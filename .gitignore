@@ -6,5 +6,6 @@ MODULE.bazel.lock
 .idea/
 .claude/
 
+
 # Built binaries
 bin/
