@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package uber.devexp.submitqueue.orchestrator;
+
+option go_package = "github.com/uber/submitqueue/orchestrator/protopb";
+option java_multiple_files = true;
+option java_outer_classname = "OrchestratorProto";
+option java_package = "com.uber.devexp.submitqueue.orchestrator";
+
+// PingRequest is the request for the Ping method
+message PingRequest {
+    // Optional message to include in the ping
+    string message = 1;
+}
+
+// PingResponse is the response for the Ping method
+message PingResponse {
+    // The response message
+    string message = 1;
+    // The service name that handled the request
+    string service_name = 2;
+    // Timestamp of when the ping was received
+    int64 timestamp = 3;
+    // Hostname of the server that handled the request
+    string hostname = 4;
+}
+
+// OrchestratorService provides the orchestrator API
+service OrchestratorService {
+    // Ping returns a response indicating the service is alive
+    rpc Ping(PingRequest) returns (PingResponse) {}
+}

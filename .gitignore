@@ -1,3 +1,8 @@
 /bazel-*
 MODULE.bazel.lock
 .vscode/
+.idea/
+.claude/
+
+# Built binaries
+bin/

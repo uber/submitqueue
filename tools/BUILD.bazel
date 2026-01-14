@@ -1,0 +1,6 @@
+# Tools for building and managing the repository
+# This BUILD file makes tools available to Bazel if needed
+
+exports_files([
+    "bazel",
+])

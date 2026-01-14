@@ -1,0 +1,4 @@
+load("@gazelle//:def.bzl", "gazelle")
+
+# gazelle:prefix github.com/uber/submitqueue
+gazelle(name = "gazelle")
