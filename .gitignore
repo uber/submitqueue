@@ -1,8 +1,11 @@
+*.gitmodules
 /bazel-*
 MODULE.bazel.lock
+/pkg/**
 .vscode/
 .idea/
 .claude/
+
 
 # Built binaries
 bin/
