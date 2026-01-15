@@ -8,19 +8,19 @@ import (
 	pb "github.com/uber/submitqueue/gateway/protopb"
 )
 
-func TestNewPingService(t *testing.T) {
-	service := NewPingService()
-	if service == nil {
-		t.Fatal("NewPingService() returned nil")
+func TestNewPingController(t *testing.T) {
+	controller := NewPingController(nil, nil)
+	if controller == nil {
+		t.Fatal("NewPingController() returned nil")
 	}
 }
 
 func TestPing_DefaultMessage(t *testing.T) {
-	service := NewPingService()
+	controller := NewPingController(nil, nil)
 	ctx := context.Background()
 
 	req := &pb.PingRequest{}
-	resp, err := service.Ping(ctx, req)
+	resp, err := controller.Ping(ctx, req)
 
 	if err != nil {
 		t.Fatalf("Ping() returned error: %v", err)
@@ -32,7 +32,7 @@ func TestPing_DefaultMessage(t *testing.T) {
 }
 
 func TestPing_CustomMessage(t *testing.T) {
-	service := NewPingService()
+	controller := NewPingController(nil, nil)
 	ctx := context.Background()
 
 	testCases := []struct {
@@ -48,7 +48,7 @@ func TestPing_CustomMessage(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := &pb.PingRequest{Message: tc.input}
-			resp, err := service.Ping(ctx, req)
+			resp, err := controller.Ping(ctx, req)
 
 			if err != nil {
 				t.Fatalf("Ping() returned error: %v", err)
@@ -62,11 +62,11 @@ func TestPing_CustomMessage(t *testing.T) {
 }
 
 func TestPing_ServiceName(t *testing.T) {
-	service := NewPingService()
+	controller := NewPingController(nil, nil)
 	ctx := context.Background()
 
 	req := &pb.PingRequest{}
-	resp, err := service.Ping(ctx, req)
+	resp, err := controller.Ping(ctx, req)
 
 	if err != nil {
 		t.Fatalf("Ping() returned error: %v", err)
@@ -78,12 +78,12 @@ func TestPing_ServiceName(t *testing.T) {
 }
 
 func TestPing_Timestamp(t *testing.T) {
-	service := NewPingService()
+	controller := NewPingController(nil, nil)
 	ctx := context.Background()
 
 	before := time.Now().Unix()
 	req := &pb.PingRequest{}
-	resp, err := service.Ping(ctx, req)
+	resp, err := controller.Ping(ctx, req)
 	after := time.Now().Unix()
 
 	if err != nil {
@@ -96,11 +96,11 @@ func TestPing_Timestamp(t *testing.T) {
 }
 
 func TestPing_Hostname(t *testing.T) {
-	service := NewPingService()
+	controller := NewPingController(nil, nil)
 	ctx := context.Background()
 
 	req := &pb.PingRequest{}
-	resp, err := service.Ping(ctx, req)
+	resp, err := controller.Ping(ctx, req)
 
 	if err != nil {
 		t.Fatalf("Ping() returned error: %v", err)

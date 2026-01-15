@@ -8,8 +8,10 @@ go_library(
     deps = [
         "//speculator/core/controller",
         "//speculator/protopb",
+        "@com_github_uber_go_tally_v4//:tally",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//reflection",
+        "@org_uber_go_zap//:zap",
     ],
 )
 

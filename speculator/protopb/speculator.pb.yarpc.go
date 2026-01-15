@@ -20,15 +20,15 @@ import (
 
 var _ = ioutil.NopCloser
 
-// SpeculatorServiceYARPCClient is the YARPC client-side interface for the SpeculatorService service.
-type SpeculatorServiceYARPCClient interface {
+// SubmitQueueSpeculatorYARPCClient is the YARPC client-side interface for the SubmitQueueSpeculator service.
+type SubmitQueueSpeculatorYARPCClient interface {
 	Ping(context.Context, *PingRequest, ...yarpc.CallOption) (*PingResponse, error)
 }
 
-func newSpeculatorServiceYARPCClient(clientConfig transport.ClientConfig, anyResolver jsonpb.AnyResolver, options ...protobuf.ClientOption) SpeculatorServiceYARPCClient {
-	return &_SpeculatorServiceYARPCCaller{protobuf.NewStreamClient(
+func newSubmitQueueSpeculatorYARPCClient(clientConfig transport.ClientConfig, anyResolver jsonpb.AnyResolver, options ...protobuf.ClientOption) SubmitQueueSpeculatorYARPCClient {
+	return &_SubmitQueueSpeculatorYARPCCaller{protobuf.NewStreamClient(
 		protobuf.ClientParams{
-			ServiceName:  "uber.devexp.submitqueue.speculator.SpeculatorService",
+			ServiceName:  "uber.devexp.submitqueue.speculator.SubmitQueueSpeculator",
 			ClientConfig: clientConfig,
 			AnyResolver:  anyResolver,
 			Options:      options,
@@ -36,33 +36,33 @@ func newSpeculatorServiceYARPCClient(clientConfig transport.ClientConfig, anyRes
 	)}
 }
 
-// NewSpeculatorServiceYARPCClient builds a new YARPC client for the SpeculatorService service.
-func NewSpeculatorServiceYARPCClient(clientConfig transport.ClientConfig, options ...protobuf.ClientOption) SpeculatorServiceYARPCClient {
-	return newSpeculatorServiceYARPCClient(clientConfig, nil, options...)
+// NewSubmitQueueSpeculatorYARPCClient builds a new YARPC client for the SubmitQueueSpeculator service.
+func NewSubmitQueueSpeculatorYARPCClient(clientConfig transport.ClientConfig, options ...protobuf.ClientOption) SubmitQueueSpeculatorYARPCClient {
+	return newSubmitQueueSpeculatorYARPCClient(clientConfig, nil, options...)
 }
 
-// SpeculatorServiceYARPCServer is the YARPC server-side interface for the SpeculatorService service.
-type SpeculatorServiceYARPCServer interface {
+// SubmitQueueSpeculatorYARPCServer is the YARPC server-side interface for the SubmitQueueSpeculator service.
+type SubmitQueueSpeculatorYARPCServer interface {
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
 }
 
-type buildSpeculatorServiceYARPCProceduresParams struct {
-	Server      SpeculatorServiceYARPCServer
+type buildSubmitQueueSpeculatorYARPCProceduresParams struct {
+	Server      SubmitQueueSpeculatorYARPCServer
 	AnyResolver jsonpb.AnyResolver
 }
 
-func buildSpeculatorServiceYARPCProcedures(params buildSpeculatorServiceYARPCProceduresParams) []transport.Procedure {
-	handler := &_SpeculatorServiceYARPCHandler{params.Server}
+func buildSubmitQueueSpeculatorYARPCProcedures(params buildSubmitQueueSpeculatorYARPCProceduresParams) []transport.Procedure {
+	handler := &_SubmitQueueSpeculatorYARPCHandler{params.Server}
 	return protobuf.BuildProcedures(
 		protobuf.BuildProceduresParams{
-			ServiceName: "uber.devexp.submitqueue.speculator.SpeculatorService",
+			ServiceName: "uber.devexp.submitqueue.speculator.SubmitQueueSpeculator",
 			UnaryHandlerParams: []protobuf.BuildProceduresUnaryHandlerParams{
 				{
 					MethodName: "Ping",
 					Handler: protobuf.NewUnaryHandler(
 						protobuf.UnaryHandlerParams{
 							Handle:      handler.Ping,
-							NewRequest:  newSpeculatorServiceServicePingYARPCRequest,
+							NewRequest:  newSubmitQueueSpeculatorServicePingYARPCRequest,
 							AnyResolver: params.AnyResolver,
 						},
 					),
@@ -74,16 +74,16 @@ func buildSpeculatorServiceYARPCProcedures(params buildSpeculatorServiceYARPCPro
 	)
 }
 
-// BuildSpeculatorServiceYARPCProcedures prepares an implementation of the SpeculatorService service for YARPC registration.
-func BuildSpeculatorServiceYARPCProcedures(server SpeculatorServiceYARPCServer) []transport.Procedure {
-	return buildSpeculatorServiceYARPCProcedures(buildSpeculatorServiceYARPCProceduresParams{Server: server})
+// BuildSubmitQueueSpeculatorYARPCProcedures prepares an implementation of the SubmitQueueSpeculator service for YARPC registration.
+func BuildSubmitQueueSpeculatorYARPCProcedures(server SubmitQueueSpeculatorYARPCServer) []transport.Procedure {
+	return buildSubmitQueueSpeculatorYARPCProcedures(buildSubmitQueueSpeculatorYARPCProceduresParams{Server: server})
 }
 
-// FxSpeculatorServiceYARPCClientParams defines the input
-// for NewFxSpeculatorServiceYARPCClient. It provides the
-// paramaters to get a SpeculatorServiceYARPCClient in an
+// FxSubmitQueueSpeculatorYARPCClientParams defines the input
+// for NewFxSubmitQueueSpeculatorYARPCClient. It provides the
+// paramaters to get a SubmitQueueSpeculatorYARPCClient in an
 // Fx application.
-type FxSpeculatorServiceYARPCClientParams struct {
+type FxSubmitQueueSpeculatorYARPCClientParams struct {
 	fx.In
 
 	Provider    yarpc.ClientConfig
@@ -91,28 +91,28 @@ type FxSpeculatorServiceYARPCClientParams struct {
 	Restriction restriction.Checker `optional:"true"`
 }
 
-// FxSpeculatorServiceYARPCClientResult defines the output
-// of NewFxSpeculatorServiceYARPCClient. It provides a
-// SpeculatorServiceYARPCClient to an Fx application.
-type FxSpeculatorServiceYARPCClientResult struct {
+// FxSubmitQueueSpeculatorYARPCClientResult defines the output
+// of NewFxSubmitQueueSpeculatorYARPCClient. It provides a
+// SubmitQueueSpeculatorYARPCClient to an Fx application.
+type FxSubmitQueueSpeculatorYARPCClientResult struct {
 	fx.Out
 
-	Client SpeculatorServiceYARPCClient
+	Client SubmitQueueSpeculatorYARPCClient
 
 	// We are using an fx.Out struct here instead of just returning a client
 	// so that we can add more values or add named versions of the client in
 	// the future without breaking any existing code.
 }
 
-// NewFxSpeculatorServiceYARPCClient provides a SpeculatorServiceYARPCClient
+// NewFxSubmitQueueSpeculatorYARPCClient provides a SubmitQueueSpeculatorYARPCClient
 // to an Fx application using the given name for routing.
 //
 //	fx.Provide(
-//	  protopb.NewFxSpeculatorServiceYARPCClient("service-name"),
+//	  protopb.NewFxSubmitQueueSpeculatorYARPCClient("service-name"),
 //	  ...
 //	)
-func NewFxSpeculatorServiceYARPCClient(name string, options ...protobuf.ClientOption) interface{} {
-	return func(params FxSpeculatorServiceYARPCClientParams) FxSpeculatorServiceYARPCClientResult {
+func NewFxSubmitQueueSpeculatorYARPCClient(name string, options ...protobuf.ClientOption) interface{} {
+	return func(params FxSubmitQueueSpeculatorYARPCClientParams) FxSubmitQueueSpeculatorYARPCClientResult {
 		cc := params.Provider.ClientConfig(name)
 
 		if params.Restriction != nil {
@@ -123,91 +123,91 @@ func NewFxSpeculatorServiceYARPCClient(name string, options ...protobuf.ClientOp
 			}
 		}
 
-		return FxSpeculatorServiceYARPCClientResult{
-			Client: newSpeculatorServiceYARPCClient(cc, params.AnyResolver, options...),
+		return FxSubmitQueueSpeculatorYARPCClientResult{
+			Client: newSubmitQueueSpeculatorYARPCClient(cc, params.AnyResolver, options...),
 		}
 	}
 }
 
-// FxSpeculatorServiceYARPCProceduresParams defines the input
-// for NewFxSpeculatorServiceYARPCProcedures. It provides the
-// paramaters to get SpeculatorServiceYARPCServer procedures in an
+// FxSubmitQueueSpeculatorYARPCProceduresParams defines the input
+// for NewFxSubmitQueueSpeculatorYARPCProcedures. It provides the
+// paramaters to get SubmitQueueSpeculatorYARPCServer procedures in an
 // Fx application.
-type FxSpeculatorServiceYARPCProceduresParams struct {
+type FxSubmitQueueSpeculatorYARPCProceduresParams struct {
 	fx.In
 
-	Server      SpeculatorServiceYARPCServer
+	Server      SubmitQueueSpeculatorYARPCServer
 	AnyResolver jsonpb.AnyResolver `name:"yarpcfx" optional:"true"`
 }
 
-// FxSpeculatorServiceYARPCProceduresResult defines the output
-// of NewFxSpeculatorServiceYARPCProcedures. It provides
-// SpeculatorServiceYARPCServer procedures to an Fx application.
+// FxSubmitQueueSpeculatorYARPCProceduresResult defines the output
+// of NewFxSubmitQueueSpeculatorYARPCProcedures. It provides
+// SubmitQueueSpeculatorYARPCServer procedures to an Fx application.
 //
 // The procedures are provided to the "yarpcfx" value group.
 // Dig 1.2 or newer must be used for this feature to work.
-type FxSpeculatorServiceYARPCProceduresResult struct {
+type FxSubmitQueueSpeculatorYARPCProceduresResult struct {
 	fx.Out
 
 	Procedures     []transport.Procedure `group:"yarpcfx"`
 	ReflectionMeta reflection.ServerMeta `group:"yarpcfx"`
 }
 
-// NewFxSpeculatorServiceYARPCProcedures provides SpeculatorServiceYARPCServer procedures to an Fx application.
-// It expects a SpeculatorServiceYARPCServer to be present in the container.
+// NewFxSubmitQueueSpeculatorYARPCProcedures provides SubmitQueueSpeculatorYARPCServer procedures to an Fx application.
+// It expects a SubmitQueueSpeculatorYARPCServer to be present in the container.
 //
 //	fx.Provide(
-//	  protopb.NewFxSpeculatorServiceYARPCProcedures(),
+//	  protopb.NewFxSubmitQueueSpeculatorYARPCProcedures(),
 //	  ...
 //	)
-func NewFxSpeculatorServiceYARPCProcedures() interface{} {
-	return func(params FxSpeculatorServiceYARPCProceduresParams) FxSpeculatorServiceYARPCProceduresResult {
-		return FxSpeculatorServiceYARPCProceduresResult{
-			Procedures: buildSpeculatorServiceYARPCProcedures(buildSpeculatorServiceYARPCProceduresParams{
+func NewFxSubmitQueueSpeculatorYARPCProcedures() interface{} {
+	return func(params FxSubmitQueueSpeculatorYARPCProceduresParams) FxSubmitQueueSpeculatorYARPCProceduresResult {
+		return FxSubmitQueueSpeculatorYARPCProceduresResult{
+			Procedures: buildSubmitQueueSpeculatorYARPCProcedures(buildSubmitQueueSpeculatorYARPCProceduresParams{
 				Server:      params.Server,
 				AnyResolver: params.AnyResolver,
 			}),
-			ReflectionMeta: SpeculatorServiceReflectionMeta,
+			ReflectionMeta: SubmitQueueSpeculatorReflectionMeta,
 		}
 	}
 }
 
-// SpeculatorServiceReflectionMeta is the reflection server metadata
+// SubmitQueueSpeculatorReflectionMeta is the reflection server metadata
 // required for using the gRPC reflection protocol with YARPC.
 //
 // See https://github.com/grpc/grpc/blob/master/doc/server-reflection.md.
-var SpeculatorServiceReflectionMeta = reflection.ServerMeta{
-	ServiceName:     "uber.devexp.submitqueue.speculator.SpeculatorService",
+var SubmitQueueSpeculatorReflectionMeta = reflection.ServerMeta{
+	ServiceName:     "uber.devexp.submitqueue.speculator.SubmitQueueSpeculator",
 	FileDescriptors: yarpcFileDescriptorClosure4a6246af296c2143,
 }
 
-type _SpeculatorServiceYARPCCaller struct {
+type _SubmitQueueSpeculatorYARPCCaller struct {
 	streamClient protobuf.StreamClient
 }
 
-func (c *_SpeculatorServiceYARPCCaller) Ping(ctx context.Context, request *PingRequest, options ...yarpc.CallOption) (*PingResponse, error) {
-	responseMessage, err := c.streamClient.Call(ctx, "Ping", request, newSpeculatorServiceServicePingYARPCResponse, options...)
+func (c *_SubmitQueueSpeculatorYARPCCaller) Ping(ctx context.Context, request *PingRequest, options ...yarpc.CallOption) (*PingResponse, error) {
+	responseMessage, err := c.streamClient.Call(ctx, "Ping", request, newSubmitQueueSpeculatorServicePingYARPCResponse, options...)
 	if responseMessage == nil {
 		return nil, err
 	}
 	response, ok := responseMessage.(*PingResponse)
 	if !ok {
-		return nil, protobuf.CastError(emptySpeculatorServiceServicePingYARPCResponse, responseMessage)
+		return nil, protobuf.CastError(emptySubmitQueueSpeculatorServicePingYARPCResponse, responseMessage)
 	}
 	return response, err
 }
 
-type _SpeculatorServiceYARPCHandler struct {
-	server SpeculatorServiceYARPCServer
+type _SubmitQueueSpeculatorYARPCHandler struct {
+	server SubmitQueueSpeculatorYARPCServer
 }
 
-func (h *_SpeculatorServiceYARPCHandler) Ping(ctx context.Context, requestMessage proto.Message) (proto.Message, error) {
+func (h *_SubmitQueueSpeculatorYARPCHandler) Ping(ctx context.Context, requestMessage proto.Message) (proto.Message, error) {
 	var request *PingRequest
 	var ok bool
 	if requestMessage != nil {
 		request, ok = requestMessage.(*PingRequest)
 		if !ok {
-			return nil, protobuf.CastError(emptySpeculatorServiceServicePingYARPCRequest, requestMessage)
+			return nil, protobuf.CastError(emptySubmitQueueSpeculatorServicePingYARPCRequest, requestMessage)
 		}
 	}
 	response, err := h.server.Ping(ctx, request)
@@ -217,46 +217,46 @@ func (h *_SpeculatorServiceYARPCHandler) Ping(ctx context.Context, requestMessag
 	return response, err
 }
 
-func newSpeculatorServiceServicePingYARPCRequest() proto.Message {
+func newSubmitQueueSpeculatorServicePingYARPCRequest() proto.Message {
 	return &PingRequest{}
 }
 
-func newSpeculatorServiceServicePingYARPCResponse() proto.Message {
+func newSubmitQueueSpeculatorServicePingYARPCResponse() proto.Message {
 	return &PingResponse{}
 }
 
 var (
-	emptySpeculatorServiceServicePingYARPCRequest  = &PingRequest{}
-	emptySpeculatorServiceServicePingYARPCResponse = &PingResponse{}
+	emptySubmitQueueSpeculatorServicePingYARPCRequest  = &PingRequest{}
+	emptySubmitQueueSpeculatorServicePingYARPCResponse = &PingResponse{}
 )
 
 var yarpcFileDescriptorClosure4a6246af296c2143 = [][]byte{
 	// speculator.proto
 	[]byte{
-		0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x91, 0x31, 0x4f, 0xc3, 0x30,
-		0x10, 0x85, 0x31, 0xad, 0x80, 0x5e, 0x2b, 0x01, 0x9e, 0xa2, 0x8a, 0xa1, 0x64, 0x80, 0x4e, 0x36,
-		0x82, 0x7f, 0xd0, 0x1f, 0x80, 0xaa, 0x74, 0x63, 0x41, 0x76, 0x38, 0xa5, 0x56, 0x71, 0xec, 0xe6,
-		0xec, 0x8a, 0x91, 0x85, 0xff, 0x8d, 0xe2, 0x40, 0xd3, 0x05, 0xd1, 0xcd, 0x77, 0x7e, 0xdf, 0xe9,
-		0x3d, 0x3d, 0xb8, 0x22, 0x8f, 0x65, 0x7c, 0x57, 0xc1, 0x35, 0xc2, 0x37, 0x2e, 0x38, 0x9e, 0x47,
-		0x8d, 0x8d, 0x78, 0xc3, 0x1d, 0x7e, 0x78, 0x41, 0x51, 0x5b, 0x13, 0xb6, 0x11, 0x23, 0x8a, 0x5e,
-		0x99, 0xdf, 0xc3, 0x78, 0x69, 0xea, 0xaa, 0xc0, 0x6d, 0x44, 0x0a, 0x3c, 0x83, 0x73, 0x8b, 0x44,
-		0xaa, 0xc2, 0x8c, 0xcd, 0xd8, 0x7c, 0x54, 0xfc, 0x8e, 0xf9, 0x17, 0x83, 0x49, 0xa7, 0x24, 0xef,
-		0x6a, 0xc2, 0xbf, 0xa5, 0xfc, 0x16, 0x26, 0x84, 0xcd, 0xce, 0x94, 0xf8, 0x5a, 0x2b, 0x8b, 0xd9,
-		0x69, 0xfa, 0x1e, 0xff, 0xec, 0x9e, 0x95, 0x45, 0x7e, 0x03, 0xa3, 0x60, 0x2c, 0x52, 0x50, 0xd6,
-		0x67, 0x83, 0x19, 0x9b, 0x0f, 0x8a, 0x7e, 0xc1, 0xa7, 0x70, 0xb1, 0x76, 0x14, 0x12, 0x3c, 0x4c,
-		0xf0, 0x7e, 0x7e, 0xfc, 0x64, 0x70, 0xbd, 0xda, 0xfb, 0x5f, 0x75, 0x37, 0xf9, 0x06, 0x86, 0xad,
-		0x39, 0x2e, 0xc5, 0xff, 0x99, 0xc5, 0x41, 0xe0, 0xe9, 0xc3, 0xf1, 0x40, 0x97, 0x3b, 0x3f, 0x59,
-		0x6c, 0xe0, 0xae, 0x74, 0xf6, 0x08, 0x70, 0x71, 0xd9, 0x3b, 0x5d, 0xb6, 0x95, 0x2c, 0xd9, 0x8b,
-		0xa8, 0x4c, 0x58, 0x47, 0x2d, 0x4a, 0x67, 0x65, 0x7b, 0x41, 0x1e, 0xa0, 0xb2, 0x47, 0x65, 0xaa,
-		0xd0, 0x6b, 0x7d, 0x96, 0x1e, 0x4f, 0xdf, 0x01, 0x00, 0x00, 0xff, 0xff, 0xfe, 0x3d, 0x19, 0x00,
-		0xdf, 0x01, 0x00, 0x00,
+		0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x91, 0xc1, 0x4a, 0x33, 0x31,
+		0x10, 0xc7, 0xbf, 0x7c, 0x2d, 0x6a, 0xa7, 0x05, 0x25, 0x20, 0x2c, 0xc5, 0x43, 0xdd, 0x83, 0xf6,
+		0x94, 0x88, 0xbe, 0x41, 0x1f, 0x40, 0xd6, 0xed, 0xcd, 0x8b, 0x24, 0xeb, 0xb0, 0x0d, 0x35, 0x9b,
+		0x74, 0x27, 0x29, 0x3e, 0x80, 0xbe, 0xb7, 0x6c, 0xaa, 0xdd, 0x5e, 0xc4, 0xde, 0x32, 0x93, 0xff,
+		0x6f, 0x98, 0x1f, 0x03, 0x17, 0xe4, 0xb1, 0x8a, 0x6f, 0x2a, 0xb8, 0x56, 0xf8, 0xd6, 0x05, 0xc7,
+		0xf3, 0xa8, 0xb1, 0x15, 0xaf, 0xb8, 0xc5, 0x77, 0x2f, 0x28, 0x6a, 0x6b, 0xc2, 0x26, 0x62, 0x44,
+		0xd1, 0x27, 0xf3, 0x5b, 0x18, 0x17, 0xa6, 0xa9, 0x4b, 0xdc, 0x44, 0xa4, 0xc0, 0x33, 0x38, 0xb5,
+		0x48, 0xa4, 0x6a, 0xcc, 0xd8, 0x8c, 0xcd, 0x47, 0xe5, 0x4f, 0x99, 0x7f, 0x32, 0x98, 0xec, 0x92,
+		0xe4, 0x5d, 0x43, 0xf8, 0x7b, 0x94, 0x5f, 0xc3, 0x84, 0xb0, 0xdd, 0x9a, 0x0a, 0x5f, 0x1a, 0x65,
+		0x31, 0xfb, 0x9f, 0xbe, 0xc7, 0xdf, 0xbd, 0x47, 0x65, 0x91, 0x5f, 0xc1, 0x28, 0x18, 0x8b, 0x14,
+		0x94, 0xf5, 0xd9, 0x60, 0xc6, 0xe6, 0x83, 0xb2, 0x6f, 0xf0, 0x29, 0x9c, 0xad, 0x1c, 0x85, 0x04,
+		0x0f, 0x13, 0xbc, 0xaf, 0xef, 0x3f, 0x18, 0x5c, 0x2e, 0x93, 0xcb, 0x53, 0xe7, 0xb2, 0xdc, 0xab,
+		0xf0, 0x35, 0x0c, 0xbb, 0x05, 0xb9, 0x14, 0x7f, 0x7b, 0x8b, 0x03, 0xe9, 0xe9, 0xdd, 0xf1, 0xc0,
+		0xce, 0x3d, 0xff, 0xb7, 0x58, 0xc3, 0x4d, 0xe5, 0xec, 0x11, 0xe0, 0xe2, 0xbc, 0x5f, 0xb1, 0xe8,
+		0xce, 0x52, 0xb0, 0x67, 0x51, 0x9b, 0xb0, 0x8a, 0x5a, 0x54, 0xce, 0xca, 0x6e, 0x82, 0x3c, 0x40,
+		0x65, 0x8f, 0xca, 0x74, 0x46, 0xaf, 0xf5, 0x49, 0x7a, 0x3c, 0x7c, 0x05, 0x00, 0x00, 0xff, 0xff,
+		0x84, 0xb6, 0x23, 0xbd, 0xe3, 0x01, 0x00, 0x00,
 	},
 }
 
 func init() {
 	yarpc.RegisterClientBuilder(
-		func(clientConfig transport.ClientConfig, structField reflect.StructField) SpeculatorServiceYARPCClient {
-			return NewSpeculatorServiceYARPCClient(clientConfig, protobuf.ClientBuilderOptions(clientConfig, structField)...)
+		func(clientConfig transport.ClientConfig, structField reflect.StructField) SubmitQueueSpeculatorYARPCClient {
+			return NewSubmitQueueSpeculatorYARPCClient(clientConfig, protobuf.ClientBuilderOptions(clientConfig, structField)...)
 		},
 	)
 }

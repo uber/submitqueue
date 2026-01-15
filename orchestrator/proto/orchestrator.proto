@@ -25,8 +25,8 @@ message PingResponse {
     string hostname = 4;
 }
 
-// OrchestratorService provides the orchestrator API
-service OrchestratorService {
+// SubmitQueueOrchestrator provides the orchestrator API
+service SubmitQueueOrchestrator {
     // Ping returns a response indicating the service is alive
     rpc Ping(PingRequest) returns (PingResponse) {}
 }

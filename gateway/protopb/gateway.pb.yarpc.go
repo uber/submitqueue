@@ -20,15 +20,15 @@ import (
 
 var _ = ioutil.NopCloser
 
-// GatewayServiceYARPCClient is the YARPC client-side interface for the GatewayService service.
-type GatewayServiceYARPCClient interface {
+// SubmitQueueGatewayYARPCClient is the YARPC client-side interface for the SubmitQueueGateway service.
+type SubmitQueueGatewayYARPCClient interface {
 	Ping(context.Context, *PingRequest, ...yarpc.CallOption) (*PingResponse, error)
 }
 
-func newGatewayServiceYARPCClient(clientConfig transport.ClientConfig, anyResolver jsonpb.AnyResolver, options ...protobuf.ClientOption) GatewayServiceYARPCClient {
-	return &_GatewayServiceYARPCCaller{protobuf.NewStreamClient(
+func newSubmitQueueGatewayYARPCClient(clientConfig transport.ClientConfig, anyResolver jsonpb.AnyResolver, options ...protobuf.ClientOption) SubmitQueueGatewayYARPCClient {
+	return &_SubmitQueueGatewayYARPCCaller{protobuf.NewStreamClient(
 		protobuf.ClientParams{
-			ServiceName:  "uber.devexp.submitqueue.gateway.GatewayService",
+			ServiceName:  "uber.devexp.submitqueue.gateway.SubmitQueueGateway",
 			ClientConfig: clientConfig,
 			AnyResolver:  anyResolver,
 			Options:      options,
@@ -36,33 +36,33 @@ func newGatewayServiceYARPCClient(clientConfig transport.ClientConfig, anyResolv
 	)}
 }
 
-// NewGatewayServiceYARPCClient builds a new YARPC client for the GatewayService service.
-func NewGatewayServiceYARPCClient(clientConfig transport.ClientConfig, options ...protobuf.ClientOption) GatewayServiceYARPCClient {
-	return newGatewayServiceYARPCClient(clientConfig, nil, options...)
+// NewSubmitQueueGatewayYARPCClient builds a new YARPC client for the SubmitQueueGateway service.
+func NewSubmitQueueGatewayYARPCClient(clientConfig transport.ClientConfig, options ...protobuf.ClientOption) SubmitQueueGatewayYARPCClient {
+	return newSubmitQueueGatewayYARPCClient(clientConfig, nil, options...)
 }
 
-// GatewayServiceYARPCServer is the YARPC server-side interface for the GatewayService service.
-type GatewayServiceYARPCServer interface {
+// SubmitQueueGatewayYARPCServer is the YARPC server-side interface for the SubmitQueueGateway service.
+type SubmitQueueGatewayYARPCServer interface {
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
 }
 
-type buildGatewayServiceYARPCProceduresParams struct {
-	Server      GatewayServiceYARPCServer
+type buildSubmitQueueGatewayYARPCProceduresParams struct {
+	Server      SubmitQueueGatewayYARPCServer
 	AnyResolver jsonpb.AnyResolver
 }
 
-func buildGatewayServiceYARPCProcedures(params buildGatewayServiceYARPCProceduresParams) []transport.Procedure {
-	handler := &_GatewayServiceYARPCHandler{params.Server}
+func buildSubmitQueueGatewayYARPCProcedures(params buildSubmitQueueGatewayYARPCProceduresParams) []transport.Procedure {
+	handler := &_SubmitQueueGatewayYARPCHandler{params.Server}
 	return protobuf.BuildProcedures(
 		protobuf.BuildProceduresParams{
-			ServiceName: "uber.devexp.submitqueue.gateway.GatewayService",
+			ServiceName: "uber.devexp.submitqueue.gateway.SubmitQueueGateway",
 			UnaryHandlerParams: []protobuf.BuildProceduresUnaryHandlerParams{
 				{
 					MethodName: "Ping",
 					Handler: protobuf.NewUnaryHandler(
 						protobuf.UnaryHandlerParams{
 							Handle:      handler.Ping,
-							NewRequest:  newGatewayServiceServicePingYARPCRequest,
+							NewRequest:  newSubmitQueueGatewayServicePingYARPCRequest,
 							AnyResolver: params.AnyResolver,
 						},
 					),
@@ -74,16 +74,16 @@ func buildGatewayServiceYARPCProcedures(params buildGatewayServiceYARPCProcedure
 	)
 }
 
-// BuildGatewayServiceYARPCProcedures prepares an implementation of the GatewayService service for YARPC registration.
-func BuildGatewayServiceYARPCProcedures(server GatewayServiceYARPCServer) []transport.Procedure {
-	return buildGatewayServiceYARPCProcedures(buildGatewayServiceYARPCProceduresParams{Server: server})
+// BuildSubmitQueueGatewayYARPCProcedures prepares an implementation of the SubmitQueueGateway service for YARPC registration.
+func BuildSubmitQueueGatewayYARPCProcedures(server SubmitQueueGatewayYARPCServer) []transport.Procedure {
+	return buildSubmitQueueGatewayYARPCProcedures(buildSubmitQueueGatewayYARPCProceduresParams{Server: server})
 }
 
-// FxGatewayServiceYARPCClientParams defines the input
-// for NewFxGatewayServiceYARPCClient. It provides the
-// paramaters to get a GatewayServiceYARPCClient in an
+// FxSubmitQueueGatewayYARPCClientParams defines the input
+// for NewFxSubmitQueueGatewayYARPCClient. It provides the
+// paramaters to get a SubmitQueueGatewayYARPCClient in an
 // Fx application.
-type FxGatewayServiceYARPCClientParams struct {
+type FxSubmitQueueGatewayYARPCClientParams struct {
 	fx.In
 
 	Provider    yarpc.ClientConfig
@@ -91,28 +91,28 @@ type FxGatewayServiceYARPCClientParams struct {
 	Restriction restriction.Checker `optional:"true"`
 }
 
-// FxGatewayServiceYARPCClientResult defines the output
-// of NewFxGatewayServiceYARPCClient. It provides a
-// GatewayServiceYARPCClient to an Fx application.
-type FxGatewayServiceYARPCClientResult struct {
+// FxSubmitQueueGatewayYARPCClientResult defines the output
+// of NewFxSubmitQueueGatewayYARPCClient. It provides a
+// SubmitQueueGatewayYARPCClient to an Fx application.
+type FxSubmitQueueGatewayYARPCClientResult struct {
 	fx.Out
 
-	Client GatewayServiceYARPCClient
+	Client SubmitQueueGatewayYARPCClient
 
 	// We are using an fx.Out struct here instead of just returning a client
 	// so that we can add more values or add named versions of the client in
 	// the future without breaking any existing code.
 }
 
-// NewFxGatewayServiceYARPCClient provides a GatewayServiceYARPCClient
+// NewFxSubmitQueueGatewayYARPCClient provides a SubmitQueueGatewayYARPCClient
 // to an Fx application using the given name for routing.
 //
 //	fx.Provide(
-//	  protopb.NewFxGatewayServiceYARPCClient("service-name"),
+//	  protopb.NewFxSubmitQueueGatewayYARPCClient("service-name"),
 //	  ...
 //	)
-func NewFxGatewayServiceYARPCClient(name string, options ...protobuf.ClientOption) interface{} {
-	return func(params FxGatewayServiceYARPCClientParams) FxGatewayServiceYARPCClientResult {
+func NewFxSubmitQueueGatewayYARPCClient(name string, options ...protobuf.ClientOption) interface{} {
+	return func(params FxSubmitQueueGatewayYARPCClientParams) FxSubmitQueueGatewayYARPCClientResult {
 		cc := params.Provider.ClientConfig(name)
 
 		if params.Restriction != nil {
@@ -123,91 +123,91 @@ func NewFxGatewayServiceYARPCClient(name string, options ...protobuf.ClientOptio
 			}
 		}
 
-		return FxGatewayServiceYARPCClientResult{
-			Client: newGatewayServiceYARPCClient(cc, params.AnyResolver, options...),
+		return FxSubmitQueueGatewayYARPCClientResult{
+			Client: newSubmitQueueGatewayYARPCClient(cc, params.AnyResolver, options...),
 		}
 	}
 }
 
-// FxGatewayServiceYARPCProceduresParams defines the input
-// for NewFxGatewayServiceYARPCProcedures. It provides the
-// paramaters to get GatewayServiceYARPCServer procedures in an
+// FxSubmitQueueGatewayYARPCProceduresParams defines the input
+// for NewFxSubmitQueueGatewayYARPCProcedures. It provides the
+// paramaters to get SubmitQueueGatewayYARPCServer procedures in an
 // Fx application.
-type FxGatewayServiceYARPCProceduresParams struct {
+type FxSubmitQueueGatewayYARPCProceduresParams struct {
 	fx.In
 
-	Server      GatewayServiceYARPCServer
+	Server      SubmitQueueGatewayYARPCServer
 	AnyResolver jsonpb.AnyResolver `name:"yarpcfx" optional:"true"`
 }
 
-// FxGatewayServiceYARPCProceduresResult defines the output
-// of NewFxGatewayServiceYARPCProcedures. It provides
-// GatewayServiceYARPCServer procedures to an Fx application.
+// FxSubmitQueueGatewayYARPCProceduresResult defines the output
+// of NewFxSubmitQueueGatewayYARPCProcedures. It provides
+// SubmitQueueGatewayYARPCServer procedures to an Fx application.
 //
 // The procedures are provided to the "yarpcfx" value group.
 // Dig 1.2 or newer must be used for this feature to work.
-type FxGatewayServiceYARPCProceduresResult struct {
+type FxSubmitQueueGatewayYARPCProceduresResult struct {
 	fx.Out
 
 	Procedures     []transport.Procedure `group:"yarpcfx"`
 	ReflectionMeta reflection.ServerMeta `group:"yarpcfx"`
 }
 
-// NewFxGatewayServiceYARPCProcedures provides GatewayServiceYARPCServer procedures to an Fx application.
-// It expects a GatewayServiceYARPCServer to be present in the container.
+// NewFxSubmitQueueGatewayYARPCProcedures provides SubmitQueueGatewayYARPCServer procedures to an Fx application.
+// It expects a SubmitQueueGatewayYARPCServer to be present in the container.
 //
 //	fx.Provide(
-//	  protopb.NewFxGatewayServiceYARPCProcedures(),
+//	  protopb.NewFxSubmitQueueGatewayYARPCProcedures(),
 //	  ...
 //	)
-func NewFxGatewayServiceYARPCProcedures() interface{} {
-	return func(params FxGatewayServiceYARPCProceduresParams) FxGatewayServiceYARPCProceduresResult {
-		return FxGatewayServiceYARPCProceduresResult{
-			Procedures: buildGatewayServiceYARPCProcedures(buildGatewayServiceYARPCProceduresParams{
+func NewFxSubmitQueueGatewayYARPCProcedures() interface{} {
+	return func(params FxSubmitQueueGatewayYARPCProceduresParams) FxSubmitQueueGatewayYARPCProceduresResult {
+		return FxSubmitQueueGatewayYARPCProceduresResult{
+			Procedures: buildSubmitQueueGatewayYARPCProcedures(buildSubmitQueueGatewayYARPCProceduresParams{
 				Server:      params.Server,
 				AnyResolver: params.AnyResolver,
 			}),
-			ReflectionMeta: GatewayServiceReflectionMeta,
+			ReflectionMeta: SubmitQueueGatewayReflectionMeta,
 		}
 	}
 }
 
-// GatewayServiceReflectionMeta is the reflection server metadata
+// SubmitQueueGatewayReflectionMeta is the reflection server metadata
 // required for using the gRPC reflection protocol with YARPC.
 //
 // See https://github.com/grpc/grpc/blob/master/doc/server-reflection.md.
-var GatewayServiceReflectionMeta = reflection.ServerMeta{
-	ServiceName:     "uber.devexp.submitqueue.gateway.GatewayService",
+var SubmitQueueGatewayReflectionMeta = reflection.ServerMeta{
+	ServiceName:     "uber.devexp.submitqueue.gateway.SubmitQueueGateway",
 	FileDescriptors: yarpcFileDescriptorClosuref1a937782ebbded5,
 }
 
-type _GatewayServiceYARPCCaller struct {
+type _SubmitQueueGatewayYARPCCaller struct {
 	streamClient protobuf.StreamClient
 }
 
-func (c *_GatewayServiceYARPCCaller) Ping(ctx context.Context, request *PingRequest, options ...yarpc.CallOption) (*PingResponse, error) {
-	responseMessage, err := c.streamClient.Call(ctx, "Ping", request, newGatewayServiceServicePingYARPCResponse, options...)
+func (c *_SubmitQueueGatewayYARPCCaller) Ping(ctx context.Context, request *PingRequest, options ...yarpc.CallOption) (*PingResponse, error) {
+	responseMessage, err := c.streamClient.Call(ctx, "Ping", request, newSubmitQueueGatewayServicePingYARPCResponse, options...)
 	if responseMessage == nil {
 		return nil, err
 	}
 	response, ok := responseMessage.(*PingResponse)
 	if !ok {
-		return nil, protobuf.CastError(emptyGatewayServiceServicePingYARPCResponse, responseMessage)
+		return nil, protobuf.CastError(emptySubmitQueueGatewayServicePingYARPCResponse, responseMessage)
 	}
 	return response, err
 }
 
-type _GatewayServiceYARPCHandler struct {
-	server GatewayServiceYARPCServer
+type _SubmitQueueGatewayYARPCHandler struct {
+	server SubmitQueueGatewayYARPCServer
 }
 
-func (h *_GatewayServiceYARPCHandler) Ping(ctx context.Context, requestMessage proto.Message) (proto.Message, error) {
+func (h *_SubmitQueueGatewayYARPCHandler) Ping(ctx context.Context, requestMessage proto.Message) (proto.Message, error) {
 	var request *PingRequest
 	var ok bool
 	if requestMessage != nil {
 		request, ok = requestMessage.(*PingRequest)
 		if !ok {
-			return nil, protobuf.CastError(emptyGatewayServiceServicePingYARPCRequest, requestMessage)
+			return nil, protobuf.CastError(emptySubmitQueueGatewayServicePingYARPCRequest, requestMessage)
 		}
 	}
 	response, err := h.server.Ping(ctx, request)
@@ -217,46 +217,46 @@ func (h *_GatewayServiceYARPCHandler) Ping(ctx context.Context, requestMessage p
 	return response, err
 }
 
-func newGatewayServiceServicePingYARPCRequest() proto.Message {
+func newSubmitQueueGatewayServicePingYARPCRequest() proto.Message {
 	return &PingRequest{}
 }
 
-func newGatewayServiceServicePingYARPCResponse() proto.Message {
+func newSubmitQueueGatewayServicePingYARPCResponse() proto.Message {
 	return &PingResponse{}
 }
 
 var (
-	emptyGatewayServiceServicePingYARPCRequest  = &PingRequest{}
-	emptyGatewayServiceServicePingYARPCResponse = &PingResponse{}
+	emptySubmitQueueGatewayServicePingYARPCRequest  = &PingRequest{}
+	emptySubmitQueueGatewayServicePingYARPCResponse = &PingResponse{}
 )
 
 var yarpcFileDescriptorClosuref1a937782ebbded5 = [][]byte{
 	// gateway.proto
 	[]byte{
-		0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x91, 0x31, 0x4f, 0xc3, 0x30,
-		0x10, 0x85, 0x31, 0xad, 0x80, 0x5e, 0x03, 0x83, 0xa7, 0xa8, 0x42, 0xa2, 0x84, 0x81, 0x4a, 0x80,
-		0x23, 0xc1, 0x3f, 0xe8, 0xc2, 0x86, 0xa2, 0xb0, 0xb1, 0x20, 0x3b, 0x9c, 0x52, 0x0f, 0x8e, 0xdd,
-		0x9c, 0xdd, 0xc2, 0x0f, 0xe0, 0x7f, 0xa3, 0x38, 0x01, 0xba, 0xa0, 0xb2, 0xf9, 0x9e, 0xdf, 0x67,
-		0xbd, 0xe7, 0x83, 0xd3, 0x5a, 0x7a, 0xdc, 0xca, 0x0f, 0xe1, 0x5a, 0xeb, 0x2d, 0xbf, 0x08, 0x0a,
-		0x5b, 0xf1, 0x86, 0x1b, 0x7c, 0x77, 0x82, 0x82, 0x32, 0xda, 0xaf, 0x03, 0x06, 0x14, 0x83, 0x2d,
-		0xbb, 0x86, 0x69, 0xa1, 0x9b, 0xba, 0xc4, 0x75, 0x40, 0xf2, 0x3c, 0x85, 0x63, 0x83, 0x44, 0xb2,
-		0xc6, 0x94, 0xcd, 0xd9, 0x62, 0x52, 0x7e, 0x8f, 0xd9, 0x27, 0x83, 0xa4, 0x77, 0x92, 0xb3, 0x0d,
-		0xe1, 0xdf, 0x56, 0x7e, 0x09, 0x09, 0x61, 0xbb, 0xd1, 0x15, 0xbe, 0x36, 0xd2, 0x60, 0x7a, 0x18,
-		0xaf, 0xa7, 0x83, 0xf6, 0x24, 0x0d, 0xf2, 0x73, 0x98, 0x78, 0x6d, 0x90, 0xbc, 0x34, 0x2e, 0x1d,
-		0xcd, 0xd9, 0x62, 0x54, 0xfe, 0x0a, 0x7c, 0x06, 0x27, 0x2b, 0x4b, 0x3e, 0xc2, 0xe3, 0x08, 0xff,
-		0xcc, 0xf7, 0x5b, 0x38, 0x7b, 0xec, 0xb3, 0x3f, 0xf7, 0xef, 0x71, 0x84, 0x71, 0x17, 0x8c, 0xdf,
-		0x8a, 0x3d, 0x65, 0xc5, 0x4e, 0xd3, 0xd9, 0xdd, 0x3f, 0xdd, 0x7d, 0xdb, 0xec, 0x60, 0xa9, 0xe0,
-		0xaa, 0xb2, 0x66, 0x1f, 0xb5, 0x4c, 0x86, 0x74, 0x45, 0xf7, 0xff, 0x05, 0x7b, 0xb9, 0xa9, 0xb5,
-		0x5f, 0x05, 0x25, 0x2a, 0x6b, 0xf2, 0x8e, 0xcd, 0x77, 0xa0, 0x7c, 0x80, 0xf2, 0xb8, 0x2c, 0xa7,
-		0xd4, 0x51, 0x3c, 0x3c, 0x7c, 0x05, 0x00, 0x00, 0xff, 0xff, 0x5a, 0x24, 0x31, 0x64, 0xc6, 0x01,
-		0x00, 0x00,
+		0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x91, 0xb1, 0x4e, 0xc3, 0x30,
+		0x10, 0x86, 0x31, 0xad, 0x80, 0x5e, 0xc3, 0xe2, 0x29, 0xaa, 0x90, 0x28, 0x61, 0xa0, 0x12, 0xe0,
+		0x48, 0xf0, 0x06, 0x5d, 0xd8, 0x50, 0x08, 0x1b, 0x0b, 0xb2, 0xc3, 0x29, 0xf5, 0xe0, 0xd8, 0xcd,
+		0xd9, 0x05, 0xc4, 0xcc, 0x7b, 0xa3, 0x38, 0x01, 0xba, 0xa0, 0xb2, 0xf9, 0xce, 0xff, 0x27, 0xdd,
+		0xa7, 0x1f, 0x8e, 0x6b, 0xe9, 0xf1, 0x55, 0xbe, 0x0b, 0xd7, 0x5a, 0x6f, 0xf9, 0x69, 0x50, 0xd8,
+		0x8a, 0x17, 0xdc, 0xe0, 0x9b, 0x13, 0x14, 0x94, 0xd1, 0x7e, 0x1d, 0x30, 0xa0, 0x18, 0x62, 0xd9,
+		0x05, 0x4c, 0x0b, 0xdd, 0xd4, 0x25, 0xae, 0x03, 0x92, 0xe7, 0x29, 0x1c, 0x1a, 0x24, 0x92, 0x35,
+		0xa6, 0x6c, 0xce, 0x16, 0x93, 0xf2, 0x7b, 0xcc, 0x3e, 0x19, 0x24, 0x7d, 0x92, 0x9c, 0x6d, 0x08,
+		0xff, 0x8e, 0xf2, 0x33, 0x48, 0x08, 0xdb, 0x8d, 0xae, 0xf0, 0xb9, 0x91, 0x06, 0xd3, 0xfd, 0xf8,
+		0x3d, 0x1d, 0x76, 0xf7, 0xd2, 0x20, 0x3f, 0x81, 0x89, 0xd7, 0x06, 0xc9, 0x4b, 0xe3, 0xd2, 0xd1,
+		0x9c, 0x2d, 0x46, 0xe5, 0xef, 0x82, 0xcf, 0xe0, 0x68, 0x65, 0xc9, 0x47, 0x78, 0x1c, 0xe1, 0x9f,
+		0xf9, 0xe6, 0x03, 0xf8, 0x63, 0xf4, 0x78, 0xe8, 0x3c, 0xee, 0x7a, 0x0d, 0x8e, 0x30, 0xee, 0x8e,
+		0xe3, 0x57, 0x62, 0x87, 0xb0, 0xd8, 0xb2, 0x9d, 0x5d, 0xff, 0x33, 0xdd, 0x1b, 0x67, 0x7b, 0x4b,
+		0x05, 0xe7, 0x95, 0x35, 0xbb, 0xa8, 0x65, 0x32, 0x9c, 0x55, 0x74, 0x1d, 0x14, 0xec, 0xe9, 0xb2,
+		0xd6, 0x7e, 0x15, 0x94, 0xa8, 0xac, 0xc9, 0x3b, 0x36, 0xdf, 0x82, 0xf2, 0x01, 0xca, 0x63, 0x61,
+		0x4e, 0xa9, 0x83, 0xf8, 0xb8, 0xfd, 0x0a, 0x00, 0x00, 0xff, 0xff, 0x91, 0x32, 0x51, 0xa7, 0xca,
+		0x01, 0x00, 0x00,
 	},
 }
 
 func init() {
 	yarpc.RegisterClientBuilder(
-		func(clientConfig transport.ClientConfig, structField reflect.StructField) GatewayServiceYARPCClient {
-			return NewGatewayServiceYARPCClient(clientConfig, protobuf.ClientBuilderOptions(clientConfig, structField)...)
+		func(clientConfig transport.ClientConfig, structField reflect.StructField) SubmitQueueGatewayYARPCClient {
+			return NewSubmitQueueGatewayYARPCClient(clientConfig, protobuf.ClientBuilderOptions(clientConfig, structField)...)
 		},
 	)
 }

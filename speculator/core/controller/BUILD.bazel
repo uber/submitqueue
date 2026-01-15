@@ -5,12 +5,20 @@ go_library(
     srcs = ["ping.go"],
     importpath = "github.com/uber/submitqueue/speculator/core/controller",
     visibility = ["//visibility:public"],
-    deps = ["//speculator/protopb"],
+    deps = [
+        "//speculator/protopb",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_zap//:zap",
+    ],
 )
 
 go_test(
     name = "controller_test",
     srcs = ["ping_test.go"],
     embed = [":controller"],
-    deps = ["//speculator/protopb"],
+    deps = [
+        "//speculator/protopb",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_zap//:zap",
+    ],
 )

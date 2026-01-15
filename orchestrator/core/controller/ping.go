@@ -5,27 +5,56 @@ import (
 	"os"
 	"time"
 
+	"github.com/uber-go/tally/v4"
 	pb "github.com/uber/submitqueue/orchestrator/protopb"
+	"go.uber.org/zap"
 )
 
-// PingServiceImpl implements the OrchestratorService gRPC service for the orchestrator
-type PingServiceImpl struct {
-	pb.UnimplementedOrchestratorServiceServer
+// PingController handles ping business logic for the orchestrator
+type PingController struct {
+	logger       *zap.Logger
+	metricsScope tally.Scope
 }
 
-// NewPingService creates a new instance of the orchestrator ping service
-func NewPingService() *PingServiceImpl {
-	return &PingServiceImpl{}
+// NewPingController creates a new instance of the orchestrator ping controller
+func NewPingController(logger *zap.Logger, scope tally.Scope) *PingController {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	if scope == nil {
+		scope = tally.NoopScope
+	}
+
+	return &PingController{
+		logger:       logger,
+		metricsScope: scope,
+	}
 }
 
 // Ping handles the ping request and returns a response
-func (s *PingServiceImpl) Ping(ctx context.Context, req *pb.PingRequest) (*pb.PingResponse, error) {
+func (c *PingController) Ping(ctx context.Context, req *pb.PingRequest) (*pb.PingResponse, error) {
+	start := time.Now()
+	defer func() {
+		c.metricsScope.Timer("ping_latency").Record(time.Since(start))
+	}()
+
+	c.metricsScope.Counter("ping_requests_total").Inc(1)
+
 	message := "pong"
+	isEcho := false
 	if req.Message != "" {
 		message = "echo: " + req.Message
+		isEcho = true
+		c.metricsScope.Counter("echo_requests_total").Inc(1)
 	}
 
 	hostname, _ := os.Hostname()
+
+	c.logger.Info("ping request received",
+		zap.String("message", req.Message),
+		zap.Bool("is_echo", isEcho),
+		zap.String("hostname", hostname),
+	)
 
 	return &pb.PingResponse{
 		Message:     message,

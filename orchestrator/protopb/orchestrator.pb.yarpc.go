@@ -20,15 +20,15 @@ import (
 
 var _ = ioutil.NopCloser
 
-// OrchestratorServiceYARPCClient is the YARPC client-side interface for the OrchestratorService service.
-type OrchestratorServiceYARPCClient interface {
+// SubmitQueueOrchestratorYARPCClient is the YARPC client-side interface for the SubmitQueueOrchestrator service.
+type SubmitQueueOrchestratorYARPCClient interface {
 	Ping(context.Context, *PingRequest, ...yarpc.CallOption) (*PingResponse, error)
 }
 
-func newOrchestratorServiceYARPCClient(clientConfig transport.ClientConfig, anyResolver jsonpb.AnyResolver, options ...protobuf.ClientOption) OrchestratorServiceYARPCClient {
-	return &_OrchestratorServiceYARPCCaller{protobuf.NewStreamClient(
+func newSubmitQueueOrchestratorYARPCClient(clientConfig transport.ClientConfig, anyResolver jsonpb.AnyResolver, options ...protobuf.ClientOption) SubmitQueueOrchestratorYARPCClient {
+	return &_SubmitQueueOrchestratorYARPCCaller{protobuf.NewStreamClient(
 		protobuf.ClientParams{
-			ServiceName:  "uber.devexp.submitqueue.orchestrator.OrchestratorService",
+			ServiceName:  "uber.devexp.submitqueue.orchestrator.SubmitQueueOrchestrator",
 			ClientConfig: clientConfig,
 			AnyResolver:  anyResolver,
 			Options:      options,
@@ -36,33 +36,33 @@ func newOrchestratorServiceYARPCClient(clientConfig transport.ClientConfig, anyR
 	)}
 }
 
-// NewOrchestratorServiceYARPCClient builds a new YARPC client for the OrchestratorService service.
-func NewOrchestratorServiceYARPCClient(clientConfig transport.ClientConfig, options ...protobuf.ClientOption) OrchestratorServiceYARPCClient {
-	return newOrchestratorServiceYARPCClient(clientConfig, nil, options...)
+// NewSubmitQueueOrchestratorYARPCClient builds a new YARPC client for the SubmitQueueOrchestrator service.
+func NewSubmitQueueOrchestratorYARPCClient(clientConfig transport.ClientConfig, options ...protobuf.ClientOption) SubmitQueueOrchestratorYARPCClient {
+	return newSubmitQueueOrchestratorYARPCClient(clientConfig, nil, options...)
 }
 
-// OrchestratorServiceYARPCServer is the YARPC server-side interface for the OrchestratorService service.
-type OrchestratorServiceYARPCServer interface {
+// SubmitQueueOrchestratorYARPCServer is the YARPC server-side interface for the SubmitQueueOrchestrator service.
+type SubmitQueueOrchestratorYARPCServer interface {
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
 }
 
-type buildOrchestratorServiceYARPCProceduresParams struct {
-	Server      OrchestratorServiceYARPCServer
+type buildSubmitQueueOrchestratorYARPCProceduresParams struct {
+	Server      SubmitQueueOrchestratorYARPCServer
 	AnyResolver jsonpb.AnyResolver
 }
 
-func buildOrchestratorServiceYARPCProcedures(params buildOrchestratorServiceYARPCProceduresParams) []transport.Procedure {
-	handler := &_OrchestratorServiceYARPCHandler{params.Server}
+func buildSubmitQueueOrchestratorYARPCProcedures(params buildSubmitQueueOrchestratorYARPCProceduresParams) []transport.Procedure {
+	handler := &_SubmitQueueOrchestratorYARPCHandler{params.Server}
 	return protobuf.BuildProcedures(
 		protobuf.BuildProceduresParams{
-			ServiceName: "uber.devexp.submitqueue.orchestrator.OrchestratorService",
+			ServiceName: "uber.devexp.submitqueue.orchestrator.SubmitQueueOrchestrator",
 			UnaryHandlerParams: []protobuf.BuildProceduresUnaryHandlerParams{
 				{
 					MethodName: "Ping",
 					Handler: protobuf.NewUnaryHandler(
 						protobuf.UnaryHandlerParams{
 							Handle:      handler.Ping,
-							NewRequest:  newOrchestratorServiceServicePingYARPCRequest,
+							NewRequest:  newSubmitQueueOrchestratorServicePingYARPCRequest,
 							AnyResolver: params.AnyResolver,
 						},
 					),
@@ -74,16 +74,16 @@ func buildOrchestratorServiceYARPCProcedures(params buildOrchestratorServiceYARP
 	)
 }
 
-// BuildOrchestratorServiceYARPCProcedures prepares an implementation of the OrchestratorService service for YARPC registration.
-func BuildOrchestratorServiceYARPCProcedures(server OrchestratorServiceYARPCServer) []transport.Procedure {
-	return buildOrchestratorServiceYARPCProcedures(buildOrchestratorServiceYARPCProceduresParams{Server: server})
+// BuildSubmitQueueOrchestratorYARPCProcedures prepares an implementation of the SubmitQueueOrchestrator service for YARPC registration.
+func BuildSubmitQueueOrchestratorYARPCProcedures(server SubmitQueueOrchestratorYARPCServer) []transport.Procedure {
+	return buildSubmitQueueOrchestratorYARPCProcedures(buildSubmitQueueOrchestratorYARPCProceduresParams{Server: server})
 }
 
-// FxOrchestratorServiceYARPCClientParams defines the input
-// for NewFxOrchestratorServiceYARPCClient. It provides the
-// paramaters to get a OrchestratorServiceYARPCClient in an
+// FxSubmitQueueOrchestratorYARPCClientParams defines the input
+// for NewFxSubmitQueueOrchestratorYARPCClient. It provides the
+// paramaters to get a SubmitQueueOrchestratorYARPCClient in an
 // Fx application.
-type FxOrchestratorServiceYARPCClientParams struct {
+type FxSubmitQueueOrchestratorYARPCClientParams struct {
 	fx.In
 
 	Provider    yarpc.ClientConfig
@@ -91,28 +91,28 @@ type FxOrchestratorServiceYARPCClientParams struct {
 	Restriction restriction.Checker `optional:"true"`
 }
 
-// FxOrchestratorServiceYARPCClientResult defines the output
-// of NewFxOrchestratorServiceYARPCClient. It provides a
-// OrchestratorServiceYARPCClient to an Fx application.
-type FxOrchestratorServiceYARPCClientResult struct {
+// FxSubmitQueueOrchestratorYARPCClientResult defines the output
+// of NewFxSubmitQueueOrchestratorYARPCClient. It provides a
+// SubmitQueueOrchestratorYARPCClient to an Fx application.
+type FxSubmitQueueOrchestratorYARPCClientResult struct {
 	fx.Out
 
-	Client OrchestratorServiceYARPCClient
+	Client SubmitQueueOrchestratorYARPCClient
 
 	// We are using an fx.Out struct here instead of just returning a client
 	// so that we can add more values or add named versions of the client in
 	// the future without breaking any existing code.
 }
 
-// NewFxOrchestratorServiceYARPCClient provides a OrchestratorServiceYARPCClient
+// NewFxSubmitQueueOrchestratorYARPCClient provides a SubmitQueueOrchestratorYARPCClient
 // to an Fx application using the given name for routing.
 //
 //	fx.Provide(
-//	  protopb.NewFxOrchestratorServiceYARPCClient("service-name"),
+//	  protopb.NewFxSubmitQueueOrchestratorYARPCClient("service-name"),
 //	  ...
 //	)
-func NewFxOrchestratorServiceYARPCClient(name string, options ...protobuf.ClientOption) interface{} {
-	return func(params FxOrchestratorServiceYARPCClientParams) FxOrchestratorServiceYARPCClientResult {
+func NewFxSubmitQueueOrchestratorYARPCClient(name string, options ...protobuf.ClientOption) interface{} {
+	return func(params FxSubmitQueueOrchestratorYARPCClientParams) FxSubmitQueueOrchestratorYARPCClientResult {
 		cc := params.Provider.ClientConfig(name)
 
 		if params.Restriction != nil {
@@ -123,91 +123,91 @@ func NewFxOrchestratorServiceYARPCClient(name string, options ...protobuf.Client
 			}
 		}
 
-		return FxOrchestratorServiceYARPCClientResult{
-			Client: newOrchestratorServiceYARPCClient(cc, params.AnyResolver, options...),
+		return FxSubmitQueueOrchestratorYARPCClientResult{
+			Client: newSubmitQueueOrchestratorYARPCClient(cc, params.AnyResolver, options...),
 		}
 	}
 }
 
-// FxOrchestratorServiceYARPCProceduresParams defines the input
-// for NewFxOrchestratorServiceYARPCProcedures. It provides the
-// paramaters to get OrchestratorServiceYARPCServer procedures in an
+// FxSubmitQueueOrchestratorYARPCProceduresParams defines the input
+// for NewFxSubmitQueueOrchestratorYARPCProcedures. It provides the
+// paramaters to get SubmitQueueOrchestratorYARPCServer procedures in an
 // Fx application.
-type FxOrchestratorServiceYARPCProceduresParams struct {
+type FxSubmitQueueOrchestratorYARPCProceduresParams struct {
 	fx.In
 
-	Server      OrchestratorServiceYARPCServer
+	Server      SubmitQueueOrchestratorYARPCServer
 	AnyResolver jsonpb.AnyResolver `name:"yarpcfx" optional:"true"`
 }
 
-// FxOrchestratorServiceYARPCProceduresResult defines the output
-// of NewFxOrchestratorServiceYARPCProcedures. It provides
-// OrchestratorServiceYARPCServer procedures to an Fx application.
+// FxSubmitQueueOrchestratorYARPCProceduresResult defines the output
+// of NewFxSubmitQueueOrchestratorYARPCProcedures. It provides
+// SubmitQueueOrchestratorYARPCServer procedures to an Fx application.
 //
 // The procedures are provided to the "yarpcfx" value group.
 // Dig 1.2 or newer must be used for this feature to work.
-type FxOrchestratorServiceYARPCProceduresResult struct {
+type FxSubmitQueueOrchestratorYARPCProceduresResult struct {
 	fx.Out
 
 	Procedures     []transport.Procedure `group:"yarpcfx"`
 	ReflectionMeta reflection.ServerMeta `group:"yarpcfx"`
 }
 
-// NewFxOrchestratorServiceYARPCProcedures provides OrchestratorServiceYARPCServer procedures to an Fx application.
-// It expects a OrchestratorServiceYARPCServer to be present in the container.
+// NewFxSubmitQueueOrchestratorYARPCProcedures provides SubmitQueueOrchestratorYARPCServer procedures to an Fx application.
+// It expects a SubmitQueueOrchestratorYARPCServer to be present in the container.
 //
 //	fx.Provide(
-//	  protopb.NewFxOrchestratorServiceYARPCProcedures(),
+//	  protopb.NewFxSubmitQueueOrchestratorYARPCProcedures(),
 //	  ...
 //	)
-func NewFxOrchestratorServiceYARPCProcedures() interface{} {
-	return func(params FxOrchestratorServiceYARPCProceduresParams) FxOrchestratorServiceYARPCProceduresResult {
-		return FxOrchestratorServiceYARPCProceduresResult{
-			Procedures: buildOrchestratorServiceYARPCProcedures(buildOrchestratorServiceYARPCProceduresParams{
+func NewFxSubmitQueueOrchestratorYARPCProcedures() interface{} {
+	return func(params FxSubmitQueueOrchestratorYARPCProceduresParams) FxSubmitQueueOrchestratorYARPCProceduresResult {
+		return FxSubmitQueueOrchestratorYARPCProceduresResult{
+			Procedures: buildSubmitQueueOrchestratorYARPCProcedures(buildSubmitQueueOrchestratorYARPCProceduresParams{
 				Server:      params.Server,
 				AnyResolver: params.AnyResolver,
 			}),
-			ReflectionMeta: OrchestratorServiceReflectionMeta,
+			ReflectionMeta: SubmitQueueOrchestratorReflectionMeta,
 		}
 	}
 }
 
-// OrchestratorServiceReflectionMeta is the reflection server metadata
+// SubmitQueueOrchestratorReflectionMeta is the reflection server metadata
 // required for using the gRPC reflection protocol with YARPC.
 //
 // See https://github.com/grpc/grpc/blob/master/doc/server-reflection.md.
-var OrchestratorServiceReflectionMeta = reflection.ServerMeta{
-	ServiceName:     "uber.devexp.submitqueue.orchestrator.OrchestratorService",
+var SubmitQueueOrchestratorReflectionMeta = reflection.ServerMeta{
+	ServiceName:     "uber.devexp.submitqueue.orchestrator.SubmitQueueOrchestrator",
 	FileDescriptors: yarpcFileDescriptorClosure96b6e6782baaa298,
 }
 
-type _OrchestratorServiceYARPCCaller struct {
+type _SubmitQueueOrchestratorYARPCCaller struct {
 	streamClient protobuf.StreamClient
 }
 
-func (c *_OrchestratorServiceYARPCCaller) Ping(ctx context.Context, request *PingRequest, options ...yarpc.CallOption) (*PingResponse, error) {
-	responseMessage, err := c.streamClient.Call(ctx, "Ping", request, newOrchestratorServiceServicePingYARPCResponse, options...)
+func (c *_SubmitQueueOrchestratorYARPCCaller) Ping(ctx context.Context, request *PingRequest, options ...yarpc.CallOption) (*PingResponse, error) {
+	responseMessage, err := c.streamClient.Call(ctx, "Ping", request, newSubmitQueueOrchestratorServicePingYARPCResponse, options...)
 	if responseMessage == nil {
 		return nil, err
 	}
 	response, ok := responseMessage.(*PingResponse)
 	if !ok {
-		return nil, protobuf.CastError(emptyOrchestratorServiceServicePingYARPCResponse, responseMessage)
+		return nil, protobuf.CastError(emptySubmitQueueOrchestratorServicePingYARPCResponse, responseMessage)
 	}
 	return response, err
 }
 
-type _OrchestratorServiceYARPCHandler struct {
-	server OrchestratorServiceYARPCServer
+type _SubmitQueueOrchestratorYARPCHandler struct {
+	server SubmitQueueOrchestratorYARPCServer
 }
 
-func (h *_OrchestratorServiceYARPCHandler) Ping(ctx context.Context, requestMessage proto.Message) (proto.Message, error) {
+func (h *_SubmitQueueOrchestratorYARPCHandler) Ping(ctx context.Context, requestMessage proto.Message) (proto.Message, error) {
 	var request *PingRequest
 	var ok bool
 	if requestMessage != nil {
 		request, ok = requestMessage.(*PingRequest)
 		if !ok {
-			return nil, protobuf.CastError(emptyOrchestratorServiceServicePingYARPCRequest, requestMessage)
+			return nil, protobuf.CastError(emptySubmitQueueOrchestratorServicePingYARPCRequest, requestMessage)
 		}
 	}
 	response, err := h.server.Ping(ctx, request)
@@ -217,46 +217,46 @@ func (h *_OrchestratorServiceYARPCHandler) Ping(ctx context.Context, requestMess
 	return response, err
 }
 
-func newOrchestratorServiceServicePingYARPCRequest() proto.Message {
+func newSubmitQueueOrchestratorServicePingYARPCRequest() proto.Message {
 	return &PingRequest{}
 }
 
-func newOrchestratorServiceServicePingYARPCResponse() proto.Message {
+func newSubmitQueueOrchestratorServicePingYARPCResponse() proto.Message {
 	return &PingResponse{}
 }
 
 var (
-	emptyOrchestratorServiceServicePingYARPCRequest  = &PingRequest{}
-	emptyOrchestratorServiceServicePingYARPCResponse = &PingResponse{}
+	emptySubmitQueueOrchestratorServicePingYARPCRequest  = &PingRequest{}
+	emptySubmitQueueOrchestratorServicePingYARPCResponse = &PingResponse{}
 )
 
 var yarpcFileDescriptorClosure96b6e6782baaa298 = [][]byte{
 	// orchestrator.proto
 	[]byte{
 		0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x94, 0x91, 0xbf, 0x4e, 0xc3, 0x30,
-		0x10, 0x87, 0x31, 0xad, 0x80, 0x5e, 0xbb, 0x60, 0x96, 0xa8, 0x62, 0x28, 0x11, 0x12, 0x99, 0x1c,
-		0x28, 0x6f, 0xd0, 0x07, 0x80, 0x28, 0x6c, 0x2c, 0x28, 0x09, 0xa7, 0xc4, 0x83, 0x63, 0xc7, 0x67,
-		0x57, 0xbc, 0x00, 0x3c, 0x37, 0x8a, 0xc3, 0x1f, 0x2f, 0x48, 0x65, 0xf3, 0x9d, 0x7f, 0xdf, 0xe9,
-		0x3e, 0x1d, 0x70, 0x6d, 0x9b, 0x0e, 0xc9, 0xd9, 0xca, 0x69, 0x2b, 0x8c, 0xd5, 0x4e, 0xf3, 0x6b,
-		0x5f, 0xa3, 0x15, 0xaf, 0xb8, 0xc7, 0x37, 0x23, 0xc8, 0xd7, 0x4a, 0xba, 0xc1, 0xa3, 0x47, 0x11,
-		0x67, 0xd3, 0x1b, 0x58, 0x16, 0xb2, 0x6f, 0x4b, 0x1c, 0x3c, 0x92, 0xe3, 0x09, 0x9c, 0x2a, 0x24,
-		0xaa, 0x5a, 0x4c, 0xd8, 0x86, 0x65, 0x8b, 0xf2, 0xbb, 0x4c, 0xdf, 0x19, 0xac, 0xa6, 0x24, 0x19,
-		0xdd, 0x13, 0xfe, 0x1d, 0xe5, 0x57, 0xb0, 0x22, 0xb4, 0x7b, 0xd9, 0xe0, 0x4b, 0x5f, 0x29, 0x4c,
-		0x8e, 0xc3, 0xf7, 0xf2, 0xab, 0xf7, 0x50, 0x29, 0xe4, 0x97, 0xb0, 0x70, 0x52, 0x21, 0xb9, 0x4a,
-		0x99, 0x64, 0xb6, 0x61, 0xd9, 0xac, 0xfc, 0x6d, 0xf0, 0x35, 0x9c, 0x75, 0x9a, 0x5c, 0x80, 0xe7,
-		0x01, 0xfe, 0xa9, 0xb7, 0x1f, 0x0c, 0x2e, 0x1e, 0x23, 0x83, 0xa7, 0x69, 0x2a, 0xd7, 0x30, 0x1f,
-		0xd7, 0xe3, 0x77, 0xe2, 0x10, 0x6f, 0x11, 0x49, 0xaf, 0xb7, 0xff, 0x41, 0x26, 0xfb, 0xf4, 0x68,
-		0x37, 0x40, 0xd6, 0x68, 0x75, 0x10, 0xba, 0x3b, 0x8f, 0x37, 0x2e, 0xc6, 0xf3, 0x14, 0xec, 0xf9,
-		0xb6, 0x95, 0xae, 0xf3, 0xb5, 0x68, 0xb4, 0xca, 0xc7, 0x29, 0x79, 0x84, 0xe7, 0x31, 0x9e, 0x87,
-		0x83, 0x9a, 0xba, 0x3e, 0x09, 0x8f, 0xfb, 0xcf, 0x00, 0x00, 0x00, 0xff, 0xff, 0x8c, 0xfb, 0x38,
-		0x99, 0xef, 0x01, 0x00, 0x00,
+		0x10, 0x87, 0x31, 0xad, 0x80, 0x5e, 0xbb, 0xe0, 0x85, 0xa8, 0x62, 0x28, 0x11, 0x12, 0x99, 0x1c,
+		0x28, 0x6f, 0xd0, 0x07, 0x80, 0x10, 0x36, 0x16, 0x94, 0x84, 0x53, 0xe2, 0xc1, 0xb1, 0xe3, 0xb3,
+		0x2b, 0x5e, 0x80, 0x85, 0xa7, 0x46, 0x71, 0xf9, 0xe3, 0x05, 0xa9, 0xdd, 0x7c, 0xe7, 0xdf, 0x67,
+		0xdd, 0xe7, 0x03, 0xae, 0x6d, 0xd3, 0x21, 0x39, 0x5b, 0x39, 0x6d, 0x85, 0xb1, 0xda, 0x69, 0x7e,
+		0xed, 0x6b, 0xb4, 0xe2, 0x0d, 0xb7, 0xf8, 0x6e, 0x04, 0xf9, 0x5a, 0x49, 0x37, 0x78, 0xf4, 0x28,
+		0xe2, 0x6c, 0x7a, 0x03, 0xf3, 0x42, 0xf6, 0x6d, 0x89, 0x83, 0x47, 0x72, 0x3c, 0x81, 0x53, 0x85,
+		0x44, 0x55, 0x8b, 0x09, 0x5b, 0xb1, 0x6c, 0x56, 0xfe, 0x94, 0xe9, 0x07, 0x83, 0xc5, 0x2e, 0x49,
+		0x46, 0xf7, 0x84, 0xff, 0x47, 0xf9, 0x15, 0x2c, 0x08, 0xed, 0x56, 0x36, 0xf8, 0xda, 0x57, 0x0a,
+		0x93, 0xe3, 0x70, 0x3d, 0xff, 0xee, 0x3d, 0x54, 0x0a, 0xf9, 0x25, 0xcc, 0x9c, 0x54, 0x48, 0xae,
+		0x52, 0x26, 0x99, 0xac, 0x58, 0x36, 0x29, 0xff, 0x1a, 0x7c, 0x09, 0x67, 0x9d, 0x26, 0x17, 0xe0,
+		0x69, 0x80, 0x7f, 0xeb, 0xf5, 0x27, 0x83, 0x8b, 0xe7, 0x60, 0xf3, 0x34, 0xda, 0x3c, 0x46, 0x32,
+		0x5c, 0xc3, 0x74, 0x1c, 0x91, 0xdf, 0x89, 0x7d, 0xdc, 0x45, 0x24, 0xbe, 0x5c, 0x1f, 0x82, 0xec,
+		0x7e, 0x20, 0x3d, 0xda, 0x0c, 0x90, 0x35, 0x5a, 0xed, 0x85, 0x6e, 0xce, 0xe3, 0x51, 0x8b, 0x71,
+		0x45, 0x05, 0x7b, 0xb9, 0x6d, 0xa5, 0xeb, 0x7c, 0x2d, 0x1a, 0xad, 0xf2, 0xf1, 0x95, 0x3c, 0xc2,
+		0xf3, 0x18, 0xcf, 0xc3, 0x52, 0x4d, 0x5d, 0x9f, 0x84, 0xc3, 0xfd, 0x57, 0x00, 0x00, 0x00, 0xff,
+		0xff, 0x72, 0x59, 0xe2, 0x9d, 0xf3, 0x01, 0x00, 0x00,
 	},
 }
 
 func init() {
 	yarpc.RegisterClientBuilder(
-		func(clientConfig transport.ClientConfig, structField reflect.StructField) OrchestratorServiceYARPCClient {
-			return NewOrchestratorServiceYARPCClient(clientConfig, protobuf.ClientBuilderOptions(clientConfig, structField)...)
+		func(clientConfig transport.ClientConfig, structField reflect.StructField) SubmitQueueOrchestratorYARPCClient {
+			return NewSubmitQueueOrchestratorYARPCClient(clientConfig, protobuf.ClientBuilderOptions(clientConfig, structField)...)
 		},
 	)
 }
