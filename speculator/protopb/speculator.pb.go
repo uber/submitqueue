@@ -151,8 +151,8 @@ const file_speculator_proto_rawDesc = "" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12!\n" +
 	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12\x1c\n" +
 	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x1a\n" +
-	"\bhostname\x18\x04 \x01(\tR\bhostname2\x80\x01\n" +
-	"\x11SpeculatorService\x12k\n" +
+	"\bhostname\x18\x04 \x01(\tR\bhostname2\x84\x01\n" +
+	"\x15SubmitQueueSpeculator\x12k\n" +
 	"\x04Ping\x12/.uber.devexp.submitqueue.speculator.PingRequest\x1a0.uber.devexp.submitqueue.speculator.PingResponse\"\x00Bk\n" +
 	"&com.uber.devexp.submitqueue.speculatorB\x0fSpeculatorProtoP\x01Z.github.com/uber/submitqueue/speculator/protopbb\x06proto3"
 
@@ -174,8 +174,8 @@ var file_speculator_proto_goTypes = []any{
 	(*PingResponse)(nil), // 1: uber.devexp.submitqueue.speculator.PingResponse
 }
 var file_speculator_proto_depIdxs = []int32{
-	0, // 0: uber.devexp.submitqueue.speculator.SpeculatorService.Ping:input_type -> uber.devexp.submitqueue.speculator.PingRequest
-	1, // 1: uber.devexp.submitqueue.speculator.SpeculatorService.Ping:output_type -> uber.devexp.submitqueue.speculator.PingResponse
+	0, // 0: uber.devexp.submitqueue.speculator.SubmitQueueSpeculator.Ping:input_type -> uber.devexp.submitqueue.speculator.PingRequest
+	1, // 1: uber.devexp.submitqueue.speculator.SubmitQueueSpeculator.Ping:output_type -> uber.devexp.submitqueue.speculator.PingResponse
 	1, // [1:2] is the sub-list for method output_type
 	0, // [0:1] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name

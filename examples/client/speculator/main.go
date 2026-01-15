@@ -36,7 +36,7 @@ func run(addr, message string, timeout time.Duration) error {
 	defer conn.Close()
 
 	// Create a client
-	client := pb.NewSpeculatorServiceClient(conn)
+	client := pb.NewSubmitQueueSpeculatorClient(conn)
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)

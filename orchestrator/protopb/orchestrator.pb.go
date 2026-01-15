@@ -151,8 +151,8 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12!\n" +
 	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12\x1c\n" +
 	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x1a\n" +
-	"\bhostname\x18\x04 \x01(\tR\bhostname2\x86\x01\n" +
-	"\x13OrchestratorService\x12o\n" +
+	"\bhostname\x18\x04 \x01(\tR\bhostname2\x8a\x01\n" +
+	"\x17SubmitQueueOrchestrator\x12o\n" +
 	"\x04Ping\x121.uber.devexp.submitqueue.orchestrator.PingRequest\x1a2.uber.devexp.submitqueue.orchestrator.PingResponse\"\x00Bq\n" +
 	"(com.uber.devexp.submitqueue.orchestratorB\x11OrchestratorProtoP\x01Z0github.com/uber/submitqueue/orchestrator/protopbb\x06proto3"
 
@@ -174,8 +174,8 @@ var file_orchestrator_proto_goTypes = []any{
 	(*PingResponse)(nil), // 1: uber.devexp.submitqueue.orchestrator.PingResponse
 }
 var file_orchestrator_proto_depIdxs = []int32{
-	0, // 0: uber.devexp.submitqueue.orchestrator.OrchestratorService.Ping:input_type -> uber.devexp.submitqueue.orchestrator.PingRequest
-	1, // 1: uber.devexp.submitqueue.orchestrator.OrchestratorService.Ping:output_type -> uber.devexp.submitqueue.orchestrator.PingResponse
+	0, // 0: uber.devexp.submitqueue.orchestrator.SubmitQueueOrchestrator.Ping:input_type -> uber.devexp.submitqueue.orchestrator.PingRequest
+	1, // 1: uber.devexp.submitqueue.orchestrator.SubmitQueueOrchestrator.Ping:output_type -> uber.devexp.submitqueue.orchestrator.PingResponse
 	1, // [1:2] is the sub-list for method output_type
 	0, // [0:1] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name

@@ -1,17 +1,32 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/speculator/core/controller"
 	pb "github.com/uber/submitqueue/speculator/protopb"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
+
+// SpeculatorServer wraps the controller and implements the gRPC service interface
+type SpeculatorServer struct {
+	pb.UnimplementedSubmitQueueSpeculatorServer
+	controller *controller.PingController
+}
+
+// Ping delegates to the controller
+func (s *SpeculatorServer) Ping(ctx context.Context, req *pb.PingRequest) (*pb.PingResponse, error) {
+	return s.controller.Ping(ctx, req)
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -21,12 +36,37 @@ func main() {
 }
 
 func run() error {
+	// Initialize development logger (human-readable console output)
+	logger, err := zap.NewDevelopment()
+	if err != nil {
+		return fmt.Errorf("failed to create logger: %w", err)
+	}
+	defer logger.Sync()
+
+	// Initialize metrics scope
+	scope := tally.NewTestScope("speculator", nil)
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			snapshot := scope.Snapshot()
+			logger.Info("metrics snapshot",
+				zap.Any("counters", snapshot.Counters()),
+				zap.Any("gauges", snapshot.Gauges()),
+				zap.Any("timers", snapshot.Timers()),
+			)
+		}
+	}()
+
 	// Create gRPC server
 	grpcServer := grpc.NewServer()
 
-	// Register the ping service
-	pingService := controller.NewPingService()
-	pb.RegisterSpeculatorServiceServer(grpcServer, pingService)
+	// Create ping controller and wrap it for gRPC
+	pingController := controller.NewPingController(logger, scope)
+	speculatorServer := &SpeculatorServer{
+		controller: pingController,
+	}
+	pb.RegisterSubmitQueueSpeculatorServer(grpcServer, speculatorServer)
 
 	// Register reflection service for debugging with grpcurl
 	reflection.Register(grpcServer)

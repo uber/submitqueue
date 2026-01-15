@@ -151,8 +151,8 @@ const file_gateway_proto_rawDesc = "" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12!\n" +
 	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12\x1c\n" +
 	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x1a\n" +
-	"\bhostname\x18\x04 \x01(\tR\bhostname2w\n" +
-	"\x0eGatewayService\x12e\n" +
+	"\bhostname\x18\x04 \x01(\tR\bhostname2{\n" +
+	"\x12SubmitQueueGateway\x12e\n" +
 	"\x04Ping\x12,.uber.devexp.submitqueue.gateway.PingRequest\x1a-.uber.devexp.submitqueue.gateway.PingResponse\"\x00Bb\n" +
 	"#com.uber.devexp.submitqueue.gatewayB\fGatewayProtoP\x01Z+github.com/uber/submitqueue/gateway/protopbb\x06proto3"
 
@@ -174,8 +174,8 @@ var file_gateway_proto_goTypes = []any{
 	(*PingResponse)(nil), // 1: uber.devexp.submitqueue.gateway.PingResponse
 }
 var file_gateway_proto_depIdxs = []int32{
-	0, // 0: uber.devexp.submitqueue.gateway.GatewayService.Ping:input_type -> uber.devexp.submitqueue.gateway.PingRequest
-	1, // 1: uber.devexp.submitqueue.gateway.GatewayService.Ping:output_type -> uber.devexp.submitqueue.gateway.PingResponse
+	0, // 0: uber.devexp.submitqueue.gateway.SubmitQueueGateway.Ping:input_type -> uber.devexp.submitqueue.gateway.PingRequest
+	1, // 1: uber.devexp.submitqueue.gateway.SubmitQueueGateway.Ping:output_type -> uber.devexp.submitqueue.gateway.PingResponse
 	1, // [1:2] is the sub-list for method output_type
 	0, // [0:1] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name

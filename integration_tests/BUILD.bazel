@@ -2,7 +2,7 @@ load("@rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "e2e_test",
-    srcs = ["api_test.go"],
+    srcs = ["ping_test.go"],
     # End-to-end tests require all servers to be running
     # They validate the entire system working together
     tags = [

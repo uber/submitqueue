@@ -19,107 +19,107 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SpeculatorService_Ping_FullMethodName = "/uber.devexp.submitqueue.speculator.SpeculatorService/Ping"
+	SubmitQueueSpeculator_Ping_FullMethodName = "/uber.devexp.submitqueue.speculator.SubmitQueueSpeculator/Ping"
 )
 
-// SpeculatorServiceClient is the client API for SpeculatorService service.
+// SubmitQueueSpeculatorClient is the client API for SubmitQueueSpeculator service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// SpeculatorService provides the speculator API
-type SpeculatorServiceClient interface {
+// SubmitQueueSpeculator provides the speculator API
+type SubmitQueueSpeculatorClient interface {
 	// Ping returns a response indicating the service is alive
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
 }
 
-type speculatorServiceClient struct {
+type submitQueueSpeculatorClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewSpeculatorServiceClient(cc grpc.ClientConnInterface) SpeculatorServiceClient {
-	return &speculatorServiceClient{cc}
+func NewSubmitQueueSpeculatorClient(cc grpc.ClientConnInterface) SubmitQueueSpeculatorClient {
+	return &submitQueueSpeculatorClient{cc}
 }
 
-func (c *speculatorServiceClient) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
+func (c *submitQueueSpeculatorClient) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PingResponse)
-	err := c.cc.Invoke(ctx, SpeculatorService_Ping_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, SubmitQueueSpeculator_Ping_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// SpeculatorServiceServer is the server API for SpeculatorService service.
-// All implementations must embed UnimplementedSpeculatorServiceServer
+// SubmitQueueSpeculatorServer is the server API for SubmitQueueSpeculator service.
+// All implementations must embed UnimplementedSubmitQueueSpeculatorServer
 // for forward compatibility.
 //
-// SpeculatorService provides the speculator API
-type SpeculatorServiceServer interface {
+// SubmitQueueSpeculator provides the speculator API
+type SubmitQueueSpeculatorServer interface {
 	// Ping returns a response indicating the service is alive
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
-	mustEmbedUnimplementedSpeculatorServiceServer()
+	mustEmbedUnimplementedSubmitQueueSpeculatorServer()
 }
 
-// UnimplementedSpeculatorServiceServer must be embedded to have
+// UnimplementedSubmitQueueSpeculatorServer must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedSpeculatorServiceServer struct{}
+type UnimplementedSubmitQueueSpeculatorServer struct{}
 
-func (UnimplementedSpeculatorServiceServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
+func (UnimplementedSubmitQueueSpeculatorServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Ping not implemented")
 }
-func (UnimplementedSpeculatorServiceServer) mustEmbedUnimplementedSpeculatorServiceServer() {}
-func (UnimplementedSpeculatorServiceServer) testEmbeddedByValue()                           {}
+func (UnimplementedSubmitQueueSpeculatorServer) mustEmbedUnimplementedSubmitQueueSpeculatorServer() {}
+func (UnimplementedSubmitQueueSpeculatorServer) testEmbeddedByValue()                               {}
 
-// UnsafeSpeculatorServiceServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to SpeculatorServiceServer will
+// UnsafeSubmitQueueSpeculatorServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to SubmitQueueSpeculatorServer will
 // result in compilation errors.
-type UnsafeSpeculatorServiceServer interface {
-	mustEmbedUnimplementedSpeculatorServiceServer()
+type UnsafeSubmitQueueSpeculatorServer interface {
+	mustEmbedUnimplementedSubmitQueueSpeculatorServer()
 }
 
-func RegisterSpeculatorServiceServer(s grpc.ServiceRegistrar, srv SpeculatorServiceServer) {
-	// If the following call pancis, it indicates UnimplementedSpeculatorServiceServer was
+func RegisterSubmitQueueSpeculatorServer(s grpc.ServiceRegistrar, srv SubmitQueueSpeculatorServer) {
+	// If the following call pancis, it indicates UnimplementedSubmitQueueSpeculatorServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&SpeculatorService_ServiceDesc, srv)
+	s.RegisterService(&SubmitQueueSpeculator_ServiceDesc, srv)
 }
 
-func _SpeculatorService_Ping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _SubmitQueueSpeculator_Ping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PingRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SpeculatorServiceServer).Ping(ctx, in)
+		return srv.(SubmitQueueSpeculatorServer).Ping(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: SpeculatorService_Ping_FullMethodName,
+		FullMethod: SubmitQueueSpeculator_Ping_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SpeculatorServiceServer).Ping(ctx, req.(*PingRequest))
+		return srv.(SubmitQueueSpeculatorServer).Ping(ctx, req.(*PingRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// SpeculatorService_ServiceDesc is the grpc.ServiceDesc for SpeculatorService service.
+// SubmitQueueSpeculator_ServiceDesc is the grpc.ServiceDesc for SubmitQueueSpeculator service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var SpeculatorService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "uber.devexp.submitqueue.speculator.SpeculatorService",
-	HandlerType: (*SpeculatorServiceServer)(nil),
+var SubmitQueueSpeculator_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "uber.devexp.submitqueue.speculator.SubmitQueueSpeculator",
+	HandlerType: (*SubmitQueueSpeculatorServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "Ping",
-			Handler:    _SpeculatorService_Ping_Handler,
+			Handler:    _SubmitQueueSpeculator_Ping_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

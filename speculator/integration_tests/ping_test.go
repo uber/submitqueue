@@ -29,7 +29,7 @@ func TestPingAPI(t *testing.T) {
 	}
 	defer conn.Close()
 
-	client := pb.NewSpeculatorServiceClient(conn)
+	client := pb.NewSubmitQueueSpeculatorClient(conn)
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 

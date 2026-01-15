@@ -6,9 +6,9 @@ This directory contains example gRPC servers and clients for each service in the
 
 Each service has its own proto definitions and gRPC API:
 
-- **Gateway**: GatewayService API (port 8081)
-- **Orchestrator**: OrchestratorService API (port 8082)
-- **Speculator**: SpeculatorService API (port 8083)
+- **SubmitQueueGateway**: Gateway API (port 8081)
+- **SubmitQueueOrchestrator**: Orchestrator API (port 8082)
+- **SubmitQueueSpeculator**: Speculator API (port 8083)
 
 ## Building and Running
 
@@ -141,13 +141,13 @@ go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
 Test the ping service:
 ```bash
 # Test gateway (port 8081)
-grpcurl -plaintext -d '{"message": "hello"}' localhost:8081 uber.devexp.submitqueue.gateway.GatewayService/Ping
+grpcurl -plaintext -d '{"message": "hello"}' localhost:8081 uber.devexp.submitqueue.gateway.SubmitQueueGateway/Ping
 
 # Test orchestrator (port 8082)
-grpcurl -plaintext -d '{"message": "hello"}' localhost:8082 uber.devexp.submitqueue.orchestrator.OrchestratorService/Ping
+grpcurl -plaintext -d '{"message": "hello"}' localhost:8082 uber.devexp.submitqueue.orchestrator.SubmitQueueOrchestrator/Ping
 
 # Test speculator (port 8083)
-grpcurl -plaintext -d '{"message": "hello"}' localhost:8083 uber.devexp.submitqueue.speculator.SpeculatorService/Ping
+grpcurl -plaintext -d '{"message": "hello"}' localhost:8083 uber.devexp.submitqueue.speculator.SubmitQueueSpeculator/Ping
 ```
 
 List available services:
@@ -159,9 +159,9 @@ grpcurl -plaintext localhost:8083 list
 
 Describe a service:
 ```bash
-grpcurl -plaintext localhost:8081 describe uber.devexp.submitqueue.gateway.GatewayService
-grpcurl -plaintext localhost:8082 describe uber.devexp.submitqueue.orchestrator.OrchestratorService
-grpcurl -plaintext localhost:8083 describe uber.devexp.submitqueue.speculator.SpeculatorService
+grpcurl -plaintext localhost:8081 describe uber.devexp.submitqueue.gateway.SubmitQueueGateway
+grpcurl -plaintext localhost:8082 describe uber.devexp.submitqueue.orchestrator.SubmitQueueOrchestrator
+grpcurl -plaintext localhost:8083 describe uber.devexp.submitqueue.speculator.SubmitQueueSpeculator
 ```
 
 ## API Reference
@@ -172,17 +172,17 @@ Each service exposes a Ping method with the same request/response structure but 
 
 #### Gateway Service
 
-**Service**: `uber.devexp.submitqueue.gateway.GatewayService`
+**Service**: `uber.devexp.submitqueue.gateway.SubmitQueueGateway`
 **Proto**: `gateway/proto/gateway.proto`
 
 #### Orchestrator Service
 
-**Service**: `uber.devexp.submitqueue.orchestrator.OrchestratorService`
+**Service**: `uber.devexp.submitqueue.orchestrator.SubmitQueueOrchestrator`
 **Proto**: `orchestrator/proto/orchestrator.proto`
 
 #### Speculator Service
 
-**Service**: `uber.devexp.submitqueue.speculator.SpeculatorService`
+**Service**: `uber.devexp.submitqueue.speculator.SubmitQueueSpeculator`
 **Proto**: `speculator/proto/speculator.proto`
 
 ### Ping Method
@@ -205,7 +205,7 @@ message PingResponse {
 
 **Example:**
 ```bash
-grpcurl -plaintext -d '{"message": "test"}' localhost:8081 uber.devexp.submitqueue.gateway.GatewayService/Ping
+grpcurl -plaintext -d '{"message": "test"}' localhost:8081 uber.devexp.submitqueue.gateway.SubmitQueueGateway/Ping
 ```
 
 Expected response:
@@ -249,7 +249,7 @@ import (
 
 // Use the clients
 conn, _ := grpc.NewClient("localhost:8081", grpc.WithTransportCredentials(insecure.NewCredentials()))
-client := gatewaypb.NewGatewayServiceClient(conn)
+client := gatewaypb.NewSubmitQueueGatewayClient(conn)
 resp, _ := client.Ping(context.Background(), &gatewaypb.PingRequest{Message: "hello"})
 ```
 

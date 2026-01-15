@@ -29,7 +29,7 @@ func TestPingAPI(t *testing.T) {
 	}
 	defer conn.Close()
 
-	client := pb.NewGatewayServiceClient(conn)
+	client := pb.NewSubmitQueueGatewayClient(conn)
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 

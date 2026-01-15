@@ -20,19 +20,10 @@ proto:
 	  --proto_path=speculator/proto speculator/proto/speculator.proto
 	@echo "Protobuf files generated successfully!"
 
-# Build all services and examples using Bazel
+# Build everything in the project using Bazel
 build:
-	@echo "Building all services with Bazel..."
-	@$(BAZEL) build //gateway:gateway
-	@$(BAZEL) build //orchestrator:orchestrator
-	@$(BAZEL) build //speculator:speculator
-	@echo "Building example servers and clients..."
-	@$(BAZEL) build //examples/server/gateway:gateway
-	@$(BAZEL) build //examples/server/orchestrator:orchestrator
-	@$(BAZEL) build //examples/server/speculator:speculator
-	@$(BAZEL) build //examples/client/gateway:gateway
-	@$(BAZEL) build //examples/client/orchestrator:orchestrator
-	@$(BAZEL) build //examples/client/speculator:speculator
+	@echo "Building all targets with Bazel..."
+	@$(BAZEL) build //...
 	@echo "Copying binaries to ./bin/..."
 	@mkdir -p bin
 	@cp -f bazel-bin/examples/server/gateway/gateway_/gateway bin/gateway_server 2>/dev/null || \

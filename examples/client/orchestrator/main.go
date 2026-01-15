@@ -36,7 +36,7 @@ func run(addr, message string, timeout time.Duration) error {
 	defer conn.Close()
 
 	// Create a client
-	client := pb.NewOrchestratorServiceClient(conn)
+	client := pb.NewSubmitQueueOrchestratorClient(conn)
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)

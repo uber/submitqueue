@@ -32,7 +32,7 @@ func TestPingForAllServices(t *testing.T) {
 		}
 		defer conn.Close()
 
-		client := gatewaypb.NewGatewayServiceClient(conn)
+		client := gatewaypb.NewSubmitQueueGatewayClient(conn)
 		ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 		defer cancel()
 
@@ -55,7 +55,7 @@ func TestPingForAllServices(t *testing.T) {
 		}
 		defer conn.Close()
 
-		client := orchestratorpb.NewOrchestratorServiceClient(conn)
+		client := orchestratorpb.NewSubmitQueueOrchestratorClient(conn)
 		ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 		defer cancel()
 
@@ -78,7 +78,7 @@ func TestPingForAllServices(t *testing.T) {
 		}
 		defer conn.Close()
 
-		client := speculatorpb.NewSpeculatorServiceClient(conn)
+		client := speculatorpb.NewSubmitQueueSpeculatorClient(conn)
 		ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 		defer cancel()
 

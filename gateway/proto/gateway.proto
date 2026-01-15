@@ -25,8 +25,8 @@ message PingResponse {
     string hostname = 4;
 }
 
-// GatewayService provides the gateway API
-service GatewayService {
+// SubmitQueueGateway provides the gateway API
+service SubmitQueueGateway {
     // Ping returns a response indicating the service is alive
     rpc Ping(PingRequest) returns (PingResponse) {}
 }
