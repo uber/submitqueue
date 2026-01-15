@@ -2,9 +2,14 @@ name: Build and Test
 
 on:
   push:
-    branches: [ main, gh-action ]
+    branches:
+      - main
   pull_request:
-    branches: [ main ]
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
 
 jobs:
   build-and-test:
