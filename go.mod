@@ -4,8 +4,10 @@ go 1.24.5
 
 require (
 	github.com/gogo/protobuf v1.3.2
+	github.com/uber-go/tally/v4 v4.1.17
 	go.uber.org/fx v1.22.0
 	go.uber.org/yarpc v1.81.0
+	go.uber.org/zap v1.27.1
 	google.golang.org/grpc v1.68.1
 	google.golang.org/protobuf v1.36.1
 )
@@ -26,21 +28,19 @@ require (
 	github.com/prometheus/procfs v0.6.0 // indirect
 	github.com/twmb/murmur3 v1.1.8 // indirect
 	github.com/uber-go/tally v3.5.8+incompatible // indirect
-	github.com/uber-go/tally/v4 v4.1.17 // indirect
 	github.com/uber/tchannel-go v1.34.4 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/dig v1.17.1 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/net/metrics v1.4.0 // indirect
 	go.uber.org/thriftrw v1.32.0 // indirect
-	go.uber.org/zap v1.27.1 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20221208152030-732eee02a75a // indirect
 	golang.org/x/lint v0.0.0-20210508222113-6edffad5e616 // indirect
 	golang.org/x/mod v0.18.0 // indirect
-	golang.org/x/net v0.32.0 // indirect
-	golang.org/x/sync v0.10.0 // indirect
-	golang.org/x/sys v0.28.0 // indirect
-	golang.org/x/text v0.21.0 // indirect
+	golang.org/x/net v0.38.0 // indirect
+	golang.org/x/sync v0.12.0 // indirect
+	golang.org/x/sys v0.31.0 // indirect
+	golang.org/x/text v0.23.0 // indirect
 	golang.org/x/tools v0.22.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20241230172942-26aa7a208def // indirect
 	honnef.co/go/tools v0.4.3 // indirect
