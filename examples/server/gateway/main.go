@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -30,7 +31,7 @@ func (s *GatewayServer) Ping(ctx context.Context, req *pb.PingRequest) (*pb.Ping
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to start gateway server: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Gateway server failure: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -45,17 +46,33 @@ func run() error {
 
 	// Initialize metrics scope
 	scope := tally.NewTestScope("gateway", nil)
+	metricsStopCh := make(chan interface{}, 1)
+	metricsWgDone := sync.WaitGroup{}
+	metricsWgDone.Add(1)
 	go func() {
+		defer metricsWgDone.Done()
+
 		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
-		for range ticker.C {
-			snapshot := scope.Snapshot()
-			logger.Info("metrics snapshot",
-				zap.Any("counters", snapshot.Counters()),
-				zap.Any("gauges", snapshot.Gauges()),
-				zap.Any("timers", snapshot.Timers()),
-			)
+
+		for {
+			select {
+			case <-metricsStopCh:
+				return
+			case <-ticker.C:
+				snapshot := scope.Snapshot()
+				logger.Info("metrics snapshot",
+					zap.Any("counters", snapshot.Counters()),
+					zap.Any("gauges", snapshot.Gauges()),
+					zap.Any("timers", snapshot.Timers()),
+				)
+			}
 		}
+	}()
+
+	defer func() {
+		close(metricsStopCh)
+		metricsWgDone.Wait()
 	}()
 
 	// Create gRPC server
@@ -81,20 +98,26 @@ func run() error {
 	fmt.Printf("Gateway gRPC server is running on %s\n", port)
 	fmt.Println("Press Ctrl+C to stop.")
 
-	// Start server in a goroutine
+	// Start server in a goroutine and wait for it to finish
+	serverErrCh := make(chan error, 1)
 	go func() {
-		if err := grpcServer.Serve(listener); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to serve: %v\n", err)
-		}
+		serverErrCh <- grpcServer.Serve(listener)
 	}()
 
-	// Wait for interrupt signal
+	// Wait for interrupt signal or server exit
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
 
-	fmt.Println("\nShutting down gateway server...")
-	grpcServer.GracefulStop()
+	select {
+	case <-sigCh:
+		fmt.Println("\nShutting down gateway server...")
+		grpcServer.GracefulStop()
+		_ = <-serverErrCh // Wait for the server to exit and ignore the error
+	case errCh := <-serverErrCh:
+		if errCh != nil {
+			err = fmt.Errorf("\nServer exited with error: %w\n", errCh)
+		}
+	}
 
-	return nil
+	return err
 }
