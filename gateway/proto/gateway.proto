@@ -7,6 +7,10 @@ option java_multiple_files = true;
 option java_outer_classname = "GatewayProto";
 option java_package = "com.uber.devexp.submitqueue.gateway";
 
+// ***************
+// API domain definitions.
+// ***************
+
 // PingRequest is the request for the Ping method
 message PingRequest {
     // Optional message to include in the ping
@@ -25,8 +29,72 @@ message PingResponse {
     string hostname = 4;
 }
 
+// Strategy defines the possible source control integration methods
+enum Strategy {
+    // Default strategy (let server decide based on configuration)
+    STRATEGY_DEFAULT = 0;
+    // Rebase commits onto target branch before landing
+    STRATEGY_REBASE = 1;
+    // Same as REBASE but squash commits into a single commit before rebase
+    STRATEGY_SQUASH_REBASE = 2;
+    // Merge commits into the target branch by creating a separate merge commit, preserving the commit history along with hashes
+    STRATEGY_MERGE = 3;
+}
+
+// Change represents a set of related code changes identified by one or more IDs from a particular code change provider, like Github Pull Requests.
+message Change {
+    // The code change provider (e.g., "github", "gerrit", "phabricator").
+    string source = 1;
+    // List of change IDs, in a format specific to the code change provider, that should be landed together. SubmitQueue guarantees that the changes are landed in the order of the list,
+    // and no other changes are landed in between. SubmitQueue does not guarantee that each change is individually valid, but produces a special validity
+    // marker on such changes. The user is responsible to include all changes in a change stack in the order of the list, starting from the earlist change.
+    repeated string ids = 2;
+}
+
+// LandRequest defines a request to land (merge into target branch of the source control repository) a set of code changes.
+message LandRequest {
+    // Name of the queue processing the land request. The queue should be defined in the configuration, otherwise an error is returned.
+    string queue = 1;
+    // Change (such as a pull request) to land into the target branch. Target branch is defined by the queue configuration.
+    Change change = 2;
+    // Source control integration strategy to use for this land operation. If not specified, the default queue strategy is used.
+    Strategy strategy = 4;
+}
+
+// LandResponse defines the response to a land request.
+message LandResponse {
+    // Globally unique identifier for the land request. Used to track the land request lifecycle.
+    string sqid = 1;
+}
+
+// ***************
+// Error messages, returned as `google.rpc.Status` messages.
+// ***************
+
+// Generic error with metadata. Each custom error type should extend this message.
+message Error {
+    // Free text error message describing the error.
+    string message = 1;
+}
+
+// UnrecognizedQueueError is returned when a queue name is not recognized. Typically this indicates a typo in the queue name or server misconfiguration.
+message UnrecognizedQueueError {
+    // Free text error message describing the error.
+    Error error = 1;
+    // Name of the queue that was not recognized.
+    string queue = 2;
+}
+
+// ***************
+// Service definitions.
+// ***************
+
 // SubmitQueueGateway provides the gateway API
 service SubmitQueueGateway {
     // Ping returns a response indicating the service is alive
     rpc Ping(PingRequest) returns (PingResponse) {}
+
+    // Land lands a set of code changes into a target branch, performing the necessary validations across all other changes in the queue.
+    // The processing is asynchronous and returns a LandResponse immediately. The land request is processed in the background.
+    rpc Land(LandRequest) returns (LandResponse) {}
 }

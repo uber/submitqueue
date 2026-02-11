@@ -2,7 +2,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "controller",
-    srcs = ["ping.go"],
+    srcs = ["ping.go", "land.go"],
     importpath = "github.com/uber/submitqueue/gateway/controller",
     visibility = ["//visibility:public"],
     deps = [
@@ -14,7 +14,7 @@ go_library(
 
 go_test(
     name = "controller_test",
-    srcs = ["ping_test.go"],
+    srcs = ["ping_test.go", "land_test.go"],
     embed = [":controller"],
     deps = ["//gateway/protopb"],
 )
