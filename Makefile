@@ -53,20 +53,20 @@ gazelle:
 # Run integration tests for a specific service (requires that service to be running)
 integration-test-gateway:
 	@echo "Running Gateway integration tests..."
-	@$(BAZEL) test //gateway/integration_tests:integration_test --test_output=all
+	@$(BAZEL) test //gateway/integration_tests:integration_tests_test --test_output=all
 
 integration-test-orchestrator:
 	@echo "Running Orchestrator integration tests..."
-	@$(BAZEL) test //orchestrator/integration_tests:integration_test --test_output=all
+	@$(BAZEL) test //orchestrator/integration_tests:integration_tests_test --test_output=all
 
 integration-test-speculator:
 	@echo "Running Speculator integration tests..."
-	@$(BAZEL) test //speculator/integration_tests:integration_test --test_output=all
+	@$(BAZEL) test //speculator/integration_tests:integration_tests_test --test_output=all
 
 # Run all service integration tests (requires all services to be running)
 integration-test:
 	@echo "Running all service integration tests..."
-	@$(BAZEL) test //gateway/integration_tests:integration_test //orchestrator/integration_tests:integration_test //speculator/integration_tests:integration_test --test_output=all
+	@$(BAZEL) test //gateway/integration_tests:integration_tests_test //orchestrator/integration_tests:integration_tests_test //speculator/integration_tests:integration_tests_test --test_output=all
 
 # Run end-to-end tests (requires all services to be running)
 e2e-test:

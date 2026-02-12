@@ -44,12 +44,12 @@ make integration-test                # All services
 ./tools/bazel test //integration_tests:e2e_test --test_output=all
 
 # Run individual service integration tests
-./tools/bazel test //gateway:integration_test --test_output=all
-./tools/bazel test //orchestrator:integration_test --test_output=all
-./tools/bazel test //speculator:integration_test --test_output=all
+./tools/bazel test //gateway/integration_tests:integration_tests_test --test_output=all
+./tools/bazel test //orchestrator/integration_tests:integration_tests_test --test_output=all
+./tools/bazel test //speculator/integration_tests:integration_tests_test --test_output=all
 
 # Run all service integration tests
-./tools/bazel test //gateway:integration_test //orchestrator:integration_test //speculator:integration_test --test_output=all
+./tools/bazel test //gateway/integration_tests:integration_tests_test //orchestrator/integration_tests:integration_tests_test //speculator/integration_tests:integration_tests_test --test_output=all
 
 # The tests are tagged as 'manual' so they won't run with 'bazel test //...'
 # This is intentional since they require servers to be running
@@ -104,11 +104,11 @@ func TestNewMethod(t *testing.T) {
 
 1. Create `newservice/integration_tests/` folder
 2. Add test files like `newservice/integration_tests/ping_test.go`
-3. Add `go_test` rule to `newservice/BUILD.bazel`:
+3. Add `go_test` rule to `newservice/integration_tests/BUILD.bazel`:
 ```python
 go_test(
-    name = "integration_test",
-    srcs = ["integration_tests/ping_test.go"],
+    name = "integration_tests_test",
+    srcs = ["ping_test.go"],
     deps = [
         "//newservice/protopb",
         "@org_golang_google_grpc//:grpc",

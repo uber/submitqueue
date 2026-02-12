@@ -16,7 +16,5 @@ go_test(
     name = "controller_test",
     srcs = ["ping_test.go"],
     embed = [":controller"],
-    deps = [
-        "//orchestrator/protopb",
-    ],
+    deps = ["//orchestrator/protopb"],
 )

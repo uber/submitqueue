@@ -1,4 +1,10 @@
 load("@gazelle//:def.bzl", "gazelle")
 
 # gazelle:prefix github.com/uber/submitqueue
+
+# Resolve protobuf import ambiguities - use the actual protopb packages, not the proto aliases
+# gazelle:resolve go github.com/uber/submitqueue/gateway/protopb //gateway/protopb
+# gazelle:resolve go github.com/uber/submitqueue/orchestrator/protopb //orchestrator/protopb
+# gazelle:resolve go github.com/uber/submitqueue/speculator/protopb //speculator/protopb
+
 gazelle(name = "gazelle")
