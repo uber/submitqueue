@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/examples/server/orchestrator",
     visibility = ["//visibility:private"],
     deps = [
-        "//orchestrator/core/controller",
+        "//orchestrator/controller",
         "//orchestrator/protopb",
         "@com_github_uber_go_tally_v4//:tally",
         "@org_golang_google_grpc//:grpc",

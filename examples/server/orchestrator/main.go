@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/uber-go/tally/v4"
-	"github.com/uber/submitqueue/orchestrator/core/controller"
+	"github.com/uber/submitqueue/orchestrator/controller"
 	pb "github.com/uber/submitqueue/orchestrator/protopb"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
