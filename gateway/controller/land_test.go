@@ -4,14 +4,13 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	pb "github.com/uber/submitqueue/gateway/protopb"
 )
 
 func TestNewLandController(t *testing.T) {
 	controller := NewLandController(nil, nil)
-	if controller == nil {
-		t.Fatal("NewLandController() returned nil")
-	}
+	require.NotNil(t, controller)
 }
 
 func TestLand_ReturnsSqid(t *testing.T) {
@@ -24,11 +23,6 @@ func TestLand_ReturnsSqid(t *testing.T) {
 	}
 	resp, err := controller.Land(ctx, req)
 
-	if err != nil {
-		t.Fatalf("Land() returned error: %v", err)
-	}
-
-	if resp.Sqid == "" {
-		t.Fatal("Expected sqid to be set, got empty string")
-	}
+	require.NoError(t, err)
+	require.NotEmpty(t, resp.Sqid)
 }

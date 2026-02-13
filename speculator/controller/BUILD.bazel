@@ -16,5 +16,11 @@ go_test(
     name = "controller_test",
     srcs = ["ping_test.go"],
     embed = [":controller"],
-    deps = ["//speculator/protopb"],
+    deps = [
+        "//speculator/protopb",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_zap//:zap",
+    ],
 )

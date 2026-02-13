@@ -11,6 +11,8 @@ go_test(
     ],
     deps = [
         "//gateway/protopb",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//credentials/insecure",
     ],

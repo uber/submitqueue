@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	gatewaypb "github.com/uber/submitqueue/gateway/protopb"
 	orchestratorpb "github.com/uber/submitqueue/orchestrator/protopb"
 	speculatorpb "github.com/uber/submitqueue/speculator/protopb"
@@ -27,9 +29,7 @@ func TestPingForAllServices(t *testing.T) {
 	t.Run("Gateway", func(t *testing.T) {
 		addr := getEnvOrDefault("GATEWAY_ADDR", "localhost:8081")
 		conn, err := waitForServer(t, addr, serverReadyTimeout)
-		if err != nil {
-			t.Fatalf("Gateway server not ready: %v", err)
-		}
+		require.NoError(t, err, "Gateway server not ready")
 		defer conn.Close()
 
 		client := gatewaypb.NewSubmitQueueGatewayClient(conn)
@@ -37,12 +37,8 @@ func TestPingForAllServices(t *testing.T) {
 		defer cancel()
 
 		resp, err := client.Ping(ctx, &gatewaypb.PingRequest{Message: "e2e test"})
-		if err != nil {
-			t.Fatalf("Gateway Ping failed: %v", err)
-		}
-		if resp.ServiceName != "gateway" {
-			t.Errorf("Expected service name 'gateway', got '%s'", resp.ServiceName)
-		}
+		require.NoError(t, err, "Gateway Ping failed")
+		assert.Equal(t, "gateway", resp.ServiceName)
 		t.Logf("Gateway is healthy: %s", resp.Message)
 	})
 
@@ -50,9 +46,7 @@ func TestPingForAllServices(t *testing.T) {
 	t.Run("Orchestrator", func(t *testing.T) {
 		addr := getEnvOrDefault("ORCHESTRATOR_ADDR", "localhost:8082")
 		conn, err := waitForServer(t, addr, serverReadyTimeout)
-		if err != nil {
-			t.Fatalf("Orchestrator server not ready: %v", err)
-		}
+		require.NoError(t, err, "Orchestrator server not ready")
 		defer conn.Close()
 
 		client := orchestratorpb.NewSubmitQueueOrchestratorClient(conn)
@@ -60,12 +54,8 @@ func TestPingForAllServices(t *testing.T) {
 		defer cancel()
 
 		resp, err := client.Ping(ctx, &orchestratorpb.PingRequest{Message: "e2e test"})
-		if err != nil {
-			t.Fatalf("Orchestrator Ping failed: %v", err)
-		}
-		if resp.ServiceName != "orchestrator" {
-			t.Errorf("Expected service name 'orchestrator', got '%s'", resp.ServiceName)
-		}
+		require.NoError(t, err, "Orchestrator Ping failed")
+		assert.Equal(t, "orchestrator", resp.ServiceName)
 		t.Logf("Orchestrator is healthy: %s", resp.Message)
 	})
 
@@ -73,9 +63,7 @@ func TestPingForAllServices(t *testing.T) {
 	t.Run("Speculator", func(t *testing.T) {
 		addr := getEnvOrDefault("SPECULATOR_ADDR", "localhost:8083")
 		conn, err := waitForServer(t, addr, serverReadyTimeout)
-		if err != nil {
-			t.Fatalf("Speculator server not ready: %v", err)
-		}
+		require.NoError(t, err, "Speculator server not ready")
 		defer conn.Close()
 
 		client := speculatorpb.NewSubmitQueueSpeculatorClient(conn)
@@ -83,12 +71,8 @@ func TestPingForAllServices(t *testing.T) {
 		defer cancel()
 
 		resp, err := client.Ping(ctx, &speculatorpb.PingRequest{Message: "e2e test"})
-		if err != nil {
-			t.Fatalf("Speculator Ping failed: %v", err)
-		}
-		if resp.ServiceName != "speculator" {
-			t.Errorf("Expected service name 'speculator', got '%s'", resp.ServiceName)
-		}
+		require.NoError(t, err, "Speculator Ping failed")
+		assert.Equal(t, "speculator", resp.ServiceName)
 		t.Logf("Speculator is healthy: %s", resp.Message)
 	})
 

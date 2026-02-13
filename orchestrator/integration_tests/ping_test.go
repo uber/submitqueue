@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	pb "github.com/uber/submitqueue/orchestrator/protopb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -24,9 +26,7 @@ func TestPingAPI(t *testing.T) {
 
 	// Wait for server to be ready
 	conn, err := waitForServer(t, addr, serverReadyTimeout)
-	if err != nil {
-		t.Fatalf("Orchestrator server not ready: %v", err)
-	}
+	require.NoError(t, err, "Orchestrator server not ready")
 	defer conn.Close()
 
 	client := pb.NewSubmitQueueOrchestratorClient(conn)
@@ -39,23 +39,13 @@ func TestPingAPI(t *testing.T) {
 	}
 
 	resp, err := client.Ping(ctx, req)
-	if err != nil {
-		t.Fatalf("Ping failed: %v", err)
-	}
+	require.NoError(t, err, "Ping failed")
 
 	// Validate response
-	if resp.Message == "" {
-		t.Error("Response message is empty")
-	}
-	if resp.ServiceName != "orchestrator" {
-		t.Errorf("Expected service name 'orchestrator', got '%s'", resp.ServiceName)
-	}
-	if resp.Timestamp == 0 {
-		t.Error("Timestamp is zero")
-	}
-	if resp.Hostname == "" {
-		t.Error("Hostname is empty")
-	}
+	assert.NotEmpty(t, resp.Message, "Response message should not be empty")
+	assert.Equal(t, "orchestrator", resp.ServiceName)
+	assert.NotZero(t, resp.Timestamp, "Timestamp should not be zero")
+	assert.NotEmpty(t, resp.Hostname, "Hostname should not be empty")
 
 	t.Logf("Orchestrator Ping test passed:")
 	t.Logf("  Message: %s", resp.Message)
