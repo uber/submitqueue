@@ -1,4 +1,3 @@
-load("@rules_go//go:def.bzl", "go_library")
 load("@rules_go//proto:def.bzl", "go_proto_library")
 load("@rules_proto//proto:defs.bzl", "proto_library")
 
@@ -9,27 +8,15 @@ proto_library(
 )
 
 # keep
+# Used for regenerating .pb.go files in ../protopb/
+# The actual go_library is in //speculator/protopb:protopb
 go_proto_library(
     name = "speculatorpb_go_proto",
     compilers = [
         "@rules_go//proto:go_proto",
         "@rules_go//proto:go_grpc_v2",
     ],
-    importpath = "github.com/uber/submitqueue/speculator/proto",
-    proto = ":speculatorpb_proto",
-    visibility = ["//visibility:public"],
-)
-
-go_library(
-    name = "proto",
-    embed = [":speculatorpb_go_proto"],
-    importpath = "github.com/uber/submitqueue/speculator/proto",
-    visibility = ["//visibility:public"],
-)
-
-go_library(
-    name = "protopb",
-    embed = [":speculatorpb_go_proto"],
     importpath = "github.com/uber/submitqueue/speculator/protopb",
+    proto = ":speculatorpb_proto",
     visibility = ["//visibility:public"],
 )

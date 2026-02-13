@@ -1,4 +1,3 @@
-load("@rules_go//go:def.bzl", "go_library")
 load("@rules_go//proto:def.bzl", "go_proto_library")
 load("@rules_proto//proto:defs.bzl", "proto_library")
 
@@ -9,27 +8,15 @@ proto_library(
 )
 
 # keep
+# Used for regenerating .pb.go files in ../protopb/
+# The actual go_library is in //orchestrator/protopb:protopb
 go_proto_library(
     name = "orchestratorpb_go_proto",
     compilers = [
         "@rules_go//proto:go_proto",
         "@rules_go//proto:go_grpc_v2",
     ],
-    importpath = "github.com/uber/submitqueue/orchestrator/proto",
-    proto = ":orchestratorpb_proto",
-    visibility = ["//visibility:public"],
-)
-
-go_library(
-    name = "proto",
-    embed = [":orchestratorpb_go_proto"],
-    importpath = "github.com/uber/submitqueue/orchestrator/proto",
-    visibility = ["//visibility:public"],
-)
-
-go_library(
-    name = "protopb",
-    embed = [":orchestratorpb_go_proto"],
     importpath = "github.com/uber/submitqueue/orchestrator/protopb",
+    proto = ":orchestratorpb_proto",
     visibility = ["//visibility:public"],
 )

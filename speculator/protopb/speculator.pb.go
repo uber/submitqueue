@@ -21,6 +21,129 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// SpeculationSignal represents the signal being sent for a batch in a speculation path, such as whether a build has
+// succeeded, failed, or been cancelled for the batch in this speculation path, or whether the batch has been
+// finalized (landed) or failed to finalize (failed to land)
+type SpeculationSignal int32
+
+const (
+	SpeculationSignal_SPECULATION_SIGNAL_UNSPECIFIED SpeculationSignal = 0
+	// Signal indicating that a build has been triggered for the batch in this speculation path
+	SpeculationSignal_SPECULATION_SIGNAL_BUILD_SUCCEEDED SpeculationSignal = 1
+	// Signal indicating that a build has been cancelled for the batch in this speculation path
+	SpeculationSignal_SPECULATION_SIGNAL_BUILD_CANCELLED SpeculationSignal = 2
+	// Signal indicating that a build has failed for the batch in this speculation path
+	SpeculationSignal_SPECULATION_SIGNAL_BUILD_FAILED SpeculationSignal = 3
+	// Signal indicating that the batch in this speculation path has been finalized, meaning it has been landed
+	SpeculationSignal_SPECULATION_SIGNAL_FINALIZE_SUCCEEDED SpeculationSignal = 4
+	// Signal indicating that the batch in this speculation path has failed to finalize, meaning it failed to land
+	SpeculationSignal_SPECULATION_SIGNAL_FINALIZE_FAILED SpeculationSignal = 5
+)
+
+// Enum value maps for SpeculationSignal.
+var (
+	SpeculationSignal_name = map[int32]string{
+		0: "SPECULATION_SIGNAL_UNSPECIFIED",
+		1: "SPECULATION_SIGNAL_BUILD_SUCCEEDED",
+		2: "SPECULATION_SIGNAL_BUILD_CANCELLED",
+		3: "SPECULATION_SIGNAL_BUILD_FAILED",
+		4: "SPECULATION_SIGNAL_FINALIZE_SUCCEEDED",
+		5: "SPECULATION_SIGNAL_FINALIZE_FAILED",
+	}
+	SpeculationSignal_value = map[string]int32{
+		"SPECULATION_SIGNAL_UNSPECIFIED":        0,
+		"SPECULATION_SIGNAL_BUILD_SUCCEEDED":    1,
+		"SPECULATION_SIGNAL_BUILD_CANCELLED":    2,
+		"SPECULATION_SIGNAL_BUILD_FAILED":       3,
+		"SPECULATION_SIGNAL_FINALIZE_SUCCEEDED": 4,
+		"SPECULATION_SIGNAL_FINALIZE_FAILED":    5,
+	}
+)
+
+func (x SpeculationSignal) Enum() *SpeculationSignal {
+	p := new(SpeculationSignal)
+	*p = x
+	return p
+}
+
+func (x SpeculationSignal) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SpeculationSignal) Descriptor() protoreflect.EnumDescriptor {
+	return file_speculator_proto_enumTypes[0].Descriptor()
+}
+
+func (SpeculationSignal) Type() protoreflect.EnumType {
+	return &file_speculator_proto_enumTypes[0]
+}
+
+func (x SpeculationSignal) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SpeculationSignal.Descriptor instead.
+func (SpeculationSignal) EnumDescriptor() ([]byte, []int) {
+	return file_speculator_proto_rawDescGZIP(), []int{0}
+}
+
+// SpeculationAction represents the recommended action to take for a given speculation path,
+// such as whether to trigger a build, cancel it, or finalize it
+type SpeculationAction int32
+
+const (
+	SpeculationAction_SPECULATION_ACTION_UNSPECIFIED SpeculationAction = 0
+	// Trigger a build for the batch in this speculation path
+	SpeculationAction_SPECULATION_ACTION_BUILD SpeculationAction = 1
+	// Cancel the build for the batch in this speculation path, if it was previously triggered
+	SpeculationAction_SPECULATION_ACTION_CANCEL SpeculationAction = 2
+	// Finalize the batch in this speculation path, meaning land them
+	SpeculationAction_SPECULATION_ACTION_FINALIZE SpeculationAction = 3
+)
+
+// Enum value maps for SpeculationAction.
+var (
+	SpeculationAction_name = map[int32]string{
+		0: "SPECULATION_ACTION_UNSPECIFIED",
+		1: "SPECULATION_ACTION_BUILD",
+		2: "SPECULATION_ACTION_CANCEL",
+		3: "SPECULATION_ACTION_FINALIZE",
+	}
+	SpeculationAction_value = map[string]int32{
+		"SPECULATION_ACTION_UNSPECIFIED": 0,
+		"SPECULATION_ACTION_BUILD":       1,
+		"SPECULATION_ACTION_CANCEL":      2,
+		"SPECULATION_ACTION_FINALIZE":    3,
+	}
+)
+
+func (x SpeculationAction) Enum() *SpeculationAction {
+	p := new(SpeculationAction)
+	*p = x
+	return p
+}
+
+func (x SpeculationAction) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SpeculationAction) Descriptor() protoreflect.EnumDescriptor {
+	return file_speculator_proto_enumTypes[1].Descriptor()
+}
+
+func (SpeculationAction) Type() protoreflect.EnumType {
+	return &file_speculator_proto_enumTypes[1]
+}
+
+func (x SpeculationAction) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SpeculationAction.Descriptor instead.
+func (SpeculationAction) EnumDescriptor() ([]byte, []int) {
+	return file_speculator_proto_rawDescGZIP(), []int{1}
+}
+
 // PingRequest is the request for the Ping method
 type PingRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -140,6 +263,339 @@ func (x *PingResponse) GetHostname() string {
 	return ""
 }
 
+// SpeculationRequest is the request for speculating the outcome of a batch (new request)
+type SpeculationRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// ID of the batch being speculated
+	BatchId string `protobuf:"bytes,1,opt,name=batch_id,json=batchId,proto3" json:"batch_id,omitempty"`
+	// List of batch IDs that the current batch depends on
+	Dependencies  []string `protobuf:"bytes,2,rep,name=dependencies,proto3" json:"dependencies,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SpeculationRequest) Reset() {
+	*x = SpeculationRequest{}
+	mi := &file_speculator_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SpeculationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SpeculationRequest) ProtoMessage() {}
+
+func (x *SpeculationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_speculator_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SpeculationRequest.ProtoReflect.Descriptor instead.
+func (*SpeculationRequest) Descriptor() ([]byte, []int) {
+	return file_speculator_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *SpeculationRequest) GetBatchId() string {
+	if x != nil {
+		return x.BatchId
+	}
+	return ""
+}
+
+func (x *SpeculationRequest) GetDependencies() []string {
+	if x != nil {
+		return x.Dependencies
+	}
+	return nil
+}
+
+// SpeculationResponse is the response for the SpeculationRequest, providing speculation results for the batch,
+// including possible speculation paths and their associated scores and recommended actions
+type SpeculationResponse struct {
+	state         protoimpl.MessageState   `protogen:"open.v1"`
+	Results       []*SpeculationPathResult `protobuf:"bytes,1,rep,name=results,proto3" json:"results,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SpeculationResponse) Reset() {
+	*x = SpeculationResponse{}
+	mi := &file_speculator_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SpeculationResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SpeculationResponse) ProtoMessage() {}
+
+func (x *SpeculationResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_speculator_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SpeculationResponse.ProtoReflect.Descriptor instead.
+func (*SpeculationResponse) Descriptor() ([]byte, []int) {
+	return file_speculator_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *SpeculationResponse) GetResults() []*SpeculationPathResult {
+	if x != nil {
+		return x.Results
+	}
+	return nil
+}
+
+// SpeculationSignalRequest is the request for sending a speculation signal for a batch in a speculation path,
+// providing information about the speculation path and the signal being sent, such as whether a build has succeeded,
+// failed, or been cancelled for the batch in this speculation path
+type SpeculationSignalRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// path is the speculation path for which the speculation signal is being sent, represented as a list of
+	// batch IDs that have been triggered as part of this speculation path leading up to the current
+	Path *SpeculationPath `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	// signal is the speculation signal being sent for the batch in this speculation path, such as whether a
+	// build has succeeded, failed, or been cancelled for the batch in this speculation path
+	Signal        SpeculationSignal `protobuf:"varint,2,opt,name=signal,proto3,enum=uber.devexp.submitqueue.speculator.SpeculationSignal" json:"signal,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SpeculationSignalRequest) Reset() {
+	*x = SpeculationSignalRequest{}
+	mi := &file_speculator_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SpeculationSignalRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SpeculationSignalRequest) ProtoMessage() {}
+
+func (x *SpeculationSignalRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_speculator_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SpeculationSignalRequest.ProtoReflect.Descriptor instead.
+func (*SpeculationSignalRequest) Descriptor() ([]byte, []int) {
+	return file_speculator_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *SpeculationSignalRequest) GetPath() *SpeculationPath {
+	if x != nil {
+		return x.Path
+	}
+	return nil
+}
+
+func (x *SpeculationSignalRequest) GetSignal() SpeculationSignal {
+	if x != nil {
+		return x.Signal
+	}
+	return SpeculationSignal_SPECULATION_SIGNAL_UNSPECIFIED
+}
+
+// SpeculationSignalResponse is the response for the SpeculationSignalRequest,
+// providing updated speculation results for the batch based on the received signal,
+// including possible speculation paths and their associated scores and recommended actions
+type SpeculationSignalResponse struct {
+	state         protoimpl.MessageState   `protogen:"open.v1"`
+	Results       []*SpeculationPathResult `protobuf:"bytes,1,rep,name=results,proto3" json:"results,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SpeculationSignalResponse) Reset() {
+	*x = SpeculationSignalResponse{}
+	mi := &file_speculator_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SpeculationSignalResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SpeculationSignalResponse) ProtoMessage() {}
+
+func (x *SpeculationSignalResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_speculator_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SpeculationSignalResponse.ProtoReflect.Descriptor instead.
+func (*SpeculationSignalResponse) Descriptor() ([]byte, []int) {
+	return file_speculator_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *SpeculationSignalResponse) GetResults() []*SpeculationPathResult {
+	if x != nil {
+		return x.Results
+	}
+	return nil
+}
+
+// SpeculationPath represents a possible speculation path for a batch, including the batch ID and a list of batch IDs
+// representing a possible sequence of batches that could be triggered as a result of the current batch,it's dependencies
+type SpeculationPath struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// batch_id is the ID of the batch for which this speculation path is being provided
+	BatchId string `protobuf:"bytes,1,opt,name=batch_id,json=batchId,proto3" json:"batch_id,omitempty"`
+	// batch_ids is a list of batch IDs representing a possible sequence of batches that could be triggered as a result
+	// of the current batch, based on the dependencies and historical data
+	BatchIds      []string `protobuf:"bytes,2,rep,name=batch_ids,json=batchIds,proto3" json:"batch_ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SpeculationPath) Reset() {
+	*x = SpeculationPath{}
+	mi := &file_speculator_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SpeculationPath) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SpeculationPath) ProtoMessage() {}
+
+func (x *SpeculationPath) ProtoReflect() protoreflect.Message {
+	mi := &file_speculator_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SpeculationPath.ProtoReflect.Descriptor instead.
+func (*SpeculationPath) Descriptor() ([]byte, []int) {
+	return file_speculator_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *SpeculationPath) GetBatchId() string {
+	if x != nil {
+		return x.BatchId
+	}
+	return ""
+}
+
+func (x *SpeculationPath) GetBatchIds() []string {
+	if x != nil {
+		return x.BatchIds
+	}
+	return nil
+}
+
+// SpeculationPathResult represents the speculation result for a given speculation path, including the speculation path,
+// a score representing the likelihood of needing this path for build, and a recommended action to take for this path
+// based on the speculation results, such as whether to trigger a build, cancel it, or finalize it
+type SpeculationPathResult struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// path is the speculation path for which the speculation result is being provided, represented as a list of
+	// batch IDs that have been triggered as part of this speculation path leading up
+	Path *SpeculationPath `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	// score is a numerical value representing the likelihood of needing this path for build
+	// 0.0 >= score <= 1.0, where a higher score indicates a higher likelihood of needing this path for build
+	Score float32 `protobuf:"fixed32,2,opt,name=score,proto3" json:"score,omitempty"`
+	// action is the recommended action to take for this path based on the speculation results, s
+	// uch as whether to trigger a build, cancel it, or finalize it
+	Action        SpeculationAction `protobuf:"varint,3,opt,name=action,proto3,enum=uber.devexp.submitqueue.speculator.SpeculationAction" json:"action,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SpeculationPathResult) Reset() {
+	*x = SpeculationPathResult{}
+	mi := &file_speculator_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SpeculationPathResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SpeculationPathResult) ProtoMessage() {}
+
+func (x *SpeculationPathResult) ProtoReflect() protoreflect.Message {
+	mi := &file_speculator_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SpeculationPathResult.ProtoReflect.Descriptor instead.
+func (*SpeculationPathResult) Descriptor() ([]byte, []int) {
+	return file_speculator_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *SpeculationPathResult) GetPath() *SpeculationPath {
+	if x != nil {
+		return x.Path
+	}
+	return nil
+}
+
+func (x *SpeculationPathResult) GetScore() float32 {
+	if x != nil {
+		return x.Score
+	}
+	return 0
+}
+
+func (x *SpeculationPathResult) GetAction() SpeculationAction {
+	if x != nil {
+		return x.Action
+	}
+	return SpeculationAction_SPECULATION_ACTION_UNSPECIFIED
+}
+
 var File_speculator_proto protoreflect.FileDescriptor
 
 const file_speculator_proto_rawDesc = "" +
@@ -151,9 +607,40 @@ const file_speculator_proto_rawDesc = "" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12!\n" +
 	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12\x1c\n" +
 	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x1a\n" +
-	"\bhostname\x18\x04 \x01(\tR\bhostname2\x84\x01\n" +
+	"\bhostname\x18\x04 \x01(\tR\bhostname\"S\n" +
+	"\x12SpeculationRequest\x12\x19\n" +
+	"\bbatch_id\x18\x01 \x01(\tR\abatchId\x12\"\n" +
+	"\fdependencies\x18\x02 \x03(\tR\fdependencies\"j\n" +
+	"\x13SpeculationResponse\x12S\n" +
+	"\aresults\x18\x01 \x03(\v29.uber.devexp.submitqueue.speculator.SpeculationPathResultR\aresults\"\xb2\x01\n" +
+	"\x18SpeculationSignalRequest\x12G\n" +
+	"\x04path\x18\x01 \x01(\v23.uber.devexp.submitqueue.speculator.SpeculationPathR\x04path\x12M\n" +
+	"\x06signal\x18\x02 \x01(\x0e25.uber.devexp.submitqueue.speculator.SpeculationSignalR\x06signal\"p\n" +
+	"\x19SpeculationSignalResponse\x12S\n" +
+	"\aresults\x18\x01 \x03(\v29.uber.devexp.submitqueue.speculator.SpeculationPathResultR\aresults\"I\n" +
+	"\x0fSpeculationPath\x12\x19\n" +
+	"\bbatch_id\x18\x01 \x01(\tR\abatchId\x12\x1b\n" +
+	"\tbatch_ids\x18\x02 \x03(\tR\bbatchIds\"\xc5\x01\n" +
+	"\x15SpeculationPathResult\x12G\n" +
+	"\x04path\x18\x01 \x01(\v23.uber.devexp.submitqueue.speculator.SpeculationPathR\x04path\x12\x14\n" +
+	"\x05score\x18\x02 \x01(\x02R\x05score\x12M\n" +
+	"\x06action\x18\x03 \x01(\x0e25.uber.devexp.submitqueue.speculator.SpeculationActionR\x06action*\xff\x01\n" +
+	"\x11SpeculationSignal\x12\"\n" +
+	"\x1eSPECULATION_SIGNAL_UNSPECIFIED\x10\x00\x12&\n" +
+	"\"SPECULATION_SIGNAL_BUILD_SUCCEEDED\x10\x01\x12&\n" +
+	"\"SPECULATION_SIGNAL_BUILD_CANCELLED\x10\x02\x12#\n" +
+	"\x1fSPECULATION_SIGNAL_BUILD_FAILED\x10\x03\x12)\n" +
+	"%SPECULATION_SIGNAL_FINALIZE_SUCCEEDED\x10\x04\x12&\n" +
+	"\"SPECULATION_SIGNAL_FINALIZE_FAILED\x10\x05*\x95\x01\n" +
+	"\x11SpeculationAction\x12\"\n" +
+	"\x1eSPECULATION_ACTION_UNSPECIFIED\x10\x00\x12\x1c\n" +
+	"\x18SPECULATION_ACTION_BUILD\x10\x01\x12\x1d\n" +
+	"\x19SPECULATION_ACTION_CANCEL\x10\x02\x12\x1f\n" +
+	"\x1bSPECULATION_ACTION_FINALIZE\x10\x032\x8e\x03\n" +
 	"\x15SubmitQueueSpeculator\x12k\n" +
-	"\x04Ping\x12/.uber.devexp.submitqueue.speculator.PingRequest\x1a0.uber.devexp.submitqueue.speculator.PingResponse\"\x00Bk\n" +
+	"\x04Ping\x12/.uber.devexp.submitqueue.speculator.PingRequest\x1a0.uber.devexp.submitqueue.speculator.PingResponse\"\x00\x12~\n" +
+	"\tSpeculate\x126.uber.devexp.submitqueue.speculator.SpeculationRequest\x1a7.uber.devexp.submitqueue.speculator.SpeculationResponse\"\x00\x12\x87\x01\n" +
+	"\x06Signal\x12<.uber.devexp.submitqueue.speculator.SpeculationSignalRequest\x1a=.uber.devexp.submitqueue.speculator.SpeculationSignalResponse\"\x00Bk\n" +
 	"&com.uber.devexp.submitqueue.speculatorB\x0fSpeculatorProtoP\x01Z.github.com/uber/submitqueue/speculator/protopbb\x06proto3"
 
 var (
@@ -168,19 +655,38 @@ func file_speculator_proto_rawDescGZIP() []byte {
 	return file_speculator_proto_rawDescData
 }
 
-var file_speculator_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_speculator_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_speculator_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_speculator_proto_goTypes = []any{
-	(*PingRequest)(nil),  // 0: uber.devexp.submitqueue.speculator.PingRequest
-	(*PingResponse)(nil), // 1: uber.devexp.submitqueue.speculator.PingResponse
+	(SpeculationSignal)(0),            // 0: uber.devexp.submitqueue.speculator.SpeculationSignal
+	(SpeculationAction)(0),            // 1: uber.devexp.submitqueue.speculator.SpeculationAction
+	(*PingRequest)(nil),               // 2: uber.devexp.submitqueue.speculator.PingRequest
+	(*PingResponse)(nil),              // 3: uber.devexp.submitqueue.speculator.PingResponse
+	(*SpeculationRequest)(nil),        // 4: uber.devexp.submitqueue.speculator.SpeculationRequest
+	(*SpeculationResponse)(nil),       // 5: uber.devexp.submitqueue.speculator.SpeculationResponse
+	(*SpeculationSignalRequest)(nil),  // 6: uber.devexp.submitqueue.speculator.SpeculationSignalRequest
+	(*SpeculationSignalResponse)(nil), // 7: uber.devexp.submitqueue.speculator.SpeculationSignalResponse
+	(*SpeculationPath)(nil),           // 8: uber.devexp.submitqueue.speculator.SpeculationPath
+	(*SpeculationPathResult)(nil),     // 9: uber.devexp.submitqueue.speculator.SpeculationPathResult
 }
 var file_speculator_proto_depIdxs = []int32{
-	0, // 0: uber.devexp.submitqueue.speculator.SubmitQueueSpeculator.Ping:input_type -> uber.devexp.submitqueue.speculator.PingRequest
-	1, // 1: uber.devexp.submitqueue.speculator.SubmitQueueSpeculator.Ping:output_type -> uber.devexp.submitqueue.speculator.PingResponse
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	9, // 0: uber.devexp.submitqueue.speculator.SpeculationResponse.results:type_name -> uber.devexp.submitqueue.speculator.SpeculationPathResult
+	8, // 1: uber.devexp.submitqueue.speculator.SpeculationSignalRequest.path:type_name -> uber.devexp.submitqueue.speculator.SpeculationPath
+	0, // 2: uber.devexp.submitqueue.speculator.SpeculationSignalRequest.signal:type_name -> uber.devexp.submitqueue.speculator.SpeculationSignal
+	9, // 3: uber.devexp.submitqueue.speculator.SpeculationSignalResponse.results:type_name -> uber.devexp.submitqueue.speculator.SpeculationPathResult
+	8, // 4: uber.devexp.submitqueue.speculator.SpeculationPathResult.path:type_name -> uber.devexp.submitqueue.speculator.SpeculationPath
+	1, // 5: uber.devexp.submitqueue.speculator.SpeculationPathResult.action:type_name -> uber.devexp.submitqueue.speculator.SpeculationAction
+	2, // 6: uber.devexp.submitqueue.speculator.SubmitQueueSpeculator.Ping:input_type -> uber.devexp.submitqueue.speculator.PingRequest
+	4, // 7: uber.devexp.submitqueue.speculator.SubmitQueueSpeculator.Speculate:input_type -> uber.devexp.submitqueue.speculator.SpeculationRequest
+	6, // 8: uber.devexp.submitqueue.speculator.SubmitQueueSpeculator.Signal:input_type -> uber.devexp.submitqueue.speculator.SpeculationSignalRequest
+	3, // 9: uber.devexp.submitqueue.speculator.SubmitQueueSpeculator.Ping:output_type -> uber.devexp.submitqueue.speculator.PingResponse
+	5, // 10: uber.devexp.submitqueue.speculator.SubmitQueueSpeculator.Speculate:output_type -> uber.devexp.submitqueue.speculator.SpeculationResponse
+	7, // 11: uber.devexp.submitqueue.speculator.SubmitQueueSpeculator.Signal:output_type -> uber.devexp.submitqueue.speculator.SpeculationSignalResponse
+	9, // [9:12] is the sub-list for method output_type
+	6, // [6:9] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_speculator_proto_init() }
@@ -193,13 +699,14 @@ func file_speculator_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_speculator_proto_rawDesc), len(file_speculator_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   2,
+			NumEnums:      2,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_speculator_proto_goTypes,
 		DependencyIndexes: file_speculator_proto_depIdxs,
+		EnumInfos:         file_speculator_proto_enumTypes,
 		MessageInfos:      file_speculator_proto_msgTypes,
 	}.Build()
 	File_speculator_proto = out.File

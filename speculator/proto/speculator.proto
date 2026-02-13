@@ -25,8 +25,104 @@ message PingResponse {
     string hostname = 4;
 }
 
-// SubmitQueueSpeculator provides the speculator API
+// SpeculationRequest is the request for speculating the outcome of a batch (new request)
+message SpeculationRequest {
+    // ID of the batch being speculated
+    string batch_id = 1;
+    // List of batch IDs that the current batch depends on
+    repeated string dependencies = 2;
+}
+
+// SpeculationResponse is the response for the SpeculationRequest, providing speculation results for the batch,
+// including possible speculation paths and their associated scores and recommended actions
+message SpeculationResponse {
+    repeated SpeculationPathResult results = 1;
+}
+
+// SpeculationSignalRequest is the request for sending a speculation signal for a batch in a speculation path,
+// providing information about the speculation path and the signal being sent, such as whether a build has succeeded,
+// failed, or been cancelled for the batch in this speculation path
+message SpeculationSignalRequest {
+    // path is the speculation path for which the speculation signal is being sent, represented as a list of
+    // batch IDs that have been triggered as part of this speculation path leading up to the current
+    SpeculationPath path = 1;
+    // signal is the speculation signal being sent for the batch in this speculation path, such as whether a
+    // build has succeeded, failed, or been cancelled for the batch in this speculation path
+    SpeculationSignal signal = 2;
+}
+
+// SpeculationSignalResponse is the response for the SpeculationSignalRequest,
+// providing updated speculation results for the batch based on the received signal,
+// including possible speculation paths and their associated scores and recommended actions
+message SpeculationSignalResponse {
+    repeated SpeculationPathResult results = 1;
+}
+
+// SpeculationSignal represents the signal being sent for a batch in a speculation path, such as whether a build has
+// succeeded, failed, or been cancelled for the batch in this speculation path, or whether the batch has been
+// finalized (landed) or failed to finalize (failed to land)
+enum SpeculationSignal {
+    SPECULATION_SIGNAL_UNSPECIFIED = 0;
+    // Signal indicating that a build has been triggered for the batch in this speculation path
+    SPECULATION_SIGNAL_BUILD_SUCCEEDED = 1;
+    // Signal indicating that a build has been cancelled for the batch in this speculation path
+    SPECULATION_SIGNAL_BUILD_CANCELLED = 2;
+    // Signal indicating that a build has failed for the batch in this speculation path
+    SPECULATION_SIGNAL_BUILD_FAILED = 3;
+    // Signal indicating that the batch in this speculation path has been finalized, meaning it has been landed
+    SPECULATION_SIGNAL_FINALIZE_SUCCEEDED = 4;
+    // Signal indicating that the batch in this speculation path has failed to finalize, meaning it failed to land
+    SPECULATION_SIGNAL_FINALIZE_FAILED = 5;
+}
+
+// SpeculationAction represents the recommended action to take for a given speculation path,
+// such as whether to trigger a build, cancel it, or finalize it
+enum SpeculationAction {
+    SPECULATION_ACTION_UNSPECIFIED = 0;
+    // Trigger a build for the batch in this speculation path
+    SPECULATION_ACTION_BUILD = 1;
+    // Cancel the build for the batch in this speculation path, if it was previously triggered
+    SPECULATION_ACTION_CANCEL = 2;
+    // Finalize the batch in this speculation path, meaning land them
+    SPECULATION_ACTION_FINALIZE = 3;
+}
+
+// SpeculationPath represents a possible speculation path for a batch, including the batch ID and a list of batch IDs
+// representing a possible sequence of batches that could be triggered as a result of the current batch,it's dependencies
+message SpeculationPath {
+    // batch_id is the ID of the batch for which this speculation path is being provided
+    string batch_id = 1;
+    // batch_ids is a list of batch IDs representing a possible sequence of batches that could be triggered as a result
+    // of the current batch, based on the dependencies and historical data
+    repeated string batch_ids = 2;
+}
+
+// SpeculationPathResult represents the speculation result for a given speculation path, including the speculation path,
+// a score representing the likelihood of needing this path for build, and a recommended action to take for this path
+// based on the speculation results, such as whether to trigger a build, cancel it, or finalize it
+message SpeculationPathResult {
+    // path is the speculation path for which the speculation result is being provided, represented as a list of
+    // batch IDs that have been triggered as part of this speculation path leading up
+    SpeculationPath path = 1;
+    // score is a numerical value representing the likelihood of needing this path for build
+    // 0.0 >= score <= 1.0, where a higher score indicates a higher likelihood of needing this path for build
+    float score = 2;
+    // action is the recommended action to take for this path based on the speculation results, s
+    // uch as whether to trigger a build, cancel it, or finalize it
+    SpeculationAction action = 3;
+}
+
+// SubmitQueueSpeculator service provides APIs for speculating, signaling, and receiving speculation results for batches
+// in the submit queue, allowing clients to make informed decisions about which batches to trigger builds for, cancel,
+// or finalize based on the speculation results and signals received for different speculation paths
 service SubmitQueueSpeculator {
     // Ping returns a response indicating the service is alive
     rpc Ping(PingRequest) returns (PingResponse) {}
+    // Speculate takes a SpeculationRequest containing information about a batch and its dependencies
+    // and returns a SpeculationResponse
+    rpc Speculate(SpeculationRequest) returns (SpeculationResponse) {}
+    // Signal takes a SpeculationSignalRequest containing a speculation path and a speculation signal for that path,
+    // and returns a SpeculationSignalResponse containing updated speculation results for the batch based on the
+    // received signal
+    rpc Signal(SpeculationSignalRequest) returns (SpeculationSignalResponse) {}
 }

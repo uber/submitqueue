@@ -19,17 +19,28 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SubmitQueueSpeculator_Ping_FullMethodName = "/uber.devexp.submitqueue.speculator.SubmitQueueSpeculator/Ping"
+	SubmitQueueSpeculator_Ping_FullMethodName      = "/uber.devexp.submitqueue.speculator.SubmitQueueSpeculator/Ping"
+	SubmitQueueSpeculator_Speculate_FullMethodName = "/uber.devexp.submitqueue.speculator.SubmitQueueSpeculator/Speculate"
+	SubmitQueueSpeculator_Signal_FullMethodName    = "/uber.devexp.submitqueue.speculator.SubmitQueueSpeculator/Signal"
 )
 
 // SubmitQueueSpeculatorClient is the client API for SubmitQueueSpeculator service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// SubmitQueueSpeculator provides the speculator API
+// SubmitQueueSpeculator service provides APIs for speculating, signaling, and receiving speculation results for batches
+// in the submit queue, allowing clients to make informed decisions about which batches to trigger builds for, cancel,
+// or finalize based on the speculation results and signals received for different speculation paths
 type SubmitQueueSpeculatorClient interface {
 	// Ping returns a response indicating the service is alive
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
+	// Speculate takes a SpeculationRequest containing information about a batch and its dependencies
+	// and returns a SpeculationResponse
+	Speculate(ctx context.Context, in *SpeculationRequest, opts ...grpc.CallOption) (*SpeculationResponse, error)
+	// Signal takes a SpeculationSignalRequest containing a speculation path and a speculation signal for that path,
+	// and returns a SpeculationSignalResponse containing updated speculation results for the batch based on the
+	// received signal
+	Signal(ctx context.Context, in *SpeculationSignalRequest, opts ...grpc.CallOption) (*SpeculationSignalResponse, error)
 }
 
 type submitQueueSpeculatorClient struct {
@@ -50,14 +61,43 @@ func (c *submitQueueSpeculatorClient) Ping(ctx context.Context, in *PingRequest,
 	return out, nil
 }
 
+func (c *submitQueueSpeculatorClient) Speculate(ctx context.Context, in *SpeculationRequest, opts ...grpc.CallOption) (*SpeculationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SpeculationResponse)
+	err := c.cc.Invoke(ctx, SubmitQueueSpeculator_Speculate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *submitQueueSpeculatorClient) Signal(ctx context.Context, in *SpeculationSignalRequest, opts ...grpc.CallOption) (*SpeculationSignalResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SpeculationSignalResponse)
+	err := c.cc.Invoke(ctx, SubmitQueueSpeculator_Signal_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SubmitQueueSpeculatorServer is the server API for SubmitQueueSpeculator service.
 // All implementations must embed UnimplementedSubmitQueueSpeculatorServer
 // for forward compatibility.
 //
-// SubmitQueueSpeculator provides the speculator API
+// SubmitQueueSpeculator service provides APIs for speculating, signaling, and receiving speculation results for batches
+// in the submit queue, allowing clients to make informed decisions about which batches to trigger builds for, cancel,
+// or finalize based on the speculation results and signals received for different speculation paths
 type SubmitQueueSpeculatorServer interface {
 	// Ping returns a response indicating the service is alive
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
+	// Speculate takes a SpeculationRequest containing information about a batch and its dependencies
+	// and returns a SpeculationResponse
+	Speculate(context.Context, *SpeculationRequest) (*SpeculationResponse, error)
+	// Signal takes a SpeculationSignalRequest containing a speculation path and a speculation signal for that path,
+	// and returns a SpeculationSignalResponse containing updated speculation results for the batch based on the
+	// received signal
+	Signal(context.Context, *SpeculationSignalRequest) (*SpeculationSignalResponse, error)
 	mustEmbedUnimplementedSubmitQueueSpeculatorServer()
 }
 
@@ -70,6 +110,12 @@ type UnimplementedSubmitQueueSpeculatorServer struct{}
 
 func (UnimplementedSubmitQueueSpeculatorServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Ping not implemented")
+}
+func (UnimplementedSubmitQueueSpeculatorServer) Speculate(context.Context, *SpeculationRequest) (*SpeculationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Speculate not implemented")
+}
+func (UnimplementedSubmitQueueSpeculatorServer) Signal(context.Context, *SpeculationSignalRequest) (*SpeculationSignalResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Signal not implemented")
 }
 func (UnimplementedSubmitQueueSpeculatorServer) mustEmbedUnimplementedSubmitQueueSpeculatorServer() {}
 func (UnimplementedSubmitQueueSpeculatorServer) testEmbeddedByValue()                               {}
@@ -110,6 +156,42 @@ func _SubmitQueueSpeculator_Ping_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SubmitQueueSpeculator_Speculate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SpeculationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SubmitQueueSpeculatorServer).Speculate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SubmitQueueSpeculator_Speculate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SubmitQueueSpeculatorServer).Speculate(ctx, req.(*SpeculationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SubmitQueueSpeculator_Signal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SpeculationSignalRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SubmitQueueSpeculatorServer).Signal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SubmitQueueSpeculator_Signal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SubmitQueueSpeculatorServer).Signal(ctx, req.(*SpeculationSignalRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SubmitQueueSpeculator_ServiceDesc is the grpc.ServiceDesc for SubmitQueueSpeculator service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -120,6 +202,14 @@ var SubmitQueueSpeculator_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Ping",
 			Handler:    _SubmitQueueSpeculator_Ping_Handler,
+		},
+		{
+			MethodName: "Speculate",
+			Handler:    _SubmitQueueSpeculator_Speculate_Handler,
+		},
+		{
+			MethodName: "Signal",
+			Handler:    _SubmitQueueSpeculator_Signal_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
