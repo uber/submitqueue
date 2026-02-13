@@ -18,13 +18,6 @@ type LandController struct {
 
 // NewLandController creates a new instance of the gateway land controller
 func NewLandController(logger *zap.Logger, scope tally.Scope) *LandController {
-	if logger == nil {
-		logger = zap.NewNop()
-	}
-	if scope == nil {
-		scope = tally.NoopScope
-	}
-
 	return &LandController{
 		logger:       logger,
 		metricsScope: scope,

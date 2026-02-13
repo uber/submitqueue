@@ -7,16 +7,18 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber-go/tally/v4"
 	pb "github.com/uber/submitqueue/orchestrator/protopb"
+	"go.uber.org/zap"
 )
 
 func TestNewPingController(t *testing.T) {
-	controller := NewPingController(nil, nil)
+	controller := NewPingController(zap.NewNop(), tally.NoopScope)
 	require.NotNil(t, controller)
 }
 
 func TestPing_DefaultMessage(t *testing.T) {
-	controller := NewPingController(nil, nil)
+	controller := NewPingController(zap.NewNop(), tally.NoopScope)
 	ctx := context.Background()
 
 	req := &pb.PingRequest{}
@@ -27,7 +29,7 @@ func TestPing_DefaultMessage(t *testing.T) {
 }
 
 func TestPing_CustomMessage(t *testing.T) {
-	controller := NewPingController(nil, nil)
+	controller := NewPingController(zap.NewNop(), tally.NoopScope)
 	ctx := context.Background()
 
 	testCases := []struct {
@@ -52,7 +54,7 @@ func TestPing_CustomMessage(t *testing.T) {
 }
 
 func TestPing_ServiceName(t *testing.T) {
-	controller := NewPingController(nil, nil)
+	controller := NewPingController(zap.NewNop(), tally.NoopScope)
 	ctx := context.Background()
 
 	req := &pb.PingRequest{}
@@ -63,7 +65,7 @@ func TestPing_ServiceName(t *testing.T) {
 }
 
 func TestPing_Timestamp(t *testing.T) {
-	controller := NewPingController(nil, nil)
+	controller := NewPingController(zap.NewNop(), tally.NoopScope)
 	ctx := context.Background()
 
 	before := time.Now().Unix()
@@ -77,7 +79,7 @@ func TestPing_Timestamp(t *testing.T) {
 }
 
 func TestPing_Hostname(t *testing.T) {
-	controller := NewPingController(nil, nil)
+	controller := NewPingController(zap.NewNop(), tally.NoopScope)
 	ctx := context.Background()
 
 	req := &pb.PingRequest{}

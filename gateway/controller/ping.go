@@ -18,13 +18,6 @@ type PingController struct {
 
 // NewPingController creates a new instance of the gateway ping controller
 func NewPingController(logger *zap.Logger, scope tally.Scope) *PingController {
-	if logger == nil {
-		logger = zap.NewNop()
-	}
-	if scope == nil {
-		scope = tally.NoopScope
-	}
-
 	return &PingController{
 		logger:       logger,
 		metricsScope: scope,
