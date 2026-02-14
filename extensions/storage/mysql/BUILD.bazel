@@ -9,7 +9,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/extensions/storage/mysql",
     visibility = ["//visibility:public"],
     deps = [
-        "//entities/storage",
+        "//entities",
         "//extensions/storage",
     ],
 )
