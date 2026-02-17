@@ -406,3 +406,4 @@ bazel clean
 - With `direnv`, you can use `bazel` directly; otherwise use `./tools/bazel`
 - Try `bazel shutdown` (or `./tools/bazel shutdown`) and rebuild
 - The wrapper automatically downloads the correct Bazel version
+# Testing ARH OSS Support
