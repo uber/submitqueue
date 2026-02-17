@@ -3,10 +3,10 @@ load("@rules_go//go:def.bzl", "go_library")
 go_library(
     name = "storage",
     srcs = [
-        "factory.go",
+        "storage.go",
         "request_store.go",
     ],
     importpath = "github.com/uber/submitqueue/extensions/storage",
     visibility = ["//visibility:public"],
-    deps = ["//entities/storage"],
+    deps = ["//entities"],
 )
