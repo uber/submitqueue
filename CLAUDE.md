@@ -48,6 +48,58 @@ The project has both `go.mod` (for Go dependencies) and `MODULE.bazel` (for Baze
 
 ## Architecture
 
+### Core Principles
+
+**Immutability and Eventual Consistency:**
+
+When working with databases and distributed systems, follow these principles:
+
+1. **Immutable Entities**: Prefer immutable data structures. Once created, entities should not be modified in place. Instead, create new versions with updated fields.
+
+2. **Eventual Consistency**: Design for eventual consistency rather than strong consistency. Services should handle:
+   - Stale reads gracefully
+   - Idempotent operations (safe to retry)
+   - Convergence over time
+
+3. **Event Sourcing Pattern**: For critical state changes:
+   - Store events (what happened) rather than just current state
+   - Derive current state from event history
+   - Enables audit trails and replay capabilities
+
+4. **Database Operations**:
+   - Use optimistic locking (version numbers) instead of pessimistic locks
+   - Design schemas for append-only patterns where possible
+   - Avoid in-place updates; prefer creating new records and marking old ones as superseded
+   - Handle concurrent modifications with conflict resolution strategies
+
+5. **Idempotency Keys**: For operations that modify state:
+   - Include unique request IDs
+   - Check for duplicate requests before executing
+   - Return same result for repeated requests with same ID
+
+**Example:**
+```go
+// Immutable entity pattern
+type Request struct {
+    ID        string
+    Version   int       // For optimistic locking
+    Status    Status
+    CreatedAt time.Time
+    UpdatedAt time.Time
+}
+
+// Instead of mutating, create new version
+func (r Request) WithStatus(status Status) Request {
+    return Request{
+        ID:        r.ID,
+        Version:   r.Version + 1,
+        Status:    status,
+        CreatedAt: r.CreatedAt,
+        UpdatedAt: time.Now(),
+    }
+}
+```
+
 ### Service Structure
 
 Each service follows the same layout:
@@ -105,10 +157,12 @@ extensions/
 
 ### Extension Interface Pattern
 
-Each extension defines:
-1. **Factory** interface for creating instances
+Each extension typically defines:
+1. **Factory** interface for creating instances (usually needed, but not always required for simple extensions)
 2. **Core interfaces** for the functionality (e.g., Publisher, Subscriber, RequestStore)
 3. **Implementation directories** under `extensions/{extension}/{impl}/`
+
+**Note on Factories:** Most extensions benefit from a Factory pattern for dependency injection and lifecycle management. However, simpler extensions with straightforward initialization may not require a separate factory interface.
 
 ### Adding New Extension Implementations
 
@@ -155,11 +209,17 @@ extensions/{new_extension}/
 1. Define vendor-agnostic interfaces at `extensions/{new_extension}/`
 2. Document interfaces and usage patterns in README.md
 3. Create first implementation under `extensions/{new_extension}/{impl}/`
-4. Follow the same Factory pattern as queue and storage extensions
+4. Consider whether a Factory pattern is needed for dependency injection and lifecycle management
 
 ## Entities
 
 Entities are domain objects used across the project. They live in the `entities/` directory, organized by domain:
+
+**Note:** Entities are organized hierarchically by domain (queue, storage, workflow, etc.) to maintain clear boundaries and separation of concerns. This organization helps:
+- Group related entities together
+- Make dependencies explicit
+- Scale as the number of entities grows
+- Maintain domain-driven design principles
 
 ```
 entities/
@@ -363,7 +423,7 @@ make test               # Run tests
 1. **Never use WORKSPACE**: This repo uses Bzlmod exclusively
 2. **Commit generated files**: All `*pb.go` files are committed
 3. **Use interfaces for extensions**: Keep implementations swappable
-4. **Follow the Factory pattern**: All extensions use Factory interface
+4. **Factory pattern**: Most extensions use Factory interface for dependency injection, though simple extensions may not require it
 5. **Keep entities pure**: No framework dependencies in entity types
 6. **Test coverage**: Add tests for new functionality
 7. **Update BUILD.bazel**: When adding new Go files, update BUILD.bazel
