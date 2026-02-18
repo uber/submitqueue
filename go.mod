@@ -3,6 +3,7 @@ module github.com/uber/submitqueue
 go 1.24.5
 
 require (
+	github.com/go-sql-driver/mysql v1.9.3
 	github.com/gogo/protobuf v1.3.2
 	github.com/stretchr/testify v1.9.0
 	github.com/uber-go/tally/v4 v4.1.17
@@ -14,6 +15,7 @@ require (
 )
 
 require (
+	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/BurntSushi/toml v1.2.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
