@@ -3,8 +3,8 @@ CREATE TABLE IF NOT EXISTS request (
     seq BIGINT NOT NULL,
     change_source VARCHAR(255) NOT NULL,
     change_ids JSON NOT NULL,
-    land_strategy INT NOT NULL DEFAULT 0,
+    land_strategy INT NOT NULL,
     state INT NOT NULL,
-    version INT NOT NULL DEFAULT 1,
+    version INT NOT NULL,
     PRIMARY KEY (queue, seq)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

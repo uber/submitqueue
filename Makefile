@@ -68,10 +68,10 @@ integration-test:
 	@echo "Running all service integration tests..."
 	@$(BAZEL) test //gateway/integration_tests:integration_tests_test //orchestrator/integration_tests:integration_tests_test //speculator/integration_tests:integration_tests_test --test_output=all
 
-# Run end-to-end tests (requires all services to be running)
+# Run end-to-end integration tests (hermetic, no manual server setup needed)
 e2e-test:
-	@echo "Running end-to-end tests..."
-	@$(BAZEL) test //integration_tests:e2e_test --test_output=all
+	@echo "Running integration tests..."
+	@$(BAZEL) test //integration_tests:integration_test --test_output=all
 
 # Clean generated files and binaries
 clean:
@@ -186,7 +186,9 @@ help:
 	@echo "  make integration-test-orchestrator - Test Orchestrator service"
 	@echo "  make integration-test-speculator   - Test Speculator service"
 	@echo "  make integration-test   - Test all services"
-	@echo "  make e2e-test           - Run end-to-end tests"
+	@echo ""
+	@echo "End-to-End Tests (hermetic, no setup needed):"
+	@echo "  make e2e-test           - Run integration tests with Testcontainers"
 	@echo ""
 	@echo "Run Clients:"
 	@echo "  make run-client-gateway - Run gateway client"
