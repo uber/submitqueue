@@ -9,31 +9,34 @@ import (
 // RequestLandStrategy defines the possible source control integration methods.
 type RequestLandStrategy int
 
+// do not use iota here, as values should be fixed and consistent across versions.
 const (
 	// RequestLandStrategyDefault lets the server decide based on configuration.
 	RequestLandStrategyDefault RequestLandStrategy = 0
 	// RequestLandStrategyRebase rebases commits onto the target branch before landing.
-	RequestLandStrategyRebase = 1
+	RequestLandStrategyRebase RequestLandStrategy = 1
 	// RequestLandStrategySquashRebase squashes commits into a single commit before rebase.
-	RequestLandStrategySquashRebase = 2
+	RequestLandStrategySquashRebase RequestLandStrategy = 2
 	// RequestLandStrategyMerge merges commits into the target branch by creating a separate merge commit, preserving the commit history along with hashes.
-	RequestLandStrategyMerge = 3
+	RequestLandStrategyMerge RequestLandStrategy = 3
 )
 
+// RequestState defines the possible states of a land request.
 type RequestState int
 
 // TODO: define all states
+// do not use iota here, as values should be fixed and consistent across versions.
 const (
 	// RequestStateUnknown is the unreachable state. It is set by default when the structure is initialized. It should never be seen in the system.
 	RequestStateUnknown RequestState = 0
 	// RequestStateNew is the initial state of a land request. It is confirmed by the system but the processing is not started yet.
 	RequestStateNew RequestState = 1
 	// RequestStateProcessing is the state of a land request that is being processed.
-	RequestStateProcessing = 2
+	RequestStateProcessing RequestState = 2
 	// RequestStateLanded is the state of a land request that has been successfully processed and landed. This is the final state.
-	RequestStateLanded = 3
+	RequestStateLanded RequestState = 3
 	// RequestStateError is the state of a land request that has encountered an error. This is the final state.
-	RequestStateError = 4
+	RequestStateError RequestState = 4
 )
 
 // Change represents a set of related code changes identified by one or more IDs from a particular code change provider, like Github Pull Requests.
