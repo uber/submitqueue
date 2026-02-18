@@ -11,5 +11,6 @@ go_library(
     deps = [
         "//entities",
         "//extensions/storage",
+        "@com_github_go_sql_driver_mysql//:mysql",
     ],
 )
