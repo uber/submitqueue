@@ -9,6 +9,8 @@ go_library(
     importpath = "github.com/uber/submitqueue/gateway/controller",
     visibility = ["//visibility:public"],
     deps = [
+        "//entities",
+        "//extensions/storage",
         "//gateway/protopb",
         "@com_github_uber_go_tally_v4//:tally",
         "@org_uber_go_zap//:zap",
@@ -23,6 +25,8 @@ go_test(
     ],
     embed = [":controller"],
     deps = [
+        "//entities",
+        "//extensions/storage",
         "//gateway/protopb",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

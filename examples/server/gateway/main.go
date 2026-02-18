@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/uber-go/tally/v4"
+	"github.com/uber/submitqueue/extensions/storage/mysql"
 	"github.com/uber/submitqueue/gateway/controller"
 	pb "github.com/uber/submitqueue/gateway/protopb"
 	"go.uber.org/zap"
@@ -21,12 +22,18 @@ import (
 // GatewayServer wraps the controller and implements the gRPC service interface
 type GatewayServer struct {
 	pb.UnimplementedSubmitQueueGatewayServer
-	controller *controller.PingController
+	pingController *controller.PingController
+	landController *controller.LandController
 }
 
 // Ping delegates to the controller
 func (s *GatewayServer) Ping(ctx context.Context, req *pb.PingRequest) (*pb.PingResponse, error) {
-	return s.controller.Ping(ctx, req)
+	return s.pingController.Ping(ctx, req)
+}
+
+// Land delegates to the controller
+func (s *GatewayServer) Land(ctx context.Context, req *pb.LandRequest) (*pb.LandResponse, error) {
+	return s.landController.Land(ctx, req)
 }
 
 func main() {
@@ -75,13 +82,31 @@ func run() error {
 		metricsWgDone.Wait()
 	}()
 
+	// Initialize MySQL storage factory
+	mysqlDSN := os.Getenv("MYSQL_DSN")
+	if mysqlDSN == "" {
+		mysqlDSN = "root:root@tcp(localhost:3306)/submitqueue?parseTime=true"
+	}
+	storeFactory, err := mysql.NewFactory(mysql.MySQLParameters{
+		DSN:             mysqlDSN,
+		MaxOpenConns:    10,
+		MaxIdleConns:    5,
+		ConnMaxLifetime: 5 * time.Minute,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create MySQL storage factory: %w", err)
+	}
+	defer storeFactory.Close()
+
 	// Create gRPC server
 	grpcServer := grpc.NewServer()
 
-	// Create ping controller and wrap it for gRPC
+	// Create controllers and wrap them for gRPC
 	pingController := controller.NewPingController(logger, scope)
+	landController := controller.NewLandController(logger, scope, storeFactory)
 	gatewayServer := &GatewayServer{
-		controller: pingController,
+		pingController: pingController,
+		landController: landController,
 	}
 	pb.RegisterSubmitQueueGatewayServer(grpcServer, gatewayServer)
 
