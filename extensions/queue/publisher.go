@@ -1,0 +1,17 @@
+package queue
+
+import (
+	"context"
+
+	"github.com/uber/submitqueue/entities/queue"
+)
+
+// Publisher publishes messages to topics.
+// Implementations must be thread-safe.
+type Publisher interface {
+	// Publish sends a message to the specified topic.
+	Publish(ctx context.Context, topic string, message queue.Message) error
+
+	// Close gracefully shuts down the publisher, flushing pending messages.
+	Close() error
+}
