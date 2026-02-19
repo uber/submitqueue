@@ -33,6 +33,8 @@ use_repo(
     "com_github_go_sql_driver_mysql",
     "com_github_gogo_protobuf",
     "com_github_stretchr_testify",
+    "com_github_testcontainers_testcontainers_go",
+    "com_github_testcontainers_testcontainers_go_modules_mysql",
     "com_github_uber_go_tally_v4",
     "org_golang_google_grpc",
     "org_golang_google_protobuf",

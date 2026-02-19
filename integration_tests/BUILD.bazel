@@ -3,21 +3,31 @@
 load("@rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "e2e_test",
-    srcs = ["ping_test.go"],
-    # End-to-end tests require all servers to be running
-    # They validate the entire system working together
-    tags = [
-        "e2e",
-        "integration",
-        "manual",
+    name = "integration_test",
+    srcs = [
+        "mysql.go",
+        "servers.go",
+        "suite_test.go",
     ],
+    data = [
+        "//extensions/storage/mysql/schema",
+        "//examples/server/gateway",
+        "//examples/server/orchestrator",
+        "//examples/server/speculator",
+    ],
+    tags = ["integration"],
     deps = [
         "//gateway/protopb",
         "//orchestrator/protopb",
         "//speculator/protopb",
+        "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
+        "@com_github_stretchr_testify//suite",
+        "@com_github_testcontainers_testcontainers_go//:testcontainers-go",
+        "@com_github_testcontainers_testcontainers_go//network",
+        "@com_github_testcontainers_testcontainers_go//wait",
+        "@com_github_testcontainers_testcontainers_go_modules_mysql//:mysql",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//credentials/insecure",
     ],
