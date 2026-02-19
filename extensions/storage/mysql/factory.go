@@ -49,11 +49,6 @@ func NewFactory(p MySQLParameters) (storage.StoreFactory, error) {
 		db.SetConnMaxLifetime(p.ConnMaxLifetime)
 	}
 
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to ping MySQL: %w", err)
-	}
-
 	return &factory{
 		db:           db,
 		requestStore: NewRequestStore(db),

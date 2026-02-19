@@ -88,8 +88,11 @@ func run() error {
 	// Register reflection service for debugging with grpcurl
 	reflection.Register(grpcServer)
 
-	// Listen on port 8082
-	port := ":8082"
+	// Listen on configurable port
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = ":8082"
+	}
 	listener, err := net.Listen("tcp", port)
 	if err != nil {
 		return fmt.Errorf("failed to listen on port %s: %w", port, err)

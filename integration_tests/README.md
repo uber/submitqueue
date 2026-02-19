@@ -1,169 +1,83 @@
-# End-to-End Tests
+# Integration Tests
 
-This directory contains end-to-end (e2e) tests for the SubmitQueue system. These tests validate that all services work together correctly as a complete system.
+This directory contains hermetic integration tests for the SubmitQueue system. All infrastructure (MySQL, gRPC servers) is managed automatically via [Testcontainers-Go](https://golang.testcontainers.org/) — no manual setup required.
 
-**Note:** For testing individual services in isolation, see the integration tests in each service's directory:
-- `gateway/integration_tests/` - Gateway service tests
-- `orchestrator/integration_tests/` - Orchestrator service tests
-- `speculator/integration_tests/` - Speculator service tests
+## Architecture
+
+Tests run as a `testify/suite` that manages the full lifecycle:
+
+1. **Docker network** is created for inter-container communication
+2. **MySQL container** starts on the network (alias `mysql`), schema is applied
+3. **Server containers** (gateway, orchestrator, speculator) are built from the actual `go_binary` targets in `examples/server/` and started on the network
+4. **gRPC clients** connect to the mapped host ports
+5. **Tests execute** against the real server binaries
+6. **Cleanup** tears down all containers and the network
+
+All servers listen on port `8080` inside their containers. Docker maps each to a random host port, so there are no port conflicts even when tests run in parallel. The fixed internal port also simplifies inter-service communication on the Docker network — services reach each other at `<alias>:8080` (e.g., `orchestrator:8080`).
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `suite_test.go` | Test suite with `SetupSuite`/`TearDownSuite` and all test methods |
+| `servers.go` | Helpers to build Docker images from server binaries and start containers |
+| `mysql.go` | MySQL container setup, schema application, and test logger |
+| `BUILD.bazel` | Bazel test target with binary and schema data dependencies |
 
 ## Running Tests
 
-### Prerequisites
-
-All servers must be running before executing the tests. Start them in separate terminals or in the background:
-
 ```bash
-# Build everything first
-make build
+# Run with Bazel
+bazel test //integration_tests:integration_test --test_output=all
 
-# Start all servers
-./bin/gateway_server &
-./bin/orchestrator_server &
-./bin/speculator_server &
+# Run with verbose output
+bazel test //integration_tests:integration_test --test_output=all --test_arg=-test.v
+
+# Run with Go (from repo root)
+go test ./integration_tests -v
 ```
 
-### Using Make (Recommended)
+The test target is tagged `integration` (not `manual`), so it is discovered by `bazel test //integration_tests/...`.
 
-```bash
-# Run end-to-end tests (all servers must be running)
-make e2e-test
+## Test Cases
 
-# Run integration tests for individual services
-make integration-test-gateway        # Just Gateway
-make integration-test-orchestrator   # Just Orchestrator
-make integration-test-speculator     # Just Speculator
-make integration-test                # All services
-
-```
-
-### Using Bazel directly
-
-```bash
-# Run end-to-end tests
-./tools/bazel test //integration_tests:e2e_test --test_output=all
-
-# Run individual service integration tests
-./tools/bazel test //gateway/integration_tests:integration_tests_test --test_output=all
-./tools/bazel test //orchestrator/integration_tests:integration_tests_test --test_output=all
-./tools/bazel test //speculator/integration_tests:integration_tests_test --test_output=all
-
-# Run all service integration tests
-./tools/bazel test //gateway/integration_tests:integration_tests_test //orchestrator/integration_tests:integration_tests_test //speculator/integration_tests:integration_tests_test --test_output=all
-
-# The tests are tagged as 'manual' so they won't run with 'bazel test //...'
-# This is intentional since they require servers to be running
-```
-
-## Test Structure
-
-### End-to-End Tests (this directory)
-
-- `TestEndToEndAllServices` - Validates all services are running and responding correctly
-
-### Service Integration Tests (in each service directory)
-
-- `gateway/integration_tests/` - Tests Gateway service in isolation
-- `orchestrator/integration_tests/` - Tests Orchestrator service in isolation
-- `speculator/integration_tests/` - Tests Speculator service in isolation
+- `TestPingGateway` — Ping gateway, assert `service_name="gateway"`
+- `TestPingOrchestrator` — Ping orchestrator, assert `service_name="orchestrator"`
+- `TestPingSpeculator` — Ping speculator, assert `service_name="speculator"`
+- `TestLandRequest` — Send `LandRequest` through gateway gRPC, assert `sqid` is returned
 
 ## Adding New Tests
 
-### 1. Add a test for a new API endpoint in an existing service
-
-Add the test to the service's `integration_tests/` folder (e.g., create `gateway/integration_tests/submit_test.go`):
+Add a method to `IntegrationSuite` in `suite_test.go`:
 
 ```go
-func TestNewMethod(t *testing.T) {
-    addr := getEnvOrDefault("GATEWAY_ADDR", "localhost:8081")
-
-    conn, err := waitForServer(t, addr, serverReadyTimeout)
-    if err != nil {
-        t.Fatalf("Gateway server not ready: %v", err)
-    }
-    defer conn.Close()
-
-    client := pb.NewSubmitQueueGatewayClient(conn)
-    ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
-    defer cancel()
-
-    req := &pb.NewMethodRequest{
-        Field: "value",
-    }
-
-    resp, err := client.NewMethod(ctx, req)
-    if err != nil {
-        t.Fatalf("NewMethod failed: %v", err)
-    }
-
-    // Add your assertions here
+func (s *IntegrationSuite) TestNewEndpoint() {
+    ctx := context.Background()
+    resp, err := s.gatewayClient.NewMethod(ctx, &gatewaypb.NewRequest{...})
+    require.NoError(s.T(), err)
+    assert.Equal(s.T(), "expected", resp.Field)
 }
 ```
 
-### 2. Add integration tests for a new service
+If the servers need to communicate with each other, pass addresses via environment variables in `servers.go`:
 
-1. Create `newservice/integration_tests/` folder
-2. Add test files like `newservice/integration_tests/ping_test.go`
-3. Add `go_test` rule to `newservice/integration_tests/BUILD.bazel`:
-```python
-go_test(
-    name = "integration_tests_test",
-    srcs = ["ping_test.go"],
-    deps = [
-        "//newservice/protopb",
-        "@org_golang_google_grpc//:grpc",
-        "@org_golang_google_grpc//credentials/insecure",
-    ],
-    tags = ["manual", "integration"],
-)
+```go
+_, addr := startServerContainer(ctx, t, log, "gateway", map[string]string{
+    "MYSQL_DSN":         "root:root@tcp(mysql:3306)/submitqueue?parseTime=true",
+    "ORCHESTRATOR_ADDR": "orchestrator:8080",
+    "SPECULATOR_ADDR":   "speculator:8080",
+}, nw)
 ```
-4. Update Makefile to add `integration-test-newservice` target
-5. Update CI workflow to start the new service and run its tests
-
-### 3. Add end-to-end tests
-
-For system-wide tests that involve multiple services, add them to `integration_tests/api_test.go`.
-
-## Environment Variables
-
-Tests support the following environment variables to customize server addresses:
-
-- `GATEWAY_ADDR` - Gateway server address (default: `localhost:8081`)
-- `ORCHESTRATOR_ADDR` - Orchestrator server address (default: `localhost:8082`)
-- `SPECULATOR_ADDR` - Speculator server address (default: `localhost:8083`)
-
-Example with Bazel:
-```bash
-GATEWAY_ADDR=10.0.0.1:8081 ./tools/bazel test //integration_tests:integration_tests --test_output=all
-```
-
-Example with Go:
-```bash
-GATEWAY_ADDR=10.0.0.1:8081 go test ./integration_tests -v
-```
-
-## CI Usage
-
-In GitHub Actions CI, the workflow:
-1. Builds all services
-2. Starts all servers in the background
-3. Runs integration tests
-4. Stops servers
-
-See `.github/workflows/build_and_test.yml` for the full workflow.
 
 ## Troubleshooting
 
-**Tests fail with "connection refused":**
-- Ensure all servers are running
-- Check that servers are listening on the expected ports: `lsof -i :8081`
-- Verify servers are healthy using the clients: `./bin/gateway_client -message test`
+**`$HOME is not defined`** — The Bazel sandbox doesn't set `HOME`. This is handled in `SetupSuite` by setting it to a temp directory.
 
-**Tests timeout:**
-- Servers may be slow to start
-- Increase `serverReadyTimeout` in the test code
-- Check server logs for startup errors
+**Ryuk reaper failure** — The Testcontainers reaper container may fail in Docker-in-Docker environments. This is handled by setting `TESTCONTAINERS_RYUK_DISABLED=true` in `SetupSuite`.
 
-**Import errors:**
-- Run `go mod tidy` to ensure all dependencies are downloaded
-- Regenerate proto files if needed: `make proto`
+**Binary not found** — Ensure the `data` attribute in `BUILD.bazel` includes the server binary targets. Bazel places them in runfiles at `examples/server/<name>/<name>_/<name>`.
+
+## TODO
+
+- [ ] Speed up container setup (pre-built images, parallel container starts, image caching)
+- [ ] Support Tracetest/Jaeger for trace-based assertions

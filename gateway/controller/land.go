@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/uber-go/tally/v4"
+	"github.com/uber/submitqueue/entities"
+	"github.com/uber/submitqueue/extensions/storage"
 	pb "github.com/uber/submitqueue/gateway/protopb"
 	"go.uber.org/zap"
 )
@@ -14,13 +16,15 @@ import (
 type LandController struct {
 	logger       *zap.Logger
 	metricsScope tally.Scope
+	storeFactory storage.StoreFactory
 }
 
 // NewLandController creates a new instance of the gateway land controller
-func NewLandController(logger *zap.Logger, scope tally.Scope) *LandController {
+func NewLandController(logger *zap.Logger, scope tally.Scope, storeFactory storage.StoreFactory) *LandController {
 	return &LandController{
 		logger:       logger,
 		metricsScope: scope,
+		storeFactory: storeFactory,
 	}
 }
 
@@ -33,8 +37,18 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 
 	c.metricsScope.Counter("land_request_count").Inc(1)
 
-	// TODO: Implement proper SQID generation and send the request to the appropriate queue. So far unix time to make it sequential.
-	sqid := fmt.Sprintf("%d", time.Now().Unix())
+	change := entities.Change{
+		Source: req.Change.GetSource(),
+		IDs:    req.Change.GetIds(),
+	}
+	strategy := entities.RequestLandStrategy(int(req.Strategy))
+
+	request, err := c.storeFactory.GetRequestStore().Create(ctx, req.Queue, change, strategy, entities.RequestStateNew)
+	if err != nil {
+		return nil, fmt.Errorf("LandController failed to create request for queue=%s: %w", req.Queue, err)
+	}
+
+	sqid := request.GetID()
 
 	c.logger.Debug("land request received",
 		zap.String("queue", req.Queue),
