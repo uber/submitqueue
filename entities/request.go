@@ -1,10 +1,5 @@
 package entities
 
-import (
-	"fmt"
-	"strconv"
-	"strings"
-)
 
 // RequestLandStrategy defines the possible source control integration methods.
 type RequestLandStrategy string
@@ -52,10 +47,10 @@ type Request struct {
 	// Immutable fields, fixed at request entity creation
 	// ****************
 
+	// ID is the globally unique identifier for the land request. Format: "<queue>/<counter_value>".
+	ID string
 	// Queue is the name of the queue processing the land request. Queue name is defined in the configuration and should be unique within the system.
 	Queue string
-	// Seq is an autoincrementing integer identifier for the land request. It is unique within the queue.
-	Seq int64
 	// Change is a number of code changes (such as pull requests) to land into the target branch. Target branch is defined by the queue configuration.
 	Change Change
 	// LandStrategy is the source control integration strategy to use for this land operation.
@@ -70,28 +65,4 @@ type Request struct {
 	// Version is the version of the object. It is used for optimistic locking.
 	// Versioning starts at 1 and is incremented for each change to the object.
 	Version int32
-}
-
-// GetID returns the globally unique identifier for the land request.
-func (r *Request) GetID() string {
-	return fmt.Sprintf("%s/%d", r.Queue, r.Seq)
-}
-
-// ParseRequestID parses the globally unique identifier for the land request and returns the queue name and sequence number.
-func ParseRequestID(id string) (queue string, seq int64, err error) {
-	parts := strings.Split(id, "/")
-	if len(parts) != 2 {
-		return "", 0, fmt.Errorf("invalid format of the request ID: %s; expected format: <queue>/<seq>", id)
-	}
-
-	seq, err = strconv.ParseInt(parts[1], 10, 64)
-	if err != nil {
-		return "", 0, fmt.Errorf("invalid sequence number in the request ID: %s; expected format: <queue>/<seq>; parsing error: %w", id, err)
-	}
-
-	if seq <= 0 {
-		return "", 0, fmt.Errorf("invalid sequence number in the request ID: %s; expected format: <queue>/<seq>; sequence number must be greater than 0 but got %d", id, seq)
-	}
-
-	return parts[0], seq, nil
 }

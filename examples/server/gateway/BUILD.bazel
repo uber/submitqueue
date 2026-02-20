@@ -6,9 +6,11 @@ go_library(
     importpath = "github.com/uber/submitqueue/examples/server/gateway",
     visibility = ["//visibility:private"],
     deps = [
+        "//extensions/counter/mysql",
         "//extensions/storage/mysql",
         "//gateway/controller",
         "//gateway/protopb",
+        "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_uber_go_tally_v4//:tally",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//reflection",

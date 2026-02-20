@@ -40,40 +40,50 @@ func (l *testLogger) logf(format string, args ...any) {
 	l.t.Logf("[%s%s] "+format, append([]any{now.Format(time.RFC3339Nano), delta}, args...)...)
 }
 
-// schemaDir returns the path to the MySQL schema directory.
+// schemaDirs returns the paths to all schema directories.
 // It checks for both Bazel runfiles and direct go test paths.
-func schemaDir() string {
-	// Bazel runfiles path
-	if dir := os.Getenv("TEST_SRCDIR"); dir != "" {
-		return filepath.Join(dir, os.Getenv("TEST_WORKSPACE"), "extensions/storage/mysql/schema")
+func schemaDirs() []string {
+	dirs := []string{
+		"extensions/storage/mysql/schema",
+		"extensions/counter/mysql/schema",
 	}
-	// Direct go test path (run from repo root)
-	return "extensions/storage/mysql/schema"
+
+	if srcDir := os.Getenv("TEST_SRCDIR"); srcDir != "" {
+		workspace := os.Getenv("TEST_WORKSPACE")
+		result := make([]string, len(dirs))
+		for i, d := range dirs {
+			result[i] = filepath.Join(srcDir, workspace, d)
+		}
+		return result
+	}
+
+	return dirs
 }
 
-// applySchema reads all .sql files from the schema directory and executes them on the database.
+// applySchema reads all .sql files from the schema directories and executes them on the database.
 func applySchema(t *testing.T, log *testLogger, db *sql.DB) {
 	t.Helper()
 
-	dir := schemaDir()
-	files, err := filepath.Glob(filepath.Join(dir, "*.sql"))
-	require.NoError(t, err, "failed to glob schema files")
-	require.NotEmpty(t, files, "no .sql schema files found in %s", dir)
+	for _, dir := range schemaDirs() {
+		files, err := filepath.Glob(filepath.Join(dir, "*.sql"))
+		require.NoError(t, err, "failed to glob schema files in %s", dir)
+		require.NotEmpty(t, files, "no .sql schema files found in %s", dir)
 
-	// Sort files to ensure deterministic schema application order.
-	sort.Strings(files)
+		// Sort files to ensure deterministic schema application order.
+		sort.Strings(files)
 
-	for _, f := range files {
-		name := filepath.Base(f)
-		log.logf("Applying schema: %s", name)
+		for _, f := range files {
+			name := filepath.Base(f)
+			log.logf("Applying schema: %s", name)
 
-		content, err := os.ReadFile(f)
-		require.NoError(t, err, "failed to read schema file %s", name)
+			content, err := os.ReadFile(f)
+			require.NoError(t, err, "failed to read schema file %s", name)
 
-		_, err = db.ExecContext(context.Background(), string(content))
-		require.NoError(t, err, "failed to execute schema file %s", name)
+			_, err = db.ExecContext(context.Background(), string(content))
+			require.NoError(t, err, "failed to execute schema file %s", name)
 
-		log.logf("Schema applied: %s", name)
+			log.logf("Schema applied: %s", name)
+		}
 	}
 }
 

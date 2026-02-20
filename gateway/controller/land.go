@@ -7,6 +7,7 @@ import (
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/entities"
+	"github.com/uber/submitqueue/extensions/counter"
 	"github.com/uber/submitqueue/extensions/storage"
 	pb "github.com/uber/submitqueue/gateway/protopb"
 	"go.uber.org/zap"
@@ -17,14 +18,16 @@ type LandController struct {
 	logger       *zap.Logger
 	metricsScope tally.Scope
 	storeFactory storage.StoreFactory
+	counter      counter.Counter
 }
 
 // NewLandController creates a new instance of the gateway land controller
-func NewLandController(logger *zap.Logger, scope tally.Scope, storeFactory storage.StoreFactory) *LandController {
+func NewLandController(logger *zap.Logger, scope tally.Scope, storeFactory storage.StoreFactory, counter counter.Counter) *LandController {
 	return &LandController{
 		logger:       logger,
 		metricsScope: scope,
 		storeFactory: storeFactory,
+		counter:      counter,
 	}
 }
 
@@ -51,20 +54,32 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 		return nil, fmt.Errorf("LandController failed to map strategy for queue=%s: %w", req.Queue, err)
 	}
 
-	request, err := c.storeFactory.GetRequestStore().Create(ctx, queue, change, strategy, entities.RequestStateNew)
+	// Generate a globally unique request ID for the land request.
+	seq, err := c.counter.Next(ctx, "request/"+queue)
 	if err != nil {
+		return nil, fmt.Errorf("LandController failed to generate request ID for queue=%s: %w", queue, err)
+	}
+
+	request := entities.Request{
+		ID:           fmt.Sprintf("%s/%d", queue, seq),
+		Queue:        queue,
+		Change:       change,
+		LandStrategy: strategy,
+		State:        entities.RequestStateNew,
+		Version:      1,
+	}
+
+	if err := c.storeFactory.GetRequestStore().Create(ctx, request); err != nil {
 		return nil, fmt.Errorf("LandController failed to create request for queue=%s: %w", req.Queue, err)
 	}
 
-	sqid := request.GetID()
-
 	c.logger.Debug("land request received",
 		zap.String("queue", req.Queue),
-		zap.String("sqid", sqid),
+		zap.String("sqid", request.ID),
 	)
 
 	return &pb.LandResponse{
-		Sqid: sqid,
+		Sqid: request.ID,
 	}, nil
 }
 

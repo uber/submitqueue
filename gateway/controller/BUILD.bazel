@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//entities",
+        "//extensions/counter",
         "//extensions/storage",
         "//gateway/protopb",
         "@com_github_uber_go_tally_v4//:tally",

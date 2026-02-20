@@ -10,6 +10,7 @@ go_test(
         "suite_test.go",
     ],
     data = [
+        "//extensions/counter/mysql/schema",
         "//extensions/storage/mysql/schema",
         "//examples/server/gateway",
         "//examples/server/orchestrator",

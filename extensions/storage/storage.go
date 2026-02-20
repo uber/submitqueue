@@ -16,6 +16,9 @@ func WrapNotFound(err error) error {
 	return fmt.Errorf("%w: %w", ErrNotFound, err)
 }
 
+// ErrAlreadyExists is returned by storage implementations when attempting to create a record with an ID that already exists.
+var ErrAlreadyExists = errors.New("record already exists")
+
 // ErrVersionMismatch is returned by storage implementations when the expected entity version does not match the current version of the object.
 // This is used to implement an optimistic locking mechanism, allowing multiple clients to update the same entity concurrently
 // and either retry or implement idempotent operations.

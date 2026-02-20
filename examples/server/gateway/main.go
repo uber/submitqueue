@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net"
 	"os"
@@ -10,7 +11,9 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally/v4"
+	mysqlcounter "github.com/uber/submitqueue/extensions/counter/mysql"
 	"github.com/uber/submitqueue/extensions/storage/mysql"
 	"github.com/uber/submitqueue/gateway/controller"
 	pb "github.com/uber/submitqueue/gateway/protopb"
@@ -98,12 +101,20 @@ func run() error {
 	}
 	defer storeFactory.Close()
 
+	// Initialize MySQL counter
+	counterDB, err := sql.Open("mysql", mysqlDSN)
+	if err != nil {
+		return fmt.Errorf("failed to open MySQL connection for counter: %w", err)
+	}
+	defer counterDB.Close()
+	cnt := mysqlcounter.NewCounter(counterDB)
+
 	// Create gRPC server
 	grpcServer := grpc.NewServer()
 
 	// Create controllers and wrap them for gRPC
 	pingController := controller.NewPingController(logger, scope)
-	landController := controller.NewLandController(logger, scope, storeFactory)
+	landController := controller.NewLandController(logger, scope, storeFactory, cnt)
 	gatewayServer := &GatewayServer{
 		pingController: pingController,
 		landController: landController,

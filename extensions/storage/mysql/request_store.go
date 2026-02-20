@@ -13,8 +13,6 @@ import (
 	"github.com/uber/submitqueue/extensions/storage"
 )
 
-const maxCreateRetries = 1000
-
 type requestStore struct {
 	db *sql.DB
 }
@@ -26,18 +24,13 @@ func NewRequestStore(db *sql.DB) storage.RequestStore {
 
 // Get retrieves a land request by ID. Returns ErrNotFound if the request is not found.
 func (r *requestStore) Get(ctx context.Context, id string) (entities.Request, error) {
-	queue, seq, err := entities.ParseRequestID(id)
-	if err != nil {
-		return entities.Request{}, fmt.Errorf("failed to parse request ID %s: %w", id, err)
-	}
-
 	var req entities.Request
 	var changeIDsJSON []byte
 
-	err = r.db.QueryRowContext(ctx,
-		"SELECT queue, seq, change_source, change_ids, land_strategy, state, version FROM request WHERE queue = ? AND seq = ?",
-		queue, seq,
-	).Scan(&req.Queue, &req.Seq, &req.Change.Source, &changeIDsJSON, &req.LandStrategy, &req.State, &req.Version)
+	err := r.db.QueryRowContext(ctx,
+		"SELECT id, queue, change_source, change_ids, land_strategy, state, version FROM request WHERE id = ?",
+		id,
+	).Scan(&req.ID, &req.Queue, &req.Change.Source, &changeIDsJSON, &req.LandStrategy, &req.State, &req.Version)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return entities.Request{}, storage.WrapNotFound(err)
@@ -53,89 +46,56 @@ func (r *requestStore) Get(ctx context.Context, id string) (entities.Request, er
 	return req, nil
 }
 
-// Create creates a new land request. Returns the created request object with generated sequence number.
-// It uses optimistic locking: obtains the current max sequence number, attempts to insert with seq+1,
-// and retries with an incremented sequence number on primary key conflict.
-func (r *requestStore) Create(ctx context.Context, queue string, change entities.Change, strategy entities.RequestLandStrategy, state entities.RequestState) (entities.Request, error) {
-	changeIDsJSON, err := json.Marshal(change.IDs)
+// Create creates a new land request. The request must have a unique ID already assigned. Returns ErrAlreadyExists if the request ID already exists.
+func (r *requestStore) Create(ctx context.Context, request entities.Request) error {
+	changeIDsJSON, err := json.Marshal(request.Change.IDs)
 	if err != nil {
-		return entities.Request{}, fmt.Errorf("failed to marshal change IDs=%v queue=%s for Create request entity: %w", change.IDs, queue, err)
+		return fmt.Errorf("failed to marshal change IDs=%v id=%s for Create request entity: %w", request.Change.IDs, request.ID, err)
 	}
 
-	var seq int64
-	err = r.db.QueryRowContext(ctx,
-		"SELECT COALESCE(MAX(seq), 0) + 1 FROM request WHERE queue = ?",
-		queue,
-	).Scan(&seq)
+	_, err = r.db.ExecContext(ctx,
+		"INSERT INTO request (id, queue, change_source, change_ids, land_strategy, state, version) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		request.ID, request.Queue, request.Change.Source, changeIDsJSON, request.LandStrategy, request.State, request.Version,
+	)
 	if err != nil {
-		return entities.Request{}, fmt.Errorf("failed to get next sequence number for queue=%s: %w", queue, err)
-	}
-
-	// Version always start from 1 as per protocol.
-	version := int32(1)
-
-	// retry up to maxCreateRetries times to insert the request entity, incrementing the sequence number on primary key conflict
-	for attempt := 0; attempt < maxCreateRetries; attempt++ {
-		_, err = r.db.ExecContext(ctx,
-			"INSERT INTO request (queue, seq, change_source, change_ids, land_strategy, state, version) VALUES (?, ?, ?, ?, ?, ?, ?)",
-			queue, seq, change.Source, changeIDsJSON, strategy, state, version,
-		)
-		if err == nil {
-			return entities.Request{
-				Queue:        queue,
-				Seq:          seq,
-				Change:       change,
-				LandStrategy: strategy,
-				State:        state,
-				Version:      version,
-			}, nil
-		}
-
-		// if the error is a MySQL primary key conflict error, increment the sequence number and retry
-		// It relies on MySQL-specific error code 1062 for primary key conflict. Hopefully this will not change in the future.
 		var mysqlErr *mysql.MySQLError
 		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
-			seq++
-			continue
+			// MySQL error code 1062 is "Duplicate entry". Hopefully it will never change with new versions of MySQL.
+			// Also it requires to have a single unique index on the table.
+			return fmt.Errorf("request entity id=%s: %w", request.ID, storage.ErrAlreadyExists)
 		}
-
-		return entities.Request{}, fmt.Errorf("failed to insert request entity queue=%s seq=%d: %w", queue, seq, err)
+		return fmt.Errorf("failed to insert request entity id=%s: %w", request.ID, err)
 	}
 
-	return entities.Request{}, fmt.Errorf("failed to insert request entity queue=%s change=%v: exceeded %d retry attempts due to primary key conflicts", queue, change, maxCreateRetries)
+	return nil
 }
 
 // UpdateState updates the state of a land request if the current version matches the expected version. If versions do not match, returns ErrVersionMismatch.
 // The implementation increments the version by 1 atomically with the state update.
 func (r *requestStore) UpdateState(ctx context.Context, id string, version int32, newState entities.RequestState) error {
-	queue, seq, err := entities.ParseRequestID(id)
-	if err != nil {
-		return fmt.Errorf("failed to parse request ID=%q: %w", id, err)
-	}
-
 	result, err := r.db.ExecContext(ctx,
-		"UPDATE request SET state = ?, version = version + 1 WHERE queue = ? AND seq = ? AND version = ?",
-		newState, queue, seq, version,
+		"UPDATE request SET state = ?, version = version + 1 WHERE id = ? AND version = ?",
+		newState, id, version,
 	)
 	if err != nil {
 		return fmt.Errorf(
-			"failed to update request state for queue=%q seq=%d version=%d newState=%v: %w",
-			queue, seq, version, newState, err,
+			"failed to update request state for id=%q version=%d newState=%v: %w",
+			id, version, newState, err,
 		)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf(
-			"failed to get rows affected from update for queue=%q seq=%d version=%d newState=%v: %w",
-			queue, seq, version, newState, err,
+			"failed to get rows affected from update for id=%q version=%d newState=%v: %w",
+			id, version, newState, err,
 		)
 	}
 
 	if rowsAffected != 1 {
 		return fmt.Errorf(
-			"version mismatch for request update: queue=%q seq=%d expected_version=%d newState=%v: %w",
-			queue, seq, version, newState, storage.ErrVersionMismatch,
+			"version mismatch for request update: id=%q expected_version=%d newState=%v: %w",
+			id, version, newState, storage.ErrVersionMismatch,
 		)
 	}
 

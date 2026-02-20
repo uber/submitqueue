@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS counter (
+    domain VARCHAR(255) NOT NULL,
+    value BIGINT NOT NULL,
+    PRIMARY KEY (domain)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
