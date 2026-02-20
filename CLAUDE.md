@@ -35,16 +35,14 @@ bazel run //examples/server/gateway:gateway
 
 # Run tests
 bazel test //...
+
+# Run tests with verbose output
+bazel test //... --test_output=all --test_arg=-v
 ```
 
-### Go Module
+### Dependency Management
 
-The project has both `go.mod` (for Go dependencies) and `MODULE.bazel` (for Bazel). Dependencies are:
-- **YARPC**: Uber's RPC framework
-- **gRPC**: Standard gRPC
-- **Zap**: Structured logging
-- **Tally**: Metrics collection
-- **Protobuf**: Protocol buffers
+The project has both `go.mod` (for Go dependencies) and `MODULE.bazel` (for Bazel)
 
 ## Architecture
 
@@ -71,6 +69,7 @@ When working with databases and distributed systems, follow these principles:
    - Design schemas for append-only patterns where possible
    - Avoid in-place updates; prefer creating new records and marking old ones as superseded
    - Handle concurrent modifications with conflict resolution strategies
+   - Avoid transactions in favor of optimistic concurrency and retries
 
 5. **Idempotency Keys**: For operations that modify state:
    - Include unique request IDs
@@ -84,8 +83,8 @@ type Request struct {
     ID        string
     Version   int       // For optimistic locking
     Status    Status
-    CreatedAt time.Time
-    UpdatedAt time.Time
+    CreatedAt int64
+    UpdatedAt int64
 }
 
 // Instead of mutating, create new version
@@ -95,7 +94,7 @@ func (r Request) WithStatus(status Status) Request {
         Version:   r.Version + 1,
         Status:    status,
         CreatedAt: r.CreatedAt,
-        UpdatedAt: time.Now(),
+        UpdatedAt: time.Now().UnixMilli(),
     }
 }
 ```
@@ -215,11 +214,7 @@ extensions/{new_extension}/
 
 Entities are domain objects used across the project. They live in the `entities/` directory, organized by domain:
 
-**Note:** Entities are organized hierarchically by domain (queue, storage, workflow, etc.) to maintain clear boundaries and separation of concerns. This organization helps:
-- Group related entities together
-- Make dependencies explicit
-- Scale as the number of entities grows
-- Maintain domain-driven design principles
+**Note:** Entities are organized hierarchically by domain (queue, storage, workflow, etc.) to maintain clear boundaries and separation of concerns.
 
 ```
 entities/
@@ -249,9 +244,14 @@ entities/{domain}/
 **Guidelines:**
 1. Group entities by domain (queue, storage, workflow, etc.)
 2. Keep entities pure and framework-agnostic
-3. Add corresponding tests
-4. Update BUILD.bazel with go_library and go_test targets
-5. Import entities using: `github.com/uber/submitqueue/entities/{domain}`
+3. Prefer timestamps (int64 as Unix epoch milliseconds) over `time.Time` objects
+4. Prefer using entities as value types and not references
+5. Every field should have a comment explaining the meaning of it
+6. If needed, entity object should reference another entity object by ID (as int or string) and not reference directly
+7. When entity field is a enum, prefer string enums with clear name
+8. When designing enums, prefer to assign sentinels ("" for strings or 0 for ints) to unreachable enum types for application logic flow control
+9. Update BUILD.bazel with go_library and go_test targets
+10. Import entities using: `github.com/uber/submitqueue/entities/{domain}`
 
 **Examples:**
 - Queue entities: `entities/queue/message.go`, `entities/queue/delivery.go`
@@ -417,6 +417,12 @@ make test               # Run tests
 - Entities: `{entity}.go`
 - Tests: `{file}_test.go`
 - BUILD files: Always `BUILD.bazel`
+
+## Testing Guidelines
+
+1. **Avoid asserting on error messages**: Assert on error type if it is a part of the contract, or assert generic error otherwise.
+2. **Avoid blocking operations for synchronization**: Do not use `time.Sleep` or similar blocking operations to synchronize state. Design the tested routine to signal back (e.g., via channels, callbacks, or condition variables).
+3. **Use testify assertions**: Use `stretchr/assert` or `require` instead of `t.Fatal()`.
 
 ## Important Notes
 
