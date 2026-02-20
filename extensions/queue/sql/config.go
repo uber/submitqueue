@@ -6,7 +6,7 @@ import (
 )
 
 // Config holds configuration for SQL-based queue.
-// DB connection, logger, and metrics are passed separately to NewFactory.
+// DB connection, logger, and metrics are passed separately to NewQueue.
 type Config struct {
 	// ConsumerGroup identifies this consumer for offset tracking (required)
 	ConsumerGroup string
