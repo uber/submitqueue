@@ -19,6 +19,7 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, 10*time.Second, cfg.LeaseRenewalInterval)
 	assert.Equal(t, 30*time.Second, cfg.LeaseDuration)
 	assert.True(t, cfg.DLQ.Enabled)
+	assert.Equal(t, "_dlq", cfg.DLQ.TopicSuffix)
 	assert.Equal(t, 3, cfg.Retry.MaxAttempts)
 	assert.Equal(t, 1*time.Second, cfg.Retry.InitialBackoff)
 	assert.Equal(t, 30*time.Second, cfg.Retry.MaxBackoff)
@@ -91,6 +92,42 @@ func TestConfigValidation(t *testing.T) {
 				Retry:                DefaultConfig("dummy", "dummy").Retry,
 			},
 			expectError: true,
+		},
+		{
+			name: "DLQ enabled without topic suffix",
+			config: Config{
+				ConsumerGroup:        "test",
+				WorkerID:             "test-worker",
+				PollInterval:         100 * time.Millisecond,
+				BatchSize:            10,
+				VisibilityTimeout:    60 * time.Second,
+				LeaseRenewalInterval: 10 * time.Second,
+				LeaseDuration:        30 * time.Second,
+				Retry:                DefaultConfig("dummy", "dummy").Retry,
+				DLQ: DLQConfig{
+					Enabled:     true,
+					TopicSuffix: "", // Missing suffix
+				},
+			},
+			expectError: true,
+		},
+		{
+			name: "DLQ disabled without topic suffix - valid",
+			config: Config{
+				ConsumerGroup:        "test",
+				WorkerID:             "test-worker",
+				PollInterval:         100 * time.Millisecond,
+				BatchSize:            10,
+				VisibilityTimeout:    60 * time.Second,
+				LeaseRenewalInterval: 10 * time.Second,
+				LeaseDuration:        30 * time.Second,
+				Retry:                DefaultConfig("dummy", "dummy").Retry,
+				DLQ: DLQConfig{
+					Enabled:     false,
+					TopicSuffix: "", // Suffix not required when disabled
+				},
+			},
+			expectError: false,
 		},
 	}
 

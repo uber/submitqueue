@@ -32,6 +32,14 @@ type messageRow struct {
 	RetryCount int
 	// PublishedAt is the Unix timestamp in milliseconds when message was published
 	PublishedAt int64
+	// FailedAt is the Unix timestamp in milliseconds when the message failed (0 for normal messages, >0 for DLQ)
+	FailedAt int64
+	// FailureCount tracks total failures before moving to DLQ (0 for normal messages, >0 for DLQ)
+	FailureCount int
+	// LastError contains the error message from the final failure ("" for normal messages)
+	LastError string
+	// OriginalTopic is the topic where the message originally failed ("" for normal messages)
+	OriginalTopic string
 }
 
 // messageStore handles message table operations (internal use only)
@@ -48,6 +56,7 @@ type messageStore interface {
 	FetchByOffset(ctx context.Context, topic string, partitionKey string, currentOffset int64, limit int) ([]messageRow, error)
 
 	// MoveToDLQ moves a message to the dead letter queue
+	// The DLQ topic is automatically constructed from the original topic plus the configured DLQ suffix
 	MoveToDLQ(ctx context.Context, topic string, messageID string, failureCount int, lastError string) error
 
 	// SetVisibilityTimeout sets the invisible_until timestamp for a message

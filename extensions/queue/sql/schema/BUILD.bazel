@@ -1,7 +1,6 @@
 filegroup(
     name = "schema",
     srcs = [
-        "queue_dlq.sql",
         "queue_messages.sql",
         "queue_offsets.sql",
         "queue_partition_leases.sql",

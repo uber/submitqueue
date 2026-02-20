@@ -163,8 +163,7 @@ func TestPublisher_PublishAfterClose(t *testing.T) {
 	require.NoError(t, err)
 
 	// Try to publish after close
-	msg := queue.NewMessage("msg1", []byte("payload"))
-	msg.PartitionKey = "part1"
+	msg := queue.NewMessage("msg1", []byte("payload"), "part1", nil)
 	err = pub.Publish(ctx, "test_topic", msg)
 	require.Error(t, err)
 }
@@ -253,8 +252,7 @@ func TestValidateTopicName(t *testing.T) {
 
 			// Try to publish with this topic name
 			ctx := context.Background()
-			msg := queue.NewMessage("msg1", []byte("test"))
-			msg.PartitionKey = "part1"
+			msg := queue.NewMessage("msg1", []byte("test"), "part1", nil)
 
 			if !tt.wantErr {
 				mockStore.EXPECT().Insert(gomock.Any(), tt.topicName, gomock.Any()).Return(nil).Times(1)
@@ -348,8 +346,7 @@ func TestPublisher_PublishContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	msg := queue.NewMessage("msg1", []byte("payload"))
-	msg.PartitionKey = "part1"
+	msg := queue.NewMessage("msg1", []byte("payload"), "part1", nil)
 
 	// Should fail with context cancelled error
 	err := pub.Publish(ctx, "test_topic", msg)

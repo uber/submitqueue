@@ -27,15 +27,19 @@ type Message struct {
 	PublishedAt int64
 }
 
-// NewMessage creates a new message with the given ID and payload.
-// Metadata is initialized as an empty map.
+// NewMessage creates a new message with the given ID, payload, partition key, and metadata.
+// If metadata is nil, it will be initialized as an empty map.
 // PublishedAt is set to the current time.
-func NewMessage(id string, payload []byte) Message {
+func NewMessage(id string, payload []byte, partitionKey string, metadata map[string]string) Message {
+	if metadata == nil {
+		metadata = make(map[string]string)
+	}
 	return Message{
-		ID:          id,
-		Payload:     payload,
-		Metadata:    make(map[string]string),
-		PublishedAt: time.Now().UnixMilli(),
+		ID:           id,
+		Payload:      payload,
+		PartitionKey: partitionKey,
+		Metadata:     metadata,
+		PublishedAt:  time.Now().UnixMilli(),
 	}
 }
 

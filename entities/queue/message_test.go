@@ -11,19 +11,18 @@ func TestNewMessage(t *testing.T) {
 	id := "test-id"
 	payload := []byte("test payload")
 
-	msg := NewMessage(id, payload)
+	msg := NewMessage(id, payload, "", nil)
 
 	assert.Equal(t, id, msg.ID)
 	assert.Equal(t, payload, msg.Payload)
+	assert.Empty(t, msg.PartitionKey)
 	assert.NotNil(t, msg.Metadata)
 	assert.Empty(t, msg.Metadata)
 	assert.NotZero(t, msg.PublishedAt)
 }
 
 func TestMessage_Copy(t *testing.T) {
-	original := NewMessage("id-123", []byte("payload"))
-	original.Metadata["key"] = "value"
-	original.PartitionKey = "partition-1"
+	original := NewMessage("id-123", []byte("payload"), "partition-1", map[string]string{"key": "value"})
 
 	copied := original.Copy()
 
@@ -44,7 +43,7 @@ func TestMessage_Copy(t *testing.T) {
 }
 
 func TestMessage_Copy_EmptyPayload(t *testing.T) {
-	original := NewMessage("id", []byte{})
+	original := NewMessage("id", []byte{}, "", nil)
 	copied := original.Copy()
 
 	assert.NotNil(t, copied.Payload)
@@ -53,16 +52,16 @@ func TestMessage_Copy_EmptyPayload(t *testing.T) {
 }
 
 func TestMessage_Fields(t *testing.T) {
-	msg := NewMessage("id-123", []byte("payload"))
+	msg := NewMessage("id-123", []byte("payload"), "user-123", map[string]string{
+		"trace-id": "xyz",
+		"source":   "gateway",
+	})
 
 	// Test metadata
-	msg.Metadata["trace-id"] = "xyz"
-	msg.Metadata["source"] = "gateway"
 	assert.Equal(t, "xyz", msg.Metadata["trace-id"])
 	assert.Equal(t, "gateway", msg.Metadata["source"])
 
 	// Test partition key
-	msg.PartitionKey = "user-123"
 	assert.Equal(t, "user-123", msg.PartitionKey)
 
 	// Test PublishedAt can be overridden

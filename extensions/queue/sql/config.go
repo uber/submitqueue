@@ -60,6 +60,10 @@ type RetryConfig struct {
 type DLQConfig struct {
 	// Enabled enables dead letter queue
 	Enabled bool
+
+	// TopicSuffix is appended to the original topic name to create the DLQ topic
+	// For example, if original topic is "orders" and suffix is "_dlq", DLQ topic will be "orders_dlq"
+	TopicSuffix string
 }
 
 // DefaultConfig returns a Config with sensible defaults
@@ -79,7 +83,8 @@ func DefaultConfig(consumerGroup, workerID string) Config {
 			BackoffMultiplier: 2.0,
 		},
 		DLQ: DLQConfig{
-			Enabled: true,
+			Enabled:     true,
+			TopicSuffix: "_dlq",
 		},
 	}
 }
@@ -121,6 +126,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Retry.BackoffMultiplier < 1.0 {
 		return fmt.Errorf("Retry.BackoffMultiplier must be >= 1.0")
+	}
+	if c.DLQ.Enabled && c.DLQ.TopicSuffix == "" {
+		return fmt.Errorf("DLQ.TopicSuffix is required when DLQ is enabled")
 	}
 	return nil
 }
