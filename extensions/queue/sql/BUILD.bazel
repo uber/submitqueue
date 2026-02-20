@@ -4,8 +4,12 @@ go_library(
     name = "sql",
     srcs = [
         "config.go",
+        "constants.go",
         "errors.go",
+        "message_store.go",
         "mock_stores.go",
+        "offset_store.go",
+        "partition_lease_store.go",
         "publisher.go",
         "stores.go",
         "subscriber.go",
@@ -26,6 +30,9 @@ go_test(
     name = "sql_test",
     srcs = [
         "config_test.go",
+        "message_store_test.go",
+        "offset_store_test.go",
+        "partition_lease_store_test.go",
         "publisher_test.go",
         "subscriber_test.go",
     ],
@@ -33,6 +40,7 @@ go_test(
     deps = [
         "//entities/queue",
         "//extensions/queue",
+        "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_uber_go_tally_v4//:tally",

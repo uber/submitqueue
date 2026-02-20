@@ -8,6 +8,14 @@ import (
 	"github.com/uber/submitqueue/entities/queue"
 )
 
+const (
+	// Fixed table names for single-table design
+	MessagesTableName        = "queue_messages"
+	PartitionLeasesTableName = "queue_partition_leases"
+	OffsetsTableName         = "queue_offsets"
+	DLQTableName             = "queue_dlq"
+)
+
 // messageRow represents a row from the messages table (internal use only)
 type messageRow struct {
 	// Offset is the auto-incrementing sequence number for message ordering within a partition
