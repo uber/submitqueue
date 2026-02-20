@@ -41,9 +41,17 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 		Source: req.Change.GetSource(),
 		IDs:    req.Change.GetIds(),
 	}
-	strategy := entities.RequestLandStrategy(int(req.Strategy))
 
-	request, err := c.storeFactory.GetRequestStore().Create(ctx, req.Queue, change, strategy, entities.RequestStateNew)
+	// TODO: validate that queue is configured. Return error if not.
+	queue := req.Queue
+
+	// TODO: pass default queue land strategy to resolver function to process a default.
+	strategy, err := resolveRequestLandStrategy(req.Strategy)
+	if err != nil {
+		return nil, fmt.Errorf("LandController failed to map strategy for queue=%s: %w", req.Queue, err)
+	}
+
+	request, err := c.storeFactory.GetRequestStore().Create(ctx, queue, change, strategy, entities.RequestStateNew)
 	if err != nil {
 		return nil, fmt.Errorf("LandController failed to create request for queue=%s: %w", req.Queue, err)
 	}
@@ -58,4 +66,21 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 	return &pb.LandResponse{
 		Sqid: sqid,
 	}, nil
+}
+
+// protoStrategyToEntity maps a proto Strategy enum to the entity RequestLandStrategy.
+func resolveRequestLandStrategy(s pb.Strategy) (entities.RequestLandStrategy, error) {
+	switch s {
+	case pb.Strategy_DEFAULT:
+		// TODO: resolve default strategy based on queue configuration
+		return entities.RequestLandStrategyRebase, nil
+	case pb.Strategy_REBASE:
+		return entities.RequestLandStrategyRebase, nil
+	case pb.Strategy_SQUASH_REBASE:
+		return entities.RequestLandStrategySquashRebase, nil
+	case pb.Strategy_MERGE:
+		return entities.RequestLandStrategyMerge, nil
+	default:
+		return entities.RequestLandStrategyUnknown, fmt.Errorf("unknown proto strategy: %v", s)
+	}
 }

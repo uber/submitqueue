@@ -120,7 +120,7 @@ func (s *IntegrationSuite) TestLandRequest() {
 	req := &gatewaypb.LandRequest{
 		Queue:    "integration-test-queue",
 		Change:   &gatewaypb.Change{Source: "github", Ids: []string{"pr-100", "pr-101"}},
-		Strategy: gatewaypb.Strategy_STRATEGY_REBASE,
+		Strategy: gatewaypb.Strategy_REBASE,
 	}
 
 	s.log.logf("Sending Land request for queue=%s", req.Queue)

@@ -26,28 +26,28 @@ type Strategy int32
 
 const (
 	// Default strategy (let server decide based on configuration)
-	Strategy_STRATEGY_DEFAULT Strategy = 0
+	Strategy_DEFAULT Strategy = 0
 	// Rebase commits onto target branch before landing
-	Strategy_STRATEGY_REBASE Strategy = 1
+	Strategy_REBASE Strategy = 1
 	// Same as REBASE but squash commits into a single commit before rebase
-	Strategy_STRATEGY_SQUASH_REBASE Strategy = 2
+	Strategy_SQUASH_REBASE Strategy = 2
 	// Merge commits into the target branch by creating a separate merge commit, preserving the commit history along with hashes
-	Strategy_STRATEGY_MERGE Strategy = 3
+	Strategy_MERGE Strategy = 3
 )
 
 // Enum value maps for Strategy.
 var (
 	Strategy_name = map[int32]string{
-		0: "STRATEGY_DEFAULT",
-		1: "STRATEGY_REBASE",
-		2: "STRATEGY_SQUASH_REBASE",
-		3: "STRATEGY_MERGE",
+		0: "DEFAULT",
+		1: "REBASE",
+		2: "SQUASH_REBASE",
+		3: "MERGE",
 	}
 	Strategy_value = map[string]int32{
-		"STRATEGY_DEFAULT":       0,
-		"STRATEGY_REBASE":        1,
-		"STRATEGY_SQUASH_REBASE": 2,
-		"STRATEGY_MERGE":         3,
+		"DEFAULT":       0,
+		"REBASE":        1,
+		"SQUASH_REBASE": 2,
+		"MERGE":         3,
 	}
 )
 
@@ -315,7 +315,7 @@ func (x *LandRequest) GetStrategy() Strategy {
 	if x != nil {
 		return x.Strategy
 	}
-	return Strategy_STRATEGY_DEFAULT
+	return Strategy_DEFAULT
 }
 
 // LandResponse defines the response to a land request.
@@ -490,12 +490,13 @@ const file_gateway_proto_rawDesc = "" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"l\n" +
 	"\x16UnrecognizedQueueError\x12<\n" +
 	"\x05error\x18\x01 \x01(\v2&.uber.devexp.submitqueue.gateway.ErrorR\x05error\x12\x14\n" +
-	"\x05queue\x18\x02 \x01(\tR\x05queue*e\n" +
-	"\bStrategy\x12\x14\n" +
-	"\x10STRATEGY_DEFAULT\x10\x00\x12\x13\n" +
-	"\x0fSTRATEGY_REBASE\x10\x01\x12\x1a\n" +
-	"\x16STRATEGY_SQUASH_REBASE\x10\x02\x12\x12\n" +
-	"\x0eSTRATEGY_MERGE\x10\x032\xe2\x01\n" +
+	"\x05queue\x18\x02 \x01(\tR\x05queue*A\n" +
+	"\bStrategy\x12\v\n" +
+	"\aDEFAULT\x10\x00\x12\n" +
+	"\n" +
+	"\x06REBASE\x10\x01\x12\x11\n" +
+	"\rSQUASH_REBASE\x10\x02\x12\t\n" +
+	"\x05MERGE\x10\x032\xe2\x01\n" +
 	"\x12SubmitQueueGateway\x12e\n" +
 	"\x04Ping\x12,.uber.devexp.submitqueue.gateway.PingRequest\x1a-.uber.devexp.submitqueue.gateway.PingResponse\"\x00\x12e\n" +
 	"\x04Land\x12,.uber.devexp.submitqueue.gateway.LandRequest\x1a-.uber.devexp.submitqueue.gateway.LandResponse\"\x00Bb\n" +

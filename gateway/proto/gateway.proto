@@ -32,13 +32,13 @@ message PingResponse {
 // Strategy defines the possible source control integration methods
 enum Strategy {
     // Default strategy (let server decide based on configuration)
-    STRATEGY_DEFAULT = 0;
+    DEFAULT = 0;
     // Rebase commits onto target branch before landing
-    STRATEGY_REBASE = 1;
+    REBASE = 1;
     // Same as REBASE but squash commits into a single commit before rebase
-    STRATEGY_SQUASH_REBASE = 2;
+    SQUASH_REBASE = 2;
     // Merge commits into the target branch by creating a separate merge commit, preserving the commit history along with hashes
-    STRATEGY_MERGE = 3;
+    MERGE = 3;
 }
 
 // Change represents a set of related code changes identified by one or more IDs from a particular code change provider, like Github Pull Requests.

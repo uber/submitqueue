@@ -7,36 +7,33 @@ import (
 )
 
 // RequestLandStrategy defines the possible source control integration methods.
-type RequestLandStrategy int
+type RequestLandStrategy string
 
-// do not use iota here, as values should be fixed and consistent across versions.
 const (
-	// RequestLandStrategyDefault lets the server decide based on configuration.
-	RequestLandStrategyDefault RequestLandStrategy = 0
+	// RequestLandStrategyUnknown is the unknown strategy. It is set by default when the structure is initialized. It should never be seen in the system and used for error control.
+	RequestLandStrategyUnknown RequestLandStrategy = ""
 	// RequestLandStrategyRebase rebases commits onto the target branch before landing.
-	RequestLandStrategyRebase RequestLandStrategy = 1
-	// RequestLandStrategySquashRebase squashes commits into a single commit before rebase.
-	RequestLandStrategySquashRebase RequestLandStrategy = 2
+	RequestLandStrategyRebase RequestLandStrategy = "rebase"
+	// RequestLandStrategySquashRebase squashes commits into a single commit before rebasing on top of the target branch.
+	RequestLandStrategySquashRebase RequestLandStrategy = "squash_rebase"
 	// RequestLandStrategyMerge merges commits into the target branch by creating a separate merge commit, preserving the commit history along with hashes.
-	RequestLandStrategyMerge RequestLandStrategy = 3
+	RequestLandStrategyMerge RequestLandStrategy = "merge"
 )
 
 // RequestState defines the possible states of a land request.
-type RequestState int
+type RequestState string
 
-// TODO: define all states
-// do not use iota here, as values should be fixed and consistent across versions.
 const (
 	// RequestStateUnknown is the unreachable state. It is set by default when the structure is initialized. It should never be seen in the system.
-	RequestStateUnknown RequestState = 0
+	RequestStateUnknown RequestState = ""
 	// RequestStateNew is the initial state of a land request. It is confirmed by the system but the processing is not started yet.
-	RequestStateNew RequestState = 1
+	RequestStateNew RequestState = "new"
 	// RequestStateProcessing is the state of a land request that is being processed.
-	RequestStateProcessing RequestState = 2
+	RequestStateProcessing RequestState = "processing"
 	// RequestStateLanded is the state of a land request that has been successfully processed and landed. This is the final state.
-	RequestStateLanded RequestState = 3
+	RequestStateLanded RequestState = "landed"
 	// RequestStateError is the state of a land request that has encountered an error. This is the final state.
-	RequestStateError RequestState = 4
+	RequestStateError RequestState = "error"
 )
 
 // Change represents a set of related code changes identified by one or more IDs from a particular code change provider, like Github Pull Requests.
@@ -61,7 +58,7 @@ type Request struct {
 	Seq int64
 	// Change is a number of code changes (such as pull requests) to land into the target branch. Target branch is defined by the queue configuration.
 	Change Change
-	// LandStrategy is the source control integration strategy to use for this land operation. If not specified, the default queue strategy is used.
+	// LandStrategy is the source control integration strategy to use for this land operation.
 	LandStrategy RequestLandStrategy
 
 	// ****************

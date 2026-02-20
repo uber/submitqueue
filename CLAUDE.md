@@ -37,7 +37,7 @@ bazel run //examples/server/gateway:gateway
 bazel test //...
 
 # Run tests with verbose output
-bazel test //... --test_output=all --test_arg=-v
+bazel test //... --test_output=all --test_arg=-test.v
 ```
 
 ### Dependency Management

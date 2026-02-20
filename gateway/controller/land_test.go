@@ -106,7 +106,7 @@ func TestLand_PassesCorrectParametersToStore(t *testing.T) {
 	req := &pb.LandRequest{
 		Queue:    "my-queue",
 		Change:   &pb.Change{Source: "github", Ids: []string{"pr-1", "pr-2"}},
-		Strategy: pb.Strategy_STRATEGY_REBASE,
+		Strategy: pb.Strategy_REBASE,
 	}
 	resp, err := controller.Land(ctx, req)
 
