@@ -2,17 +2,37 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "sql",
-    srcs = ["config.go"],
+    srcs = [
+        "config.go",
+        "mock_stores.go",
+        "publisher.go",
+        "stores.go",
+        "validation.go",
+    ],
     importpath = "github.com/uber/submitqueue/extensions/queue/sql",
     visibility = ["//visibility:public"],
+    deps = [
+        "//entities/queue",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_mock//gomock",
+        "@org_uber_go_zap//:zap",
+    ],
 )
 
 go_test(
     name = "sql_test",
-    srcs = ["config_test.go"],
+    srcs = [
+        "config_test.go",
+        "publisher_test.go",
+    ],
     embed = [":sql"],
     deps = [
+        "//entities/queue",
+        "//extensions/queue",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_mock//gomock",
+        "@org_uber_go_zap//zaptest",
     ],
 )
