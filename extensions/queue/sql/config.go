@@ -5,14 +5,6 @@ import (
 	"time"
 )
 
-const (
-	// Fixed table names for single-table design
-	MessagesTableName        = "queue_messages"
-	PartitionLeasesTableName = "queue_partition_leases"
-	OffsetsTableName         = "queue_offsets"
-	DLQTableName             = "queue_dlq"
-)
-
 // Config holds configuration for SQL-based queue.
 // DB connection, logger, and metrics are passed separately to NewFactory.
 type Config struct {

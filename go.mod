@@ -10,6 +10,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/mysql v0.40.0
 	github.com/uber-go/tally/v4 v4.1.17
 	go.uber.org/fx v1.22.0
+	go.uber.org/mock v0.6.0
 	go.uber.org/yarpc v1.81.0
 	go.uber.org/zap v1.27.1
 	google.golang.org/grpc v1.68.1

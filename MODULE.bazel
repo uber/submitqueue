@@ -39,6 +39,7 @@ use_repo(
     "org_golang_google_grpc",
     "org_golang_google_protobuf",
     "org_uber_go_fx",
+    "org_uber_go_mock",
     "org_uber_go_yarpc",
     "org_uber_go_zap",
 )
