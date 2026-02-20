@@ -1,82 +1,17 @@
 # SubmitQueue Repository Guide for Claude
 
-## Overview
+## Key Concepts
 
-SubmitQueue is a distributed system for managing code submission workflows. The project follows clean architecture principles with three main services:
-
-- **Gateway** (port 8081): Entry point for external requests
-- **Orchestrator** (port 8082): Coordinates job execution
-- **Speculator** (port 8083): Performs speculative builds
-
-## Build System
-
-### Bazel with Bzlmod
-
-This repository uses **Bazel 8.4.1** with **Bzlmod** (NOT WORKSPACE) for dependency management.
-
-- **Version pinning**: `.bazelversion` pins Bazel to 8.4.1
-- **Dependencies**: Managed in `MODULE.bazel` (NOT in a WORKSPACE file)
-- **Go version**: 1.24.5 (defined in MODULE.bazel)
-- **Bazel wrapper**: `./tools/bazel` (Python-based Bazelisk wrapper)
-- **direnv**: When enabled via `.envrc`, use `bazel` directly; otherwise use `./tools/bazel`
-
-### Key Bazel Commands
-
-```bash
-# Build everything
-bazel build //...
-
-# Build specific service
-bazel build //gateway/protopb
-bazel build //examples/server/gateway:gateway
-
-# Run a service
-bazel run //examples/server/gateway:gateway
-
-# Run tests
-bazel test //...
-
-# Run tests with verbose output
-bazel test //... --test_output=all --test_arg=-test.v
-```
-
-### Dependency Management
-
-The project has both `go.mod` (for Go dependencies) and `MODULE.bazel` (for Bazel)
-
-## Architecture
-
-### Core Principles
+SubmitQueue is a distributed system for managing code submission workflows. It follows clean architecture with interface-driven extensibility.
 
 **Immutability and Eventual Consistency:**
 
-When working with databases and distributed systems, follow these principles:
+1. **Immutable entities** — once created, don't modify in place. Create new versions with updated fields.
+2. **Eventual consistency** — handle stale reads, idempotent operations, and convergence over time.
+3. **Event sourcing** — store events (what happened) rather than just current state for critical changes.
+4. **Optimistic locking** — use version numbers instead of pessimistic locks. Avoid transactions; prefer optimistic concurrency and retries.
+5. **Idempotency keys** — include unique request IDs, check for duplicates before executing.
 
-1. **Immutable Entities**: Prefer immutable data structures. Once created, entities should not be modified in place. Instead, create new versions with updated fields.
-
-2. **Eventual Consistency**: Design for eventual consistency rather than strong consistency. Services should handle:
-   - Stale reads gracefully
-   - Idempotent operations (safe to retry)
-   - Convergence over time
-
-3. **Event Sourcing Pattern**: For critical state changes:
-   - Store events (what happened) rather than just current state
-   - Derive current state from event history
-   - Enables audit trails and replay capabilities
-
-4. **Database Operations**:
-   - Use optimistic locking (version numbers) instead of pessimistic locks
-   - Design schemas for append-only patterns where possible
-   - Avoid in-place updates; prefer creating new records and marking old ones as superseded
-   - Handle concurrent modifications with conflict resolution strategies
-   - Avoid transactions in favor of optimistic concurrency and retries
-
-5. **Idempotency Keys**: For operations that modify state:
-   - Include unique request IDs
-   - Check for duplicate requests before executing
-   - Return same result for repeated requests with same ID
-
-**Example:**
 ```go
 // Immutable entity pattern
 type Request struct {
@@ -99,294 +34,73 @@ func (r Request) WithStatus(status Status) Request {
 }
 ```
 
-### Service Structure
+## Architecture
 
-Each service follows the same layout:
+### Services
+
+Three services, each following the same layout:
+
+- **Gateway** (port 8081): Entry point for external requests
+- **Orchestrator** (port 8082): Coordinates job execution
+- **Speculator** (port 8083): Performs speculative builds
 
 ```
 <service>/
 ├── controller/          # Business logic (pure, transport-agnostic)
-│   ├── BUILD.bazel
-│   └── *.go            # Controller implementations
-├── proto/              # Proto definitions (.proto files)
-│   ├── BUILD.bazel
-│   └── *.proto
-├── protopb/            # Generated proto code (committed to repo)
-│   ├── BUILD.bazel
-│   ├── *.pb.go         # Standard protobuf
-│   ├── *_grpc.pb.go    # gRPC service code
-│   └── *.pb.yarpc.go   # YARPC service code
-└── integration_tests/  # Integration tests
+├── proto/               # Proto definitions (.proto files)
+├── protopb/             # Generated proto code (committed to repo)
+└── integration_tests/
 ```
 
-**Key principle**: Controllers contain pure business logic and are independent of transport layer (gRPC/YARPC).
+### Controllers
 
-### Proto File Generation
+Controllers contain pure business logic, independent of the transport layer (gRPC/YARPC). They live in `{service}/controller/` and are wired up in `examples/server/{service}/main.go`.
 
-All generated proto files are **committed to the repository**. When modifying `.proto` files:
+### Entities
 
-1. Edit the `.proto` file
-2. Run `make proto` to regenerate all three file types:
-   - `*.pb.go` (protobuf code)
-   - `*_grpc.pb.go` (gRPC service code)
-   - `*.pb.yarpc.go` (YARPC service code)
-3. Update controller implementations if needed
-4. Commit all generated files
-
-## Extension System
-
-Extensions are **vendor-agnostic, pluggable interfaces** for different backend implementations. This is a core architectural pattern in the repository.
-
-### Current Extensions
-
-```
-extensions/
-├── queue/              # Messaging queue abstraction
-│   ├── queue.go        # Factory interface
-│   ├── publisher.go    # Publisher interface
-│   ├── subscriber.go   # Subscriber interface
-│   └── README.md       # Documentation
-└── storage/            # Storage abstraction
-    ├── factory.go      # Factory interface
-    ├── request_store.go # RequestStore interface
-    └── mysql/          # MySQL implementation
-        ├── factory.go
-        └── request_store.go
-```
-
-### Extension Interface Pattern
-
-Each extension typically defines:
-1. **Factory** interface for creating instances (usually needed, but not always required for simple extensions)
-2. **Core interfaces** for the functionality (e.g., Publisher, Subscriber, RequestStore)
-3. **Implementation directories** under `extensions/{extension}/{impl}/`
-
-**Note on Factories:** Most extensions benefit from a Factory pattern for dependency injection and lifecycle management. However, simpler extensions with straightforward initialization may not require a separate factory interface.
-
-### Adding New Extension Implementations
-
-When implementing a new backend for an existing extension:
-
-**Structure:**
-```
-extensions/{extension}/{impl}/
-├── BUILD.bazel
-├── factory.go          # Implements Factory interface
-└── {interface}.go      # Implements core interfaces
-```
-
-**Examples:**
-- Queue implementations: `extensions/queue/sql/`, `extensions/queue/kafka/`
-- Storage implementations: `extensions/storage/postgres/`, `extensions/storage/cassandra/`
-
-**Steps:**
-1. Create `extensions/{extension}/{impl}/` directory
-2. Implement the Factory interface from `extensions/{extension}/`
-3. Implement all required interfaces (Publisher/Subscriber for queue, RequestStore for storage)
-4. Add BUILD.bazel with appropriate go_library target
-5. Map domain entities to/from backend format
-6. Wire up lifecycle methods (Close, Ack/Nack, etc.)
-
-### Adding New Extension Types
-
-When adding a completely new extension category (e.g., cache, auth, etc.):
-
-**Structure:**
-```
-extensions/{new_extension}/
-├── BUILD.bazel
-├── README.md           # Document the interfaces and usage
-├── factory.go          # Factory interface
-├── {interface}.go      # Core interfaces
-└── {first_impl}/       # First implementation
-    ├── BUILD.bazel
-    ├── factory.go
-    └── {interface}.go
-```
-
-**Pattern to follow:**
-1. Define vendor-agnostic interfaces at `extensions/{new_extension}/`
-2. Document interfaces and usage patterns in README.md
-3. Create first implementation under `extensions/{new_extension}/{impl}/`
-4. Consider whether a Factory pattern is needed for dependency injection and lifecycle management
-
-## Entities
-
-Entities are domain objects used across the project. They live in the `entities/` directory, organized by domain:
-
-**Note:** Entities are organized hierarchically by domain (queue, storage, workflow, etc.) to maintain clear boundaries and separation of concerns.
+Domain objects in `entities/`, organized by domain. Top-level entities live directly in `entities/`; domain-specific ones go in subdirectories.
 
 ```
 entities/
-├── queue/              # Queue domain entities
-│   ├── BUILD.bazel
-│   ├── message.go      # Message entity
-│   ├── message_test.go
-│   ├── delivery.go     # Delivery entity
-│   └── delivery_test.go
-└── storage/            # Storage domain entities
-    ├── BUILD.bazel
-    └── land_request.go # LandRequest entity
+├── request.go           # Request, Change, enums (RequestState, RequestLandStrategy)
+└── queue/
+    └── message.go       # Message entity
 ```
 
-### Adding New Entities
+**Entity guidelines:**
+1. Keep entities pure and framework-agnostic — no external dependencies
+2. Use value types, not references
+3. Prefer `int64` Unix epoch milliseconds over `time.Time`
+4. Every field must have a comment explaining its meaning
+5. Reference other entities by ID (string or int), not directly
+6. Use string enums with clear names; assign sentinel values (`""` for strings, `0` for ints) to unreachable/unknown enum variants
 
-When adding new domain entities:
+### Extensions
 
-**Structure:**
-```
-entities/{domain}/
-├── BUILD.bazel
-├── {entity}.go
-└── {entity}_test.go
-```
-
-**Guidelines:**
-1. Group entities by domain (queue, storage, workflow, etc.)
-2. Keep entities pure and framework-agnostic
-3. Prefer timestamps (int64 as Unix epoch milliseconds) over `time.Time` objects
-4. Prefer using entities as value types and not references
-5. Every field should have a comment explaining the meaning of it
-6. If needed, entity object should reference another entity object by ID (as int or string) and not reference directly
-7. When entity field is a enum, prefer string enums with clear name
-8. When designing enums, prefer to assign sentinels ("" for strings or 0 for ints) to unreachable enum types for application logic flow control
-9. Update BUILD.bazel with go_library and go_test targets
-10. Import entities using: `github.com/uber/submitqueue/entities/{domain}`
-
-**Examples:**
-- Queue entities: `entities/queue/message.go`, `entities/queue/delivery.go`
-- Storage entities: `entities/storage/land_request.go`
-- New workflow entity: `entities/workflow/job.go`
-
-## Directory Structure
+Extensions are **vendor-agnostic, pluggable interfaces** for backend implementations. Each defines interfaces at the top level with implementations in subdirectories.
 
 ```
-submitqueue/
-├── MODULE.bazel              # Bzlmod dependencies
-├── go.mod                    # Go module dependencies
-├── BUILD.bazel              # Root build configuration
-├── Makefile                 # Build automation
-├── .bazelversion            # Bazel version (8.4.1)
-├── .envrc                   # direnv configuration
-│
-├── tools/                   # Bazel tooling
-│   └── bazel               # Bazelisk wrapper
-│
-├── gateway/                # Gateway service
-│   ├── controller/         # Business logic
-│   ├── proto/              # Proto definitions
-│   ├── protopb/            # Generated proto code
-│   └── integration_tests/
-│
-├── orchestrator/           # Orchestrator service
-│   ├── controller/
-│   ├── proto/
-│   ├── protopb/
-│   └── integration_tests/
-│
-├── speculator/             # Speculator service
-│   ├── controller/
-│   ├── proto/
-│   ├── protopb/
-│   └── integration_tests/
-│
-├── extensions/             # Pluggable backend implementations
-│   ├── queue/              # Queue abstraction
-│   │   └── {impl}/         # Implementation (sql, kafka, etc.)
-│   └── storage/            # Storage abstraction
-│       └── {impl}/         # Implementation (mysql, postgres, etc.)
-│
-├── entities/               # Domain entities
-│   ├── queue/              # Queue entities
-│   └── storage/            # Storage entities
-│
-├── examples/               # Example implementations
-│   ├── server/             # Server examples
-│   │   ├── gateway/
-│   │   ├── orchestrator/
-│   │   └── speculator/
-│   └── client/             # Client examples
-│       ├── gateway/
-│       ├── orchestrator/
-│       └── speculator/
-│
-├── integration_tests/      # Cross-service integration tests
-├── docs/                   # Documentation
-│   ├── architecture/       # Architecture docs
-│   └── designs/            # Design documents
-└── bin/                    # Compiled binaries (gitignored)
+extensions/
+├── counter/             # Atomic sequential number generation
+│   ├── counter.go       # Counter interface
+│   └── mysql/           # MySQL implementation
+├── queue/               # Messaging queue abstraction
+│   ├── queue.go         # Queue (factory) interface
+│   ├── publisher.go     # Publisher interface
+│   ├── subscriber.go    # Subscriber interface
+│   ├── delivery.go      # Delivery interface
+│   └── sql/             # SQL (MySQL) implementation
+└── storage/             # Storage abstraction
+    ├── storage.go       # StoreFactory interface + sentinel errors
+    ├── request_store.go # RequestStore interface
+    └── mysql/           # MySQL implementation
 ```
 
-## Development Workflow
-
-### Making Changes
-
-**1. Modifying Proto Files:**
-```bash
-# Edit proto file
-vim gateway/proto/gateway.proto
-
-# Regenerate proto code
-make proto
-
-# Update controller implementation
-vim gateway/controller/*.go
-
-# Rebuild
-make build
-```
-
-**2. Adding New RPC Method:**
-1. Update proto file with new method
-2. Run `make proto`
-3. Create controller in `{service}/controller/`
-4. Wire up controller in `examples/server/{service}/main.go`
-5. Test with client
-
-**3. Adding New Extension Implementation:**
-1. Create `extensions/{extension}/{impl}/` directory
-2. Implement Factory and core interfaces
-3. Add BUILD.bazel
-4. Add tests
-5. Document in extension's README.md
-
-**4. Adding New Entity:**
-1. Create `entities/{domain}/{entity}.go`
-2. Add corresponding test file
-3. Update BUILD.bazel
-4. Use entity in extensions/controllers as needed
-
-### Testing
-
-```bash
-# Build everything
-make build
-
-# Run a service
-make run-gateway
-
-# Test with client (in another terminal)
-make run-client-gateway MESSAGE="hello"
-
-# Use grpcurl for manual testing
-grpcurl -plaintext -d '{"message": "hello"}' \
-  localhost:8081 uber.devexp.submitqueue.gateway.SubmitQueueGateway/Ping
-```
-
-### Common Make Targets
-
-```bash
-make build              # Build all services
-make proto              # Regenerate proto files
-make run-gateway        # Run gateway service
-make run-orchestrator   # Run orchestrator service
-make run-speculator     # Run speculator service
-make clean              # Remove binaries
-make clean-proto        # Remove generated proto files
-make test               # Run tests
-```
-
-## Key Conventions
+**Extension pattern:**
+1. Define vendor-agnostic interfaces at `extensions/{extension}/`
+2. Implementations go in `extensions/{extension}/{impl}/`
+3. Most extensions use a Factory interface for dependency injection and lifecycle management
+4. Include a README.md documenting interfaces and usage
 
 ### Import Paths
 
@@ -396,19 +110,51 @@ make test               # Run tests
 - Extension impl: `github.com/uber/submitqueue/extensions/{extension}/{impl}`
 - Entities: `github.com/uber/submitqueue/entities/{domain}`
 
-### Code Organization
+## Development
 
-1. **Separation of Concerns**: Controllers are pure business logic, independent of transport
-2. **Interface-Driven**: Extensions define interfaces, implementations live in subdirectories
-3. **Generated Code Committed**: All proto-generated files are committed to repo
-4. **Build Files**: Every Go package has a BUILD.bazel file
-5. **Testing**: Each package should have corresponding tests
+### Directory Structure
 
-### Dependencies
+```
+submitqueue/
+├── MODULE.bazel              # Bzlmod dependencies
+├── go.mod                    # Go module dependencies
+├── BUILD.bazel               # Root build configuration
+├── Makefile                  # Build automation
+├── .bazelversion             # Pinned Bazel version
+├── .envrc                    # direnv configuration
+├── tools/bazel               # Bazelisk wrapper
+├── gateway/                  # Gateway service
+├── orchestrator/             # Orchestrator service
+├── speculator/               # Speculator service
+├── extensions/               # Pluggable backend implementations
+├── entities/                 # Domain entities
+├── examples/                 # Server and client examples
+│   ├── server/{service}/
+│   └── client/{service}/
+├── integration_tests/        # Cross-service hermetic tests (Testcontainers)
+├── docs/                     # Documentation
+└── bin/                      # Compiled binaries (gitignored)
+```
 
-- **External dependencies**: Add to both `go.mod` AND `MODULE.bazel`
-- **Internal dependencies**: Reference via import paths and Bazel deps
-- **Proto dependencies**: Defined in BUILD.bazel files
+### Build System
+
+This repository uses **Bazel with Bzlmod** (NOT WORKSPACE) for dependency management.
+
+- **Version pinning**: `.bazelversion` pins the Bazel version
+- **Dependencies**: Managed in `MODULE.bazel` (NOT a WORKSPACE file)
+- **Go version**: Defined in `go.mod`, read by `MODULE.bazel` via `go_sdk.from_file()`
+- **Bazel wrapper**: `./tools/bazel` (Bazelisk wrapper). With direnv (`.envrc`), use `bazel` directly.
+- **External dependencies**: Must be added to both `go.mod` AND `MODULE.bazel`
+- **BUILD files**: Every Go package must have a `BUILD.bazel` file
+
+### Proto Generation
+
+All generated proto files are **committed to the repository**. When modifying `.proto` files:
+
+1. Edit the `.proto` file in `{service}/proto/`
+2. Run `make proto` to regenerate all three file types: `*.pb.go`, `*_grpc.pb.go`, `*.pb.yarpc.go`
+3. Update controller implementations if needed
+4. Commit all generated files
 
 ### File Naming
 
@@ -418,42 +164,43 @@ make test               # Run tests
 - Tests: `{file}_test.go`
 - BUILD files: Always `BUILD.bazel`
 
-## Testing Guidelines
+### Common Make Targets
 
-1. **Avoid asserting on error messages**: Assert on error type if it is a part of the contract, or assert generic error otherwise.
-2. **Avoid blocking operations for synchronization**: Do not use `time.Sleep` or similar blocking operations to synchronize state. Design the tested routine to signal back (e.g., via channels, callbacks, or condition variables).
-3. **Use testify assertions**: Use `stretchr/assert` or `require` instead of `t.Fatal()`.
+```bash
+make build                    # Build all services
+make proto                    # Regenerate proto files
+make test                     # Run unit tests
+make integration-test         # Run service integration tests
+make e2e-test                 # Run hermetic tests with Testcontainers
+make run-gateway              # Run gateway (port 8081)
+make run-orchestrator         # Run orchestrator (port 8082)
+make run-speculator           # Run speculator (port 8083)
+make run-client-gateway       # Run gateway client
+make gazelle                  # Update BUILD.bazel files
+make clean                    # Remove binaries and Bazel cache
+make clean-proto              # Remove generated proto files
+```
 
-## Important Notes
+### Common Workflows
 
-1. **Never use WORKSPACE**: This repo uses Bzlmod exclusively
-2. **Commit generated files**: All `*pb.go` files are committed
-3. **Use interfaces for extensions**: Keep implementations swappable
-4. **Factory pattern**: Most extensions use Factory interface for dependency injection, though simple extensions may not require it
-5. **Keep entities pure**: No framework dependencies in entity types
-6. **Test coverage**: Add tests for new functionality
-7. **Update BUILD.bazel**: When adding new Go files, update BUILD.bazel
-
-## Quick Reference
-
-**Add new service method:**
+**Add new RPC method:**
 1. Edit `{service}/proto/*.proto`
-2. Run `make proto`
+2. `make proto`
 3. Add controller in `{service}/controller/`
 4. Wire up in `examples/server/{service}/main.go`
 
 **Add new extension implementation:**
-1. Create `extensions/{extension}/{impl}/`
-2. Implement Factory and interfaces
-3. Add BUILD.bazel
-4. Document usage
+1. Create `extensions/{extension}/{impl}/` directory
+2. Implement factory and core interfaces
+3. Add `BUILD.bazel`
+4. Add tests and document in README.md
 
 **Add new entity:**
-1. Create `entities/{domain}/{entity}.go`
-2. Add test file
-3. Update BUILD.bazel
+1. Create `entities/{domain}/{entity}.go` with test file
+2. Add `BUILD.bazel` with `go_library` and `go_test` targets
 
-**Run/test locally:**
-1. `make run-{service}` to start service
-2. `make run-client-{service}` to test
-3. Or use `grpcurl` for ad-hoc testing
+### Testing Guidelines
+
+1. **Avoid asserting on error messages** — assert on error type if it is part of the contract, or assert generic error otherwise.
+2. **Avoid blocking operations for synchronization** — do not use `time.Sleep`. Design the tested routine to signal back (channels, callbacks, condition variables).
+3. **Use testify assertions** — use `stretchr/assert` or `require` instead of `t.Fatal()`.
