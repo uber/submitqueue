@@ -4,15 +4,18 @@ go_library(
     name = "sql",
     srcs = [
         "config.go",
+        "errors.go",
         "mock_stores.go",
         "publisher.go",
         "stores.go",
+        "subscriber.go",
         "validation.go",
     ],
     importpath = "github.com/uber/submitqueue/extensions/queue/sql",
     visibility = ["//visibility:public"],
     deps = [
         "//entities/queue",
+        "//extensions/queue",
         "@com_github_uber_go_tally_v4//:tally",
         "@org_uber_go_mock//gomock",
         "@org_uber_go_zap//:zap",
@@ -24,6 +27,7 @@ go_test(
     srcs = [
         "config_test.go",
         "publisher_test.go",
+        "subscriber_test.go",
     ],
     embed = [":sql"],
     deps = [

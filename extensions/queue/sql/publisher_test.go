@@ -17,7 +17,7 @@ import (
 
 const fixedTimestamp = int64(1234567890000) // Fixed timestamp for test repeatability
 
-func setupPublisherTest(t *testing.T, mockStore *MockMessageStore) extqueue.Publisher {
+func setupPublisherTest(t *testing.T, mockStore *MockmessageStore) extqueue.Publisher {
 	t.Helper()
 
 	config := DefaultConfig("test-consumer", "test-worker")
@@ -35,7 +35,7 @@ func TestPublisher_Publish(t *testing.T) {
 		topic     string
 		messages  []queue.Message
 		wantErr   bool
-		setupMock func(*MockMessageStore)
+		setupMock func(*MockmessageStore)
 	}{
 		{
 			name:  "publish single message",
@@ -44,7 +44,7 @@ func TestPublisher_Publish(t *testing.T) {
 				{ID: "msg1", Payload: []byte("payload1"), PartitionKey: "part1", PublishedAt: fixedTimestamp},
 			},
 			wantErr: false,
-			setupMock: func(m *MockMessageStore) {
+			setupMock: func(m *MockmessageStore) {
 				m.EXPECT().Insert(gomock.Any(), "test_topic", gomock.Any()).Return(nil).Times(1)
 			},
 		},
@@ -57,7 +57,7 @@ func TestPublisher_Publish(t *testing.T) {
 				{ID: "msg3", Payload: []byte("p3"), PartitionKey: "part2", PublishedAt: fixedTimestamp},
 			},
 			wantErr: false,
-			setupMock: func(m *MockMessageStore) {
+			setupMock: func(m *MockmessageStore) {
 				m.EXPECT().Insert(gomock.Any(), "multi_topic", gomock.Any()).Return(nil).Times(3)
 			},
 		},
@@ -66,7 +66,7 @@ func TestPublisher_Publish(t *testing.T) {
 			topic:    "empty_topic",
 			messages: []queue.Message{},
 			wantErr:  false,
-			setupMock: func(m *MockMessageStore) {
+			setupMock: func(m *MockmessageStore) {
 				// No Insert expected
 			},
 		},
@@ -83,7 +83,7 @@ func TestPublisher_Publish(t *testing.T) {
 				},
 			},
 			wantErr: false,
-			setupMock: func(m *MockMessageStore) {
+			setupMock: func(m *MockmessageStore) {
 				m.EXPECT().Insert(gomock.Any(), "metadata_topic", gomock.Any()).Return(nil).Times(1)
 			},
 		},
@@ -94,7 +94,7 @@ func TestPublisher_Publish(t *testing.T) {
 				{ID: "msg1", Payload: []byte("p"), PartitionKey: "part1", PublishedAt: fixedTimestamp},
 			},
 			wantErr: true,
-			setupMock: func(m *MockMessageStore) {
+			setupMock: func(m *MockmessageStore) {
 				// No Insert expected since validation fails
 			},
 		},
@@ -105,7 +105,7 @@ func TestPublisher_Publish(t *testing.T) {
 				{ID: "msg1", Payload: []byte("p"), PartitionKey: "part1", PublishedAt: fixedTimestamp},
 			},
 			wantErr: true,
-			setupMock: func(m *MockMessageStore) {
+			setupMock: func(m *MockmessageStore) {
 				// No Insert expected since validation fails
 			},
 		},
@@ -116,7 +116,7 @@ func TestPublisher_Publish(t *testing.T) {
 				{ID: "msg1", Payload: []byte("p"), PartitionKey: "part1", PublishedAt: fixedTimestamp},
 			},
 			wantErr: true,
-			setupMock: func(m *MockMessageStore) {
+			setupMock: func(m *MockmessageStore) {
 				// No Insert expected since validation fails
 			},
 		},
@@ -127,7 +127,7 @@ func TestPublisher_Publish(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			defer ctrl.Finish()
 
-			mockStore := NewMockMessageStore(ctrl)
+			mockStore := NewMockmessageStore(ctrl)
 			tt.setupMock(mockStore)
 
 			pub := setupPublisherTest(t, mockStore)
@@ -153,7 +153,7 @@ func TestPublisher_PublishAfterClose(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	mockStore := NewMockMessageStore(ctrl)
+	mockStore := NewMockmessageStore(ctrl)
 	pub := setupPublisherTest(t, mockStore)
 
 	ctx := context.Background()
@@ -173,7 +173,7 @@ func TestPublisher_Close(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	mockStore := NewMockMessageStore(ctrl)
+	mockStore := NewMockmessageStore(ctrl)
 	pub := setupPublisherTest(t, mockStore)
 
 	// Close should succeed
@@ -248,7 +248,7 @@ func TestValidateTopicName(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			defer ctrl.Finish()
 
-			mockStore := NewMockMessageStore(ctrl)
+			mockStore := NewMockmessageStore(ctrl)
 			pub := setupPublisherTest(t, mockStore)
 
 			// Try to publish with this topic name
@@ -274,7 +274,7 @@ func TestPublisher_PublishMetrics(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	mockStore := NewMockMessageStore(ctrl)
+	mockStore := NewMockmessageStore(ctrl)
 	mockStore.EXPECT().Insert(gomock.Any(), "metrics_test", gomock.Any()).Return(nil).Times(2)
 
 	pub := setupPublisherTest(t, mockStore)
@@ -304,7 +304,7 @@ func TestPublisher_ConcurrentPublish(t *testing.T) {
 	const numGoroutines = 10
 	const messagesPerGoroutine = 5
 
-	mockStore := NewMockMessageStore(ctrl)
+	mockStore := NewMockmessageStore(ctrl)
 	mockStore.EXPECT().Insert(gomock.Any(), "concurrent_topic", gomock.Any()).Return(nil).Times(numGoroutines * messagesPerGoroutine)
 
 	pub := setupPublisherTest(t, mockStore)
@@ -339,7 +339,7 @@ func TestPublisher_PublishContextCancellation(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	mockStore := NewMockMessageStore(ctrl)
+	mockStore := NewMockmessageStore(ctrl)
 	mockStore.EXPECT().Insert(gomock.Any(), "test_topic", gomock.Any()).Return(context.Canceled).Times(1)
 
 	pub := setupPublisherTest(t, mockStore)

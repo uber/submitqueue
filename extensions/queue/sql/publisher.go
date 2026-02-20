@@ -15,13 +15,13 @@ type publisher struct {
 	config       Config
 	logger       *zap.SugaredLogger
 	metrics      tally.Scope
-	messageStore MessageStore
+	messageStore messageStore
 	mu           sync.RWMutex
 	closed       bool
 }
 
 // NewPublisher creates a publisher with the given configuration and dependencies
-func NewPublisher(config Config, logger *zap.SugaredLogger, metrics tally.Scope, messageStore MessageStore) *publisher {
+func NewPublisher(config Config, logger *zap.SugaredLogger, metrics tally.Scope, messageStore messageStore) *publisher {
 	return &publisher{
 		config:       config,
 		logger:       logger,
