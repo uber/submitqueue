@@ -1,0 +1,25 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "queue_test",
+    srcs = ["queue_test.go"],
+    data = [
+        "//extension/queue/sql/schema",
+    ],
+    tags = ["integration"],
+    deps = [
+        "//entity/queue",
+        "//extension/queue",
+        "//extension/queue/sql",
+        "//e2e_test/testutil",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_stretchr_testify//suite",
+        "@com_github_testcontainers_testcontainers_go//:testcontainers-go",
+        "@com_github_testcontainers_testcontainers_go//network",
+        "@com_github_testcontainers_testcontainers_go_modules_mysql//:mysql",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_zap//zaptest",
+    ],
+)

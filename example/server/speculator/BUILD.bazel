@@ -1,0 +1,22 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "speculator_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/uber/submitqueue/example/server/speculator",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//speculator/controller",
+        "//speculator/protopb",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//reflection",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "speculator",
+    embed = [":speculator_lib"],
+    visibility = ["//visibility:public"],
+)

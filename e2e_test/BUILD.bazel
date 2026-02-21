@@ -1,0 +1,35 @@
+# gazelle:ignore
+
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "e2e_test",
+    srcs = [
+        "servers.go",
+        "suite_test.go",
+    ],
+    data = [
+        "//extension/counter/mysql/schema",
+        "//extension/storage/mysql/schema",
+        "//example/server/gateway",
+        "//example/server/orchestrator",
+        "//example/server/speculator",
+    ],
+    tags = ["integration"],
+    deps = [
+        "//e2e_test/testutil",
+        "//gateway/protopb",
+        "//orchestrator/protopb",
+        "//speculator/protopb",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_stretchr_testify//suite",
+        "@com_github_testcontainers_testcontainers_go//:testcontainers-go",
+        "@com_github_testcontainers_testcontainers_go//network",
+        "@com_github_testcontainers_testcontainers_go//wait",
+        "@com_github_testcontainers_testcontainers_go_modules_mysql//:mysql",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials/insecure",
+    ],
+)

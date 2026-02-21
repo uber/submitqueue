@@ -1,7 +1,7 @@
 .PHONY: proto build test integration-test integration-test-gateway integration-test-orchestrator integration-test-speculator e2e-test gazelle clean run-all start-servers stop-servers run-gateway run-orchestrator run-speculator run-client-gateway run-client-orchestrator run-client-speculator
 
 # Bazel wrapper
-BAZEL = ./tools/bazel
+BAZEL = ./tool/bazel
 
 # Generate protobuf files for all services using protoc
 proto:
@@ -26,18 +26,18 @@ build:
 	@$(BAZEL) build //...
 	@echo "Copying binaries to ./bin/..."
 	@mkdir -p bin
-	@cp -f bazel-bin/examples/server/gateway/gateway_/gateway bin/gateway_server 2>/dev/null || \
-	 cp -f bazel-bin/examples/server/gateway/gateway bin/gateway_server 2>/dev/null || true
-	@cp -f bazel-bin/examples/server/orchestrator/orchestrator_/orchestrator bin/orchestrator_server 2>/dev/null || \
-	 cp -f bazel-bin/examples/server/orchestrator/orchestrator bin/orchestrator_server 2>/dev/null || true
-	@cp -f bazel-bin/examples/server/speculator/speculator_/speculator bin/speculator_server 2>/dev/null || \
-	 cp -f bazel-bin/examples/server/speculator/speculator bin/speculator_server 2>/dev/null || true
-	@cp -f bazel-bin/examples/client/gateway/gateway_/gateway bin/gateway_client 2>/dev/null || \
-	 cp -f bazel-bin/examples/client/gateway/gateway bin/gateway_client 2>/dev/null || true
-	@cp -f bazel-bin/examples/client/orchestrator/orchestrator_/orchestrator bin/orchestrator_client 2>/dev/null || \
-	 cp -f bazel-bin/examples/client/orchestrator/orchestrator bin/orchestrator_client 2>/dev/null || true
-	@cp -f bazel-bin/examples/client/speculator/speculator_/speculator bin/speculator_client 2>/dev/null || \
-	 cp -f bazel-bin/examples/client/speculator/speculator bin/speculator_client 2>/dev/null || true
+	@cp -f bazel-bin/example/server/gateway/gateway_/gateway bin/gateway_server 2>/dev/null || \
+	 cp -f bazel-bin/example/server/gateway/gateway bin/gateway_server 2>/dev/null || true
+	@cp -f bazel-bin/example/server/orchestrator/orchestrator_/orchestrator bin/orchestrator_server 2>/dev/null || \
+	 cp -f bazel-bin/example/server/orchestrator/orchestrator bin/orchestrator_server 2>/dev/null || true
+	@cp -f bazel-bin/example/server/speculator/speculator_/speculator bin/speculator_server 2>/dev/null || \
+	 cp -f bazel-bin/example/server/speculator/speculator bin/speculator_server 2>/dev/null || true
+	@cp -f bazel-bin/example/client/gateway/gateway_/gateway bin/gateway_client 2>/dev/null || \
+	 cp -f bazel-bin/example/client/gateway/gateway bin/gateway_client 2>/dev/null || true
+	@cp -f bazel-bin/example/client/orchestrator/orchestrator_/orchestrator bin/orchestrator_client 2>/dev/null || \
+	 cp -f bazel-bin/example/client/orchestrator/orchestrator bin/orchestrator_client 2>/dev/null || true
+	@cp -f bazel-bin/example/client/speculator/speculator_/speculator bin/speculator_client 2>/dev/null || \
+	 cp -f bazel-bin/example/client/speculator/speculator bin/speculator_client 2>/dev/null || true
 	@echo "Build complete! Binaries are in ./bin/"
 
 # Run unit tests using Bazel (excludes integration tests which require running servers)
@@ -53,25 +53,25 @@ gazelle:
 # Run integration tests for a specific service (requires that service to be running)
 integration-test-gateway:
 	@echo "Running Gateway integration tests..."
-	@$(BAZEL) test //gateway/integration_tests:integration_tests_test --test_output=all
+	@$(BAZEL) test //gateway/integration_test:integration_test_test --test_output=all
 
 integration-test-orchestrator:
 	@echo "Running Orchestrator integration tests..."
-	@$(BAZEL) test //orchestrator/integration_tests:integration_tests_test --test_output=all
+	@$(BAZEL) test //orchestrator/integration_test:integration_test_test --test_output=all
 
 integration-test-speculator:
 	@echo "Running Speculator integration tests..."
-	@$(BAZEL) test //speculator/integration_tests:integration_tests_test --test_output=all
+	@$(BAZEL) test //speculator/integration_test:integration_test_test --test_output=all
 
 # Run all service integration tests (requires all services to be running)
 integration-test:
 	@echo "Running all service integration tests..."
-	@$(BAZEL) test //gateway/integration_tests:integration_tests_test //orchestrator/integration_tests:integration_tests_test //speculator/integration_tests:integration_tests_test --test_output=all
+	@$(BAZEL) test //gateway/integration_test:integration_test_test //orchestrator/integration_test:integration_test_test //speculator/integration_test:integration_test_test --test_output=all
 
 # Run end-to-end integration tests (hermetic, no manual server setup needed)
 e2e-test:
 	@echo "Running integration tests..."
-	@$(BAZEL) test //integration_tests:integration_test --test_output=all
+	@$(BAZEL) test //e2e_test:e2e_test --test_output=all
 
 # Clean generated files and binaries
 clean:
@@ -124,29 +124,29 @@ run-all: start-servers
 # Run gateway server using Bazel
 run-gateway:
 	@echo "Starting gateway server on port 8081..."
-	@$(BAZEL) run //examples/server/gateway:gateway
+	@$(BAZEL) run //example/server/gateway:gateway
 
 # Run orchestrator server using Bazel
 run-orchestrator:
 	@echo "Starting orchestrator server on port 8082..."
-	@$(BAZEL) run //examples/server/orchestrator:orchestrator
+	@$(BAZEL) run //example/server/orchestrator:orchestrator
 
 # Run speculator server using Bazel
 run-speculator:
 	@echo "Starting speculator server on port 8083..."
-	@$(BAZEL) run //examples/server/speculator:speculator
+	@$(BAZEL) run //example/server/speculator:speculator
 
 # Run gateway client using Bazel
 run-client-gateway:
-	@$(BAZEL) run //examples/client/gateway:gateway -- -addr $(or $(SERVER_ADDR),localhost:8081) -message "$(or $(MESSAGE),ping)"
+	@$(BAZEL) run //example/client/gateway:gateway -- -addr $(or $(SERVER_ADDR),localhost:8081) -message "$(or $(MESSAGE),ping)"
 
 # Run orchestrator client using Bazel
 run-client-orchestrator:
-	@$(BAZEL) run //examples/client/orchestrator:orchestrator -- -addr $(or $(SERVER_ADDR),localhost:8082) -message "$(or $(MESSAGE),ping)"
+	@$(BAZEL) run //example/client/orchestrator:orchestrator -- -addr $(or $(SERVER_ADDR),localhost:8082) -message "$(or $(MESSAGE),ping)"
 
 # Run speculator client using Bazel
 run-client-speculator:
-	@$(BAZEL) run //examples/client/speculator:speculator -- -addr $(or $(SERVER_ADDR),localhost:8083) -message "$(or $(MESSAGE),ping)"
+	@$(BAZEL) run //example/client/speculator:speculator -- -addr $(or $(SERVER_ADDR),localhost:8083) -message "$(or $(MESSAGE),ping)"
 
 # Install dependencies (for go mod users)
 deps:
@@ -160,7 +160,7 @@ query-targets:
 	@$(BAZEL) query //...
 
 query-deps:
-	@$(BAZEL) query 'deps(//examples/server/gateway:gateway)'
+	@$(BAZEL) query 'deps(//example/server/gateway:gateway)'
 
 # Help
 help:

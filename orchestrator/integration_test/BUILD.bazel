@@ -1,0 +1,19 @@
+# gazelle:ignore
+
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "integration_test_test",
+    srcs = ["ping_test.go"],
+    tags = [
+        "integration",
+        "manual",
+    ],
+    deps = [
+        "//orchestrator/protopb",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials/insecure",
+    ],
+)

@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally/v4"
-	"github.com/uber/submitqueue/entities"
-	"github.com/uber/submitqueue/extensions/storage"
+	"github.com/uber/submitqueue/entity"
+	"github.com/uber/submitqueue/extension/storage"
 	pb "github.com/uber/submitqueue/gateway/protopb"
 	"go.uber.org/zap"
 )
@@ -23,56 +23,56 @@ func (m *mockCounter) Next(ctx context.Context, domain string) (int64, error) {
 }
 
 type mockRequestStore struct {
-	createFunc func(ctx context.Context, request entities.Request) error
+	createFunc func(ctx context.Context, request entity.Request) error
 }
 
-func (m *mockRequestStore) Get(ctx context.Context, id string) (entities.Request, error) {
-	return entities.Request{}, nil
+func (m *mockRequestStore) Get(ctx context.Context, id string) (entity.Request, error) {
+	return entity.Request{}, nil
 }
 
-func (m *mockRequestStore) Create(ctx context.Context, request entities.Request) error {
+func (m *mockRequestStore) Create(ctx context.Context, request entity.Request) error {
 	return m.createFunc(ctx, request)
 }
 
-func (m *mockRequestStore) UpdateState(ctx context.Context, id string, version int32, newState entities.RequestState) error {
+func (m *mockRequestStore) UpdateState(ctx context.Context, id string, version int32, newState entity.RequestState) error {
 	return nil
 }
 
-type mockStoreFactory struct {
+type mockStorage struct {
 	requestStore storage.RequestStore
 }
 
-func (m *mockStoreFactory) GetRequestStore() storage.RequestStore {
+func (m *mockStorage) GetRequestStore() storage.RequestStore {
 	return m.requestStore
 }
 
-func (m *mockStoreFactory) Close() error {
+func (m *mockStorage) Close() error {
 	return nil
 }
 
 func TestNewLandController(t *testing.T) {
-	factory := &mockStoreFactory{requestStore: &mockRequestStore{
-		createFunc: func(ctx context.Context, request entities.Request) error {
+	store := &mockStorage{requestStore: &mockRequestStore{
+		createFunc: func(ctx context.Context, request entity.Request) error {
 			return nil
 		},
 	}}
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop(), tally.NoopScope, factory, cnt)
+	controller := NewLandController(zap.NewNop(), tally.NoopScope, store, cnt)
 	require.NotNil(t, controller)
 }
 
 func TestLand_ReturnsSqid(t *testing.T) {
-	factory := &mockStoreFactory{requestStore: &mockRequestStore{
-		createFunc: func(ctx context.Context, request entities.Request) error {
+	store := &mockStorage{requestStore: &mockRequestStore{
+		createFunc: func(ctx context.Context, request entity.Request) error {
 			return nil
 		},
 	}}
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop(), tally.NoopScope, factory, cnt)
+	controller := NewLandController(zap.NewNop(), tally.NoopScope, store, cnt)
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -86,10 +86,10 @@ func TestLand_ReturnsSqid(t *testing.T) {
 }
 
 func TestLand_PassesCorrectParametersToStore(t *testing.T) {
-	var capturedRequest entities.Request
+	var capturedRequest entity.Request
 
-	factory := &mockStoreFactory{requestStore: &mockRequestStore{
-		createFunc: func(ctx context.Context, request entities.Request) error {
+	store := &mockStorage{requestStore: &mockRequestStore{
+		createFunc: func(ctx context.Context, request entity.Request) error {
 			capturedRequest = request
 			return nil
 		},
@@ -97,7 +97,7 @@ func TestLand_PassesCorrectParametersToStore(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 42, nil
 	}}
-	controller := NewLandController(zap.NewNop(), tally.NoopScope, factory, cnt)
+	controller := NewLandController(zap.NewNop(), tally.NoopScope, store, cnt)
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -112,22 +112,22 @@ func TestLand_PassesCorrectParametersToStore(t *testing.T) {
 	assert.Equal(t, "my-queue", capturedRequest.Queue)
 	assert.Equal(t, "github", capturedRequest.Change.Source)
 	assert.Equal(t, []string{"pr-1", "pr-2"}, capturedRequest.Change.IDs)
-	assert.Equal(t, entities.RequestLandStrategyRebase, capturedRequest.LandStrategy)
-	assert.Equal(t, entities.RequestStateNew, capturedRequest.State)
+	assert.Equal(t, entity.RequestLandStrategyRebase, capturedRequest.LandStrategy)
+	assert.Equal(t, entity.RequestStateNew, capturedRequest.State)
 	assert.Equal(t, int32(1), capturedRequest.Version)
 	assert.Equal(t, "my-queue/42", resp.Sqid)
 }
 
 func TestLand_ReturnsErrorOnStorageFailure(t *testing.T) {
-	factory := &mockStoreFactory{requestStore: &mockRequestStore{
-		createFunc: func(ctx context.Context, request entities.Request) error {
+	store := &mockStorage{requestStore: &mockRequestStore{
+		createFunc: func(ctx context.Context, request entity.Request) error {
 			return fmt.Errorf("database connection failed")
 		},
 	}}
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop(), tally.NoopScope, factory, cnt)
+	controller := NewLandController(zap.NewNop(), tally.NoopScope, store, cnt)
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -140,15 +140,15 @@ func TestLand_ReturnsErrorOnStorageFailure(t *testing.T) {
 }
 
 func TestLand_ReturnsErrorOnCounterFailure(t *testing.T) {
-	factory := &mockStoreFactory{requestStore: &mockRequestStore{
-		createFunc: func(ctx context.Context, request entities.Request) error {
+	store := &mockStorage{requestStore: &mockRequestStore{
+		createFunc: func(ctx context.Context, request entity.Request) error {
 			return nil
 		},
 	}}
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 0, fmt.Errorf("counter unavailable")
 	}}
-	controller := NewLandController(zap.NewNop(), tally.NoopScope, factory, cnt)
+	controller := NewLandController(zap.NewNop(), tally.NoopScope, store, cnt)
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -163,8 +163,8 @@ func TestLand_ReturnsErrorOnCounterFailure(t *testing.T) {
 func TestLand_CounterDomainIncludesQueue(t *testing.T) {
 	var capturedDomain string
 
-	factory := &mockStoreFactory{requestStore: &mockRequestStore{
-		createFunc: func(ctx context.Context, request entities.Request) error {
+	store := &mockStorage{requestStore: &mockRequestStore{
+		createFunc: func(ctx context.Context, request entity.Request) error {
 			return nil
 		},
 	}}
@@ -172,7 +172,7 @@ func TestLand_CounterDomainIncludesQueue(t *testing.T) {
 		capturedDomain = domain
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop(), tally.NoopScope, factory, cnt)
+	controller := NewLandController(zap.NewNop(), tally.NoopScope, store, cnt)
 	ctx := context.Background()
 
 	req := &pb.LandRequest{

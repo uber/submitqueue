@@ -1,0 +1,14 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "queue",
+    srcs = [
+        "delivery.go",
+        "publisher.go",
+        "queue.go",
+        "subscriber.go",
+    ],
+    importpath = "github.com/uber/submitqueue/extension/queue",
+    visibility = ["//visibility:public"],
+    deps = ["//entity/queue"],
+)

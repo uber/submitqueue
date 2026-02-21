@@ -23,13 +23,13 @@ Build and run a service:
 make run-gateway
 
 # Using Go directly
-go run examples/server/gateway/main.go
+go run example/server/gateway/main.go
 
 # Using Bazel (with direnv)
-bazel run //examples/server/gateway:gateway
+bazel run //example/server/gateway:gateway
 
 # Or without direnv
-./tools/bazel run //examples/server/gateway:gateway
+./tool/bazel run //example/server/gateway:gateway
 ```
 
 Test the service:
@@ -38,17 +38,17 @@ Test the service:
 make run-client-gateway MESSAGE="hello"
 
 # Or using Go directly
-go run examples/client/gateway/main.go -message "hello"
+go run example/client/gateway/main.go -message "hello"
 
 # Or using grpcurl
 grpcurl -plaintext -d '{"message": "hello"}' localhost:8081 uber.devexp.submitqueue.gateway.SubmitQueueGateway/Ping
 ```
 
-For detailed instructions, see [examples/README.md](examples/README.md).
+For detailed instructions, see [example/README.md](example/README.md).
 
 ## Project Structure
 
-See [docs/architecture/STRUCTURE.md](docs/architecture/STRUCTURE.md) for a detailed breakdown of the project structure.
+See [doc/architecture/STRUCTURE.md](doc/architecture/STRUCTURE.md) for a detailed breakdown of the project structure.
 
 ## Architecture
 
@@ -58,7 +58,7 @@ The project follows clean architecture principles with clear separation of conce
   - Only depend on logger, metrics, and protobuf types
   - Example: `PingController` handles ping business logic
 
-- **Server Adapters** (`examples/server/`): gRPC transport layer
+- **Server Adapters** (`example/server/`): gRPC transport layer
   - Wrap controllers and implement gRPC service interfaces
   - Handle protocol-specific concerns (e.g., `UnimplementedServiceServer`)
 
@@ -76,7 +76,7 @@ The project follows clean architecture principles with clear separation of conce
 - **grpcurl** (optional, for manual testing)
 - **direnv** (recommended, to automatically load `.envrc`)
 
-**Note**: The project includes `./tools/bazel` (bazelisk wrapper) and `.bazelversion`, so you don't need to install Bazel or Bazelisk separately.
+**Note**: The project includes `./tool/bazel` (bazelisk wrapper) and `.bazelversion`, so you don't need to install Bazel or Bazelisk separately.
 
 #### Using direnv (Recommended)
 
@@ -92,7 +92,7 @@ eval "$(direnv hook zsh)"  # or bash, fish, etc.
 direnv allow
 ```
 
-With direnv enabled, you can use `bazel` directly instead of `./tools/bazel`.
+With direnv enabled, you can use `bazel` directly instead of `./tool/bazel`.
 
 Install optional tools:
 ```bash
@@ -145,14 +145,14 @@ make proto
 go build ./...
 
 # Build example servers
-go build -o bin/gateway_server ./examples/server/gateway/
-go build -o bin/orchestrator_server ./examples/server/orchestrator/
-go build -o bin/speculator_server ./examples/server/speculator/
+go build -o bin/gateway_server ./example/server/gateway/
+go build -o bin/orchestrator_server ./example/server/orchestrator/
+go build -o bin/speculator_server ./example/server/speculator/
 
 # Build clients
-go build -o bin/gateway_client ./examples/client/gateway/
-go build -o bin/orchestrator_client ./examples/client/orchestrator/
-go build -o bin/speculator_client ./examples/client/speculator/
+go build -o bin/gateway_client ./example/client/gateway/
+go build -o bin/orchestrator_client ./example/client/orchestrator/
+go build -o bin/speculator_client ./example/client/speculator/
 
 # Run a server
 ./bin/gateway_server
@@ -165,25 +165,25 @@ go build -o bin/speculator_client ./examples/client/speculator/
 
 The project uses **Bzlmod** (not WORKSPACE) for dependency management. Bazel version is pinned at 8.4.1 in `.bazelversion`.
 
-The project includes `./tools/bazel` which automatically downloads the correct Bazel version. If you're using `direnv`, you can simply use `bazel` instead of `./tools/bazel`.
+The project includes `./tool/bazel` which automatically downloads the correct Bazel version. If you're using `direnv`, you can simply use `bazel` instead of `./tool/bazel`.
 
 ```bash
 # Build everything (with direnv)
 bazel build //...
 
 # Or without direnv
-./tools/bazel build //...
+./tool/bazel build //...
 
 # Build specific components
 bazel build //gateway/protopb
-bazel build //examples/server/gateway:gateway
-bazel build //examples/client/gateway:gateway
+bazel build //example/server/gateway:gateway
+bazel build //example/client/gateway:gateway
 
 # Run a server
-bazel run //examples/server/gateway:gateway
+bazel run //example/server/gateway:gateway
 
 # Run a client
-bazel run //examples/client/gateway:gateway -- -message "hello"
+bazel run //example/client/gateway:gateway -- -message "hello"
 
 # Or use the Makefile (recommended)
 make build
@@ -193,11 +193,11 @@ make run-gateway
 **Note**:
 - The repository uses Bzlmod for modern dependency management
 - All generated proto files are committed to the repository
-- With `direnv` enabled, use `bazel` directly; otherwise use `./tools/bazel`
+- With `direnv` enabled, use `bazel` directly; otherwise use `./tool/bazel`
 
 ### Running Services
 
-See the [examples directory](examples/) for examples of running each service.
+See the [examples directory](example/) for examples of running each service.
 
 ## Development Workflow
 
@@ -226,7 +226,7 @@ When you make changes to `.proto` files, you need to regenerate the protobuf cod
 
 4. Update client examples to display new fields:
    ```bash
-   # Edit examples/client/gateway/main.go to show the new field
+   # Edit example/client/gateway/main.go to show the new field
    ```
 
 5. Rebuild and test:
@@ -358,7 +358,7 @@ make test
 
 4. **Create server wrapper in example:**
    ```go
-   // In examples/server/gateway/main.go
+   // In example/server/gateway/main.go
    // Add method delegation to GatewayServer struct:
    func (s *GatewayServer) NewMethod(ctx context.Context, req *pb.NewRequest) (*pb.NewResponse, error) {
        return s.newController.NewMethod(ctx, req)
@@ -403,6 +403,6 @@ bazel clean
 
 **Bazel build issues:**
 - Bazel version is pinned to 8.4.1 in `.bazelversion`
-- With `direnv`, you can use `bazel` directly; otherwise use `./tools/bazel`
-- Try `bazel shutdown` (or `./tools/bazel shutdown`) and rebuild
+- With `direnv`, you can use `bazel` directly; otherwise use `./tool/bazel`
+- Try `bazel shutdown` (or `./tool/bazel shutdown`) and rebuild
 - The wrapper automatically downloads the correct Bazel version

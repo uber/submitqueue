@@ -1,0 +1,18 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "testutil",
+    srcs = [
+        "docker.go",
+        "mysql.go",
+    ],
+    importpath = "github.com/uber/submitqueue/e2e_test/testutil",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_stretchr_testify//require",
+        "@com_github_testcontainers_testcontainers_go//:testcontainers-go",
+        "@com_github_testcontainers_testcontainers_go//network",
+        "@com_github_testcontainers_testcontainers_go_modules_mysql//:mysql",
+    ],
+)

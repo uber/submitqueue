@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/uber-go/tally/v4"
-	"github.com/uber/submitqueue/entities"
-	"github.com/uber/submitqueue/extensions/counter"
-	"github.com/uber/submitqueue/extensions/storage"
+	"github.com/uber/submitqueue/entity"
+	"github.com/uber/submitqueue/extension/counter"
+	"github.com/uber/submitqueue/extension/storage"
 	pb "github.com/uber/submitqueue/gateway/protopb"
 	"go.uber.org/zap"
 )
@@ -17,16 +17,16 @@ import (
 type LandController struct {
 	logger       *zap.Logger
 	metricsScope tally.Scope
-	storeFactory storage.StoreFactory
+	store        storage.Storage
 	counter      counter.Counter
 }
 
 // NewLandController creates a new instance of the gateway land controller
-func NewLandController(logger *zap.Logger, scope tally.Scope, storeFactory storage.StoreFactory, counter counter.Counter) *LandController {
+func NewLandController(logger *zap.Logger, scope tally.Scope, store storage.Storage, counter counter.Counter) *LandController {
 	return &LandController{
 		logger:       logger,
 		metricsScope: scope,
-		storeFactory: storeFactory,
+		store:        store,
 		counter:      counter,
 	}
 }
@@ -40,7 +40,7 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 
 	c.metricsScope.Counter("land_request_count").Inc(1)
 
-	change := entities.Change{
+	change := entity.Change{
 		Source: req.Change.GetSource(),
 		IDs:    req.Change.GetIds(),
 	}
@@ -60,16 +60,16 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 		return nil, fmt.Errorf("LandController failed to generate request ID for queue=%s: %w", queue, err)
 	}
 
-	request := entities.Request{
+	request := entity.Request{
 		ID:           fmt.Sprintf("%s/%d", queue, seq),
 		Queue:        queue,
 		Change:       change,
 		LandStrategy: strategy,
-		State:        entities.RequestStateNew,
+		State:        entity.RequestStateNew,
 		Version:      1,
 	}
 
-	if err := c.storeFactory.GetRequestStore().Create(ctx, request); err != nil {
+	if err := c.store.GetRequestStore().Create(ctx, request); err != nil {
 		return nil, fmt.Errorf("LandController failed to create request for queue=%s: %w", req.Queue, err)
 	}
 
@@ -84,18 +84,18 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 }
 
 // protoStrategyToEntity maps a proto Strategy enum to the entity RequestLandStrategy.
-func resolveRequestLandStrategy(s pb.Strategy) (entities.RequestLandStrategy, error) {
+func resolveRequestLandStrategy(s pb.Strategy) (entity.RequestLandStrategy, error) {
 	switch s {
 	case pb.Strategy_DEFAULT:
 		// TODO: resolve default strategy based on queue configuration
-		return entities.RequestLandStrategyRebase, nil
+		return entity.RequestLandStrategyRebase, nil
 	case pb.Strategy_REBASE:
-		return entities.RequestLandStrategyRebase, nil
+		return entity.RequestLandStrategyRebase, nil
 	case pb.Strategy_SQUASH_REBASE:
-		return entities.RequestLandStrategySquashRebase, nil
+		return entity.RequestLandStrategySquashRebase, nil
 	case pb.Strategy_MERGE:
-		return entities.RequestLandStrategyMerge, nil
+		return entity.RequestLandStrategyMerge, nil
 	default:
-		return entities.RequestLandStrategyUnknown, fmt.Errorf("unknown proto strategy: %v", s)
+		return entity.RequestLandStrategyUnknown, fmt.Errorf("unknown proto strategy: %v", s)
 	}
 }

@@ -49,19 +49,19 @@ Three services, each following the same layout:
 ├── controller/          # Business logic (pure, transport-agnostic)
 ├── proto/               # Proto definitions (.proto files)
 ├── protopb/             # Generated proto code (committed to repo)
-└── integration_tests/
+└── integration_test/
 ```
 
 ### Controllers
 
-Controllers contain pure business logic, independent of the transport layer (gRPC/YARPC). They live in `{service}/controller/` and are wired up in `examples/server/{service}/main.go`.
+Controllers contain pure business logic, independent of the transport layer (gRPC/YARPC). They live in `{service}/controller/` and are wired up in `example/server/{service}/main.go`.
 
 ### Entities
 
-Domain objects in `entities/`, organized by domain. Top-level entities live directly in `entities/`; domain-specific ones go in subdirectories.
+Domain objects in `entity/`, organized by domain. Top-level entities live directly in `entity/`; domain-specific ones go in subdirectories.
 
 ```
-entities/
+entity/
 ├── request.go           # Request, Change, enums (RequestState, RequestLandStrategy)
 └── queue/
     └── message.go       # Message entity
@@ -80,7 +80,7 @@ entities/
 Extensions are **vendor-agnostic, pluggable interfaces** for backend implementations. Each defines interfaces at the top level with implementations in subdirectories.
 
 ```
-extensions/
+extension/
 ├── counter/             # Atomic sequential number generation
 │   ├── counter.go       # Counter interface
 │   └── mysql/           # MySQL implementation
@@ -91,14 +91,14 @@ extensions/
 │   ├── delivery.go      # Delivery interface
 │   └── sql/             # SQL (MySQL) implementation
 └── storage/             # Storage abstraction
-    ├── storage.go       # StoreFactory interface + sentinel errors
+    ├── storage.go       # Storage (factory) interface + sentinel errors
     ├── request_store.go # RequestStore interface
     └── mysql/           # MySQL implementation
 ```
 
 **Extension pattern:**
-1. Define vendor-agnostic interfaces at `extensions/{extension}/`
-2. Implementations go in `extensions/{extension}/{impl}/`
+1. Define vendor-agnostic interfaces at `extension/{ext}/`
+2. Implementations go in `extension/{ext}/{impl}/`
 3. Most extensions use a Factory interface for dependency injection and lifecycle management
 4. Include a README.md documenting interfaces and usage
 
@@ -106,9 +106,9 @@ extensions/
 
 - Controllers: `github.com/uber/submitqueue/{service}/controller`
 - Proto (generated): `github.com/uber/submitqueue/{service}/protopb`
-- Extensions: `github.com/uber/submitqueue/extensions/{extension}`
-- Extension impl: `github.com/uber/submitqueue/extensions/{extension}/{impl}`
-- Entities: `github.com/uber/submitqueue/entities/{domain}`
+- Extensions: `github.com/uber/submitqueue/extension/{extension}`
+- Extension impl: `github.com/uber/submitqueue/extension/{extension}/{impl}`
+- Entities: `github.com/uber/submitqueue/entity/{domain}`
 
 ## Development
 
@@ -122,17 +122,17 @@ submitqueue/
 ├── Makefile                  # Build automation
 ├── .bazelversion             # Pinned Bazel version
 ├── .envrc                    # direnv configuration
-├── tools/bazel               # Bazelisk wrapper
+├── tool/bazel                # Bazelisk wrapper
 ├── gateway/                  # Gateway service
 ├── orchestrator/             # Orchestrator service
 ├── speculator/               # Speculator service
-├── extensions/               # Pluggable backend implementations
-├── entities/                 # Domain entities
-├── examples/                 # Server and client examples
+├── extension/                # Pluggable backend implementations
+├── entity/                   # Domain entities
+├── example/                  # Server and client examples
 │   ├── server/{service}/
 │   └── client/{service}/
-├── integration_tests/        # Cross-service hermetic tests (Testcontainers)
-├── docs/                     # Documentation
+├── e2e_test/                 # Cross-service hermetic tests (Testcontainers)
+├── doc/                      # Documentation
 └── bin/                      # Compiled binaries (gitignored)
 ```
 
@@ -143,7 +143,7 @@ This repository uses **Bazel with Bzlmod** (NOT WORKSPACE) for dependency manage
 - **Version pinning**: `.bazelversion` pins the Bazel version
 - **Dependencies**: Managed in `MODULE.bazel` (NOT a WORKSPACE file)
 - **Go version**: Defined in `go.mod`, read by `MODULE.bazel` via `go_sdk.from_file()`
-- **Bazel wrapper**: `./tools/bazel` (Bazelisk wrapper). With direnv (`.envrc`), use `bazel` directly.
+- **Bazel wrapper**: `./tool/bazel` (Bazelisk wrapper). With direnv (`.envrc`), use `bazel` directly.
 - **External dependencies**: Must be added to both `go.mod` AND `MODULE.bazel`
 - **BUILD files**: Every Go package must have a `BUILD.bazel` file
 
@@ -187,16 +187,16 @@ make clean-proto              # Remove generated proto files
 1. Edit `{service}/proto/*.proto`
 2. `make proto`
 3. Add controller in `{service}/controller/`
-4. Wire up in `examples/server/{service}/main.go`
+4. Wire up in `example/server/{service}/main.go`
 
 **Add new extension implementation:**
-1. Create `extensions/{extension}/{impl}/` directory
+1. Create `extension/{extension}/{impl}/` directory
 2. Implement factory and core interfaces
 3. Add `BUILD.bazel`
 4. Add tests and document in README.md
 
 **Add new entity:**
-1. Create `entities/{domain}/{entity}.go` with test file
+1. Create `entity/{domain}/{entity}.go` with test file
 2. Add `BUILD.bazel` with `go_library` and `go_test` targets
 
 ### Testing Guidelines

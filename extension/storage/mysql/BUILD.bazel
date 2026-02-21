@@ -1,0 +1,16 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mysql",
+    srcs = [
+        "storage.go",
+        "request_store.go",
+    ],
+    importpath = "github.com/uber/submitqueue/extension/storage/mysql",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//entity",
+        "//extension/storage",
+        "@com_github_go_sql_driver_mysql//:mysql",
+    ],
+)
