@@ -5,7 +5,6 @@ load("@rules_go//go:def.bzl", "go_test")
 go_test(
     name = "integration_test",
     srcs = [
-        "mysql.go",
         "servers.go",
         "suite_test.go",
     ],
@@ -18,6 +17,7 @@ go_test(
     ],
     tags = ["integration"],
     deps = [
+        "//integration_tests/testutil",
         "//gateway/protopb",
         "//orchestrator/protopb",
         "//speculator/protopb",

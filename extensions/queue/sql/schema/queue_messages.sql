@@ -31,6 +31,15 @@ CREATE TABLE IF NOT EXISTS queue_messages (
     created_at BIGINT UNSIGNED NOT NULL,
     published_at BIGINT UNSIGNED NOT NULL,
 
+    -- DLQ-specific fields (0/"" for normal messages, populated for DLQ messages)
+    failed_at BIGINT UNSIGNED NOT NULL,
+    -- failure_count stores how many times the message failed on the ORIGINAL topic before moving to DLQ
+    -- This is different from retry_count, which tracks retries on the CURRENT topic and gets reset to 0 on DLQ move
+    -- We need both because: retry_count must reset for DLQ processing, but we still need to know original failure count
+    failure_count INT UNSIGNED NOT NULL,
+    last_error TEXT NOT NULL,
+    original_topic VARCHAR(255) NOT NULL,
+
     -- Supports: SELECT ... WHERE topic=? AND partition_key=? AND invisible_until<=? ORDER BY offset
     -- Used by subscribers to poll for ready-to-process messages within their assigned partition
     INDEX idx_topic_partition_visible_offset (topic, partition_key, invisible_until, offset),

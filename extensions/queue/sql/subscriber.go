@@ -411,15 +411,18 @@ func (s *subscriber) fetchAndDeliverPartition(ctx context.Context, sub *subscrip
 
 			// Move to DLQ if enabled
 			if s.config.DLQ.Enabled {
+				dlqTopic := sub.topic + s.config.DLQ.TopicSuffix
 				if err := s.messageStore.MoveToDLQ(ctx, sub.topic, row.ID, row.RetryCount, "exceeded retry limit"); err != nil {
 					s.logger.Errorw("failed to move message to DLQ",
 						"topic", sub.topic,
+						"dlq_topic", dlqTopic,
 						"message_id", row.ID,
 						"error", err,
 					)
 				} else {
 					s.logger.Infow("moved message to DLQ",
 						"topic", sub.topic,
+						"dlq_topic", dlqTopic,
 						"message_id", row.ID,
 						"retry_count", row.RetryCount,
 					)
@@ -443,9 +446,7 @@ func (s *subscriber) fetchAndDeliverPartition(ctx context.Context, sub *subscrip
 		}
 
 		// Create message (value type)
-		msg := queue.NewMessage(row.ID, row.Payload)
-		msg.Metadata = row.Metadata
-		msg.PartitionKey = row.PartitionKey
+		msg := queue.NewMessage(row.ID, row.Payload, row.PartitionKey, row.Metadata)
 		msg.PublishedAt = row.PublishedAt
 
 		// Calculate message age for metrics
@@ -463,6 +464,20 @@ func (s *subscriber) fetchAndDeliverPartition(ctx context.Context, sub *subscrip
 			"topic":         sub.topic,
 			"partition_key": partitionKey,
 			"offset":        deliveryID,
+		}
+
+		// Add DLQ-specific metadata if this is a DLQ message
+		if row.FailedAt > 0 {
+			deliveryMetadata["dlq.failed_at"] = fmt.Sprintf("%d", row.FailedAt)
+		}
+		if row.FailureCount > 0 {
+			deliveryMetadata["dlq.failure_count"] = fmt.Sprintf("%d", row.FailureCount)
+		}
+		if row.LastError != "" {
+			deliveryMetadata["dlq.last_error"] = row.LastError
+		}
+		if row.OriginalTopic != "" {
+			deliveryMetadata["dlq.original_topic"] = row.OriginalTopic
 		}
 
 		// Create SQL delivery implementation

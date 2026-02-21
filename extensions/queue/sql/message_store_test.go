@@ -113,9 +113,9 @@ func TestmessageStore_FetchByOffset(t *testing.T) {
 	// Expect transaction begin
 	mock.ExpectBegin()
 
-	// Mock query results
-	rows := sqlmock.NewRows([]string{"offset", "id", "payload", "metadata", "partition_key", "retry_count", "published_at"}).
-		AddRow(int64(1), "msg1", []byte("payload1"), []byte("{}"), "part1", 0, time.Now().UnixMilli())
+	// Mock query results (including DLQ columns)
+	rows := sqlmock.NewRows([]string{"offset", "id", "payload", "metadata", "partition_key", "retry_count", "published_at", "failed_at", "failure_count", "last_error", "original_topic"}).
+		AddRow(int64(1), "msg1", []byte("payload1"), []byte("{}"), "part1", 0, time.Now().UnixMilli(), int64(0), 0, "", "")
 
 	mock.ExpectQuery("SELECT (.+) FROM queue_messages").
 		WithArgs(topic, partitionKey, currentOffset, sqlmock.AnyArg(), limit).
@@ -163,19 +163,26 @@ func TestmessageStore_MoveToDLQ(t *testing.T) {
 	failureCount := 3
 	lastError := "test error"
 
+	// Get config to know the DLQ suffix
+	config := DefaultConfig("test-consumer", "test-worker")
+	dlqTopic := topic + config.DLQ.TopicSuffix // "test_topic_dlq"
+
 	// Expect transaction begin
 	mock.ExpectBegin()
 
-	// Mock query for fetching message - SELECT payload, metadata, partition_key, created_at, published_at
-	rows := sqlmock.NewRows([]string{"payload", "metadata", "partition_key", "created_at", "published_at"}).
-		AddRow([]byte("payload1"), []byte("{}"), "part1", time.Now().UnixMilli(), time.Now().UnixMilli())
+	// Mock query for fetching message - SELECT payload, metadata, partition_key, created_at, published_at, retry_count
+	rows := sqlmock.NewRows([]string{"payload", "metadata", "partition_key", "created_at", "published_at", "retry_count"}).
+		AddRow([]byte("payload1"), []byte(`{"key":"value"}`), "part1", time.Now().UnixMilli(), time.Now().UnixMilli(), failureCount)
 
 	mock.ExpectQuery("SELECT (.+) FROM queue_messages").
 		WithArgs(topic, messageID).
 		WillReturnRows(rows)
 
-	// Expect insert into DLQ
-	mock.ExpectExec("INSERT INTO queue_dlq").
+	// Expect insert into queue_messages with DLQ topic and DLQ-specific columns
+	// Columns: topic, id, payload, metadata, partition_key, created_at, published_at, invisible_until, retry_count, failed_at, failure_count, last_error, original_topic
+	// Note: retry_count is reset to 0 for DLQ processing, but failure_count preserves the original attempts
+	mock.ExpectExec("INSERT INTO queue_messages").
+		WithArgs(dlqTopic, messageID, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), int64(0), 0, sqlmock.AnyArg(), failureCount, lastError, topic).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// Expect delete from main table

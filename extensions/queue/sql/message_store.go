@@ -72,8 +72,8 @@ func (s *sqlmessageStore) Insert(ctx context.Context, topic string, messages []q
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (topic, id, payload, metadata, partition_key, created_at, published_at, retry_count, invisible_until)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)
+		INSERT INTO %s (topic, id, payload, metadata, partition_key, created_at, published_at, retry_count, invisible_until, failed_at, failure_count, last_error, original_topic)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, '', '')
 	`, MessagesTableName))
 	if err != nil {
 		s.logger.Errorw("failed to prepare statement",
@@ -210,7 +210,7 @@ func (s *sqlmessageStore) FetchByOffset(ctx context.Context, topic string, parti
 
 	// Fetch visible messages (invisible_until <= now)
 	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-		SELECT offset, id, payload, metadata, partition_key, retry_count, published_at
+		SELECT offset, id, payload, metadata, partition_key, retry_count, published_at, failed_at, failure_count, last_error, original_topic
 		FROM %s
 		WHERE topic = ? AND partition_key = ? AND offset > ? AND invisible_until <= ?
 		ORDER BY offset
@@ -239,9 +239,13 @@ func (s *sqlmessageStore) FetchByOffset(ctx context.Context, topic string, parti
 			partKey          string
 			retryCount       int
 			publishedAtMilli int64
+			failedAt         int64
+			failureCount     int
+			lastError        string
+			originalTopic    string
 		)
 
-		if err := rows.Scan(&offset, &id, &payload, &metadataJSON, &partKey, &retryCount, &publishedAtMilli); err != nil {
+		if err := rows.Scan(&offset, &id, &payload, &metadataJSON, &partKey, &retryCount, &publishedAtMilli, &failedAt, &failureCount, &lastError, &originalTopic); err != nil {
 			s.logger.Errorw("failed to scan message row",
 				logTopic, topic,
 				logPartitionKey, partitionKey,
@@ -269,13 +273,17 @@ func (s *sqlmessageStore) FetchByOffset(ctx context.Context, topic string, parti
 		}
 
 		results = append(results, messageRow{
-			Offset:       offset,
-			ID:           id,
-			Payload:      payload,
-			Metadata:     metadata,
-			PartitionKey: partKey,
-			RetryCount:   retryCount,
-			PublishedAt:  publishedAtMilli,
+			Offset:        offset,
+			ID:            id,
+			Payload:       payload,
+			Metadata:      metadata,
+			PartitionKey:  partKey,
+			RetryCount:    retryCount,
+			PublishedAt:   publishedAtMilli,
+			FailedAt:      failedAt,
+			FailureCount:  failureCount,
+			LastError:     lastError,
+			OriginalTopic: originalTopic,
 		})
 
 		messageIDs = append(messageIDs, id)
@@ -349,7 +357,9 @@ func (s *sqlmessageStore) FetchByOffset(ctx context.Context, topic string, parti
 	return results, nil
 }
 
-// MoveToDLQ atomically moves a message from the main table to the DLQ table
+// MoveToDLQ atomically moves a message to the DLQ by reinserting it with the DLQ topic name
+// The message is inserted back into queue_messages table with the DLQ topic (original + suffix)
+// This allows DLQ messages to be consumed using the normal subscriber
 func (s *sqlmessageStore) MoveToDLQ(ctx context.Context, topic string, messageID string, failureCount int, lastError string) error {
 	start := time.Now()
 	success := false
@@ -360,6 +370,9 @@ func (s *sqlmessageStore) MoveToDLQ(ctx context.Context, topic string, messageID
 		}
 		s.metrics.Tagged(map[string]string{"result": result}).Timer("move_to_dlq.latency").Record(time.Since(start))
 	}()
+
+	// Construct DLQ topic name
+	dlqTopic := topic + s.config.DLQ.TopicSuffix
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -380,13 +393,14 @@ func (s *sqlmessageStore) MoveToDLQ(ctx context.Context, topic string, messageID
 		partitionKey     string
 		createdAtMilli   int64
 		publishedAtMilli int64
+		retryCount       int
 	)
 
 	err = tx.QueryRowContext(ctx, fmt.Sprintf(`
-		SELECT payload, metadata, partition_key, created_at, published_at
+		SELECT payload, metadata, partition_key, created_at, published_at, retry_count
 		FROM %s
 		WHERE topic = ? AND id = ?
-	`, MessagesTableName), topic, messageID).Scan(&payload, &metadataJSON, &partitionKey, &createdAtMilli, &publishedAtMilli)
+	`, MessagesTableName), topic, messageID).Scan(&payload, &metadataJSON, &partitionKey, &createdAtMilli, &publishedAtMilli, &retryCount)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -406,16 +420,19 @@ func (s *sqlmessageStore) MoveToDLQ(ctx context.Context, topic string, messageID
 		return fmt.Errorf("failed to fetch message: %w", err)
 	}
 
-	// Insert into DLQ table
+	// Insert into queue_messages table with DLQ topic name and DLQ-specific fields
+	// Reset retry_count to 0 since this is a new topic (DLQ processing starts fresh)
+	// Store the original failure count for tracking purposes
 	now := start.UnixMilli()
 	_, err = tx.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (topic, id, payload, metadata, partition_key, created_at, published_at, failed_at, failure_count, last_error)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, DLQTableName), topic, messageID, payload, metadataJSON, partitionKey, createdAtMilli, publishedAtMilli, now, failureCount, lastError)
+		INSERT INTO %s (topic, id, payload, metadata, partition_key, created_at, published_at, invisible_until, retry_count, failed_at, failure_count, last_error, original_topic)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, MessagesTableName), dlqTopic, messageID, payload, metadataJSON, partitionKey, createdAtMilli, publishedAtMilli, int64(0), 0, now, failureCount, lastError, topic)
 
 	if err != nil {
-		s.logger.Errorw("failed to insert into DLQ",
+		s.logger.Errorw("failed to insert into DLQ topic",
 			logTopic, topic,
+			"dlq_topic", dlqTopic,
 			logMessageID, messageID,
 			logPartitionKey, partitionKey,
 			"failure_count", failureCount,
@@ -425,7 +442,7 @@ func (s *sqlmessageStore) MoveToDLQ(ctx context.Context, topic string, messageID
 		return fmt.Errorf("failed to insert into DLQ: %w", err)
 	}
 
-	// Delete from main table
+	// Delete from original topic
 	_, err = tx.ExecContext(ctx, fmt.Sprintf(`
 		DELETE FROM %s WHERE topic = ? AND id = ?
 	`, MessagesTableName), topic, messageID)
@@ -454,6 +471,7 @@ func (s *sqlmessageStore) MoveToDLQ(ctx context.Context, topic string, messageID
 	s.metrics.Counter("messages.moved_to_dlq").Inc(1)
 	s.logger.Infow("moved message to DLQ",
 		logTopic, topic,
+		"dlq_topic", dlqTopic,
 		logMessageID, messageID,
 		logPartitionKey, partitionKey,
 		"failure_count", failureCount,

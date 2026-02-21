@@ -12,6 +12,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/uber/submitqueue/integration_tests/testutil"
 )
 
 const serverPort = "8080"
@@ -29,7 +30,7 @@ func serverBinaryPath(name string) string {
 func startServerContainer(
 	ctx context.Context,
 	t *testing.T,
-	log *testLogger,
+	log *testutil.TestLogger,
 	name string,
 	env map[string]string,
 	nw *testcontainers.DockerNetwork,
@@ -37,7 +38,7 @@ func startServerContainer(
 	t.Helper()
 
 	binaryPath := serverBinaryPath(name)
-	log.logf("Resolved %s binary: %s", name, binaryPath)
+	log.Logf("Resolved %s binary: %s", name, binaryPath)
 
 	// Create temp build context with binary and Dockerfile.
 	tmpDir := t.TempDir()
@@ -48,7 +49,7 @@ func startServerContainer(
 
 	env["PORT"] = ":" + serverPort
 
-	log.logf("Starting %s container", name)
+	log.Logf("Starting %s container", name)
 	ctr, err := testcontainers.Run(ctx, "",
 		testcontainers.WithDockerfile(testcontainers.FromDockerfile{
 			Context:    tmpDir,
@@ -56,16 +57,25 @@ func startServerContainer(
 		}),
 		testcontainers.WithExposedPorts(serverPort+"/tcp"),
 		testcontainers.WithEnv(env),
-		testcontainers.WithWaitStrategy(wait.ForLog("server is running")),
+		testcontainers.WithWaitStrategy(wait.ForLog("gRPC server is running")),
 		network.WithNetwork([]string{name}, nw),
 	)
-	require.NoError(t, err, "failed to start %s container", name)
+	if err != nil {
+		// Print container logs on failure if container was created
+		if ctr != nil {
+			if logs, logErr := ctr.Logs(ctx); logErr == nil {
+				logBytes, _ := io.ReadAll(logs)
+				log.Logf("%s container logs:\n%s", name, string(logBytes))
+			}
+		}
+		require.NoError(t, err, "failed to start %s container", name)
+	}
 	t.Cleanup(func() {
-		log.logf("Terminating %s container", name)
+		log.Logf("Terminating %s container", name)
 		if err := ctr.Terminate(ctx); err != nil {
 			t.Logf("failed to terminate %s container: %v", name, err)
 		}
-		log.logf("%s container terminated", name)
+		log.Logf("%s container terminated", name)
 	})
 
 	mappedPort, err := ctr.MappedPort(ctx, serverPort+"/tcp")
@@ -73,12 +83,12 @@ func startServerContainer(
 	host, err := ctr.Host(ctx)
 	require.NoError(t, err, "failed to get host for %s", name)
 	addr := fmt.Sprintf("%s:%s", host, mappedPort.Port())
-	log.logf("%s container started on %s", name, addr)
+	log.Logf("%s container started on %s", name, addr)
 	return ctr, addr
 }
 
 
-func startGatewayContainer(ctx context.Context, t *testing.T, log *testLogger, nw *testcontainers.DockerNetwork) string {
+func startGatewayContainer(ctx context.Context, t *testing.T, log *testutil.TestLogger, nw *testcontainers.DockerNetwork) string {
 	t.Helper()
 	_, addr := startServerContainer(ctx, t, log, "gateway", map[string]string{
 		"MYSQL_DSN": "root:root@tcp(mysql:3306)/submitqueue?parseTime=true",
@@ -86,13 +96,13 @@ func startGatewayContainer(ctx context.Context, t *testing.T, log *testLogger, n
 	return addr
 }
 
-func startOrchestratorContainer(ctx context.Context, t *testing.T, log *testLogger, nw *testcontainers.DockerNetwork) string {
+func startOrchestratorContainer(ctx context.Context, t *testing.T, log *testutil.TestLogger, nw *testcontainers.DockerNetwork) string {
 	t.Helper()
 	_, addr := startServerContainer(ctx, t, log, "orchestrator", map[string]string{}, nw)
 	return addr
 }
 
-func startSpeculatorContainer(ctx context.Context, t *testing.T, log *testLogger, nw *testcontainers.DockerNetwork) string {
+func startSpeculatorContainer(ctx context.Context, t *testing.T, log *testutil.TestLogger, nw *testcontainers.DockerNetwork) string {
 	t.Helper()
 	_, addr := startServerContainer(ctx, t, log, "speculator", map[string]string{}, nw)
 	return addr

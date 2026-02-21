@@ -2,15 +2,14 @@ package integration_tests
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/network"
 	gatewaypb "github.com/uber/submitqueue/gateway/protopb"
+	"github.com/uber/submitqueue/integration_tests/testutil"
 	orchestratorpb "github.com/uber/submitqueue/orchestrator/protopb"
 	speculatorpb "github.com/uber/submitqueue/speculator/protopb"
 	"google.golang.org/grpc"
@@ -19,7 +18,7 @@ import (
 
 type IntegrationSuite struct {
 	suite.Suite
-	log *testLogger
+	log *testutil.TestLogger
 
 	nw *testcontainers.DockerNetwork
 
@@ -37,28 +36,27 @@ func TestIntegration(t *testing.T) {
 func (s *IntegrationSuite) SetupSuite() {
 	t := s.T()
 	ctx := context.Background()
-	s.log = newTestLogger(t)
+	s.log = testutil.NewTestLogger(t)
 
-	// Disable Ryuk reaper container which may not work in Docker-in-Docker environments.
-	t.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true")
+	// Setup Docker environment and network
+	s.nw, ctx = testutil.SetupDockerEnv(t, s.log, ctx)
 
-	// Ensure HOME is set for Docker config resolution in Bazel sandbox.
-	if os.Getenv("HOME") == "" {
-		t.Setenv("HOME", t.TempDir())
-	}
+	// Start MySQL container on the network and apply schemas.
+	mysqlContainer, db, _ := testutil.SetupMySQL(t, s.log, s.nw, "extensions/storage/mysql/schema")
+	testutil.ApplySchema(t, s.log, db, testutil.SchemaDir("extensions/counter/mysql/schema"))
 
-	// Create Docker network for inter-container communication.
-	nw, err := network.New(ctx)
-	require.NoError(t, err, "failed to create Docker network")
-	s.nw = nw
-	t.Cleanup(func() {
-		s.log.logf("Removing Docker network")
-		require.NoError(t, nw.Remove(ctx), "failed to remove Docker network")
+	// Register MySQL cleanup
+	s.addCleanup(func() {
+		s.log.Logf("Closing MySQL connection")
+		if err := db.Close(); err != nil {
+			s.log.Logf("Failed to close MySQL connection: %v", err)
+		}
+		s.log.Logf("Terminating MySQL container")
+		if err := mysqlContainer.Terminate(context.Background()); err != nil {
+			s.log.Logf("Failed to terminate MySQL container: %v", err)
+		}
+		s.log.Logf("MySQL container terminated")
 	})
-	s.log.logf("Docker network created: %s", nw.Name)
-
-	// Start MySQL container on the network and apply schema.
-	setupMySQL(t, s.log, s.nw)
 
 	// Start all server containers.
 	gatewayAddr := startGatewayContainer(ctx, t, s.log, s.nw)
@@ -71,7 +69,7 @@ func (s *IntegrationSuite) SetupSuite() {
 	s.orchestratorClient = orchestratorpb.NewSubmitQueueOrchestratorClient(s.dial(orchestratorAddr, opts))
 	s.speculatorClient = speculatorpb.NewSubmitQueueSpeculatorClient(s.dial(speculatorAddr, opts))
 
-	s.log.logf("All containers started and clients connected")
+	s.log.Logf("All containers started and clients connected")
 }
 
 func (s *IntegrationSuite) TearDownSuite() {
@@ -96,7 +94,7 @@ func (s *IntegrationSuite) TestPingGateway() {
 	resp, err := s.gatewayClient.Ping(ctx, &gatewaypb.PingRequest{Message: "integration test"})
 	require.NoError(s.T(), err, "Gateway Ping failed")
 	assert.Equal(s.T(), "gateway", resp.ServiceName)
-	s.log.logf("Gateway ping: %s", resp.Message)
+	s.log.Logf("Gateway ping: %s", resp.Message)
 }
 
 func (s *IntegrationSuite) TestPingOrchestrator() {
@@ -104,7 +102,7 @@ func (s *IntegrationSuite) TestPingOrchestrator() {
 	resp, err := s.orchestratorClient.Ping(ctx, &orchestratorpb.PingRequest{Message: "integration test"})
 	require.NoError(s.T(), err, "Orchestrator Ping failed")
 	assert.Equal(s.T(), "orchestrator", resp.ServiceName)
-	s.log.logf("Orchestrator ping: %s", resp.Message)
+	s.log.Logf("Orchestrator ping: %s", resp.Message)
 }
 
 func (s *IntegrationSuite) TestPingSpeculator() {
@@ -112,7 +110,7 @@ func (s *IntegrationSuite) TestPingSpeculator() {
 	resp, err := s.speculatorClient.Ping(ctx, &speculatorpb.PingRequest{Message: "integration test"})
 	require.NoError(s.T(), err, "Speculator Ping failed")
 	assert.Equal(s.T(), "speculator", resp.ServiceName)
-	s.log.logf("Speculator ping: %s", resp.Message)
+	s.log.Logf("Speculator ping: %s", resp.Message)
 }
 
 func (s *IntegrationSuite) TestLandRequest() {
@@ -123,9 +121,9 @@ func (s *IntegrationSuite) TestLandRequest() {
 		Strategy: gatewaypb.Strategy_REBASE,
 	}
 
-	s.log.logf("Sending Land request for queue=%s", req.Queue)
+	s.log.Logf("Sending Land request for queue=%s", req.Queue)
 	resp, err := s.gatewayClient.Land(ctx, req)
 	require.NoError(s.T(), err, "Land request failed")
 	require.NotEmpty(s.T(), resp.Sqid, "SQID should not be empty")
-	s.log.logf("Land request succeeded: sqid=%s", resp.Sqid)
+	s.log.Logf("Land request succeeded: sqid=%s", resp.Sqid)
 }
