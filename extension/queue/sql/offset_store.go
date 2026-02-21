@@ -14,7 +14,6 @@ import (
 // sqloffsetStore is the SQL implementation of offsetStore
 type sqloffsetStore struct {
 	db      *sql.DB
-	config  Config
 	logger  *zap.SugaredLogger
 	metrics tally.Scope
 }
@@ -25,34 +24,33 @@ const (
 )
 
 // newOffsetStore creates a new SQL offset store
-func newOffsetStore(db *sql.DB, config Config, logger *zap.Logger, metrics tally.Scope) offsetStore {
+func newOffsetStore(db *sql.DB, logger *zap.Logger, metrics tally.Scope) offsetStore {
 	return &sqloffsetStore{
 		db:      db,
-		config:  config,
 		logger:  logger.Sugar().Named("offset_store"),
 		metrics: metrics.SubScope("offset_store"),
 	}
 }
 
 // Initialize creates an offset entry for a topic+partition if it doesn't exist
-func (s *sqloffsetStore) Initialize(ctx context.Context, topic string, partitionKey string) error {
+func (s *sqloffsetStore) Initialize(ctx context.Context, topic string, partitionKey string, consumerGroup string) error {
 	now := time.Now().UnixMilli()
 
 	// Try to insert, ignore if already exists
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		INSERT IGNORE INTO %s (consumer_group, topic, partition_key, offset_acked, updated_at)
 		VALUES (?, ?, ?, 0, ?)
-	`, OffsetsTableName), s.config.ConsumerGroup, topic, partitionKey, now)
+	`, OffsetsTableName), consumerGroup, topic, partitionKey, now)
 
 	return err
 }
 
 // GetAckedOffset returns the current acked offset for a topic+partition
-func (s *sqloffsetStore) GetAckedOffset(ctx context.Context, topic string, partitionKey string) (int64, error) {
+func (s *sqloffsetStore) GetAckedOffset(ctx context.Context, topic string, partitionKey string, consumerGroup string) (int64, error) {
 	var offset int64
 	err := s.db.QueryRowContext(ctx, fmt.Sprintf(`
 		SELECT offset_acked FROM %s WHERE consumer_group = ? AND topic = ? AND partition_key = ?
-	`, OffsetsTableName), s.config.ConsumerGroup, topic, partitionKey).Scan(&offset)
+	`, OffsetsTableName), consumerGroup, topic, partitionKey).Scan(&offset)
 
 	if err == sql.ErrNoRows {
 		// Partition not yet initialized, return 0
@@ -67,20 +65,20 @@ func (s *sqloffsetStore) GetAckedOffset(ctx context.Context, topic string, parti
 }
 
 // UpdateAckedOffset updates the offset_acked for a topic+partition (only if new offset is greater)
-func (s *sqloffsetStore) UpdateAckedOffset(ctx context.Context, topic string, partitionKey string, offset int64) error {
+func (s *sqloffsetStore) UpdateAckedOffset(ctx context.Context, topic string, partitionKey string, offset int64, consumerGroup string) error {
 	now := time.Now().UnixMilli()
 
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE %s
 		SET offset_acked = ?, updated_at = ?
 		WHERE consumer_group = ? AND topic = ? AND partition_key = ? AND offset_acked < ?
-	`, OffsetsTableName), offset, now, s.config.ConsumerGroup, topic, partitionKey, offset)
+	`, OffsetsTableName), offset, now, consumerGroup, topic, partitionKey, offset)
 
 	return err
 }
 
 // AckMessage atomically deletes a message and updates the acked offset
-func (s *sqloffsetStore) AckMessage(ctx context.Context, topic string, partitionKey string, messageID string, offset int64, messageStore messageStore) error {
+func (s *sqloffsetStore) AckMessage(ctx context.Context, topic string, partitionKey string, messageID string, offset int64, consumerGroup string, messageStore messageStore) error {
 	start := time.Now()
 	success := false
 	defer func() {
@@ -116,7 +114,7 @@ func (s *sqloffsetStore) AckMessage(ctx context.Context, topic string, partition
 		ON DUPLICATE KEY UPDATE
 			offset_acked = IF(VALUES(offset_acked) > offset_acked, VALUES(offset_acked), offset_acked),
 			updated_at = VALUES(updated_at)
-	`, OffsetsTableName), s.config.ConsumerGroup, topic, partitionKey, offset, now)
+	`, OffsetsTableName), consumerGroup, topic, partitionKey, offset, now)
 	if err != nil {
 		s.metrics.Tagged(map[string]string{tagErrorType: "update_offset"}).Counter(metricAckMessageErrors).Inc(1)
 		return fmt.Errorf("failed to update offset: %w", err)

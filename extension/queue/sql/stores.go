@@ -53,11 +53,12 @@ type messageStore interface {
 	// FetchByOffset fetches messages with offset > currentOffset for a specific partition
 	// Only fetches visible messages (invisible_until <= now)
 	// Atomically sets invisible_until and increments retry_count
-	FetchByOffset(ctx context.Context, topic string, partitionKey string, currentOffset int64, limit int) ([]messageRow, error)
+	// visibilityTimeoutMs specifies how long messages should be invisible after fetching (in milliseconds)
+	FetchByOffset(ctx context.Context, topic string, partitionKey string, currentOffset int64, limit int, visibilityTimeoutMs int64) ([]messageRow, error)
 
 	// MoveToDLQ moves a message to the dead letter queue
-	// The DLQ topic is automatically constructed from the original topic plus the configured DLQ suffix
-	MoveToDLQ(ctx context.Context, topic string, messageID string, failureCount int, lastError string) error
+	// dlqTopicSuffix is appended to the original topic to form the DLQ topic name
+	MoveToDLQ(ctx context.Context, topic string, messageID string, failureCount int, lastError string, dlqTopicSuffix string) error
 
 	// SetVisibilityTimeout sets the invisible_until timestamp for a message
 	// visibilityTimeoutMillis: milliseconds from now to hide the message
@@ -69,34 +70,37 @@ type messageStore interface {
 // offsetStore handles offset table operations for per-partition offset tracking (internal use only)
 type offsetStore interface {
 	// Initialize creates an offset entry for a topic+partition if it doesn't exist
-	Initialize(ctx context.Context, topic string, partitionKey string) error
+	Initialize(ctx context.Context, topic string, partitionKey string, consumerGroup string) error
 
 	// GetAckedOffset returns the current acked offset for a topic+partition
-	GetAckedOffset(ctx context.Context, topic string, partitionKey string) (int64, error)
+	GetAckedOffset(ctx context.Context, topic string, partitionKey string, consumerGroup string) (int64, error)
 
 	// UpdateAckedOffset updates the offset_acked for a topic+partition (only if new offset is greater)
-	UpdateAckedOffset(ctx context.Context, topic string, partitionKey string, offset int64) error
+	UpdateAckedOffset(ctx context.Context, topic string, partitionKey string, offset int64, consumerGroup string) error
 
 	// AckMessage atomically deletes a message and updates the acked offset
-	AckMessage(ctx context.Context, topic string, partitionKey string, messageID string, offset int64, messageStore messageStore) error
+	AckMessage(ctx context.Context, topic string, partitionKey string, messageID string, offset int64, consumerGroup string, messageStore messageStore) error
 }
 
 // partitionLeaseStore handles partition lease operations (internal use only)
 type partitionLeaseStore interface {
 	// TryAcquireLease attempts to acquire or renew a lease for a partition
 	// Returns true if lease is acquired/owned by this worker
-	TryAcquireLease(ctx context.Context, topic string, partitionKey string) (bool, error)
+	// leaseDurationMs is how long the lease is valid (in milliseconds)
+	TryAcquireLease(ctx context.Context, topic string, partitionKey string, subscriberName string, consumerGroup string, leaseDurationMs int64) (bool, error)
 
 	// RenewLease renews the lease for a partition owned by this worker
-	RenewLease(ctx context.Context, topic string, partitionKey string) error
+	// leaseDurationMs is how long the lease is valid (in milliseconds)
+	RenewLease(ctx context.Context, topic string, partitionKey string, subscriberName string, consumerGroup string, leaseDurationMs int64) error
 
 	// ReleaseLease releases the lease for a partition owned by this worker
-	ReleaseLease(ctx context.Context, topic string, partitionKey string) error
+	ReleaseLease(ctx context.Context, topic string, partitionKey string, subscriberName string, consumerGroup string) error
 
 	// GetLeasedPartitions returns all partitions currently leased by this worker
-	GetLeasedPartitions(ctx context.Context, topic string) ([]string, error)
+	GetLeasedPartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string) ([]string, error)
 
 	// DiscoverAndAcquirePartitions discovers partitions from messages table and tries to acquire leases
 	// Returns the number of new leases acquired
-	DiscoverAndAcquirePartitions(ctx context.Context, topic string) (int, error)
+	// leaseDurationMs is how long the lease is valid (in milliseconds)
+	DiscoverAndAcquirePartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string, leaseDurationMs int64) (int, error)
 }

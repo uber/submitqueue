@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "queue",
@@ -7,8 +7,19 @@ go_library(
         "publisher.go",
         "queue.go",
         "subscriber.go",
+        "subscription_config.go",
     ],
     importpath = "github.com/uber/submitqueue/extension/queue",
     visibility = ["//visibility:public"],
     deps = ["//entity/queue"],
+)
+
+go_test(
+    name = "queue_test",
+    srcs = ["subscription_config_test.go"],
+    embed = [":queue"],
+    deps = [
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
 )

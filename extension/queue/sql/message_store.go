@@ -17,7 +17,6 @@ import (
 // sqlmessageStore is the SQL implementation of messageStore
 type sqlmessageStore struct {
 	db      *sql.DB
-	config  Config
 	logger  *zap.SugaredLogger
 	metrics tally.Scope
 }
@@ -30,10 +29,9 @@ const (
 )
 
 // newMessageStore creates a new SQL message store
-func newMessageStore(db *sql.DB, config Config, logger *zap.Logger, metrics tally.Scope) messageStore {
+func newMessageStore(db *sql.DB, logger *zap.Logger, metrics tally.Scope) messageStore {
 	return &sqlmessageStore{
 		db:      db,
-		config:  config,
 		logger:  logger.Sugar().Named("message_store"),
 		metrics: metrics.SubScope("message_store"),
 	}
@@ -181,7 +179,7 @@ func (s *sqlmessageStore) Delete(ctx context.Context, topic string, messageID st
 
 // FetchByOffset fetches visible messages with offset > currentOffset for a specific partition
 // Atomically sets invisible_until and increments retry_count for fetched messages
-func (s *sqlmessageStore) FetchByOffset(ctx context.Context, topic string, partitionKey string, currentOffset int64, limit int) ([]messageRow, error) {
+func (s *sqlmessageStore) FetchByOffset(ctx context.Context, topic string, partitionKey string, currentOffset int64, limit int, visibilityTimeoutMs int64) ([]messageRow, error) {
 	start := time.Now()
 	success := false
 	defer func() {
@@ -193,7 +191,7 @@ func (s *sqlmessageStore) FetchByOffset(ctx context.Context, topic string, parti
 	}()
 
 	now := start.UnixMilli()
-	invisibleUntil := now + s.config.VisibilityTimeout.Milliseconds()
+	invisibleUntil := now + visibilityTimeoutMs
 
 	// Start transaction to atomically fetch and update messages
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -360,7 +358,7 @@ func (s *sqlmessageStore) FetchByOffset(ctx context.Context, topic string, parti
 // MoveToDLQ atomically moves a message to the DLQ by reinserting it with the DLQ topic name
 // The message is inserted back into queue_messages table with the DLQ topic (original + suffix)
 // This allows DLQ messages to be consumed using the normal subscriber
-func (s *sqlmessageStore) MoveToDLQ(ctx context.Context, topic string, messageID string, failureCount int, lastError string) error {
+func (s *sqlmessageStore) MoveToDLQ(ctx context.Context, topic string, messageID string, failureCount int, lastError string, dlqTopicSuffix string) error {
 	start := time.Now()
 	success := false
 	defer func() {
@@ -372,7 +370,7 @@ func (s *sqlmessageStore) MoveToDLQ(ctx context.Context, topic string, messageID
 	}()
 
 	// Construct DLQ topic name
-	dlqTopic := topic + s.config.DLQ.TopicSuffix
+	dlqTopic := topic + dlqTopicSuffix
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

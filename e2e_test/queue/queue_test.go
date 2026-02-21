@@ -97,12 +97,10 @@ func (s *QueueIntegrationSuite) TestPublishAndSubscribe() {
 	t := s.T()
 
 	// Create queue
-	config := queueSQL.DefaultConfig("test-consumer", "test-worker-1")
 	q, err := queueSQL.NewQueue(queueSQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
-		Config:       config,
 	})
 	require.NoError(t, err)
 	defer q.Close()
@@ -112,8 +110,9 @@ func (s *QueueIntegrationSuite) TestPublishAndSubscribe() {
 
 	topic := "test_topic"
 
-	// Subscribe first
-	deliveryChan, err := subscriber.Subscribe(s.ctx, topic)
+	// Subscribe first with config
+	subConfig := extqueue.DefaultSubscriptionConfig("test-worker-1", "test-consumer")
+	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
 	// Publish messages with various metadata scenarios
@@ -168,12 +167,10 @@ func (s *QueueIntegrationSuite) TestPublishAndSubscribe() {
 func (s *QueueIntegrationSuite) TestMultiplePartitions() {
 	t := s.T()
 
-	config := queueSQL.DefaultConfig("multi-partition-consumer", "worker-1")
 	q, err := queueSQL.NewQueue(queueSQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
-		Config:       config,
 	})
 	require.NoError(t, err)
 	defer q.Close()
@@ -184,7 +181,8 @@ func (s *QueueIntegrationSuite) TestMultiplePartitions() {
 	topic := "multi_partition_topic"
 
 	// Subscribe
-	deliveryChan, err := subscriber.Subscribe(s.ctx, topic)
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "multi-partition-consumer")
+	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
 	// Publish messages to different partitions
@@ -214,16 +212,10 @@ func (s *QueueIntegrationSuite) TestMultiplePartitions() {
 func (s *QueueIntegrationSuite) TestVisibilityTimeoutAndRetry() {
 	t := s.T()
 
-	// Use short visibility timeout for faster test
-	config := queueSQL.DefaultConfig("retry-consumer", "worker-1")
-	config.VisibilityTimeout = 2 * time.Second
-	config.PollInterval = 100 * time.Millisecond
-
 	q, err := queueSQL.NewQueue(queueSQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
-		Config:       config,
 	})
 	require.NoError(t, err)
 	defer q.Close()
@@ -233,8 +225,13 @@ func (s *QueueIntegrationSuite) TestVisibilityTimeoutAndRetry() {
 
 	topic := "retry_topic"
 
+	// Use short visibility timeout for faster test
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "retry-consumer")
+	subConfig.VisibilityTimeoutMs = 2000      // 2 seconds
+	subConfig.PollIntervalMs = 100            // 100 milliseconds
+
 	// Subscribe
-	deliveryChan, err := subscriber.Subscribe(s.ctx, topic)
+	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
 	// Publish a message
@@ -256,8 +253,8 @@ func (s *QueueIntegrationSuite) TestVisibilityTimeoutAndRetry() {
 	require.NoError(t, err)
 
 	// Wait for original visibility timeout to expire (but not the extended timeout)
-	t.Logf("Waiting for original visibility timeout (%v) - message should NOT reappear", config.VisibilityTimeout)
-	time.Sleep(config.VisibilityTimeout + 200*time.Millisecond)
+	t.Logf("Waiting for original visibility timeout (%v) - message should NOT reappear", time.Duration(subConfig.VisibilityTimeoutMs)*time.Millisecond)
+	time.Sleep(time.Duration(subConfig.VisibilityTimeoutMs)*time.Millisecond + 200*time.Millisecond)
 
 	// Message should NOT be redelivered yet (visibility was extended)
 	select {
@@ -286,7 +283,7 @@ func (s *QueueIntegrationSuite) TestVisibilityTimeoutAndRetry() {
 
 	// Wait for visibility timeout to expire
 	t.Logf("Waiting for visibility timeout to expire...")
-	time.Sleep(config.VisibilityTimeout + 500*time.Millisecond)
+	time.Sleep(time.Duration(subConfig.VisibilityTimeoutMs)*time.Millisecond + 500*time.Millisecond)
 
 	// Receive second time (retry)
 	thirdDelivery := receiveWithTimeout(t, deliveryChan, 5*time.Second)
@@ -302,14 +299,10 @@ func (s *QueueIntegrationSuite) TestVisibilityTimeoutAndRetry() {
 func (s *QueueIntegrationSuite) TestNackWithDelay() {
 	t := s.T()
 
-	config := queueSQL.DefaultConfig("nack-consumer", "worker-1")
-	config.PollInterval = 100 * time.Millisecond
-
 	q, err := queueSQL.NewQueue(queueSQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
-		Config:       config,
 	})
 	require.NoError(t, err)
 	defer q.Close()
@@ -320,7 +313,9 @@ func (s *QueueIntegrationSuite) TestNackWithDelay() {
 	topic := "nack_topic"
 
 	// Subscribe
-	deliveryChan, err := subscriber.Subscribe(s.ctx, topic)
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "nack-consumer")
+	subConfig.PollIntervalMs = 100 // 100 milliseconds
+	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
 	// Publish message
@@ -356,12 +351,10 @@ func (s *QueueIntegrationSuite) TestNackWithDelay() {
 func (s *QueueIntegrationSuite) TestIdempotentPublish() {
 	t := s.T()
 
-	config := queueSQL.DefaultConfig("idempotent-consumer", "worker-1")
 	q, err := queueSQL.NewQueue(queueSQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
-		Config:       config,
 	})
 	require.NoError(t, err)
 	defer q.Close()
@@ -372,7 +365,8 @@ func (s *QueueIntegrationSuite) TestIdempotentPublish() {
 	topic := "idempotent_topic"
 
 	// Subscribe
-	deliveryChan, err := subscriber.Subscribe(s.ctx, topic)
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "idempotent-consumer")
+	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
 	// Publish same message twice
@@ -404,12 +398,10 @@ func (s *QueueIntegrationSuite) TestIdempotentPublish() {
 func (s *QueueIntegrationSuite) TestConcurrentPublishers() {
 	t := s.T()
 
-	config := queueSQL.DefaultConfig("concurrent-consumer", "worker-1")
 	q, err := queueSQL.NewQueue(queueSQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
-		Config:       config,
 	})
 	require.NoError(t, err)
 	defer q.Close()
@@ -420,7 +412,8 @@ func (s *QueueIntegrationSuite) TestConcurrentPublishers() {
 	topic := "concurrent_topic"
 
 	// Subscribe
-	deliveryChan, err := subscriber.Subscribe(s.ctx, topic)
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "concurrent-consumer")
+	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
 	// Publish from multiple goroutines
@@ -461,18 +454,10 @@ func (s *QueueIntegrationSuite) TestConcurrentPublishers() {
 func (s *QueueIntegrationSuite) TestCrashRecovery() {
 	t := s.T()
 
-	// Use short timeouts for faster test
-	config := queueSQL.DefaultConfig("crash-consumer", "worker-1")
-	config.VisibilityTimeout = 2 * time.Second
-	config.PollInterval = 100 * time.Millisecond
-	config.LeaseDuration = 3 * time.Second        // Short lease for testing crash recovery
-	config.LeaseRenewalInterval = 1 * time.Second // Must be less than LeaseDuration
-
 	q1, err := queueSQL.NewQueue(queueSQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
-		Config:       config,
 	})
 	require.NoError(t, err)
 
@@ -481,8 +466,15 @@ func (s *QueueIntegrationSuite) TestCrashRecovery() {
 
 	topic := "crash_topic"
 
+	// Use short timeouts for faster test
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "crash-consumer")
+	subConfig.VisibilityTimeoutMs = 2000          // 2 seconds
+	subConfig.PollIntervalMs = 100                // 100 milliseconds
+	subConfig.LeaseDurationMs = 3000              // 3 seconds - short lease for testing crash recovery
+	subConfig.LeaseRenewalIntervalMs = 1000       // 1 second - must be less than LeaseDuration
+
 	// Subscribe with first worker
-	deliveryChan1, err := subscriber1.Subscribe(s.ctx, topic)
+	deliveryChan1, err := subscriber1.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
 	// Publish message
@@ -499,28 +491,28 @@ func (s *QueueIntegrationSuite) TestCrashRecovery() {
 	t.Logf("Worker 1 crashed (queue closed)")
 
 	// Wait for both visibility timeout AND partition lease to expire
-	waitTime := config.LeaseDuration + config.VisibilityTimeout + time.Second
+	waitTime := time.Duration(subConfig.LeaseDurationMs+subConfig.VisibilityTimeoutMs)*time.Millisecond + time.Second
 	t.Logf("Waiting %v for lease and visibility timeout to expire", waitTime)
 	time.Sleep(waitTime)
 
 	// Start worker 2 with same consumer group
-	config2 := queueSQL.DefaultConfig("crash-consumer", "worker-2")
-	config2.VisibilityTimeout = 2 * time.Second
-	config2.PollInterval = 100 * time.Millisecond
-	config2.LeaseDuration = 3 * time.Second
-	config2.LeaseRenewalInterval = 1 * time.Second
-
 	q2, err := queueSQL.NewQueue(queueSQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
-		Config:       config2,
 	})
 	require.NoError(t, err)
 	defer q2.Close()
 
 	subscriber2 := q2.Subscriber()
-	deliveryChan2, err := subscriber2.Subscribe(s.ctx, topic)
+
+	subConfig2 := extqueue.DefaultSubscriptionConfig("worker-2", "crash-consumer")
+	subConfig2.VisibilityTimeoutMs = 2000          // 2 seconds
+	subConfig2.PollIntervalMs = 100                // 100 milliseconds
+	subConfig2.LeaseDurationMs = 3000              // 3 seconds
+	subConfig2.LeaseRenewalIntervalMs = 1000       // 1 second
+
+	deliveryChan2, err := subscriber2.Subscribe(s.ctx, topic, subConfig2)
 	require.NoError(t, err)
 
 	// Worker 2 should receive the same message (recovery)
@@ -540,22 +532,18 @@ func (s *QueueIntegrationSuite) TestMultipleConsumerGroups() {
 	topic := "multi_group_topic"
 
 	// Create two different consumer groups
-	config1 := queueSQL.DefaultConfig("group-A", "worker-1")
 	q1, err := queueSQL.NewQueue(queueSQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
-		Config:       config1,
 	})
 	require.NoError(t, err)
 	defer q1.Close()
 
-	config2 := queueSQL.DefaultConfig("group-B", "worker-1")
 	q2, err := queueSQL.NewQueue(queueSQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
-		Config:       config2,
 	})
 	require.NoError(t, err)
 	defer q2.Close()
@@ -565,10 +553,12 @@ func (s *QueueIntegrationSuite) TestMultipleConsumerGroups() {
 	subscriber2 := q2.Subscriber()
 
 	// Subscribe both groups
-	deliveryChan1, err := subscriber1.Subscribe(s.ctx, topic)
+	subConfig1 := extqueue.DefaultSubscriptionConfig("worker-1", "group-A")
+	deliveryChan1, err := subscriber1.Subscribe(s.ctx, topic, subConfig1)
 	require.NoError(t, err)
 
-	deliveryChan2, err := subscriber2.Subscribe(s.ctx, topic)
+	subConfig2 := extqueue.DefaultSubscriptionConfig("worker-1", "group-B")
+	deliveryChan2, err := subscriber2.Subscribe(s.ctx, topic, subConfig2)
 	require.NoError(t, err)
 
 	// Publish messages
@@ -621,22 +611,18 @@ func (s *QueueIntegrationSuite) TestMultipleWorkersInConsumerGroup() {
 	consumerGroup := "shared-group"
 
 	// Create two workers in same consumer group
-	config1 := queueSQL.DefaultConfig(consumerGroup, "worker-1")
 	q1, err := queueSQL.NewQueue(queueSQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
-		Config:       config1,
 	})
 	require.NoError(t, err)
 	defer q1.Close()
 
-	config2 := queueSQL.DefaultConfig(consumerGroup, "worker-2")
 	q2, err := queueSQL.NewQueue(queueSQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
-		Config:       config2,
 	})
 	require.NoError(t, err)
 	defer q2.Close()
@@ -646,10 +632,12 @@ func (s *QueueIntegrationSuite) TestMultipleWorkersInConsumerGroup() {
 	subscriber2 := q2.Subscriber()
 
 	// Subscribe both workers
-	deliveryChan1, err := subscriber1.Subscribe(s.ctx, topic)
+	subConfig1 := extqueue.DefaultSubscriptionConfig("worker-1", consumerGroup)
+	deliveryChan1, err := subscriber1.Subscribe(s.ctx, topic, subConfig1)
 	require.NoError(t, err)
 
-	deliveryChan2, err := subscriber2.Subscribe(s.ctx, topic)
+	subConfig2 := extqueue.DefaultSubscriptionConfig("worker-2", consumerGroup)
+	deliveryChan2, err := subscriber2.Subscribe(s.ctx, topic, subConfig2)
 	require.NoError(t, err)
 
 	// Publish messages to different partitions so they can be distributed
@@ -740,12 +728,10 @@ func (s *QueueIntegrationSuite) TestConcurrentSubscribers() {
 	totalMessages := numSubscribers * messagesPerSubscriber
 
 	// Create publisher
-	publisherConfig := queueSQL.DefaultConfig(consumerGroup, "publisher")
 	pubQueue, err := queueSQL.NewQueue(queueSQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
-		Config:       publisherConfig,
 	})
 	require.NoError(t, err)
 	defer pubQueue.Close()
@@ -757,18 +743,17 @@ func (s *QueueIntegrationSuite) TestConcurrentSubscribers() {
 	var deliveryChans []<-chan extqueue.Delivery
 
 	for i := 0; i < numSubscribers; i++ {
-		config := queueSQL.DefaultConfig(consumerGroup, fmt.Sprintf("worker-%d", i))
 		q, err := queueSQL.NewQueue(queueSQL.Params{
 			DB:           s.db,
 			Logger:       zaptest.NewLogger(t),
 			MetricsScope: tally.NoopScope,
-			Config:       config,
 		})
 		require.NoError(t, err)
 		queues = append(queues, q)
 
 		subscriber := q.Subscriber()
-		deliveryChan, err := subscriber.Subscribe(s.ctx, topic)
+		subConfig := extqueue.DefaultSubscriptionConfig(fmt.Sprintf("worker-%d", i), consumerGroup)
+		deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 		require.NoError(t, err)
 		deliveryChans = append(deliveryChans, deliveryChan)
 	}
@@ -848,18 +833,10 @@ func (s *QueueIntegrationSuite) TestDeadLetterQueue() {
 
 	topic := "dlq_topic"
 
-	// Configure with low max attempts and DLQ enabled
-	config := queueSQL.DefaultConfig("dlq-consumer", "worker-1")
-	config.PollInterval = 100 * time.Millisecond
-	config.VisibilityTimeout = 1 * time.Second
-	config.Retry.MaxAttempts = 2 // Only 2 attempts before DLQ
-	config.DLQ.Enabled = true
-
 	q, err := queueSQL.NewQueue(queueSQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
-		Config:       config,
 	})
 	require.NoError(t, err)
 	defer q.Close()
@@ -867,8 +844,15 @@ func (s *QueueIntegrationSuite) TestDeadLetterQueue() {
 	publisher := q.Publisher()
 	subscriber := q.Subscriber()
 
+	// Configure with low max attempts and DLQ enabled
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "dlq-consumer")
+	subConfig.PollIntervalMs = 100       // 100 milliseconds
+	subConfig.VisibilityTimeoutMs = 1000 // 1 second
+	subConfig.Retry.MaxAttempts = 2      // Only 2 attempts before DLQ
+	subConfig.DLQ.Enabled = true
+
 	// Subscribe to main topic
-	deliveryChan, err := subscriber.Subscribe(s.ctx, topic)
+	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
 	// Publish a message that will fail
@@ -878,7 +862,7 @@ func (s *QueueIntegrationSuite) TestDeadLetterQueue() {
 	t.Logf("Published poison message, will nack repeatedly")
 
 	// Receive and nack the message MaxAttempts times
-	for attempt := 1; attempt <= config.Retry.MaxAttempts; attempt++ {
+	for attempt := 1; attempt <= subConfig.Retry.MaxAttempts; attempt++ {
 		delivery := receiveWithTimeout(t, deliveryChan, 10*time.Second)
 		t.Logf("Attempt %d: received message, nacking", delivery.Attempt())
 		assert.Equal(t, attempt, delivery.Attempt())
@@ -888,11 +872,11 @@ func (s *QueueIntegrationSuite) TestDeadLetterQueue() {
 		require.NoError(t, delivery.Nack(s.ctx, 0))
 
 		// Wait a bit for visibility timeout
-		time.Sleep(config.VisibilityTimeout + 200*time.Millisecond)
+		time.Sleep(time.Duration(subConfig.VisibilityTimeoutMs)*time.Millisecond + 200*time.Millisecond)
 	}
 
 	// After MaxAttempts, message should be moved to DLQ topic
-	t.Logf("Message should be moved to DLQ after %d failed attempts", config.Retry.MaxAttempts)
+	t.Logf("Message should be moved to DLQ after %d failed attempts", subConfig.Retry.MaxAttempts)
 
 	// Should NOT receive on main topic anymore (message moved to DLQ)
 	select {
@@ -903,10 +887,11 @@ func (s *QueueIntegrationSuite) TestDeadLetterQueue() {
 	}
 
 	// Subscribe to DLQ topic to consume the failed message
-	dlqTopic := topic + config.DLQ.TopicSuffix
+	dlqTopic := topic + subConfig.DLQ.TopicSuffix
 	t.Logf("Subscribing to DLQ topic: %s", dlqTopic)
 
-	dlqDeliveryChan, err := subscriber.Subscribe(s.ctx, dlqTopic)
+	dlqConfig := extqueue.DefaultSubscriptionConfig("worker-1", "dlq-consumer")
+	dlqDeliveryChan, err := subscriber.Subscribe(s.ctx, dlqTopic, dlqConfig)
 	require.NoError(t, err)
 
 	// Receive the message from DLQ
@@ -924,7 +909,7 @@ func (s *QueueIntegrationSuite) TestDeadLetterQueue() {
 
 	// Verify values
 	assert.Equal(t, topic, metadata["dlq.original_topic"])
-	assert.Equal(t, fmt.Sprintf("%d", config.Retry.MaxAttempts), metadata["dlq.failure_count"])
+	assert.Equal(t, fmt.Sprintf("%d", subConfig.Retry.MaxAttempts), metadata["dlq.failure_count"])
 	assert.Equal(t, "exceeded retry limit", metadata["dlq.last_error"])
 
 	failedAt := metadata["dlq.failed_at"]
@@ -944,12 +929,10 @@ func (s *QueueIntegrationSuite) TestMessageOrderingWithinPartition() {
 	topic := "ordering_topic"
 	partitionKey := "ordered-partition"
 
-	config := queueSQL.DefaultConfig("ordering-consumer", "worker-1")
 	q, err := queueSQL.NewQueue(queueSQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
-		Config:       config,
 	})
 	require.NoError(t, err)
 	defer q.Close()
@@ -958,7 +941,8 @@ func (s *QueueIntegrationSuite) TestMessageOrderingWithinPartition() {
 	subscriber := q.Subscriber()
 
 	// Subscribe first
-	deliveryChan, err := subscriber.Subscribe(s.ctx, topic)
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "ordering-consumer")
+	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
 	// Publish messages with same partition key (should be ordered)
@@ -996,12 +980,10 @@ func (s *QueueIntegrationSuite) TestLateSubscriber() {
 
 	topic := "late_subscriber_topic"
 
-	config := queueSQL.DefaultConfig("late-consumer", "worker-1")
 	q, err := queueSQL.NewQueue(queueSQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
-		Config:       config,
 	})
 	require.NoError(t, err)
 	defer q.Close()
@@ -1021,7 +1003,8 @@ func (s *QueueIntegrationSuite) TestLateSubscriber() {
 
 	// Now subscribe (late subscriber)
 	subscriber := q.Subscriber()
-	deliveryChan, err := subscriber.Subscribe(s.ctx, topic)
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "late-consumer")
+	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 	t.Logf("Late subscriber joined after messages published")
 
@@ -1048,13 +1031,10 @@ func (s *QueueIntegrationSuite) TestEmptyTopicSubscribe() {
 
 	topic := "empty_topic"
 
-	config := queueSQL.DefaultConfig("empty-consumer", "worker-1")
-	config.PollInterval = 100 * time.Millisecond
 	q, err := queueSQL.NewQueue(queueSQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
-		Config:       config,
 	})
 	require.NoError(t, err)
 	defer q.Close()
@@ -1062,7 +1042,9 @@ func (s *QueueIntegrationSuite) TestEmptyTopicSubscribe() {
 	subscriber := q.Subscriber()
 
 	// Subscribe to empty topic (no messages published yet)
-	deliveryChan, err := subscriber.Subscribe(s.ctx, topic)
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "empty-consumer")
+	subConfig.PollIntervalMs = 100 // 100 milliseconds
+	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 	t.Logf("Subscribed to empty topic")
 
@@ -1093,13 +1075,10 @@ func (s *QueueIntegrationSuite) TestGracefulShutdownDuringProcessing() {
 
 	topic := "shutdown_topic"
 
-	config := queueSQL.DefaultConfig("shutdown-consumer", "worker-1")
-	config.PollInterval = 100 * time.Millisecond
 	q, err := queueSQL.NewQueue(queueSQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
-		Config:       config,
 	})
 	require.NoError(t, err)
 
@@ -1107,7 +1086,9 @@ func (s *QueueIntegrationSuite) TestGracefulShutdownDuringProcessing() {
 	subscriber := q.Subscriber()
 
 	// Subscribe
-	deliveryChan, err := subscriber.Subscribe(s.ctx, topic)
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "shutdown-consumer")
+	subConfig.PollIntervalMs = 100 // 100 milliseconds
+	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
 	// Publish messages
@@ -1155,8 +1136,8 @@ drainLoop:
 
 	// Wait for visibility timeout to expire so messages become visible again
 	// All messages (in-flight + buffered) were fetched and marked invisible
-	t.Logf("Waiting for visibility timeout to expire (%v) so messages become visible again...", config.VisibilityTimeout)
-	time.Sleep(config.VisibilityTimeout + 500*time.Millisecond)
+	t.Logf("Waiting for visibility timeout to expire (%v) so messages become visible again...", time.Duration(subConfig.VisibilityTimeoutMs)*time.Millisecond)
+	time.Sleep(time.Duration(subConfig.VisibilityTimeoutMs)*time.Millisecond + 500*time.Millisecond)
 
 	// Start new subscriber to verify all messages are redelivered
 	t.Logf("Starting new subscriber to verify message recovery...")
@@ -1164,13 +1145,13 @@ drainLoop:
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
-		Config:       config,
 	})
 	require.NoError(t, err)
 	defer q2.Close()
 
 	subscriber2 := q2.Subscriber()
-	deliveryChan2, err := subscriber2.Subscribe(s.ctx, topic)
+	subConfig2 := extqueue.DefaultSubscriptionConfig("worker-1", "shutdown-consumer")
+	deliveryChan2, err := subscriber2.Subscribe(s.ctx, topic, subConfig2)
 	require.NoError(t, err)
 
 	// Receive all unprocessed messages (all should be redelivered after visibility timeout)

@@ -20,9 +20,7 @@ const fixedTimestamp = int64(1234567890000) // Fixed timestamp for test repeatab
 func setupPublisherTest(t *testing.T, mockStore *MockmessageStore) extqueue.Publisher {
 	t.Helper()
 
-	config := DefaultConfig("test-consumer", "test-worker")
-
-	return NewPublisher(config,
+	return NewPublisher(
 		zaptest.NewLogger(t).Sugar().Named("publisher"),
 		tally.NoopScope.SubScope("publisher"),
 		mockStore,

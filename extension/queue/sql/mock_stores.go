@@ -56,18 +56,18 @@ func (mr *MockmessageStoreMockRecorder) Delete(ctx, topic, messageID any) *gomoc
 }
 
 // FetchByOffset mocks base method.
-func (m *MockmessageStore) FetchByOffset(ctx context.Context, topic, partitionKey string, currentOffset int64, limit int) ([]messageRow, error) {
+func (m *MockmessageStore) FetchByOffset(ctx context.Context, topic, partitionKey string, currentOffset int64, limit int, visibilityTimeoutMs int64) ([]messageRow, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FetchByOffset", ctx, topic, partitionKey, currentOffset, limit)
+	ret := m.ctrl.Call(m, "FetchByOffset", ctx, topic, partitionKey, currentOffset, limit, visibilityTimeoutMs)
 	ret0, _ := ret[0].([]messageRow)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // FetchByOffset indicates an expected call of FetchByOffset.
-func (mr *MockmessageStoreMockRecorder) FetchByOffset(ctx, topic, partitionKey, currentOffset, limit any) *gomock.Call {
+func (mr *MockmessageStoreMockRecorder) FetchByOffset(ctx, topic, partitionKey, currentOffset, limit, visibilityTimeoutMs any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchByOffset", reflect.TypeOf((*MockmessageStore)(nil).FetchByOffset), ctx, topic, partitionKey, currentOffset, limit)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchByOffset", reflect.TypeOf((*MockmessageStore)(nil).FetchByOffset), ctx, topic, partitionKey, currentOffset, limit, visibilityTimeoutMs)
 }
 
 // Insert mocks base method.
@@ -85,17 +85,17 @@ func (mr *MockmessageStoreMockRecorder) Insert(ctx, topic, messages any) *gomock
 }
 
 // MoveToDLQ mocks base method.
-func (m *MockmessageStore) MoveToDLQ(ctx context.Context, topic, messageID string, failureCount int, lastError string) error {
+func (m *MockmessageStore) MoveToDLQ(ctx context.Context, topic, messageID string, failureCount int, lastError, dlqTopicSuffix string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MoveToDLQ", ctx, topic, messageID, failureCount, lastError)
+	ret := m.ctrl.Call(m, "MoveToDLQ", ctx, topic, messageID, failureCount, lastError, dlqTopicSuffix)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // MoveToDLQ indicates an expected call of MoveToDLQ.
-func (mr *MockmessageStoreMockRecorder) MoveToDLQ(ctx, topic, messageID, failureCount, lastError any) *gomock.Call {
+func (mr *MockmessageStoreMockRecorder) MoveToDLQ(ctx, topic, messageID, failureCount, lastError, dlqTopicSuffix any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveToDLQ", reflect.TypeOf((*MockmessageStore)(nil).MoveToDLQ), ctx, topic, messageID, failureCount, lastError)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveToDLQ", reflect.TypeOf((*MockmessageStore)(nil).MoveToDLQ), ctx, topic, messageID, failureCount, lastError, dlqTopicSuffix)
 }
 
 // SetVisibilityTimeout mocks base method.
@@ -137,60 +137,60 @@ func (m *MockoffsetStore) EXPECT() *MockoffsetStoreMockRecorder {
 }
 
 // AckMessage mocks base method.
-func (m *MockoffsetStore) AckMessage(ctx context.Context, topic, partitionKey, messageID string, offset int64, messageStore messageStore) error {
+func (m *MockoffsetStore) AckMessage(ctx context.Context, topic, partitionKey, messageID string, offset int64, consumerGroup string, messageStore messageStore) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AckMessage", ctx, topic, partitionKey, messageID, offset, messageStore)
+	ret := m.ctrl.Call(m, "AckMessage", ctx, topic, partitionKey, messageID, offset, consumerGroup, messageStore)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // AckMessage indicates an expected call of AckMessage.
-func (mr *MockoffsetStoreMockRecorder) AckMessage(ctx, topic, partitionKey, messageID, offset, messageStore any) *gomock.Call {
+func (mr *MockoffsetStoreMockRecorder) AckMessage(ctx, topic, partitionKey, messageID, offset, consumerGroup, messageStore any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AckMessage", reflect.TypeOf((*MockoffsetStore)(nil).AckMessage), ctx, topic, partitionKey, messageID, offset, messageStore)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AckMessage", reflect.TypeOf((*MockoffsetStore)(nil).AckMessage), ctx, topic, partitionKey, messageID, offset, consumerGroup, messageStore)
 }
 
 // GetAckedOffset mocks base method.
-func (m *MockoffsetStore) GetAckedOffset(ctx context.Context, topic, partitionKey string) (int64, error) {
+func (m *MockoffsetStore) GetAckedOffset(ctx context.Context, topic, partitionKey, consumerGroup string) (int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetAckedOffset", ctx, topic, partitionKey)
+	ret := m.ctrl.Call(m, "GetAckedOffset", ctx, topic, partitionKey, consumerGroup)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetAckedOffset indicates an expected call of GetAckedOffset.
-func (mr *MockoffsetStoreMockRecorder) GetAckedOffset(ctx, topic, partitionKey any) *gomock.Call {
+func (mr *MockoffsetStoreMockRecorder) GetAckedOffset(ctx, topic, partitionKey, consumerGroup any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAckedOffset", reflect.TypeOf((*MockoffsetStore)(nil).GetAckedOffset), ctx, topic, partitionKey)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAckedOffset", reflect.TypeOf((*MockoffsetStore)(nil).GetAckedOffset), ctx, topic, partitionKey, consumerGroup)
 }
 
 // Initialize mocks base method.
-func (m *MockoffsetStore) Initialize(ctx context.Context, topic, partitionKey string) error {
+func (m *MockoffsetStore) Initialize(ctx context.Context, topic, partitionKey, consumerGroup string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Initialize", ctx, topic, partitionKey)
+	ret := m.ctrl.Call(m, "Initialize", ctx, topic, partitionKey, consumerGroup)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Initialize indicates an expected call of Initialize.
-func (mr *MockoffsetStoreMockRecorder) Initialize(ctx, topic, partitionKey any) *gomock.Call {
+func (mr *MockoffsetStoreMockRecorder) Initialize(ctx, topic, partitionKey, consumerGroup any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Initialize", reflect.TypeOf((*MockoffsetStore)(nil).Initialize), ctx, topic, partitionKey)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Initialize", reflect.TypeOf((*MockoffsetStore)(nil).Initialize), ctx, topic, partitionKey, consumerGroup)
 }
 
 // UpdateAckedOffset mocks base method.
-func (m *MockoffsetStore) UpdateAckedOffset(ctx context.Context, topic, partitionKey string, offset int64) error {
+func (m *MockoffsetStore) UpdateAckedOffset(ctx context.Context, topic, partitionKey string, offset int64, consumerGroup string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateAckedOffset", ctx, topic, partitionKey, offset)
+	ret := m.ctrl.Call(m, "UpdateAckedOffset", ctx, topic, partitionKey, offset, consumerGroup)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateAckedOffset indicates an expected call of UpdateAckedOffset.
-func (mr *MockoffsetStoreMockRecorder) UpdateAckedOffset(ctx, topic, partitionKey, offset any) *gomock.Call {
+func (mr *MockoffsetStoreMockRecorder) UpdateAckedOffset(ctx, topic, partitionKey, offset, consumerGroup any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateAckedOffset", reflect.TypeOf((*MockoffsetStore)(nil).UpdateAckedOffset), ctx, topic, partitionKey, offset)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateAckedOffset", reflect.TypeOf((*MockoffsetStore)(nil).UpdateAckedOffset), ctx, topic, partitionKey, offset, consumerGroup)
 }
 
 // MockpartitionLeaseStore is a mock of partitionLeaseStore interface.
@@ -218,74 +218,74 @@ func (m *MockpartitionLeaseStore) EXPECT() *MockpartitionLeaseStoreMockRecorder 
 }
 
 // DiscoverAndAcquirePartitions mocks base method.
-func (m *MockpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Context, topic string) (int, error) {
+func (m *MockpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Context, topic, subscriberName, consumerGroup string, leaseDurationMs int64) (int, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DiscoverAndAcquirePartitions", ctx, topic)
+	ret := m.ctrl.Call(m, "DiscoverAndAcquirePartitions", ctx, topic, subscriberName, consumerGroup, leaseDurationMs)
 	ret0, _ := ret[0].(int)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // DiscoverAndAcquirePartitions indicates an expected call of DiscoverAndAcquirePartitions.
-func (mr *MockpartitionLeaseStoreMockRecorder) DiscoverAndAcquirePartitions(ctx, topic any) *gomock.Call {
+func (mr *MockpartitionLeaseStoreMockRecorder) DiscoverAndAcquirePartitions(ctx, topic, subscriberName, consumerGroup, leaseDurationMs any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DiscoverAndAcquirePartitions", reflect.TypeOf((*MockpartitionLeaseStore)(nil).DiscoverAndAcquirePartitions), ctx, topic)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DiscoverAndAcquirePartitions", reflect.TypeOf((*MockpartitionLeaseStore)(nil).DiscoverAndAcquirePartitions), ctx, topic, subscriberName, consumerGroup, leaseDurationMs)
 }
 
 // GetLeasedPartitions mocks base method.
-func (m *MockpartitionLeaseStore) GetLeasedPartitions(ctx context.Context, topic string) ([]string, error) {
+func (m *MockpartitionLeaseStore) GetLeasedPartitions(ctx context.Context, topic, subscriberName, consumerGroup string) ([]string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetLeasedPartitions", ctx, topic)
+	ret := m.ctrl.Call(m, "GetLeasedPartitions", ctx, topic, subscriberName, consumerGroup)
 	ret0, _ := ret[0].([]string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetLeasedPartitions indicates an expected call of GetLeasedPartitions.
-func (mr *MockpartitionLeaseStoreMockRecorder) GetLeasedPartitions(ctx, topic any) *gomock.Call {
+func (mr *MockpartitionLeaseStoreMockRecorder) GetLeasedPartitions(ctx, topic, subscriberName, consumerGroup any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLeasedPartitions", reflect.TypeOf((*MockpartitionLeaseStore)(nil).GetLeasedPartitions), ctx, topic)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLeasedPartitions", reflect.TypeOf((*MockpartitionLeaseStore)(nil).GetLeasedPartitions), ctx, topic, subscriberName, consumerGroup)
 }
 
 // ReleaseLease mocks base method.
-func (m *MockpartitionLeaseStore) ReleaseLease(ctx context.Context, topic, partitionKey string) error {
+func (m *MockpartitionLeaseStore) ReleaseLease(ctx context.Context, topic, partitionKey, subscriberName, consumerGroup string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ReleaseLease", ctx, topic, partitionKey)
+	ret := m.ctrl.Call(m, "ReleaseLease", ctx, topic, partitionKey, subscriberName, consumerGroup)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // ReleaseLease indicates an expected call of ReleaseLease.
-func (mr *MockpartitionLeaseStoreMockRecorder) ReleaseLease(ctx, topic, partitionKey any) *gomock.Call {
+func (mr *MockpartitionLeaseStoreMockRecorder) ReleaseLease(ctx, topic, partitionKey, subscriberName, consumerGroup any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseLease", reflect.TypeOf((*MockpartitionLeaseStore)(nil).ReleaseLease), ctx, topic, partitionKey)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseLease", reflect.TypeOf((*MockpartitionLeaseStore)(nil).ReleaseLease), ctx, topic, partitionKey, subscriberName, consumerGroup)
 }
 
 // RenewLease mocks base method.
-func (m *MockpartitionLeaseStore) RenewLease(ctx context.Context, topic, partitionKey string) error {
+func (m *MockpartitionLeaseStore) RenewLease(ctx context.Context, topic, partitionKey, subscriberName, consumerGroup string, leaseDurationMs int64) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RenewLease", ctx, topic, partitionKey)
+	ret := m.ctrl.Call(m, "RenewLease", ctx, topic, partitionKey, subscriberName, consumerGroup, leaseDurationMs)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RenewLease indicates an expected call of RenewLease.
-func (mr *MockpartitionLeaseStoreMockRecorder) RenewLease(ctx, topic, partitionKey any) *gomock.Call {
+func (mr *MockpartitionLeaseStoreMockRecorder) RenewLease(ctx, topic, partitionKey, subscriberName, consumerGroup, leaseDurationMs any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RenewLease", reflect.TypeOf((*MockpartitionLeaseStore)(nil).RenewLease), ctx, topic, partitionKey)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RenewLease", reflect.TypeOf((*MockpartitionLeaseStore)(nil).RenewLease), ctx, topic, partitionKey, subscriberName, consumerGroup, leaseDurationMs)
 }
 
 // TryAcquireLease mocks base method.
-func (m *MockpartitionLeaseStore) TryAcquireLease(ctx context.Context, topic, partitionKey string) (bool, error) {
+func (m *MockpartitionLeaseStore) TryAcquireLease(ctx context.Context, topic, partitionKey, subscriberName, consumerGroup string, leaseDurationMs int64) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "TryAcquireLease", ctx, topic, partitionKey)
+	ret := m.ctrl.Call(m, "TryAcquireLease", ctx, topic, partitionKey, subscriberName, consumerGroup, leaseDurationMs)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // TryAcquireLease indicates an expected call of TryAcquireLease.
-func (mr *MockpartitionLeaseStoreMockRecorder) TryAcquireLease(ctx, topic, partitionKey any) *gomock.Call {
+func (mr *MockpartitionLeaseStoreMockRecorder) TryAcquireLease(ctx, topic, partitionKey, subscriberName, consumerGroup, leaseDurationMs any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TryAcquireLease", reflect.TypeOf((*MockpartitionLeaseStore)(nil).TryAcquireLease), ctx, topic, partitionKey)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TryAcquireLease", reflect.TypeOf((*MockpartitionLeaseStore)(nil).TryAcquireLease), ctx, topic, partitionKey, subscriberName, consumerGroup, leaseDurationMs)
 }

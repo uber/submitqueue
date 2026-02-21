@@ -14,7 +14,6 @@ import (
 // sqlpartitionLeaseStore is the SQL implementation of partitionLeaseStore
 type sqlpartitionLeaseStore struct {
 	db      *sql.DB
-	config  Config
 	logger  *zap.SugaredLogger
 	metrics tally.Scope
 }
@@ -28,17 +27,16 @@ const (
 )
 
 // newPartitionLeaseStore creates a new SQL partition lease store
-func newPartitionLeaseStore(db *sql.DB, config Config, logger *zap.Logger, metrics tally.Scope) partitionLeaseStore {
+func newPartitionLeaseStore(db *sql.DB, logger *zap.Logger, metrics tally.Scope) partitionLeaseStore {
 	return &sqlpartitionLeaseStore{
 		db:      db,
-		config:  config,
 		logger:  logger.Sugar().Named("partition_lease_store"),
 		metrics: metrics.SubScope("partition_lease_store"),
 	}
 }
 
 // TryAcquireLease attempts to acquire or renew a lease for a partition
-func (s *sqlpartitionLeaseStore) TryAcquireLease(ctx context.Context, topic string, partitionKey string) (bool, error) {
+func (s *sqlpartitionLeaseStore) TryAcquireLease(ctx context.Context, topic string, partitionKey string, subscriberName string, consumerGroup string, leaseDurationMs int64) (bool, error) {
 	start := time.Now()
 	success := false
 	defer func() {
@@ -50,7 +48,7 @@ func (s *sqlpartitionLeaseStore) TryAcquireLease(ctx context.Context, topic stri
 	}()
 
 	now := start.UnixMilli()
-	staleThreshold := now - s.config.LeaseDuration.Milliseconds()
+	staleThreshold := now - leaseDurationMs
 
 	// Try to insert or update stale lease
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
@@ -61,7 +59,7 @@ func (s *sqlpartitionLeaseStore) TryAcquireLease(ctx context.Context, topic stri
 			leased_at = IF(lease_renewed_at < ?, VALUES(leased_at), leased_at),
 			lease_renewed_at = IF(lease_renewed_at < ?, VALUES(lease_renewed_at), lease_renewed_at)
 	`, PartitionLeasesTableName),
-		s.config.ConsumerGroup, topic, partitionKey, s.config.WorkerID, now, now,
+		consumerGroup, topic, partitionKey, subscriberName, now, now,
 		staleThreshold, staleThreshold, staleThreshold)
 
 	if err != nil {
@@ -79,7 +77,7 @@ func (s *sqlpartitionLeaseStore) TryAcquireLease(ctx context.Context, topic stri
 	err = s.db.QueryRowContext(ctx, fmt.Sprintf(`
 		SELECT leased_by FROM %s
 		WHERE consumer_group = ? AND topic = ? AND partition_key = ?
-	`, PartitionLeasesTableName), s.config.ConsumerGroup, topic, partitionKey).Scan(&owner)
+	`, PartitionLeasesTableName), consumerGroup, topic, partitionKey).Scan(&owner)
 
 	if err != nil {
 		s.logger.Errorw("failed to check lease ownership",
@@ -91,7 +89,7 @@ func (s *sqlpartitionLeaseStore) TryAcquireLease(ctx context.Context, topic stri
 		return false, fmt.Errorf("failed to check lease ownership: %w", err)
 	}
 
-	acquired := owner == s.config.WorkerID
+	acquired := owner == subscriberName
 	if acquired {
 		s.metrics.Counter("try_acquire_lease.acquired").Inc(1)
 		s.logger.Debugw("acquired lease",
@@ -107,7 +105,7 @@ func (s *sqlpartitionLeaseStore) TryAcquireLease(ctx context.Context, topic stri
 }
 
 // RenewLease renews the lease for a partition owned by this worker
-func (s *sqlpartitionLeaseStore) RenewLease(ctx context.Context, topic string, partitionKey string) error {
+func (s *sqlpartitionLeaseStore) RenewLease(ctx context.Context, topic string, partitionKey string, subscriberName string, consumerGroup string, leaseDurationMs int64) error {
 	start := time.Now()
 	success := false
 	defer func() {
@@ -124,7 +122,7 @@ func (s *sqlpartitionLeaseStore) RenewLease(ctx context.Context, topic string, p
 		UPDATE %s
 		SET lease_renewed_at = ?
 		WHERE consumer_group = ? AND topic = ? AND partition_key = ? AND leased_by = ?
-	`, PartitionLeasesTableName), now, s.config.ConsumerGroup, topic, partitionKey, s.config.WorkerID)
+	`, PartitionLeasesTableName), now, consumerGroup, topic, partitionKey, subscriberName)
 
 	if err != nil {
 		s.logger.Errorw("failed to renew lease",
@@ -168,7 +166,7 @@ func (s *sqlpartitionLeaseStore) RenewLease(ctx context.Context, topic string, p
 }
 
 // ReleaseLease releases the lease for a partition owned by this worker
-func (s *sqlpartitionLeaseStore) ReleaseLease(ctx context.Context, topic string, partitionKey string) error {
+func (s *sqlpartitionLeaseStore) ReleaseLease(ctx context.Context, topic string, partitionKey string, subscriberName string, consumerGroup string) error {
 	start := time.Now()
 	success := false
 	defer func() {
@@ -182,7 +180,7 @@ func (s *sqlpartitionLeaseStore) ReleaseLease(ctx context.Context, topic string,
 	result, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		DELETE FROM %s
 		WHERE consumer_group = ? AND topic = ? AND partition_key = ? AND leased_by = ?
-	`, PartitionLeasesTableName), s.config.ConsumerGroup, topic, partitionKey, s.config.WorkerID)
+	`, PartitionLeasesTableName), consumerGroup, topic, partitionKey, subscriberName)
 
 	if err != nil {
 		s.logger.Errorw("failed to release lease",
@@ -210,7 +208,7 @@ func (s *sqlpartitionLeaseStore) ReleaseLease(ctx context.Context, topic string,
 }
 
 // GetLeasedPartitions returns all partitions currently leased by this worker
-func (s *sqlpartitionLeaseStore) GetLeasedPartitions(ctx context.Context, topic string) ([]string, error) {
+func (s *sqlpartitionLeaseStore) GetLeasedPartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string) ([]string, error) {
 	start := time.Now()
 	success := false
 	defer func() {
@@ -224,7 +222,7 @@ func (s *sqlpartitionLeaseStore) GetLeasedPartitions(ctx context.Context, topic 
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT partition_key FROM %s
 		WHERE consumer_group = ? AND topic = ? AND leased_by = ?
-	`, PartitionLeasesTableName), s.config.ConsumerGroup, topic, s.config.WorkerID)
+	`, PartitionLeasesTableName), consumerGroup, topic, subscriberName)
 
 	if err != nil {
 		s.logger.Errorw("failed to get leased partitions",
@@ -264,7 +262,7 @@ func (s *sqlpartitionLeaseStore) GetLeasedPartitions(ctx context.Context, topic 
 
 // DiscoverAndAcquirePartitions discovers partitions from messages table and tries to acquire leases
 // Returns the number of new leases acquired
-func (s *sqlpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Context, topic string) (int, error) {
+func (s *sqlpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string, leaseDurationMs int64) (int, error) {
 	start := time.Now()
 	success := false
 	defer func() {
@@ -313,7 +311,7 @@ func (s *sqlpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Contex
 	// Try to acquire leases for discovered partitions
 	acquiredCount := 0
 	for _, partitionKey := range partitions {
-		acquired, err := s.TryAcquireLease(ctx, topic, partitionKey)
+		acquired, err := s.TryAcquireLease(ctx, topic, partitionKey, subscriberName, consumerGroup, leaseDurationMs)
 		if err != nil {
 			// Log but continue trying other partitions
 			s.logger.Warnw("failed to acquire lease for partition",

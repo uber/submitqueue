@@ -3,7 +3,6 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "sql",
     srcs = [
-        "config.go",
         "constants.go",
         "errors.go",
         "message_store.go",
@@ -30,7 +29,6 @@ go_library(
 go_test(
     name = "sql_test",
     srcs = [
-        "config_test.go",
         "message_store_test.go",
         "offset_store_test.go",
         "partition_lease_store_test.go",

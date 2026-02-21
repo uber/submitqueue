@@ -11,14 +11,15 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
+const testLeaseDurationMs = 30000 // 30 seconds in milliseconds
+
 func setuppartitionLeaseStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, partitionLeaseStore) {
 	t.Helper()
 
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	config := DefaultConfig("test-consumer", "test-worker")
-	store := newPartitionLeaseStore(db, config, zaptest.NewLogger(t), tally.NoopScope)
+	store := newPartitionLeaseStore(db, zaptest.NewLogger(t), tally.NoopScope)
 
 	return db, mock, store
 }
@@ -34,11 +35,11 @@ func TestpartitionLeaseStore_TryAcquireLease(t *testing.T) {
 			name: "successfully acquire lease",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO queue_partition_leases").
-					WithArgs("test-consumer", "test_topic", "part1", "test-worker", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+					WithArgs(testConsumerGroup, "test_topic", "part1", testSubscriberName, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
-				rows := sqlmock.NewRows([]string{"leased_by"}).AddRow("test-worker")
+				rows := sqlmock.NewRows([]string{"leased_by"}).AddRow(testSubscriberName)
 				mock.ExpectQuery("SELECT leased_by FROM queue_partition_leases").
-					WithArgs("test-consumer", "test_topic", "part1").
+					WithArgs(testConsumerGroup, "test_topic", "part1").
 					WillReturnRows(rows)
 			},
 			acquired: true,
@@ -51,7 +52,7 @@ func TestpartitionLeaseStore_TryAcquireLease(t *testing.T) {
 					WillReturnResult(sqlmock.NewResult(1, 1))
 				rows := sqlmock.NewRows([]string{"leased_by"}).AddRow("other-worker")
 				mock.ExpectQuery("SELECT leased_by FROM queue_partition_leases").
-					WithArgs("test-consumer", "test_topic", "part1").
+					WithArgs(testConsumerGroup, "test_topic", "part1").
 					WillReturnRows(rows)
 			},
 			acquired: false,
@@ -70,7 +71,7 @@ func TestpartitionLeaseStore_TryAcquireLease(t *testing.T) {
 
 			tt.setup(mock)
 
-			acquired, err := store.TryAcquireLease(ctx, topic, partitionKey)
+			acquired, err := store.TryAcquireLease(ctx, topic, partitionKey, testSubscriberName, testConsumerGroup, testLeaseDurationMs)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -92,7 +93,7 @@ func TestpartitionLeaseStore_RenewLease(t *testing.T) {
 			name: "successfully renew lease",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE queue_partition_leases").
-					WithArgs(sqlmock.AnyArg(), "test-consumer", "test_topic", "part1", "test-worker").
+					WithArgs(sqlmock.AnyArg(), testConsumerGroup, "test_topic", "part1", testSubscriberName).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 			wantErr: false,
@@ -101,7 +102,7 @@ func TestpartitionLeaseStore_RenewLease(t *testing.T) {
 			name: "lease not owned",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE queue_partition_leases").
-					WithArgs(sqlmock.AnyArg(), "test-consumer", "test_topic", "part1", "test-worker").
+					WithArgs(sqlmock.AnyArg(), testConsumerGroup, "test_topic", "part1", testSubscriberName).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
 			wantErr: true,
@@ -119,7 +120,7 @@ func TestpartitionLeaseStore_RenewLease(t *testing.T) {
 
 			tt.setup(mock)
 
-			err := store.RenewLease(ctx, topic, partitionKey)
+			err := store.RenewLease(ctx, topic, partitionKey, testSubscriberName, testConsumerGroup, testLeaseDurationMs)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -140,7 +141,7 @@ func TestpartitionLeaseStore_ReleaseLease(t *testing.T) {
 			name: "successfully release lease",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("DELETE FROM queue_partition_leases").
-					WithArgs("test-consumer", "test_topic", "part1", "test-worker").
+					WithArgs(testConsumerGroup, "test_topic", "part1", testSubscriberName).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 			wantErr: false,
@@ -149,7 +150,7 @@ func TestpartitionLeaseStore_ReleaseLease(t *testing.T) {
 			name: "idempotent - already released",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("DELETE FROM queue_partition_leases").
-					WithArgs("test-consumer", "test_topic", "part1", "test-worker").
+					WithArgs(testConsumerGroup, "test_topic", "part1", testSubscriberName).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
 			wantErr: false,
@@ -167,7 +168,7 @@ func TestpartitionLeaseStore_ReleaseLease(t *testing.T) {
 
 			tt.setup(mock)
 
-			err := store.ReleaseLease(ctx, topic, partitionKey)
+			err := store.ReleaseLease(ctx, topic, partitionKey, testSubscriberName, testConsumerGroup)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -191,10 +192,10 @@ func TestpartitionLeaseStore_GetLeasedPartitions(t *testing.T) {
 		AddRow("part3")
 
 	mock.ExpectQuery("SELECT partition_key FROM queue_partition_leases").
-		WithArgs("test-consumer", topic, "test-worker").
+		WithArgs(testConsumerGroup, topic, testSubscriberName).
 		WillReturnRows(rows)
 
-	partitions, err := store.GetLeasedPartitions(ctx, topic)
+	partitions, err := store.GetLeasedPartitions(ctx, topic, testSubscriberName, testConsumerGroup)
 	require.NoError(t, err)
 	require.Len(t, partitions, 3)
 	require.Equal(t, []string{"part1", "part2", "part3"}, partitions)
@@ -224,7 +225,7 @@ func TestpartitionLeaseStore_DiscoverAndAcquirePartitions(t *testing.T) {
 			WillReturnResult(sqlmock.NewResult(1, 1))
 
 		// Expect ownership check - first one acquired, second not
-		owner := "test-worker"
+		owner := testSubscriberName
 		if i == 1 {
 			owner = "other-worker"
 		}
@@ -233,7 +234,7 @@ func TestpartitionLeaseStore_DiscoverAndAcquirePartitions(t *testing.T) {
 			WillReturnRows(ownerRows)
 	}
 
-	acquired, err := store.DiscoverAndAcquirePartitions(ctx, topic)
+	acquired, err := store.DiscoverAndAcquirePartitions(ctx, topic, testSubscriberName, testConsumerGroup, testLeaseDurationMs)
 	require.NoError(t, err)
 	require.Equal(t, 1, acquired) // Only 1 out of 2 was acquired
 	require.NoError(t, mock.ExpectationsWereMet())
