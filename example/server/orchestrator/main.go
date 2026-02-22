@@ -14,6 +14,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/consumer"
+	"github.com/uber/submitqueue/extension/queue"
 	queueSQL "github.com/uber/submitqueue/extension/queue/sql"
 	"github.com/uber/submitqueue/orchestrator/controller"
 	"github.com/uber/submitqueue/orchestrator/controller/request"
@@ -91,13 +92,30 @@ func run() error {
 		}
 		defer queueDB.Close()
 
-		q, err := queueSQL.NewQueue(queueSQL.Params{
-			DB:           queueDB,
-			Logger:       logger,
-			MetricsScope: scope.SubScope("queue"),
-		})
+		// Retry queue creation (with retries for MySQL startup)
+		var q queue.Queue
+		maxRetries := 10
+		retryInterval := time.Second
+		for i := 0; i < maxRetries; i++ {
+			q, err = queueSQL.NewQueue(queueSQL.Params{
+				DB:           queueDB,
+				Logger:       logger,
+				MetricsScope: scope.SubScope("queue"),
+			})
+			if err == nil {
+				break
+			}
+			if i < maxRetries-1 {
+				logger.Warn("failed to create queue, retrying...",
+					zap.Int("attempt", i+1),
+					zap.Int("max_retries", maxRetries),
+					zap.Error(err),
+				)
+				time.Sleep(retryInterval)
+			}
+		}
 		if err != nil {
-			return fmt.Errorf("failed to create queue: %w", err)
+			return fmt.Errorf("failed to create queue after %d retries: %w", maxRetries, err)
 		}
 		defer q.Close()
 

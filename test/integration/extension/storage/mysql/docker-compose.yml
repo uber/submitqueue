@@ -1,0 +1,17 @@
+# Docker Compose for MySQL Storage Library Tests
+# Tests the storage library's MySQL implementation in isolation
+
+services:
+  # MySQL database for storage infrastructure
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: submitqueue
+    ports:
+      - "3306"  # Random ephemeral port to avoid conflicts
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

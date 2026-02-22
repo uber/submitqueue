@@ -1,0 +1,58 @@
+# Docker Compose for Orchestrator Manual Testing
+#
+# IMPORTANT: Before running docker-compose, build the Linux binary:
+#   make build-orchestrator-linux
+#   OR
+#   bazel build --platforms=@rules_go//go/toolchain:linux_amd64 //example/server/orchestrator
+#
+# Quick start:
+#   make docker-orchestrator  (builds binary + starts compose)
+
+services:
+  # Application Database - Stores business data (requests, batches, etc.)
+  mysql-app:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: submitqueue
+    ports:
+      - "3306"  # Random ephemeral port to avoid conflicts
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Queue Database - Messaging infrastructure (messages, offsets, partition leases)
+  # Separate from app DB to demonstrate queue is pluggable infrastructure
+  mysql-queue:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: submitqueue
+    ports:
+      - "3306"  # Random ephemeral port to avoid conflicts
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  orchestrator-service:
+    build:
+      context: ${REPO_ROOT}
+      dockerfile: example/server/orchestrator/Dockerfile
+    ports:
+      - "8080"  # Random ephemeral port to avoid conflicts
+    environment:
+      - PORT=:8080
+      # Application database connection (for request state, batches, etc.)
+      - MYSQL_DSN=root:root@tcp(mysql-app:3306)/submitqueue?parseTime=true
+      # Queue infrastructure connection (separate database)
+      - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
+      - HOSTNAME=orchestrator-dev
+    depends_on:
+      mysql-app:
+        condition: service_healthy
+      mysql-queue:
+        condition: service_healthy

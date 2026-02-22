@@ -1,0 +1,117 @@
+name: Integration Tests - Extensions
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  # Detect which extensions changed
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      counter: ${{ steps.filter.outputs.counter }}
+      queue: ${{ steps.filter.outputs.queue }}
+      storage: ${{ steps.filter.outputs.storage }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            counter:
+              - 'extension/counter/**'
+              - 'test/integration/extension/counter/**'
+              - 'entity/**'
+              - '.github/workflows/integration_test_extension.yml'
+            queue:
+              - 'extension/queue/**'
+              - 'test/integration/extension/queue/**'
+              - 'entity/**'
+              - '.github/workflows/integration_test_extension.yml'
+            storage:
+              - 'extension/storage/**'
+              - 'test/integration/extension/storage/**'
+              - 'entity/**'
+              - '.github/workflows/integration_test_extension.yml'
+
+  # Counter extension tests
+  test-counter:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.counter == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run counter extension tests
+        run: ./tool/bazel test //test/integration/extension/counter/... --test_output=errors
+
+      - name: Display container logs on failure
+        if: failure()
+        run: |
+          echo "=== Listing all Docker containers ==="
+          docker ps -a --filter "name=sq-test-" || true
+          echo ""
+          echo "=== Dumping container logs ==="
+          for container in $(docker ps -a --filter "name=sq-test-" --format "{{.Names}}"); do
+            echo ">>> Logs for $container <<<"
+            docker logs "$container" 2>&1 || true
+            echo ""
+          done
+
+  # Queue extension tests
+  test-queue:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.queue == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run queue extension tests
+        run: ./tool/bazel test //test/integration/extension/queue/... --test_output=errors
+
+      - name: Display container logs on failure
+        if: failure()
+        run: |
+          echo "=== Listing all Docker containers ==="
+          docker ps -a --filter "name=sq-test-" || true
+          echo ""
+          echo "=== Dumping container logs ==="
+          for container in $(docker ps -a --filter "name=sq-test-" --format "{{.Names}}"); do
+            echo ">>> Logs for $container <<<"
+            docker logs "$container" 2>&1 || true
+            echo ""
+          done
+
+  # Storage extension tests
+  test-storage:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.storage == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run storage extension tests
+        run: ./tool/bazel test //test/integration/extension/storage/... --test_output=errors
+
+      - name: Display container logs on failure
+        if: failure()
+        run: |
+          echo "=== Listing all Docker containers ==="
+          docker ps -a --filter "name=sq-test-" || true
+          echo ""
+          echo "=== Dumping container logs ==="
+          for container in $(docker ps -a --filter "name=sq-test-" --format "{{.Names}}"); do
+            echo ">>> Logs for $container <<<"
+            docker logs "$container" 2>&1 || true
+            echo ""
+          done

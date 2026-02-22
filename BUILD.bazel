@@ -7,4 +7,13 @@ load("@gazelle//:def.bzl", "gazelle")
 # gazelle:resolve go github.com/uber/submitqueue/orchestrator/protopb //orchestrator/protopb
 # gazelle:resolve go github.com/uber/submitqueue/speculator/protopb //speculator/protopb
 
+# Export marker files for test data dependencies (used by FindRepoRoot in tests)
+exports_files(
+    [
+        "MODULE.bazel",
+        "go.mod",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 gazelle(name = "gazelle")

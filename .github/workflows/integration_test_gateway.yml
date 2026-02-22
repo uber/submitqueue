@@ -1,0 +1,34 @@
+name: Integration Tests - Gateway Service
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+jobs:
+  test-gateway:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Gateway integration tests
+        run: make integration-test-gateway
+
+      - name: Display container logs on failure
+        if: failure()
+        run: |
+          echo "=== Listing all Docker containers ==="
+          docker ps -a --filter "name=sq-test-" || true
+          echo ""
+          echo "=== Dumping container logs ==="
+          for container in $(docker ps -a --filter "name=sq-test-" --format "{{.Names}}"); do
+            echo ">>> Logs for $container <<<"
+            docker logs "$container" 2>&1 || true
+            echo ""
+          done

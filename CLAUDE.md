@@ -53,8 +53,7 @@ Three services, each following the same layout:
 │       ├── {step}.go    # Step in workflow
 │       └── {step}_test.go
 ├── proto/               # Proto definitions (.proto files)
-├── protopb/             # Generated proto code (committed to repo)
-└── integration_test/
+└── protopb/             # Generated proto code (committed to repo)
 ```
 
 ### Controllers
@@ -141,27 +140,7 @@ extension/
 
 ### Directory Structure
 
-```
-submitqueue/
-├── MODULE.bazel              # Bzlmod dependencies
-├── go.mod                    # Go module dependencies
-├── BUILD.bazel               # Root build configuration
-├── Makefile                  # Build automation
-├── .bazelversion             # Pinned Bazel version
-├── .envrc                    # direnv configuration
-├── tool/bazel                # Bazelisk wrapper
-├── gateway/                  # Gateway service
-├── orchestrator/             # Orchestrator service
-├── speculator/               # Speculator service
-├── extension/                # Pluggable backend implementations
-├── entity/                   # Domain entities
-├── example/                  # Server and client examples
-│   ├── server/{service}/
-│   └── client/{service}/
-├── e2e_test/                 # Cross-service hermetic tests (Testcontainers)
-├── doc/                      # Documentation
-└── bin/                      # Compiled binaries (gitignored)
-```
+See [doc/PROJECT_STRUCTURE.md](doc/PROJECT_STRUCTURE.md) for detailed project organization and architecture.
 
 ### Build System
 
@@ -173,6 +152,9 @@ This repository uses **Bazel with Bzlmod** (NOT WORKSPACE) for dependency manage
 - **Bazel wrapper**: `./tool/bazel` (Bazelisk wrapper). With direnv (`.envrc`), use `bazel` directly.
 - **External dependencies**: Must be added to both `go.mod` AND `MODULE.bazel`
 - **BUILD files**: Every Go package must have a `BUILD.bazel` file
+- **Gazelle**: Run `make gazelle` after adding/removing Go files to update BUILD files
+  - CI enforces BUILD files are in sync - will fail if `make gazelle` generates changes
+  - Always run `make gazelle` before committing
 
 ### Proto Generation
 
@@ -196,20 +178,49 @@ All generated proto files are **committed to the repository**. When modifying `.
 - Use **singular** names for directories (e.g., `mock/` not `mocks/`, `entity/` not `entities/`)
 - This applies to all folders including test mocks, extensions, entities, and service directories
 
+### Makefile Convention
+
+The `Makefile` follows strict conventions for maintainability:
+
+**Alphabetical ordering:**
+- **Targets are alphabetically sorted** — makes it easy to find specific targets
+- **`.PHONY` declaration** — lists all targets in alphabetical order
+- **`help` target is always last** — exception to alphabetical ordering for discoverability
+- When adding new targets, insert them in alphabetical order (not at the end)
+
+**Help text documentation:**
+- **Add `## Description` after each target** — enables auto-generated help and shell completion
+- Format: `target: ## Short description of what this target does`
+- Example: `build: ## Build all services and examples`
+- Run `make help` to see all documented targets with descriptions
+- Shell completion (zsh) shows these descriptions when you press `<TAB>`
+
+**Example target with help text:**
+```makefile
+integration-test: build-all-linux ## Run all integration tests (auto-builds binaries)
+	@echo "Running all integration tests..."
+	@$(BAZEL) test //test/integration/... --test_output=errors
+```
+
+This convention makes the Makefile self-documenting and enables powerful shell completion.
+
 ### Common Make Targets
 
 ```bash
 make build                    # Build all services
 make proto                    # Regenerate proto files
 make test                     # Run unit tests
-make integration-test         # Run service integration tests
-make e2e-test                 # Run hermetic tests with Testcontainers
-make run-gateway              # Run gateway (port 8081)
-make run-orchestrator         # Run orchestrator (port 8082)
-make run-speculator           # Run speculator (port 8083)
-make run-client-gateway       # Run gateway client
+make integration-test         # Run all integration tests (Docker-based)
+make integration-test-gateway # Test Gateway service
+make e2e-test                 # Run end-to-end tests
+make local-start              # Start full stack with Docker Compose
+make local-ps                 # Show running containers and ports
+make local-logs               # View logs from all services
+make local-stop               # Stop all services
+make run-client-gateway       # Test Gateway client (SERVER_ADDR, MESSAGE)
+make run-client-orchestrator  # Test Orchestrator client
 make gazelle                  # Update BUILD.bazel files
-make clean                    # Remove binaries and Bazel cache
+make clean                    # Clean Bazel cache
 make clean-proto              # Remove generated proto files
 ```
 
@@ -240,6 +251,23 @@ make clean-proto              # Remove generated proto files
 1. **Avoid asserting on error messages** — assert on error type if it is part of the contract, or assert generic error otherwise.
 2. **Avoid blocking operations for synchronization** — do not use `time.Sleep`. Design the tested routine to signal back (channels, callbacks, condition variables).
 3. **Use testify assertions** — use `stretchr/assert` or `require` instead of `t.Fatal()`.
+
+**Integration Test Conventions:**
+
+1. **Package naming** — use folder name as package name (NOT `*_test` suffix):
+   - `test/integration/gateway/` → `package gateway`
+   - `test/integration/extension/counter/mysql/` → `package mysql`
+   - This matches Uber's go-code integration test pattern
+
+2. **Bazel target naming** — use Gazelle-generated names and add `tags = ["integration"]`:
+   - Target name matches folder: `name = "gateway_test"`, `name = "mysql_test"`
+   - Always include `tags = ["integration"]` to exclude from unit tests
+   - Include `data = [...]` for docker-compose and schema files
+
+3. **Docker Compose-based** — all integration tests use Docker Compose:
+   - Use `testutil.NewComposeStack()` for hermetic setup
+   - Provide meaningful test context (e.g., "ext-storage-mysql", "svc-gateway")
+   - Use `stack.ConnectMySQLService()` or `stack.MySQLServiceDSN()` for DB connections
 
 ### Code Style Guidelines
 

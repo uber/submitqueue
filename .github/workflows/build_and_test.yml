@@ -1,4 +1,4 @@
-name: Build and Test
+name: Build and Unit Tests
 
 on:
   push:
@@ -18,33 +18,23 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Build all services
+    - name: Check BUILD files are up to date
+      run: |
+        echo "Running Gazelle to check BUILD files..."
+        make gazelle
+        if ! git diff --quiet; then
+          echo "❌ BUILD files are out of date!"
+          echo ""
+          echo "The following files were modified by Gazelle:"
+          git diff --name-only
+          echo ""
+          echo "Please run 'make gazelle' locally and commit the changes."
+          exit 1
+        fi
+        echo "✅ BUILD files are up to date"
+
+    - name: Build project
       run: make build
 
     - name: Run unit tests
-      run: make test || echo "No tests found yet"
-
-    - name: Start all servers
-      run: make start-servers
-
-    - name: Run service integration tests
-      run: make integration-test
-
-    - name: Run end-to-end tests
-      run: make e2e-test
-
-    - name: Stop servers
-      if: always()
-      run: make stop-servers
-
-    - name: Display server logs on failure
-      if: failure()
-      run: |
-        echo "=== Gateway logs ==="
-        cat /tmp/gateway.log || echo "No gateway logs found"
-        echo ""
-        echo "=== Orchestrator logs ==="
-        cat /tmp/orchestrator.log || echo "No orchestrator logs found"
-        echo ""
-        echo "=== Speculator logs ==="
-        cat /tmp/speculator.log || echo "No speculator logs found"
+      run: make test || echo "No unit tests found"
