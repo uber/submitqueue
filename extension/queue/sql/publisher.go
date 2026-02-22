@@ -12,7 +12,6 @@ import (
 )
 
 type publisher struct {
-	config       Config
 	logger       *zap.SugaredLogger
 	metrics      tally.Scope
 	messageStore messageStore
@@ -20,10 +19,9 @@ type publisher struct {
 	closed       bool
 }
 
-// NewPublisher creates a publisher with the given configuration and dependencies
-func NewPublisher(config Config, logger *zap.SugaredLogger, metrics tally.Scope, messageStore messageStore) *publisher {
+// NewPublisher creates a publisher with the given dependencies
+func NewPublisher(logger *zap.SugaredLogger, metrics tally.Scope, messageStore messageStore) *publisher {
 	return &publisher{
-		config:       config,
 		logger:       logger,
 		metrics:      metrics,
 		messageStore: messageStore,

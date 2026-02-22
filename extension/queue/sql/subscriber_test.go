@@ -13,12 +13,13 @@ import (
 	extqueue "github.com/uber/submitqueue/extension/queue"
 )
 
+func testSubscriptionConfig() extqueue.SubscriptionConfig {
+	return extqueue.DefaultSubscriptionConfig("test-subscriber", "test-consumer")
+}
+
 func setupSubscriberTest(t *testing.T, mockMessageStore *MockmessageStore, mockOffsetStore *MockoffsetStore, mockLeaseStore *MockpartitionLeaseStore) extqueue.Subscriber {
 	t.Helper()
-
-	config := DefaultConfig("test-consumer", "test-worker")
-
-	return NewSubscriber(config, zaptest.NewLogger(t).Sugar().Named("subscriber"), tally.NoopScope.SubScope("subscriber"), mockMessageStore, mockOffsetStore, mockLeaseStore)
+	return NewSubscriber(zaptest.NewLogger(t).Sugar().Named("subscriber"), tally.NoopScope.SubScope("subscriber"), mockMessageStore, mockOffsetStore, mockLeaseStore)
 }
 
 func TestSubscriber_Subscribe(t *testing.T) {
@@ -39,7 +40,7 @@ func TestSubscriber_Subscribe(t *testing.T) {
 			expectedChans: 2,
 		},
 		{
-			name:          "same topic returns same channel",
+			name:          "same topic and consumer group returns same channel",
 			topics:        []string{"test_topic", "test_topic"},
 			expectSame:    true,
 			expectedChans: 1,
@@ -57,17 +58,18 @@ func TestSubscriber_Subscribe(t *testing.T) {
 
 			sub := setupSubscriberTest(t, mockMessageStore, mockOffsetStore, mockLeaseStore)
 			ctx := context.Background()
+			cfg := testSubscriptionConfig()
 
 			var channels []<-chan extqueue.Delivery
 			for _, topic := range tt.topics {
-				ch, err := sub.Subscribe(ctx, topic)
+				ch, err := sub.Subscribe(ctx, topic, cfg)
 				require.NoError(t, err)
 				assert.NotNil(t, ch)
 				channels = append(channels, ch)
 			}
 
 			if tt.expectSame && len(channels) == 2 {
-				assert.Equal(t, channels[0], channels[1], "should return same channel for same topic")
+				assert.Equal(t, channels[0], channels[1], "should return same channel for same topic and consumer group")
 			}
 		})
 	}
@@ -75,16 +77,16 @@ func TestSubscriber_Subscribe(t *testing.T) {
 
 func TestSubscriber_Close(t *testing.T) {
 	tests := []struct {
-		name            string
-		setupSub        func(ctx context.Context, sub extqueue.Subscriber) error
-		closeCount      int
-		subscribeAfter  bool
-		expectSubError  bool
+		name           string
+		setupSub       func(ctx context.Context, sub extqueue.Subscriber) error
+		closeCount     int
+		subscribeAfter bool
+		expectSubError bool
 	}{
 		{
 			name: "close with active subscription",
 			setupSub: func(ctx context.Context, sub extqueue.Subscriber) error {
-				_, err := sub.Subscribe(ctx, "test_topic")
+				_, err := sub.Subscribe(ctx, "test_topic", testSubscriptionConfig())
 				return err
 			},
 			closeCount: 1,
@@ -113,7 +115,7 @@ func TestSubscriber_Close(t *testing.T) {
 			mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
 
 			// Expect lease operations during cleanup
-			mockLeaseStore.EXPECT().GetLeasedPartitions(gomock.Any(), gomock.Any()).Return([]string{}, nil).AnyTimes()
+			mockLeaseStore.EXPECT().GetLeasedPartitions(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]string{}, nil).AnyTimes()
 
 			sub := setupSubscriberTest(t, mockMessageStore, mockOffsetStore, mockLeaseStore)
 			ctx := context.Background()
@@ -132,7 +134,7 @@ func TestSubscriber_Close(t *testing.T) {
 
 			// Try to subscribe after close if needed
 			if tt.subscribeAfter {
-				ch, err := sub.Subscribe(ctx, "test_topic")
+				ch, err := sub.Subscribe(ctx, "test_topic", testSubscriptionConfig())
 				if tt.expectSubError {
 					require.Error(t, err)
 					assert.Nil(t, ch)

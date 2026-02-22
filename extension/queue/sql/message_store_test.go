@@ -25,8 +25,7 @@ func setupmessageStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, messageStore
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	config := DefaultConfig("test-consumer", "test-worker")
-	store := newMessageStore(db, config, zaptest.NewLogger(t), testMetrics())
+	store := newMessageStore(db, zaptest.NewLogger(t), testMetrics())
 
 	return db, mock, store
 }
@@ -109,6 +108,7 @@ func TestmessageStore_FetchByOffset(t *testing.T) {
 	partitionKey := "part1"
 	currentOffset := int64(0)
 	limit := 10
+	visibilityTimeoutMs := int64(60000) // 60 seconds in milliseconds
 
 	// Expect transaction begin
 	mock.ExpectBegin()
@@ -128,7 +128,7 @@ func TestmessageStore_FetchByOffset(t *testing.T) {
 	// Expect commit
 	mock.ExpectCommit()
 
-	results, err := store.FetchByOffset(ctx, topic, partitionKey, currentOffset, limit)
+	results, err := store.FetchByOffset(ctx, topic, partitionKey, currentOffset, limit, visibilityTimeoutMs)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	require.Equal(t, "msg1", results[0].ID)
@@ -162,10 +162,8 @@ func TestmessageStore_MoveToDLQ(t *testing.T) {
 	messageID := "msg1"
 	failureCount := 3
 	lastError := "test error"
-
-	// Get config to know the DLQ suffix
-	config := DefaultConfig("test-consumer", "test-worker")
-	dlqTopic := topic + config.DLQ.TopicSuffix // "test_topic_dlq"
+	dlqTopicSuffix := "_dlq"
+	dlqTopic := topic + dlqTopicSuffix
 
 	// Expect transaction begin
 	mock.ExpectBegin()
@@ -193,7 +191,7 @@ func TestmessageStore_MoveToDLQ(t *testing.T) {
 	// Expect commit
 	mock.ExpectCommit()
 
-	err := store.MoveToDLQ(ctx, topic, messageID, failureCount, lastError)
+	err := store.MoveToDLQ(ctx, topic, messageID, failureCount, lastError, dlqTopicSuffix)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

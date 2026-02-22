@@ -27,47 +27,33 @@ type Params struct {
 
 	// MetricsScope for metrics collection (required)
 	MetricsScope tally.Scope
-
-	// Config holds queue configuration
-	Config Config
 }
 
 // NewQueue creates a new SQL-based queue
 func NewQueue(params Params) (queue.Queue, error) {
-	if err := params.Config.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid config: %w", err)
-	}
-
 	// Test connection
 	if err := params.DB.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
 	logger := params.Logger.Sugar().Named("queue.sql")
-	logger.Infow("created SQL queue",
-		"consumer_group", params.Config.ConsumerGroup,
-		"worker_id", params.Config.WorkerID,
-		"poll_interval", params.Config.PollInterval,
-		"batch_size", params.Config.BatchSize,
-	)
+	logger.Info("created SQL queue")
 
 	// Create stores
-	messageStore := newMessageStore(params.DB, params.Config, params.Logger, params.MetricsScope)
-	offsetStore := newOffsetStore(params.DB, params.Config, params.Logger, params.MetricsScope)
-	leaseStore := newPartitionLeaseStore(params.DB, params.Config, params.Logger, params.MetricsScope)
+	messageStore := newMessageStore(params.DB, params.Logger, params.MetricsScope)
+	offsetStore := newOffsetStore(params.DB, params.Logger, params.MetricsScope)
+	leaseStore := newPartitionLeaseStore(params.DB, params.Logger, params.MetricsScope)
 
 	queueMetrics := params.MetricsScope.SubScope("queue")
 
 	// Create publisher and subscriber
 	publisher := NewPublisher(
-		params.Config,
 		logger.Named("publisher"),
 		queueMetrics.SubScope("publisher"),
 		messageStore,
 	)
 
 	subscriber := NewSubscriber(
-		params.Config,
 		logger.Named("subscriber"),
 		queueMetrics.SubScope("subscriber"),
 		messageStore,

@@ -25,7 +25,6 @@ func TestNewQueue(t *testing.T) {
 			DB:           db,
 			Logger:       zaptest.NewLogger(t),
 			MetricsScope: tally.NewTestScope("test", nil),
-			Config:       DefaultConfig("test-consumer", "test-worker"),
 		})
 
 		require.NoError(t, err)
@@ -39,24 +38,6 @@ func TestNewQueue(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
-	t.Run("error when config is invalid", func(t *testing.T) {
-		db, _, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
-		require.NoError(t, err)
-		defer db.Close()
-
-		config := DefaultConfig("", "") // Invalid: empty consumer group and worker ID
-
-		q, err := NewQueue(Params{
-			DB:           db,
-			Logger:       zaptest.NewLogger(t),
-			MetricsScope: tally.NewTestScope("test", nil),
-			Config:       config,
-		})
-
-		require.Error(t, err)
-		assert.Nil(t, q)
-	})
-
 	t.Run("error when DB ping fails", func(t *testing.T) {
 		db, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
 		require.NoError(t, err)
@@ -68,7 +49,6 @@ func TestNewQueue(t *testing.T) {
 			DB:           db,
 			Logger:       zaptest.NewLogger(t),
 			MetricsScope: tally.NewTestScope("test", nil),
-			Config:       DefaultConfig("test-consumer", "test-worker"),
 		})
 
 		require.Error(t, err)
@@ -89,7 +69,6 @@ func TestQueue_Publisher(t *testing.T) {
 		DB:           db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NewTestScope("test", nil),
-		Config:       DefaultConfig("test-consumer", "test-worker"),
 	})
 	require.NoError(t, err)
 	defer q.Close()
@@ -116,7 +95,6 @@ func TestQueue_Subscriber(t *testing.T) {
 		DB:           db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NewTestScope("test", nil),
-		Config:       DefaultConfig("test-consumer", "test-worker"),
 	})
 	require.NoError(t, err)
 	defer q.Close()
@@ -179,7 +157,6 @@ func TestQueue_Close(t *testing.T) {
 				DB:           db,
 				Logger:       zaptest.NewLogger(t),
 				MetricsScope: tally.NewTestScope("test", nil),
-				Config:       DefaultConfig("test-consumer", "test-worker"),
 			})
 			require.NoError(t, err)
 
@@ -209,7 +186,6 @@ func TestQueue_Close(t *testing.T) {
 			DB:           db,
 			Logger:       zaptest.NewLogger(t),
 			MetricsScope: tally.NewTestScope("test", nil),
-			Config:       DefaultConfig("test-consumer", "test-worker"),
 		})
 		require.NoError(t, err)
 
@@ -234,7 +210,6 @@ func TestQueue_Close(t *testing.T) {
 			DB:           db,
 			Logger:       zaptest.NewLogger(t),
 			MetricsScope: tally.NewTestScope("test", nil),
-			Config:       DefaultConfig("test-consumer", "test-worker"),
 		})
 		require.NoError(t, err)
 
@@ -264,13 +239,11 @@ func TestQueue_Integration(t *testing.T) {
 
 	logger := zaptest.NewLogger(t)
 	metricsScope := tally.NewTestScope("test", nil)
-	config := DefaultConfig("test-consumer", "test-worker")
 
 	q, err := NewQueue(Params{
 		DB:           db,
 		Logger:       logger,
 		MetricsScope: metricsScope,
-		Config:       config,
 	})
 	require.NoError(t, err)
 	defer q.Close()

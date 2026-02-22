@@ -10,14 +10,18 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
+const (
+	testConsumerGroup  = "test-consumer"
+	testSubscriberName = "test-subscriber"
+)
+
 func setupoffsetStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, offsetStore) {
 	t.Helper()
 
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	config := DefaultConfig("test-consumer", "test-worker")
-	store := newOffsetStore(db, config, zaptest.NewLogger(t), testMetrics())
+	store := newOffsetStore(db, zaptest.NewLogger(t), testMetrics())
 
 	return db, mock, store
 }
@@ -31,10 +35,10 @@ func TestoffsetStore_Initialize(t *testing.T) {
 	partitionKey := "part1"
 
 	mock.ExpectExec("INSERT IGNORE INTO queue_offsets").
-		WithArgs("test-consumer", topic, partitionKey, sqlmock.AnyArg()).
+		WithArgs(testConsumerGroup, topic, partitionKey, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
-	err := store.Initialize(ctx, topic, partitionKey)
+	err := store.Initialize(ctx, topic, partitionKey, testConsumerGroup)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -51,7 +55,7 @@ func TestoffsetStore_GetAckedOffset(t *testing.T) {
 			setup: func(mock sqlmock.Sqlmock) {
 				rows := sqlmock.NewRows([]string{"offset_acked"}).AddRow(int64(100))
 				mock.ExpectQuery("SELECT offset_acked FROM queue_offsets").
-					WithArgs("test-consumer", "test_topic", "part1").
+					WithArgs(testConsumerGroup, "test_topic", "part1").
 					WillReturnRows(rows)
 			},
 			expectedOffset: 100,
@@ -61,7 +65,7 @@ func TestoffsetStore_GetAckedOffset(t *testing.T) {
 			name: "offset not found returns zero",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectQuery("SELECT offset_acked FROM queue_offsets").
-					WithArgs("test-consumer", "test_topic", "part1").
+					WithArgs(testConsumerGroup, "test_topic", "part1").
 					WillReturnError(sql.ErrNoRows)
 			},
 			expectedOffset: 0,
@@ -80,7 +84,7 @@ func TestoffsetStore_GetAckedOffset(t *testing.T) {
 
 			tt.setup(mock)
 
-			offset, err := store.GetAckedOffset(ctx, topic, partitionKey)
+			offset, err := store.GetAckedOffset(ctx, topic, partitionKey, testConsumerGroup)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -102,10 +106,10 @@ func TestoffsetStore_UpdateAckedOffset(t *testing.T) {
 	offset := int64(150)
 
 	mock.ExpectExec("UPDATE queue_offsets").
-		WithArgs(offset, sqlmock.AnyArg(), "test-consumer", topic, partitionKey, offset).
+		WithArgs(offset, sqlmock.AnyArg(), testConsumerGroup, topic, partitionKey, offset).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	err := store.UpdateAckedOffset(ctx, topic, partitionKey, offset)
+	err := store.UpdateAckedOffset(ctx, topic, partitionKey, offset, testConsumerGroup)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -124,7 +128,7 @@ func TestoffsetStore_AckMessage(t *testing.T) {
 					WithArgs("test_topic", "part1", "msg1").
 					WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectExec("INSERT INTO queue_offsets").
-					WithArgs("test-consumer", "test_topic", "part1", int64(100), sqlmock.AnyArg()).
+					WithArgs(testConsumerGroup, "test_topic", "part1", int64(100), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 				mock.ExpectCommit()
 			},
@@ -156,7 +160,7 @@ func TestoffsetStore_AckMessage(t *testing.T) {
 
 			tt.setup(mock)
 
-			err := store.AckMessage(ctx, topic, partitionKey, messageID, offset, nil)
+			err := store.AckMessage(ctx, topic, partitionKey, messageID, offset, testConsumerGroup, nil)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
