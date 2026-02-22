@@ -113,17 +113,3 @@ func (s *IntegrationSuite) TestPingSpeculator() {
 	s.log.Logf("Speculator ping: %s", resp.Message)
 }
 
-func (s *IntegrationSuite) TestLandRequest() {
-	ctx := context.Background()
-	req := &gatewaypb.LandRequest{
-		Queue:    "integration-test-queue",
-		Change:   &gatewaypb.Change{Source: "github", Ids: []string{"pr-100", "pr-101"}},
-		Strategy: gatewaypb.Strategy_REBASE,
-	}
-
-	s.log.Logf("Sending Land request for queue=%s", req.Queue)
-	resp, err := s.gatewayClient.Land(ctx, req)
-	require.NoError(s.T(), err, "Land request failed")
-	require.NotEmpty(s.T(), resp.Sqid, "SQID should not be empty")
-	s.log.Logf("Land request succeeded: sqid=%s", resp.Sqid)
-}

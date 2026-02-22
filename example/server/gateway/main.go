@@ -14,6 +14,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally/v4"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
+	queueSQL "github.com/uber/submitqueue/extension/queue/sql"
 	"github.com/uber/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/gateway/controller"
 	pb "github.com/uber/submitqueue/gateway/protopb"
@@ -36,6 +37,9 @@ func (s *GatewayServer) Ping(ctx context.Context, req *pb.PingRequest) (*pb.Ping
 
 // Land delegates to the controller
 func (s *GatewayServer) Land(ctx context.Context, req *pb.LandRequest) (*pb.LandResponse, error) {
+	if s.landController == nil {
+		return nil, fmt.Errorf("land API unavailable (queue infrastructure not configured)")
+	}
 	return s.landController.Land(ctx, req)
 }
 
@@ -109,16 +113,52 @@ func run() error {
 	defer counterDB.Close()
 	cnt := mysqlcounter.NewCounter(counterDB)
 
+	// Initialize queue (optional - only if QUEUE_MYSQL_DSN is provided)
+	// This allows the server to start without queue infrastructure for basic testing
+	// If queue is not available, only the Ping API will work (Land API requires queue)
+	queueDSN := os.Getenv("QUEUE_MYSQL_DSN")
+
 	// Create gRPC server
 	grpcServer := grpc.NewServer()
 
 	// Create controllers and wrap them for gRPC
 	pingController := controller.NewPingController(logger, scope)
-	landController := controller.NewLandController(logger, scope, store, cnt)
-	gatewayServer := &GatewayServer{
-		pingController: pingController,
-		landController: landController,
+
+	var gatewayServer *GatewayServer
+	if queueDSN != "" {
+		queueDB, err := sql.Open("mysql", queueDSN)
+		if err != nil {
+			return fmt.Errorf("failed to open MySQL connection for queue: %w", err)
+		}
+		defer queueDB.Close()
+
+		q, err := queueSQL.NewQueue(queueSQL.Params{
+			DB:           queueDB,
+			Logger:       logger,
+			MetricsScope: scope.SubScope("queue"),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create queue: %w", err)
+		}
+		defer q.Close()
+
+		logger.Info("queue initialized", zap.String("dsn", queueDSN))
+
+		// Land controller requires queue publisher
+		landController := controller.NewLandController(logger.Sugar(), scope, store, cnt, q.Publisher())
+		gatewayServer = &GatewayServer{
+			pingController: pingController,
+			landController: landController,
+		}
+	} else {
+		logger.Warn("queue infrastructure disabled (QUEUE_MYSQL_DSN not set) - only Ping API available")
+		// Only Ping controller available without queue
+		gatewayServer = &GatewayServer{
+			pingController: pingController,
+			landController: nil, // Land API will return errors if called
+		}
 	}
+
 	pb.RegisterSubmitQueueGatewayServer(grpcServer, gatewayServer)
 
 	// Register reflection service for debugging with grpcurl

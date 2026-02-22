@@ -47,6 +47,11 @@ Three services, each following the same layout:
 ```
 <service>/
 ├── controller/          # Business logic (pure, transport-agnostic)
+│   ├── {method}.go      # RPC controllers (e.g., land.go, ping.go)
+│   ├── {method}_test.go
+│   └── {step}/          # Queue message controllers (e.g., request/)
+│       ├── {step}.go    # Step in workflow
+│       └── {step}_test.go
 ├── proto/               # Proto definitions (.proto files)
 ├── protopb/             # Generated proto code (committed to repo)
 └── integration_test/
@@ -54,7 +59,24 @@ Three services, each following the same layout:
 
 ### Controllers
 
-Controllers contain pure business logic, independent of the transport layer (gRPC/YARPC). They live in `{service}/controller/` and are wired up in `example/server/{service}/main.go`.
+Controllers contain pure business logic, independent of infrastructure. There are two types:
+
+**RPC Controllers** - Handle synchronous API requests in `{service}/controller/`. Accept protobuf types, independent of gRPC/YARPC transport.
+
+```go
+func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.LandResponse, error)
+```
+
+**Queue Message Controllers** - Process async queue messages in `{service}/controller/{step}/`. Implement `consumer.Controller` interface.
+
+```go
+// Receives consumer.Delivery (NOT extension/queue.Delivery)
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
+    // Return nil to ack, error to nack. Consumer handles ack/nack automatically.
+}
+```
+
+Controllers receive `consumer.Delivery` (subset interface without Ack/Nack methods) to enforce separation: controllers do business logic, consumer framework handles infrastructure.
 
 ### Entities
 
@@ -70,7 +92,10 @@ entity/
 **Entity guidelines:**
 1. Keep entities pure and framework-agnostic — no external dependencies
 2. Use value types, not references
-3. Prefer `int64` Unix epoch milliseconds over `time.Time`
+3. Prefer `int64` milliseconds over `time.Time` and `time.Duration`:
+   - Timestamps: Unix epoch milliseconds (e.g., `CreatedAt int64`) — use `time.UnixMilli()` method
+   - Durations/timeouts: milliseconds (e.g., `TimeoutMs int64`, `DelayMs int64`)
+   - Use `time.Duration(ms) * time.Millisecond` to convert to `time.Duration` when needed
 4. Every field must have a comment explaining its meaning
 5. Reference other entities by ID (string or int), not directly
 6. Use string enums with clear names; assign sentinel values (`""` for strings, `0` for ints) to unreachable/unknown enum variants
@@ -104,7 +129,9 @@ extension/
 
 ### Import Paths
 
-- Controllers: `github.com/uber/submitqueue/{service}/controller`
+- RPC Controllers: `github.com/uber/submitqueue/{service}/controller`
+- Queue Controllers: `github.com/uber/submitqueue/{service}/controller/{step}`
+- Consumer: `github.com/uber/submitqueue/consumer`
 - Proto (generated): `github.com/uber/submitqueue/{service}/protopb`
 - Extensions: `github.com/uber/submitqueue/extension/{extension}`
 - Extension impl: `github.com/uber/submitqueue/extension/{extension}/{impl}`
@@ -164,6 +191,11 @@ All generated proto files are **committed to the repository**. When modifying `.
 - Tests: `{file}_test.go`
 - BUILD files: Always `BUILD.bazel`
 
+### Directory Naming
+
+- Use **singular** names for directories (e.g., `mock/` not `mocks/`, `entity/` not `entities/`)
+- This applies to all folders including test mocks, extensions, entities, and service directories
+
 ### Common Make Targets
 
 ```bash
@@ -189,6 +221,10 @@ make clean-proto              # Remove generated proto files
 3. Add controller in `{service}/controller/`
 4. Wire up in `example/server/{service}/main.go`
 
+**Add new queue message controller:**
+1. Create `{service}/controller/{step}/` with controller implementing `consumer.Controller`
+2. Wire up in `example/server/{service}/main.go`: register → start → stop on shutdown
+
 **Add new extension implementation:**
 1. Create `extension/{extension}/{impl}/` directory
 2. Implement factory and core interfaces
@@ -204,3 +240,20 @@ make clean-proto              # Remove generated proto files
 1. **Avoid asserting on error messages** — assert on error type if it is part of the contract, or assert generic error otherwise.
 2. **Avoid blocking operations for synchronization** — do not use `time.Sleep`. Design the tested routine to signal back (channels, callbacks, condition variables).
 3. **Use testify assertions** — use `stretchr/assert` or `require` instead of `t.Fatal()`.
+
+### Code Style Guidelines
+
+1. **Use SugaredLogger for structured logging** — always use `zap.SugaredLogger` with structured logging methods:
+   - `logger.Debugw(msg, key1, val1, key2, val2, ...)` for debug logs
+   - `logger.Infow(msg, key1, val1, key2, val2, ...)` for info logs
+   - `logger.Errorw(msg, key1, val1, key2, val2, ...)` for error logs
+   - Never use unstructured methods like `Debug()`, `Info()`, `Error()`, or `Printf()`
+   - Example: `logger.Infow("starting consumer", "subscriber_name", subscriberName, "controller_count", len(controllers))`
+
+2. **Use interfaces for contracts** — define interfaces for public APIs and dependencies:
+   - Public components should return/accept interfaces, not concrete structs
+   - Unexported structs implement the interfaces
+   - Makes testing easier through mocking
+   - Example: `func New(...) Consumer` returns interface, not `*consumer`
+   - Implementation struct is unexported: `type consumer struct { ... }`
+
