@@ -1,40 +1,35 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "controller",
+    name = "consumer",
     srcs = [
-        "land.go",
-        "ping.go",
+        "consumer.go",
+        "controller.go",
+        "error.go",
     ],
-    importpath = "github.com/uber/submitqueue/gateway/controller",
+    importpath = "github.com/uber/submitqueue/core/consumer",
     visibility = ["//visibility:public"],
     deps = [
-        "//entity",
         "//entity/queue",
-        "//extension/counter",
         "//extension/queue",
-        "//extension/storage",
-        "//gateway/protopb",
         "@com_github_uber_go_tally_v4//:tally",
         "@org_uber_go_zap//:zap",
     ],
 )
 
 go_test(
-    name = "controller_test",
+    name = "consumer_test",
     srcs = [
-        "land_test.go",
-        "ping_test.go",
+        "consumer_test.go",
+        "error_test.go",
     ],
-    embed = [":controller"],
+    embed = [":consumer"],
     deps = [
-        "//entity",
         "//entity/queue",
-        "//extension/storage",
-        "//gateway/protopb",
+        "//extension/queue",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_uber_go_tally_v4//:tally",
-        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest",
     ],
 )
