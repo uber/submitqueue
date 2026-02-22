@@ -14,7 +14,9 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally/v4"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
+	"github.com/uber/submitqueue/extension/queue"
 	queueSQL "github.com/uber/submitqueue/extension/queue/sql"
+	"github.com/uber/submitqueue/extension/storage"
 	"github.com/uber/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/gateway/controller"
 	pb "github.com/uber/submitqueue/gateway/protopb"
@@ -48,6 +50,10 @@ func main() {
 }
 
 func run() error {
+	// Set up signal handling early so retry loops can respond to SIGTERM
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
 	// Initialize development logger (human-readable console output)
 	logger, err := zap.NewDevelopment()
 	if err != nil {
@@ -86,19 +92,39 @@ func run() error {
 		metricsWgDone.Wait()
 	}()
 
-	// Initialize MySQL storage
+	// Initialize MySQL storage (with retries for MySQL startup)
 	mysqlDSN := os.Getenv("MYSQL_DSN")
 	if mysqlDSN == "" {
 		mysqlDSN = "root:root@tcp(localhost:3306)/submitqueue?parseTime=true"
 	}
-	store, err := mysql.NewStorage(mysql.MySQLParameters{
-		DSN:             mysqlDSN,
-		MaxOpenConns:    10,
-		MaxIdleConns:    5,
-		ConnMaxLifetime: 5 * time.Minute,
-	})
+	var store storage.Storage
+	maxRetries := 10
+	retryInterval := time.Second
+	for i := 0; i < maxRetries; i++ {
+		store, err = mysql.NewStorage(mysql.MySQLParameters{
+			DSN:             mysqlDSN,
+			MaxOpenConns:    10,
+			MaxIdleConns:    5,
+			ConnMaxLifetime: 5 * time.Minute,
+		})
+		if err == nil {
+			break
+		}
+		if i < maxRetries-1 {
+			logger.Warn("failed to create MySQL storage, retrying...",
+				zap.Int("attempt", i+1),
+				zap.Int("max_retries", maxRetries),
+				zap.Error(err),
+			)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(retryInterval):
+			}
+		}
+	}
 	if err != nil {
-		return fmt.Errorf("failed to create MySQL storage: %w", err)
+		return fmt.Errorf("failed to create MySQL storage after %d retries: %w", maxRetries, err)
 	}
 	defer store.Close()
 
@@ -128,13 +154,34 @@ func run() error {
 	}
 	defer queueDB.Close()
 
-	q, err := queueSQL.NewQueue(queueSQL.Params{
-		DB:           queueDB,
-		Logger:       logger,
-		MetricsScope: scope.SubScope("queue"),
-	})
+	// Retry queue creation (with retries for MySQL startup)
+	var q queue.Queue
+	maxRetries = 10
+	retryInterval = time.Second
+	for i := 0; i < maxRetries; i++ {
+		q, err = queueSQL.NewQueue(queueSQL.Params{
+			DB:           queueDB,
+			Logger:       logger,
+			MetricsScope: scope.SubScope("queue"),
+		})
+		if err == nil {
+			break
+		}
+		if i < maxRetries-1 {
+			logger.Warn("failed to create queue, retrying...",
+				zap.Int("attempt", i+1),
+				zap.Int("max_retries", maxRetries),
+				zap.Error(err),
+			)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(retryInterval):
+			}
+		}
+	}
 	if err != nil {
-		return fmt.Errorf("failed to create queue: %w", err)
+		return fmt.Errorf("failed to create queue after %d retries: %w", maxRetries, err)
 	}
 	defer q.Close()
 
@@ -172,11 +219,8 @@ func run() error {
 	}()
 
 	// Wait for interrupt signal or server exit
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
 	select {
-	case <-sigCh:
+	case <-ctx.Done():
 		fmt.Println("\nShutting down gateway server...")
 		grpcServer.GracefulStop()
 		_ = <-serverErrCh // Wait for the server to exit and ignore the error

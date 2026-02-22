@@ -1,5 +1,10 @@
 load("@rules_go//go:def.bzl", "go_binary", "go_library")
 
+exports_files(
+    ["docker-compose.yml"],
+    visibility = ["//visibility:public"],
+)
+
 go_library(
     name = "gateway_lib",
     srcs = ["main.go"],
@@ -7,7 +12,9 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//extension/counter/mysql",
+        "//extension/queue",
         "//extension/queue/sql",
+        "//extension/storage",
         "//extension/storage/mysql",
         "//gateway/controller",
         "//gateway/protopb",

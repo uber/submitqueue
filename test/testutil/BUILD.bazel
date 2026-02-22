@@ -1,0 +1,18 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "testutil",
+    srcs = [
+        "compose.go",
+        "logger.go",
+        "schema.go",
+    ],
+    importpath = "github.com/uber/submitqueue/test/testutil",
+    visibility = ["//test:__subpackages__"],
+    deps = [
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials/insecure",
+    ],
+)

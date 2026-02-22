@@ -94,6 +94,70 @@ direnv allow
 
 With direnv enabled, you can use `bazel` directly instead of `./tool/bazel`.
 
+### Shell Configuration (Optional)
+
+#### Make Target Auto-Completion (zsh)
+
+Enable tab-completion for Makefile targets with descriptions:
+
+1. **Add to `~/.zshrc`:**
+   ```bash
+   # Initialize completion system
+   autoload -Uz compinit
+   compinit
+
+   # Makefile target completion with caching and help text
+   function _make_targets() {
+     local -a targets
+     local makefile_cache=".make_targets_cache"
+
+     if [[ -f Makefile ]]; then
+       # Regenerate cache if Makefile is newer
+       if [[ ! -f $makefile_cache ]] || [[ Makefile -nt $makefile_cache ]]; then
+         awk -F':.*?## ' '/^[a-zA-Z0-9_-]+:.*?## / {printf "%s:%s\n", $1, $2}' Makefile > $makefile_cache
+       fi
+
+       # Read cache into targets array
+       targets=(${(f)"$(<$makefile_cache)"})
+
+       # If cache has descriptions, use them; otherwise fallback to simple list
+       if [[ -s $makefile_cache ]] && grep -q ':' $makefile_cache 2>/dev/null; then
+         _describe 'make targets' targets
+       else
+         # Fallback: just target names
+         awk -F: '/^[a-zA-Z0-9_-]+:/ {print $1}' Makefile > $makefile_cache
+         targets=(${(f)"$(<$makefile_cache)"})
+         _describe 'make targets' targets
+       fi
+     fi
+   }
+
+   compdef _make_targets make
+   ```
+
+2. **Reload your shell:**
+   ```bash
+   source ~/.zshrc
+   ```
+
+3. **Try it out:**
+   ```bash
+   make <TAB>           # Shows all targets with descriptions
+   make local-<TAB>     # Shows all local-* targets
+   make integration<TAB> # Shows integration test options
+   ```
+
+   You'll see:
+   ```
+   build                          -- Build all services and examples
+   test                           -- Run unit tests
+   local-start                    -- Start full stack (Gateway + Orchestrator + MySQL)
+   integration-test               -- Run all integration tests (auto-builds binaries)
+   # ... and more!
+   ```
+
+**Note**: The completion cache (`.make_targets_cache`) is gitignored and automatically regenerates when the Makefile changes.
+
 Install optional tools:
 ```bash
 # macOS

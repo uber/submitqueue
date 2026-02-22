@@ -1,0 +1,15 @@
+name: Setup
+description: Setup Bazel cache for CI jobs
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Bazel cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/bazel
+          ~/.cache/bazelisk
+        key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'go.mod', '.bazelversion') }}
+        restore-keys: |
+          bazel-${{ runner.os }}-

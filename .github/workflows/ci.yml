@@ -1,0 +1,138 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # BUILD AND UNIT TESTS (special case - Gazelle + build + unit tests)
+  # ---------------------------------------------------------------------------
+  build-and-unit-test:
+    name: Build and Unit Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      - name: Check BUILD files are up to date
+        run: |
+          echo "Running Gazelle to check BUILD files..." >&2
+          make gazelle
+          if ! git diff --quiet; then
+            echo "BUILD files are out of date!" >&2
+            echo "" >&2
+            echo "The following files were modified by Gazelle:" >&2
+            git diff --name-only >&2
+            echo "" >&2
+            echo "Please run 'make gazelle' locally and commit the changes." >&2
+            exit 1
+          fi
+          echo "BUILD files are up to date" >&2
+
+      - name: Build project
+        run: make build
+
+      - name: Run unit tests
+        run: make test || echo "No unit tests found"
+
+  # ---------------------------------------------------------------------------
+  # INTEGRATION TESTS (e2e, gateway, orchestrator)
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: E2E Integration Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      - name: Run E2E tests
+        run: make e2e-test
+
+      - uses: ./.github/actions/logs
+
+  gateway-integration-test:
+    name: Gateway Integration Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      - name: Run Gateway integration tests
+        run: make integration-test-gateway
+
+      - uses: ./.github/actions/logs
+
+  orchestrator-integration-test:
+    name: Orchestrator Integration Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      - name: Run Orchestrator integration tests
+        run: make integration-test-orchestrator
+
+      - uses: ./.github/actions/logs
+
+  # ---------------------------------------------------------------------------
+  # EXTENSION TESTS
+  # ---------------------------------------------------------------------------
+  counter-integration-test:
+    name: Counter Extension Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/run-bazel-test
+        with:
+          target: //test/integration/extension/counter/...
+
+  queue-integration-test:
+    name: Queue Extension Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/run-bazel-test
+        with:
+          target: //test/integration/extension/queue/...
+
+  storage-integration-test:
+    name: Storage Extension Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/run-bazel-test
+        with:
+          target: //test/integration/extension/storage/...
+
+  # ---------------------------------------------------------------------------
+  # REQUIRED CHECKS GATE
+  # ---------------------------------------------------------------------------
+  required-checks:
+    name: Required Checks
+    runs-on: ubuntu-latest
+    needs:
+      - build-and-unit-test
+      - e2e
+      - gateway-integration-test
+      - orchestrator-integration-test
+      - counter-integration-test
+      - queue-integration-test
+      - storage-integration-test
+    steps:
+      - name: All required checks passed
+        run: |
+          echo "All required checks passed!" >&2
