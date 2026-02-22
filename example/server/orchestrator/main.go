@@ -14,7 +14,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
-	"github.com/uber/submitqueue/extension/queue"
+	extqueue "github.com/uber/submitqueue/extension/queue"
 	queueSQL "github.com/uber/submitqueue/extension/queue/sql"
 	"github.com/uber/submitqueue/orchestrator/controller"
 	"github.com/uber/submitqueue/orchestrator/controller/request"
@@ -85,75 +85,74 @@ func run() error {
 		metricsWgDone.Wait()
 	}()
 
-	// Initialize queue (optional - only if QUEUE_MYSQL_DSN is provided)
-	// This allows the server to start without queue infrastructure for basic testing
+	// Open queue database connection
+	// Docker Compose healthchecks ensure MySQL is ready before service starts
 	queueDSN := os.Getenv("QUEUE_MYSQL_DSN")
-	var c consumer.Consumer
-	if queueDSN != "" {
-		queueDB, err := sql.Open("mysql", queueDSN)
-		if err != nil {
-			return fmt.Errorf("failed to open MySQL connection for queue: %w", err)
-		}
-		defer queueDB.Close()
-
-		// Retry queue creation (with retries for MySQL startup)
-		var q queue.Queue
-		maxRetries := 10
-		retryInterval := time.Second
-		for i := 0; i < maxRetries; i++ {
-			q, err = queueSQL.NewQueue(queueSQL.Params{
-				DB:           queueDB,
-				Logger:       logger,
-				MetricsScope: scope.SubScope("queue"),
-			})
-			if err == nil {
-				break
-			}
-			if i < maxRetries-1 {
-				logger.Warn("failed to create queue, retrying...",
-					zap.Int("attempt", i+1),
-					zap.Int("max_retries", maxRetries),
-					zap.Error(err),
-				)
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(retryInterval):
-				}
-			}
-		}
-		if err != nil {
-			return fmt.Errorf("failed to create queue after %d retries: %w", maxRetries, err)
-		}
-		defer q.Close()
-
-		logger.Info("queue initialized", zap.String("dsn", queueDSN))
-
-		// Create consumer
-		subscriberName := os.Getenv("HOSTNAME")
-		if subscriberName == "" {
-			subscriberName = fmt.Sprintf("orchestrator-%d", time.Now().Unix())
-		}
-
-		c = consumer.New(logger.Sugar(), scope.SubScope("consumer"), q, subscriberName)
-
-		// Register handlers for the pipeline
-		requestHandler := request.NewController(logger.Sugar(), scope)
-		if err := c.Register(requestHandler); err != nil {
-			return fmt.Errorf("failed to register request handler: %w", err)
-		}
-
-		logger.Info("handlers registered", zap.Int("count", 1))
-
-		// Start consumers
-		if err := c.Start(ctx); err != nil {
-			return fmt.Errorf("failed to start consumers: %w", err)
-		}
-
-		logger.Info("consumer started")
-	} else {
-		logger.Warn("queue infrastructure disabled (QUEUE_MYSQL_DSN not set)")
+	if queueDSN == "" {
+		return fmt.Errorf("QUEUE_MYSQL_DSN environment variable is required")
 	}
+	queueDB, err := sql.Open("mysql", queueDSN)
+	if err != nil {
+		return fmt.Errorf("failed to open queue database: %w", err)
+	}
+	defer queueDB.Close()
+
+	// Initialize queue
+	sqlQueue, err := queueSQL.NewQueue(queueSQL.Params{
+		DB:           queueDB,
+		Logger:       logger,
+		MetricsScope: scope.SubScope("queue"),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create queue: %w", err)
+	}
+	defer sqlQueue.Close()
+
+	logger.Info("initialized queue", zap.String("dsn", queueDSN))
+
+	// Create topic registry
+	subscriberName := os.Getenv("HOSTNAME")
+	if subscriberName == "" {
+		subscriberName = fmt.Sprintf("orchestrator-%d", time.Now().Unix())
+	}
+
+	registry := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{
+			{Topic: consumer.TopicRequest, Queue: sqlQueue},
+			{Topic: consumer.TopicToBatch, Queue: sqlQueue},
+		},
+		[]extqueue.SubscriptionConfig{
+			extqueue.DefaultSubscriptionConfig(
+				consumer.TopicRequest.String(),
+				subscriberName,
+				"orchestrator-request",
+			),
+		},
+	)
+
+	// Create consumer
+	c := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry)
+
+	// Register request controller
+	// Pipeline: request → batch → speculation → build → merge
+	requestController := request.NewController(
+		logger.Sugar(),
+		scope,
+		registry,
+		consumer.TopicRequest,
+		"orchestrator-request",
+	)
+	if err := c.Register(requestController); err != nil {
+		return fmt.Errorf("failed to register request controller: %w", err)
+	}
+
+	logger.Info("controllers registered", zap.Int("count", 1))
+
+	// Start consumers
+	if err := c.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start consumers: %w", err)
+	}
+	logger.Info("consumer started")
 
 	// Create gRPC server
 	grpcServer := grpc.NewServer()
@@ -191,22 +190,14 @@ func run() error {
 	select {
 	case <-ctx.Done():
 		fmt.Println("\nShutting down orchestrator server...")
-		if c != nil {
-			if err := c.Stop(30000); err != nil {
-				logger.Error("consumer stop error", zap.Error(err))
-			}
-		}
+		c.Stop(30000) // Stop consumers with 30s timeout
 		grpcServer.GracefulStop()
 		_ = <-serverErrCh // Wait for the server to exit and ignore the error
 	case errCh := <-serverErrCh:
 		if errCh != nil {
 			err = fmt.Errorf("\nServer exited with error: %w\n", errCh)
 		}
-		if c != nil {
-			if stopErr := c.Stop(30000); stopErr != nil {
-				logger.Error("consumer stop error", zap.Error(stopErr))
-			}
-		}
+		c.Stop(30000) // Stop consumers with 30s timeout
 	}
 
 	return err

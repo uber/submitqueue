@@ -1,5 +1,7 @@
 package consumer
 
+//go:generate mockgen -source=controller.go -destination=mock/controller_mock.go -package=mock
+
 import (
 	"context"
 
@@ -84,15 +86,10 @@ type Controller interface {
 	Name() string
 
 	// Topic returns the topic this controller subscribes to.
-	Topic() string
+	Topic() Topic
 
 	// ConsumerGroup returns the consumer group for offset tracking.
 	// Multiple controllers can share a consumer group to load-balance across workers.
 	// Different consumer groups consume independently.
 	ConsumerGroup() string
-
-	// SubscriptionConfig returns the subscription config for this controller.
-	// Allows each controller to customize poll interval, batch size, timeouts, retry, DLQ.
-	// The subscriberName parameter is the unique worker identifier (hostname, pod name).
-	SubscriptionConfig(subscriberName string) extqueue.SubscriptionConfig
 }

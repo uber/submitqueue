@@ -7,16 +7,18 @@ import (
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/entity"
-	extqueue "github.com/uber/submitqueue/extension/queue"
+	entityqueue "github.com/uber/submitqueue/entity/queue"
 	"go.uber.org/zap"
 )
 
 // Controller handles request queue messages.
+// It consumes requests, validates them, and publishes to the next stage.
 // Implements consumer.Controller interface for integration with the consumer.
 type Controller struct {
-	logger       *zap.SugaredLogger
-	metricsScope tally.Scope
-	topic        string
+	logger        *zap.SugaredLogger
+	metricsScope  tally.Scope
+	registry      consumer.TopicRegistry
+	topic         consumer.Topic
 	consumerGroup string
 }
 
@@ -24,17 +26,24 @@ type Controller struct {
 var _ consumer.Controller = (*Controller)(nil)
 
 // NewController creates a new request controller for the orchestrator.
-func NewController(logger *zap.SugaredLogger, scope tally.Scope) *Controller {
+func NewController(
+	logger *zap.SugaredLogger,
+	scope tally.Scope,
+	registry consumer.TopicRegistry,
+	topic consumer.Topic,
+	consumerGroup string,
+) *Controller {
 	return &Controller{
-		logger:       logger.Named("request_controller"),
-		metricsScope: scope.SubScope("request_controller"),
-		topic:         "request",
-		consumerGroup: "orchestrator-request",
+		logger:        logger.Named("request_controller"),
+		metricsScope:  scope.SubScope("request_controller"),
+		registry:      registry,
+		topic:         topic,
+		consumerGroup: consumerGroup,
 	}
 }
 
 // Process processes a request delivery from the queue.
-// Deserializes the request, logs the event, and prepares for future state transitions.
+// Deserializes the request, validates it, and publishes to the batch topic.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	c.metricsScope.Counter("received").Inc(1)
@@ -67,13 +76,49 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"partition_key", msg.PartitionKey,
 	)
 
-	// TODO: Update request state to processing
-	// TODO: Perform validation checks
-	// TODO: Publish to next queue (requests_for_batching)
+	// TODO: Add validation logic
+	// - Merge Conflict Check
+
+	// Publish to batch topic
+	if err := c.publish(ctx, consumer.TopicToBatch, request); err != nil {
+		c.logger.Errorw("failed to publish output",
+			"request_id", request.ID,
+			"topic", "batch",
+			"error", err,
+		)
+		c.metricsScope.Counter("publish_errors").Inc(1)
+		return fmt.Errorf("failed to publish to batch: %w", err)
+	}
+
+	c.logger.Infow("published request to next stage",
+		"request_id", request.ID,
+		"topic", "batch",
+	)
 
 	c.metricsScope.Counter("processed").Inc(1)
 
 	return nil // Success - message will be acked
+}
+
+// publish publishes a request to the specified topic.
+func (c *Controller) publish(ctx context.Context, topic consumer.Topic, request entity.Request) error {
+	payload, err := request.ToBytes()
+	if err != nil {
+		return fmt.Errorf("failed to serialize request: %w", err)
+	}
+
+	msg := entityqueue.NewMessage(request.ID, payload, request.Queue, nil)
+
+	q, ok := c.registry.Queue(topic)
+	if !ok {
+		return fmt.Errorf("no queue registered for topic %s", topic)
+	}
+
+	if err := q.Publisher().Publish(ctx, topic.String(), msg); err != nil {
+		return fmt.Errorf("failed to publish message: %w", err)
+	}
+
+	return nil
 }
 
 // Name returns the controller name for logging and metrics.
@@ -82,30 +127,11 @@ func (c *Controller) Name() string {
 }
 
 // Topic returns the topic this controller subscribes to.
-func (c *Controller) Topic() string {
+func (c *Controller) Topic() consumer.Topic {
 	return c.topic
 }
 
 // ConsumerGroup returns the consumer group for offset tracking.
 func (c *Controller) ConsumerGroup() string {
 	return c.consumerGroup
-}
-
-// SubscriptionConfig returns the subscription config for the request controller.
-// Uses default settings which work well for request processing (100ms poll, 60s visibility timeout).
-func (c *Controller) SubscriptionConfig(subscriberName string) extqueue.SubscriptionConfig {
-	config := extqueue.DefaultSubscriptionConfig(subscriberName, c.consumerGroup)
-
-	// Request controller uses default settings:
-	// - PollInterval: 100ms (fast polling for immediate request processing)
-	// - BatchSize: 10
-	// - VisibilityTimeout: 60s
-	// - Retry: 3 attempts with exponential backoff
-	// - DLQ: enabled
-
-	// Can customize if needed:
-	// config.PollInterval = 50 * time.Millisecond  // Even faster polling
-	// config.BatchSize = 20                         // Process more requests at once
-
-	return config
 }

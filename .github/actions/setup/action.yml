@@ -1,5 +1,17 @@
 name: Setup
-description: Setup Bazel cache for CI jobs
+description: Setup Bazel caches for CI jobs
+
+# Caches three directories that match the paths configured in .bazelrc:
+#   - disk-cache:  compiled build outputs (biggest speedup — avoids recompilation)
+#   - repo-cache:  downloaded external dependencies (avoids re-downloading Go modules, protobuf, etc.)
+#   - bazelisk:    the Bazel binary itself
+#
+# Cache key includes github.job so each CI job saves its own cache entry
+# (otherwise concurrent jobs race on the same key and only one wins).
+# github.run_id ensures the key never matches exactly, forcing actions/cache
+# to always save — so the disk cache accumulates entries across runs.
+# The restore-keys fallback restores from the most recent prior run of the
+# same job (preferred), then same deps, then any.
 
 runs:
   using: composite
@@ -8,8 +20,11 @@ runs:
       uses: actions/cache@v4
       with:
         path: |
-          ~/.cache/bazel
+          ~/.cache/bazel-disk-cache
+          ~/.cache/bazel-repo-cache
           ~/.cache/bazelisk
-        key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'go.mod', '.bazelversion') }}
+        key: bazel-${{ runner.os }}-${{ github.job }}-${{ hashFiles('MODULE.bazel', 'go.mod', 'go.sum', '.bazelversion', '.bazelrc') }}-${{ github.run_id }}
         restore-keys: |
+          bazel-${{ runner.os }}-${{ github.job }}-${{ hashFiles('MODULE.bazel', 'go.mod', 'go.sum', '.bazelversion', '.bazelrc') }}-
+          bazel-${{ runner.os }}-${{ github.job }}-
           bazel-${{ runner.os }}-
