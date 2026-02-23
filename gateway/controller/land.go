@@ -8,7 +8,9 @@ import (
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/entity"
+	"github.com/uber/submitqueue/entity/queue"
 	"github.com/uber/submitqueue/extension/counter"
+	extqueue "github.com/uber/submitqueue/extension/queue"
 	"github.com/uber/submitqueue/extension/storage"
 	pb "github.com/uber/submitqueue/gateway/protopb"
 	"go.uber.org/zap"
@@ -25,19 +27,21 @@ func IsInvalidRequest(err error) bool {
 
 // LandController handles land business logic for the gateway
 type LandController struct {
-	logger       *zap.Logger
+	logger       *zap.SugaredLogger
 	metricsScope tally.Scope
 	store        storage.Storage
 	counter      counter.Counter
+	publisher    extqueue.Publisher
 }
 
-// NewLandController creates a new instance of the gateway land controller
-func NewLandController(logger *zap.Logger, scope tally.Scope, store storage.Storage, counter counter.Counter) *LandController {
+// NewLandController creates a new instance of the gateway land controller.
+func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, store storage.Storage, counter counter.Counter, publisher extqueue.Publisher) *LandController {
 	return &LandController{
 		logger:       logger,
 		metricsScope: scope,
 		store:        store,
 		counter:      counter,
+		publisher:    publisher,
 	}
 }
 
@@ -94,14 +98,56 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 		return nil, fmt.Errorf("LandController failed to create request for queue=%s: %w", req.Queue, err)
 	}
 
-	c.logger.Debug("land request received",
-		zap.String("queue", req.Queue),
-		zap.String("sqid", request.ID),
+	c.logger.Debugw("land request created",
+		"queue", req.Queue,
+		"sqid", request.ID,
+		"change_source", change.Source,
+		"change_ids", change.IDs,
+		"strategy", string(strategy),
 	)
+
+	// Publish to queue for async processing
+	if err := c.publishToQueue(ctx, request); err != nil {
+		c.logger.Errorw("failed to publish request to queue",
+			"queue", req.Queue,
+			"sqid", request.ID,
+			"error", err,
+		)
+		return nil, fmt.Errorf("LandController failed to publish request to queue: %w", err)
+	}
+
+	c.logger.Infow("request published to queue",
+		"queue", req.Queue,
+		"sqid", request.ID,
+		"topic", "request",
+	)
+	c.metricsScope.Counter("publish_success").Inc(1)
 
 	return &pb.LandResponse{
 		Sqid: request.ID,
 	}, nil
+}
+
+// publishToQueue publishes a request to the request queue for async processing.
+func (c *LandController) publishToQueue(ctx context.Context, request entity.Request) error {
+	// Serialize request entity to JSON
+	payload, err := request.ToBytes()
+	if err != nil {
+		return fmt.Errorf("failed to serialize request: %w", err)
+	}
+
+	// Create queue message
+	// - Message ID: request.ID for idempotency
+	// - Payload: serialized Request entity
+	// - Partition key: request.Queue (ensures ordering per queue)
+	msg := queue.NewMessage(request.ID, payload, request.Queue, nil)
+
+	// Publish to request topic
+	if err := c.publisher.Publish(ctx, "request", msg); err != nil {
+		return fmt.Errorf("failed to publish message: %w", err)
+	}
+
+	return nil
 }
 
 // protoStrategyToEntity maps a proto Strategy enum to the entity RequestLandStrategy.

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/entity"
+	"github.com/uber/submitqueue/entity/queue"
 	"github.com/uber/submitqueue/extension/storage"
 	pb "github.com/uber/submitqueue/gateway/protopb"
 	"go.uber.org/zap"
@@ -50,6 +51,25 @@ func (m *mockStorage) Close() error {
 	return nil
 }
 
+type mockPublisher struct {
+	publishFunc func(ctx context.Context, topic string, msg queue.Message) error
+}
+
+func (m *mockPublisher) Publish(ctx context.Context, topic string, msg queue.Message) error {
+	return m.publishFunc(ctx, topic, msg)
+}
+
+func (m *mockPublisher) Close() error {
+	return nil
+}
+
+// noopPublisher returns a mock publisher that succeeds silently.
+func noopPublisher() *mockPublisher {
+	return &mockPublisher{publishFunc: func(ctx context.Context, topic string, msg queue.Message) error {
+		return nil
+	}}
+}
+
 func TestNewLandController(t *testing.T) {
 	store := &mockStorage{requestStore: &mockRequestStore{
 		createFunc: func(ctx context.Context, request entity.Request) error {
@@ -59,7 +79,7 @@ func TestNewLandController(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop(), tally.NoopScope, store, cnt)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
 	require.NotNil(t, controller)
 }
 
@@ -72,7 +92,7 @@ func TestLand_ReturnsSqid(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop(), tally.NoopScope, store, cnt)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -97,7 +117,7 @@ func TestLand_PassesCorrectParametersToStore(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 42, nil
 	}}
-	controller := NewLandController(zap.NewNop(), tally.NoopScope, store, cnt)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -127,7 +147,7 @@ func TestLand_ReturnsErrorOnStorageFailure(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop(), tally.NoopScope, store, cnt)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -148,7 +168,7 @@ func TestLand_ReturnsErrorOnCounterFailure(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 0, fmt.Errorf("counter unavailable")
 	}}
-	controller := NewLandController(zap.NewNop(), tally.NoopScope, store, cnt)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -172,7 +192,7 @@ func TestLand_CounterDomainIncludesQueue(t *testing.T) {
 		capturedDomain = domain
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop(), tally.NoopScope, store, cnt)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -194,7 +214,7 @@ func TestLand_ReturnsErrorOnEmptyQueue(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop(), tally.NoopScope, store, cnt)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -216,7 +236,7 @@ func TestLand_ReturnsErrorOnEmptyChangeSource(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop(), tally.NoopScope, store, cnt)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -238,7 +258,7 @@ func TestLand_ReturnsErrorOnNilChange(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop(), tally.NoopScope, store, cnt)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -260,7 +280,7 @@ func TestLand_ReturnsErrorOnEmptyChangeIDs(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop(), tally.NoopScope, store, cnt)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -271,4 +291,78 @@ func TestLand_ReturnsErrorOnEmptyChangeIDs(t *testing.T) {
 
 	require.Error(t, err)
 	assert.True(t, IsInvalidRequest(err))
+}
+
+func TestLand_PublishesToQueue(t *testing.T) {
+	var publishedTopic string
+	var publishedMessage queue.Message
+
+	store := &mockStorage{requestStore: &mockRequestStore{
+		createFunc: func(ctx context.Context, request entity.Request) error {
+			return nil
+		},
+	}}
+	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
+		return 123, nil
+	}}
+	publisher := &mockPublisher{publishFunc: func(ctx context.Context, topic string, msg queue.Message) error {
+		publishedTopic = topic
+		publishedMessage = msg
+		return nil
+	}}
+
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, publisher)
+	ctx := context.Background()
+
+	req := &pb.LandRequest{
+		Queue:    "test-queue",
+		Change:   &pb.Change{Source: "github", Ids: []string{"PR-456"}},
+		Strategy: pb.Strategy_REBASE,
+	}
+	resp, err := controller.Land(ctx, req)
+
+	require.NoError(t, err)
+	assert.Equal(t, "test-queue/123", resp.Sqid)
+
+	// Verify message was published
+	assert.Equal(t, "request", publishedTopic)
+	assert.Equal(t, "test-queue/123", publishedMessage.ID)
+	assert.Equal(t, "test-queue", publishedMessage.PartitionKey)
+
+	// Verify payload can be deserialized
+	deserializedReq, err := entity.RequestFromBytes(publishedMessage.Payload)
+	require.NoError(t, err)
+	assert.Equal(t, "test-queue/123", deserializedReq.ID)
+	assert.Equal(t, "test-queue", deserializedReq.Queue)
+	assert.Equal(t, "github", deserializedReq.Change.Source)
+	assert.Equal(t, []string{"PR-456"}, deserializedReq.Change.IDs)
+	assert.Equal(t, entity.RequestLandStrategyRebase, deserializedReq.LandStrategy)
+	assert.Equal(t, entity.RequestStateNew, deserializedReq.State)
+	assert.Equal(t, int32(1), deserializedReq.Version)
+}
+
+func TestLand_ContinuesWhenPublishFails(t *testing.T) {
+	store := &mockStorage{requestStore: &mockRequestStore{
+		createFunc: func(ctx context.Context, request entity.Request) error {
+			return nil
+		},
+	}}
+	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
+		return 999, nil
+	}}
+	publisher := &mockPublisher{publishFunc: func(ctx context.Context, topic string, msg queue.Message) error {
+		return fmt.Errorf("queue unavailable")
+	}}
+
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, publisher)
+	ctx := context.Background()
+
+	req := &pb.LandRequest{
+		Queue:  "test-queue",
+		Change: &pb.Change{Source: "github", Ids: []string{"PR-1"}},
+	}
+	_, err := controller.Land(ctx, req)
+
+	// Should fail if publish fails
+	require.Error(t, err)
 }

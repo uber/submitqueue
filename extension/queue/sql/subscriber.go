@@ -52,6 +52,9 @@ type sqlDelivery struct {
 	messageID     string
 	consumerGroup string
 
+	// DLQ configuration for Reject
+	dlqConfig extqueue.DLQConfig
+
 	// Track acknowledgment state
 	mu           sync.Mutex
 	acknowledged bool
@@ -68,6 +71,7 @@ func newSQLDelivery(
 	offset int64,
 	messageID string,
 	consumerGroup string,
+	dlqConfig extqueue.DLQConfig,
 ) *sqlDelivery {
 	return &sqlDelivery{
 		msg:           msg,
@@ -81,6 +85,7 @@ func newSQLDelivery(
 		offset:        offset,
 		messageID:     messageID,
 		consumerGroup: consumerGroup,
+		dlqConfig:     dlqConfig,
 		acknowledged:  false,
 	}
 }
@@ -166,6 +171,57 @@ func (d *sqlDelivery) Nack(ctx context.Context, requeueAfterMillis int64) error 
 		"message_id", d.messageID,
 		"requeue_after_millis", requeueAfterMillis,
 	)
+
+	d.acknowledged = true
+	return nil
+}
+
+// Reject implements extqueue.Delivery.Reject
+func (d *sqlDelivery) Reject(ctx context.Context, reason string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if d.acknowledged {
+		return &ErrAlreadyAcknowledged{DeliveryID: d.deliveryID}
+	}
+
+	if d.dlqConfig.Enabled {
+		// Move to DLQ
+		if err := d.subscriber.messageStore.MoveToDLQ(
+			ctx, d.topic, d.messageID, d.attempt, reason, d.dlqConfig.TopicSuffix,
+		); err != nil {
+			return fmt.Errorf("failed to move message to DLQ: %w", err)
+		}
+
+		// Update offset tracking
+		if err := d.subscriber.offsetStore.UpdateAckedOffset(
+			ctx, d.topic, d.partitionKey, d.offset, d.consumerGroup,
+		); err != nil {
+			// Log but don't fail — message is already in DLQ
+			d.subscriber.logger.Errorw("failed to update offset after DLQ move",
+				"topic", d.topic,
+				"message_id", d.messageID,
+				"error", err,
+			)
+		}
+
+		d.subscriber.metrics.Tagged(map[string]string{
+			"topic":         d.topic,
+			"partition_key": d.partitionKey,
+		}).Counter("messages_rejected_to_dlq").Inc(1)
+	} else {
+		// DLQ disabled — fall back to ack (remove from queue)
+		if err := d.subscriber.offsetStore.AckMessage(
+			ctx, d.topic, d.partitionKey, d.messageID, d.offset, d.consumerGroup, d.subscriber.messageStore,
+		); err != nil {
+			return err
+		}
+
+		d.subscriber.metrics.Tagged(map[string]string{
+			"topic":         d.topic,
+			"partition_key": d.partitionKey,
+		}).Counter("messages_rejected_no_dlq").Inc(1)
+	}
 
 	d.acknowledged = true
 	return nil
@@ -505,6 +561,7 @@ func (s *subscriber) fetchAndDeliverPartition(ctx context.Context, sub *subscrip
 			row.Offset,
 			row.ID,
 			cfg.ConsumerGroup,
+			cfg.DLQ,
 		)
 
 		// Deliver message

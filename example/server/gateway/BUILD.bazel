@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//extension/counter/mysql",
+        "//extension/queue/sql",
         "//extension/storage/mysql",
         "//gateway/controller",
         "//gateway/protopb",

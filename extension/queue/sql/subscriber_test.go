@@ -2,6 +2,7 @@ package sql
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,6 +11,7 @@ import (
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/uber/submitqueue/entity/queue"
 	extqueue "github.com/uber/submitqueue/extension/queue"
 )
 
@@ -75,6 +77,112 @@ func TestSubscriber_Subscribe(t *testing.T) {
 	}
 }
 
+func TestSQLDelivery_Reject(t *testing.T) {
+	tests := []struct {
+		name           string
+		dlqEnabled     bool
+		alreadyAcked   bool
+		moveToDLQErr   error
+		ackMessageErr  error
+		expectErr      bool
+		expectMoveDLQ  bool
+		expectAck      bool
+	}{
+		{
+			name:          "DLQ enabled moves message to DLQ",
+			dlqEnabled:    true,
+			expectMoveDLQ: true,
+		},
+		{
+			name:      "DLQ disabled falls back to ack",
+			expectAck: true,
+		},
+		{
+			name:         "already acknowledged returns error",
+			dlqEnabled:   true,
+			alreadyAcked: true,
+			expectErr:    true,
+		},
+		{
+			name:          "DLQ enabled but MoveToDLQ fails",
+			dlqEnabled:    true,
+			moveToDLQErr:  fmt.Errorf("db error"),
+			expectErr:     true,
+			expectMoveDLQ: true,
+		},
+		{
+			name:          "DLQ disabled but AckMessage fails",
+			ackMessageErr: fmt.Errorf("db error"),
+			expectErr:     true,
+			expectAck:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockMsgStore := NewMockmessageStore(ctrl)
+			mockOffStore := NewMockoffsetStore(ctrl)
+			mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+
+			sub := NewSubscriber(
+				zaptest.NewLogger(t).Sugar(),
+				tally.NoopScope,
+				mockMsgStore,
+				mockOffStore,
+				mockLeaseStore,
+			)
+
+			msg := queue.NewMessage("msg-1", []byte("payload"), "part-1", nil)
+			dlqConfig := extqueue.DLQConfig{
+				Enabled:     tt.dlqEnabled,
+				TopicSuffix: "_dlq",
+			}
+
+			d := newSQLDelivery(
+				msg, "1", 1, nil,
+				sub, "test_topic", "part-1", 100, "msg-1", "test-group",
+				dlqConfig,
+			)
+
+			if tt.alreadyAcked {
+				d.acknowledged = true
+			}
+
+			if tt.expectMoveDLQ {
+				mockMsgStore.EXPECT().MoveToDLQ(
+					gomock.Any(), "test_topic", "msg-1", 1, "bad payload", "_dlq",
+				).Return(tt.moveToDLQErr)
+
+				if tt.moveToDLQErr == nil {
+					mockOffStore.EXPECT().UpdateAckedOffset(
+						gomock.Any(), "test_topic", "part-1", int64(100), "test-group",
+					).Return(nil)
+				}
+			}
+
+			if tt.expectAck {
+				mockOffStore.EXPECT().AckMessage(
+					gomock.Any(), "test_topic", "part-1", "msg-1", int64(100), "test-group", mockMsgStore,
+				).Return(tt.ackMessageErr)
+			}
+
+			err := d.Reject(context.Background(), "bad payload")
+
+			if tt.expectErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.True(t, d.acknowledged)
+		})
+	}
+}
+
+// TestSubscriber_Close tests subscriber close behavior
 func TestSubscriber_Close(t *testing.T) {
 	tests := []struct {
 		name           string
