@@ -13,7 +13,7 @@ type ChangeProviderStore interface {
 	Get(ctx context.Context, id string) (entity.ChangeProvider, error)
 
 	// Create creates a new change provider.
-	Create(ctx context.Context, request entity.Request) error
+	Create(ctx context.Context, changeProvider entity.ChangeProvider) error
 
 	// There is no update function since once created, data is only ever read from this
 	// store.
