@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,6 +13,15 @@ import (
 	pb "github.com/uber/submitqueue/gateway/protopb"
 	"go.uber.org/zap"
 )
+
+// ErrInvalidRequest is returned when the request fails validation.
+// This error should be mapped to codes.InvalidArgument at the gRPC layer.
+var ErrInvalidRequest = errors.New("invalid request")
+
+// IsInvalidRequest returns true if any error in the error chain is ErrInvalidRequest.
+func IsInvalidRequest(err error) bool {
+	return errors.Is(err, ErrInvalidRequest)
+}
 
 // LandController handles land business logic for the gateway
 type LandController struct {
@@ -39,6 +49,17 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 	}()
 
 	c.metricsScope.Counter("land_request_count").Inc(1)
+
+	// Validate required fields.
+	if req.Queue == "" {
+		return nil, fmt.Errorf("LandController requires the request to have a queue name specified: %w", ErrInvalidRequest)
+	}
+	if req.Change == nil || req.Change.Source == "" {
+		return nil, fmt.Errorf("LandController requires the request to have a change source specified: %w", ErrInvalidRequest)
+	}
+	if len(req.Change.GetIds()) == 0 {
+		return nil, fmt.Errorf("LandController requires the request to have at least one change ID specified: %w", ErrInvalidRequest)
+	}
 
 	change := entity.Change{
 		Source: req.Change.GetSource(),
