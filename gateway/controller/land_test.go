@@ -184,3 +184,91 @@ func TestLand_CounterDomainIncludesQueue(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "request/my-queue", capturedDomain)
 }
+
+func TestLand_ReturnsErrorOnEmptyQueue(t *testing.T) {
+	store := &mockStorage{requestStore: &mockRequestStore{
+		createFunc: func(ctx context.Context, request entity.Request) error {
+			return nil
+		},
+	}}
+	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
+		return 1, nil
+	}}
+	controller := NewLandController(zap.NewNop(), tally.NoopScope, store, cnt)
+	ctx := context.Background()
+
+	req := &pb.LandRequest{
+		Queue:  "",
+		Change: &pb.Change{Source: "github", Ids: []string{"123"}},
+	}
+	_, err := controller.Land(ctx, req)
+
+	require.Error(t, err)
+	assert.True(t, IsInvalidRequest(err))
+}
+
+func TestLand_ReturnsErrorOnEmptyChangeSource(t *testing.T) {
+	store := &mockStorage{requestStore: &mockRequestStore{
+		createFunc: func(ctx context.Context, request entity.Request) error {
+			return nil
+		},
+	}}
+	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
+		return 1, nil
+	}}
+	controller := NewLandController(zap.NewNop(), tally.NoopScope, store, cnt)
+	ctx := context.Background()
+
+	req := &pb.LandRequest{
+		Queue:  "test-queue",
+		Change: &pb.Change{Source: "", Ids: []string{"123"}},
+	}
+	_, err := controller.Land(ctx, req)
+
+	require.Error(t, err)
+	assert.True(t, IsInvalidRequest(err))
+}
+
+func TestLand_ReturnsErrorOnNilChange(t *testing.T) {
+	store := &mockStorage{requestStore: &mockRequestStore{
+		createFunc: func(ctx context.Context, request entity.Request) error {
+			return nil
+		},
+	}}
+	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
+		return 1, nil
+	}}
+	controller := NewLandController(zap.NewNop(), tally.NoopScope, store, cnt)
+	ctx := context.Background()
+
+	req := &pb.LandRequest{
+		Queue:  "test-queue",
+		Change: nil,
+	}
+	_, err := controller.Land(ctx, req)
+
+	require.Error(t, err)
+	assert.True(t, IsInvalidRequest(err))
+}
+
+func TestLand_ReturnsErrorOnEmptyChangeIDs(t *testing.T) {
+	store := &mockStorage{requestStore: &mockRequestStore{
+		createFunc: func(ctx context.Context, request entity.Request) error {
+			return nil
+		},
+	}}
+	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
+		return 1, nil
+	}}
+	controller := NewLandController(zap.NewNop(), tally.NoopScope, store, cnt)
+	ctx := context.Background()
+
+	req := &pb.LandRequest{
+		Queue:  "test-queue",
+		Change: &pb.Change{Source: "github", Ids: []string{}},
+	}
+	_, err := controller.Land(ctx, req)
+
+	require.Error(t, err)
+	assert.True(t, IsInvalidRequest(err))
+}
