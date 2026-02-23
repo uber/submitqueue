@@ -200,6 +200,7 @@ message PingResponse {
     string message = 1;       // The response message
     string service_name = 2;  // The service name that handled the request
     int64 timestamp = 3;      // Timestamp of when the ping was received
+    string hostname = 4;      // The hostname of the server that handled the request
 }
 ```
 
@@ -213,7 +214,8 @@ Expected response:
 {
   "message": "echo: test",
   "service_name": "gateway",
-  "timestamp": 1705234567
+  "timestamp": 1705234567,
+  "hostname": "gateway-host-01"
 }
 ```
 
