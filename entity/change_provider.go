@@ -13,7 +13,4 @@ type ChangeProvider struct {
 	// Metadata is the interesting data from the change provider that we want to store.
 	// This is a freeform JSON object.
 	Metadata map[string]any
-	// Version is the version of the object. It is used for optimistic locking.
-	// Versioning starts at 1 and is incremented for each change to the object.
-	Version int32
 }

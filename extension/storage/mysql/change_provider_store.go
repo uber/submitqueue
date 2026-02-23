@@ -28,9 +28,9 @@ func (s *changeProviderStore) Get(ctx context.Context, id string) (entity.Change
 	var metadataJSON []byte
 
 	err := s.db.QueryRowContext(ctx,
-		"SELECT id, queue, change_provider_src, change_provider_id, metadata, version FROM change_provider WHERE id = ?",
+		"SELECT id, queue, change_provider_src, change_provider_id, metadata FROM change_provider WHERE id = ?",
 		id,
-	).Scan(&cp.ID, &cp.Queue, &cp.ChangeProviderSrc, &cp.ChangeProviderID, &metadataJSON, &cp.Version)
+	).Scan(&cp.ID, &cp.Queue, &cp.ChangeProviderSrc, &cp.ChangeProviderID, &metadataJSON)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.ChangeProvider{}, storage.WrapNotFound(err)
@@ -54,8 +54,8 @@ func (s *changeProviderStore) Create(ctx context.Context, changeProvider entity.
 	}
 
 	_, err = s.db.ExecContext(ctx,
-		"INSERT INTO change_provider (id, queue, change_provider_src, change_provider_id, metadata, version) VALUES (?, ?, ?, ?, ?, ?)",
-		changeProvider.ID, changeProvider.Queue, changeProvider.ChangeProviderSrc, changeProvider.ChangeProviderID, metadataJSON, changeProvider.Version,
+		"INSERT INTO change_provider (id, queue, change_provider_src, change_provider_id, metadata) VALUES (?, ?, ?, ?, ?)",
+		changeProvider.ID, changeProvider.Queue, changeProvider.ChangeProviderSrc, changeProvider.ChangeProviderID, metadataJSON,
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
