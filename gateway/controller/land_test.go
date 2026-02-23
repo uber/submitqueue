@@ -42,8 +42,8 @@ type mockChangeProviderStore struct {
 	createFunc func(ctx context.Context, changeProvider entity.ChangeProvider) error
 }
 
-func (m *mockChangeProviderStore) Get(ctx context.Context, id string) (entity.ChangeProvider, error) {
-	return entity.ChangeProvider{}, nil
+func (m *mockChangeProviderStore) Get(ctx context.Context, requestID string) ([]entity.ChangeProvider, error) {
+	return nil, nil
 }
 
 func (m *mockChangeProviderStore) Create(ctx context.Context, changeProvider entity.ChangeProvider) error {
