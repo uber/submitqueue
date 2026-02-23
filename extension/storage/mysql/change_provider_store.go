@@ -25,7 +25,7 @@ func NewChangeProviderStore(db *sql.DB) storage.ChangeProviderStore {
 // Get retrieves change provider(s) by request ID. Returns ErrNotFound if the change provider is not found.
 func (s *changeProviderStore) Get(ctx context.Context, requestID string) ([]entity.ChangeProvider, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, change_provider_src, change_provider_id, metadata FROM change_provider WHERE id = ?",
+		"SELECT request_id, change_provider_src, change_provider_id, metadata FROM change_provider WHERE request_id = ?",
 		requestID,
 	)
 	if err != nil {
@@ -67,7 +67,7 @@ func (s *changeProviderStore) Create(ctx context.Context, changeProvider entity.
 	}
 
 	_, err = s.db.ExecContext(ctx,
-		"INSERT INTO change_provider (id, change_provider_src, change_provider_id, metadata) VALUES (?, ?, ?, ?)",
+		"INSERT INTO change_provider (request_id, change_provider_src, change_provider_id, metadata) VALUES (?, ?, ?, ?)",
 		changeProvider.RequestID, changeProvider.ChangeProviderSrc, changeProvider.ChangeProviderID, metadataJSON,
 	)
 	if err != nil {
