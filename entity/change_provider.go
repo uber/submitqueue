@@ -1,5 +1,7 @@
 package entity
 
+// ChangeProvider represents a code change from an external provider (e.g., a GitHub pull request or Gerrit changelist)
+// along with its associated metadata. The object is immutable after creation.
 type ChangeProvider struct {
 	// ID is the globally unique identifier for the land request. Format: "<queue>/<counter_value>".
 	ID string
