@@ -11,5 +11,5 @@ type ChangeProvider struct {
 	ChangeProviderID string
 	// Metadata is the interesting data from the change provider that we want to store.
 	// This is a freeform JSON object.
-	Metadata map[string]any
+	Metadata map[string]string
 }
