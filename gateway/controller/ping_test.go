@@ -25,7 +25,7 @@ func TestPing_DefaultMessage(t *testing.T) {
 	resp, err := controller.Ping(ctx, req)
 
 	require.NoError(t, err)
-	assert.Equal(t, "pong", resp.Message)
+	assert.Equal(t, "pong!", resp.Message)
 }
 
 func TestPing_CustomMessage(t *testing.T) {
