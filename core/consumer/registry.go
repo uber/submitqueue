@@ -10,6 +10,18 @@ const (
 	TopicRequest Topic = "request"
 	// TopicToBatch is where validated requests are published for batching.
 	TopicToBatch Topic = "to-batch"
+	// TopicBatched is where batched requests are published for speculation.
+	TopicBatched Topic = "batched"
+	// TopicBuild is where requests are published for builds.
+	TopicBuild Topic = "build"
+	// TopicBuildSignal is where build signals are published for processing.
+	TopicBuildSignal Topic = "build-signal"
+	// TopicToMerge is where requests are published for merging.
+	TopicToMerge Topic = "to-merge"
+	// TopicMergeSignal is where merge signals are published for processing.
+	TopicMergeSignal Topic = "merge-signal"
+	// TopicFinalize is where requests are published for finalization.
+	TopicFinalize Topic = "finalize"
 )
 
 // String returns the topic name as a string.
