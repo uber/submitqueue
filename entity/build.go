@@ -11,8 +11,8 @@ const (
 
 // SpeculationPathInfo represents the base and head commits of a speculation path used in a build.
 type SpeculationPathInfo struct {
-	// Base represents the base state of this speculation path.
-	Base string
+	// Base is a list of batchIDs(in order) that form the base of this speculation path.
+	Base []string
 	// Head represents the head commit of this speculation path.
 	Head string
 }
