@@ -13,15 +13,13 @@ const (
 type SpeculationPathInfo struct {
 	// Base is a list of batchIDs(in order) that form the base of this speculation path.
 	Base []string
-	// Head represents the head commit of this speculation path.
-	Head string
 }
 
 // Build represents a build scheduled for a batch along a specific speculation path.
 // All fields except the Status are immutable after creation.
 type Build struct {
-	// ID represents the build ID. It is the responsibility of the caller to ensure
-	// this is unique.
+	// ID represents the build ID. It is the responsibility of a build management system to ensure
+	// that this is unique.
 	ID string
 	// BatchID is the batch for which this build is scheduled.
 	BatchID string
