@@ -33,7 +33,7 @@ func (c *PingController) Ping(ctx context.Context, req *pb.PingRequest) (*pb.Pin
 
 	c.metricsScope.Counter("ping_requests_total").Inc(1)
 
-	message := "pong"
+	message := "pong!"
 	isEcho := false
 	if req.Message != "" {
 		message = "echo: " + req.Message
