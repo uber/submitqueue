@@ -1,7 +1,7 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "sql",
+    name = "mysql",
     srcs = [
         "constants.go",
         "errors.go",
@@ -15,7 +15,7 @@ go_library(
         "subscriber.go",
         "validation.go",
     ],
-    importpath = "github.com/uber/submitqueue/extension/queue/sql",
+    importpath = "github.com/uber/submitqueue/extension/queue/mysql",
     visibility = ["//visibility:public"],
     deps = [
         "//entity/queue",
@@ -27,7 +27,7 @@ go_library(
 )
 
 go_test(
-    name = "sql_test",
+    name = "mysql_test",
     srcs = [
         "message_store_test.go",
         "offset_store_test.go",
@@ -36,7 +36,7 @@ go_test(
         "sql_test.go",
         "subscriber_test.go",
     ],
-    embed = [":sql"],
+    embed = [":mysql"],
     deps = [
         "//entity/queue",
         "//extension/queue",

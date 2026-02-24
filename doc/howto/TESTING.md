@@ -29,7 +29,7 @@ SubmitQueue uses **two separate databases** to demonstrate proper architectural 
 
 ### 2. Queue Database
 - **Purpose**: Messaging infrastructure (queue messages, offsets, partition leases)
-- **Schema**: `extension/queue/sql/schema`
+- **Schema**: `extension/queue/mysql/schema`
 - **Used by**: Gateway (publishes), Orchestrator (consumes)
 - **Connection**: `QUEUE_MYSQL_DSN`
 

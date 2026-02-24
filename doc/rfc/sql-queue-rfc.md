@@ -159,7 +159,7 @@ We chose **custom database-backed queue** because:
 - `(topic, partition_key, invisible_until, offset)`: Core fetch query - find visible messages in partition ordered by offset
 - `(topic, partition_key, id)`: Unique constraint and fast lookup for Ack/Nack
 
-See `extension/queue/sql/schema/queue_messages.sql` for full schema.
+See `extension/queue/mysql/schema/queue_messages.sql` for full schema.
 
 ### Partition Leases Table
 
@@ -172,7 +172,7 @@ See `extension/queue/sql/schema/queue_messages.sql` for full schema.
 - `(leased_by)`: Find all partitions owned by a worker
 - `(lease_renewed_at)`: Detect stale leases across workers
 
-See `extension/queue/sql/schema/queue_partition_leases.sql` for full schema.
+See `extension/queue/mysql/schema/queue_partition_leases.sql` for full schema.
 
 ### Consumer Offsets Table
 
@@ -185,7 +185,7 @@ See `extension/queue/sql/schema/queue_partition_leases.sql` for full schema.
 - `(consumer_group)`: Monitor all offsets for a consumer group
 - `(topic)`: Find all consumers for a topic
 
-See `extension/queue/sql/schema/queue_offsets.sql` for full schema.
+See `extension/queue/mysql/schema/queue_offsets.sql` for full schema.
 
 ### Dead Letter Queue Table
 
@@ -201,7 +201,7 @@ See `extension/queue/sql/schema/queue_offsets.sql` for full schema.
 - `(failed_at)`: Time-based queries and cleanup
 - `(topic, partition_key, id)`: Unique constraint, prevents duplicates
 
-See `extension/queue/sql/schema/queue_dlq.sql` for full schema.
+See `extension/queue/mysql/schema/queue_dlq.sql` for full schema.
 
 ## Message Flow
 

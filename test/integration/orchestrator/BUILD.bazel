@@ -8,7 +8,7 @@ go_test(
         "//:go.mod",
         "//example/server/orchestrator:docker-compose.yml",
         "//extension/counter/mysql/schema",
-        "//extension/queue/sql/schema",
+        "//extension/queue/mysql/schema",
         "//extension/storage/mysql/schema",
     ],
     tags = ["integration"],

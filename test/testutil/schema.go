@@ -14,7 +14,7 @@ import (
 
 // SchemaDir returns the path to a schema directory.
 // It checks for both Bazel runfiles and direct go test paths.
-// relativePath should be like "extension/storage/mysql/schema" or "extension/queue/sql/schema"
+// relativePath should be like "extension/storage/mysql/schema" or "extension/queue/mysql/schema"
 func SchemaDir(relativePath string) string {
 	// Bazel runfiles path
 	if dir := os.Getenv("TEST_SRCDIR"); dir != "" {
