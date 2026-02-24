@@ -8,5 +8,15 @@ type SpeculationTree struct {
 	Queue string
 	// Speculations is a list of speculation paths for this batch based on a graph of its
 	// dependents.
+	//
+	// For e.g - Consider batches - queueA/batch/1, queueA/batch/2, queueA/batch/3
+	// such that - queueA/batch/2 and queueA/batch/3 depend on queueA/batch/1
+	//
+	// Speculations for queueA/batch/1 - [{"path": "queueA/batch/1", "state": "scheduled", "score": 0.1}]
+	// Speculations for queueA/batch/2 - [{"path": "queueA/batch/2", "state": "scheduled", "score": 0.9}, {"path": "queueA/batch/1//queueA/batch/2", "state": "scheduled", "score": 0.3}]
+	// Speculations for queueA/batch/3 - [{"path": "queueA/batch/3", "state": "scheduled", "score": 0.9}, {"path": "queueA/batch/1//queueA/batch/3", "state": "scheduled", "score": 0.3}]
+	//
+	// Note that the key value pairs within the map could have additional information about the speculation path if needed.
+	//
 	Speculations []map[string]string
 }
