@@ -35,6 +35,9 @@ type Storage interface {
 	// GetBatchStore returns the BatchStore instance.
 	GetBatchStore() BatchStore
 
+	// GetBatchDependentStore returns the BatchDependentStore instance.
+	GetBatchDependentStore() BatchDependentStore
+
 	// Close closes the storage and all underlying connections. Should only be called once at the end of the program.
 	Close() error
 }
