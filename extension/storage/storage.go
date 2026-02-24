@@ -32,6 +32,9 @@ type Storage interface {
 	// GetChangeProviderStore returns the ChangeProviderStore instance.
 	GetChangeProviderStore() ChangeProviderStore
 
+	// GetBatchStore returns the BatchStore instance.
+	GetBatchStore() BatchStore
+
 	// Close closes the storage and all underlying connections. Should only be called once at the end of the program.
 	Close() error
 }
