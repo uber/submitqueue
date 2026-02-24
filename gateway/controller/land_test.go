@@ -78,10 +78,30 @@ func (m *mockBatchStore) UpdateState(ctx context.Context, id string, version int
 	return nil
 }
 
+type mockBatchDependentStore struct {
+	createFunc func(ctx context.Context, batchDependent entity.BatchDependent) error
+	getFunc    func(ctx context.Context, batchID string) (entity.BatchDependent, error)
+}
+
+func (m *mockBatchDependentStore) Get(ctx context.Context, batchID string) (entity.BatchDependent, error) {
+	if m.getFunc != nil {
+		return m.getFunc(ctx, batchID)
+	}
+	return entity.BatchDependent{}, nil
+}
+
+func (m *mockBatchDependentStore) Create(ctx context.Context, batchDependent entity.BatchDependent) error {
+	if m.createFunc != nil {
+		return m.createFunc(ctx, batchDependent)
+	}
+	return nil
+}
+
 type mockStorage struct {
-	requestStore        storage.RequestStore
-	changeProviderStore storage.ChangeProviderStore
-	batchStore          storage.BatchStore
+	requestStore          storage.RequestStore
+	changeProviderStore   storage.ChangeProviderStore
+	batchStore            storage.BatchStore
+	batchDependentStore   storage.BatchDependentStore
 }
 
 func (m *mockStorage) GetRequestStore() storage.RequestStore {
@@ -94,6 +114,10 @@ func (m *mockStorage) GetChangeProviderStore() storage.ChangeProviderStore {
 
 func (m *mockStorage) GetBatchStore() storage.BatchStore {
 	return m.batchStore
+}
+
+func (m *mockStorage) GetBatchDependentStore() storage.BatchDependentStore {
+	return m.batchDependentStore
 }
 
 func (m *mockStorage) Close() error {
