@@ -11,6 +11,6 @@ func TestNewQueueConfig(t *testing.T) {
 
 	assert.Equal(t, "uber/submitqueue/main", cfg.Name)
 	assert.Equal(t, "git", cfg.VCSType)
-	assert.Equal(t, "git@github.com:uber/submitqueue.git", cfg.VCSRepo)
+	assert.Equal(t, "git@github.com:uber/submitqueue.git", cfg.VCSAddress)
 	assert.Equal(t, "main", cfg.Target)
 }

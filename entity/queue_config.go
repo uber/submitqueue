@@ -13,12 +13,12 @@ type QueueConfig struct {
 	// A queue operates on exactly one VCS.
 	VCSType string
 
-	// VCSRepo identifies the repository in the version control system.
+	// VCSAddress identifies the repository in the version control system.
 	// The format is VCS-specific:
 	//   - Git: remote URL (e.g., "git@github.com:uber/submitqueue.git")
 	//   - Perforce: depot path (e.g., "//depot/project")
 	//   - SVN: repository URL (e.g., "https://svn.example.com/repos/project")
-	VCSRepo string
+	VCSAddress string
 
 	// Target is the landing target where changes are merged.
 	// The format is VCS-specific:
@@ -32,13 +32,13 @@ type QueueConfig struct {
 func NewQueueConfig(
 	name string,
 	vcsType string,
-	vcsRepo string,
+	vcsAddress string,
 	target string,
 ) QueueConfig {
 	return QueueConfig{
-		Name:    name,
-		VCSType: vcsType,
-		VCSRepo: vcsRepo,
-		Target:  target,
+		Name:       name,
+		VCSType:    vcsType,
+		VCSAddress: vcsAddress,
+		Target:     target,
 	}
 }
