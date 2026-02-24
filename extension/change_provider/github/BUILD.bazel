@@ -1,0 +1,17 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "github",
+    srcs = [
+        "change_provider.go",
+        "client.go",
+        "transport.go",
+    ],
+    importpath = "github.com/uber/submitqueue/extension/change_provider/github",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//extension/change_provider",
+        "@com_github_golang_jwt_jwt_v5//:jwt",
+        "@in_gopkg_yaml_v3//:yaml_v3",
+    ],
+)

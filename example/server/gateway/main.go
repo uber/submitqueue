@@ -13,6 +13,8 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally/v4"
+	changeprovider "github.com/uber/submitqueue/extension/change_provider"
+	"github.com/uber/submitqueue/extension/change_provider/github"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	queueSQL "github.com/uber/submitqueue/extension/queue/sql"
 	"github.com/uber/submitqueue/extension/storage/mysql"
@@ -139,6 +141,38 @@ func run() error {
 	defer q.Close()
 
 	logger.Info("queue initialized", zap.String("dsn", queueDSN))
+
+	// Initialize GitHub change provider (optional)
+	var changeProvider changeprovider.ChangeProvider
+	githubConfigPath := os.Getenv("GITHUB_APP_CONFIG_PATH")
+	if githubConfigPath == "" {
+		githubConfigPath = "config/github-app.yaml"
+	}
+
+	githubConfig, err := github.LoadConfigFromFile(githubConfigPath)
+	if err != nil {
+		logger.Warn("GitHub change provider disabled", zap.String("config_path", githubConfigPath), zap.Error(err))
+	} else {
+		httpClient, err := github.NewHTTPClientFromConfig(githubConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create GitHub HTTP client: %w", err)
+		}
+
+		changeProvider = github.NewChangeProvider(github.Params{
+			HTTPClient: httpClient,
+			Owner:      githubConfig.Owner,
+			Repo:       githubConfig.Repo,
+		})
+
+		logger.Info("GitHub change provider initialized",
+			zap.Int64("app_id", githubConfig.AppID),
+			zap.String("owner", githubConfig.Owner),
+			zap.String("repo", githubConfig.Repo),
+		)
+	}
+
+	// Suppress unused variable warning until changeProvider is used by a controller
+	_ = changeProvider
 
 	// Land controller requires queue publisher
 	landController := controller.NewLandController(logger.Sugar(), scope, store, cnt, q.Publisher())

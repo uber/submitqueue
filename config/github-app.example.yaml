@@ -1,0 +1,10 @@
+app_id: 123456
+installation_id: 789012
+owner: your-org
+repo: your-repo
+private_key: |
+  -----BEGIN RSA PRIVATE KEY-----
+  MIIEpAIBAAKCAQEA...
+  YOUR_PRIVATE_KEY_CONTENTS_HERE
+  ...
+  -----END RSA PRIVATE KEY-----

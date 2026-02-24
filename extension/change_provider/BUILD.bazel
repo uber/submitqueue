@@ -1,0 +1,8 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "change_provider",
+    srcs = ["change_provider.go"],
+    importpath = "github.com/uber/submitqueue/extension/change_provider",
+    visibility = ["//visibility:public"],
+)

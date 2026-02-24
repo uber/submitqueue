@@ -1,0 +1,8 @@
+# Ignore actual config files, only keep examples
+*.yaml
+*.json
+!*.example.yaml
+!*.example.json
+
+# Ignore private keys
+*.pem
