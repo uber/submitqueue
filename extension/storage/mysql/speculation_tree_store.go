@@ -28,9 +28,9 @@ func (s *speculationTreeStore) Get(ctx context.Context, batchID string) (entity.
 	var speculationsJSON []byte
 
 	err := s.db.QueryRowContext(ctx,
-		"SELECT batch_id, queue, speculations FROM speculation_tree WHERE batch_id = ?",
+		"SELECT batch_id, speculations FROM speculation_tree WHERE batch_id = ?",
 		batchID,
-	).Scan(&st.BatchID, &st.Queue, &speculationsJSON)
+	).Scan(&st.BatchID, &speculationsJSON)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.SpeculationTree{}, storage.WrapNotFound(err)
@@ -54,8 +54,8 @@ func (s *speculationTreeStore) Create(ctx context.Context, speculationTree entit
 	}
 
 	_, err = s.db.ExecContext(ctx,
-		"INSERT INTO speculation_tree (batch_id, queue, speculations) VALUES (?, ?, ?)",
-		speculationTree.BatchID, speculationTree.Queue, speculationsJSON,
+		"INSERT INTO speculation_tree (batch_id, speculations) VALUES (?, ?)",
+		speculationTree.BatchID, speculationsJSON,
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
@@ -69,7 +69,7 @@ func (s *speculationTreeStore) Create(ctx context.Context, speculationTree entit
 }
 
 // UpdateSpeculations updates the speculations of a speculation tree. Returns ErrNotFound if the speculation tree is not found.
-func (s *speculationTreeStore) UpdateSpeculations(ctx context.Context, batchID string, speculations []map[string]string) error {
+func (s *speculationTreeStore) UpdateSpeculations(ctx context.Context, batchID string, speculations []entity.SpeculationInfo) error {
 	speculationsJSON, err := json.Marshal(speculations)
 	if err != nil {
 		return fmt.Errorf("failed to marshal speculations batchID=%s for UpdateSpeculations: %w", batchID, err)

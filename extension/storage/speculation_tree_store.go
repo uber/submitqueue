@@ -18,5 +18,5 @@ type SpeculationTreeStore interface {
 
 	// UpdateSpeculations updates the speculations of a speculation tree.
 	// Returns ErrNotFound if the speculation tree is not found.
-	UpdateSpeculations(ctx context.Context, batchID string, speculations []map[string]string) error
+	UpdateSpeculations(ctx context.Context, batchID string, speculations []entity.SpeculationInfo) error
 }
