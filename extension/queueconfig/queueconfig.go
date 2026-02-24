@@ -15,8 +15,8 @@ var ErrNotFound = errors.New("queue config not found")
 type Store interface {
 	// Get returns the configuration for a named queue.
 	// Returns ErrNotFound if no configuration exists for the given name.
-	Get(ctx context.Context, name string) (queueconfig.QueueConfig, error)
+	Get(ctx context.Context, name string) (queueconfig.Config, error)
 
 	// List returns all configured queues.
-	List(ctx context.Context) ([]queueconfig.QueueConfig, error)
+	List(ctx context.Context) ([]queueconfig.Config, error)
 }

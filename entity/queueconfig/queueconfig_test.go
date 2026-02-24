@@ -6,11 +6,11 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestNewQueueConfig(t *testing.T) {
+func TestNewConfig(t *testing.T) {
 	repo := Repository{ID: "uber/submitqueue"}
 	dest := Destination{Ref: "main"}
 
-	cfg := NewQueueConfig("uber/submitqueue/main", repo, dest, "github")
+	cfg := NewConfig("uber/submitqueue/main", repo, dest, "github")
 
 	assert.Equal(t, "uber/submitqueue/main", cfg.Name)
 	assert.Equal(t, "uber/submitqueue", cfg.Repository.ID)
@@ -18,7 +18,7 @@ func TestNewQueueConfig(t *testing.T) {
 	assert.Equal(t, "github", cfg.ChangeProviderName)
 }
 
-func TestNewQueueConfig_DifferentPlatforms(t *testing.T) {
+func TestNewConfig_DifferentPlatforms(t *testing.T) {
 	tests := []struct {
 		name        string
 		repo        Repository
@@ -53,7 +53,7 @@ func TestNewQueueConfig_DifferentPlatforms(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := NewQueueConfig(tt.name, tt.repo, tt.destination, tt.provider)
+			cfg := NewConfig(tt.name, tt.repo, tt.destination, tt.provider)
 
 			assert.Equal(t, tt.repo, cfg.Repository)
 			assert.Equal(t, tt.destination, cfg.Destination)
@@ -62,8 +62,8 @@ func TestNewQueueConfig_DifferentPlatforms(t *testing.T) {
 	}
 }
 
-func TestQueueConfig_ZeroValue(t *testing.T) {
-	var cfg QueueConfig
+func TestConfig_ZeroValue(t *testing.T) {
+	var cfg Config
 
 	assert.Empty(t, cfg.Name)
 	assert.Empty(t, cfg.Repository.ID)

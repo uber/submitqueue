@@ -27,11 +27,11 @@ type Destination struct {
 	Ref string
 }
 
-// QueueConfig holds the configuration for a single submit queue.
+// Config holds the configuration for a single submit queue.
 // Each queue maps a repository + destination to a processing pipeline.
 // A repository can have multiple queues, but each queue has exactly one destination.
 // Immutable after creation.
-type QueueConfig struct {
+type Config struct {
 	// Name uniquely identifies this queue within the system.
 	// Referenced by entity.Request.Queue.
 	Name string
@@ -51,15 +51,14 @@ type QueueConfig struct {
 	// ChangeProvider ChangeProvider to be defined in the changeprovider extension package
 }
 
-// NewQueueConfig creates a new QueueConfig with the given parameters.
-func NewQueueConfig(
+// NewConfig creates a new Config with the given parameters.
+func NewConfig(
 	name string,
 	repository Repository,
 	destination Destination,
 	changeProviderName string,
-) QueueConfig {
-	// Create instance of ChangeProvider instance from the change provider name
-	return QueueConfig{
+) Config {
+	return Config{
 		Name:               name,
 		Repository:         repository,
 		Destination:        destination,
