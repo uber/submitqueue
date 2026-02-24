@@ -1,0 +1,24 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "mock",
+    srcs = ["build_manager.go"],
+    importpath = "github.com/uber/submitqueue/extension/build/mock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//entity",
+        "//entity/build",
+        "@org_uber_go_mock//gomock",
+    ],
+)
+
+go_test(
+    name = "mock_test",
+    srcs = ["build_manager_test.go"],
+    embed = [":mock"],
+    deps = [
+        "//entity",
+        "//entity/build",
+        "@org_uber_go_mock//gomock",
+    ],
+)
