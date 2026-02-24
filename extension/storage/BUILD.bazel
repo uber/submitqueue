@@ -3,6 +3,9 @@ load("@rules_go//go:def.bzl", "go_library")
 go_library(
     name = "storage",
     srcs = [
+        "batch_dependent_store.go",
+        "batch_store.go",
+        "build_store.go",
         "change_provider_store.go",
         "request_store.go",
         "storage.go",
