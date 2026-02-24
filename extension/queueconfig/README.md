@@ -19,4 +19,4 @@ type Store interface {
 
 Queue configuration entity lives in `entity/queue_config.go`:
 
-- **QueueConfig** — configuration for a single submit queue (name, repository ID, destination ref, change provider names)
+- **QueueConfig** — configuration for a single submit queue (name, VCS type, VCS repo, target)

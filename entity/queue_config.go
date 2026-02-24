@@ -1,48 +1,44 @@
 package entity
 
 // QueueConfig holds the configuration for a single submit queue.
-// Each queue maps a repository + destination to a processing pipeline.
-// A repository can have multiple queues, but each queue has exactly one destination.
+// Each queue maps a VCS repository + target to a processing pipeline.
+// A repository can have multiple queues, but each queue has exactly one target.
 // Immutable after creation.
 type QueueConfig struct {
 	// Name uniquely identifies this queue within the system.
 	// Referenced by Request.Queue.
 	Name string
 
-	// RepositoryID is the platform-specific identifier for the source control repository.
-	// Opaque to the system; meaningful only to the change provider.
-	// Examples:
-	//   - GitHub/GitLab: "owner/repo" (e.g., "uber/submitqueue")
+	// VCSType identifies the version control system (e.g., "git", "svn", "perforce").
+	// A queue operates on exactly one VCS.
+	VCSType string
+
+	// VCSRepo identifies the repository in the version control system.
+	// The format is VCS-specific:
+	//   - Git: remote URL (e.g., "git@github.com:uber/submitqueue.git")
 	//   - Perforce: depot path (e.g., "//depot/project")
 	//   - SVN: repository URL (e.g., "https://svn.example.com/repos/project")
-	RepositoryID string
+	VCSRepo string
 
-	// DestinationRef is the VCS-specific reference for the landing target.
-	// Opaque to the system; meaningful only to the change provider.
-	// Examples:
-	//   - Git: branch name (e.g., "main", "release/v2")
+	// Target is the landing target where changes are merged.
+	// The format is VCS-specific:
+	//   - Git: branch ref (e.g., "main", "release/v2")
 	//   - Perforce: stream or depot path (e.g., "//depot/main/...")
 	//   - SVN: repository path (e.g., "trunk/")
-	//   - Mercurial: bookmark name (e.g., "main")
-	DestinationRef string
-
-	// ChangeProviderNames identifies which change providers to use (e.g., "github", "gerrit").
-	// A queue may use multiple providers simultaneously (e.g., "github" and "phabricator").
-	// Resolved to ChangeProvider instances at wiring time.
-	ChangeProviderNames []string
+	Target string
 }
 
 // NewQueueConfig creates a new QueueConfig with the given parameters.
 func NewQueueConfig(
 	name string,
-	repositoryID string,
-	destinationRef string,
-	changeProviderNames []string,
+	vcsType string,
+	vcsRepo string,
+	target string,
 ) QueueConfig {
 	return QueueConfig{
-		Name:                name,
-		RepositoryID:        repositoryID,
-		DestinationRef:      destinationRef,
-		ChangeProviderNames: changeProviderNames,
+		Name:    name,
+		VCSType: vcsType,
+		VCSRepo: vcsRepo,
+		Target:  target,
 	}
 }
