@@ -190,7 +190,8 @@ func (s *ComposeStack) ServiceHost(serviceName string, containerPort int) (strin
 }
 
 // ConnectMySQLService connects to a MySQL service by name in the compose stack.
-// Retries the connection and registers cleanup automatically.
+// Requires that Up() has been called first — the TCP-based healthcheck in
+// docker-compose ensures MySQL is accepting TCP connections before Up() returns.
 func (s *ComposeStack) ConnectMySQLService(serviceName string) (*sql.DB, error) {
 	s.t.Helper()
 
@@ -199,24 +200,14 @@ func (s *ComposeStack) ConnectMySQLService(serviceName string) (*sql.DB, error) 
 		return nil, err
 	}
 
-	// Retry connection a few times as MySQL might still be initializing
-	var db *sql.DB
-	for i := 0; i < 10; i++ {
-		db, err = sql.Open("mysql", dsn)
-		if err != nil {
-			return nil, fmt.Errorf("failed to open mysql connection: %w", err)
-		}
-
-		if err = db.Ping(); err == nil {
-			break
-		}
-
-		db.Close()
-		time.Sleep(1 * time.Second)
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open mysql connection: %w", err)
 	}
 
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to %s mysql after retries: %w", serviceName, err)
+	if err = db.Ping(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to ping %s mysql: %w", serviceName, err)
 	}
 
 	port, _ := s.ServicePort(serviceName, 3306) // We already got the port successfully
