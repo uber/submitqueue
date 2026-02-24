@@ -1,0 +1,17 @@
+# Docker Compose for SQL Queue Library Tests
+# Tests the queue library's SQL implementation in isolation
+
+services:
+  # MySQL database for queue infrastructure
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: submitqueue
+    ports:
+      - "3306"  # Random ephemeral port to avoid conflicts
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

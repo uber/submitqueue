@@ -8,12 +8,14 @@ import (
 )
 
 func TestDefaultSubscriptionConfig(t *testing.T) {
+	topic := "test-topic"
 	subscriberName := "test-worker"
 	consumerGroup := "test-consumer"
 
-	config := DefaultSubscriptionConfig(subscriberName, consumerGroup)
+	config := DefaultSubscriptionConfig(topic, subscriberName, consumerGroup)
 
 	// Verify required fields are set
+	assert.Equal(t, topic, config.Topic)
 	assert.Equal(t, subscriberName, config.SubscriberName)
 	assert.Equal(t, consumerGroup, config.ConsumerGroup)
 
@@ -37,8 +39,8 @@ func TestDefaultSubscriptionConfig(t *testing.T) {
 
 func TestSubscriptionConfig_FieldsAreIndependent(t *testing.T) {
 	// Create two configs and modify one to ensure they're independent
-	config1 := DefaultSubscriptionConfig("worker-1", "consumer-1")
-	config2 := DefaultSubscriptionConfig("worker-2", "consumer-2")
+	config1 := DefaultSubscriptionConfig("topic-1", "worker-1", "consumer-1")
+	config2 := DefaultSubscriptionConfig("topic-2", "worker-2", "consumer-2")
 
 	// Modify config1
 	config1.PollIntervalMs = 500
@@ -56,7 +58,7 @@ func TestSubscriptionConfig_FieldsAreIndependent(t *testing.T) {
 }
 
 func TestSubscriptionConfig_CustomValues(t *testing.T) {
-	config := DefaultSubscriptionConfig("my-worker", "my-consumer")
+	config := DefaultSubscriptionConfig("my-topic", "my-worker", "my-consumer")
 
 	// Override with custom values (in milliseconds)
 	config.PollIntervalMs = 200
@@ -109,6 +111,7 @@ func TestSubscriptionConfig_ZeroValues(t *testing.T) {
 	// Test that zero-value SubscriptionConfig can be created
 	var config SubscriptionConfig
 
+	assert.Equal(t, "", config.Topic)
 	assert.Equal(t, "", config.SubscriberName)
 	assert.Equal(t, "", config.ConsumerGroup)
 	assert.Equal(t, int64(0), config.PollIntervalMs)
@@ -123,17 +126,19 @@ func TestSubscriptionConfig_ZeroValues(t *testing.T) {
 func TestSubscriptionConfig_DifferentConsumerGroups(t *testing.T) {
 	// Test that different consumer groups get independent configs
 	tests := []struct {
+		topic          string
 		subscriberName string
 		consumerGroup  string
 	}{
-		{"worker-1", "group-A"},
-		{"worker-1", "group-B"},
-		{"worker-2", "group-A"},
+		{"topic-A", "worker-1", "group-A"},
+		{"topic-B", "worker-1", "group-B"},
+		{"topic-A", "worker-2", "group-A"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.subscriberName+"_"+tt.consumerGroup, func(t *testing.T) {
-			config := DefaultSubscriptionConfig(tt.subscriberName, tt.consumerGroup)
+		t.Run(tt.topic+"_"+tt.subscriberName+"_"+tt.consumerGroup, func(t *testing.T) {
+			config := DefaultSubscriptionConfig(tt.topic, tt.subscriberName, tt.consumerGroup)
+			require.Equal(t, tt.topic, config.Topic)
 			require.Equal(t, tt.subscriberName, config.SubscriberName)
 			require.Equal(t, tt.consumerGroup, config.ConsumerGroup)
 		})

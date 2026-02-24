@@ -2,7 +2,12 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "entity",
-    srcs = ["request.go"],
+    srcs = [
+        "batch.go",
+        "batch_dependent.go",
+        "change_provider.go",
+        "request.go",
+    ],
     importpath = "github.com/uber/submitqueue/entity",
     visibility = ["//visibility:public"],
 )

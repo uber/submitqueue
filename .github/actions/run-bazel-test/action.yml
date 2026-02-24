@@ -1,0 +1,14 @@
+name: Run Bazel Test
+description: Run a Bazel test target
+
+inputs:
+  target:
+    description: Bazel test target pattern
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Run Bazel test
+      shell: bash
+      run: ./tool/bazel test ${{ inputs.target }} --test_output=streamed

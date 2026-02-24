@@ -1,0 +1,57 @@
+# Docker Compose for Gateway Manual Testing
+#
+# IMPORTANT: Before running docker-compose, build the Linux binary:
+#   make build-gateway-linux
+#   OR
+#   bazel build --platforms=@rules_go//go/toolchain:linux_amd64 //example/server/gateway
+#
+# Quick start:
+#   make docker-gateway  (builds binary + starts compose)
+
+services:
+  # Application Database - Stores business data (requests, counters, etc.)
+  mysql-app:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: submitqueue
+    ports:
+      - "3306"  # Random ephemeral port to avoid conflicts
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Queue Database - Messaging infrastructure (messages, offsets, partition leases)
+  # Separate from app DB to demonstrate queue is pluggable infrastructure
+  mysql-queue:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: submitqueue
+    ports:
+      - "3306"  # Random ephemeral port to avoid conflicts
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  gateway-service:
+    build:
+      context: ${REPO_ROOT}
+      dockerfile: example/server/gateway/Dockerfile
+    ports:
+      - "8080"  # Random ephemeral port to avoid conflicts
+    environment:
+      - PORT=:8080
+      # Application database connection
+      - MYSQL_DSN=root:root@tcp(mysql-app:3306)/submitqueue?parseTime=true
+      # Queue infrastructure connection (separate database)
+      - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
+    depends_on:
+      mysql-app:
+        condition: service_healthy
+      mysql-queue:
+        condition: service_healthy

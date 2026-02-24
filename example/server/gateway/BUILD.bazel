@@ -1,11 +1,17 @@
 load("@rules_go//go:def.bzl", "go_binary", "go_library")
 
+exports_files(
+    ["docker-compose.yml"],
+    visibility = ["//visibility:public"],
+)
+
 go_library(
     name = "gateway_lib",
     srcs = ["main.go"],
     importpath = "github.com/uber/submitqueue/example/server/gateway",
     visibility = ["//visibility:private"],
     deps = [
+        "//core/consumer",
         "//extension/counter/mysql",
         "//extension/queue/sql",
         "//extension/storage/mysql",

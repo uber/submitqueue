@@ -28,15 +28,14 @@ type Consumer interface {
 
 // consumer implements the Consumer interface.
 type consumer struct {
-	logger         *zap.SugaredLogger
-	metricsScope   tally.Scope
-	queue          queue.Queue
-	subscriberName string // Unique worker ID (hostname, pod name)
+	logger       *zap.SugaredLogger
+	metricsScope tally.Scope
+	registry     TopicRegistry
 
 	mu            sync.Mutex
 	stopped       bool
 	controllers   []Controller
-	subscriptions map[string]*activeSubscription // topic -> subscription
+	subscriptions map[Topic]*activeSubscription // topic -> subscription
 }
 
 // activeSubscription tracks the state of an active subscription.
@@ -47,14 +46,13 @@ type activeSubscription struct {
 }
 
 // New creates a new consumer.
-// subscriberName is the unique worker identifier used for partition leasing (e.g., hostname, pod name).
-func New(logger *zap.SugaredLogger, scope tally.Scope, q queue.Queue, subscriberName string) Consumer {
+// registry provides queue and subscription config for topics.
+func New(logger *zap.SugaredLogger, scope tally.Scope, registry TopicRegistry) Consumer {
 	return &consumer{
-		logger:         logger,
-		metricsScope:   scope.SubScope("consumer"),
-		queue:          q,
-		subscriberName: subscriberName,
-		subscriptions:  make(map[string]*activeSubscription),
+		logger:        logger,
+		metricsScope:  scope.SubScope("consumer"),
+		registry:      registry,
+		subscriptions: make(map[Topic]*activeSubscription),
 	}
 }
 
@@ -105,7 +103,6 @@ func (m *consumer) Start(ctx context.Context) error {
 	}
 
 	m.logger.Infow("starting consumer",
-		"subscriber_name", m.subscriberName,
 		"controller_count", len(m.controllers),
 	)
 
@@ -127,12 +124,23 @@ func (m *consumer) Start(ctx context.Context) error {
 
 // subscribe subscribes a controller to its topic and spawns a consumption goroutine.
 func (m *consumer) subscribe(ctx context.Context, controller Controller) error {
-	// Get controller's subscription config
-	config := controller.SubscriptionConfig(m.subscriberName)
+	topic := controller.Topic()
+	consumerGroup := controller.ConsumerGroup()
 
-	// Subscribe to topic
-	subscriber := m.queue.Subscriber()
-	deliveryChan, err := subscriber.Subscribe(ctx, controller.Topic(), config)
+	// Get subscription config from registry
+	config, ok := m.registry.SubscriptionConfig(topic, consumerGroup)
+	if !ok {
+		return fmt.Errorf("no subscription config for topic %s, consumer group %s", topic, consumerGroup)
+	}
+
+	// Get queue for this topic
+	q, ok := m.registry.Queue(topic)
+	if !ok {
+		return fmt.Errorf("no queue registered for topic %s", topic)
+	}
+
+	subscriber := q.Subscriber()
+	deliveryChan, err := subscriber.Subscribe(ctx, topic.String(), config)
 	if err != nil {
 		return fmt.Errorf("subscribe failed: %w", err)
 	}
@@ -147,15 +155,15 @@ func (m *consumer) subscribe(ctx context.Context, controller Controller) error {
 		cancelFunc: cancel,
 		done:       done,
 	}
-	m.subscriptions[controller.Topic()] = sub
+	m.subscriptions[topic] = sub
 
 	// Spawn consumption goroutine
 	go m.consumeLoop(controllerCtx, controller, deliveryChan, done)
 
 	m.logger.Infow("controller started",
 		"controller", controller.Name(),
-		"topic", controller.Topic(),
-		"consumer_group", controller.ConsumerGroup(),
+		"topic", topic,
+		"consumer_group", consumerGroup,
 	)
 
 	return nil
@@ -165,14 +173,16 @@ func (m *consumer) subscribe(ctx context.Context, controller Controller) error {
 func (m *consumer) consumeLoop(ctx context.Context, controller Controller, deliveryChan <-chan queue.Delivery, done chan struct{}) {
 	defer close(done)
 
+	topic := controller.Topic()
+
 	controllerScope := m.metricsScope.Tagged(map[string]string{
 		"controller": controller.Name(),
-		"topic":      controller.Topic(),
+		"topic":      topic.String(),
 	})
 
 	m.logger.Debugw("consume loop started",
 		"controller", controller.Name(),
-		"topic", controller.Topic(),
+		"topic", topic,
 	)
 
 	for {
@@ -180,7 +190,7 @@ func (m *consumer) consumeLoop(ctx context.Context, controller Controller, deliv
 		case <-ctx.Done():
 			m.logger.Infow("consume loop stopped",
 				"controller", controller.Name(),
-				"topic", controller.Topic(),
+				"topic", topic,
 			)
 			return
 
@@ -188,7 +198,7 @@ func (m *consumer) consumeLoop(ctx context.Context, controller Controller, deliv
 			if !ok {
 				m.logger.Infow("delivery channel closed",
 					"controller", controller.Name(),
-					"topic", controller.Topic(),
+					"topic", topic,
 				)
 				return
 			}
@@ -204,10 +214,11 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 	controllerScope.Counter("messages_received").Inc(1)
 
 	msg := delivery.Message()
+	topic := controller.Topic()
 
 	m.logger.Debugw("processing delivery",
 		"controller", controller.Name(),
-		"topic", controller.Topic(),
+		"topic", topic,
 		"message_id", msg.ID,
 		"partition_key", msg.PartitionKey,
 		"attempt", delivery.Attempt(),
@@ -263,7 +274,7 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 		// Controller returned retryable error - nack message for retry
 		m.logger.Errorw("controller error, nacking message",
 			"controller", controller.Name(),
-			"topic", controller.Topic(),
+			"topic", topic,
 			"message_id", msg.ID,
 			"partition_key", msg.PartitionKey,
 			"attempt", delivery.Attempt(),
@@ -278,7 +289,7 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 		if nackErr := delivery.Nack(ctx, 0); nackErr != nil {
 			m.logger.Errorw("failed to nack message",
 				"controller", controller.Name(),
-				"topic", controller.Topic(),
+				"topic", topic,
 				"message_id", msg.ID,
 				"error", nackErr,
 			)
@@ -299,7 +310,7 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 	if ackErr := delivery.Ack(ctx); ackErr != nil {
 		m.logger.Errorw("failed to ack message",
 			"controller", controller.Name(),
-			"topic", controller.Topic(),
+			"topic", topic,
 			"message_id", msg.ID,
 			"error", ackErr,
 		)
@@ -323,7 +334,7 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 
 	m.logger.Debugw("message processed successfully",
 		"controller", controller.Name(),
-		"topic", controller.Topic(),
+		"topic", topic,
 		"message_id", msg.ID,
 		"partition_key", msg.PartitionKey,
 		"attempt", delivery.Attempt(),
@@ -388,7 +399,7 @@ func (m *consumer) unsubscribeAll(timeoutMs int64) error {
 	}
 
 	// Clear subscriptions
-	m.subscriptions = make(map[string]*activeSubscription)
+	m.subscriptions = make(map[Topic]*activeSubscription)
 
 	if timedOut {
 		return fmt.Errorf("timeout waiting for controllers to stop")

@@ -29,6 +29,9 @@ type Storage interface {
 	// GetRequestStore returns the RequestStore instance.
 	GetRequestStore() RequestStore
 
+	// GetChangeProviderStore returns the ChangeProviderStore instance.
+	GetChangeProviderStore() ChangeProviderStore
+
 	// Close closes the storage and all underlying connections. Should only be called once at the end of the program.
 	Close() error
 }

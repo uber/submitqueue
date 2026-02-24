@@ -8,7 +8,7 @@ go_library(
     deps = [
         "//core/consumer",
         "//entity",
-        "//extension/queue",
+        "//entity/queue",
         "@com_github_uber_go_tally_v4//:tally",
         "@org_uber_go_zap//:zap",
     ],
@@ -22,7 +22,6 @@ go_test(
         "//core/consumer",
         "//entity",
         "//entity/queue",
-        "//extension/queue",
         "//extension/queue/mock",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

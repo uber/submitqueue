@@ -1,0 +1,4 @@
+exports_files(
+    ["docker-compose.yml"],
+    visibility = ["//visibility:public"],
+)

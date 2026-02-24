@@ -39,12 +39,29 @@ func (m *mockRequestStore) UpdateState(ctx context.Context, id string, version i
 	return nil
 }
 
+type mockChangeProviderStore struct {
+	createFunc func(ctx context.Context, changeProvider entity.ChangeProvider) error
+}
+
+func (m *mockChangeProviderStore) Get(ctx context.Context, requestID string) ([]entity.ChangeProvider, error) {
+	return nil, nil
+}
+
+func (m *mockChangeProviderStore) Create(ctx context.Context, changeProvider entity.ChangeProvider) error {
+	return m.createFunc(ctx, changeProvider)
+}
+
 type mockStorage struct {
-	requestStore storage.RequestStore
+	requestStore        storage.RequestStore
+	changeProviderStore storage.ChangeProviderStore
 }
 
 func (m *mockStorage) GetRequestStore() storage.RequestStore {
 	return m.requestStore
+}
+
+func (m *mockStorage) GetChangeProviderStore() storage.ChangeProviderStore {
+	return m.changeProviderStore
 }
 
 func (m *mockStorage) Close() error {
@@ -71,28 +88,42 @@ func noopPublisher() *mockPublisher {
 }
 
 func TestNewLandController(t *testing.T) {
-	store := &mockStorage{requestStore: &mockRequestStore{
-		createFunc: func(ctx context.Context, request entity.Request) error {
-			return nil
+	store := &mockStorage{
+		requestStore: &mockRequestStore{
+			createFunc: func(ctx context.Context, request entity.Request) error {
+				return nil
+			},
 		},
-	}}
+		changeProviderStore: &mockChangeProviderStore{
+			createFunc: func(ctx context.Context, changeProvider entity.ChangeProvider) error {
+				return nil
+			},
+		},
+	}
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	require.NotNil(t, controller)
 }
 
 func TestLand_ReturnsSqid(t *testing.T) {
-	store := &mockStorage{requestStore: &mockRequestStore{
-		createFunc: func(ctx context.Context, request entity.Request) error {
-			return nil
+	store := &mockStorage{
+		requestStore: &mockRequestStore{
+			createFunc: func(ctx context.Context, request entity.Request) error {
+				return nil
+			},
 		},
-	}}
+		changeProviderStore: &mockChangeProviderStore{
+			createFunc: func(ctx context.Context, changeProvider entity.ChangeProvider) error {
+				return nil
+			},
+		},
+	}
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -108,16 +139,23 @@ func TestLand_ReturnsSqid(t *testing.T) {
 func TestLand_PassesCorrectParametersToStore(t *testing.T) {
 	var capturedRequest entity.Request
 
-	store := &mockStorage{requestStore: &mockRequestStore{
-		createFunc: func(ctx context.Context, request entity.Request) error {
-			capturedRequest = request
-			return nil
+	store := &mockStorage{
+		requestStore: &mockRequestStore{
+			createFunc: func(ctx context.Context, request entity.Request) error {
+				capturedRequest = request
+				return nil
+			},
 		},
-	}}
+		changeProviderStore: &mockChangeProviderStore{
+			createFunc: func(ctx context.Context, changeProvider entity.ChangeProvider) error {
+				return nil
+			},
+		},
+	}
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 42, nil
 	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -139,15 +177,22 @@ func TestLand_PassesCorrectParametersToStore(t *testing.T) {
 }
 
 func TestLand_ReturnsErrorOnStorageFailure(t *testing.T) {
-	store := &mockStorage{requestStore: &mockRequestStore{
-		createFunc: func(ctx context.Context, request entity.Request) error {
-			return fmt.Errorf("database connection failed")
+	store := &mockStorage{
+		requestStore: &mockRequestStore{
+			createFunc: func(ctx context.Context, request entity.Request) error {
+				return fmt.Errorf("database connection failed")
+			},
 		},
-	}}
+		changeProviderStore: &mockChangeProviderStore{
+			createFunc: func(ctx context.Context, changeProvider entity.ChangeProvider) error {
+				return nil
+			},
+		},
+	}
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -160,15 +205,22 @@ func TestLand_ReturnsErrorOnStorageFailure(t *testing.T) {
 }
 
 func TestLand_ReturnsErrorOnCounterFailure(t *testing.T) {
-	store := &mockStorage{requestStore: &mockRequestStore{
-		createFunc: func(ctx context.Context, request entity.Request) error {
-			return nil
+	store := &mockStorage{
+		requestStore: &mockRequestStore{
+			createFunc: func(ctx context.Context, request entity.Request) error {
+				return nil
+			},
 		},
-	}}
+		changeProviderStore: &mockChangeProviderStore{
+			createFunc: func(ctx context.Context, changeProvider entity.ChangeProvider) error {
+				return nil
+			},
+		},
+	}
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 0, fmt.Errorf("counter unavailable")
 	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -183,16 +235,23 @@ func TestLand_ReturnsErrorOnCounterFailure(t *testing.T) {
 func TestLand_CounterDomainIncludesQueue(t *testing.T) {
 	var capturedDomain string
 
-	store := &mockStorage{requestStore: &mockRequestStore{
-		createFunc: func(ctx context.Context, request entity.Request) error {
-			return nil
+	store := &mockStorage{
+		requestStore: &mockRequestStore{
+			createFunc: func(ctx context.Context, request entity.Request) error {
+				return nil
+			},
 		},
-	}}
+		changeProviderStore: &mockChangeProviderStore{
+			createFunc: func(ctx context.Context, changeProvider entity.ChangeProvider) error {
+				return nil
+			},
+		},
+	}
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		capturedDomain = domain
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -214,7 +273,7 @@ func TestLand_ReturnsErrorOnEmptyQueue(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -236,7 +295,7 @@ func TestLand_ReturnsErrorOnEmptyChangeSource(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -258,7 +317,7 @@ func TestLand_ReturnsErrorOnNilChange(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -280,7 +339,7 @@ func TestLand_ReturnsErrorOnEmptyChangeIDs(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -311,7 +370,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 		return nil
 	}}
 
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, publisher)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, publisher, "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -354,7 +413,7 @@ func TestLand_ContinuesWhenPublishFails(t *testing.T) {
 		return fmt.Errorf("queue unavailable")
 	}}
 
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, publisher)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, publisher, "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{

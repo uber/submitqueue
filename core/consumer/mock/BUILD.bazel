@@ -1,0 +1,13 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mock",
+    srcs = ["controller_mock.go"],
+    importpath = "github.com/uber/submitqueue/core/consumer/mock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//core/consumer",
+        "//entity/queue",
+        "@org_uber_go_mock//gomock",
+    ],
+)

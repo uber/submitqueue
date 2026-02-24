@@ -10,3 +10,7 @@ MODULE.bazel.lock
 
 # Built binaries
 bin/
+.docker-bin/
+
+# Make completion cache
+.make_targets_cache

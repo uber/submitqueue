@@ -13,6 +13,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally/v4"
+	"github.com/uber/submitqueue/core/consumer"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	queueSQL "github.com/uber/submitqueue/extension/queue/sql"
 	"github.com/uber/submitqueue/extension/storage/mysql"
@@ -48,6 +49,10 @@ func main() {
 }
 
 func run() error {
+	// Set up signal handling early so retry loops can respond to SIGTERM
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
 	// Initialize development logger (human-readable console output)
 	logger, err := zap.NewDevelopment()
 	if err != nil {
@@ -86,49 +91,38 @@ func run() error {
 		metricsWgDone.Wait()
 	}()
 
-	// Initialize MySQL storage
-	mysqlDSN := os.Getenv("MYSQL_DSN")
-	if mysqlDSN == "" {
-		mysqlDSN = "root:root@tcp(localhost:3306)/submitqueue?parseTime=true"
+	// Open application database connection
+	// Docker Compose healthchecks ensure MySQL is ready before service starts
+	appDSN := os.Getenv("MYSQL_DSN")
+	if appDSN == "" {
+		return fmt.Errorf("MYSQL_DSN environment variable is required")
 	}
-	store, err := mysql.NewStorage(mysql.MySQLParameters{
-		DSN:             mysqlDSN,
-		MaxOpenConns:    10,
-		MaxIdleConns:    5,
-		ConnMaxLifetime: 5 * time.Minute,
-	})
+	appDB, err := sql.Open("mysql", appDSN)
 	if err != nil {
-		return fmt.Errorf("failed to create MySQL storage: %w", err)
+		return fmt.Errorf("failed to open app database: %w", err)
 	}
-	defer store.Close()
+	defer appDB.Close()
 
-	// Initialize MySQL counter
-	counterDB, err := sql.Open("mysql", mysqlDSN)
+	// Initialize storage and counter from shared app database connection
+	store, err := mysql.NewStorage(appDB)
 	if err != nil {
-		return fmt.Errorf("failed to open MySQL connection for counter: %w", err)
+		return fmt.Errorf("failed to create storage: %w", err)
 	}
-	defer counterDB.Close()
-	cnt := mysqlcounter.NewCounter(counterDB)
+	cnt := mysqlcounter.NewCounter(appDB)
 
-	// Initialize queue
+	// Open queue database connection
 	queueDSN := os.Getenv("QUEUE_MYSQL_DSN")
 	if queueDSN == "" {
 		return fmt.Errorf("QUEUE_MYSQL_DSN environment variable is required")
 	}
-
-	// Create gRPC server
-	grpcServer := grpc.NewServer()
-
-	// Create controllers and wrap them for gRPC
-	pingController := controller.NewPingController(logger, scope)
-
 	queueDB, err := sql.Open("mysql", queueDSN)
 	if err != nil {
-		return fmt.Errorf("failed to open MySQL connection for queue: %w", err)
+		return fmt.Errorf("failed to open queue database: %w", err)
 	}
 	defer queueDB.Close()
 
-	q, err := queueSQL.NewQueue(queueSQL.Params{
+	// Initialize queue
+	sqlQueue, err := queueSQL.NewQueue(queueSQL.Params{
 		DB:           queueDB,
 		Logger:       logger,
 		MetricsScope: scope.SubScope("queue"),
@@ -136,12 +130,19 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("failed to create queue: %w", err)
 	}
-	defer q.Close()
+	defer sqlQueue.Close()
 
-	logger.Info("queue initialized", zap.String("dsn", queueDSN))
+	logger.Info("initialized dependencies",
+		zap.String("app_dsn", appDSN),
+		zap.String("queue_dsn", queueDSN),
+	)
 
-	// Land controller requires queue publisher
-	landController := controller.NewLandController(logger.Sugar(), scope, store, cnt, q.Publisher())
+	// Create gRPC server
+	grpcServer := grpc.NewServer()
+
+	// Create controllers and wrap them for gRPC
+	pingController := controller.NewPingController(logger, scope)
+	landController := controller.NewLandController(logger.Sugar(), scope, store, cnt, sqlQueue.Publisher(), consumer.TopicRequest.String())
 	gatewayServer := &GatewayServer{
 		pingController: pingController,
 		landController: landController,
@@ -172,11 +173,8 @@ func run() error {
 	}()
 
 	// Wait for interrupt signal or server exit
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
 	select {
-	case <-sigCh:
+	case <-ctx.Done():
 		fmt.Println("\nShutting down gateway server...")
 		grpcServer.GracefulStop()
 		_ = <-serverErrCh // Wait for the server to exit and ignore the error

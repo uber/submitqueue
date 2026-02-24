@@ -32,16 +32,19 @@ type LandController struct {
 	store        storage.Storage
 	counter      counter.Counter
 	publisher    extqueue.Publisher
+	topic        string // Topic to publish requests to (e.g., "request", "land_request")
 }
 
 // NewLandController creates a new instance of the gateway land controller.
-func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, store storage.Storage, counter counter.Counter, publisher extqueue.Publisher) *LandController {
+// topic: the queue topic to publish requests to (e.g., "request", "land_request")
+func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, store storage.Storage, counter counter.Counter, publisher extqueue.Publisher, topic string) *LandController {
 	return &LandController{
 		logger:       logger,
 		metricsScope: scope,
 		store:        store,
 		counter:      counter,
 		publisher:    publisher,
+		topic:        topic,
 	}
 }
 
@@ -119,7 +122,7 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 	c.logger.Infow("request published to queue",
 		"queue", req.Queue,
 		"sqid", request.ID,
-		"topic", "request",
+		"topic", c.topic,
 	)
 	c.metricsScope.Counter("publish_success").Inc(1)
 
@@ -143,7 +146,7 @@ func (c *LandController) publishToQueue(ctx context.Context, request entity.Requ
 	msg := queue.NewMessage(request.ID, payload, request.Queue, nil)
 
 	// Publish to request topic
-	if err := c.publisher.Publish(ctx, "request", msg); err != nil {
+	if err := c.publisher.Publish(ctx, c.topic, msg); err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 
