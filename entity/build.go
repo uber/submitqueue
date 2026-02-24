@@ -4,10 +4,39 @@ package entity
 type BuildStatus string
 
 const (
-	// BuildStateUnknown is the unreachable state. It is set by default when the structure is initialized. It should never be seen in the system.
-	BuildStateUnknown BuildStatus = ""
-	// TODO: Add comprehensive list of known build states.
+	// BuildStatusUnknown is the unreachable state. It is set by default when the structure is initialized. It should never be seen in the system.
+	BuildStatusUnknown BuildStatus = ""
+
+	// BuildStatusQueued indicates the build has been scheduled but not yet started.
+	BuildStatusQueued BuildStatus = "queued"
+
+	// BuildStatusRunning indicates the build is currently executing.
+	BuildStatusRunning BuildStatus = "running"
+
+	// BuildStatusPassed indicates the build completed successfully.
+	// This is a terminal state.
+	BuildStatusPassed BuildStatus = "passed"
+
+	// BuildStatusFailed indicates the build completed with failures.
+	// This is a terminal state.
+	BuildStatusFailed BuildStatus = "failed"
+
+	// BuildStatusCancelled indicates the build was cancelled before completion.
+	// This is a terminal state.
+	BuildStatusCancelled BuildStatus = "cancelled"
+
+	// BuildStatusBlocked indicates the build is waiting for manual approval or unblocking.
+	// Some CI systems (like BuildKite) support manual approval steps.
+	BuildStatusBlocked BuildStatus = "blocked"
 )
+
+// IsTerminal returns true if the build state represents a final state (passed, failed, or cancelled).
+// Terminal states indicate the build has finished and will not change state again.
+// Note: BuildStatusBlocked is NOT terminal as blocked builds can be unblocked and continue execution.
+func (s BuildStatus) IsTerminal() bool {
+	return s == BuildStatusPassed || s == BuildStatusFailed || s == BuildStatusCancelled
+}
+
 
 // SpeculationPathInfo represents the base and head commits of a speculation path used in a build.
 type SpeculationPathInfo struct {
