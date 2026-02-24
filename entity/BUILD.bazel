@@ -8,6 +8,7 @@ go_library(
         "build.go",
         "change_provider.go",
         "request.go",
+        "speculation_tree.go",
     ],
     importpath = "github.com/uber/submitqueue/entity",
     visibility = ["//visibility:public"],
