@@ -1,5 +1,5 @@
 name: Run Bazel Test
-description: Run Bazel test and show logs on failure
+description: Run a Bazel test target
 
 inputs:
   target:
@@ -11,7 +11,4 @@ runs:
   steps:
     - name: Run Bazel test
       shell: bash
-      run: ./tool/bazel test ${{ inputs.target }} --test_output=errors
-
-    - uses: ./.github/actions/logs
-      if: always()
+      run: ./tool/bazel test ${{ inputs.target }} --test_output=streamed

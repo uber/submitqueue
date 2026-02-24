@@ -103,7 +103,7 @@ func TestNewLandController(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	require.NotNil(t, controller)
 }
 
@@ -123,7 +123,7 @@ func TestLand_ReturnsSqid(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -155,7 +155,7 @@ func TestLand_PassesCorrectParametersToStore(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 42, nil
 	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -192,7 +192,7 @@ func TestLand_ReturnsErrorOnStorageFailure(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -220,7 +220,7 @@ func TestLand_ReturnsErrorOnCounterFailure(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 0, fmt.Errorf("counter unavailable")
 	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -251,7 +251,7 @@ func TestLand_CounterDomainIncludesQueue(t *testing.T) {
 		capturedDomain = domain
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -273,7 +273,7 @@ func TestLand_ReturnsErrorOnEmptyQueue(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -295,7 +295,7 @@ func TestLand_ReturnsErrorOnEmptyChangeSource(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -317,7 +317,7 @@ func TestLand_ReturnsErrorOnNilChange(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -339,7 +339,7 @@ func TestLand_ReturnsErrorOnEmptyChangeIDs(t *testing.T) {
 	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
 		return 1, nil
 	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher())
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -370,7 +370,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 		return nil
 	}}
 
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, publisher)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, publisher, "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -413,7 +413,7 @@ func TestLand_ContinuesWhenPublishFails(t *testing.T) {
 		return fmt.Errorf("queue unavailable")
 	}}
 
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, publisher)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, publisher, "request")
 	ctx := context.Background()
 
 	req := &pb.LandRequest{

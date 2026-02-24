@@ -86,11 +86,12 @@ make build-all-linux                # Build Linux binaries for Docker
 
 ### How Automated Tests Work
 
-Tests use **docker-compose** to spin up containers automatically:
+Tests use **docker-compose** via `ComposeStack` to spin up containers automatically:
 
-1. `SetupSuite()` - Creates MySQL + service containers **once** per test suite
-2. All tests run against those containers
-3. `TearDownSuite()` - Cleans up containers automatically
+1. `NewComposeStack()` registers cleanup (stop log tailing, tear down containers)
+2. `Up()` starts containers, waits for healthchecks (`--wait`), and auto-tails container logs to stderr
+3. Tests run against those containers with **real-time log output**
+4. On cleanup, containers are torn down automatically (set `SKIP_CLEANUP=true` to keep them for inspection)
 
 ---
 
@@ -167,15 +168,16 @@ sq-test-e2e-def456-orchestrator-service-1
 
 ### Debugging with Container Names
 
+Container logs are **automatically streamed to stderr** during test runs, so you'll see service output (startup messages, errors, zap logs) in real time — both locally and in CI.
+
+For additional manual inspection:
+
 ```bash
 # See what tests are currently running
 docker ps --format "table {{.Names}}\t{{.Status}}" | grep sq-test
 
 # Find all containers from gateway test
 docker ps | grep sq-test-gateway
-
-# View logs from specific test container
-docker logs sq-test-gateway-abc123-mysql-app-1
 
 # Inspect a specific test's MySQL
 docker exec -it sq-test-ext-counter-2ce1d0-mysql-1 \
@@ -353,6 +355,9 @@ make integration-test
 ```
 
 ### Containers Not Cleaning Up
+
+Containers are torn down automatically after each test. Set `SKIP_CLEANUP=true` to keep them for inspection.
+
 ```bash
 # List all test containers
 docker ps -a | grep sq-test
@@ -400,8 +405,7 @@ assert.Equal(s.T(), "expected", resp.Value)
 
 ## See Also
 
-- [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) - Project organization
-- [CLAUDE.md](../../CLAUDE.md) - Development guidelines
+- [CLAUDE.md](../../CLAUDE.md) - Development guidelines and project structure
 - [example/server/docker-compose.yml](../../example/server/docker-compose.yml) - Full stack service definitions
 - [example/server/gateway/docker-compose.yml](../../example/server/gateway/docker-compose.yml) - Gateway isolation
 - [example/server/orchestrator/docker-compose.yml](../../example/server/orchestrator/docker-compose.yml) - Orchestrator isolation

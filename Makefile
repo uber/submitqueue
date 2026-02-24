@@ -62,7 +62,7 @@ deps: ## Install Go dependencies
 
 e2e-test: build-all-linux ## Run end-to-end tests (hermetic, auto-builds binaries)
 	@echo "Running end-to-end tests..."
-	@$(BAZEL) test //test/e2e:e2e_test --test_output=all
+	@$(BAZEL) test //test/e2e:e2e_test --test_output=streamed
 
 gazelle: ## Update BUILD.bazel files
 	@echo "Running Gazelle to update BUILD files..."
@@ -70,19 +70,19 @@ gazelle: ## Update BUILD.bazel files
 
 integration-test: build-all-linux ## Run all integration tests (auto-builds binaries)
 	@echo "Running all integration tests..."
-	@$(BAZEL) test //test/integration/... --test_output=errors
+	@$(BAZEL) test //test/integration/... --test_output=streamed
 
 integration-test-extensions: ## Run extension integration tests
 	@echo "Running extension integration tests..."
-	@$(BAZEL) test //test/integration/extension/... --test_output=errors
+	@$(BAZEL) test //test/integration/extension/... --test_output=streamed
 
 integration-test-gateway: build-gateway-linux ## Run Gateway integration tests (auto-builds binary)
 	@echo "Running Gateway integration tests..."
-	@$(BAZEL) test //test/integration/gateway:gateway_test --test_output=errors
+	@$(BAZEL) test //test/integration/gateway:gateway_test --test_output=streamed
 
 integration-test-orchestrator: build-orchestrator-linux ## Run Orchestrator integration tests (auto-builds binary)
 	@echo "Running Orchestrator integration tests..."
-	@$(BAZEL) test //test/integration/orchestrator:orchestrator_test --test_output=errors
+	@$(BAZEL) test //test/integration/orchestrator:orchestrator_test --test_output=streamed
 
 local-clean: ## Stop and remove all local services, volumes, and images
 	@echo "Cleaning all services and data..."

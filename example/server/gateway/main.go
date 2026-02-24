@@ -13,10 +13,9 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally/v4"
+	"github.com/uber/submitqueue/core/consumer"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
-	"github.com/uber/submitqueue/extension/queue"
 	queueSQL "github.com/uber/submitqueue/extension/queue/sql"
-	"github.com/uber/submitqueue/extension/storage"
 	"github.com/uber/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/gateway/controller"
 	pb "github.com/uber/submitqueue/gateway/protopb"
@@ -92,103 +91,58 @@ func run() error {
 		metricsWgDone.Wait()
 	}()
 
-	// Initialize MySQL storage (with retries for MySQL startup)
-	mysqlDSN := os.Getenv("MYSQL_DSN")
-	if mysqlDSN == "" {
-		mysqlDSN = "root:root@tcp(localhost:3306)/submitqueue?parseTime=true"
+	// Open application database connection
+	// Docker Compose healthchecks ensure MySQL is ready before service starts
+	appDSN := os.Getenv("MYSQL_DSN")
+	if appDSN == "" {
+		return fmt.Errorf("MYSQL_DSN environment variable is required")
 	}
-	var store storage.Storage
-	maxRetries := 10
-	retryInterval := time.Second
-	for i := 0; i < maxRetries; i++ {
-		store, err = mysql.NewStorage(mysql.MySQLParameters{
-			DSN:             mysqlDSN,
-			MaxOpenConns:    10,
-			MaxIdleConns:    5,
-			ConnMaxLifetime: 5 * time.Minute,
-		})
-		if err == nil {
-			break
-		}
-		if i < maxRetries-1 {
-			logger.Warn("failed to create MySQL storage, retrying...",
-				zap.Int("attempt", i+1),
-				zap.Int("max_retries", maxRetries),
-				zap.Error(err),
-			)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(retryInterval):
-			}
-		}
-	}
+	appDB, err := sql.Open("mysql", appDSN)
 	if err != nil {
-		return fmt.Errorf("failed to create MySQL storage after %d retries: %w", maxRetries, err)
+		return fmt.Errorf("failed to open app database: %w", err)
 	}
-	defer store.Close()
+	defer appDB.Close()
 
-	// Initialize MySQL counter
-	counterDB, err := sql.Open("mysql", mysqlDSN)
+	// Initialize storage and counter from shared app database connection
+	store, err := mysql.NewStorage(appDB)
 	if err != nil {
-		return fmt.Errorf("failed to open MySQL connection for counter: %w", err)
+		return fmt.Errorf("failed to create storage: %w", err)
 	}
-	defer counterDB.Close()
-	cnt := mysqlcounter.NewCounter(counterDB)
+	cnt := mysqlcounter.NewCounter(appDB)
 
-	// Initialize queue
+	// Open queue database connection
 	queueDSN := os.Getenv("QUEUE_MYSQL_DSN")
 	if queueDSN == "" {
 		return fmt.Errorf("QUEUE_MYSQL_DSN environment variable is required")
 	}
+	queueDB, err := sql.Open("mysql", queueDSN)
+	if err != nil {
+		return fmt.Errorf("failed to open queue database: %w", err)
+	}
+	defer queueDB.Close()
+
+	// Initialize queue
+	sqlQueue, err := queueSQL.NewQueue(queueSQL.Params{
+		DB:           queueDB,
+		Logger:       logger,
+		MetricsScope: scope.SubScope("queue"),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create queue: %w", err)
+	}
+	defer sqlQueue.Close()
+
+	logger.Info("initialized dependencies",
+		zap.String("app_dsn", appDSN),
+		zap.String("queue_dsn", queueDSN),
+	)
 
 	// Create gRPC server
 	grpcServer := grpc.NewServer()
 
 	// Create controllers and wrap them for gRPC
 	pingController := controller.NewPingController(logger, scope)
-
-	queueDB, err := sql.Open("mysql", queueDSN)
-	if err != nil {
-		return fmt.Errorf("failed to open MySQL connection for queue: %w", err)
-	}
-	defer queueDB.Close()
-
-	// Retry queue creation (with retries for MySQL startup)
-	var q queue.Queue
-	maxRetries = 10
-	retryInterval = time.Second
-	for i := 0; i < maxRetries; i++ {
-		q, err = queueSQL.NewQueue(queueSQL.Params{
-			DB:           queueDB,
-			Logger:       logger,
-			MetricsScope: scope.SubScope("queue"),
-		})
-		if err == nil {
-			break
-		}
-		if i < maxRetries-1 {
-			logger.Warn("failed to create queue, retrying...",
-				zap.Int("attempt", i+1),
-				zap.Int("max_retries", maxRetries),
-				zap.Error(err),
-			)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(retryInterval):
-			}
-		}
-	}
-	if err != nil {
-		return fmt.Errorf("failed to create queue after %d retries: %w", maxRetries, err)
-	}
-	defer q.Close()
-
-	logger.Info("queue initialized", zap.String("dsn", queueDSN))
-
-	// Land controller requires queue publisher
-	landController := controller.NewLandController(logger.Sugar(), scope, store, cnt, q.Publisher())
+	landController := controller.NewLandController(logger.Sugar(), scope, store, cnt, sqlQueue.Publisher(), consumer.TopicRequest.String())
 	gatewayServer := &GatewayServer{
 		pingController: pingController,
 		landController: landController,

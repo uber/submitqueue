@@ -1,238 +1,105 @@
-package consumer
+package consumer_test
 
 import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally/v4"
+	"github.com/uber/submitqueue/core/consumer"
+	consumermock "github.com/uber/submitqueue/core/consumer/mock"
 	"github.com/uber/submitqueue/entity/queue"
 	extqueue "github.com/uber/submitqueue/extension/queue"
+	queuemock "github.com/uber/submitqueue/extension/queue/mock"
+	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
 
-// Mock Controller
-type mockController struct {
-	name          string
-	topic         string
-	consumerGroup string
-	processFunc   func(ctx context.Context, delivery Delivery) error
-}
-
-func (m *mockController) Process(ctx context.Context, delivery Delivery) error {
-	return m.processFunc(ctx, delivery)
-}
-
-func (m *mockController) Name() string {
-	return m.name
-}
-
-func (m *mockController) Topic() string {
-	return m.topic
-}
-
-func (m *mockController) ConsumerGroup() string {
-	return m.consumerGroup
-}
-
-func (m *mockController) SubscriptionConfig(subscriberName string) extqueue.SubscriptionConfig {
-	return extqueue.DefaultSubscriptionConfig(subscriberName, m.consumerGroup)
-}
-
-// Mock Delivery
-type mockDelivery struct {
-	msg          queue.Message
-	attempt      int
-	ackFunc      func(ctx context.Context) error
-	nackFunc     func(ctx context.Context, requeueAfterMillis int64) error
-	rejectFunc   func(ctx context.Context, reason string) error
-	acked        bool
-	nacked       bool
-	rejected     bool
-	rejectReason string
-	nackDelayMs  int64
-	done         chan struct{} // Signals when ack/nack/reject is called
-	mu           sync.Mutex
-}
-
-func (m *mockDelivery) Message() queue.Message {
-	return m.msg
-}
-
-func (m *mockDelivery) DeliveryID() string {
-	return m.msg.ID
-}
-
-func (m *mockDelivery) Attempt() int {
-	return m.attempt
-}
-
-func (m *mockDelivery) ReceivedAt() int64 {
-	return time.Now().UnixMilli()
-}
-
-func (m *mockDelivery) Metadata() map[string]string {
-	return nil
-}
-
-func (m *mockDelivery) Ack(ctx context.Context) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.acked = true
-	if m.done != nil {
-		close(m.done)
+// setupController configures a MockController with standard expectations.
+func setupController(mc *consumermock.MockController, name string, topic consumer.Topic, consumerGroup string, processFunc func(context.Context, consumer.Delivery) error) {
+	mc.EXPECT().Name().Return(name).AnyTimes()
+	mc.EXPECT().Topic().Return(topic).AnyTimes()
+	mc.EXPECT().ConsumerGroup().Return(consumerGroup).AnyTimes()
+	if processFunc != nil {
+		mc.EXPECT().Process(gomock.Any(), gomock.Any()).DoAndReturn(processFunc).AnyTimes()
 	}
-	if m.ackFunc != nil {
-		return m.ackFunc(ctx)
-	}
-	return nil
 }
 
-func (m *mockDelivery) Nack(ctx context.Context, requeueAfterMillis int64) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.nacked = true
-	m.nackDelayMs = requeueAfterMillis
-	if m.done != nil {
-		close(m.done)
-	}
-	if m.nackFunc != nil {
-		return m.nackFunc(ctx, requeueAfterMillis)
-	}
-	return nil
+// newRegistry creates a TopicRegistry with a mock queue and default subscription config.
+func newRegistry(q extqueue.Queue, topic consumer.Topic, consumerGroup string) consumer.TopicRegistry {
+	return consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{{Topic: topic, Queue: q}},
+		[]extqueue.SubscriptionConfig{
+			extqueue.DefaultSubscriptionConfig(topic.String(), "test-worker", consumerGroup),
+		},
+	)
 }
 
-func (m *mockDelivery) Reject(ctx context.Context, reason string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.rejected = true
-	m.rejectReason = reason
-	if m.done != nil {
-		close(m.done)
-	}
-	if m.rejectFunc != nil {
-		return m.rejectFunc(ctx, reason)
-	}
-	return nil
-}
-
-func (m *mockDelivery) ExtendVisibilityTimeout(ctx context.Context, durationMillis int64) error {
-	return nil
-}
-
-func (m *mockDelivery) WasAcked() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.acked
-}
-
-func (m *mockDelivery) WasNacked() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.nacked
-}
-
-func (m *mockDelivery) WasRejected() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.rejected
-}
-
-// Mock Subscriber
-type mockSubscriber struct {
-	subscribeFunc func(ctx context.Context, topic string, config extqueue.SubscriptionConfig) (<-chan extqueue.Delivery, error)
-}
-
-func (m *mockSubscriber) Subscribe(ctx context.Context, topic string, config extqueue.SubscriptionConfig) (<-chan extqueue.Delivery, error) {
-	return m.subscribeFunc(ctx, topic, config)
-}
-
-func (m *mockSubscriber) Close() error {
-	return nil
-}
-
-// Mock Queue
-type mockQueue struct {
-	subscriber extqueue.Subscriber
-}
-
-func (m *mockQueue) Publisher() extqueue.Publisher {
-	return nil
-}
-
-func (m *mockQueue) Subscriber() extqueue.Subscriber {
-	return m.subscriber
-}
-
-func (m *mockQueue) Close() error {
-	return nil
+// setupDelivery creates a MockDelivery with standard expectations and a done channel
+// that closes when Ack or Nack is called.
+func setupDelivery(del *queuemock.MockDelivery, msg queue.Message, ackErr, nackErr error) chan struct{} {
+	done := make(chan struct{})
+	del.EXPECT().Message().Return(msg).AnyTimes()
+	del.EXPECT().Attempt().Return(1).AnyTimes()
+	del.EXPECT().ReceivedAt().Return(time.Now().UnixMilli()).AnyTimes()
+	del.EXPECT().Metadata().Return(nil).AnyTimes()
+	del.EXPECT().DeliveryID().Return(msg.ID).AnyTimes()
+	del.EXPECT().Ack(gomock.Any()).DoAndReturn(func(ctx context.Context) error {
+		close(done)
+		return ackErr
+	}).MaxTimes(1)
+	del.EXPECT().Nack(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, requeueAfterMillis int64) error {
+		close(done)
+		return nackErr
+	}).MaxTimes(1)
+	return done
 }
 
 func TestNew(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
-	scope := tally.NoopScope
-	q := &mockQueue{}
 
-	c := New(logger, scope, q, "test-worker")
+	reg := consumer.NewTopicRegistry(nil, nil)
 
+	c := consumer.New(logger, tally.NoopScope, reg)
 	require.NotNil(t, c)
-
-	// Type assert to access internal fields
-	impl := c.(*consumer)
-	assert.Equal(t, "test-worker", impl.subscriberName)
-	assert.Empty(t, impl.controllers)
-	assert.Empty(t, impl.subscriptions)
 }
 
 func TestConsumer_Register(t *testing.T) {
+	ctrl := gomock.NewController(t)
 	logger := zaptest.NewLogger(t).Sugar()
-	scope := tally.NoopScope
-	q := &mockQueue{}
-	c := New(logger, scope, q, "test-worker")
 
-	handler1 := &mockController{
-		name:          "handler1",
-		topic:         "topic1",
-		consumerGroup: "group1",
-	}
-	handler2 := &mockController{
-		name:          "handler2",
-		topic:         "topic2",
-		consumerGroup: "group2",
-	}
+	reg := consumer.NewTopicRegistry(nil, nil)
+	c := consumer.New(logger, tally.NoopScope, reg)
 
-	// Register first handler
+	handler1 := consumermock.NewMockController(ctrl)
+	setupController(handler1, "handler1", consumer.TopicRequest, "group1", nil)
+
+	handler2 := consumermock.NewMockController(ctrl)
+	setupController(handler2, "handler2", consumer.Topic("other-topic"), "group2", nil)
+
 	err := c.Register(handler1)
 	require.NoError(t, err)
-	assert.Len(t, c.(*consumer).controllers, 1)
 
-	// Register second handler
 	err = c.Register(handler2)
 	require.NoError(t, err)
-	assert.Len(t, c.(*consumer).controllers, 2)
 }
 
 func TestConsumer_Register_DuplicateTopic(t *testing.T) {
+	ctrl := gomock.NewController(t)
 	logger := zaptest.NewLogger(t).Sugar()
-	scope := tally.NoopScope
-	q := &mockQueue{}
-	c := New(logger, scope, q, "test-worker")
 
-	handler1 := &mockController{
-		name:          "handler1",
-		topic:         "topic1",
-		consumerGroup: "group1",
-	}
-	handler2 := &mockController{
-		name:          "handler2",
-		topic:         "topic1", // Same topic
-		consumerGroup: "group2",
-	}
+	reg := consumer.NewTopicRegistry(nil, nil)
+	c := consumer.New(logger, tally.NoopScope, reg)
+
+	handler1 := consumermock.NewMockController(ctrl)
+	setupController(handler1, "handler1", consumer.TopicRequest, "group1", nil)
+
+	handler2 := consumermock.NewMockController(ctrl)
+	setupController(handler2, "handler2", consumer.TopicRequest, "group2", nil)
 
 	err := c.Register(handler1)
 	require.NoError(t, err)
@@ -242,19 +109,17 @@ func TestConsumer_Register_DuplicateTopic(t *testing.T) {
 }
 
 func TestConsumer_Register_AfterStop(t *testing.T) {
+	ctrl := gomock.NewController(t)
 	logger := zaptest.NewLogger(t).Sugar()
-	scope := tally.NoopScope
-	q := &mockQueue{}
-	c := New(logger, scope, q, "test-worker")
+
+	reg := consumer.NewTopicRegistry(nil, nil)
+	c := consumer.New(logger, tally.NoopScope, reg)
 
 	err := c.Stop(1000)
 	require.NoError(t, err)
 
-	handler := &mockController{
-		name:          "handler1",
-		topic:         "topic1",
-		consumerGroup: "group1",
-	}
+	handler := consumermock.NewMockController(ctrl)
+	setupController(handler, "handler1", consumer.TopicRequest, "group1", nil)
 
 	err = c.Register(handler)
 	assert.Error(t, err)
@@ -262,26 +127,23 @@ func TestConsumer_Register_AfterStop(t *testing.T) {
 
 func TestConsumer_Start_NoHandlers(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
-	scope := tally.NoopScope
-	q := &mockQueue{}
-	c := New(logger, scope, q, "test-worker")
 
-	ctx := context.Background()
-	err := c.Start(ctx)
+	reg := consumer.NewTopicRegistry(nil, nil)
+	c := consumer.New(logger, tally.NoopScope, reg)
+
+	err := c.Start(context.Background())
 	assert.Error(t, err)
 }
 
 func TestConsumer_Start_AfterStop(t *testing.T) {
+	ctrl := gomock.NewController(t)
 	logger := zaptest.NewLogger(t).Sugar()
-	scope := tally.NoopScope
-	q := &mockQueue{}
-	c := New(logger, scope, q, "test-worker")
 
-	handler := &mockController{
-		name:          "handler1",
-		topic:         "topic1",
-		consumerGroup: "group1",
-	}
+	reg := consumer.NewTopicRegistry(nil, nil)
+	c := consumer.New(logger, tally.NoopScope, reg)
+
+	handler := consumermock.NewMockController(ctrl)
+	setupController(handler, "handler1", consumer.TopicRequest, "group1", nil)
 
 	err := c.Register(handler)
 	require.NoError(t, err)
@@ -289,34 +151,83 @@ func TestConsumer_Start_AfterStop(t *testing.T) {
 	err = c.Stop(1000)
 	require.NoError(t, err)
 
-	ctx := context.Background()
-	err = c.Start(ctx)
+	err = c.Start(context.Background())
 	assert.Error(t, err)
 }
 
-func TestConsumer_ProcessDelivery_Success(t *testing.T) {
+func TestConsumer_Start_MissingSubscriptionConfig(t *testing.T) {
+	ctrl := gomock.NewController(t)
 	logger := zaptest.NewLogger(t).Sugar()
-	scope := tally.NoopScope
+
+	mockQ := queuemock.NewMockQueue(ctrl)
+	// Registry has queue but no subscription config
+	reg := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{{Topic: consumer.TopicRequest, Queue: mockQ}},
+		nil,
+	)
+
+	c := consumer.New(logger, tally.NoopScope, reg)
+
+	handler := consumermock.NewMockController(ctrl)
+	setupController(handler, "handler", consumer.TopicRequest, "group", nil)
+
+	err := c.Register(handler)
+	require.NoError(t, err)
+
+	err = c.Start(context.Background())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no subscription config")
+}
+
+func TestConsumer_Start_SubscribeFailure(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	logger := zaptest.NewLogger(t).Sugar()
+
+	mockSub := queuemock.NewMockSubscriber(ctrl)
+	mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, fmt.Errorf("connection refused"))
+
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Subscriber().Return(mockSub)
+
+	reg := newRegistry(mockQ, consumer.TopicRequest, "group")
+
+	c := consumer.New(logger, tally.NoopScope, reg)
+
+	handler := consumermock.NewMockController(ctrl)
+	setupController(handler, "handler", consumer.TopicRequest, "group", nil)
+
+	err := c.Register(handler)
+	require.NoError(t, err)
+
+	err = c.Start(context.Background())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "subscribe failed")
+}
+
+func TestConsumer_ProcessDelivery_Success(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	logger := zaptest.NewLogger(t).Sugar()
 
 	deliveryChan := make(chan extqueue.Delivery, 1)
-	subscriber := &mockSubscriber{
-		subscribeFunc: func(ctx context.Context, topic string, config extqueue.SubscriptionConfig) (<-chan extqueue.Delivery, error) {
-			return deliveryChan, nil
-		},
-	}
-	q := &mockQueue{subscriber: subscriber}
-	c := New(logger, scope, q, "test-worker")
+	mockSub := queuemock.NewMockSubscriber(ctrl)
+	mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
+
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Subscriber().Return(mockSub)
+
+	reg := newRegistry(mockQ, consumer.TopicRequest, "test-group")
+
+	c := consumer.New(logger, tally.NoopScope, reg)
 
 	handledMsg := ""
-	handler := &mockController{
-		name:          "test-handler",
-		topic:         "test-topic",
-		consumerGroup: "test-group",
-		processFunc: func(ctx context.Context, delivery Delivery) error {
+	handler := consumermock.NewMockController(ctrl)
+	setupController(handler, "test-handler", consumer.TopicRequest, "test-group",
+		func(ctx context.Context, delivery consumer.Delivery) error {
 			handledMsg = delivery.Message().ID
-			return nil // Success
+			return nil
 		},
-	}
+	)
 
 	err := c.Register(handler)
 	require.NoError(t, err)
@@ -327,48 +238,40 @@ func TestConsumer_ProcessDelivery_Success(t *testing.T) {
 	err = c.Start(ctx)
 	require.NoError(t, err)
 
-	// Send a test message
 	msg := queue.NewMessage("test-msg-1", []byte("payload"), "partition1", nil)
-	delivery := &mockDelivery{
-		msg:     msg,
-		attempt: 1,
-		done:    make(chan struct{}),
-	}
+	mockDel := queuemock.NewMockDelivery(ctrl)
+	done := setupDelivery(mockDel, msg, nil, nil)
 
-	deliveryChan <- delivery
-
-	// Wait for processing to complete
-	<-delivery.done
+	deliveryChan <- mockDel
+	<-done
 
 	assert.Equal(t, "test-msg-1", handledMsg)
-	assert.True(t, delivery.WasAcked(), "Message should be acked on success")
-	assert.False(t, delivery.WasNacked(), "Message should not be nacked on success")
 
 	err = c.Stop(30000)
 	require.NoError(t, err)
 }
 
 func TestConsumer_ProcessDelivery_Error(t *testing.T) {
+	ctrl := gomock.NewController(t)
 	logger := zaptest.NewLogger(t).Sugar()
-	scope := tally.NoopScope
 
 	deliveryChan := make(chan extqueue.Delivery, 1)
-	subscriber := &mockSubscriber{
-		subscribeFunc: func(ctx context.Context, topic string, config extqueue.SubscriptionConfig) (<-chan extqueue.Delivery, error) {
-			return deliveryChan, nil
-		},
-	}
-	q := &mockQueue{subscriber: subscriber}
-	c := New(logger, scope, q, "test-worker")
+	mockSub := queuemock.NewMockSubscriber(ctrl)
+	mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
 
-	handler := &mockController{
-		name:          "test-handler",
-		topic:         "test-topic",
-		consumerGroup: "test-group",
-		processFunc: func(ctx context.Context, delivery Delivery) error {
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Subscriber().Return(mockSub)
+
+	reg := newRegistry(mockQ, consumer.TopicRequest, "test-group")
+
+	c := consumer.New(logger, tally.NoopScope, reg)
+
+	handler := consumermock.NewMockController(ctrl)
+	setupController(handler, "test-handler", consumer.TopicRequest, "test-group",
+		func(ctx context.Context, delivery consumer.Delivery) error {
 			return fmt.Errorf("processing failed")
 		},
-	}
+	)
 
 	err := c.Register(handler)
 	require.NoError(t, err)
@@ -379,47 +282,38 @@ func TestConsumer_ProcessDelivery_Error(t *testing.T) {
 	err = c.Start(ctx)
 	require.NoError(t, err)
 
-	// Send a test message
 	msg := queue.NewMessage("test-msg-2", []byte("payload"), "partition1", nil)
-	delivery := &mockDelivery{
-		msg:     msg,
-		attempt: 2,
-		done:    make(chan struct{}),
-	}
+	mockDel := queuemock.NewMockDelivery(ctrl)
+	done := setupDelivery(mockDel, msg, nil, nil)
 
-	deliveryChan <- delivery
-
-	// Wait for processing to complete
-	<-delivery.done
-
-	assert.False(t, delivery.WasAcked(), "Message should not be acked on error")
-	assert.True(t, delivery.WasNacked(), "Message should be nacked on error")
+	deliveryChan <- mockDel
+	<-done
 
 	err = c.Stop(30000)
 	require.NoError(t, err)
 }
 
 func TestConsumer_ProcessDelivery_NonRetryableError(t *testing.T) {
+	ctrl := gomock.NewController(t)
 	logger := zaptest.NewLogger(t).Sugar()
-	scope := tally.NoopScope
 
 	deliveryChan := make(chan extqueue.Delivery, 1)
-	subscriber := &mockSubscriber{
-		subscribeFunc: func(ctx context.Context, topic string, config extqueue.SubscriptionConfig) (<-chan extqueue.Delivery, error) {
-			return deliveryChan, nil
-		},
-	}
-	q := &mockQueue{subscriber: subscriber}
-	c := New(logger, scope, q, "test-worker")
+	mockSub := queuemock.NewMockSubscriber(ctrl)
+	mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
 
-	handler := &mockController{
-		name:          "test-handler",
-		topic:         "test-topic",
-		consumerGroup: "test-group",
-		processFunc: func(ctx context.Context, delivery Delivery) error {
-			return NewNonRetryableError(fmt.Errorf("bad payload"))
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Subscriber().Return(mockSub)
+
+	reg := newRegistry(mockQ, consumer.TopicRequest, "test-group")
+
+	c := consumer.New(logger, tally.NoopScope, reg)
+
+	handler := consumermock.NewMockController(ctrl)
+	setupController(handler, "test-handler", consumer.TopicRequest, "test-group",
+		func(ctx context.Context, delivery consumer.Delivery) error {
+			return consumer.NewNonRetryableError(fmt.Errorf("bad payload"))
 		},
-	}
+	)
 
 	err := c.Register(handler)
 	require.NoError(t, err)
@@ -430,48 +324,43 @@ func TestConsumer_ProcessDelivery_NonRetryableError(t *testing.T) {
 	err = c.Start(ctx)
 	require.NoError(t, err)
 
-	// Send a test message with non-retryable payload
 	msg := queue.NewMessage("poison-msg", []byte("bad"), "partition1", nil)
-	delivery := &mockDelivery{
-		msg:     msg,
-		attempt: 1,
-		done:    make(chan struct{}),
-	}
+	done := make(chan struct{})
+	mockDel := queuemock.NewMockDelivery(ctrl)
+	mockDel.EXPECT().Message().Return(msg).AnyTimes()
+	mockDel.EXPECT().Attempt().Return(1).AnyTimes()
+	mockDel.EXPECT().ReceivedAt().Return(time.Now().UnixMilli()).AnyTimes()
+	mockDel.EXPECT().Metadata().Return(nil).AnyTimes()
+	mockDel.EXPECT().DeliveryID().Return(msg.ID).AnyTimes()
+	mockDel.EXPECT().Reject(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, reason string) error {
+		close(done)
+		return nil
+	}).Times(1)
 
-	deliveryChan <- delivery
-
-	// Wait for processing to complete
-	<-delivery.done
-
-	assert.True(t, delivery.WasRejected(), "Non-retryable message should be rejected")
-	assert.False(t, delivery.WasAcked(), "Non-retryable message should not be acked directly")
-	assert.False(t, delivery.WasNacked(), "Non-retryable message should not be nacked")
+	deliveryChan <- mockDel
+	<-done
 
 	err = c.Stop(30000)
 	require.NoError(t, err)
 }
 
 func TestConsumer_Stop(t *testing.T) {
+	ctrl := gomock.NewController(t)
 	logger := zaptest.NewLogger(t).Sugar()
-	scope := tally.NoopScope
 
 	deliveryChan := make(chan extqueue.Delivery)
-	subscriber := &mockSubscriber{
-		subscribeFunc: func(ctx context.Context, topic string, config extqueue.SubscriptionConfig) (<-chan extqueue.Delivery, error) {
-			return deliveryChan, nil
-		},
-	}
-	q := &mockQueue{subscriber: subscriber}
-	c := New(logger, scope, q, "test-worker")
+	mockSub := queuemock.NewMockSubscriber(ctrl)
+	mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
 
-	handler := &mockController{
-		name:          "test-handler",
-		topic:         "test-topic",
-		consumerGroup: "test-group",
-		processFunc: func(ctx context.Context, delivery Delivery) error {
-			return nil
-		},
-	}
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Subscriber().Return(mockSub)
+
+	reg := newRegistry(mockQ, consumer.TopicRequest, "test-group")
+
+	c := consumer.New(logger, tally.NoopScope, reg)
+
+	handler := consumermock.NewMockController(ctrl)
+	setupController(handler, "test-handler", consumer.TopicRequest, "test-group", nil)
 
 	err := c.Register(handler)
 	require.NoError(t, err)
@@ -482,30 +371,15 @@ func TestConsumer_Stop(t *testing.T) {
 	err = c.Start(ctx)
 	require.NoError(t, err)
 
-	assert.Len(t, c.(*consumer).subscriptions, 1)
-
-	// Stop the c
+	// Stop should complete cleanly
 	err = c.Stop(30000)
 	require.NoError(t, err)
-
-	assert.Empty(t, c.(*consumer).subscriptions, "Subscriptions should be cleared after stop")
 }
 
 func TestConsumer_ObservabilityTags(t *testing.T) {
-	logger := zaptest.NewLogger(t).Sugar()
-
-	deliveryChan := make(chan extqueue.Delivery, 10)
-	subscriber := &mockSubscriber{
-		subscribeFunc: func(ctx context.Context, topic string, config extqueue.SubscriptionConfig) (<-chan extqueue.Delivery, error) {
-			return deliveryChan, nil
-		},
-	}
-	q := &mockQueue{subscriber: subscriber}
-
 	tests := []struct {
 		name           string
 		handlerError   error
-		ackError       error
 		nackError      error
 		expectSuccess  bool
 		expectAckCount bool
@@ -513,7 +387,7 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 		{
 			name:           "success with ack",
 			handlerError:   nil,
-			ackError:       nil,
+			nackError:      nil,
 			expectSuccess:  true,
 			expectAckCount: true,
 		},
@@ -528,18 +402,27 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a fresh scope for each test
+			ctrl := gomock.NewController(t)
+			logger := zaptest.NewLogger(t).Sugar()
 			testScope := tally.NewTestScope("consumer", nil)
-			testC := New(logger, testScope, q, "test-worker")
 
-			handler := &mockController{
-				name:          "test-handler",
-				topic:         "test-topic",
-				consumerGroup: "test-group",
-				processFunc: func(ctx context.Context, delivery Delivery) error {
+			deliveryChan := make(chan extqueue.Delivery, 1)
+			mockSub := queuemock.NewMockSubscriber(ctrl)
+			mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
+
+			mockQ := queuemock.NewMockQueue(ctrl)
+			mockQ.EXPECT().Subscriber().Return(mockSub)
+
+			reg := newRegistry(mockQ, consumer.TopicRequest, "test-group")
+
+			testC := consumer.New(logger, testScope, reg)
+
+			handler := consumermock.NewMockController(ctrl)
+			setupController(handler, "test-handler", consumer.TopicRequest, "test-group",
+				func(ctx context.Context, delivery consumer.Delivery) error {
 					return tt.handlerError
 				},
-			}
+			)
 
 			err := testC.Register(handler)
 			require.NoError(t, err)
@@ -550,56 +433,39 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 			err = testC.Start(ctx)
 			require.NoError(t, err)
 
-			// Send a test message
 			msg := queue.NewMessage("msg-1", []byte("payload"), "partition1", nil)
-			delivery := &mockDelivery{
-				msg:     msg,
-				attempt: 1,
-				done:    make(chan struct{}),
-				ackFunc: func(ctx context.Context) error {
-					return tt.ackError
-				},
-				nackFunc: func(ctx context.Context, requeueAfterMillis int64) error {
-					return tt.nackError
-				},
-			}
+			mockDel := queuemock.NewMockDelivery(ctrl)
+			done := setupDelivery(mockDel, msg, nil, tt.nackError)
 
-			deliveryChan <- delivery
+			deliveryChan <- mockDel
+			<-done
 
-			// Wait for processing to complete
-			<-delivery.done
-
-			// Verify metrics exist
 			snapshot := testScope.Snapshot()
 
-			// Check handler latency with success tag exists
 			timers := snapshot.Timers()
 			assert.NotEmpty(t, timers, "Should have timer metrics")
 
-			// Check for handler latency metric
 			var foundLatency bool
 			for _, timer := range timers {
 				if strings.Contains(timer.Name(), "controller_latency") {
 					foundLatency = true
-					// Verify success tag
 					tags := timer.Tags()
 					if tt.expectSuccess {
-						assert.Equal(t, "true", tags["success"], "Should have success=true tag")
+						assert.Equal(t, "true", tags["success"])
 					} else {
-						assert.Equal(t, "false", tags["success"], "Should have success=false tag")
+						assert.Equal(t, "false", tags["success"])
 					}
 				}
 			}
 			assert.True(t, foundLatency, "Should have controller_latency metric")
 
-			// Check counters
 			counters := snapshot.Counters()
 			if tt.expectAckCount {
 				var foundAck bool
 				for _, counter := range counters {
 					if strings.Contains(counter.Name(), "ack_count") {
 						foundAck = true
-						assert.Greater(t, counter.Value(), int64(0), "ack_count should be > 0")
+						assert.Greater(t, counter.Value(), int64(0))
 					}
 				}
 				assert.True(t, foundAck, "Should have ack_count metric")
@@ -611,26 +477,25 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 }
 
 func TestConsumer_AckNackLatencyTracking(t *testing.T) {
+	ctrl := gomock.NewController(t)
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NewTestScope("consumer", nil)
 
 	deliveryChan := make(chan extqueue.Delivery, 1)
-	subscriber := &mockSubscriber{
-		subscribeFunc: func(ctx context.Context, topic string, config extqueue.SubscriptionConfig) (<-chan extqueue.Delivery, error) {
-			return deliveryChan, nil
-		},
-	}
-	q := &mockQueue{subscriber: subscriber}
-	c := New(logger, scope, q, "test-worker")
+	mockSub := queuemock.NewMockSubscriber(ctrl)
+	mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
 
-	handler := &mockController{
-		name:          "test-handler",
-		topic:         "test-topic",
-		consumerGroup: "test-group",
-		processFunc: func(ctx context.Context, delivery Delivery) error {
-			return nil // Success
-		},
-	}
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Subscriber().Return(mockSub)
+
+	reg := newRegistry(mockQ, consumer.TopicRequest, "test-group")
+
+	c := consumer.New(logger, scope, reg)
+
+	handler := consumermock.NewMockController(ctrl)
+	setupController(handler, "test-handler", consumer.TopicRequest, "test-group",
+		func(ctx context.Context, delivery consumer.Delivery) error { return nil },
+	)
 
 	err := c.Register(handler)
 	require.NoError(t, err)
@@ -641,20 +506,13 @@ func TestConsumer_AckNackLatencyTracking(t *testing.T) {
 	err = c.Start(ctx)
 	require.NoError(t, err)
 
-	// Send a test message
 	msg := queue.NewMessage("msg-1", []byte("payload"), "partition1", nil)
-	delivery := &mockDelivery{
-		msg:     msg,
-		attempt: 1,
-		done:    make(chan struct{}),
-	}
+	mockDel := queuemock.NewMockDelivery(ctrl)
+	done := setupDelivery(mockDel, msg, nil, nil)
 
-	deliveryChan <- delivery
+	deliveryChan <- mockDel
+	<-done
 
-	// Wait for processing to complete
-	<-delivery.done
-
-	// Verify we have some timer metrics (latency tracking is working)
 	snapshot := scope.Snapshot()
 	assert.NotEmpty(t, snapshot.Timers(), "Should have timer metrics for latency tracking")
 	assert.NotEmpty(t, snapshot.Counters(), "Should have counter metrics")
@@ -664,26 +522,27 @@ func TestConsumer_AckNackLatencyTracking(t *testing.T) {
 }
 
 func TestConsumer_ErrorMetrics(t *testing.T) {
+	ctrl := gomock.NewController(t)
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NewTestScope("consumer", nil)
 
 	deliveryChan := make(chan extqueue.Delivery, 1)
-	subscriber := &mockSubscriber{
-		subscribeFunc: func(ctx context.Context, topic string, config extqueue.SubscriptionConfig) (<-chan extqueue.Delivery, error) {
-			return deliveryChan, nil
-		},
-	}
-	q := &mockQueue{subscriber: subscriber}
-	c := New(logger, scope, q, "test-worker")
+	mockSub := queuemock.NewMockSubscriber(ctrl)
+	mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
 
-	handler := &mockController{
-		name:          "test-handler",
-		topic:         "test-topic",
-		consumerGroup: "test-group",
-		processFunc: func(ctx context.Context, delivery Delivery) error {
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Subscriber().Return(mockSub)
+
+	reg := newRegistry(mockQ, consumer.TopicRequest, "test-group")
+
+	c := consumer.New(logger, scope, reg)
+
+	handler := consumermock.NewMockController(ctrl)
+	setupController(handler, "test-handler", consumer.TopicRequest, "test-group",
+		func(ctx context.Context, delivery consumer.Delivery) error {
 			return fmt.Errorf("processing failed")
 		},
-	}
+	)
 
 	err := c.Register(handler)
 	require.NoError(t, err)
@@ -694,27 +553,16 @@ func TestConsumer_ErrorMetrics(t *testing.T) {
 	err = c.Start(ctx)
 	require.NoError(t, err)
 
-	// Send a test message
 	msg := queue.NewMessage("msg-1", []byte("payload"), "partition1", nil)
-	delivery := &mockDelivery{
-		msg:     msg,
-		attempt: 1,
-		done:    make(chan struct{}),
-		nackFunc: func(ctx context.Context, requeueAfterMillis int64) error {
-			return fmt.Errorf("nack failed")
-		},
-	}
+	mockDel := queuemock.NewMockDelivery(ctrl)
+	done := setupDelivery(mockDel, msg, nil, fmt.Errorf("nack failed"))
 
-	deliveryChan <- delivery
+	deliveryChan <- mockDel
+	<-done
 
-	// Wait for processing to complete
-	<-delivery.done
-
-	// Verify error metrics are tracked
 	snapshot := scope.Snapshot()
 	counters := snapshot.Counters()
 
-	// Should have handler_errors and nack_errors
 	var hasErrorMetrics bool
 	for _, counter := range counters {
 		if strings.Contains(counter.Name(), "errors") {

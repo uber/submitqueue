@@ -48,10 +48,6 @@ func (s *MySQLStorageIntegrationSuite) SetupSuite() {
 
 	s.log.Logf("Compose stack started successfully")
 
-	// Get MySQL DSN for storage initialization
-	dsn, err := s.stack.MySQLServiceDSN("mysql")
-	require.NoError(t, err, "failed to get MySQL DSN")
-
 	// Connect to MySQL for schema application
 	s.db, err = s.stack.ConnectMySQLService("mysql")
 	require.NoError(t, err, "failed to connect to MySQL")
@@ -62,10 +58,8 @@ func (s *MySQLStorageIntegrationSuite) SetupSuite() {
 
 	s.log.Logf("Schemas applied successfully")
 
-	// Create storage instance
-	store, err := mysqlstorage.NewStorage(mysqlstorage.MySQLParameters{
-		DSN: dsn,
-	})
+	// Create storage instance using the existing database connection
+	store, err := mysqlstorage.NewStorage(s.db)
 	require.NoError(t, err, "failed to create storage")
 
 	// Provide the storage instance to the contract suite

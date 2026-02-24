@@ -24,7 +24,8 @@ type ComposeStack struct {
 	t           *testing.T
 	log         *TestLogger
 	ctx         context.Context
-	composeCmd  []string // docker-compose command (either ["docker-compose"] or ["docker", "compose"])
+	composeCmd  []string    // docker-compose command (either ["docker-compose"] or ["docker", "compose"])
+	logCmd      *exec.Cmd   // background "docker compose logs -f" process
 }
 
 // getDockerComposeCommand returns the docker-compose command to use.
@@ -68,16 +69,7 @@ func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, compose
 
 	// Register cleanup
 	t.Cleanup(func() {
-		// Skip cleanup if test failed (for debugging) or SKIP_CLEANUP env var is set
-		if t.Failed() {
-			log.Logf("Test FAILED - keeping containers for debugging")
-			log.Logf("Container prefix: %s", projectName)
-			log.Logf("List containers: docker ps -a | grep %s", projectName)
-			log.Logf("View logs: docker logs %s-<service>-1", projectName)
-			composeCmd := strings.Join(stack.composeCmd, " ")
-			log.Logf("Clean up manually: %s -f %s -p %s down -v --rmi local", composeCmd, absPath, projectName)
-			return
-		}
+		stack.stopLogs()
 
 		if os.Getenv("SKIP_CLEANUP") == "true" {
 			log.Logf("SKIP_CLEANUP=true - keeping containers for inspection")
@@ -95,11 +87,12 @@ func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, compose
 }
 
 // Up starts all services in the compose stack.
+// Uses --wait to block until all services with healthcheck directives are healthy.
 func (s *ComposeStack) Up() error {
 	s.t.Helper()
 	s.log.Logf("Starting compose stack from %s", s.composeFile)
 
-	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName, "up", "-d", "--build")
+	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName, "up", "-d", "--build", "--wait")
 	cmd := exec.CommandContext(s.ctx, s.composeCmd[0], args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -108,11 +101,8 @@ func (s *ComposeStack) Up() error {
 		return fmt.Errorf("failed to start compose stack: %w", err)
 	}
 
-	// Wait for services to be healthy
-	s.log.Logf("Waiting for services to be healthy...")
-	time.Sleep(5 * time.Second) // Simple wait for now
-
 	s.log.Logf("Compose stack started successfully")
+	s.tailLogs()
 	return nil
 }
 
@@ -128,6 +118,30 @@ func (s *ComposeStack) down() {
 
 	if err := cmd.Run(); err != nil {
 		s.log.Logf("Warning: failed to stop compose stack: %v", err)
+	}
+}
+
+// tailLogs starts a background "docker compose logs -f" process that streams
+// container logs to stderr in real time. Using os.Stderr instead of t.Log()
+// because t.Log() buffers output until the test finishes.
+func (s *ComposeStack) tailLogs() {
+	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName, "logs", "-f")
+	cmd := exec.Command(s.composeCmd[0], args...)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		s.log.Logf("Warning: failed to tail logs: %v", err)
+		return
+	}
+	s.logCmd = cmd
+}
+
+// stopLogs kills the background log-tailing process if running.
+func (s *ComposeStack) stopLogs() {
+	if s.logCmd != nil && s.logCmd.Process != nil {
+		s.logCmd.Process.Kill()
+		s.logCmd.Wait()
 	}
 }
 

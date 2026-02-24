@@ -11,33 +11,49 @@ import (
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
-	extqueue "github.com/uber/submitqueue/extension/queue"
-	"github.com/uber/submitqueue/extension/queue/mock"
+	queuemock "github.com/uber/submitqueue/extension/queue/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
 
-func TestNewController(t *testing.T) {
+// newTestController creates a controller with test dependencies.
+func newTestController(t *testing.T, ctrl *gomock.Controller, publishErr error) *Controller {
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
 
-	controller := NewController(logger, scope)
+	mockPub := queuemock.NewMockPublisher(ctrl)
+	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, topic string, msg queue.Message) error {
+			return publishErr
+		},
+	).AnyTimes()
+
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+
+	registry := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{{Topic: consumer.TopicToBatch, Queue: mockQ}},
+		nil,
+	)
+
+	return NewController(logger, scope, registry, consumer.TopicRequest, "orchestrator-request")
+}
+
+func TestNewController(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	controller := newTestController(t, ctrl, nil)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, "request", controller.Topic())
+	assert.Equal(t, consumer.TopicRequest, controller.Topic())
 	assert.Equal(t, "orchestrator-request", controller.ConsumerGroup())
 	assert.Equal(t, "request", controller.Name())
 }
 
 func TestController_Process_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
 
-	logger := zaptest.NewLogger(t).Sugar()
-	scope := tally.NoopScope
-	controller := NewController(logger, scope)
+	controller := newTestController(t, ctrl, nil)
 
-	// Create a valid request
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
@@ -47,42 +63,31 @@ func TestController_Process_Success(t *testing.T) {
 		Version:      1,
 	}
 
-	// Serialize to bytes
 	payload, err := request.ToBytes()
 	require.NoError(t, err)
 
-	// Create delivery with mock
 	msg := queue.NewMessage("test-queue/123", payload, "test-queue", nil)
-	delivery := mock.NewMockDelivery(ctrl)
+	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
-	// Handle the delivery
-	ctx := context.Background()
-	err = controller.Process(ctx, delivery)
-
-	// Should return nil (success)
+	err = controller.Process(context.Background(), delivery)
 	require.NoError(t, err)
 }
 
 func TestController_Process_InvalidJSON(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
 
-	logger := zaptest.NewLogger(t).Sugar()
-	scope := tally.NoopScope
-	controller := NewController(logger, scope)
+	controller := newTestController(t, ctrl, nil)
 
-	// Create delivery with invalid JSON
 	invalidPayload := []byte(`{"invalid": json"}`)
 	msg := queue.NewMessage("invalid-msg", invalidPayload, "partition1", nil)
-	delivery := mock.NewMockDelivery(ctrl)
+	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
 	// Process the delivery
-	ctx := context.Background()
-	err := controller.Process(ctx, delivery)
+	err := controller.Process(context.Background(), delivery)
 
 	// Should return NonRetryableError for malformed messages
 	require.Error(t, err)
@@ -104,11 +109,8 @@ func TestController_Process_AllRequestStates(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
-			defer ctrl.Finish()
 
-			logger := zaptest.NewLogger(t).Sugar()
-			scope := tally.NoopScope
-			controller := NewController(logger, scope)
+			controller := newTestController(t, ctrl, nil)
 
 			request := entity.Request{
 				ID:           fmt.Sprintf("queue/%s", tt.state),
@@ -123,13 +125,11 @@ func TestController_Process_AllRequestStates(t *testing.T) {
 			require.NoError(t, err)
 
 			msg := queue.NewMessage(request.ID, payload, request.Queue, nil)
-			delivery := mock.NewMockDelivery(ctrl)
+			delivery := queuemock.NewMockDelivery(ctrl)
 			delivery.EXPECT().Message().Return(msg).AnyTimes()
 			delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
-			ctx := context.Background()
-			err = controller.Process(ctx, delivery)
-
+			err = controller.Process(context.Background(), delivery)
 			require.NoError(t, err)
 		})
 	}
@@ -137,18 +137,15 @@ func TestController_Process_AllRequestStates(t *testing.T) {
 
 func TestController_Process_MultipleChanges(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
 
-	logger := zaptest.NewLogger(t).Sugar()
-	scope := tally.NoopScope
-	controller := NewController(logger, scope)
+	controller := newTestController(t, ctrl, nil)
 
 	request := entity.Request{
 		ID:    "queue/999",
 		Queue: "test-queue",
 		Change: entity.Change{
 			Source: "github",
-			IDs:    []string{"PR-1", "PR-2", "PR-3"}, // Multiple PRs
+			IDs:    []string{"PR-1", "PR-2", "PR-3"},
 		},
 		LandStrategy: entity.RequestLandStrategySquashRebase,
 		State:        entity.RequestStateNew,
@@ -159,43 +156,43 @@ func TestController_Process_MultipleChanges(t *testing.T) {
 	require.NoError(t, err)
 
 	msg := queue.NewMessage(request.ID, payload, request.Queue, nil)
-	delivery := mock.NewMockDelivery(ctrl)
+	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
-	ctx := context.Background()
-	err = controller.Process(ctx, delivery)
-
+	err = controller.Process(context.Background(), delivery)
 	require.NoError(t, err)
 }
 
-func TestController_SubscriptionConfig(t *testing.T) {
-	logger := zaptest.NewLogger(t).Sugar()
-	scope := tally.NoopScope
-	controller := NewController(logger, scope)
+func TestController_Process_PublishFailure(t *testing.T) {
+	ctrl := gomock.NewController(t)
 
-	config := controller.SubscriptionConfig("test-worker-123")
+	controller := newTestController(t, ctrl, fmt.Errorf("publish failed"))
 
-	assert.Equal(t, "test-worker-123", config.SubscriberName)
-	assert.Equal(t, "orchestrator-request", config.ConsumerGroup)
-	assert.Equal(t, int64(100), config.PollIntervalMs) // 100ms
-	assert.Equal(t, 10, config.BatchSize)
-	assert.Equal(t, int64(60000), config.VisibilityTimeoutMs) // 60s
-	assert.Equal(t, 3, config.Retry.MaxAttempts)
-	assert.True(t, config.DLQ.Enabled)
+	request := entity.Request{
+		ID:           "test-queue/123",
+		Queue:        "test-queue",
+		Change:       entity.Change{Source: "github", IDs: []string{"PR-1"}},
+		LandStrategy: entity.RequestLandStrategyRebase,
+		State:        entity.RequestStateNew,
+		Version:      1,
+	}
+
+	payload, err := request.ToBytes()
+	require.NoError(t, err)
+
+	msg := queue.NewMessage(request.ID, payload, request.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	err = controller.Process(context.Background(), delivery)
+	assert.Error(t, err)
 }
 
 func TestController_InterfaceImplementation(t *testing.T) {
-	logger := zaptest.NewLogger(t).Sugar()
-	scope := tally.NoopScope
-	controller := NewController(logger, scope)
+	ctrl := gomock.NewController(t)
+	controller := newTestController(t, ctrl, nil)
 
-	// Verify implements consumer.Controller interface
-	var _ interface {
-		Process(ctx context.Context, delivery consumer.Delivery) error
-		Name() string
-		Topic() string
-		ConsumerGroup() string
-		SubscriptionConfig(subscriberName string) extqueue.SubscriptionConfig
-	} = controller
+	var _ consumer.Controller = controller
 }
