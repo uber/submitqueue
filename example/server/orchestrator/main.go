@@ -15,7 +15,7 @@ import (
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
 	extqueue "github.com/uber/submitqueue/extension/queue"
-	queueSQL "github.com/uber/submitqueue/extension/queue/sql"
+	queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
 	"github.com/uber/submitqueue/orchestrator/controller"
 	"github.com/uber/submitqueue/orchestrator/controller/request"
 	pb "github.com/uber/submitqueue/orchestrator/protopb"
@@ -98,7 +98,7 @@ func run() error {
 	defer queueDB.Close()
 
 	// Initialize queue
-	sqlQueue, err := queueSQL.NewQueue(queueSQL.Params{
+	mysqlQueue, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           queueDB,
 		Logger:       logger,
 		MetricsScope: scope.SubScope("queue"),
@@ -106,7 +106,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("failed to create queue: %w", err)
 	}
-	defer sqlQueue.Close()
+	defer mysqlQueue.Close()
 
 	logger.Info("initialized queue", zap.String("dsn", queueDSN))
 
@@ -118,8 +118,8 @@ func run() error {
 
 	registry := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Topic: consumer.TopicRequest, Queue: sqlQueue},
-			{Topic: consumer.TopicToBatch, Queue: sqlQueue},
+			{Topic: consumer.TopicRequest, Queue: mysqlQueue},
+			{Topic: consumer.TopicToBatch, Queue: mysqlQueue},
 		},
 		[]extqueue.SubscriptionConfig{
 			extqueue.DefaultSubscriptionConfig(

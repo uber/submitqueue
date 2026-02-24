@@ -1,4 +1,4 @@
-package sql
+package mysql
 
 // Common constants for frequently repeated strings across stores
 

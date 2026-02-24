@@ -120,7 +120,7 @@ local-init-schemas: ## Manually apply all database schemas
 		docker exec -i $(LOCAL_PROJECT)-mysql-app-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
 	done
 	@echo "Applying queue schema to mysql-queue..."
-	@for file in extension/queue/sql/schema/*.sql; do \
+	@for file in extension/queue/mysql/schema/*.sql; do \
 		echo "  - Applying $$(basename $$file)..."; \
 		docker exec -i $(LOCAL_PROJECT)-mysql-queue-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
 	done
