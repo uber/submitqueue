@@ -15,7 +15,7 @@ import (
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
-	queueSQL "github.com/uber/submitqueue/extension/queue/sql"
+	queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
 	"github.com/uber/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/gateway/controller"
 	pb "github.com/uber/submitqueue/gateway/protopb"
@@ -122,7 +122,7 @@ func run() error {
 	defer queueDB.Close()
 
 	// Initialize queue
-	sqlQueue, err := queueSQL.NewQueue(queueSQL.Params{
+	mysqlQueue, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           queueDB,
 		Logger:       logger,
 		MetricsScope: scope.SubScope("queue"),
@@ -130,7 +130,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("failed to create queue: %w", err)
 	}
-	defer sqlQueue.Close()
+	defer mysqlQueue.Close()
 
 	logger.Info("initialized dependencies",
 		zap.String("app_dsn", appDSN),
@@ -142,7 +142,7 @@ func run() error {
 
 	// Create controllers and wrap them for gRPC
 	pingController := controller.NewPingController(logger, scope)
-	landController := controller.NewLandController(logger.Sugar(), scope, store, cnt, sqlQueue.Publisher(), consumer.TopicRequest.String())
+	landController := controller.NewLandController(logger.Sugar(), scope, store, cnt, mysqlQueue.Publisher(), consumer.TopicRequest.String())
 	gatewayServer := &GatewayServer{
 		pingController: pingController,
 		landController: landController,

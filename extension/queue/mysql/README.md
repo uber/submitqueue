@@ -15,14 +15,14 @@ MySQL-based distributed queue with partition leasing, visibility timeout, and at
 import (
     "database/sql"
     _ "github.com/go-sql-driver/mysql"
-    queueSQL "github.com/uber/submitqueue/extension/queue/sql"
+    queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
     extqueue "github.com/uber/submitqueue/extension/queue"
     "github.com/uber/submitqueue/entity/queue"
 )
 
 // Setup
 db, _ := sql.Open("mysql", "user:pass@tcp(localhost:3306)/db")
-q, _ := queueSQL.NewQueue(queueSQL.Params{
+q, _ := queueMySQL.NewQueue(queueMySQL.Params{
     DB:           db,
     Logger:       logger,
     MetricsScope: metrics,

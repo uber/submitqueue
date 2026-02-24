@@ -74,7 +74,7 @@ func (s *OrchestratorIntegrationSuite) SetupSuite() {
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("extension/counter/mysql/schema"))
 
 	// Apply schemas programmatically to queue database
-	testutil.ApplySchema(t, s.log, s.queueDB, testutil.SchemaDir("extension/queue/sql/schema"))
+	testutil.ApplySchema(t, s.log, s.queueDB, testutil.SchemaDir("extension/queue/mysql/schema"))
 
 	s.log.Logf("Schemas applied successfully")
 

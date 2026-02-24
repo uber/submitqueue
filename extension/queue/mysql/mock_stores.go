@@ -7,7 +7,7 @@
 //
 
 // Package sql is a generated GoMock package.
-package sql
+package mysql
 
 import (
 	context "context"

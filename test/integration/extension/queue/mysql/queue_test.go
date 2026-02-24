@@ -1,4 +1,4 @@
-package sql
+package mysql
 
 import (
 	"context"
@@ -18,7 +18,7 @@ import (
 
 	"github.com/uber/submitqueue/entity/queue"
 	extqueue "github.com/uber/submitqueue/extension/queue"
-	queueSQL "github.com/uber/submitqueue/extension/queue/sql"
+	queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
 	"github.com/uber/submitqueue/test/testutil"
 )
 
@@ -63,7 +63,7 @@ func (s *SQLQueueIntegrationSuite) SetupSuite() {
 	s.log.Logf("Connected to MySQL for queue testing")
 
 	// Apply schemas programmatically from directory (queue has 3 schema files)
-	schemaDir := testutil.SchemaDir("extension/queue/sql/schema")
+	schemaDir := testutil.SchemaDir("extension/queue/mysql/schema")
 	testutil.ApplySchema(t, s.log, s.db, schemaDir)
 
 	s.log.Logf("Schemas applied successfully")
@@ -121,7 +121,7 @@ func (s *SQLQueueIntegrationSuite) TestPublishAndSubscribe() {
 	t := s.T()
 
 	// Create queue
-	q, err := queueSQL.NewQueue(queueSQL.Params{
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
@@ -191,7 +191,7 @@ func (s *SQLQueueIntegrationSuite) TestPublishAndSubscribe() {
 func (s *SQLQueueIntegrationSuite) TestMultiplePartitions() {
 	t := s.T()
 
-	q, err := queueSQL.NewQueue(queueSQL.Params{
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
@@ -236,7 +236,7 @@ func (s *SQLQueueIntegrationSuite) TestMultiplePartitions() {
 func (s *SQLQueueIntegrationSuite) TestVisibilityTimeoutAndRetry() {
 	t := s.T()
 
-	q, err := queueSQL.NewQueue(queueSQL.Params{
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
@@ -323,7 +323,7 @@ func (s *SQLQueueIntegrationSuite) TestVisibilityTimeoutAndRetry() {
 func (s *SQLQueueIntegrationSuite) TestNackWithDelay() {
 	t := s.T()
 
-	q, err := queueSQL.NewQueue(queueSQL.Params{
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
@@ -375,7 +375,7 @@ func (s *SQLQueueIntegrationSuite) TestNackWithDelay() {
 func (s *SQLQueueIntegrationSuite) TestIdempotentPublish() {
 	t := s.T()
 
-	q, err := queueSQL.NewQueue(queueSQL.Params{
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
@@ -422,7 +422,7 @@ func (s *SQLQueueIntegrationSuite) TestIdempotentPublish() {
 func (s *SQLQueueIntegrationSuite) TestConcurrentPublishers() {
 	t := s.T()
 
-	q, err := queueSQL.NewQueue(queueSQL.Params{
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
@@ -478,7 +478,7 @@ func (s *SQLQueueIntegrationSuite) TestConcurrentPublishers() {
 func (s *SQLQueueIntegrationSuite) TestCrashRecovery() {
 	t := s.T()
 
-	q1, err := queueSQL.NewQueue(queueSQL.Params{
+	q1, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
@@ -520,7 +520,7 @@ func (s *SQLQueueIntegrationSuite) TestCrashRecovery() {
 	time.Sleep(waitTime)
 
 	// Start worker 2 with same consumer group
-	q2, err := queueSQL.NewQueue(queueSQL.Params{
+	q2, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
@@ -556,7 +556,7 @@ func (s *SQLQueueIntegrationSuite) TestMultipleConsumerGroups() {
 	topic := "multi_group_topic"
 
 	// Create two different consumer groups
-	q1, err := queueSQL.NewQueue(queueSQL.Params{
+	q1, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
@@ -564,7 +564,7 @@ func (s *SQLQueueIntegrationSuite) TestMultipleConsumerGroups() {
 	require.NoError(t, err)
 	defer q1.Close()
 
-	q2, err := queueSQL.NewQueue(queueSQL.Params{
+	q2, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
@@ -635,7 +635,7 @@ func (s *SQLQueueIntegrationSuite) TestMultipleWorkersInConsumerGroup() {
 	consumerGroup := "shared-group"
 
 	// Create two workers in same consumer group
-	q1, err := queueSQL.NewQueue(queueSQL.Params{
+	q1, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
@@ -643,7 +643,7 @@ func (s *SQLQueueIntegrationSuite) TestMultipleWorkersInConsumerGroup() {
 	require.NoError(t, err)
 	defer q1.Close()
 
-	q2, err := queueSQL.NewQueue(queueSQL.Params{
+	q2, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
@@ -752,7 +752,7 @@ func (s *SQLQueueIntegrationSuite) TestConcurrentSubscribers() {
 	totalMessages := numSubscribers * messagesPerSubscriber
 
 	// Create publisher
-	pubQueue, err := queueSQL.NewQueue(queueSQL.Params{
+	pubQueue, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
@@ -767,7 +767,7 @@ func (s *SQLQueueIntegrationSuite) TestConcurrentSubscribers() {
 	var deliveryChans []<-chan extqueue.Delivery
 
 	for i := 0; i < numSubscribers; i++ {
-		q, err := queueSQL.NewQueue(queueSQL.Params{
+		q, err := queueMySQL.NewQueue(queueMySQL.Params{
 			DB:           s.db,
 			Logger:       zaptest.NewLogger(t),
 			MetricsScope: tally.NoopScope,
@@ -857,7 +857,7 @@ func (s *SQLQueueIntegrationSuite) TestDeadLetterQueue() {
 
 	topic := "dlq_topic"
 
-	q, err := queueSQL.NewQueue(queueSQL.Params{
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
@@ -953,7 +953,7 @@ func (s *SQLQueueIntegrationSuite) TestMessageOrderingWithinPartition() {
 	topic := "ordering_topic"
 	partitionKey := "ordered-partition"
 
-	q, err := queueSQL.NewQueue(queueSQL.Params{
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
@@ -1004,7 +1004,7 @@ func (s *SQLQueueIntegrationSuite) TestLateSubscriber() {
 
 	topic := "late_subscriber_topic"
 
-	q, err := queueSQL.NewQueue(queueSQL.Params{
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
@@ -1055,7 +1055,7 @@ func (s *SQLQueueIntegrationSuite) TestEmptyTopicSubscribe() {
 
 	topic := "empty_topic"
 
-	q, err := queueSQL.NewQueue(queueSQL.Params{
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
@@ -1099,7 +1099,7 @@ func (s *SQLQueueIntegrationSuite) TestGracefulShutdownDuringProcessing() {
 
 	topic := "shutdown_topic"
 
-	q, err := queueSQL.NewQueue(queueSQL.Params{
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,
@@ -1165,7 +1165,7 @@ drainLoop:
 
 	// Start new subscriber to verify all messages are redelivered
 	t.Logf("Starting new subscriber to verify message recovery...")
-	q2, err := queueSQL.NewQueue(queueSQL.Params{
+	q2, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           s.db,
 		Logger:       zaptest.NewLogger(t),
 		MetricsScope: tally.NoopScope,

@@ -13,7 +13,7 @@ go_library(
     deps = [
         "//core/consumer",
         "//extension/queue",
-        "//extension/queue/sql",
+        "//extension/queue/mysql",
         "//orchestrator/controller",
         "//orchestrator/controller/request",
         "//orchestrator/protopb",
