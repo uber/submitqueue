@@ -13,7 +13,7 @@ LOCAL_PROJECT = submitqueue
 # Set REPO_ROOT for docker-compose
 export REPO_ROOT := $(shell pwd)
 
-.PHONY: build build-all-linux build-gateway-linux build-orchestrator-linux clean clean-proto deps e2e-test gazelle integration-test integration-test-extensions integration-test-gateway integration-test-orchestrator local-clean local-gateway-start local-gateway-stop local-init-schemas local-logs local-orchestrator-start local-orchestrator-stop local-ps local-restart local-start local-stop proto query-deps query-targets run-client-gateway run-client-orchestrator run-client-speculator test test-no-cache help
+.PHONY: build build-all-linux build-gateway-linux build-orchestrator-linux clean clean-proto deps e2e-test gazelle integration-test integration-test-extensions integration-test-gateway integration-test-orchestrator local-clean local-gateway-start local-gateway-stop local-init-schemas local-logs local-orchestrator-start local-orchestrator-stop local-ps local-restart local-start local-stop proto query-deps query-targets run-client-gateway run-client-orchestrator run-client-speculator run-queue-admin test test-no-cache help
 
 
 build: ## Build all services and examples
@@ -226,6 +226,9 @@ run-client-orchestrator:
 # Run speculator client (connects to any running speculator service)
 run-client-speculator:
 	@$(BAZEL) run //example/client/speculator:speculator -- -addr $(or $(SERVER_ADDR),localhost:8083) -message "$(or $(MESSAGE),ping)"
+
+run-queue-admin: ## Run queue-admin CLI (use ARGS to pass arguments, e.g. make run-queue-admin ARGS="list-topics")
+	@$(BAZEL) run //extension/queue/mysql/ctl -- $(ARGS)
 
 test: ## Run unit tests
 	@echo "Running unit tests..."

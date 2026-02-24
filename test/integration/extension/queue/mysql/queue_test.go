@@ -19,6 +19,7 @@ import (
 	"github.com/uber/submitqueue/entity/queue"
 	extqueue "github.com/uber/submitqueue/extension/queue"
 	queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
+	queueAdmin "github.com/uber/submitqueue/extension/queue/mysql/ctl/lib"
 	"github.com/uber/submitqueue/test/testutil"
 )
 
@@ -1198,4 +1199,300 @@ drainLoop:
 	assert.GreaterOrEqual(t, len(receivedIDs), 1, "Should receive at least the in-flight message")
 
 	t.Logf("Graceful shutdown test successful: %d messages recovered (including in-flight)", len(receivedIDs))
+}
+
+// --- Admin CLI (ctl) integration tests ---
+// These tests use the publisher/subscriber to create real state,
+// then verify it using AdminStore.
+
+func (s *SQLQueueIntegrationSuite) TestAdmin_ListTopicsAfterPublish() {
+	t := s.T()
+
+	topic := "admin_list_topics_test"
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	// Publish messages
+	publisher := q.Publisher()
+	require.NoError(t, publisher.Publish(s.ctx, topic, queue.NewMessage("msg-1", []byte("a"), "p1", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, queue.NewMessage("msg-2", []byte("b"), "p1", nil)))
+
+	// Verify via AdminStore
+	admin := queueAdmin.NewAdminStore(s.db)
+	topics, err := admin.ListTopics(s.ctx)
+	require.NoError(t, err)
+
+	found := false
+	for _, ti := range topics {
+		if ti.Topic == topic {
+			found = true
+			assert.Equal(t, int64(2), ti.MessageCount)
+		}
+	}
+	assert.True(t, found, "topic %q should appear in list-topics", topic)
+}
+
+func (s *SQLQueueIntegrationSuite) TestAdmin_TopicStatsAfterPublish() {
+	t := s.T()
+
+	topic := "admin_stats_test"
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	publisher := q.Publisher()
+	require.NoError(t, publisher.Publish(s.ctx, topic, queue.NewMessage("s1", []byte("x"), "p1", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, queue.NewMessage("s2", []byte("y"), "p2", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, queue.NewMessage("s3", []byte("z"), "p2", nil)))
+
+	admin := queueAdmin.NewAdminStore(s.db)
+	stats, err := admin.GetTopicStats(s.ctx, topic, "_dlq")
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(3), stats.TotalMessages)
+	assert.Equal(t, int64(3), stats.VisibleMessages)
+	assert.Equal(t, int64(0), stats.InvisibleMessages)
+	assert.Equal(t, int64(2), stats.PartitionCount) // p1, p2
+	assert.Equal(t, int64(0), stats.DLQCount)
+
+	t.Logf("Topic stats verified: total=%d visible=%d partitions=%d", stats.TotalMessages, stats.VisibleMessages, stats.PartitionCount)
+}
+
+func (s *SQLQueueIntegrationSuite) TestAdmin_InspectMessage() {
+	t := s.T()
+
+	topic := "admin_inspect_test"
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	metadata := map[string]string{"env": "test", "trace": "abc"}
+	publisher := q.Publisher()
+	require.NoError(t, publisher.Publish(s.ctx, topic, queue.NewMessage("inspect-1", []byte("payload-data"), "p1", metadata)))
+
+	admin := queueAdmin.NewAdminStore(s.db)
+	detail, found, err := admin.InspectMessage(s.ctx, topic, "inspect-1")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "inspect-1", detail.ID)
+	assert.Equal(t, topic, detail.Topic)
+	assert.Equal(t, "p1", detail.PartitionKey)
+	assert.Equal(t, []byte("payload-data"), detail.Payload)
+	assert.Equal(t, "test", detail.Metadata["env"])
+	assert.Equal(t, "abc", detail.Metadata["trace"])
+
+	t.Logf("Inspect message verified: id=%s payload=%s metadata=%v", detail.ID, string(detail.Payload), detail.Metadata)
+}
+
+func (s *SQLQueueIntegrationSuite) TestAdmin_DeleteAndPurge() {
+	t := s.T()
+
+	topic := "admin_delete_test"
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	publisher := q.Publisher()
+	require.NoError(t, publisher.Publish(s.ctx, topic, queue.NewMessage("del-1", []byte("a"), "p1", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, queue.NewMessage("del-2", []byte("b"), "p1", nil)))
+	require.NoError(t, publisher.Publish(s.ctx, topic, queue.NewMessage("del-3", []byte("c"), "p1", nil)))
+
+	admin := queueAdmin.NewAdminStore(s.db)
+
+	// Delete single message
+	affected, err := admin.DeleteMessage(s.ctx, topic, "del-1")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), affected)
+
+	// Verify it's gone
+	_, found, err := admin.InspectMessage(s.ctx, topic, "del-1")
+	require.NoError(t, err)
+	assert.False(t, found)
+
+	// Purge remaining
+	affected, err = admin.PurgeTopic(s.ctx, topic)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), affected)
+
+	// Verify topic is empty
+	msgs, err := admin.ListMessages(s.ctx, topic, "", 50)
+	require.NoError(t, err)
+	assert.Empty(t, msgs)
+}
+
+func (s *SQLQueueIntegrationSuite) TestAdmin_ConsumerLagAfterPartialAck() {
+	t := s.T()
+
+	topic := "admin_lag_test"
+	consumerGroup := "lag-consumer"
+
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	publisher := q.Publisher()
+	subscriber := q.Subscriber()
+
+	// Publish 5 messages to same partition
+	for i := 0; i < 5; i++ {
+		msg := queue.NewMessage(fmt.Sprintf("lag-%d", i), []byte("data"), "lag-partition", nil)
+		require.NoError(t, publisher.Publish(s.ctx, topic, msg))
+	}
+
+	// Subscribe and ack only 2
+	subConfig := extqueue.DefaultSubscriptionConfig(topic, "worker-1", consumerGroup)
+	subConfig.PollIntervalMs = 100
+	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
+	require.NoError(t, err)
+
+	receiveNWithTimeout(t, deliveryChan, 2, 5*time.Second, func(delivery extqueue.Delivery, index int) {
+		require.NoError(t, delivery.Ack(s.ctx))
+	})
+
+	// Check consumer lag — should show lag > 0
+	admin := queueAdmin.NewAdminStore(s.db)
+	lags, err := admin.ConsumerLag(s.ctx, topic)
+	require.NoError(t, err)
+	require.NotEmpty(t, lags)
+
+	var found bool
+	for _, lag := range lags {
+		if lag.ConsumerGroup == consumerGroup && lag.PartitionKey == "lag-partition" {
+			found = true
+			assert.Greater(t, lag.LatestOffset, lag.AckedOffset, "latest should be ahead of acked")
+			assert.Greater(t, lag.Lag, int64(0), "lag should be positive with unacked messages")
+			t.Logf("Consumer lag verified: acked=%d latest=%d lag=%d", lag.AckedOffset, lag.LatestOffset, lag.Lag)
+		}
+	}
+	assert.True(t, found, "should find lag entry for consumer group %q", consumerGroup)
+}
+
+func (s *SQLQueueIntegrationSuite) TestAdmin_LeasesAndOffsets() {
+	t := s.T()
+
+	topic := "admin_leases_test"
+	consumerGroup := "lease-consumer"
+
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	publisher := q.Publisher()
+	subscriber := q.Subscriber()
+
+	// Publish and subscribe to create leases and offsets
+	require.NoError(t, publisher.Publish(s.ctx, topic, queue.NewMessage("lo-1", []byte("a"), "p1", nil)))
+
+	subConfig := extqueue.DefaultSubscriptionConfig(topic, "admin-worker-1", consumerGroup)
+	subConfig.PollIntervalMs = 100
+	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
+	require.NoError(t, err)
+
+	// Ack the message to create offset entries
+	delivery := receiveWithTimeout(t, deliveryChan, 5*time.Second)
+	require.NoError(t, delivery.Ack(s.ctx))
+
+	admin := queueAdmin.NewAdminStore(s.db)
+
+	// Verify leases are visible
+	leases, err := admin.ListLeases(s.ctx)
+	require.NoError(t, err)
+
+	var leaseFound bool
+	for _, l := range leases {
+		if l.ConsumerGroup == consumerGroup && l.Topic == topic {
+			leaseFound = true
+			assert.Equal(t, "admin-worker-1", l.LeasedBy)
+			assert.Greater(t, l.LeasedAt, int64(0))
+			assert.Greater(t, l.LeaseRenewedAt, int64(0))
+			t.Logf("Lease verified: group=%s topic=%s partition=%s leased_by=%s", l.ConsumerGroup, l.Topic, l.PartitionKey, l.LeasedBy)
+		}
+	}
+	assert.True(t, leaseFound, "should find lease for consumer group %q", consumerGroup)
+
+	// Verify offsets are visible
+	offsets, err := admin.ListOffsets(s.ctx, consumerGroup)
+	require.NoError(t, err)
+
+	var offsetFound bool
+	for _, o := range offsets {
+		if o.Topic == topic {
+			offsetFound = true
+			assert.Greater(t, o.OffsetAcked, int64(0), "offset should be > 0 after ack")
+			t.Logf("Offset verified: group=%s topic=%s partition=%s acked=%d", o.ConsumerGroup, o.Topic, o.PartitionKey, o.OffsetAcked)
+		}
+	}
+	assert.True(t, offsetFound, "should find offset for consumer group %q", consumerGroup)
+}
+
+func (s *SQLQueueIntegrationSuite) TestAdmin_ResetOffsetAndReleaseLease() {
+	t := s.T()
+
+	topic := "admin_reset_test"
+	consumerGroup := "reset-consumer"
+
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	publisher := q.Publisher()
+	subscriber := q.Subscriber()
+
+	// Publish, subscribe, ack — creates offsets and leases
+	require.NoError(t, publisher.Publish(s.ctx, topic, queue.NewMessage("r1", []byte("a"), "rp1", nil)))
+
+	subConfig := extqueue.DefaultSubscriptionConfig(topic, "reset-worker", consumerGroup)
+	subConfig.PollIntervalMs = 100
+	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
+	require.NoError(t, err)
+
+	delivery := receiveWithTimeout(t, deliveryChan, 5*time.Second)
+	require.NoError(t, delivery.Ack(s.ctx))
+
+	admin := queueAdmin.NewAdminStore(s.db)
+
+	// Reset offset to 0
+	affected, err := admin.ResetOffset(s.ctx, consumerGroup, topic, "rp1", 0)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), affected)
+
+	// Verify offset was reset
+	offsets, err := admin.ListOffsets(s.ctx, consumerGroup)
+	require.NoError(t, err)
+	for _, o := range offsets {
+		if o.Topic == topic && o.PartitionKey == "rp1" {
+			assert.Equal(t, int64(0), o.OffsetAcked, "offset should be reset to 0")
+		}
+	}
+
+	// Release the lease
+	affected, err = admin.ReleaseLease(s.ctx, consumerGroup, topic, "rp1")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), affected)
+
+	// Verify lease is gone
+	leases, err := admin.ListLeases(s.ctx)
+	require.NoError(t, err)
+	for _, l := range leases {
+		if l.ConsumerGroup == consumerGroup && l.Topic == topic && l.PartitionKey == "rp1" {
+			t.Errorf("lease should have been released but still exists")
+		}
+	}
+
+	t.Logf("Reset offset and release lease verified")
 }
