@@ -1,9 +1,21 @@
 package entity
 
+// SpeculationPathAction defines the possible actions for a speculation path.
+type SpeculationPathAction string
+
+const (
+	// SpeculationPathActionUnknown is the default zero value for SpeculationPathAction.
+	SpeculationPathActionUnknown SpeculationPathAction = ""
+	// TODO: Add comprehensive list of actions
+)
+
 // SpeculationInfo represents metadata about a single speculation path, including the path through the dependency graph, its current state, and the predicted build score.
 type SpeculationInfo struct {
+	// Path represents the speculation path.
 	Path string
-	State string
+	// Action is a state that this path is in.
+	Action SpeculationPathAction
+	// Score is score for this speculation path.
 	Score float32
 }
 
