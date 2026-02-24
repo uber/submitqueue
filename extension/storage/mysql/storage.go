@@ -14,6 +14,7 @@ type mysqlStorage struct {
 	changeProviderStore   storage.ChangeProviderStore
 	batchStore            storage.BatchStore
 	batchDependentStore   storage.BatchDependentStore
+	buildStore            storage.BuildStore
 }
 
 // NewStorage creates a new MySQL storage.
@@ -24,6 +25,7 @@ func NewStorage(db *sql.DB) (storage.Storage, error) {
 		changeProviderStore:   NewChangeProviderStore(db),
 		batchStore:            NewBatchStore(db),
 		batchDependentStore:   NewBatchDependentStore(db),
+		buildStore:            NewBuildStore(db),
 	}, nil
 }
 
@@ -45,6 +47,11 @@ func (f *mysqlStorage) GetBatchStore() storage.BatchStore {
 // GetBatchDependentStore returns the MySQL-backed BatchDependentStore.
 func (f *mysqlStorage) GetBatchDependentStore() storage.BatchDependentStore {
 	return f.batchDependentStore
+}
+
+// GetBuildStore returns the MySQL-backed BuildStore.
+func (f *mysqlStorage) GetBuildStore() storage.BuildStore {
+	return f.buildStore
 }
 
 // Close closes the underlying database connection.
