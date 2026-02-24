@@ -23,6 +23,12 @@ func NewChangeProviderStore(db *sql.DB) storage.ChangeProviderStore {
 }
 
 // Get retrieves change provider(s) by request ID. Returns ErrNotFound if the change provider is not found.
+//
+// Note: The order of ChangeProvider entities returned here is not guaranteed
+// to be the same as the request to which it belongs. The caller is repsonsible
+// for inspecting and mapping the result of this function to the
+// order of changes within the original request.
+//
 func (s *changeProviderStore) Get(ctx context.Context, requestID string) ([]entity.ChangeProvider, error) {
 	rows, err := s.db.QueryContext(ctx,
 		"SELECT request_id, change_provider_src, change_provider_id, metadata FROM change_provider WHERE request_id = ?",
