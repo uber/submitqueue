@@ -10,15 +10,13 @@ Provides queue configurations by name.
 
 ```go
 type Store interface {
-    Get(ctx context.Context, name string) (queueconfig.Config, error)
-    List(ctx context.Context) ([]queueconfig.Config, error)
+    Get(ctx context.Context, name string) (entity.QueueConfig, error)
+    List(ctx context.Context) ([]entity.QueueConfig, error)
 }
 ```
 
 ## Entities
 
-Queue configuration entities live in `entity/queueconfig/`:
+Queue configuration entity lives in `entity/queue_config.go`:
 
-- **Config** — configuration for a single submit queue (name, repository, destination, change provider)
-- **Repository** — platform-specific repository identifier (opaque ID string)
-- **Destination** — VCS-agnostic landing target (opaque ref string interpreted by the change provider)
+- **QueueConfig** — configuration for a single submit queue (name, repository ID, destination ref, change provider names)

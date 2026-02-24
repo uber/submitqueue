@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/uber/submitqueue/entity/queueconfig"
+	"github.com/uber/submitqueue/entity"
 )
 
 // ErrNotFound is returned when the requested queue configuration does not exist.
@@ -15,8 +15,8 @@ var ErrNotFound = errors.New("queue config not found")
 type Store interface {
 	// Get returns the configuration for a named queue.
 	// Returns ErrNotFound if no configuration exists for the given name.
-	Get(ctx context.Context, name string) (queueconfig.Config, error)
+	Get(ctx context.Context, name string) (entity.QueueConfig, error)
 
 	// List returns all configured queues.
-	List(ctx context.Context) ([]queueconfig.Config, error)
+	List(ctx context.Context) ([]entity.QueueConfig, error)
 }

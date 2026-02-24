@@ -5,5 +5,5 @@ go_library(
     srcs = ["queueconfig.go"],
     importpath = "github.com/uber/submitqueue/extension/queueconfig",
     visibility = ["//visibility:public"],
-    deps = ["//entity/queueconfig"],
+    deps = ["//entity"],
 )
