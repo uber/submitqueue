@@ -6,8 +6,32 @@ type BatchState string
 const (
 	// BatchStateUnknown is the unreachable state. It is set by default when the structure is initialized. It should never be seen in the system.
 	BatchStateUnknown BatchState = ""
-	// TODO: Add comprehensive list of known batch states.
+	// BatchStateScheduled is the state of a batch that has been scheduled for processing.
+	BatchStateScheduled BatchState = "scheduled"
+	// BatchStateSpeculating is the state of a batch that is undergoing speculative execution.
+	BatchStateSpeculating BatchState = "speculating"
+	// BatchStateFinalizing is the state of a batch that is being finalized after speculative execution.
+	BatchStateFinalizing BatchState = "finalizing"
+	// BatchStateSucceeded is the terminal state of a batch that has been successfully landed.
+	BatchStateSucceeded BatchState = "succeeded"
+	// BatchStateFailed is the terminal state of a batch that has failed to land.
+	BatchStateFailed BatchState = "failed"
+	// BatchStateCancelled is the terminal state of a batch that was cancelled before completion.
+	BatchStateCancelled BatchState = "cancelled"
+	// BatchStateCancellationFailed is the terminal state of a batch whose cancellation process itself failed.
+	BatchStateCancellationFailed BatchState = "cancellationfailed"
 )
+
+// IsTerminal returns true if the batch state is a terminal state.
+// Terminal states are states from which no further transitions are possible.
+func (s BatchState) IsTerminal() bool {
+	switch s {
+	case BatchStateSucceeded, BatchStateFailed, BatchStateCancelled, BatchStateCancellationFailed:
+		return true
+	default:
+		return false
+	}
+}
 
 // Batch represents a group of requests to land (merge into target branch of the source control repository).
 type Batch struct {
