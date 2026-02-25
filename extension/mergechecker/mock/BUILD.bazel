@@ -1,0 +1,13 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mock",
+    srcs = ["mergechecker_mock.go"],
+    importpath = "github.com/uber/submitqueue/extension/mergechecker/mock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//entity",
+        "//extension/mergechecker",
+        "@org_uber_go_mock//gomock",
+    ],
+)

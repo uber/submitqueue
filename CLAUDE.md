@@ -241,6 +241,7 @@ deps = [
 
 ### Testing
 
+- **Table-driven tests** — prefer table-driven tests with `t.Run` subtests over individual test functions.
 - **Avoid asserting on error messages** — assert on error type or generic error.
 - **No change detector tests** — don't assert on default values, internal structure, or implementation details that can change without affecting behavior. Test what the code *does*, not how it's constructed.
 - **No `time.Sleep` for synchronization** — use channels, callbacks, condition variables.

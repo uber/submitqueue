@@ -11,13 +11,22 @@ import (
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
+	"github.com/uber/submitqueue/extension/mergechecker"
+	mergecheckermock "github.com/uber/submitqueue/extension/mergechecker/mock"
 	queuemock "github.com/uber/submitqueue/extension/queue/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
 
+// newMergeableMock returns a mock MergeChecker that always returns mergeable.
+func newMergeableMock(ctrl *gomock.Controller) *mergecheckermock.MockMergeChecker {
+	mc := mergecheckermock.NewMockMergeChecker(ctrl)
+	mc.EXPECT().Check(gomock.Any(), gomock.Any(), gomock.Any()).Return(mergechecker.Result{Mergeable: true}, nil).AnyTimes()
+	return mc
+}
+
 // newTestController creates a controller with test dependencies.
-func newTestController(t *testing.T, ctrl *gomock.Controller, publishErr error) *Controller {
+func newTestController(t *testing.T, ctrl *gomock.Controller, mc mergechecker.MergeChecker, publishErr error) *Controller {
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
 
@@ -36,12 +45,13 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, publishErr error) 
 		nil,
 	)
 
-	return NewController(logger, scope, registry, consumer.TopicRequest, "orchestrator-request")
+	return NewController(logger, scope, registry, mc, consumer.TopicRequest, "orchestrator-request")
 }
 
 func TestNewController(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	controller := newTestController(t, ctrl, nil)
+	mc := newMergeableMock(ctrl)
+	controller := newTestController(t, ctrl, mc, nil)
 
 	require.NotNil(t, controller)
 	assert.Equal(t, consumer.TopicRequest, controller.Topic())
@@ -51,8 +61,9 @@ func TestNewController(t *testing.T) {
 
 func TestController_Process_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
+	mc := newMergeableMock(ctrl)
 
-	controller := newTestController(t, ctrl, nil)
+	controller := newTestController(t, ctrl, mc, nil)
 
 	request := entity.Request{
 		ID:           "test-queue/123",
@@ -77,8 +88,9 @@ func TestController_Process_Success(t *testing.T) {
 
 func TestController_Process_InvalidJSON(t *testing.T) {
 	ctrl := gomock.NewController(t)
+	mc := newMergeableMock(ctrl)
 
-	controller := newTestController(t, ctrl, nil)
+	controller := newTestController(t, ctrl, mc, nil)
 
 	invalidPayload := []byte(`{"invalid": json"}`)
 	msg := queue.NewMessage("invalid-msg", invalidPayload, "partition1", nil)
@@ -109,8 +121,9 @@ func TestController_Process_AllRequestStates(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
+			mc := newMergeableMock(ctrl)
 
-			controller := newTestController(t, ctrl, nil)
+			controller := newTestController(t, ctrl, mc, nil)
 
 			request := entity.Request{
 				ID:           fmt.Sprintf("queue/%s", tt.state),
@@ -137,8 +150,9 @@ func TestController_Process_AllRequestStates(t *testing.T) {
 
 func TestController_Process_MultipleChanges(t *testing.T) {
 	ctrl := gomock.NewController(t)
+	mc := newMergeableMock(ctrl)
 
-	controller := newTestController(t, ctrl, nil)
+	controller := newTestController(t, ctrl, mc, nil)
 
 	request := entity.Request{
 		ID:    "queue/999",
@@ -169,8 +183,9 @@ func TestController_Process_MultipleChanges(t *testing.T) {
 
 func TestController_Process_PublishFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
+	mc := newMergeableMock(ctrl)
 
-	controller := newTestController(t, ctrl, fmt.Errorf("publish failed"))
+	controller := newTestController(t, ctrl, mc, fmt.Errorf("publish failed"))
 
 	request := entity.Request{
 		ID:           "test-queue/123",
@@ -195,7 +210,69 @@ func TestController_Process_PublishFailure(t *testing.T) {
 
 func TestController_InterfaceImplementation(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	controller := newTestController(t, ctrl, nil)
+	mc := newMergeableMock(ctrl)
+	controller := newTestController(t, ctrl, mc, nil)
 
 	var _ consumer.Controller = controller
+}
+
+func TestController_Process_NotMergeable(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	mc := mergecheckermock.NewMockMergeChecker(ctrl)
+	mc.EXPECT().Check(gomock.Any(), gomock.Any(), gomock.Any()).Return(mergechecker.Result{Mergeable: false}, nil)
+
+	controller := newTestController(t, ctrl, mc, nil)
+
+	request := entity.Request{
+		ID:           "test-queue/123",
+		Queue:        "test-queue",
+		Change:       entity.Change{URIs: []string{"github://uber/repo/1/abc123"}},
+		LandStrategy: entity.RequestLandStrategyRebase,
+		State:        entity.RequestStateNew,
+		Version:      1,
+	}
+
+	payload, err := request.ToBytes()
+	require.NoError(t, err)
+
+	msg := queue.NewMessage(request.ID, payload, request.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	err = controller.Process(context.Background(), delivery)
+	require.Error(t, err)
+	assert.True(t, consumer.IsNonRetryable(err))
+}
+
+func TestController_Process_MergeCheckError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	mc := mergecheckermock.NewMockMergeChecker(ctrl)
+	mc.EXPECT().Check(gomock.Any(), gomock.Any(), gomock.Any()).Return(mergechecker.Result{}, fmt.Errorf("merge check failed"))
+
+	controller := newTestController(t, ctrl, mc, nil)
+
+	request := entity.Request{
+		ID:           "test-queue/123",
+		Queue:        "test-queue",
+		Change:       entity.Change{URIs: []string{"github://uber/repo/1/abc123"}},
+		LandStrategy: entity.RequestLandStrategyRebase,
+		State:        entity.RequestStateNew,
+		Version:      1,
+	}
+
+	payload, err := request.ToBytes()
+	require.NoError(t, err)
+
+	msg := queue.NewMessage(request.ID, payload, request.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	err = controller.Process(context.Background(), delivery)
+	require.Error(t, err)
+	// Merge check errors should be retryable (not NonRetryableError)
+	assert.False(t, consumer.IsNonRetryable(err))
 }
