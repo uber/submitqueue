@@ -14,22 +14,23 @@ import (
 //
 // All implementations must be thread-safe and support concurrent operations.
 type BuildManager interface {
-	// ScheduleBuild creates a new build with the CI provider for testing a batch.
+	// Schedule submits a list of changes to the CI provider for processing.
+	// Each change specifies an action (validate or apply) to perform.
+	//
+	// The implementation is responsible for:
+	//   - Looking up the job name from the queue configuration
+	//   - Creating appropriate builds/jobs for each change based on its action
+	//   - Handling dependencies between changes (order may be significant)
+	//   - Tracking build IDs internally for subsequent Poll/CancelBuild calls
 	//
 	// Parameters:
-	//   - head: BatchID of the batch being tested
-	//   - base: List of BatchIDs (in order) that have been applied on main. Order matters.
-	//   - jobName: Pipeline/job name to be called on the CI provider
+	//   - ctx: Request context for cancellation and timeouts
+	//   - queueName: Name of the queue processing these changes. Used to look up job configuration.
+	//   - changes: List of changes to process. Order may be significant for dependencies.
 	//
 	// Returns:
-	//   - string: Unique build ID
 	//   - error: ErrInvalidRequest if validation fails, ErrProviderUnavailable if CI provider is unreachable
-	ScheduleBuild(
-		ctx context.Context,
-		head string,
-		base []string,
-		jobName string,
-	) (string, error)
+	Schedule(ctx context.Context, queueName string, changes []entity.BuildChange) error
 
 	// Poll retrieves the current status of a build from the CI provider.
 	// This is a synchronous call that queries the provider's API.

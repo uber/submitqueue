@@ -56,3 +56,26 @@ type Build struct {
 	// Status represents the state of the build lifecycle this build is in.
 	Status BuildStatus
 }
+
+// BuildAction defines the action to perform on a change submitted to the build system.
+type BuildAction string
+
+const (
+	// BuildActionUnknown is the sentinel value for uninitialized actions.
+	BuildActionUnknown BuildAction = ""
+	// BuildActionValidate runs validation/testing on the change without applying it.
+	BuildActionValidate BuildAction = "validate"
+	// BuildActionApply applies the change to the target branch.
+	BuildActionApply BuildAction = "apply"
+)
+
+// BuildChange represents a code change to be processed by the build system.
+// This is used by BuildManager to specify what changes to build and what action to perform.
+type BuildChange struct {
+	// ChangeID is the unique identifier for this change.
+	// This is typically a diff ID (e.g., "D12345") or PR number (e.g., "42"),
+	// depending on the source control provider.
+	ChangeID string
+	// Action specifies what operation to perform on this change.
+	Action BuildAction
+}

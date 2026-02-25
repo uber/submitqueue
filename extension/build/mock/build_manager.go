@@ -78,17 +78,16 @@ func (mr *MockBuildManagerMockRecorder) Poll(ctx, id interface{}) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Poll", reflect.TypeOf((*MockBuildManager)(nil).Poll), ctx, id)
 }
 
-// ScheduleBuild mocks base method.
-func (m *MockBuildManager) ScheduleBuild(ctx context.Context, head string, base []string, jobName string) (string, error) {
+// Schedule mocks base method.
+func (m *MockBuildManager) Schedule(ctx context.Context, queueName string, changes []entity.BuildChange) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ScheduleBuild", ctx, head, base, jobName)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret := m.ctrl.Call(m, "Schedule", ctx, queueName, changes)
+	ret0, _ := ret[0].(error)
+	return ret0
 }
 
-// ScheduleBuild indicates an expected call of ScheduleBuild.
-func (mr *MockBuildManagerMockRecorder) ScheduleBuild(ctx, head, base, jobName interface{}) *gomock.Call {
+// Schedule indicates an expected call of Schedule.
+func (mr *MockBuildManagerMockRecorder) Schedule(ctx, queueName, changes interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ScheduleBuild", reflect.TypeOf((*MockBuildManager)(nil).ScheduleBuild), ctx, head, base, jobName)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Schedule", reflect.TypeOf((*MockBuildManager)(nil).Schedule), ctx, queueName, changes)
 }

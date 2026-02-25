@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/uber/submitqueue/entity"
 	"go.uber.org/mock/gomock"
+	"github.com/uber/submitqueue/entity"
 )
 
 // TestMockBuildManager_Compilation verifies the mock compiles and basic setup works.
@@ -15,28 +15,27 @@ func TestMockBuildManager_Compilation(t *testing.T) {
 
 	mockBuildMgr := NewMockBuildManager(ctrl)
 
-	// Test ScheduleBuild
-	buildID := "mock://1"
+	// Test Schedule
 	mockBuildMgr.EXPECT().
-		ScheduleBuild(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(buildID, nil)
+		Schedule(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil)
 
-	head := "queue-1/batch/5"
-	base := []string{"queue-1/batch/1", "queue-1/batch/2"}
-	jobName := "test-pipeline"
+	queueName := "test-queue"
+	changes := []entity.BuildChange{
+		{ChangeID: "D12345", Action: entity.BuildActionValidate},
+		{ChangeID: "D12346", Action: entity.BuildActionApply},
+	}
 
-	result, err := mockBuildMgr.ScheduleBuild(
-		context.Background(), head, base, jobName,
+	err := mockBuildMgr.Schedule(
+		context.Background(), queueName, changes,
 	)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != buildID {
-		t.Fatalf("expected %v, got %v", buildID, result)
-	}
 
 	// Test Poll
+	buildID := "mock://1"
 	mockBuildMgr.EXPECT().
 		Poll(gomock.Any(), gomock.Any()).
 		Return(entity.BuildStatusPassed, nil)

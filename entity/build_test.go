@@ -50,3 +50,47 @@ func TestBuildStatus_IsTerminal(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildChange_Creation(t *testing.T) {
+	tests := []struct {
+		name     string
+		change   BuildChange
+		wantID   string
+		wantAction BuildAction
+	}{
+		{
+			name: "validate action",
+			change: BuildChange{
+				ChangeID: "D12345",
+				Action:   BuildActionValidate,
+			},
+			wantID:   "D12345",
+			wantAction: BuildActionValidate,
+		},
+		{
+			name: "apply action",
+			change: BuildChange{
+				ChangeID: "PR-42",
+				Action:   BuildActionApply,
+			},
+			wantID:   "PR-42",
+			wantAction: BuildActionApply,
+		},
+		{
+			name: "unknown action",
+			change: BuildChange{
+				ChangeID: "123",
+				Action:   BuildActionUnknown,
+			},
+			wantID:   "123",
+			wantAction: BuildActionUnknown,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.wantID, tt.change.ChangeID)
+			assert.Equal(t, tt.wantAction, tt.change.Action)
+		})
+	}
+}
