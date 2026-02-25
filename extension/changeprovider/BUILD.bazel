@@ -5,4 +5,5 @@ go_library(
     srcs = ["change_provider.go"],
     importpath = "github.com/uber/submitqueue/extension/changeprovider",
     visibility = ["//visibility:public"],
+    deps = ["//entity"],
 )

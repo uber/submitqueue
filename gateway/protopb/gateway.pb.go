@@ -197,22 +197,22 @@ func (x *PingResponse) GetHostname() string {
 	return ""
 }
 
-// Change represents a set of code changes identified by a URI from a code change provider like Github Pull Requests.
-// The provider is extracted from the URI hostname.
+// Change represents a code change identified by URIs from a code change provider (e.g., GitHub Pull Request, Phabricator Diff).
+// The provider is extracted from the URI scheme.
 type Change struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// URI identifying the change(s) to land. The format is provider-specific.
+	// URIs identifying the change(s) to land (RFC 3986 compliant).
+	// The scheme identifies the change provider, and the path contains provider-specific resource identifiers.
 	//
-	// By default we support GitHub format (though other providers can be added):
+	// GitHub is supported by default (though other providers can be added):
 	//
-	//	Single diff: "github.com/<org>/<repo>/<pr>/<hash>"
-	//	Stacked diff: "github.com/<org>/<repo>/<pr1>/<hash1>/<pr2>/<hash2>/..."
-	//	Example: "github.com/uber/submitqueue/123/abc123def"
+	//	Template: "github://<org>/<repo>/pull/<pr>/<hash>"
+	//	Example: "github://uber/submitqueue/pull/123/abc123def"
 	//
 	// SubmitQueue guarantees changes are landed in order with no other changes in between.
 	// SubmitQueue does not guarantee each change is individually valid, but produces a validity marker on such changes.
 	// The user is responsible for including all changes in a stack in order, starting from the earliest change.
-	Uri           string `protobuf:"bytes,1,opt,name=uri,proto3" json:"uri,omitempty"`
+	Uris          []string `protobuf:"bytes,1,rep,name=uris,proto3" json:"uris,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -247,11 +247,11 @@ func (*Change) Descriptor() ([]byte, []int) {
 	return file_gateway_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *Change) GetUri() string {
+func (x *Change) GetUris() []string {
 	if x != nil {
-		return x.Uri
+		return x.Uris
 	}
-	return ""
+	return nil
 }
 
 // LandRequest defines a request to land (merge into target branch of the source control repository) a set of code changes.
@@ -476,9 +476,9 @@ const file_gateway_proto_rawDesc = "" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12!\n" +
 	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12\x1c\n" +
 	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x1a\n" +
-	"\bhostname\x18\x04 \x01(\tR\bhostname\"\x1a\n" +
-	"\x06Change\x12\x10\n" +
-	"\x03uri\x18\x01 \x01(\tR\x03uri\"\xab\x01\n" +
+	"\bhostname\x18\x04 \x01(\tR\bhostname\"\x1c\n" +
+	"\x06Change\x12\x12\n" +
+	"\x04uris\x18\x01 \x03(\tR\x04uris\"\xab\x01\n" +
 	"\vLandRequest\x12\x14\n" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\x12?\n" +
 	"\x06change\x18\x02 \x01(\v2'.uber.devexp.submitqueue.gateway.ChangeR\x06change\x12E\n" +

@@ -1,6 +1,10 @@
 package changeprovider
 
-import "context"
+import (
+	"context"
+
+	"github.com/uber/submitqueue/entity"
+)
 
 // User represents the author of a change.
 type User struct {
@@ -30,19 +34,14 @@ type ChangeInfo struct {
 	ID string
 	// User is the author of the change.
 	User User
-	// ChangedFiles is the list of files modified in this change.
+	// ChangedFiles is the list of files modified in this change. Order is unspecified.
 	ChangedFiles []ChangedFile
 }
 
 // ChangeProvider fetches change metadata from external systems
 // Each implementation is configured for a specific provider (GitHub, GitLab, Phabricator).
 type ChangeProvider interface {
-	// Get retrieves change information for the provided URI (RFC 3986 compliant).
-	// The URI scheme identifies the provider, and the path contains provider-specific resource identifiers.
-	//
-	// By default, the GitHub format is supported (though other providers can be added):
-	//   Single PR: "github://<org>/<repo>/pull/<pr>/<hash>"
-	//   Stacked PRs: "github://<org>/<repo>/pull/<pr1>/<hash1>/<pr2>/<hash2>/..."
+	// Get retrieves change information for the provided Change.
 	// Returns the change info containing metadata and file changes.
-	Get(ctx context.Context, uri string) (ChangeInfo, error)
+	Get(ctx context.Context, change entity.Change) (ChangeInfo, error)
 }

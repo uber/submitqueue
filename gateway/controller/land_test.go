@@ -248,7 +248,7 @@ func TestLand_ReturnsSqid(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &pb.Change{Uri: "github://uber/test-repo/pull/123/abc123def"},
+		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/abc123def"}},
 	}
 	resp, err := controller.Land(ctx, req)
 
@@ -280,7 +280,7 @@ func TestLand_PassesCorrectParametersToStore(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:    "my-queue",
-		Change:   &pb.Change{Uri: "github://uber/myservice/pull/1/abc111/2/def222"},
+		Change:   &pb.Change{Uris: []string{"github://uber/myservice/pull/1/abc111", "github://uber/myservice/pull/2/def222"}},
 		Strategy: pb.Strategy_REBASE,
 	}
 	resp, err := controller.Land(ctx, req)
@@ -288,7 +288,7 @@ func TestLand_PassesCorrectParametersToStore(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "my-queue/42", capturedRequest.ID)
 	assert.Equal(t, "my-queue", capturedRequest.Queue)
-	assert.Equal(t, "github://uber/myservice/pull/1/abc111/2/def222", capturedRequest.Change.URI)
+	assert.Equal(t, []string{"github://uber/myservice/pull/1/abc111", "github://uber/myservice/pull/2/def222"}, capturedRequest.Change.URIs)
 	assert.Equal(t, entity.RequestLandStrategyRebase, capturedRequest.LandStrategy)
 	assert.Equal(t, entity.RequestStateNew, capturedRequest.State)
 	assert.Equal(t, int32(1), capturedRequest.Version)
@@ -316,7 +316,7 @@ func TestLand_ReturnsErrorOnStorageFailure(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &pb.Change{Uri: "github://uber/test-repo/pull/123/abc123def"},
+		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/abc123def"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -344,7 +344,7 @@ func TestLand_ReturnsErrorOnCounterFailure(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &pb.Change{Uri: "github://uber/test-repo/pull/123/abc123def"},
+		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/abc123def"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -375,7 +375,7 @@ func TestLand_CounterDomainIncludesQueue(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "my-queue",
-		Change: &pb.Change{Uri: "github://uber/test-repo/pull/123/abc123def"},
+		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/abc123def"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -397,7 +397,7 @@ func TestLand_ReturnsErrorOnEmptyQueue(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "",
-		Change: &pb.Change{Uri: "github://uber/test-repo/pull/123/abc123def"},
+		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/abc123def"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -419,7 +419,7 @@ func TestLand_ReturnsErrorOnEmptyChangeUri(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &pb.Change{Uri: ""},
+		Change: &pb.Change{Uris: []string{}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -472,7 +472,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:    "test-queue",
-		Change:   &pb.Change{Uri: "github://uber/backend/pull/456/fed987cba"},
+		Change:   &pb.Change{Uris: []string{"github://uber/backend/pull/456/fed987cba"}},
 		Strategy: pb.Strategy_REBASE,
 	}
 	resp, err := controller.Land(ctx, req)
@@ -490,7 +490,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test-queue/123", deserializedReq.ID)
 	assert.Equal(t, "test-queue", deserializedReq.Queue)
-	assert.Equal(t, "github://uber/backend/pull/456/fed987cba", deserializedReq.Change.URI)
+	assert.Equal(t, []string{"github://uber/backend/pull/456/fed987cba"}, deserializedReq.Change.URIs)
 	assert.Equal(t, entity.RequestLandStrategyRebase, deserializedReq.LandStrategy)
 	assert.Equal(t, entity.RequestStateNew, deserializedReq.State)
 	assert.Equal(t, int32(1), deserializedReq.Version)
@@ -514,7 +514,7 @@ func TestLand_ContinuesWhenPublishFails(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &pb.Change{Uri: "github://uber/service/pull/1/abc123def"},
+		Change: &pb.Change{Uris: []string{"github://uber/service/pull/1/abc123def"}},
 	}
 	_, err := controller.Land(ctx, req)
 

@@ -33,18 +33,17 @@ const (
 	RequestStateError RequestState = "error"
 )
 
-// Change represents a code change identified by a URI from a code change provider (e.g., GitHub Pull Request, Phabricator Diff).
+// Change represents a code change identified by URIs from a code change provider (e.g., GitHub Pull Request, Phabricator Diff).
 // The provider is extracted from the URI scheme. The object is immutable after creation.
 type Change struct {
-	// URI identifies the change(s) to land (RFC 3986 compliant).
+	// URIs identifies the change(s) to land (RFC 3986 compliant).
 	// The scheme identifies the change provider, and the path contains provider-specific resource identifiers.
 	//
-	// By default, the GitHub format is supported (though other providers can be added):
-	//   Single PR: "github://<org>/<repo>/pull/<pr>/<hash>"
-	//   Stacked PRs: "github://<org>/<repo>/pull/<pr1>/<hash1>/<pr2>/<hash2>/..."
+	// GitHub is supported by default (though other providers can be added):
+	//   Template: "github://<org>/<repo>/pull/<pr>/<hash>"
 	//   Example: "github://uber/submitqueue/pull/123/abc123def"
 	//
-	URI string `json:"uri"`
+	URIs []string `json:"uris"`
 }
 
 // Request defines a request to land (merge into target branch of the source control repository) a set of code changes.

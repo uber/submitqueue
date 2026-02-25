@@ -41,21 +41,20 @@ enum Strategy {
     MERGE = 3;
 }
 
-// Change represents a code change identified by a URI from a code change provider (e.g., GitHub Pull Request, Phabricator Diff).
+// Change represents a code change identified by URIs from a code change provider (e.g., GitHub Pull Request, Phabricator Diff).
 // The provider is extracted from the URI scheme.
 message Change {
-    // URI identifying the change(s) to land (RFC 3986 compliant).
+    // URIs identifying the change(s) to land (RFC 3986 compliant).
     // The scheme identifies the change provider, and the path contains provider-specific resource identifiers.
     //
-    // By default, the GitHub format is supported (though other providers can be added):
-    //   Single PR: "github://<org>/<repo>/pull/<pr>/<hash>"
-    //   Stacked PRs: "github://<org>/<repo>/pull/<pr1>/<hash1>/<pr2>/<hash2>/..."
+    // GitHub is supported by default (though other providers can be added):
+    //   Template: "github://<org>/<repo>/pull/<pr>/<hash>"
     //   Example: "github://uber/submitqueue/pull/123/abc123def"
     //
     // SubmitQueue guarantees changes are landed in order with no other changes in between.
     // SubmitQueue does not guarantee each change is individually valid, but produces a validity marker on such changes.
     // The user is responsible for including all changes in a stack in order, starting from the earliest change.
-    string uri = 1;
+    repeated string uris = 1;
 }
 
 // LandRequest defines a request to land (merge into target branch of the source control repository) a set of code changes.
