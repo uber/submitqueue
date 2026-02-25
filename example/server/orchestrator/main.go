@@ -14,6 +14,8 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/extension/counter"
+	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	extqueue "github.com/uber/submitqueue/extension/queue"
 	queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
 	"github.com/uber/submitqueue/orchestrator/controller"
@@ -92,6 +94,20 @@ func run() error {
 		metricsWgDone.Wait()
 	}()
 
+	// Open app database connection for counter
+	// Docker Compose healthchecks ensure MySQL is ready before service starts
+	appDSN := os.Getenv("MYSQL_DSN")
+	if appDSN == "" {
+		return fmt.Errorf("MYSQL_DSN environment variable is required")
+	}
+	appDB, err := sql.Open("mysql", appDSN)
+	if err != nil {
+		return fmt.Errorf("failed to open app database: %w", err)
+	}
+	defer appDB.Close()
+
+	cnt := mysqlcounter.NewCounter(appDB)
+
 	// Open queue database connection
 	// Docker Compose healthchecks ensure MySQL is ready before service starts
 	queueDSN := os.Getenv("QUEUE_MYSQL_DSN")
@@ -129,7 +145,7 @@ func run() error {
 	c := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry)
 
 	// Register controllers
-	if err := registerControllers(c, logger.Sugar(), scope, registry); err != nil {
+	if err := registerControllers(c, logger.Sugar(), scope, registry, cnt); err != nil {
 		return err
 	}
 
@@ -253,7 +269,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) consumer.TopicReg
 //
 //	→ merge → merge-signal
 //	finalize (terminal)
-func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry) error {
+func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, cnt counter.Counter) error {
 	requestController := request.NewController(
 		logger,
 		scope,
@@ -269,6 +285,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		registry,
+		cnt,
 		consumer.TopicToBatch,
 		"orchestrator-batch",
 	)

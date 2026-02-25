@@ -8,6 +8,7 @@ import (
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
+	"github.com/uber/submitqueue/extension/counter"
 	"go.uber.org/zap"
 )
 
@@ -18,6 +19,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	registry      consumer.TopicRegistry
+	counter       counter.Counter
 	topic         consumer.Topic
 	consumerGroup string
 }
@@ -30,6 +32,7 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	registry consumer.TopicRegistry,
+	counter counter.Counter,
 	topic consumer.Topic,
 	consumerGroup string,
 ) *Controller {
@@ -37,6 +40,7 @@ func NewController(
 		logger:        logger.Named("batch_controller"),
 		metricsScope:  scope.SubScope("batch_controller"),
 		registry:      registry,
+		counter:       counter,
 		topic:         topic,
 		consumerGroup: consumerGroup,
 	}
@@ -73,9 +77,37 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"partition_key", msg.PartitionKey,
 	)
 
-	// TODO: Add batching logic
-	// - Group requests into batches
-	// - Create batch entity with dependencies
+	// Generate a globally unique batch ID.
+	seq, err := c.counter.Next(ctx, "batch/"+request.Queue)
+	if err != nil {
+		c.logger.Errorw("failed to generate batch ID",
+			"request_id", request.ID,
+			"queue", request.Queue,
+			"error", err,
+		)
+		c.metricsScope.Counter("counter_errors").Inc(1)
+		return fmt.Errorf("failed to generate batch ID for queue=%s: %w", request.Queue, err)
+	}
+
+	batch := entity.Batch{
+		ID:       fmt.Sprintf("%s/batch/%d", request.Queue, seq),
+		Queue:    request.Queue,
+		Contains: []string{request.ID},
+		// TODO Dependencies
+		State:    entity.BatchStateCreated,
+		Version:  1,
+	}
+
+	c.logger.Infow("batch created",
+		"batch_id", batch.ID,
+		"request_id", request.ID,
+		"queue", request.Queue,
+	)
+
+	// TODO:
+	// - Add batch to DB
+	// - Create batch dependent entity
+	// - Add to batch dependent DB
 
 	// Publish to speculate topic
 	if err := c.publish(ctx, consumer.TopicBatched, request); err != nil {

@@ -9,6 +9,7 @@ go_library(
         "//core/consumer",
         "//entity",
         "//entity/queue",
+        "//extension/counter",
         "@com_github_uber_go_tally_v4//:tally",
         "@org_uber_go_zap//:zap",
     ],
