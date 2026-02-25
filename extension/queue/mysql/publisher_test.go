@@ -10,6 +10,7 @@ import (
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/entity/queue"
 	extqueue "github.com/uber/submitqueue/extension/queue"
 	// mocks in same package
@@ -97,14 +98,14 @@ func TestPublisher_Publish(t *testing.T) {
 			},
 		},
 		{
-			name:  "publish with invalid topic name - special chars",
+			name:  "publish with valid topic name - hyphens",
 			topic: "topic-with-dash",
 			messages: []queue.Message{
 				{ID: "msg1", Payload: []byte("p"), PartitionKey: "part1", PublishedAt: fixedTimestamp},
 			},
-			wantErr: true,
+			wantErr: false,
 			setupMock: func(m *MockmessageStore) {
-				// No Insert expected since validation fails
+				m.EXPECT().Insert(gomock.Any(), "topic-with-dash", gomock.Any()).Return(nil).Times(1)
 			},
 		},
 		{
@@ -219,9 +220,9 @@ func TestValidateTopicName(t *testing.T) {
 			wantErr:   true,
 		},
 		{
-			name:      "invalid topic - dash",
+			name:      "valid topic - with hyphens",
 			topicName: "my-topic",
-			wantErr:   true,
+			wantErr:   false,
 		},
 		{
 			name:      "invalid topic - dot",
@@ -262,6 +263,20 @@ func TestValidateTopicName(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 			}
+		})
+	}
+}
+
+// TestAllConsumerTopicsPassValidation ensures every topic defined in consumer.AllTopics
+// passes MySQL topic name validation. This test will catch mismatches automatically
+// when new topics are added.
+func TestAllConsumerTopicsPassValidation(t *testing.T) {
+	require.NotEmpty(t, consumer.AllTopics, "AllTopics must not be empty")
+
+	for _, topic := range consumer.AllTopics {
+		t.Run(string(topic), func(t *testing.T) {
+			err := validateTopicName(string(topic))
+			require.NoError(t, err, "consumer topic %q must pass MySQL topic name validation", topic)
 		})
 	}
 }
