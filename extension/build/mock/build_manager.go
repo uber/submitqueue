@@ -64,12 +64,13 @@ func (mr *MockBuildManagerMockRecorder) Close() *gomock.Call {
 }
 
 // Poll mocks base method.
-func (m *MockBuildManager) Poll(ctx context.Context, id string) (entity.BuildStatus, error) {
+func (m *MockBuildManager) Poll(ctx context.Context, id string) (entity.BuildStatus, map[string]string, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Poll", ctx, id)
 	ret0, _ := ret[0].(entity.BuildStatus)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(map[string]string)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // Poll indicates an expected call of Poll.

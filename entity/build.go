@@ -60,10 +60,10 @@ type BuildAction string
 const (
 	// BuildActionUnknown is the sentinel value for uninitialized actions.
 	BuildActionUnknown BuildAction = ""
-	// BuildActionValidate runs validation/testing on the change without applying it.
-	BuildActionValidate BuildAction = "validate"
 	// BuildActionApply applies the change to the target branch.
 	BuildActionApply BuildAction = "apply"
+	// BuildActionValidate runs validation/testing on the change without applying it.
+	BuildActionValidate BuildAction = "validate"
 )
 
 // BuildChange represents a code change to be processed by the build system.

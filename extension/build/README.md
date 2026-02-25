@@ -22,7 +22,7 @@ type BuildManager interface {
     ) (string, error)
 
     // Poll retrieves the current status of a build from the CI provider
-    Poll(ctx context.Context, id string) (entity.BuildStatus, error)
+    Poll(ctx context.Context, id string) (entity.BuildStatus, map[string]string, error)
 
     // CancelBuild requests cancellation of a build (asynchronous operation)
     CancelBuild(ctx context.Context, id string) error
@@ -60,8 +60,8 @@ type BuildAction string
 
 const (
     BuildActionUnknown   BuildAction = ""         // Sentinel value
-    BuildActionValidate  BuildAction = "validate" // Run validation/testing without applying
     BuildActionApply     BuildAction = "apply"    // Apply the change to the target branch
+    BuildActionValidate  BuildAction = "validate" // Run validation/testing without applying
 )
 ```
 
@@ -105,6 +105,20 @@ func (s BuildStatus) IsTerminal() bool
 
 **Build Lifecycle**: `accepted` → `passed`/`failed`/`cancelled`
 
+### Build Metadata
+
+The `Poll` method returns a `map[string]string` containing additional metadata about the build. The specific keys and values are implementation-defined, but common examples include:
+
+**Common metadata keys:**
+- `build_url` - Direct link to the build in the CI provider's UI
+- `commit_sha` - Git commit SHA being tested
+- `duration_ms` - Build duration in milliseconds
+- `started_at` - Build start timestamp
+- `finished_at` - Build completion timestamp
+- `error_message` - Error details for failed builds
+
+Implementations may include additional provider-specific metadata. Consumers should handle missing keys gracefully.
+
 ## Error Handling
 
 The extension defines sentinel errors following the SubmitQueue pattern:
@@ -119,7 +133,7 @@ Each error has helper functions:
 
 Example:
 ```go
-status, err := buildMgr.Poll(ctx, buildID)
+status, metadata, err := buildMgr.Poll(ctx, buildID)
 if build.IsBuildNotFound(err) {
     // Handle missing build
 }
@@ -132,8 +146,8 @@ if build.IsBuildNotFound(err) {
 ```go
 // 1. Schedule a build with changes
 changes := []entity.BuildChange{
-    {ChangeID: "D12345", Action: entity.BuildActionValidate},
-    {ChangeID: "D12346", Action: entity.BuildActionApply},
+    {ChangeID: "D12345", Action: entity.BuildActionApply},
+    {ChangeID: "D12346", Action: entity.BuildActionValidate},
 }
 
 buildID, err := buildMgr.Schedule(ctx, "my-queue", changes)
@@ -142,10 +156,14 @@ if err != nil {
 }
 
 // 2. Poll for build status
-status, err := buildMgr.Poll(ctx, buildID)
+status, metadata, err := buildMgr.Poll(ctx, buildID)
 if err != nil {
     // Handle error
 }
+
+// Access build metadata
+buildURL := metadata["build_url"]
+commitSHA := metadata["commit_sha"]
 
 // 3. Check if build is done
 if status.IsTerminal() {
@@ -246,7 +264,7 @@ To add support for a new CI provider:
 
 5. **Implement Schedule method**:
    - Look up job name from queue config using `queueName` parameter
-   - Handle both `BuildActionValidate` and `BuildActionApply` actions
+   - Handle both `BuildActionApply` and `BuildActionValidate` actions
    - Create appropriate builds/jobs for each change
    - Return unique build ID
 
