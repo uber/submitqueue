@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/uber/submitqueue/entity"
-	entitybuild "github.com/uber/submitqueue/entity/build"
 	"go.uber.org/mock/gomock"
 )
 
@@ -16,18 +15,18 @@ func TestMockBuildManager_Compilation(t *testing.T) {
 
 	mockBuildMgr := NewMockBuildManager(ctrl)
 
-	// Verify mock implements the interface by calling a method with expectations
-	buildID := entitybuild.NewBuildID("mock", "1")
+	// Test ScheduleBuild
+	buildID := "mock://1"
 	mockBuildMgr.EXPECT().
-		ScheduleBuild(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(),
-			gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(),
-			gomock.Any(), gomock.Any()).
+		ScheduleBuild(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(buildID, nil)
 
-	testBatch := entity.Batch{ID: "test"}
+	head := "queue-1/batch/5"
+	base := []string{"queue-1/batch/1", "queue-1/batch/2"}
+	jobName := "test-pipeline"
+
 	result, err := mockBuildMgr.ScheduleBuild(
-		context.Background(), "sha", nil, testBatch,
-		"repo", "main", "pipeline", "sqid", nil, "msg",
+		context.Background(), head, base, jobName,
 	)
 
 	if err != nil {
@@ -35,5 +34,18 @@ func TestMockBuildManager_Compilation(t *testing.T) {
 	}
 	if result != buildID {
 		t.Fatalf("expected %v, got %v", buildID, result)
+	}
+
+	// Test Poll
+	mockBuildMgr.EXPECT().
+		Poll(gomock.Any(), gomock.Any()).
+		Return(entity.BuildStatusPassed, nil)
+
+	status, err := mockBuildMgr.Poll(context.Background(), buildID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != entity.BuildStatusPassed {
+		t.Fatalf("expected %v, got %v", entity.BuildStatusPassed, status)
 	}
 }

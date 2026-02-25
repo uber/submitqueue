@@ -38,11 +38,6 @@ func TestBuildStatus_IsTerminal(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "blocked is not terminal",
-			status:   BuildStatusBlocked,
-			expected: false,
-		},
-		{
 			name:     "unknown is not terminal",
 			status:   BuildStatusUnknown,
 			expected: false,

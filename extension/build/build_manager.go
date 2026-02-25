@@ -1,12 +1,11 @@
 package build
 
-//go:generate go run go.uber.org/mock/mockgen -source=build_manager.go -destination=mock/build_manager.go -package=mock
+//go:generate mockgen -source=build_manager.go -destination=mock/build_manager.go -package=mock
 
 import (
 	"context"
 
 	"github.com/uber/submitqueue/entity"
-	entitybuild "github.com/uber/submitqueue/entity/build"
 )
 
 // BuildManager is a vendor-agnostic interface for managing builds with external CI/CD providers.
@@ -17,47 +16,43 @@ import (
 type BuildManager interface {
 	// ScheduleBuild creates a new build with the CI provider for testing a batch.
 	//
-	// The baseSHA represents the starting point (main branch HEAD).
-	// The speculatedBatchesToBeApplied are batches already applied on main.
-	// The batchToBeTest is the batch being tested on top of those base batches.
-	//
-	// Batch information is used to:
-	//   - Generate descriptive build messages
-	//   - Add environment variables for CI scripts
-	//   - Populate metadata for tracing and debugging
+	// Parameters:
+	//   - head: BatchID of the batch being tested
+	//   - base: List of BatchIDs (in order) that have been applied on main. Order matters.
+	//   - jobName: Pipeline/job name to be called on the CI provider
 	//
 	// Returns:
-	//   - BuildID: Unique identifier for the scheduled build
+	//   - string: Unique build ID
 	//   - error: ErrInvalidRequest if validation fails, ErrProviderUnavailable if CI provider is unreachable
 	ScheduleBuild(
 		ctx context.Context,
-		baseSHA string,
-		speculatedBatchesToBeApplied []entity.BatchDependent,
-		batchToBeTest entity.Batch,
-		repoURL string,
-		branch string,
-		pipelineID string,
-		sqid string,
-		env map[string]string,
-		message string,
-	) (entitybuild.BuildID, error)
+		head string,
+		base []string,
+		jobName string,
+	) (string, error)
 
 	// Poll retrieves the current status of a build from the CI provider.
 	// This is a synchronous call that queries the provider's API.
 	//
+	// Parameters:
+	//   - id: Build ID string
+	//
 	// Returns:
-	//   - BuildStatus: Current state, timestamps, URLs, and metadata for the build
-	//   - error: ErrBuildNotFound if the build doesn't exist, ErrProviderUnavailable if the CI provider is unreachable
-	Poll(ctx context.Context, id entitybuild.BuildID) (entitybuild.BuildStatus, error)
+	//   - BuildStatus: Current state of the build
+	//   - error: ErrBuildNotFound if the build doesn't exist, ErrProviderUnavailable if CI provider is unreachable
+	Poll(ctx context.Context, id string) (entity.BuildStatus, error)
 
 	// CancelBuild requests cancellation of a queued or running build.
 	// Builds that have already completed cannot be cancelled.
+	//
+	// Parameters:
+	//   - id: Build ID string
 	//
 	// Returns:
 	//   - error: ErrBuildNotFound if the build doesn't exist,
 	//            ErrBuildNotCancellable if the build has already finished,
 	//            ErrProviderUnavailable if the CI provider is unreachable
-	CancelBuild(ctx context.Context, id entitybuild.BuildID) error
+	CancelBuild(ctx context.Context, id string) error
 
 	// Close gracefully shuts down the build manager.
 	// Implementations should cancel pending requests, close HTTP clients, and clean up resources.

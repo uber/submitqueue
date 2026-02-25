@@ -7,7 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//entity",
-        "//entity/build",
         "@org_uber_go_mock//gomock",
     ],
 )
@@ -18,7 +17,6 @@ go_test(
     embed = [":mock"],
     deps = [
         "//entity",
-        "//entity/build",
         "@org_uber_go_mock//gomock",
     ],
 )

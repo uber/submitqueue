@@ -24,15 +24,10 @@ const (
 	// BuildStatusCancelled indicates the build was cancelled before completion.
 	// This is a terminal state.
 	BuildStatusCancelled BuildStatus = "cancelled"
-
-	// BuildStatusBlocked indicates the build is waiting for manual approval or unblocking.
-	// Some CI systems (like BuildKite) support manual approval steps.
-	BuildStatusBlocked BuildStatus = "blocked"
 )
 
 // IsTerminal returns true if the build state represents a final state (passed, failed, or cancelled).
 // Terminal states indicate the build has finished and will not change state again.
-// Note: BuildStatusBlocked is NOT terminal as blocked builds can be unblocked and continue execution.
 func (s BuildStatus) IsTerminal() bool {
 	return s == BuildStatusPassed || s == BuildStatusFailed || s == BuildStatusCancelled
 }

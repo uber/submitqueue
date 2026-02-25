@@ -10,6 +10,5 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//entity",
-        "//entity/build",
     ],
 )
