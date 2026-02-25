@@ -197,15 +197,19 @@ func (x *PingResponse) GetHostname() string {
 	return ""
 }
 
-// Change represents a set of related code changes identified by one or more IDs from a particular code change provider, like Github Pull Requests.
+// Change represents a set of related code changes identified by one or more URIs from a particular code change provider, like Github Pull Requests.
 type Change struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The code change provider (e.g., "github", "gerrit", "phabricator").
 	Source string `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`
-	// List of change IDs, in a format specific to the code change provider, that should be landed together. SubmitQueue guarantees that the changes are landed in the order of the list,
-	// and no other changes are landed in between. SubmitQueue does not guarantee that each change is individually valid, but produces a special validity
-	// marker on such changes. The user is responsible to include all changes in a change stack in the order of the list, starting from the earlist change.
-	Ids           []string `protobuf:"bytes,2,rep,name=ids,proto3" json:"ids,omitempty"`
+	// List of change URIs that should be landed together. The format is provider-specific:
+	//   - GitHub: "owner/repo/pr_number@commit_hash" (e.g., "uber/submitqueue/123@abc123def")
+	//   - Phabricator: "revision_id@commit_hash" (e.g., "D12345@abc123def")
+	//
+	// SubmitQueue guarantees that the changes are landed in the order of the list, and no other changes are landed in between.
+	// SubmitQueue does not guarantee that each change is individually valid, but produces a special validity marker on such changes.
+	// The user is responsible to include all changes in a change stack in the order of the list, starting from the earliest change.
+	Uris          []string `protobuf:"bytes,2,rep,name=uris,proto3" json:"uris,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -247,9 +251,9 @@ func (x *Change) GetSource() string {
 	return ""
 }
 
-func (x *Change) GetIds() []string {
+func (x *Change) GetUris() []string {
 	if x != nil {
-		return x.Ids
+		return x.Uris
 	}
 	return nil
 }
@@ -476,10 +480,10 @@ const file_gateway_proto_rawDesc = "" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12!\n" +
 	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12\x1c\n" +
 	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x1a\n" +
-	"\bhostname\x18\x04 \x01(\tR\bhostname\"2\n" +
+	"\bhostname\x18\x04 \x01(\tR\bhostname\"4\n" +
 	"\x06Change\x12\x16\n" +
-	"\x06source\x18\x01 \x01(\tR\x06source\x12\x10\n" +
-	"\x03ids\x18\x02 \x03(\tR\x03ids\"\xab\x01\n" +
+	"\x06source\x18\x01 \x01(\tR\x06source\x12\x12\n" +
+	"\x04uris\x18\x02 \x03(\tR\x04uris\"\xab\x01\n" +
 	"\vLandRequest\x12\x14\n" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\x12?\n" +
 	"\x06change\x18\x02 \x01(\v2'.uber.devexp.submitqueue.gateway.ChangeR\x06change\x12E\n" +

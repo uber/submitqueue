@@ -41,14 +41,17 @@ enum Strategy {
     MERGE = 3;
 }
 
-// Change represents a set of related code changes identified by one or more IDs from a particular code change provider, like Github Pull Requests.
+// Change represents a set of related code changes identified by one or more URIs from a particular code change provider, like Github Pull Requests.
 message Change {
-    // The code change provider (e.g., "github", "gerrit", "phabricator").
+    // The code change provider ID that maps to a registered provider (e.g., "github", "github-enterprise", "phabricator").
     string source = 1;
-    // List of change IDs, in a format specific to the code change provider, that should be landed together. SubmitQueue guarantees that the changes are landed in the order of the list,
-    // and no other changes are landed in between. SubmitQueue does not guarantee that each change is individually valid, but produces a special validity
-    // marker on such changes. The user is responsible to include all changes in a change stack in the order of the list, starting from the earlist change.
-    repeated string ids = 2;
+    // List of change URIs that should be landed together. The format is provider-specific:
+    //   - GitHub: "owner/repo/pr_number@commit_hash" (e.g., "uber/submitqueue/123@abc123def")
+    //   - Phabricator: "revision_id@commit_hash" (e.g., "D12345@abc123def")
+    // SubmitQueue guarantees that the changes are landed in the order of the list, and no other changes are landed in between.
+    // SubmitQueue does not guarantee that each change is individually valid, but produces a special validity marker on such changes.
+    // The user is responsible to include all changes in a change stack in the order of the list, starting from the earliest change.
+    repeated string uris = 2;
 }
 
 // LandRequest defines a request to land (merge into target branch of the source control repository) a set of code changes.

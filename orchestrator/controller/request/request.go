@@ -70,7 +70,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"state", string(request.State),
 		"land_strategy", string(request.LandStrategy),
 		"change_source", request.Change.Source,
-		"change_ids", request.Change.IDs,
+		"change_uris", request.Change.URIs,
 		"version", request.Version,
 		"attempt", delivery.Attempt(),
 		"partition_key", msg.PartitionKey,

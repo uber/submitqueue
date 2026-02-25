@@ -33,13 +33,15 @@ const (
 	RequestStateError RequestState = "error"
 )
 
-// Change represents a set of related code changes identified by one or more IDs from a particular code change provider, like Github Pull Requests.
+// Change represents a set of related code changes identified by one or more URIs from a particular code change provider, like Github Pull Requests.
 // The object is immutable after creation.
 type Change struct {
-	// Source is the code change provider (e.g., "github", "gerrit", "phabricator").
+	// Source is the code change provider ID that maps to a registered provider (e.g., "github", "github-enterprise", "phabricator").
 	Source string `json:"source"`
-	// IDs is a list of change IDs, in a format specific to the code change provider, that should be landed together.
-	IDs []string `json:"ids"`
+	// URIs is a list of change URIs that should be landed together. The format is provider-specific:
+	//   - GitHub: "owner/repo/pr_number@commit_hash" (e.g., "uber/submitqueue/123@abc123def")
+	//   - Phabricator: "revision_id@commit_hash" (e.g., "D12345@abc123def")
+	URIs []string `json:"uris"`
 }
 
 // Request defines a request to land (merge into target branch of the source control repository) a set of code changes.

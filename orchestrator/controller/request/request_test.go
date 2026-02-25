@@ -57,7 +57,7 @@ func TestController_Process_Success(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{Source: "github", IDs: []string{"PR-456"}},
+		Change:       entity.Change{Source: "github", URIs: []string{"uber/service/456@abc123def"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
 		State:        entity.RequestStateNew,
 		Version:      1,
@@ -115,7 +115,7 @@ func TestController_Process_AllRequestStates(t *testing.T) {
 			request := entity.Request{
 				ID:           fmt.Sprintf("queue/%s", tt.state),
 				Queue:        "test-queue",
-				Change:       entity.Change{Source: "github", IDs: []string{"PR-1"}},
+				Change:       entity.Change{Source: "github", URIs: []string{"uber/service/1@aaa111bbb"}},
 				LandStrategy: tt.strategy,
 				State:        tt.state,
 				Version:      1,
@@ -145,7 +145,7 @@ func TestController_Process_MultipleChanges(t *testing.T) {
 		Queue: "test-queue",
 		Change: entity.Change{
 			Source: "github",
-			IDs:    []string{"PR-1", "PR-2", "PR-3"},
+			URIs:   []string{"uber/monorepo/1@aaa111", "uber/monorepo/2@bbb222", "uber/monorepo/3@ccc333"},
 		},
 		LandStrategy: entity.RequestLandStrategySquashRebase,
 		State:        entity.RequestStateNew,
@@ -172,7 +172,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{Source: "github", IDs: []string{"PR-1"}},
+		Change:       entity.Change{Source: "github", URIs: []string{"uber/service/1@xyz789abc"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
 		State:        entity.RequestStateNew,
 		Version:      1,
