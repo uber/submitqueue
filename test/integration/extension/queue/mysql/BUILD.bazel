@@ -12,6 +12,7 @@ go_test(
         "//entity/queue",
         "//extension/queue",
         "//extension/queue/mysql",
+        "//extension/queue/mysql/ctl/lib",
         "//test/testutil",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_stretchr_testify//assert",
