@@ -12,12 +12,12 @@ func TestQueueConfig(t *testing.T) {
 		VCSType:      "git",
 		VCSAddress:   "git@github.com:uber/submitqueue.git",
 		Target:       "main",
-		BuildRunner:  "uber/submitqueue/ci",
+		BuildRunner:  "buildkite.com/uber/submitqueue-ci",
 	}
 
 	assert.Equal(t, "uber/submitqueue/main", cfg.Name)
 	assert.Equal(t, "git", cfg.VCSType)
 	assert.Equal(t, "git@github.com:uber/submitqueue.git", cfg.VCSAddress)
 	assert.Equal(t, "main", cfg.Target)
-	assert.Equal(t, "uber/submitqueue/ci", cfg.BuildRunner)
+	assert.Equal(t, "buildkite.com/uber/submitqueue-ci", cfg.BuildRunner)
 }

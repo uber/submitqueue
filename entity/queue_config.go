@@ -30,7 +30,7 @@ type QueueConfig struct {
 	// BuildRunner identifies the CI pipeline or job that runs builds for this queue.
 	// Opaque to the system; meaningful only to the build extension implementation.
 	// Examples:
-	//   - Buildkite: "uber/submitqueue/ci"
-	//   - Jenkins: "https://jenkins.example.com/job/submitqueue-verify"
+	//   - Buildkite: "buildkite.com/uber/submitqueue-ci"
+	//   - Jenkins: "jenkins.example.com/job/submitqueue-verify"
 	BuildRunner string
 }
