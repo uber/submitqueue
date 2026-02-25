@@ -14,39 +14,70 @@ Main interface for interacting with CI providers.
 
 ```go
 type BuildManager interface {
-    // Schedule a new build with the CI provider for testing a batch
-    ScheduleBuild(
+    // Schedule submits a list of changes to the CI provider for processing
+    Schedule(
         ctx context.Context,
-        head string,
-        base []string,
-        jobName string,
+        queueName string,
+        changes []entity.BuildChange,
     ) (string, error)
 
-    // Poll current status of a build
+    // Poll retrieves the current status of a build from the CI provider
     Poll(ctx context.Context, id string) (entity.BuildStatus, error)
 
-    // Cancel a running or queued build
+    // CancelBuild requests cancellation of a build (asynchronous operation)
     CancelBuild(ctx context.Context, id string) error
+
+    // Close gracefully shuts down the build manager
+    Close() error
 }
 ```
 
 **Thread-safety**: All implementations must be thread-safe and support concurrent operations.
 
+**Implementation Design**: Implementations may be designed as heavy singletons (with connection pooling and caching) or lightweight instances created on-demand, depending on the CI provider's requirements and implementation strategy.
+
 ## Types
 
-### ScheduleBuild Parameters
+### BuildChange
 
-**head** (string, required): BatchID of the batch being tested
+Represents a code change to be processed by the build system.
 
-**base** ([]string, required): List of BatchIDs (in order) that have been applied on main. Order matters.
+```go
+type BuildChange struct {
+    // ChangeID is the unique identifier for this change (diff ID, PR number, etc.)
+    ChangeID string
+    // Action specifies what operation to perform on this change
+    Action BuildAction
+}
+```
 
-**jobName** (string, required): Pipeline/job name to be called on the CI provider
-- BuildKite: "organization/pipeline-slug"
-- Jenkins: "job-name"
+### BuildAction
+
+Defines the action to perform on a change.
+
+```go
+type BuildAction string
+
+const (
+    BuildActionUnknown   BuildAction = ""         // Sentinel value
+    BuildActionValidate  BuildAction = "validate" // Run validation/testing without applying
+    BuildActionApply     BuildAction = "apply"    // Apply the change to the target branch
+)
+```
+
+### Schedule Parameters
+
+**queueName** (string, required): Name of the queue processing these changes. Used to look up job configuration from queue config.
+
+**changes** ([]entity.BuildChange, required): List of changes to process. Each change includes:
+- **ChangeID**: Unique identifier (e.g., "D12345" for Phabricator, "42" for GitHub PR)
+- **Action**: What to do with the change (validate or apply)
+
+Order of changes may be significant for dependencies.
 
 ### Build ID Format
 
-Build IDs returned by `ScheduleBuild` should use a URI-like format: `"provider://id"`
+Build IDs returned by `Schedule` should use a URI-like format: `"provider://id"`
 
 **Examples**:
 - `"buildkite://uber/submitqueue-ci/123"`
@@ -55,7 +86,7 @@ Build IDs returned by `ScheduleBuild` should use a URI-like format: `"provider:/
 
 This format allows the implementation to encode both the provider name and provider-specific build identifier in a single string.
 
-### Build State Enum
+### Build Status Enum
 
 ```go
 type BuildStatus string
@@ -63,6 +94,7 @@ type BuildStatus string
 const (
     BuildStatusUnknown    BuildStatus = ""          // Sentinel value
     BuildStatusQueued     BuildStatus = "queued"    // Scheduled but not started
+    BuildStatusAccepted   BuildStatus = "accepted"  // Accepted by CI provider
     BuildStatusRunning    BuildStatus = "running"   // Currently executing
     BuildStatusPassed     BuildStatus = "passed"    // Completed successfully (terminal)
     BuildStatusFailed     BuildStatus = "failed"    // Completed with failures (terminal)
@@ -72,6 +104,8 @@ const (
 // IsTerminal returns true for passed/failed/cancelled states
 func (s BuildStatus) IsTerminal() bool
 ```
+
+**Build Lifecycle**: `queued` → `accepted` → `running` → `passed`/`failed`/`cancelled`
 
 ## Error Handling
 
@@ -96,6 +130,32 @@ if build.IsBuildNotFound(err) {
 
 ## Usage
 
+### Basic Workflow
+
+```go
+// 1. Schedule a build with changes
+changes := []entity.BuildChange{
+    {ChangeID: "D12345", Action: entity.BuildActionValidate},
+    {ChangeID: "D12346", Action: entity.BuildActionApply},
+}
+
+buildID, err := buildMgr.Schedule(ctx, "my-queue", changes)
+if err != nil {
+    // Handle error
+}
+
+// 2. Poll for build status
+status, err := buildMgr.Poll(ctx, buildID)
+if err != nil {
+    // Handle error
+}
+
+// 3. Check if build is done
+if status.IsTerminal() {
+    // Build finished: status is passed, failed, or cancelled
+}
+```
+
 ### GoMock Mocks
 
 For unit testing with gomock, use the generated mock:
@@ -104,6 +164,7 @@ For unit testing with gomock, use the generated mock:
 import (
     "testing"
 
+    "github.com/uber/submitqueue/entity"
     "github.com/uber/submitqueue/extension/build/mock"
     "go.uber.org/mock/gomock"
 )
@@ -115,8 +176,12 @@ func TestMyController(t *testing.T) {
     mockBuildMgr := mock.NewMockBuildManager(ctrl)
 
     // Set up expectations
+    changes := []entity.BuildChange{
+        {ChangeID: "D12345", Action: entity.BuildActionValidate},
+    }
+
     mockBuildMgr.EXPECT().
-        ScheduleBuild(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+        Schedule(gomock.Any(), "test-queue", changes).
         Return("mock://1", nil)
 
     // Test your code that uses the mock
@@ -125,14 +190,24 @@ func TestMyController(t *testing.T) {
 
 ### Cancelling Builds
 
+Cancellation is **asynchronous** - the method initiates the cancellation request and returns immediately. Use `Poll` to check if the build has transitioned to `BuildStatusCancelled`.
+
 ```go
 err := mgr.CancelBuild(ctx, buildID)
 if build.IsBuildNotCancellable(err) {
-    // Build already finished
+    // Build cannot be cancelled (implementation-specific)
 } else if err != nil {
     // Other error
 }
+
+// Poll to verify cancellation
+status, _ := mgr.Poll(ctx, buildID)
+if status == entity.BuildStatusCancelled {
+    // Cancellation successful
+}
 ```
+
+**Note**: The implementation decides how to handle cancellation requests for builds in terminal states (passed, failed, cancelled). It may return an error, silently ignore the request, or handle it in a provider-specific way.
 
 ## Implementing a New Provider
 
@@ -148,10 +223,11 @@ To add support for a new CI provider:
 
    type Params struct {
        // Provider-specific configuration
-       BaseURL    string
-       Username   string
-       APIToken   string
-       Logger     *zap.Logger
+       BaseURL      string
+       Username     string
+       APIToken     string
+       QueueConfig  QueueConfigStore // For looking up job names
+       Logger       *zap.Logger
        MetricsScope tally.Scope
    }
 
@@ -164,6 +240,7 @@ To add support for a new CI provider:
 
 3. **Map provider states to entity.BuildStatus enum**:
    - Map provider's state values to the standard `entity.BuildStatus` constants
+   - Include mapping for `BuildStatusAccepted` if provider supports it
    - Use `entity.BuildStatusUnknown` for unexpected states
 
 4. **Handle provider errors**:
@@ -171,19 +248,29 @@ To add support for a new CI provider:
    - 5xx errors → `build.WrapProviderUnavailable()`
    - Validation errors → `build.WrapInvalidRequest()`
 
-5. **Define jobName format**:
-   - Document the expected format in provider README
-   - Examples:
-     - BuildKite: `"organization/pipeline-slug"`
-     - Jenkins: `"job-name"`
+5. **Implement Schedule method**:
+   - Look up job name from queue config using `queueName` parameter
+   - Handle both `BuildActionValidate` and `BuildActionApply` actions
+   - Create appropriate builds/jobs for each change
+   - Return unique build ID
 
-6. **Add tests**:
+6. **Implement CancelBuild**:
+   - Make asynchronous cancellation request to CI provider
+   - Return immediately after initiating request
+   - Decide how to handle terminal state cancellations
+
+7. **Choose implementation design**:
+   - **Singleton**: If provider needs connection pooling, auth token caching, rate limiting
+   - **Lightweight**: If provider SDK handles resource management or implementation is stateless
+
+8. **Add tests**:
    - Unit tests with mock HTTP server
    - Validation tests for all required fields
    - Error mapping tests
    - Thread-safety tests
+   - Test both validate and apply actions
 
-7. **Update BUILD.bazel**:
+9. **Update BUILD.bazel**:
    ```bazel
    go_library(
        name = "jenkins",
@@ -191,7 +278,9 @@ To add support for a new CI provider:
        importpath = "github.com/uber/submitqueue/extension/build/jenkins",
        visibility = ["//visibility:public"],
        deps = [
+           "//entity",
            "//extension/build",
+           "//extension/queueconfig",
            "@org_uber_go_zap//:zap",
            "@com_github_uber_go_tally_v4//:tally",
        ],
@@ -223,10 +312,11 @@ extension/build/
 ### Design Principles
 
 1. **Vendor-agnostic**: Interface doesn't leak provider-specific details
-2. **Immutable types**: BuildRequest and BuildStatus are value types
+2. **Change-focused**: Operates on individual changes (diff IDs, PR numbers) with explicit actions
 3. **Thread-safe**: All implementations support concurrent operations
 4. **Error transparency**: Sentinel errors for common failure modes
-5. **No persistent state**: BuildManager doesn't manage connections or require cleanup
+5. **Implementation flexibility**: Supports both heavy singleton and lightweight on-demand designs
+6. **Asynchronous cancellation**: CancelBuild initiates request and returns immediately
 
 ## Future Enhancements
 
@@ -235,6 +325,7 @@ Potential improvements not in the current implementation:
 - **Webhook support**: Accept push notifications from CI providers instead of polling
 - **Build artifacts**: Track and retrieve build artifacts
 - **Retry logic**: Automatic retry for transient failures
-- **Batch operations**: Schedule/poll/cancel multiple builds at once
+- **Batch operations**: Poll/cancel multiple builds at once
 - **Streaming logs**: Real-time log streaming from builds
 - **Build caching**: Cache build status to reduce API calls
+- **Partial cancellation**: Cancel individual changes in a multi-change build
