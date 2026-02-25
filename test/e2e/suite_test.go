@@ -111,16 +111,30 @@ func (s *E2EIntegrationSuite) TestPingOrchestrator() {
 	s.log.Logf("Orchestrator ping: %s", resp.Message)
 }
 
-func (s *E2EIntegrationSuite) TestLandRequest() {
+func (s *E2EIntegrationSuite) TestLandRequest_SinglePR() {
 	req := &gatewaypb.LandRequest{
 		Queue:    "e2e-test-queue",
-		Change:   &gatewaypb.Change{Source: "github", Uris: []string{"github.com/uber/e2e-service/100/aaa100bbb", "github.com/uber/e2e-service/101/ccc101ddd"}},
+		Change:   &gatewaypb.Change{Uri: "github://uber/e2e-service/pull/123/abc123def"},
 		Strategy: gatewaypb.Strategy_REBASE,
 	}
 
-	s.log.Logf("Sending Land request for queue=%s", req.Queue)
+	s.log.Logf("Sending Land request (single PR) for queue=%s", req.Queue)
 	resp, err := s.gatewayClient.Land(s.ctx, req)
 	require.NoError(s.T(), err, "Land request failed")
 	require.NotEmpty(s.T(), resp.Sqid, "SQID should not be empty")
-	s.log.Logf("Land request succeeded: sqid=%s", resp.Sqid)
+	s.log.Logf("Land request (single PR) succeeded: sqid=%s", resp.Sqid)
+}
+
+func (s *E2EIntegrationSuite) TestLandRequest_StackedPRs() {
+	req := &gatewaypb.LandRequest{
+		Queue:    "e2e-test-queue",
+		Change:   &gatewaypb.Change{Uri: "github://uber/e2e-service/pull/100/aaa100bbb/101/ccc101ddd/102/eee102fff"},
+		Strategy: gatewaypb.Strategy_SQUASH_REBASE,
+	}
+
+	s.log.Logf("Sending Land request (stacked PRs) for queue=%s", req.Queue)
+	resp, err := s.gatewayClient.Land(s.ctx, req)
+	require.NoError(s.T(), err, "Land request with stacked PRs failed")
+	require.NotEmpty(s.T(), resp.Sqid, "SQID should not be empty")
+	s.log.Logf("Land request (stacked PRs) succeeded: sqid=%s", resp.Sqid)
 }

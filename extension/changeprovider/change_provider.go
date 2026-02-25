@@ -34,12 +34,15 @@ type ChangeInfo struct {
 	ChangedFiles []ChangedFile
 }
 
-// ChangeProvider fetches change information from external code review providers.
+// ChangeProvider fetches change metadata from external systems
 // Each implementation is configured for a specific provider (GitHub, GitLab, Phabricator).
 type ChangeProvider interface {
-	// Get retrieves change information for the provided URIs.
-	// The URI format is determined by the implementation.
-	// Default format: "github.com/<org>/<repo>/<pr>/<hash>" (e.g., "github.com/uber/submitqueue/123/abc123def")
+	// Get retrieves change information for the provided URI (RFC 3986 compliant).
+	// The URI scheme identifies the provider, and the path contains provider-specific resource identifiers.
+	//
+	// By default, the GitHub format is supported (though other providers can be added):
+	//   Single PR: "github://<org>/<repo>/pull/<pr>/<hash>"
+	//   Stacked PRs: "github://<org>/<repo>/pull/<pr1>/<hash1>/<pr2>/<hash2>/..."
 	// Returns the change info containing metadata and file changes.
-	Get(ctx context.Context, uris []string) (ChangeInfo, error)
+	Get(ctx context.Context, uri string) (ChangeInfo, error)
 }

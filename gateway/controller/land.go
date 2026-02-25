@@ -61,16 +61,12 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 	if req.Queue == "" {
 		return nil, fmt.Errorf("LandController requires the request to have a queue name specified: %w", ErrInvalidRequest)
 	}
-	if req.Change == nil || req.Change.Source == "" {
-		return nil, fmt.Errorf("LandController requires the request to have a change source specified: %w", ErrInvalidRequest)
-	}
-	if len(req.Change.GetUris()) == 0 {
-		return nil, fmt.Errorf("LandController requires the request to have at least one change URI specified: %w", ErrInvalidRequest)
+	if req.Change == nil || req.Change.Uri == "" {
+		return nil, fmt.Errorf("LandController requires the request to have a change URI specified: %w", ErrInvalidRequest)
 	}
 
 	change := entity.Change{
-		Provider: req.Change.GetSource(),
-		URIs:     req.Change.GetUris(),
+		URI: req.Change.GetUri(),
 	}
 
 	// TODO: validate that queue is configured. Return error if not.
@@ -104,8 +100,7 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 	c.logger.Debugw("land request created",
 		"queue", req.Queue,
 		"sqid", request.ID,
-		"change_source", change.Provider,
-		"change_uris", change.URIs,
+		"change_uri", change.URI,
 		"strategy", string(strategy),
 	)
 

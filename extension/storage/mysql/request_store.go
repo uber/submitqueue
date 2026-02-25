@@ -3,7 +3,6 @@ package mysql
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -25,12 +24,11 @@ func NewRequestStore(db *sql.DB) storage.RequestStore {
 // Get retrieves a land request by ID. Returns ErrNotFound if the request is not found.
 func (r *requestStore) Get(ctx context.Context, id string) (entity.Request, error) {
 	var req entity.Request
-	var changeURIsJSON []byte
 
 	err := r.db.QueryRowContext(ctx,
-		"SELECT id, queue, change_source, change_uris, land_strategy, state, version FROM request WHERE id = ?",
+		"SELECT id, queue, change_uri, land_strategy, state, version FROM request WHERE id = ?",
 		id,
-	).Scan(&req.ID, &req.Queue, &req.Change.Provider, &changeURIsJSON, &req.LandStrategy, &req.State, &req.Version)
+	).Scan(&req.ID, &req.Queue, &req.Change.URI, &req.LandStrategy, &req.State, &req.Version)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.Request{}, storage.WrapNotFound(err)
@@ -39,23 +37,14 @@ func (r *requestStore) Get(ctx context.Context, id string) (entity.Request, erro
 		return entity.Request{}, fmt.Errorf("failed to get request entity id=%s from the database: %w", id, err)
 	}
 
-	if err := json.Unmarshal(changeURIsJSON, &req.Change.URIs); err != nil {
-		return entity.Request{}, fmt.Errorf("failed to unmarshal change URIs for request entity id=%s from the database: %w", id, err)
-	}
-
 	return req, nil
 }
 
 // Create creates a new land request. The request must have a unique ID already assigned. Returns ErrAlreadyExists if the request ID already exists.
 func (r *requestStore) Create(ctx context.Context, request entity.Request) error {
-	changeURIsJSON, err := json.Marshal(request.Change.URIs)
-	if err != nil {
-		return fmt.Errorf("failed to marshal change URIs=%v id=%s for Create request entity: %w", request.Change.URIs, request.ID, err)
-	}
-
-	_, err = r.db.ExecContext(ctx,
-		"INSERT INTO request (id, queue, change_source, change_uris, land_strategy, state, version) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		request.ID, request.Queue, request.Change.Provider, changeURIsJSON, request.LandStrategy, request.State, request.Version,
+	_, err := r.db.ExecContext(ctx,
+		"INSERT INTO request (id, queue, change_uri, land_strategy, state, version) VALUES (?, ?, ?, ?, ?, ?)",
+		request.ID, request.Queue, request.Change.URI, request.LandStrategy, request.State, request.Version,
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError

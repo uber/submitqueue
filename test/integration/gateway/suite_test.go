@@ -111,7 +111,7 @@ func (s *GatewayIntegrationSuite) TestLandAPI() {
 
 	req := &pb.LandRequest{
 		Queue:    "test-queue",
-		Change:   &pb.Change{Source: "github", Uris: []string{"github.com/uber/integration-test/123/abc123def"}},
+		Change:   &pb.Change{Uri: "github://uber/integration-test/pull/123/abc123def"},
 		Strategy: pb.Strategy_REBASE,
 	}
 
@@ -135,4 +135,39 @@ func (s *GatewayIntegrationSuite) TestLandAPI() {
 	assert.Equal(t, 1, msgCount, "should have 1 message in queue")
 
 	s.log.Logf("Land API test passed: request stored and message published")
+}
+
+// TestLandAPI_StackedPRs tests the Gateway Land API with stacked PRs
+func (s *GatewayIntegrationSuite) TestLandAPI_StackedPRs() {
+	t := s.T()
+
+	// Stacked PR URI with multiple PRs encoded in the path
+	stackedURI := "github://uber/integration-test/pull/100/aaa100bbb/101/ccc101ddd/102/eee102fff"
+
+	req := &pb.LandRequest{
+		Queue:    "test-queue",
+		Change:   &pb.Change{Uri: stackedURI},
+		Strategy: pb.Strategy_SQUASH_REBASE,
+	}
+
+	s.log.Logf("Sending Land request with stacked PRs for queue=%s", req.Queue)
+	resp, err := s.client.Land(s.ctx, req)
+	require.NoError(t, err, "Land request with stacked PRs failed")
+	require.NotEmpty(t, resp.Sqid, "SQID should not be empty")
+
+	s.log.Logf("Land request with stacked PRs succeeded: sqid=%s", resp.Sqid)
+
+	// Verify the full stacked URI is stored correctly in database
+	var storedURI string
+	err = s.db.QueryRow("SELECT change_uri FROM request WHERE id = ?", resp.Sqid).Scan(&storedURI)
+	require.NoError(t, err, "failed to query request from database")
+	assert.Equal(t, stackedURI, storedURI, "stacked PR URI should be stored exactly as provided")
+
+	// Verify message published to queue
+	var msgCount int
+	err = s.queueDB.QueryRow("SELECT COUNT(*) FROM queue_messages WHERE id = ?", resp.Sqid).Scan(&msgCount)
+	require.NoError(t, err, "failed to query queue messages")
+	assert.Equal(t, 1, msgCount, "should have 1 message in queue")
+
+	s.log.Logf("Land API stacked PRs test passed: URI length=%d", len(stackedURI))
 }

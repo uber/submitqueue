@@ -46,8 +46,7 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet() {
 		Queue: "test-queue",
 		State: entity.RequestStateNew,
 		Change: entity.Change{
-			Provider: "github",
-			URIs:     []string{"github.com/uber/storage-test/123/abc123def"},
+			URI: "github://uber/storage-test/pull/123/abc123def",
 		},
 		LandStrategy: entity.RequestLandStrategyMerge,
 		Version:      1,
@@ -65,12 +64,46 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet() {
 	assert.Equal(t, request.ID, retrieved.ID)
 	assert.Equal(t, request.Queue, retrieved.Queue)
 	assert.Equal(t, request.State, retrieved.State)
-	assert.Equal(t, request.Change.Provider, retrieved.Change.Provider)
-	assert.Equal(t, request.Change.URIs, retrieved.Change.URIs)
+	assert.Equal(t, request.Change.URI, retrieved.Change.URI)
 	assert.Equal(t, request.LandStrategy, retrieved.LandStrategy)
 	assert.Equal(t, request.Version, retrieved.Version)
 
 	s.log.Logf("CreateAndGet test passed: created and retrieved request %s", request.ID)
+}
+
+// TestStorage_CreateAndGet_StackedPRs tests creating and retrieving a request with stacked PRs
+func (s *StorageContractSuite) TestStorage_CreateAndGet_StackedPRs() {
+	t := s.T()
+	ctx := s.ctx
+
+	// Stacked PR URI with multiple PRs encoded in the path
+	stackedURI := "github://uber/monorepo/pull/101/aaa111bbb/102/ccc222ddd/103/eee333fff/104/ggg444hhh"
+
+	request := entity.Request{
+		ID:    "test/stacked-prs",
+		Queue: "test-queue",
+		State: entity.RequestStateNew,
+		Change: entity.Change{
+			URI: stackedURI,
+		},
+		LandStrategy: entity.RequestLandStrategySquashRebase,
+		Version:      1,
+	}
+
+	// Create request
+	err := s.storage.GetRequestStore().Create(ctx, request)
+	require.NoError(t, err, "failed to create request with stacked PRs")
+
+	// Get request back
+	retrieved, err := s.storage.GetRequestStore().Get(ctx, request.ID)
+	require.NoError(t, err, "failed to get request with stacked PRs")
+
+	// Verify the full stacked URI is preserved
+	assert.Equal(t, stackedURI, retrieved.Change.URI, "stacked PR URI should be preserved exactly")
+	assert.Equal(t, request.ID, retrieved.ID)
+	assert.Equal(t, request.LandStrategy, retrieved.LandStrategy)
+
+	s.log.Logf("CreateAndGet_StackedPRs test passed: stacked URI length=%d", len(stackedURI))
 }
 
 // TestStorage_UpdateState tests updating request state
