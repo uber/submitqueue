@@ -273,12 +273,6 @@ func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueu
 		return nil, fmt.Errorf("subscriber is closed")
 	}
 
-	// Validate topic name
-	if err := validateTopicName(topic); err != nil {
-		s.logger.Errorw("subscribe failed: invalid topic name", "topic", topic, "error", err)
-		return nil, fmt.Errorf("subscribe failure: invalid topic name. err: %w", err)
-	}
-
 	// Create subscription key (topic + consumer group must be unique)
 	subKey := topic + ":" + config.ConsumerGroup
 

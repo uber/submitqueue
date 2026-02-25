@@ -10,7 +10,6 @@ import (
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 
-	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/entity/queue"
 	extqueue "github.com/uber/submitqueue/extension/queue"
 	// mocks in same package
@@ -87,17 +86,6 @@ func TestPublisher_Publish(t *testing.T) {
 			},
 		},
 		{
-			name:  "publish with invalid topic name - uppercase",
-			topic: "InvalidTopic",
-			messages: []queue.Message{
-				{ID: "msg1", Payload: []byte("p"), PartitionKey: "part1", PublishedAt: fixedTimestamp},
-			},
-			wantErr: true,
-			setupMock: func(m *MockmessageStore) {
-				// No Insert expected since validation fails
-			},
-		},
-		{
 			name:  "publish with valid topic name - hyphens",
 			topic: "topic-with-dash",
 			messages: []queue.Message{
@@ -106,17 +94,6 @@ func TestPublisher_Publish(t *testing.T) {
 			wantErr: false,
 			setupMock: func(m *MockmessageStore) {
 				m.EXPECT().Insert(gomock.Any(), "topic-with-dash", gomock.Any()).Return(nil).Times(1)
-			},
-		},
-		{
-			name:  "publish with invalid topic name - empty",
-			topic: "",
-			messages: []queue.Message{
-				{ID: "msg1", Payload: []byte("p"), PartitionKey: "part1", PublishedAt: fixedTimestamp},
-			},
-			wantErr: true,
-			setupMock: func(m *MockmessageStore) {
-				// No Insert expected since validation fails
 			},
 		},
 	}
@@ -181,104 +158,6 @@ func TestPublisher_Close(t *testing.T) {
 	// Closing again should still succeed (idempotent)
 	err = pub.Close()
 	require.NoError(t, err)
-}
-
-func TestValidateTopicName(t *testing.T) {
-	tests := []struct {
-		name      string
-		topicName string
-		wantErr   bool
-	}{
-		{
-			name:      "valid topic - lowercase letters",
-			topicName: "mytopic",
-			wantErr:   false,
-		},
-		{
-			name:      "valid topic - with numbers",
-			topicName: "topic123",
-			wantErr:   false,
-		},
-		{
-			name:      "valid topic - with underscores",
-			topicName: "my_topic_name",
-			wantErr:   false,
-		},
-		{
-			name:      "valid topic - all valid chars",
-			topicName: "abc_123_xyz",
-			wantErr:   false,
-		},
-		{
-			name:      "invalid topic - empty",
-			topicName: "",
-			wantErr:   true,
-		},
-		{
-			name:      "invalid topic - uppercase",
-			topicName: "MyTopic",
-			wantErr:   true,
-		},
-		{
-			name:      "valid topic - with hyphens",
-			topicName: "my-topic",
-			wantErr:   false,
-		},
-		{
-			name:      "invalid topic - dot",
-			topicName: "my.topic",
-			wantErr:   true,
-		},
-		{
-			name:      "invalid topic - space",
-			topicName: "my topic",
-			wantErr:   true,
-		},
-		{
-			name:      "invalid topic - special chars",
-			topicName: "topic!@#",
-			wantErr:   true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			defer ctrl.Finish()
-
-			mockStore := NewMockmessageStore(ctrl)
-			pub := setupPublisherTest(t, mockStore)
-
-			// Try to publish with this topic name
-			ctx := context.Background()
-			msg := queue.NewMessage("msg1", []byte("test"), "part1", nil)
-
-			if !tt.wantErr {
-				mockStore.EXPECT().Insert(gomock.Any(), tt.topicName, gomock.Any()).Return(nil).Times(1)
-			}
-
-			err := pub.Publish(ctx, tt.topicName, msg)
-			if tt.wantErr {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-			}
-		})
-	}
-}
-
-// TestAllConsumerTopicsPassValidation ensures every topic defined in consumer.AllTopics
-// passes MySQL topic name validation. This test will catch mismatches automatically
-// when new topics are added.
-func TestAllConsumerTopicsPassValidation(t *testing.T) {
-	require.NotEmpty(t, consumer.AllTopics, "AllTopics must not be empty")
-
-	for _, topic := range consumer.AllTopics {
-		t.Run(string(topic), func(t *testing.T) {
-			err := validateTopicName(string(topic))
-			require.NoError(t, err, "consumer topic %q must pass MySQL topic name validation", topic)
-		})
-	}
 }
 
 func TestPublisher_PublishMetrics(t *testing.T) {

@@ -16,7 +16,7 @@ import (
 )
 
 func testSubscriptionConfig() extqueue.SubscriptionConfig {
-	return extqueue.DefaultSubscriptionConfig("test-topic", "test-subscriber", "test-consumer")
+	return extqueue.DefaultSubscriptionConfig("test-subscriber", "test-consumer")
 }
 
 func setupSubscriberTest(t *testing.T, mockMessageStore *MockmessageStore, mockOffsetStore *MockoffsetStore, mockLeaseStore *MockpartitionLeaseStore) extqueue.Subscriber {

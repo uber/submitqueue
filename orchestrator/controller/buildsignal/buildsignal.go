@@ -17,7 +17,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	registry      consumer.TopicRegistry
-	topic         consumer.Topic
+	topicKey      consumer.TopicKey
 	consumerGroup string
 }
 
@@ -29,14 +29,14 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	registry consumer.TopicRegistry,
-	topic consumer.Topic,
+	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
 		logger:        logger.Named("buildsignal_controller"),
 		metricsScope:  scope.SubScope("buildsignal_controller"),
 		registry:      registry,
-		topic:         topic,
+		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
 }
@@ -86,9 +86,9 @@ func (c *Controller) Name() string {
 	return "buildsignal"
 }
 
-// Topic returns the topic this controller subscribes to.
-func (c *Controller) Topic() consumer.Topic {
-	return c.topic
+// TopicKey returns the topic key this controller subscribes to.
+func (c *Controller) TopicKey() consumer.TopicKey {
+	return c.topicKey
 }
 
 // ConsumerGroup returns the consumer group for offset tracking.

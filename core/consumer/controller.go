@@ -85,8 +85,8 @@ type Controller interface {
 	// Name returns the controller name for logging and metrics.
 	Name() string
 
-	// Topic returns the topic this controller subscribes to.
-	Topic() Topic
+	// TopicKey returns the topic key this controller subscribes to.
+	TopicKey() TopicKey
 
 	// ConsumerGroup returns the consumer group for offset tracking.
 	// Multiple controllers can share a consumer group to load-balance across workers.

@@ -31,15 +31,15 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, publishErr error) 
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
-	registry := consumer.NewTopicRegistry(
+	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Topic: consumer.TopicBuild, Queue: mockQ},
-			{Topic: consumer.TopicToMerge, Queue: mockQ},
+			{Key: consumer.TopicKeyBuild, Name: "build", Queue: mockQ},
+			{Key: consumer.TopicKeyToMerge, Name: "to-merge", Queue: mockQ},
 		},
-		nil,
 	)
+	require.NoError(t, err)
 
-	return NewController(logger, scope, registry, consumer.TopicBatched, "orchestrator-speculate")
+	return NewController(logger, scope, registry, consumer.TopicKeyBatched, "orchestrator-speculate")
 }
 
 func TestNewController(t *testing.T) {
@@ -47,7 +47,7 @@ func TestNewController(t *testing.T) {
 	controller := newTestController(t, ctrl, nil)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicBatched, controller.Topic())
+	assert.Equal(t, consumer.TopicKeyBatched, controller.TopicKey())
 	assert.Equal(t, "orchestrator-speculate", controller.ConsumerGroup())
 	assert.Equal(t, "speculate", controller.Name())
 }

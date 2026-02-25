@@ -1,105 +1,140 @@
 package consumer
 
-import "github.com/uber/submitqueue/extension/queue"
+import (
+	"fmt"
 
-// Topic identifies a queue topic in the pipeline.
-type Topic string
-
-const (
-	// TopicRequest is where new requests arrive from the gateway.
-	TopicRequest Topic = "request"
-	// TopicToBatch is where validated requests are published for batching.
-	TopicToBatch Topic = "to-batch"
-	// TopicBatched is where batched requests are published for speculation.
-	TopicBatched Topic = "batched"
-	// TopicBuild is where requests are published for builds.
-	TopicBuild Topic = "build"
-	// TopicBuildSignal is where build signals are published for processing.
-	TopicBuildSignal Topic = "build-signal"
-	// TopicToMerge is where requests are published for merging.
-	TopicToMerge Topic = "to-merge"
-	// TopicMergeSignal is where merge signals are published for processing.
-	TopicMergeSignal Topic = "merge-signal"
-	// TopicFinalize is where requests are published for finalization.
-	TopicFinalize Topic = "finalize"
+	"github.com/uber/submitqueue/extension/queue"
 )
 
-// AllTopics returns all defined pipeline topics.
-// Update this list when adding new topics.
-var AllTopics = []Topic{
-	TopicRequest,
-	TopicToBatch,
-	TopicBatched,
-	TopicBuild,
-	TopicBuildSignal,
-	TopicToMerge,
-	TopicMergeSignal,
-	TopicFinalize,
-}
+// TopicKey identifies a pipeline stage. It is a fixed key used to
+// look up queue backends, topic names, and subscription configs
+// in the TopicRegistry.  The actual queue topic name is provided
+// separately via TopicConfig.Name so that library consumers can
+// choose their own naming conventions.
+type TopicKey string
 
-// String returns the topic name as a string.
-func (t Topic) String() string {
+const (
+	// TopicKeyRequest is the pipeline stage where new requests arrive from the gateway.
+	TopicKeyRequest TopicKey = "request"
+	// TopicKeyToBatch is the pipeline stage where validated requests are published for batching.
+	TopicKeyToBatch TopicKey = "to-batch"
+	// TopicKeyBatched is the pipeline stage where batched requests are published for speculation.
+	TopicKeyBatched TopicKey = "batched"
+	// TopicKeyBuild is the pipeline stage where requests are published for builds.
+	TopicKeyBuild TopicKey = "build"
+	// TopicKeyBuildSignal is the pipeline stage where build signals are published for processing.
+	TopicKeyBuildSignal TopicKey = "build-signal"
+	// TopicKeyToMerge is the pipeline stage where requests are published for merging.
+	TopicKeyToMerge TopicKey = "to-merge"
+	// TopicKeyMergeSignal is the pipeline stage where merge signals are published for processing.
+	TopicKeyMergeSignal TopicKey = "merge-signal"
+	// TopicKeyFinalize is the pipeline stage where requests are published for finalization.
+	TopicKeyFinalize TopicKey = "finalize"
+)
+
+// String returns the topic key as a string.
+func (t TopicKey) String() string {
 	return string(t)
 }
 
-// TopicConfig maps a topic to its queue backend.
+// TopicConfig combines all configuration for a single pipeline topic:
+// the fixed key, the actual queue topic name, the queue backend, and
+// (optionally) subscription settings.
 type TopicConfig struct {
-	// Topic is the topic identifier.
-	Topic Topic
+	// Key is the fixed pipeline stage identifier.
+	Key TopicKey
+	// Name is the actual queue topic name (e.g. "request", "my-custom-request").
+	Name string
 	// Queue is the queue backend for this topic.
 	Queue queue.Queue
+	// Subscription is the subscription configuration for this topic.
+	// Leave at zero value for publish-only topics.
+	Subscription queue.SubscriptionConfig
 }
 
-// TopicRegistry provides queue and subscription config for topics.
-// Each topic can have a different queue backend.
+// TopicRegistry provides queue, topic name, and subscription config for topics.
+// Each topic can have a different queue backend and topic name.
 type TopicRegistry struct {
-	queues              map[Topic]queue.Queue
+	queues     map[TopicKey]queue.Queue
+	topicNames map[TopicKey]string
 	subscriptionConfigs map[topicGroup]queue.SubscriptionConfig
 }
 
-// topicGroup identifies a topic and consumer group pair.
+// topicGroup identifies a topic key and consumer group pair.
 type topicGroup struct {
-	topic         Topic
+	topicKey      TopicKey
 	consumerGroup string
 }
 
-// NewTopicRegistry creates a new TopicRegistry.
-//   - topicConfigs: maps each topic to its queue backend
-//   - subscriptionConfigs: subscription configurations for each topic+consumerGroup
-func NewTopicRegistry(
-	topicConfigs []TopicConfig,
-	subscriptionConfigs []queue.SubscriptionConfig,
-) TopicRegistry {
-	queues := make(map[Topic]queue.Queue, len(topicConfigs))
-	for _, tc := range topicConfigs {
-		queues[tc.Topic] = tc.Queue
-	}
+// NewTopicRegistry creates a new TopicRegistry from a list of TopicConfigs.
+// Returns an error if any topic name is invalid.
+func NewTopicRegistry(configs []TopicConfig) (TopicRegistry, error) {
+	queues := make(map[TopicKey]queue.Queue, len(configs))
+	topicNames := make(map[TopicKey]string, len(configs))
+	subConfigs := make(map[topicGroup]queue.SubscriptionConfig)
 
-	configs := make(map[topicGroup]queue.SubscriptionConfig, len(subscriptionConfigs))
-	for _, cfg := range subscriptionConfigs {
-		key := topicGroup{
-			topic:         Topic(cfg.Topic),
-			consumerGroup: cfg.ConsumerGroup,
+	for _, cfg := range configs {
+		if err := ValidateTopicName(cfg.Name); err != nil {
+			return TopicRegistry{}, fmt.Errorf("invalid topic name for key %s: %w", cfg.Key, err)
 		}
-		configs[key] = cfg
+
+		queues[cfg.Key] = cfg.Queue
+		topicNames[cfg.Key] = cfg.Name
+
+		// Register subscription config if a consumer group is set.
+		if cfg.Subscription.ConsumerGroup != "" {
+			sub := cfg.Subscription
+			key := topicGroup{
+				topicKey:      cfg.Key,
+				consumerGroup: sub.ConsumerGroup,
+			}
+			subConfigs[key] = sub
+		}
 	}
 
 	return TopicRegistry{
 		queues:              queues,
-		subscriptionConfigs: configs,
-	}
+		topicNames:          topicNames,
+		subscriptionConfigs: subConfigs,
+	}, nil
 }
 
-// Queue returns the queue backend for the given topic.
-// Returns ok=false if no queue is registered for this topic.
-func (r TopicRegistry) Queue(topic Topic) (queue.Queue, bool) {
-	q, ok := r.queues[topic]
+// ValidateTopicName ensures a topic name is valid.
+// Topic names must be non-empty, at most 255 characters, and contain only
+// lowercase letters, numbers, underscores, and hyphens.
+func ValidateTopicName(name string) error {
+	if name == "" {
+		return fmt.Errorf("topic name cannot be empty")
+	}
+	if len(name) > 255 {
+		return fmt.Errorf("topic name too long (max 255 characters)")
+	}
+	for _, c := range name {
+		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+			return fmt.Errorf("topic name must contain only lowercase letters, numbers, underscores, and hyphens")
+		}
+	}
+	return nil
+}
+
+// Queue returns the queue backend for the given topic key.
+// Returns ok=false if no queue is registered for this key.
+func (r TopicRegistry) Queue(key TopicKey) (queue.Queue, bool) {
+	q, ok := r.queues[key]
 	return q, ok
 }
 
-// SubscriptionConfig returns the subscription configuration for the given topic and consumer group.
+// TopicName returns the actual queue topic name for the given key.
+// Returns ok=false if no topic is registered for this key.
+func (r TopicRegistry) TopicName(key TopicKey) (string, bool) {
+	name, ok := r.topicNames[key]
+	return name, ok
+}
+
+// SubscriptionConfig returns the subscription configuration for the given
+// topic key and consumer group.
 // Returns ok=false if no configuration is registered.
-func (r TopicRegistry) SubscriptionConfig(topic Topic, consumerGroup string) (queue.SubscriptionConfig, bool) {
-	cfg, ok := r.subscriptionConfigs[topicGroup{topic: topic, consumerGroup: consumerGroup}]
+func (r TopicRegistry) SubscriptionConfig(key TopicKey, consumerGroup string) (queue.SubscriptionConfig, bool) {
+	cfg, ok := r.subscriptionConfigs[topicGroup{topicKey: key, consumerGroup: consumerGroup}]
 	return cfg, ok
 }

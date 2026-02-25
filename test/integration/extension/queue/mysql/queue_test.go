@@ -136,7 +136,7 @@ func (s *SQLQueueIntegrationSuite) TestPublishAndSubscribe() {
 	topic := "test_topic"
 
 	// Subscribe first with config
-	subConfig := extqueue.DefaultSubscriptionConfig(topic, "test-worker-1", "test-consumer")
+	subConfig := extqueue.DefaultSubscriptionConfig("test-worker-1", "test-consumer")
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
@@ -206,7 +206,7 @@ func (s *SQLQueueIntegrationSuite) TestMultiplePartitions() {
 	topic := "multi_partition_topic"
 
 	// Subscribe
-	subConfig := extqueue.DefaultSubscriptionConfig(topic, "worker-1", "multi-partition-consumer")
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "multi-partition-consumer")
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
@@ -251,7 +251,7 @@ func (s *SQLQueueIntegrationSuite) TestVisibilityTimeoutAndRetry() {
 	topic := "retry_topic"
 
 	// Use short visibility timeout for faster test
-	subConfig := extqueue.DefaultSubscriptionConfig(topic, "worker-1", "retry-consumer")
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "retry-consumer")
 	subConfig.VisibilityTimeoutMs = 2000      // 2 seconds
 	subConfig.PollIntervalMs = 100            // 100 milliseconds
 
@@ -338,7 +338,7 @@ func (s *SQLQueueIntegrationSuite) TestNackWithDelay() {
 	topic := "nack_topic"
 
 	// Subscribe
-	subConfig := extqueue.DefaultSubscriptionConfig(topic, "worker-1", "nack-consumer")
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "nack-consumer")
 	subConfig.PollIntervalMs = 100 // 100 milliseconds
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
@@ -390,7 +390,7 @@ func (s *SQLQueueIntegrationSuite) TestIdempotentPublish() {
 	topic := "idempotent_topic"
 
 	// Subscribe
-	subConfig := extqueue.DefaultSubscriptionConfig(topic, "worker-1", "idempotent-consumer")
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "idempotent-consumer")
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
@@ -437,7 +437,7 @@ func (s *SQLQueueIntegrationSuite) TestConcurrentPublishers() {
 	topic := "concurrent_topic"
 
 	// Subscribe
-	subConfig := extqueue.DefaultSubscriptionConfig(topic, "worker-1", "concurrent-consumer")
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "concurrent-consumer")
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
@@ -492,7 +492,7 @@ func (s *SQLQueueIntegrationSuite) TestCrashRecovery() {
 	topic := "crash_topic"
 
 	// Use short timeouts for faster test
-	subConfig := extqueue.DefaultSubscriptionConfig(topic, "worker-1", "crash-consumer")
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "crash-consumer")
 	subConfig.VisibilityTimeoutMs = 2000          // 2 seconds
 	subConfig.PollIntervalMs = 100                // 100 milliseconds
 	subConfig.LeaseDurationMs = 3000              // 3 seconds - short lease for testing crash recovery
@@ -531,7 +531,7 @@ func (s *SQLQueueIntegrationSuite) TestCrashRecovery() {
 
 	subscriber2 := q2.Subscriber()
 
-	subConfig2 := extqueue.DefaultSubscriptionConfig(topic, "worker-2", "crash-consumer")
+	subConfig2 := extqueue.DefaultSubscriptionConfig("worker-2", "crash-consumer")
 	subConfig2.VisibilityTimeoutMs = 2000          // 2 seconds
 	subConfig2.PollIntervalMs = 100                // 100 milliseconds
 	subConfig2.LeaseDurationMs = 3000              // 3 seconds
@@ -578,11 +578,11 @@ func (s *SQLQueueIntegrationSuite) TestMultipleConsumerGroups() {
 	subscriber2 := q2.Subscriber()
 
 	// Subscribe both groups
-	subConfig1 := extqueue.DefaultSubscriptionConfig(topic, "worker-1", "group-A")
+	subConfig1 := extqueue.DefaultSubscriptionConfig("worker-1", "group-A")
 	deliveryChan1, err := subscriber1.Subscribe(s.ctx, topic, subConfig1)
 	require.NoError(t, err)
 
-	subConfig2 := extqueue.DefaultSubscriptionConfig(topic, "worker-1", "group-B")
+	subConfig2 := extqueue.DefaultSubscriptionConfig("worker-1", "group-B")
 	deliveryChan2, err := subscriber2.Subscribe(s.ctx, topic, subConfig2)
 	require.NoError(t, err)
 
@@ -657,11 +657,11 @@ func (s *SQLQueueIntegrationSuite) TestMultipleWorkersInConsumerGroup() {
 	subscriber2 := q2.Subscriber()
 
 	// Subscribe both workers
-	subConfig1 := extqueue.DefaultSubscriptionConfig(topic, "worker-1", consumerGroup)
+	subConfig1 := extqueue.DefaultSubscriptionConfig("worker-1", consumerGroup)
 	deliveryChan1, err := subscriber1.Subscribe(s.ctx, topic, subConfig1)
 	require.NoError(t, err)
 
-	subConfig2 := extqueue.DefaultSubscriptionConfig(topic, "worker-2", consumerGroup)
+	subConfig2 := extqueue.DefaultSubscriptionConfig("worker-2", consumerGroup)
 	deliveryChan2, err := subscriber2.Subscribe(s.ctx, topic, subConfig2)
 	require.NoError(t, err)
 
@@ -777,7 +777,7 @@ func (s *SQLQueueIntegrationSuite) TestConcurrentSubscribers() {
 		queues = append(queues, q)
 
 		subscriber := q.Subscriber()
-		subConfig := extqueue.DefaultSubscriptionConfig(topic, fmt.Sprintf("worker-%d", i), consumerGroup)
+		subConfig := extqueue.DefaultSubscriptionConfig(fmt.Sprintf("worker-%d", i), consumerGroup)
 		deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 		require.NoError(t, err)
 		deliveryChans = append(deliveryChans, deliveryChan)
@@ -870,7 +870,7 @@ func (s *SQLQueueIntegrationSuite) TestDeadLetterQueue() {
 	subscriber := q.Subscriber()
 
 	// Configure with low max attempts and DLQ enabled
-	subConfig := extqueue.DefaultSubscriptionConfig(topic, "worker-1", "dlq-consumer")
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "dlq-consumer")
 	subConfig.PollIntervalMs = 100       // 100 milliseconds
 	subConfig.VisibilityTimeoutMs = 1000 // 1 second
 	subConfig.Retry.MaxAttempts = 2      // Only 2 attempts before DLQ
@@ -915,7 +915,7 @@ func (s *SQLQueueIntegrationSuite) TestDeadLetterQueue() {
 	dlqTopic := topic + subConfig.DLQ.TopicSuffix
 	t.Logf("Subscribing to DLQ topic: %s", dlqTopic)
 
-	dlqConfig := extqueue.DefaultSubscriptionConfig(topic, "worker-1", "dlq-consumer")
+	dlqConfig := extqueue.DefaultSubscriptionConfig("worker-1", "dlq-consumer")
 	dlqDeliveryChan, err := subscriber.Subscribe(s.ctx, dlqTopic, dlqConfig)
 	require.NoError(t, err)
 
@@ -966,7 +966,7 @@ func (s *SQLQueueIntegrationSuite) TestMessageOrderingWithinPartition() {
 	subscriber := q.Subscriber()
 
 	// Subscribe first
-	subConfig := extqueue.DefaultSubscriptionConfig(topic, "worker-1", "ordering-consumer")
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "ordering-consumer")
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
@@ -1028,7 +1028,7 @@ func (s *SQLQueueIntegrationSuite) TestLateSubscriber() {
 
 	// Now subscribe (late subscriber)
 	subscriber := q.Subscriber()
-	subConfig := extqueue.DefaultSubscriptionConfig(topic, "worker-1", "late-consumer")
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "late-consumer")
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 	t.Logf("Late subscriber joined after messages published")
@@ -1067,7 +1067,7 @@ func (s *SQLQueueIntegrationSuite) TestEmptyTopicSubscribe() {
 	subscriber := q.Subscriber()
 
 	// Subscribe to empty topic (no messages published yet)
-	subConfig := extqueue.DefaultSubscriptionConfig(topic, "worker-1", "empty-consumer")
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "empty-consumer")
 	subConfig.PollIntervalMs = 100 // 100 milliseconds
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
@@ -1111,7 +1111,7 @@ func (s *SQLQueueIntegrationSuite) TestGracefulShutdownDuringProcessing() {
 	subscriber := q.Subscriber()
 
 	// Subscribe
-	subConfig := extqueue.DefaultSubscriptionConfig(topic, "worker-1", "shutdown-consumer")
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "shutdown-consumer")
 	subConfig.PollIntervalMs = 100 // 100 milliseconds
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
@@ -1175,7 +1175,7 @@ drainLoop:
 	defer q2.Close()
 
 	subscriber2 := q2.Subscriber()
-	subConfig2 := extqueue.DefaultSubscriptionConfig(topic, "worker-1", "shutdown-consumer")
+	subConfig2 := extqueue.DefaultSubscriptionConfig("worker-1", "shutdown-consumer")
 	deliveryChan2, err := subscriber2.Subscribe(s.ctx, topic, subConfig2)
 	require.NoError(t, err)
 
@@ -1351,7 +1351,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_ConsumerLagAfterPartialAck() {
 	}
 
 	// Subscribe and ack only 2
-	subConfig := extqueue.DefaultSubscriptionConfig(topic, "worker-1", consumerGroup)
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", consumerGroup)
 	subConfig.PollIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
@@ -1396,7 +1396,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_LeasesAndOffsets() {
 	// Publish and subscribe to create leases and offsets
 	require.NoError(t, publisher.Publish(s.ctx, topic, queue.NewMessage("lo-1", []byte("a"), "p1", nil)))
 
-	subConfig := extqueue.DefaultSubscriptionConfig(topic, "admin-worker-1", consumerGroup)
+	subConfig := extqueue.DefaultSubscriptionConfig("admin-worker-1", consumerGroup)
 	subConfig.PollIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
@@ -1456,7 +1456,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_ResetOffsetAndReleaseLease() {
 	// Publish, subscribe, ack — creates offsets and leases
 	require.NoError(t, publisher.Publish(s.ctx, topic, queue.NewMessage("r1", []byte("a"), "rp1", nil)))
 
-	subConfig := extqueue.DefaultSubscriptionConfig(topic, "reset-worker", consumerGroup)
+	subConfig := extqueue.DefaultSubscriptionConfig("reset-worker", consumerGroup)
 	subConfig.PollIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
