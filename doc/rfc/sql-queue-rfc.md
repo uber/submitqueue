@@ -18,8 +18,7 @@ MySQL-based distributed message queue with partition leasing, visibility timeout
 ### Motivation
 
 SubmitQueue needs a reliable message queue for coordinating asynchronous workflows:
-- **Orchestrator** publishes merge jobs to workers
-- **Speculator** publishes speculative build requests
+- **Orchestrator** publishes merge jobs and speculative build requests to workers
 - **Workers** need distributed coordination without duplicate processing
 - **Crash recovery** must preserve exactly where processing stopped
 
