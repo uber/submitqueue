@@ -33,4 +33,19 @@ type QueueConfig struct {
 	//   - Buildkite: "buildkite.com/uber/submitqueue-ci"
 	//   - Jenkins: "jenkins.example.com/job/submitqueue-verify"
 	BuildRunner string `json:"build_runner" yaml:"build_runner"`
+
+	// ChangeProvider identifies the change provider implementation for this queue.
+	// Maps to a registered ChangeProvider in the implementation registry.
+	// Examples: "github", "gitlab", "phabricator"
+	ChangeProvider string `json:"change_provider" yaml:"change_provider"`
+
+	// MergeChecker identifies the merge checker implementation for this queue.
+	// Maps to a registered MergeChecker in the implementation registry.
+	// Examples: "github", "gitlab"
+	MergeChecker string `json:"merge_checker" yaml:"merge_checker"`
+
+	// LandProvider identifies the land provider implementation for this queue.
+	// Maps to a registered LandProvider in the implementation registry.
+	// Examples: "github", "gitlab"
+	LandProvider string `json:"land_provider" yaml:"land_provider"`
 }
