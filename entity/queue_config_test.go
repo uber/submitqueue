@@ -6,11 +6,18 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestNewQueueConfig(t *testing.T) {
-	cfg := NewQueueConfig("uber/submitqueue/main", "git", "git@github.com:uber/submitqueue.git", "main")
+func TestQueueConfig(t *testing.T) {
+	cfg := QueueConfig{
+		Name:         "uber/submitqueue/main",
+		VCSType:      "git",
+		VCSAddress:   "git@github.com:uber/submitqueue.git",
+		Target:       "main",
+		BuildRunner:  "uber/submitqueue/ci",
+	}
 
 	assert.Equal(t, "uber/submitqueue/main", cfg.Name)
 	assert.Equal(t, "git", cfg.VCSType)
 	assert.Equal(t, "git@github.com:uber/submitqueue.git", cfg.VCSAddress)
 	assert.Equal(t, "main", cfg.Target)
+	assert.Equal(t, "uber/submitqueue/ci", cfg.BuildRunner)
 }

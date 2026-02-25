@@ -26,19 +26,11 @@ type QueueConfig struct {
 	//   - Perforce: stream or depot path (e.g., "//depot/main/...")
 	//   - SVN: repository path (e.g., "trunk/")
 	Target string
-}
 
-// NewQueueConfig creates a new QueueConfig with the given parameters.
-func NewQueueConfig(
-	name string,
-	vcsType string,
-	vcsAddress string,
-	target string,
-) QueueConfig {
-	return QueueConfig{
-		Name:       name,
-		VCSType:    vcsType,
-		VCSAddress: vcsAddress,
-		Target:     target,
-	}
+	// BuildRunner identifies the CI pipeline or job that runs builds for this queue.
+	// Opaque to the system; meaningful only to the build extension implementation.
+	// Examples:
+	//   - Buildkite: "uber/submitqueue/ci"
+	//   - Jenkins: "https://jenkins.example.com/job/submitqueue-verify"
+	BuildRunner string
 }
