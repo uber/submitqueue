@@ -19,6 +19,6 @@ type BatchStore interface {
 	// The implementation should increment the version by 1 atomically with the state update.
 	UpdateState(ctx context.Context, id string, version int32, newState entity.BatchState) error
 
-	// GetByStates retrieves all batches that are in the given states.
-	GetByStates(ctx context.Context, states []entity.BatchState) ([]entity.Batch, error)
+	// GetByQueueAndStates retrieves all batches that belong to the given queue and are in the given states.
+	GetByQueueAndStates(ctx context.Context, queue string, states []entity.BatchState) ([]entity.Batch, error)
 }

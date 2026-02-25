@@ -78,7 +78,7 @@ func (m *mockBatchStore) UpdateState(ctx context.Context, id string, version int
 	return nil
 }
 
-func (m *mockBatchStore) GetByStates(ctx context.Context, states []entity.BatchState) ([]entity.Batch, error) {
+func (m *mockBatchStore) GetByQueueAndStates(ctx context.Context, queue string, states []entity.BatchState) ([]entity.Batch, error) {
 	return nil, nil
 }
 
