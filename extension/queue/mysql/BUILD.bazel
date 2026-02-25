@@ -38,6 +38,7 @@ go_test(
     ],
     embed = [":mysql"],
     deps = [
+        "//core/consumer",
         "//entity/queue",
         "//extension/queue",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
