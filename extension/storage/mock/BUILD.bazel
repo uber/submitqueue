@@ -66,6 +66,7 @@ gomock(
     source_importpath = "github.com/uber/submitqueue/extension/storage",
 )
 
+# gazelle:ignore
 go_library(
     name = "mock",
     srcs = [
