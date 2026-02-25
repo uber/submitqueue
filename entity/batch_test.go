@@ -13,7 +13,7 @@ func TestBatchState_IsTerminal(t *testing.T) {
 		terminal bool
 	}{
 		{name: "unknown", state: BatchStateUnknown, terminal: false},
-		{name: "scheduled", state: BatchStateScheduled, terminal: false},
+		{name: "created", state: BatchStateCreated, terminal: false},
 		{name: "speculating", state: BatchStateSpeculating, terminal: false},
 		{name: "finalizing", state: BatchStateFinalizing, terminal: false},
 		{name: "succeeded", state: BatchStateSucceeded, terminal: true},

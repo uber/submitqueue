@@ -6,15 +6,15 @@ type BatchState string
 const (
 	// BatchStateUnknown is the unreachable state. It is set by default when the structure is initialized. It should never be seen in the system.
 	BatchStateUnknown BatchState = ""
-	// BatchStateScheduled is the state of a batch that has been scheduled for processing.
-	BatchStateScheduled BatchState = "scheduled"
+	// BatchStateCreated is the state of a batch that has been created for processing.
+	BatchStateCreated BatchState = "created"
 	// BatchStateSpeculating is the state of a batch that is undergoing speculative execution.
 	BatchStateSpeculating BatchState = "speculating"
 	// BatchStateFinalizing is the state of a batch that is being finalized after speculative execution.
 	BatchStateFinalizing BatchState = "finalizing"
 	// BatchStateSucceeded is the terminal state of a batch that has been successfully landed.
 	BatchStateSucceeded BatchState = "succeeded"
-	// BatchStateFailed is the terminal state of a batch that has failed to land.
+	// BatchStateFailed is the terminal state of a batch that has failed.
 	BatchStateFailed BatchState = "failed"
 	// BatchStateCancelled is the terminal state of a batch that was cancelled before completion.
 	BatchStateCancelled BatchState = "cancelled"
