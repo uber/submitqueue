@@ -12,6 +12,10 @@ import (
 // Implementations provide integration with specific CI systems (BuildKite, Jenkins, etc.)
 // to schedule builds, poll their status, and cancel running builds.
 //
+// Implementations may be designed as heavy singletons (with connection pooling and caching)
+// or lightweight instances created on-demand, depending on the CI provider's requirements
+// and implementation strategy.
+//
 // All implementations must be thread-safe and support concurrent operations.
 type BuildManager interface {
 	// Schedule submits a list of changes to the CI provider for processing.
@@ -21,7 +25,6 @@ type BuildManager interface {
 	//   - Looking up the job name from the queue configuration
 	//   - Creating appropriate builds/jobs for each change based on its action
 	//   - Handling dependencies between changes (order may be significant)
-	//   - Tracking build IDs internally for subsequent Poll/CancelBuild calls
 	//
 	// Parameters:
 	//   - ctx: Request context for cancellation and timeouts
@@ -29,8 +32,9 @@ type BuildManager interface {
 	//   - changes: List of changes to process. Order may be significant for dependencies.
 	//
 	// Returns:
+	//   - string: Unique build ID that can be used with Poll and CancelBuild methods
 	//   - error: ErrInvalidRequest if validation fails, ErrProviderUnavailable if CI provider is unreachable
-	Schedule(ctx context.Context, queueName string, changes []entity.BuildChange) error
+	Schedule(ctx context.Context, queueName string, changes []entity.BuildChange) (string, error)
 
 	// Poll retrieves the current status of a build from the CI provider.
 	// This is a synchronous call that queries the provider's API.
@@ -43,15 +47,23 @@ type BuildManager interface {
 	//   - error: ErrBuildNotFound if the build doesn't exist, ErrProviderUnavailable if CI provider is unreachable
 	Poll(ctx context.Context, id string) (entity.BuildStatus, error)
 
-	// CancelBuild requests cancellation of a queued or running build.
-	// Builds that have already completed cannot be cancelled.
+	// CancelBuild requests cancellation of a build.
+	//
+	// This operation is asynchronous and does not wait for the cancellation to complete.
+	// The implementation should initiate the cancellation request with the CI provider
+	// and return immediately. Use Poll to check if the build has transitioned to
+	// BuildStatusCancelled.
+	//
+	// The implementation decides how to handle cancellation requests for builds in
+	// terminal states (passed, failed, cancelled). It may return an error, silently
+	// ignore the request, or handle it in a provider-specific way.
 	//
 	// Parameters:
 	//   - id: Build ID string
 	//
 	// Returns:
 	//   - error: ErrBuildNotFound if the build doesn't exist,
-	//            ErrBuildNotCancellable if the build has already finished,
+	//            ErrBuildNotCancellable if the build cannot be cancelled (implementation-specific),
 	//            ErrProviderUnavailable if the CI provider is unreachable
 	CancelBuild(ctx context.Context, id string) error
 

@@ -79,11 +79,12 @@ func (mr *MockBuildManagerMockRecorder) Poll(ctx, id interface{}) *gomock.Call {
 }
 
 // Schedule mocks base method.
-func (m *MockBuildManager) Schedule(ctx context.Context, queueName string, changes []entity.BuildChange) error {
+func (m *MockBuildManager) Schedule(ctx context.Context, queueName string, changes []entity.BuildChange) (string, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Schedule", ctx, queueName, changes)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // Schedule indicates an expected call of Schedule.

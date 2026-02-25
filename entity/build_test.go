@@ -33,6 +33,11 @@ func TestBuildStatus_IsTerminal(t *testing.T) {
 			expected: false,
 		},
 		{
+			name:     "accepted is not terminal",
+			status:   BuildStatusAccepted,
+			expected: false,
+		},
+		{
 			name:     "running is not terminal",
 			status:   BuildStatusRunning,
 			expected: false,

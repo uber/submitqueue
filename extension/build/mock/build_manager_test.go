@@ -16,9 +16,10 @@ func TestMockBuildManager_Compilation(t *testing.T) {
 	mockBuildMgr := NewMockBuildManager(ctrl)
 
 	// Test Schedule
+	expectedBuildID := "mock://test-build-123"
 	mockBuildMgr.EXPECT().
 		Schedule(gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(nil)
+		Return(expectedBuildID, nil)
 
 	queueName := "test-queue"
 	changes := []entity.BuildChange{
@@ -26,16 +27,18 @@ func TestMockBuildManager_Compilation(t *testing.T) {
 		{ChangeID: "D12346", Action: entity.BuildActionApply},
 	}
 
-	err := mockBuildMgr.Schedule(
+	buildID, err := mockBuildMgr.Schedule(
 		context.Background(), queueName, changes,
 	)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if buildID != expectedBuildID {
+		t.Fatalf("expected build ID %v, got %v", expectedBuildID, buildID)
+	}
 
 	// Test Poll
-	buildID := "mock://1"
 	mockBuildMgr.EXPECT().
 		Poll(gomock.Any(), gomock.Any()).
 		Return(entity.BuildStatusPassed, nil)

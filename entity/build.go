@@ -10,6 +10,9 @@ const (
 	// BuildStatusQueued indicates the build has been scheduled but not yet started.
 	BuildStatusQueued BuildStatus = "queued"
 
+	// BuildStatusAccepted indicates the build has been accepted by the CI provider.
+	BuildStatusAccepted BuildStatus = "accepted"
+
 	// BuildStatusRunning indicates the build is currently executing.
 	BuildStatusRunning BuildStatus = "running"
 
