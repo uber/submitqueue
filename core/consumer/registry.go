@@ -24,6 +24,19 @@ const (
 	TopicFinalize Topic = "finalize"
 )
 
+// AllTopics returns all defined pipeline topics.
+// Update this list when adding new topics.
+var AllTopics = []Topic{
+	TopicRequest,
+	TopicToBatch,
+	TopicBatched,
+	TopicBuild,
+	TopicBuildSignal,
+	TopicToMerge,
+	TopicMergeSignal,
+	TopicFinalize,
+}
+
 // String returns the topic name as a string.
 func (t Topic) String() string {
 	return string(t)
