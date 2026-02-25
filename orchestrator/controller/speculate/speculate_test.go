@@ -60,7 +60,7 @@ func TestController_Process_Success(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{Source: "github", IDs: []string{"PR-456"}},
+		Change:       entity.Change{URIs: []string{"github://uber/service/pull/456/abc123def"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
 		State:        entity.RequestStateNew,
 		Version:      1,
@@ -103,7 +103,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{Source: "github", IDs: []string{"PR-1"}},
+		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/xyz789abc"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
 		State:        entity.RequestStateNew,
 		Version:      1,

@@ -111,7 +111,7 @@ func (s *GatewayIntegrationSuite) TestLandAPI() {
 
 	req := &pb.LandRequest{
 		Queue:    "test-queue",
-		Change:   &pb.Change{Source: "github", Ids: []string{"PR-123"}},
+		Change:   &pb.Change{Uris: []string{"github://uber/integration-test/pull/123/abc123def"}},
 		Strategy: pb.Strategy_REBASE,
 	}
 
