@@ -248,7 +248,7 @@ func TestLand_ReturnsSqid(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &pb.Change{Source: "github", Ids: []string{"123"}},
+		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/abc123def"}},
 	}
 	resp, err := controller.Land(ctx, req)
 
@@ -280,7 +280,7 @@ func TestLand_PassesCorrectParametersToStore(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:    "my-queue",
-		Change:   &pb.Change{Source: "github", Ids: []string{"pr-1", "pr-2"}},
+		Change:   &pb.Change{Uris: []string{"github://uber/myservice/pull/1/abc111", "github://uber/myservice/pull/2/def222"}},
 		Strategy: pb.Strategy_REBASE,
 	}
 	resp, err := controller.Land(ctx, req)
@@ -288,8 +288,7 @@ func TestLand_PassesCorrectParametersToStore(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "my-queue/42", capturedRequest.ID)
 	assert.Equal(t, "my-queue", capturedRequest.Queue)
-	assert.Equal(t, "github", capturedRequest.Change.Source)
-	assert.Equal(t, []string{"pr-1", "pr-2"}, capturedRequest.Change.IDs)
+	assert.Equal(t, []string{"github://uber/myservice/pull/1/abc111", "github://uber/myservice/pull/2/def222"}, capturedRequest.Change.URIs)
 	assert.Equal(t, entity.RequestLandStrategyRebase, capturedRequest.LandStrategy)
 	assert.Equal(t, entity.RequestStateNew, capturedRequest.State)
 	assert.Equal(t, int32(1), capturedRequest.Version)
@@ -317,7 +316,7 @@ func TestLand_ReturnsErrorOnStorageFailure(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &pb.Change{Source: "github", Ids: []string{"123"}},
+		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/abc123def"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -345,7 +344,7 @@ func TestLand_ReturnsErrorOnCounterFailure(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &pb.Change{Source: "github", Ids: []string{"123"}},
+		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/abc123def"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -376,7 +375,7 @@ func TestLand_CounterDomainIncludesQueue(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "my-queue",
-		Change: &pb.Change{Source: "github", Ids: []string{"123"}},
+		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/abc123def"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -398,7 +397,7 @@ func TestLand_ReturnsErrorOnEmptyQueue(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "",
-		Change: &pb.Change{Source: "github", Ids: []string{"123"}},
+		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/abc123def"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -406,7 +405,7 @@ func TestLand_ReturnsErrorOnEmptyQueue(t *testing.T) {
 	assert.True(t, IsInvalidRequest(err))
 }
 
-func TestLand_ReturnsErrorOnEmptyChangeSource(t *testing.T) {
+func TestLand_ReturnsErrorOnEmptyChangeUri(t *testing.T) {
 	store := &mockStorage{requestStore: &mockRequestStore{
 		createFunc: func(ctx context.Context, request entity.Request) error {
 			return nil
@@ -420,7 +419,7 @@ func TestLand_ReturnsErrorOnEmptyChangeSource(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &pb.Change{Source: "", Ids: []string{"123"}},
+		Change: &pb.Change{Uris: []string{}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -443,28 +442,6 @@ func TestLand_ReturnsErrorOnNilChange(t *testing.T) {
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
 		Change: nil,
-	}
-	_, err := controller.Land(ctx, req)
-
-	require.Error(t, err)
-	assert.True(t, IsInvalidRequest(err))
-}
-
-func TestLand_ReturnsErrorOnEmptyChangeIDs(t *testing.T) {
-	store := &mockStorage{requestStore: &mockRequestStore{
-		createFunc: func(ctx context.Context, request entity.Request) error {
-			return nil
-		},
-	}}
-	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
-		return 1, nil
-	}}
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
-	ctx := context.Background()
-
-	req := &pb.LandRequest{
-		Queue:  "test-queue",
-		Change: &pb.Change{Source: "github", Ids: []string{}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -495,7 +472,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:    "test-queue",
-		Change:   &pb.Change{Source: "github", Ids: []string{"PR-456"}},
+		Change:   &pb.Change{Uris: []string{"github://uber/backend/pull/456/fed987cba"}},
 		Strategy: pb.Strategy_REBASE,
 	}
 	resp, err := controller.Land(ctx, req)
@@ -513,8 +490,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test-queue/123", deserializedReq.ID)
 	assert.Equal(t, "test-queue", deserializedReq.Queue)
-	assert.Equal(t, "github", deserializedReq.Change.Source)
-	assert.Equal(t, []string{"PR-456"}, deserializedReq.Change.IDs)
+	assert.Equal(t, []string{"github://uber/backend/pull/456/fed987cba"}, deserializedReq.Change.URIs)
 	assert.Equal(t, entity.RequestLandStrategyRebase, deserializedReq.LandStrategy)
 	assert.Equal(t, entity.RequestStateNew, deserializedReq.State)
 	assert.Equal(t, int32(1), deserializedReq.Version)
@@ -538,7 +514,7 @@ func TestLand_ContinuesWhenPublishFails(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &pb.Change{Source: "github", Ids: []string{"PR-1"}},
+		Change: &pb.Change{Uris: []string{"github://uber/service/pull/1/abc123def"}},
 	}
 	_, err := controller.Land(ctx, req)
 
