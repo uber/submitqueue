@@ -200,12 +200,10 @@ func (x *PingResponse) GetHostname() string {
 // Change represents a set of related code changes identified by one or more URIs from a particular code change provider, like Github Pull Requests.
 type Change struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The code change provider (e.g., "github", "gerrit", "phabricator").
+	// The code change provider ID that maps to a registered provider (e.g., "github", "github-enterprise", "phabricator").
 	Source string `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`
-	// List of change URIs that should be landed together. The format is provider-specific:
-	//   - GitHub: "owner/repo/pr_number@commit_hash" (e.g., "uber/submitqueue/123@abc123def")
-	//   - Phabricator: "revision_id@commit_hash" (e.g., "D12345@abc123def")
-	//
+	// List of change URIs that should be landed together. The format is determined by the change-provider implementation.
+	// Default format: "github.com/<org>/<repo>/<pr>/<hash>" (e.g., "github.com/uber/submitqueue/123/abc123def")
 	// SubmitQueue guarantees that the changes are landed in the order of the list, and no other changes are landed in between.
 	// SubmitQueue does not guarantee that each change is individually valid, but produces a special validity marker on such changes.
 	// The user is responsible to include all changes in a change stack in the order of the list, starting from the earliest change.

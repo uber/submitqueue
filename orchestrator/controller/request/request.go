@@ -69,7 +69,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"queue", request.Queue,
 		"state", string(request.State),
 		"land_strategy", string(request.LandStrategy),
-		"change_source", request.Change.Source,
+		"change_source", request.Change.Provider,
 		"change_uris", request.Change.URIs,
 		"version", request.Version,
 		"attempt", delivery.Attempt(),

@@ -69,8 +69,8 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 	}
 
 	change := entity.Change{
-		Source: req.Change.GetSource(),
-		URIs:   req.Change.GetUris(),
+		Provider: req.Change.GetSource(),
+		URIs:     req.Change.GetUris(),
 	}
 
 	// TODO: validate that queue is configured. Return error if not.
@@ -104,7 +104,7 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 	c.logger.Debugw("land request created",
 		"queue", req.Queue,
 		"sqid", request.ID,
-		"change_source", change.Source,
+		"change_source", change.Provider,
 		"change_uris", change.URIs,
 		"strategy", string(strategy),
 	)

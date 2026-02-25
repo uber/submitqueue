@@ -30,7 +30,7 @@ func (r *requestStore) Get(ctx context.Context, id string) (entity.Request, erro
 	err := r.db.QueryRowContext(ctx,
 		"SELECT id, queue, change_source, change_uris, land_strategy, state, version FROM request WHERE id = ?",
 		id,
-	).Scan(&req.ID, &req.Queue, &req.Change.Source, &changeURIsJSON, &req.LandStrategy, &req.State, &req.Version)
+	).Scan(&req.ID, &req.Queue, &req.Change.Provider, &changeURIsJSON, &req.LandStrategy, &req.State, &req.Version)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.Request{}, storage.WrapNotFound(err)
@@ -55,7 +55,7 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) error
 
 	_, err = r.db.ExecContext(ctx,
 		"INSERT INTO request (id, queue, change_source, change_uris, land_strategy, state, version) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		request.ID, request.Queue, request.Change.Source, changeURIsJSON, request.LandStrategy, request.State, request.Version,
+		request.ID, request.Queue, request.Change.Provider, changeURIsJSON, request.LandStrategy, request.State, request.Version,
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError

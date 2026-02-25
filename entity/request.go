@@ -36,11 +36,10 @@ const (
 // Change represents a set of related code changes identified by one or more URIs from a particular code change provider, like Github Pull Requests.
 // The object is immutable after creation.
 type Change struct {
-	// Source is the code change provider ID that maps to a registered provider (e.g., "github", "github-enterprise", "phabricator").
-	Source string `json:"source"`
-	// URIs is a list of change URIs that should be landed together. The format is provider-specific:
-	//   - GitHub: "owner/repo/pr_number@commit_hash" (e.g., "uber/submitqueue/123@abc123def")
-	//   - Phabricator: "revision_id@commit_hash" (e.g., "D12345@abc123def")
+	// Provider is the code change provider that maps to a registered provider (e.g., "github", "github-enterprise", "phabricator").
+	Provider string `json:"provider"`
+	// URIs is a list of change URIs that should be landed together. The format is determined by the change-provider implementation.
+	// Default format: "github.com/<org>/<repo>/<pr>/<hash>" (e.g., "github.com/uber/submitqueue/123/abc123def")
 	URIs []string `json:"uris"`
 }
 

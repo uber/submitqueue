@@ -46,8 +46,8 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet() {
 		Queue: "test-queue",
 		State: entity.RequestStateNew,
 		Change: entity.Change{
-			Source: "github",
-			URIs:   []string{"uber/storage-test/123@abc123def"},
+			Provider: "github",
+			URIs:     []string{"github.com/uber/storage-test/123/abc123def"},
 		},
 		LandStrategy: entity.RequestLandStrategyMerge,
 		Version:      1,
@@ -65,7 +65,7 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet() {
 	assert.Equal(t, request.ID, retrieved.ID)
 	assert.Equal(t, request.Queue, retrieved.Queue)
 	assert.Equal(t, request.State, retrieved.State)
-	assert.Equal(t, request.Change.Source, retrieved.Change.Source)
+	assert.Equal(t, request.Change.Provider, retrieved.Change.Provider)
 	assert.Equal(t, request.Change.URIs, retrieved.Change.URIs)
 	assert.Equal(t, request.LandStrategy, retrieved.LandStrategy)
 	assert.Equal(t, request.Version, retrieved.Version)

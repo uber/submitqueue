@@ -11,7 +11,7 @@ func TestRequest_ToBytes(t *testing.T) {
 	req := Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       Change{Source: "github", URIs: []string{"uber/submitqueue/456@abc123def", "uber/submitqueue/789@def456abc"}},
+		Change:       Change{Provider: "github", URIs: []string{"github.com/uber/submitqueue/456/abc123def", "github.com/uber/submitqueue/789/def456abc"}},
 		LandStrategy: RequestLandStrategyRebase,
 		State:        RequestStateNew,
 		Version:      1,
@@ -25,7 +25,7 @@ func TestRequest_ToBytes(t *testing.T) {
 	jsonStr := string(data)
 	assert.Contains(t, jsonStr, "test-queue/123")
 	assert.Contains(t, jsonStr, "github")
-	assert.Contains(t, jsonStr, "uber/submitqueue/456@abc123def")
+	assert.Contains(t, jsonStr, "github.com/uber/submitqueue/456/abc123def")
 	assert.Contains(t, jsonStr, "rebase")
 	assert.Contains(t, jsonStr, "new")
 }
@@ -34,7 +34,7 @@ func TestRequestFromBytes(t *testing.T) {
 	original := Request{
 		ID:           "my-queue/999",
 		Queue:        "my-queue",
-		Change:       Change{Source: "phabricator", URIs: []string{"D111@fedcba987"}},
+		Change:       Change{Provider: "phabricator", URIs: []string{"phabricator.uber.com/D111/fedcba987"}},
 		LandStrategy: RequestLandStrategyMerge,
 		State:        RequestStateProcessing,
 		Version:      3,
@@ -51,7 +51,7 @@ func TestRequestFromBytes(t *testing.T) {
 	// Verify all fields match
 	assert.Equal(t, original.ID, deserialized.ID)
 	assert.Equal(t, original.Queue, deserialized.Queue)
-	assert.Equal(t, original.Change.Source, deserialized.Change.Source)
+	assert.Equal(t, original.Change.Provider, deserialized.Change.Provider)
 	assert.Equal(t, original.Change.URIs, deserialized.Change.URIs)
 	assert.Equal(t, original.LandStrategy, deserialized.LandStrategy)
 	assert.Equal(t, original.State, deserialized.State)
@@ -89,7 +89,7 @@ func TestRequest_SerializationRoundTrip(t *testing.T) {
 			req: Request{
 				ID:           "queue1/100",
 				Queue:        "queue1",
-				Change:       Change{Source: "github", URIs: []string{"uber/repo-a/101@aaa111", "uber/repo-a/102@bbb222", "uber/repo-a/103@ccc333"}},
+				Change:       Change{Provider: "github", URIs: []string{"github.com/uber/repo-a/101/aaa111", "github.com/uber/repo-a/102/bbb222", "github.com/uber/repo-a/103/ccc333"}},
 				LandStrategy: RequestLandStrategySquashRebase,
 				State:        RequestStateLanded,
 				Version:      5,
@@ -100,7 +100,7 @@ func TestRequest_SerializationRoundTrip(t *testing.T) {
 			req: Request{
 				ID:           "queue2/200",
 				Queue:        "queue2",
-				Change:       Change{Source: "phabricator", URIs: []string{"D12345@abc123def456"}},
+				Change:       Change{Provider: "phabricator", URIs: []string{"phabricator.uber.com/D12345/abc123def456"}},
 				LandStrategy: RequestLandStrategyRebase,
 				State:        RequestStateNew,
 				Version:      1,
@@ -111,7 +111,7 @@ func TestRequest_SerializationRoundTrip(t *testing.T) {
 			req: Request{
 				ID:           "queue3/300",
 				Queue:        "queue3",
-				Change:       Change{Source: "github-enterprise", URIs: []string{"internal/service/999@deadbeef12"}},
+				Change:       Change{Provider: "github-enterprise", URIs: []string{"github.uber.com/internal/service/999/deadbeef12"}},
 				LandStrategy: RequestLandStrategyMerge,
 				State:        RequestStateError,
 				Version:      10,
