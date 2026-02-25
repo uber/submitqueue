@@ -18,6 +18,7 @@ go_library(
 go_test(
     name = "entity_test",
     srcs = [
+        "batch_test.go",
         "build_test.go",
         "request_test.go",
     ],
