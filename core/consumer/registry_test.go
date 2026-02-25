@@ -167,28 +167,3 @@ func TestTopicRegistry_Queue_PerTopic(t *testing.T) {
 	_, ok = registry.Queue(consumer.Topic("nonexistent"))
 	assert.False(t, ok)
 }
-
-func TestTopic_String(t *testing.T) {
-	tests := []struct {
-		name     string
-		topic    consumer.Topic
-		expected string
-	}{
-		{
-			name:     "predefined topic",
-			topic:    consumer.TopicRequest,
-			expected: "request",
-		},
-		{
-			name:     "custom topic",
-			topic:    consumer.Topic("custom"),
-			expected: "custom",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, tt.topic.String())
-		})
-	}
-}

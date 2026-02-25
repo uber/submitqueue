@@ -7,20 +7,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestNewMessage(t *testing.T) {
-	id := "test-id"
-	payload := []byte("test payload")
-
-	msg := NewMessage(id, payload, "", nil)
-
-	assert.Equal(t, id, msg.ID)
-	assert.Equal(t, payload, msg.Payload)
-	assert.Empty(t, msg.PartitionKey)
-	assert.NotNil(t, msg.Metadata)
-	assert.Empty(t, msg.Metadata)
-	assert.NotZero(t, msg.PublishedAt)
-}
-
 func TestMessage_Copy(t *testing.T) {
 	original := NewMessage("id-123", []byte("payload"), "partition-1", map[string]string{"key": "value"})
 

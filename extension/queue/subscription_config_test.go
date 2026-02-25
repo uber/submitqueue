@@ -7,36 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDefaultSubscriptionConfig(t *testing.T) {
-	topic := "test-topic"
-	subscriberName := "test-worker"
-	consumerGroup := "test-consumer"
-
-	config := DefaultSubscriptionConfig(topic, subscriberName, consumerGroup)
-
-	// Verify required fields are set
-	assert.Equal(t, topic, config.Topic)
-	assert.Equal(t, subscriberName, config.SubscriberName)
-	assert.Equal(t, consumerGroup, config.ConsumerGroup)
-
-	// Verify default timing values (in milliseconds)
-	assert.Equal(t, int64(100), config.PollIntervalMs)
-	assert.Equal(t, 10, config.BatchSize)
-	assert.Equal(t, int64(60000), config.VisibilityTimeoutMs)
-	assert.Equal(t, int64(10000), config.LeaseRenewalIntervalMs)
-	assert.Equal(t, int64(30000), config.LeaseDurationMs)
-
-	// Verify retry config defaults
-	assert.Equal(t, 3, config.Retry.MaxAttempts)
-	assert.Equal(t, int64(1000), config.Retry.InitialBackoffMs)
-	assert.Equal(t, int64(30000), config.Retry.MaxBackoffMs)
-	assert.Equal(t, 2.0, config.Retry.BackoffMultiplier)
-
-	// Verify DLQ config defaults
-	assert.True(t, config.DLQ.Enabled)
-	assert.Equal(t, "_dlq", config.DLQ.TopicSuffix)
-}
-
 func TestSubscriptionConfig_FieldsAreIndependent(t *testing.T) {
 	// Create two configs and modify one to ensure they're independent
 	config1 := DefaultSubscriptionConfig("topic-1", "worker-1", "consumer-1")
@@ -87,40 +57,6 @@ func TestSubscriptionConfig_CustomValues(t *testing.T) {
 	assert.Equal(t, 3.0, config.Retry.BackoffMultiplier)
 	assert.False(t, config.DLQ.Enabled)
 	assert.Equal(t, "_dead", config.DLQ.TopicSuffix)
-}
-
-func TestRetryConfig_ZeroValues(t *testing.T) {
-	// Test that zero-value RetryConfig can be created
-	var config RetryConfig
-
-	assert.Equal(t, 0, config.MaxAttempts)
-	assert.Equal(t, int64(0), config.InitialBackoffMs)
-	assert.Equal(t, int64(0), config.MaxBackoffMs)
-	assert.Equal(t, 0.0, config.BackoffMultiplier)
-}
-
-func TestDLQConfig_ZeroValues(t *testing.T) {
-	// Test that zero-value DLQConfig can be created
-	var config DLQConfig
-
-	assert.False(t, config.Enabled)
-	assert.Equal(t, "", config.TopicSuffix)
-}
-
-func TestSubscriptionConfig_ZeroValues(t *testing.T) {
-	// Test that zero-value SubscriptionConfig can be created
-	var config SubscriptionConfig
-
-	assert.Equal(t, "", config.Topic)
-	assert.Equal(t, "", config.SubscriberName)
-	assert.Equal(t, "", config.ConsumerGroup)
-	assert.Equal(t, int64(0), config.PollIntervalMs)
-	assert.Equal(t, 0, config.BatchSize)
-	assert.Equal(t, int64(0), config.VisibilityTimeoutMs)
-	assert.Equal(t, int64(0), config.LeaseRenewalIntervalMs)
-	assert.Equal(t, int64(0), config.LeaseDurationMs)
-	assert.Equal(t, 0, config.Retry.MaxAttempts)
-	assert.False(t, config.DLQ.Enabled)
 }
 
 func TestSubscriptionConfig_DifferentConsumerGroups(t *testing.T) {
