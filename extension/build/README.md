@@ -93,9 +93,7 @@ type BuildStatus string
 
 const (
     BuildStatusUnknown    BuildStatus = ""          // Sentinel value
-    BuildStatusQueued     BuildStatus = "queued"    // Scheduled but not started
     BuildStatusAccepted   BuildStatus = "accepted"  // Accepted by CI provider
-    BuildStatusRunning    BuildStatus = "running"   // Currently executing
     BuildStatusPassed     BuildStatus = "passed"    // Completed successfully (terminal)
     BuildStatusFailed     BuildStatus = "failed"    // Completed with failures (terminal)
     BuildStatusCancelled  BuildStatus = "cancelled" // Cancelled before completion (terminal)
@@ -105,15 +103,14 @@ const (
 func (s BuildStatus) IsTerminal() bool
 ```
 
-**Build Lifecycle**: `queued` → `accepted` → `running` → `passed`/`failed`/`cancelled`
+**Build Lifecycle**: `accepted` → `passed`/`failed`/`cancelled`
 
 ## Error Handling
 
 The extension defines sentinel errors following the SubmitQueue pattern:
 
 - **`ErrBuildNotFound`** - Build doesn't exist or was deleted
-- **`ErrBuildNotCancellable`** - Build has already finished
-- **`ErrProviderUnavailable`** - CI provider unreachable or experiencing errors
+- **`ErrBuildNotCancellable`** - Build cannot be cancelled (implementation-specific)
 - **`ErrInvalidRequest`** - Request validation failed
 
 Each error has helper functions:
@@ -245,7 +242,6 @@ To add support for a new CI provider:
 
 4. **Handle provider errors**:
    - 404 errors → `build.WrapBuildNotFound()`
-   - 5xx errors → `build.WrapProviderUnavailable()`
    - Validation errors → `build.WrapInvalidRequest()`
 
 5. **Implement Schedule method**:

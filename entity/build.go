@@ -7,14 +7,8 @@ const (
 	// BuildStatusUnknown is the unreachable state. It is set by default when the structure is initialized. It should never be seen in the system.
 	BuildStatusUnknown BuildStatus = ""
 
-	// BuildStatusQueued indicates the build has been scheduled but not yet started.
-	BuildStatusQueued BuildStatus = "queued"
-
 	// BuildStatusAccepted indicates the build has been accepted by the CI provider.
 	BuildStatusAccepted BuildStatus = "accepted"
-
-	// BuildStatusRunning indicates the build is currently executing.
-	BuildStatusRunning BuildStatus = "running"
 
 	// BuildStatusPassed indicates the build completed successfully.
 	// This is a terminal state.

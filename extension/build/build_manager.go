@@ -33,7 +33,7 @@ type BuildManager interface {
 	//
 	// Returns:
 	//   - string: Unique build ID that can be used with Poll and CancelBuild methods
-	//   - error: ErrInvalidRequest if validation fails, ErrProviderUnavailable if CI provider is unreachable
+	//   - error: ErrInvalidRequest if validation fails
 	Schedule(ctx context.Context, queueName string, changes []entity.BuildChange) (string, error)
 
 	// Poll retrieves the current status of a build from the CI provider.
@@ -44,7 +44,7 @@ type BuildManager interface {
 	//
 	// Returns:
 	//   - BuildStatus: Current state of the build
-	//   - error: ErrBuildNotFound if the build doesn't exist, ErrProviderUnavailable if CI provider is unreachable
+	//   - error: ErrBuildNotFound if the build doesn't exist
 	Poll(ctx context.Context, id string) (entity.BuildStatus, error)
 
 	// CancelBuild requests cancellation of a build.
@@ -63,8 +63,7 @@ type BuildManager interface {
 	//
 	// Returns:
 	//   - error: ErrBuildNotFound if the build doesn't exist,
-	//            ErrBuildNotCancellable if the build cannot be cancelled (implementation-specific),
-	//            ErrProviderUnavailable if the CI provider is unreachable
+	//            ErrBuildNotCancellable if the build cannot be cancelled (implementation-specific)
 	CancelBuild(ctx context.Context, id string) error
 
 	// Close gracefully shuts down the build manager.
