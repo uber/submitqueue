@@ -110,9 +110,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// - Add to batch dependent DB
 
 	// Publish to speculate topic
-	if err := c.publish(ctx, consumer.TopicBatched, request); err != nil {
+	if err := c.publish(ctx, consumer.TopicBatched, batch); err != nil {
 		c.logger.Errorw("failed to publish output",
-			"request_id", request.ID,
+			"batch_id", batch.ID,
 			"topic", consumer.TopicBatched,
 			"error", err,
 		)
@@ -120,8 +120,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}
 
-	c.logger.Infow("published request to next stage",
-		"request_id", request.ID,
+	c.logger.Infow("published batch to next stage",
+		"batch_id", batch.ID,
 		"topic", consumer.TopicBatched,
 	)
 
@@ -130,14 +130,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	return nil // Success - message will be acked
 }
 
-// publish publishes a request to the specified topic.
-func (c *Controller) publish(ctx context.Context, topic consumer.Topic, request entity.Request) error {
-	payload, err := request.ToBytes()
+// publish publishes a batch to the specified topic.
+func (c *Controller) publish(ctx context.Context, topic consumer.Topic, batch entity.Batch) error {
+	payload, err := batch.ToBytes()
 	if err != nil {
-		return fmt.Errorf("failed to serialize request: %w", err)
+		return fmt.Errorf("failed to serialize batch: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(request.ID, payload, request.Queue, nil)
+	msg := entityqueue.NewMessage(batch.ID, payload, batch.Queue, nil)
 
 	q, ok := c.registry.Queue(topic)
 	if !ok {
