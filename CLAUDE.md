@@ -48,8 +48,8 @@ submitqueue/
 │   ├── counter/                # Sequential number generation (interface + mysql/)
 │   ├── queue/                  # Messaging queue abstraction (interface + sql/)
 │   └── storage/                # Storage abstraction (interface + mysql/)
-├── core/
-│   └── consumer/               # Reusable queue consumer infrastructure
+├── core/                        # Shared infrastructure packages reused across services
+│   └── consumer/               # Queue consumption framework (lifecycle, ack/nack, routing)
 ├── example/server/             # Runnable servers with Docker Compose
 ├── test/
 │   ├── e2e/                    # End-to-end tests (full stack)
