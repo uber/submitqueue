@@ -18,15 +18,13 @@ const (
 	BatchStateFailed BatchState = "failed"
 	// BatchStateCancelled is the terminal state of a batch that was cancelled before completion.
 	BatchStateCancelled BatchState = "cancelled"
-	// BatchStateCancellationFailed is the terminal state of a batch whose cancellation process itself failed.
-	BatchStateCancellationFailed BatchState = "cancellationfailed"
 )
 
 // IsTerminal returns true if the batch state is a terminal state.
 // Terminal states are states from which no further transitions are possible.
 func (s BatchState) IsTerminal() bool {
 	switch s {
-	case BatchStateSucceeded, BatchStateFailed, BatchStateCancelled, BatchStateCancellationFailed:
+	case BatchStateSucceeded, BatchStateFailed, BatchStateCancelled:
 		return true
 	default:
 		return false

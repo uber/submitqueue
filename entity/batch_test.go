@@ -19,7 +19,6 @@ func TestBatchState_IsTerminal(t *testing.T) {
 		{name: "succeeded", state: BatchStateSucceeded, terminal: true},
 		{name: "failed", state: BatchStateFailed, terminal: true},
 		{name: "cancelled", state: BatchStateCancelled, terminal: true},
-		{name: "cancellationfailed", state: BatchStateCancellationFailed, terminal: true},
 		{name: "arbitrary string", state: BatchState("something_else"), terminal: false},
 	}
 
