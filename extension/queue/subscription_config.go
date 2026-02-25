@@ -4,9 +4,6 @@ package queue
 // Each subscription (topic) can have its own settings for polling,
 // batching, retries, and dead letter queue behavior.
 type SubscriptionConfig struct {
-	// Topic is the queue topic name to subscribe to.
-	Topic string
-
 	// SubscriberName uniquely identifies this subscriber instance for partition leases.
 	// Different workers should use different names (e.g., hostname, pod name, UUID).
 	// Combined with ConsumerGroup, this determines which worker owns a partition lease.
@@ -68,9 +65,8 @@ type DLQConfig struct {
 }
 
 // DefaultSubscriptionConfig returns a SubscriptionConfig with sensible defaults.
-func DefaultSubscriptionConfig(topic, subscriberName, consumerGroup string) SubscriptionConfig {
+func DefaultSubscriptionConfig(subscriberName, consumerGroup string) SubscriptionConfig {
 	return SubscriptionConfig{
-		Topic:                  topic,
 		SubscriberName:         subscriberName,
 		ConsumerGroup:          consumerGroup,
 		PollIntervalMs:         100,      // 100ms

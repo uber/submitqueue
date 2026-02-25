@@ -192,16 +192,16 @@ func (mr *MockControllerMockRecorder) Process(ctx, delivery any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Process", reflect.TypeOf((*MockController)(nil).Process), ctx, delivery)
 }
 
-// Topic mocks base method.
-func (m *MockController) Topic() consumer.Topic {
+// TopicKey mocks base method.
+func (m *MockController) TopicKey() consumer.TopicKey {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Topic")
-	ret0, _ := ret[0].(consumer.Topic)
+	ret := m.ctrl.Call(m, "TopicKey")
+	ret0, _ := ret[0].(consumer.TopicKey)
 	return ret0
 }
 
-// Topic indicates an expected call of Topic.
-func (mr *MockControllerMockRecorder) Topic() *gomock.Call {
+// TopicKey indicates an expected call of TopicKey.
+func (mr *MockControllerMockRecorder) TopicKey() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Topic", reflect.TypeOf((*MockController)(nil).Topic))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TopicKey", reflect.TypeOf((*MockController)(nil).TopicKey))
 }

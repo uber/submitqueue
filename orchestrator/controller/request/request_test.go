@@ -40,12 +40,12 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, mc mergechecker.Me
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
-	registry := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Topic: consumer.TopicToBatch, Queue: mockQ}},
-		nil,
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{{Key: consumer.TopicKeyToBatch, Name: "to-batch", Queue: mockQ}},
 	)
+	require.NoError(t, err)
 
-	return NewController(logger, scope, registry, mc, consumer.TopicRequest, "orchestrator-request")
+	return NewController(logger, scope, registry, mc, consumer.TopicKeyRequest, "orchestrator-request")
 }
 
 func TestNewController(t *testing.T) {
@@ -54,7 +54,7 @@ func TestNewController(t *testing.T) {
 	controller := newTestController(t, ctrl, mc, nil)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicRequest, controller.Topic())
+	assert.Equal(t, consumer.TopicKeyRequest, controller.TopicKey())
 	assert.Equal(t, "orchestrator-request", controller.ConsumerGroup())
 	assert.Equal(t, "request", controller.Name())
 }

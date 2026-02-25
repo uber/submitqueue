@@ -20,16 +20,17 @@ func newTestController(t *testing.T) *Controller {
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
 
-	registry := consumer.NewTopicRegistry(nil, nil)
+	registry, err := consumer.NewTopicRegistry(nil)
+	require.NoError(t, err)
 
-	return NewController(logger, scope, registry, consumer.TopicBuildSignal, "orchestrator-buildsignal")
+	return NewController(logger, scope, registry, consumer.TopicKeyBuildSignal, "orchestrator-buildsignal")
 }
 
 func TestNewController(t *testing.T) {
 	controller := newTestController(t)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicBuildSignal, controller.Topic())
+	assert.Equal(t, consumer.TopicKeyBuildSignal, controller.TopicKey())
 	assert.Equal(t, "orchestrator-buildsignal", controller.ConsumerGroup())
 	assert.Equal(t, "buildsignal", controller.Name())
 }

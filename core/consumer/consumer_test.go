@@ -20,9 +20,9 @@ import (
 )
 
 // setupController configures a MockController with standard expectations.
-func setupController(mc *consumermock.MockController, name string, topic consumer.Topic, consumerGroup string, processFunc func(context.Context, consumer.Delivery) error) {
+func setupController(mc *consumermock.MockController, name string, topicKey consumer.TopicKey, consumerGroup string, processFunc func(context.Context, consumer.Delivery) error) {
 	mc.EXPECT().Name().Return(name).AnyTimes()
-	mc.EXPECT().Topic().Return(topic).AnyTimes()
+	mc.EXPECT().TopicKey().Return(topicKey).AnyTimes()
 	mc.EXPECT().ConsumerGroup().Return(consumerGroup).AnyTimes()
 	if processFunc != nil {
 		mc.EXPECT().Process(gomock.Any(), gomock.Any()).DoAndReturn(processFunc).AnyTimes()
@@ -30,13 +30,22 @@ func setupController(mc *consumermock.MockController, name string, topic consume
 }
 
 // newRegistry creates a TopicRegistry with a mock queue and default subscription config.
-func newRegistry(q extqueue.Queue, topic consumer.Topic, consumerGroup string) consumer.TopicRegistry {
-	return consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Topic: topic, Queue: q}},
-		[]extqueue.SubscriptionConfig{
-			extqueue.DefaultSubscriptionConfig(topic.String(), "test-worker", consumerGroup),
+func newRegistry(t *testing.T, q extqueue.Queue, topicKey consumer.TopicKey, consumerGroup string) consumer.TopicRegistry {
+	t.Helper()
+	reg, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{
+			{
+				Key:   topicKey,
+				Name:  topicKey.String(),
+				Queue: q,
+				Subscription: extqueue.DefaultSubscriptionConfig(
+					"test-worker", consumerGroup,
+				),
+			},
 		},
 	)
+	require.NoError(t, err)
+	return reg
 }
 
 // setupDelivery creates a MockDelivery with standard expectations and a done channel
@@ -62,7 +71,8 @@ func setupDelivery(del *queuemock.MockDelivery, msg queue.Message, ackErr, nackE
 func TestNew(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 
-	reg := consumer.NewTopicRegistry(nil, nil)
+	reg, err := consumer.NewTopicRegistry(nil)
+	require.NoError(t, err)
 
 	c := consumer.New(logger, tally.NoopScope, reg)
 	require.NotNil(t, c)
@@ -72,14 +82,14 @@ func TestConsumer_Register(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	logger := zaptest.NewLogger(t).Sugar()
 
-	reg := consumer.NewTopicRegistry(nil, nil)
+	reg, _ := consumer.NewTopicRegistry(nil)
 	c := consumer.New(logger, tally.NoopScope, reg)
 
 	handler1 := consumermock.NewMockController(ctrl)
-	setupController(handler1, "handler1", consumer.TopicRequest, "group1", nil)
+	setupController(handler1, "handler1", consumer.TopicKeyRequest, "group1", nil)
 
 	handler2 := consumermock.NewMockController(ctrl)
-	setupController(handler2, "handler2", consumer.Topic("other-topic"), "group2", nil)
+	setupController(handler2, "handler2", consumer.TopicKey("other-topic"), "group2", nil)
 
 	err := c.Register(handler1)
 	require.NoError(t, err)
@@ -92,14 +102,14 @@ func TestConsumer_Register_DuplicateTopic(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	logger := zaptest.NewLogger(t).Sugar()
 
-	reg := consumer.NewTopicRegistry(nil, nil)
+	reg, _ := consumer.NewTopicRegistry(nil)
 	c := consumer.New(logger, tally.NoopScope, reg)
 
 	handler1 := consumermock.NewMockController(ctrl)
-	setupController(handler1, "handler1", consumer.TopicRequest, "group1", nil)
+	setupController(handler1, "handler1", consumer.TopicKeyRequest, "group1", nil)
 
 	handler2 := consumermock.NewMockController(ctrl)
-	setupController(handler2, "handler2", consumer.TopicRequest, "group2", nil)
+	setupController(handler2, "handler2", consumer.TopicKeyRequest, "group2", nil)
 
 	err := c.Register(handler1)
 	require.NoError(t, err)
@@ -112,14 +122,14 @@ func TestConsumer_Register_AfterStop(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	logger := zaptest.NewLogger(t).Sugar()
 
-	reg := consumer.NewTopicRegistry(nil, nil)
+	reg, _ := consumer.NewTopicRegistry(nil)
 	c := consumer.New(logger, tally.NoopScope, reg)
 
 	err := c.Stop(1000)
 	require.NoError(t, err)
 
 	handler := consumermock.NewMockController(ctrl)
-	setupController(handler, "handler1", consumer.TopicRequest, "group1", nil)
+	setupController(handler, "handler1", consumer.TopicKeyRequest, "group1", nil)
 
 	err = c.Register(handler)
 	assert.Error(t, err)
@@ -128,7 +138,7 @@ func TestConsumer_Register_AfterStop(t *testing.T) {
 func TestConsumer_Start_NoHandlers(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 
-	reg := consumer.NewTopicRegistry(nil, nil)
+	reg, _ := consumer.NewTopicRegistry(nil)
 	c := consumer.New(logger, tally.NoopScope, reg)
 
 	err := c.Start(context.Background())
@@ -139,11 +149,11 @@ func TestConsumer_Start_AfterStop(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	logger := zaptest.NewLogger(t).Sugar()
 
-	reg := consumer.NewTopicRegistry(nil, nil)
+	reg, _ := consumer.NewTopicRegistry(nil)
 	c := consumer.New(logger, tally.NoopScope, reg)
 
 	handler := consumermock.NewMockController(ctrl)
-	setupController(handler, "handler1", consumer.TopicRequest, "group1", nil)
+	setupController(handler, "handler1", consumer.TopicKeyRequest, "group1", nil)
 
 	err := c.Register(handler)
 	require.NoError(t, err)
@@ -161,17 +171,17 @@ func TestConsumer_Start_MissingSubscriptionConfig(t *testing.T) {
 
 	mockQ := queuemock.NewMockQueue(ctrl)
 	// Registry has queue but no subscription config
-	reg := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Topic: consumer.TopicRequest, Queue: mockQ}},
-		nil,
+	reg, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{{Key: consumer.TopicKeyRequest, Name: "request", Queue: mockQ}},
 	)
+	require.NoError(t, err)
 
 	c := consumer.New(logger, tally.NoopScope, reg)
 
 	handler := consumermock.NewMockController(ctrl)
-	setupController(handler, "handler", consumer.TopicRequest, "group", nil)
+	setupController(handler, "handler", consumer.TopicKeyRequest, "group", nil)
 
-	err := c.Register(handler)
+	err = c.Register(handler)
 	require.NoError(t, err)
 
 	err = c.Start(context.Background())
@@ -190,12 +200,12 @@ func TestConsumer_Start_SubscribeFailure(t *testing.T) {
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Subscriber().Return(mockSub)
 
-	reg := newRegistry(mockQ, consumer.TopicRequest, "group")
+	reg := newRegistry(t, mockQ, consumer.TopicKeyRequest, "group")
 
 	c := consumer.New(logger, tally.NoopScope, reg)
 
 	handler := consumermock.NewMockController(ctrl)
-	setupController(handler, "handler", consumer.TopicRequest, "group", nil)
+	setupController(handler, "handler", consumer.TopicKeyRequest, "group", nil)
 
 	err := c.Register(handler)
 	require.NoError(t, err)
@@ -216,13 +226,13 @@ func TestConsumer_ProcessDelivery_Success(t *testing.T) {
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Subscriber().Return(mockSub)
 
-	reg := newRegistry(mockQ, consumer.TopicRequest, "test-group")
+	reg := newRegistry(t, mockQ, consumer.TopicKeyRequest, "test-group")
 
 	c := consumer.New(logger, tally.NoopScope, reg)
 
 	handledMsg := ""
 	handler := consumermock.NewMockController(ctrl)
-	setupController(handler, "test-handler", consumer.TopicRequest, "test-group",
+	setupController(handler, "test-handler", consumer.TopicKeyRequest, "test-group",
 		func(ctx context.Context, delivery consumer.Delivery) error {
 			handledMsg = delivery.Message().ID
 			return nil
@@ -262,12 +272,12 @@ func TestConsumer_ProcessDelivery_Error(t *testing.T) {
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Subscriber().Return(mockSub)
 
-	reg := newRegistry(mockQ, consumer.TopicRequest, "test-group")
+	reg := newRegistry(t, mockQ, consumer.TopicKeyRequest, "test-group")
 
 	c := consumer.New(logger, tally.NoopScope, reg)
 
 	handler := consumermock.NewMockController(ctrl)
-	setupController(handler, "test-handler", consumer.TopicRequest, "test-group",
+	setupController(handler, "test-handler", consumer.TopicKeyRequest, "test-group",
 		func(ctx context.Context, delivery consumer.Delivery) error {
 			return fmt.Errorf("processing failed")
 		},
@@ -304,12 +314,12 @@ func TestConsumer_ProcessDelivery_NonRetryableError(t *testing.T) {
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Subscriber().Return(mockSub)
 
-	reg := newRegistry(mockQ, consumer.TopicRequest, "test-group")
+	reg := newRegistry(t, mockQ, consumer.TopicKeyRequest, "test-group")
 
 	c := consumer.New(logger, tally.NoopScope, reg)
 
 	handler := consumermock.NewMockController(ctrl)
-	setupController(handler, "test-handler", consumer.TopicRequest, "test-group",
+	setupController(handler, "test-handler", consumer.TopicKeyRequest, "test-group",
 		func(ctx context.Context, delivery consumer.Delivery) error {
 			return consumer.NewNonRetryableError(fmt.Errorf("bad payload"))
 		},
@@ -355,12 +365,12 @@ func TestConsumer_Stop(t *testing.T) {
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Subscriber().Return(mockSub)
 
-	reg := newRegistry(mockQ, consumer.TopicRequest, "test-group")
+	reg := newRegistry(t, mockQ, consumer.TopicKeyRequest, "test-group")
 
 	c := consumer.New(logger, tally.NoopScope, reg)
 
 	handler := consumermock.NewMockController(ctrl)
-	setupController(handler, "test-handler", consumer.TopicRequest, "test-group", nil)
+	setupController(handler, "test-handler", consumer.TopicKeyRequest, "test-group", nil)
 
 	err := c.Register(handler)
 	require.NoError(t, err)
@@ -413,12 +423,12 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 			mockQ := queuemock.NewMockQueue(ctrl)
 			mockQ.EXPECT().Subscriber().Return(mockSub)
 
-			reg := newRegistry(mockQ, consumer.TopicRequest, "test-group")
+			reg := newRegistry(t, mockQ, consumer.TopicKeyRequest, "test-group")
 
 			testC := consumer.New(logger, testScope, reg)
 
 			handler := consumermock.NewMockController(ctrl)
-			setupController(handler, "test-handler", consumer.TopicRequest, "test-group",
+			setupController(handler, "test-handler", consumer.TopicKeyRequest, "test-group",
 				func(ctx context.Context, delivery consumer.Delivery) error {
 					return tt.handlerError
 				},
@@ -488,12 +498,12 @@ func TestConsumer_AckNackLatencyTracking(t *testing.T) {
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Subscriber().Return(mockSub)
 
-	reg := newRegistry(mockQ, consumer.TopicRequest, "test-group")
+	reg := newRegistry(t, mockQ, consumer.TopicKeyRequest, "test-group")
 
 	c := consumer.New(logger, scope, reg)
 
 	handler := consumermock.NewMockController(ctrl)
-	setupController(handler, "test-handler", consumer.TopicRequest, "test-group",
+	setupController(handler, "test-handler", consumer.TopicKeyRequest, "test-group",
 		func(ctx context.Context, delivery consumer.Delivery) error { return nil },
 	)
 
@@ -533,12 +543,12 @@ func TestConsumer_ErrorMetrics(t *testing.T) {
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Subscriber().Return(mockSub)
 
-	reg := newRegistry(mockQ, consumer.TopicRequest, "test-group")
+	reg := newRegistry(t, mockQ, consumer.TopicKeyRequest, "test-group")
 
 	c := consumer.New(logger, scope, reg)
 
 	handler := consumermock.NewMockController(ctrl)
-	setupController(handler, "test-handler", consumer.TopicRequest, "test-group",
+	setupController(handler, "test-handler", consumer.TopicKeyRequest, "test-group",
 		func(ctx context.Context, delivery consumer.Delivery) error {
 			return fmt.Errorf("processing failed")
 		},

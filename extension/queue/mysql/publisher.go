@@ -40,13 +40,6 @@ func (p *publisher) Publish(ctx context.Context, topic string, message queue.Mes
 		return fmt.Errorf("publisher is closed")
 	}
 
-	// Validate topic name (SQL-safe)
-	if err := validateTopicName(topic); err != nil {
-		p.logger.Errorw("publish failure: invalid topic name", "topic", topic, "error", err)
-		p.metrics.Tagged(map[string]string{"topic": topic}).Counter("publish_errors").Inc(1)
-		return fmt.Errorf("publish invalid topic name: %w", err)
-	}
-
 	if err := p.messageStore.Insert(ctx, topic, []queue.Message{message}); err != nil {
 		p.metrics.Tagged(map[string]string{"topic": topic}).Counter("publish_errors").Inc(1)
 		p.logger.Errorw("publish failure: message store insert error", "topic", topic, "error", err)
