@@ -124,12 +124,40 @@ func (m *mockBuildStore) UpdateStatus(ctx context.Context, id string, newStatus 
 	return nil
 }
 
+type mockSpeculationTreeStore struct {
+	createFunc            func(ctx context.Context, speculationTree entity.SpeculationTree) error
+	getFunc               func(ctx context.Context, batchID string) (entity.SpeculationTree, error)
+	updateSpeculationsFunc func(ctx context.Context, batchID string, speculations []map[string]string) error
+}
+
+func (m *mockSpeculationTreeStore) Get(ctx context.Context, batchID string) (entity.SpeculationTree, error) {
+	if m.getFunc != nil {
+		return m.getFunc(ctx, batchID)
+	}
+	return entity.SpeculationTree{}, nil
+}
+
+func (m *mockSpeculationTreeStore) Create(ctx context.Context, speculationTree entity.SpeculationTree) error {
+	if m.createFunc != nil {
+		return m.createFunc(ctx, speculationTree)
+	}
+	return nil
+}
+
+func (m *mockSpeculationTreeStore) UpdateSpeculations(ctx context.Context, batchID string, speculations []map[string]string) error {
+	if m.updateSpeculationsFunc != nil {
+		return m.updateSpeculationsFunc(ctx, batchID, speculations)
+	}
+	return nil
+}
+
 type mockStorage struct {
 	requestStore          storage.RequestStore
 	changeProviderStore   storage.ChangeProviderStore
 	batchStore            storage.BatchStore
 	batchDependentStore   storage.BatchDependentStore
 	buildStore            storage.BuildStore
+	speculationTreeStore  storage.SpeculationTreeStore
 }
 
 func (m *mockStorage) GetRequestStore() storage.RequestStore {
@@ -150,6 +178,10 @@ func (m *mockStorage) GetBatchDependentStore() storage.BatchDependentStore {
 
 func (m *mockStorage) GetBuildStore() storage.BuildStore {
 	return m.buildStore
+}
+
+func (m *mockStorage) GetSpeculationTreeStore() storage.SpeculationTreeStore {
+	return m.speculationTreeStore
 }
 
 func (m *mockStorage) Close() error {

@@ -41,6 +41,9 @@ type Storage interface {
 	// GetBuildStore returns the BuildStore instance.
 	GetBuildStore() BuildStore
 
+	// GetSpeculationTreeStore returns the SpeculationTreeStore instance.
+	GetSpeculationTreeStore() SpeculationTreeStore
+
 	// Close closes the storage and all underlying connections. Should only be called once at the end of the program.
 	Close() error
 }
