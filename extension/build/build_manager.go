@@ -56,7 +56,7 @@ type BuildManager interface {
 	// BuildStatusCancelled.
 	//
 	// The implementation decides how to handle cancellation requests for builds in
-	// terminal states (passed, failed, cancelled). It may return an error, silently
+	// terminal states (succeeded, failed, cancelled). It may return an error, silently
 	// ignore the request, or handle it in a provider-specific way.
 	//
 	// Parameters:

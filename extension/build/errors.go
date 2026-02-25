@@ -25,7 +25,7 @@ func WrapBuildNotFound(err error) error {
 
 // ErrBuildNotCancellable is returned when attempting to cancel a build that cannot be cancelled.
 // The specific conditions are implementation-defined and may include:
-//   - The build has already finished (passed, failed, or cancelled)
+//   - The build has already finished (succeeded, failed, or cancelled)
 //   - The provider does not support cancellation for this build type
 var ErrBuildNotCancellable = errors.New("build not cancellable")
 

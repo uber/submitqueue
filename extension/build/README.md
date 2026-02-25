@@ -92,18 +92,18 @@ This format allows the implementation to encode both the provider name and provi
 type BuildStatus string
 
 const (
-    BuildStatusUnknown    BuildStatus = ""          // Sentinel value
-    BuildStatusAccepted   BuildStatus = "accepted"  // Accepted by CI provider
-    BuildStatusPassed     BuildStatus = "passed"    // Completed successfully (terminal)
-    BuildStatusFailed     BuildStatus = "failed"    // Completed with failures (terminal)
-    BuildStatusCancelled  BuildStatus = "cancelled" // Cancelled before completion (terminal)
+    BuildStatusUnknown    BuildStatus = ""           // Sentinel value
+    BuildStatusAccepted   BuildStatus = "accepted"   // Accepted by CI provider
+    BuildStatusSucceeded  BuildStatus = "succeeded"  // Completed successfully (terminal)
+    BuildStatusFailed     BuildStatus = "failed"     // Completed with failures (terminal)
+    BuildStatusCancelled  BuildStatus = "cancelled"  // Cancelled before completion (terminal)
 )
 
-// IsTerminal returns true for passed/failed/cancelled states
+// IsTerminal returns true for succeeded/failed/cancelled states
 func (s BuildStatus) IsTerminal() bool
 ```
 
-**Build Lifecycle**: `accepted` → `passed`/`failed`/`cancelled`
+**Build Lifecycle**: `accepted` → `succeeded`/`failed`/`cancelled`
 
 ### Build Metadata
 
@@ -167,7 +167,7 @@ commitSHA := metadata["commit_sha"]
 
 // 3. Check if build is done
 if status.IsTerminal() {
-    // Build finished: status is passed, failed, or cancelled
+    // Build finished: status is succeeded, failed, or cancelled
 }
 ```
 
@@ -222,7 +222,7 @@ if status == entity.BuildStatusCancelled {
 }
 ```
 
-**Note**: The implementation decides how to handle cancellation requests for builds in terminal states (passed, failed, cancelled). It may return an error, silently ignore the request, or handle it in a provider-specific way.
+**Note**: The implementation decides how to handle cancellation requests for builds in terminal states (succeeded, failed, cancelled). It may return an error, silently ignore the request, or handle it in a provider-specific way.
 
 ## Implementing a New Provider
 

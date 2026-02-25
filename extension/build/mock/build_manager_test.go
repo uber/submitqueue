@@ -45,14 +45,14 @@ func TestMockBuildManager_Compilation(t *testing.T) {
 	}
 	mockBuildMgr.EXPECT().
 		Poll(gomock.Any(), gomock.Any()).
-		Return(entity.BuildStatusPassed, expectedMetadata, nil)
+		Return(entity.BuildStatusSucceeded, expectedMetadata, nil)
 
 	status, metadata, err := mockBuildMgr.Poll(context.Background(), buildID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if status != entity.BuildStatusPassed {
-		t.Fatalf("expected %v, got %v", entity.BuildStatusPassed, status)
+	if status != entity.BuildStatusSucceeded {
+		t.Fatalf("expected %v, got %v", entity.BuildStatusSucceeded, status)
 	}
 	if metadata["build_url"] != expectedMetadata["build_url"] {
 		t.Fatalf("expected metadata %v, got %v", expectedMetadata, metadata)

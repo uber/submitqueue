@@ -10,9 +10,9 @@ const (
 	// BuildStatusAccepted indicates the build has been accepted by the CI provider.
 	BuildStatusAccepted BuildStatus = "accepted"
 
-	// BuildStatusPassed indicates the build completed successfully.
+	// BuildStatusSucceeded indicates the build completed successfully.
 	// This is a terminal state.
-	BuildStatusPassed BuildStatus = "passed"
+	BuildStatusSucceeded BuildStatus = "succeeded"
 
 	// BuildStatusFailed indicates the build completed with failures.
 	// This is a terminal state.
@@ -23,10 +23,10 @@ const (
 	BuildStatusCancelled BuildStatus = "cancelled"
 )
 
-// IsTerminal returns true if the build state represents a final state (passed, failed, or cancelled).
+// IsTerminal returns true if the build state represents a final state (succeeded, failed, or cancelled).
 // Terminal states indicate the build has finished and will not change state again.
 func (s BuildStatus) IsTerminal() bool {
-	return s == BuildStatusPassed || s == BuildStatusFailed || s == BuildStatusCancelled
+	return s == BuildStatusSucceeded || s == BuildStatusFailed || s == BuildStatusCancelled
 }
 
 

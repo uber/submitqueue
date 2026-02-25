@@ -13,8 +13,8 @@ func TestBuildStatus_IsTerminal(t *testing.T) {
 		expected bool
 	}{
 		{
-			name:     "passed is terminal",
-			status:   BuildStatusPassed,
+			name:     "succeeded is terminal",
+			status:   BuildStatusSucceeded,
 			expected: true,
 		},
 		{
