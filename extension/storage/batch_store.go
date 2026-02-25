@@ -1,5 +1,7 @@
 package storage
 
+//go:generate mockgen -source=batch_store.go -destination=mock/batch_store.go -package=mock
+
 import (
 	"context"
 

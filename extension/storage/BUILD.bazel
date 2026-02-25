@@ -1,5 +1,18 @@
 load("@rules_go//go:def.bzl", "go_library")
 
+exports_files(
+    [
+        "batch_dependent_store.go",
+        "batch_store.go",
+        "build_store.go",
+        "change_provider_store.go",
+        "request_store.go",
+        "speculation_tree_store.go",
+        "storage.go",
+    ],
+    visibility = ["//extension/storage/mock:__pkg__"],
+)
+
 go_library(
     name = "storage",
     srcs = [
