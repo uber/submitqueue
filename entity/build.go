@@ -38,12 +38,6 @@ func (s BuildStatus) IsTerminal() bool {
 }
 
 
-// SpeculationPathInfo represents the base and head commits of a speculation path used in a build.
-type SpeculationPathInfo struct {
-	// Base is a list of batchIDs(in order) that form the base of this speculation path.
-	Base []string
-}
-
 // Build represents a build scheduled for a batch along a specific speculation path.
 // All fields except the Status are immutable after creation.
 type Build struct {
@@ -55,7 +49,7 @@ type Build struct {
 	// SpeculationPath is the speculation path that represents this build. For
 	// a given batch this path is crafted from the graph that is generated from the
 	// dependencies of this batch.
-	SpeculationPath SpeculationPathInfo
+	SpeculationPath SpeculationPath
 	// Score represents the build prediction score for this speculation path.
 	Score float32
 	// Status represents the state of the build lifecycle this build is in.

@@ -1,0 +1,20 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "speculation",
+    srcs = ["speculation.go"],
+    importpath = "github.com/uber/submitqueue/core/speculation",
+    visibility = ["//visibility:public"],
+    deps = ["//entity"],
+)
+
+go_test(
+    name = "speculation_test",
+    srcs = ["speculation_test.go"],
+    embed = [":speculation"],
+    deps = [
+        "//entity",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

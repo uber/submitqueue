@@ -6,6 +6,7 @@ import (
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/core/speculation"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
 	"go.uber.org/zap"
@@ -73,9 +74,23 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"partition_key", msg.PartitionKey,
 	)
 
-	// TODO: Add speculation logic
-	// - Speculative merge/rebase
-	// - Conflict detection
+	// Generate speculation tree for this request.
+	// For now, no dependencies are provided (single batch, no predecessors).
+	// This will be extended when the batch controller provides dependency information.
+	tree, err := speculation.GenerateTree(request.ID, nil)
+	if err != nil {
+		c.logger.Errorw("failed to generate speculation tree",
+			"request_id", request.ID,
+			"error", err,
+		)
+		c.metricsScope.Counter("speculation_errors").Inc(1)
+		return consumer.NewNonRetryableError(fmt.Errorf("failed to generate speculation tree: %w", err))
+	}
+
+	c.logger.Infow("generated speculation tree",
+		"request_id", request.ID,
+		"path_count", len(tree.Speculations),
+	)
 
 	// Publish to build topic
 	if err := c.publish(ctx, consumer.TopicKeyBuild, request); err != nil {
