@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -16,6 +17,8 @@ import (
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/extension/counter"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
+	"github.com/uber/submitqueue/extension/mergechecker"
+	githubchecker "github.com/uber/submitqueue/extension/mergechecker/github"
 	extqueue "github.com/uber/submitqueue/extension/queue"
 	queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
 	"github.com/uber/submitqueue/orchestrator/controller"
@@ -144,8 +147,11 @@ func run() error {
 	// Create consumer
 	c := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry)
 
+	// Create merge checker
+	mc := newMergeChecker(logger, scope)
+
 	// Register controllers
-	if err := registerControllers(c, logger.Sugar(), scope, registry, cnt); err != nil {
+	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cnt); err != nil {
 		return err
 	}
 
@@ -269,11 +275,13 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) consumer.TopicReg
 //
 //	→ merge → merge-signal
 //	finalize (terminal)
-func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, cnt counter.Counter) error {
+
+func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cnt counter.Counter) error {
 	requestController := request.NewController(
 		logger,
 		scope,
 		registry,
+		mc,
 		consumer.TopicRequest,
 		"orchestrator-request",
 	)
@@ -360,4 +368,40 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	}
 
 	return nil
+}
+
+// newMergeChecker creates a MergeChecker for GitHub (github.com).
+// Configured via GITHUB_TOKEN and GITHUB_GRAPHQL_URL environment variables.
+func newMergeChecker(logger *zap.Logger, scope tally.Scope) mergechecker.MergeChecker {
+	graphQLURL := os.Getenv("GITHUB_GRAPHQL_URL")
+	if graphQLURL == "" {
+		graphQLURL = "https://api.github.com/graphql"
+	}
+
+	httpClient := &http.Client{}
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		httpClient.Transport = &bearerTransport{token: token}
+	}
+
+	github := githubchecker.NewMergeChecker(githubchecker.Params{
+		HTTPClient:   httpClient,
+		GraphQLURL:   graphQLURL,
+		Logger:       logger.Sugar(),
+		MetricsScope: scope.SubScope("mergechecker"),
+	})
+
+	return mergechecker.NewMultiChecker(map[string]mergechecker.MergeChecker{
+		"github": github,
+	})
+}
+
+// bearerTransport is an http.RoundTripper that adds a Bearer token to requests.
+type bearerTransport struct {
+	token string
+}
+
+func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Header.Set("Authorization", "Bearer "+t.token)
+	return http.DefaultTransport.RoundTrip(req)
 }

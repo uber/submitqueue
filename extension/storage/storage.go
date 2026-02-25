@@ -1,5 +1,7 @@
 package storage
 
+//go:generate mockgen -source=storage.go -destination=mock/storage.go -package=mock
+
 import "errors"
 import "fmt"
 

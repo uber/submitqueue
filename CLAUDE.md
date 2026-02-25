@@ -184,8 +184,64 @@ make clean              # Clean Bazel cache
 **Add new entity:**
 1. Create `entity/{domain}/{entity}.go` with test file and `BUILD.bazel`
 
+**Add gomock for an extension interface:**
+
+Mocks use the Bazel `gomock` rule from `@rules_go//extras:gomock.bzl` and are generated at build time (not checked in). See `extension/storage/mock/` for the canonical example.
+
+To add a mock for a new interface file in an existing mock package (e.g., `extension/storage/new_store.go`):
+
+1. Add a `//go:generate` directive to the interface file:
+   ```go
+   //go:generate mockgen -source=new_store.go -destination=mock/new_store.go -package=mock
+   ```
+2. Add the file to `exports_files` in the parent `BUILD.bazel` with visibility to the mock package:
+   ```starlark
+   exports_files(
+       ["new_store.go", ...],
+       visibility = ["//extension/storage/mock:__pkg__"],
+   )
+   ```
+3. Add a `gomock` rule in the mock `BUILD.bazel`:
+   ```starlark
+   gomock(
+       name = "mock_new_store_src",
+       out = "new_store_mock.go",
+       mockgen_tool = _MOCKGEN,
+       package = "mock",
+       source = "//extension/storage:new_store.go",
+       source_importpath = "github.com/uber/submitqueue/extension/storage",
+   )
+   ```
+4. Add the rule target to the `go_library` srcs in the same file.
+
+To create a mock package for a new extension (e.g., `extension/queue/mock/`):
+
+1. Create `extension/{ext}/mock/BUILD.bazel` with `gomock` rules, a `go_library`, and `# gazelle:ignore`.
+2. Add `exports_files` to `extension/{ext}/BUILD.bazel` for each interface file.
+3. Follow the same per-interface pattern as above.
+
+Mock `BUILD.bazel` files use `# gazelle:ignore` so `make gazelle` will not update them — they must be maintained manually.
+
+**Using mocks in tests:**
+```go
+import storagemock "github.com/uber/submitqueue/extension/storage/mock"
+
+ctrl := gomock.NewController(t)
+mockStore := storagemock.NewMockRequestStore(ctrl)
+mockStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+```
+
+Test `BUILD.bazel` deps:
+```starlark
+deps = [
+    "//extension/storage/mock",
+    "@org_uber_go_mock//gomock",
+]
+```
+
 ### Testing
 
+- **Table-driven tests** — prefer table-driven tests with `t.Run` subtests over individual test functions.
 - **Avoid asserting on error messages** — assert on error type or generic error.
 - **No change detector tests** — don't assert on default values, internal structure, or implementation details that can change without affecting behavior. Test what the code *does*, not how it's constructed.
 - **No `time.Sleep` for synchronization** — use channels, callbacks, condition variables.

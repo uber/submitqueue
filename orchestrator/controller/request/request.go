@@ -8,6 +8,7 @@ import (
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
+	"github.com/uber/submitqueue/extension/mergechecker"
 	"go.uber.org/zap"
 )
 
@@ -18,6 +19,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	registry      consumer.TopicRegistry
+	mergeChecker  mergechecker.MergeChecker
 	topic         consumer.Topic
 	consumerGroup string
 }
@@ -30,6 +32,7 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	registry consumer.TopicRegistry,
+	mergeChecker mergechecker.MergeChecker,
 	topic consumer.Topic,
 	consumerGroup string,
 ) *Controller {
@@ -37,6 +40,7 @@ func NewController(
 		logger:        logger.Named("request_controller"),
 		metricsScope:  scope.SubScope("request_controller"),
 		registry:      registry,
+		mergeChecker:  mergeChecker,
 		topic:         topic,
 		consumerGroup: consumerGroup,
 	}
@@ -76,8 +80,25 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"partition_key", msg.PartitionKey,
 	)
 
-	// TODO: Add validation logic
-	// - Merge Conflict Check
+	// Merge conflict check
+	mergeResult, err := c.mergeChecker.Check(ctx, request.Queue, request.Change)
+	if err != nil {
+		c.logger.Errorw("merge check failed",
+			"request_id", request.ID,
+			"error", err,
+		)
+		c.metricsScope.Counter("merge_check_errors").Inc(1)
+		return fmt.Errorf("merge check failed: %w", err)
+	}
+	if !mergeResult.Mergeable {
+		c.logger.Infow("request not mergeable",
+			"request_id", request.ID,
+			"queue", request.Queue,
+			"reason", mergeResult.Reason,
+		)
+		c.metricsScope.Counter("not_mergeable").Inc(1)
+		return consumer.NewNonRetryableError(fmt.Errorf("request %s is not mergeable: %s", request.ID, mergeResult.Reason))
+	}
 
 	// Publish to batch topic
 	if err := c.publish(ctx, consumer.TopicToBatch, request); err != nil {
