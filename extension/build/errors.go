@@ -24,7 +24,7 @@ func WrapBuildNotFound(err error) error {
 }
 
 // ErrBuildNotCancellable is returned when attempting to cancel a build that cannot be cancelled.
-// This occurs when:
+// The specific conditions are implementation-defined and may include:
 //   - The build has already finished (passed, failed, or cancelled)
 //   - The provider does not support cancellation for this build type
 var ErrBuildNotCancellable = errors.New("build not cancellable")
@@ -39,28 +39,11 @@ func WrapBuildNotCancellable(err error) error {
 	return fmt.Errorf("%w: %w", ErrBuildNotCancellable, err)
 }
 
-// ErrProviderUnavailable is returned when the CI provider is unreachable or experiencing errors.
-// This can occur due to:
-//   - Network connectivity issues
-//   - Provider service outages (5xx errors)
-//   - Authentication failures (invalid API tokens)
-//   - Rate limiting
-var ErrProviderUnavailable = errors.New("provider unavailable")
-
-// IsProviderUnavailable returns true if any error in the error chain is ErrProviderUnavailable.
-func IsProviderUnavailable(err error) bool {
-	return errors.Is(err, ErrProviderUnavailable)
-}
-
-// WrapProviderUnavailable wraps ErrProviderUnavailable with the original error from the build provider.
-func WrapProviderUnavailable(err error) error {
-	return fmt.Errorf("%w: %w", ErrProviderUnavailable, err)
-}
-
-// ErrInvalidRequest is returned when ScheduleBuild parameters fail validation.
+// ErrInvalidRequest is returned when Schedule parameters fail validation.
 // This can occur when:
-//   - Required parameters are missing (baseSHA, batchToBeTest.ID, repoURL, branch, pipelineID, sqid)
-//   - Parameter values are malformed (invalid URLs, empty strings, etc.)
+//   - queueName is empty or invalid
+//   - changes list is empty
+//   - changes contain invalid ChangeIDs or Actions
 var ErrInvalidRequest = errors.New("invalid request")
 
 // IsInvalidRequest returns true if any error in the error chain is ErrInvalidRequest.
