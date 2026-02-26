@@ -13,6 +13,7 @@ import (
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
 	queuemock "github.com/uber/submitqueue/extension/queue/mock"
+	storagemock "github.com/uber/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
@@ -37,9 +38,18 @@ func newSequentialCounter() *mockCounter {
 }
 
 // newTestController creates a controller with test dependencies.
-func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *mockCounter, publishErr error) *Controller {
+// If mockStorage is nil, a default MockStorage with an empty batch store is created.
+func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *mockCounter, mockStorage *storagemock.MockStorage, publishErr error) *Controller {
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
+
+	if mockStorage == nil {
+		mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+		mockBatchStore.EXPECT().GetByQueueAndStates(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
+		mockStorage = storagemock.NewMockStorage(ctrl)
+		mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	}
 
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
@@ -56,12 +66,12 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *mockCounter, 
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, registry, cnt, consumer.TopicKeyToBatch, "orchestrator-batch")
+	return NewController(logger, scope, registry, cnt, mockStorage, consumer.TopicKeyToBatch, "orchestrator-batch")
 }
 
 func TestNewController(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	controller := newTestController(t, ctrl, newSequentialCounter(), nil)
+	controller := newTestController(t, ctrl, newSequentialCounter(), nil, nil)
 
 	require.NotNil(t, controller)
 	assert.Equal(t, consumer.TopicKeyToBatch, controller.TopicKey())
@@ -72,7 +82,7 @@ func TestNewController(t *testing.T) {
 func TestController_Process_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	controller := newTestController(t, ctrl, newSequentialCounter(), nil)
+	controller := newTestController(t, ctrl, newSequentialCounter(), nil, nil)
 
 	request := entity.Request{
 		ID:           "test-queue/123",
@@ -98,7 +108,7 @@ func TestController_Process_Success(t *testing.T) {
 func TestController_Process_InvalidJSON(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	controller := newTestController(t, ctrl, newSequentialCounter(), nil)
+	controller := newTestController(t, ctrl, newSequentialCounter(), nil, nil)
 
 	invalidPayload := []byte(`{"invalid": json"}`)
 	msg := queue.NewMessage("invalid-msg", invalidPayload, "partition1", nil)
@@ -115,7 +125,7 @@ func TestController_Process_InvalidJSON(t *testing.T) {
 func TestController_Process_PublishFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	controller := newTestController(t, ctrl, newSequentialCounter(), fmt.Errorf("publish failed"))
+	controller := newTestController(t, ctrl, newSequentialCounter(), nil, fmt.Errorf("publish failed"))
 
 	request := entity.Request{
 		ID:           "test-queue/123",
@@ -146,7 +156,7 @@ func TestController_Process_CounterFailure(t *testing.T) {
 			return 0, fmt.Errorf("counter unavailable")
 		},
 	}
-	controller := newTestController(t, ctrl, cnt, nil)
+	controller := newTestController(t, ctrl, cnt, nil, nil)
 
 	request := entity.Request{
 		ID:           "test-queue/123",
@@ -171,7 +181,7 @@ func TestController_Process_CounterFailure(t *testing.T) {
 
 func TestController_InterfaceImplementation(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	controller := newTestController(t, ctrl, newSequentialCounter(), nil)
+	controller := newTestController(t, ctrl, newSequentialCounter(), nil, nil)
 
 	var _ consumer.Controller = controller
 }
