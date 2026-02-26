@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/uber-go/tally/v4"
+	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
 	"github.com/uber/submitqueue/extension/counter"
@@ -18,7 +19,7 @@ import (
 
 // ErrInvalidRequest is returned when the request fails validation.
 // This error should be mapped to codes.InvalidArgument at the gRPC layer.
-var ErrInvalidRequest = errors.New("invalid request")
+var ErrInvalidRequest = errs.NewUserError(errors.New("invalid request"))
 
 // IsInvalidRequest returns true if any error in the error chain is ErrInvalidRequest.
 func IsInvalidRequest(err error) bool {

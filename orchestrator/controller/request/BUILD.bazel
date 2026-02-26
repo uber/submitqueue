@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//core/consumer",
+        "//core/errs",
         "//entity",
         "//entity/queue",
         "//extension/mergechecker",
@@ -21,6 +22,7 @@ go_test(
     embed = [":request"],
     deps = [
         "//core/consumer",
+        "//core/errs",
         "//entity",
         "//entity/queue",
         "//extension/mergechecker",

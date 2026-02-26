@@ -49,7 +49,8 @@ submitqueue/
 │   ├── queue/                  # Messaging queue abstraction (interface + sql/)
 │   └── storage/                # Storage abstraction (interface + mysql/)
 ├── core/                        # Shared infrastructure packages reused across services
-│   └── consumer/               # Queue consumption framework (lifecycle, ack/nack, routing)
+│   ├── consumer/               # Queue consumption framework (lifecycle, ack/nack, routing)
+│   └── errs/                   # Error classification framework (user vs infra, retryability)
 ├── example/server/             # Runnable servers with Docker Compose
 ├── test/
 │   ├── e2e/                    # End-to-end tests (full stack)
@@ -260,3 +261,14 @@ See [doc/howto/TESTING.md](doc/howto/TESTING.md) for full testing guide.
 2. **Interfaces for behavior, structs for data** — use interfaces for behavioral contracts (Consumer, Controller, Storage). Use structs for data containers, configs, and registries (TopicRegistry, SubscriptionConfig).
 3. **Value types over pointers** — prefer value types for structs, configs, and return values. Use `(T, bool)` to signal absence instead of `*T`. Pointers only when mutation or shared ownership is needed.
 4. **Errors for failures, not control flow** — reserve `error` returns for unexpected or infrastructure failures. Use result types (structs, bools) for expected outcomes like `(Result, error)` or `(T, bool)`. Avoid sentinel errors that represent non-failure states.
+
+### Error Classification (`core/errs`)
+
+Errors are classified by origin (user vs infra) and retryability. The framework lives in `core/errs/`. See [core/errs/README.md](core/errs/README.md) for full details.
+
+**Key rules:**
+1. **Non-retryable by default** — a plain `fmt.Errorf(...)` is non-retryable. Wrap with `errs.NewRetryableError(...)` to opt in to retry.
+2. **Infra by default** — any error not wrapped with `NewUserError` is infra. There is no `NewInfraError`.
+3. **Extensions return plain errors** — extension interfaces (`MergeChecker`, `Storage`, `Publisher`) return standard `error` values with their own domain sentinels (e.g. `storage.ErrNotFound`). They do NOT classify errors as user or infra.
+4. **Controllers classify errors** — the service controller that calls an extension decides whether the failure is user-caused or infrastructure-caused. The same extension error may be classified differently depending on context.
+5. **Error chain works end-to-end** — extensions wrap custom errors, controllers wrap with `errs.New*Error`, and `errors.Is`/`errors.As` walks the full chain.

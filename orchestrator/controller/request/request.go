@@ -6,6 +6,7 @@ import (
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
 	"github.com/uber/submitqueue/extension/mergechecker"
@@ -65,7 +66,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		)
 		c.metricsScope.Counter("deserialize_errors").Inc(1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
-		return consumer.NewNonRetryableError(fmt.Errorf("failed to deserialize request: %w", err))
+		return fmt.Errorf("failed to deserialize request: %w", err)
 	}
 
 	c.logger.Infow("received land request event",
@@ -97,7 +98,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			"reason", mergeResult.Reason,
 		)
 		c.metricsScope.Counter("not_mergeable").Inc(1)
-		return consumer.NewNonRetryableError(fmt.Errorf("request %s is not mergeable: %s", request.ID, mergeResult.Reason))
+		return errs.NewUserError(fmt.Errorf("request %s is not mergeable: %s", request.ID, mergeResult.Reason))
 	}
 
 	// Publish to batch topic
@@ -108,7 +109,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			"error", err,
 		)
 		c.metricsScope.Counter("publish_errors").Inc(1)
-		return fmt.Errorf("failed to publish to batch: %w", err)
+		return errs.NewRetryableError(fmt.Errorf("failed to publish to batch: %w", err))
 	}
 
 	c.logger.Infow("published request to next stage",
