@@ -68,5 +68,5 @@ type BuildManager interface {
 	// Implementations should close HTTP clients and clean up resources.
 	// After Close is called, all other methods should return errors.
 	// Close is idempotent and safe to call multiple times.
-	Close(ctx context.Context) error
+	Close() error
 }

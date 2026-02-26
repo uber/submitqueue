@@ -28,7 +28,7 @@ type BuildManager interface {
     CancelBuild(ctx context.Context, buildID string) error
 
     // Close gracefully shuts down the build manager
-    Close(ctx context.Context) error
+    Close() error
 }
 ```
 
