@@ -10,19 +10,12 @@ import (
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
+	countermock "github.com/uber/submitqueue/extension/counter/mock"
 	storagemock "github.com/uber/submitqueue/extension/storage/mock"
 	pb "github.com/uber/submitqueue/gateway/protopb"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 )
-
-type mockCounter struct {
-	nextFunc func(ctx context.Context, domain string) (int64, error)
-}
-
-func (m *mockCounter) Next(ctx context.Context, domain string) (int64, error) {
-	return m.nextFunc(ctx, domain)
-}
 
 type mockPublisher struct {
 	publishFunc func(ctx context.Context, topic string, msg queue.Message) error
@@ -47,9 +40,7 @@ func TestNewLandController(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
 
-	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
-		return 1, nil
-	}}
+	cnt := countermock.NewMockCounter(ctrl)
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	require.NotNil(t, controller)
 }
@@ -61,9 +52,8 @@ func TestLand_ReturnsSqid(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
-	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
-		return 1, nil
-	}}
+	cnt := countermock.NewMockCounter(ctrl)
+	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(1), nil)
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
@@ -91,9 +81,8 @@ func TestLand_PassesCorrectParametersToStore(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
-	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
-		return 42, nil
-	}}
+	cnt := countermock.NewMockCounter(ctrl)
+	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(42), nil)
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
@@ -121,9 +110,8 @@ func TestLand_ReturnsErrorOnStorageFailure(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
-	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
-		return 1, nil
-	}}
+	cnt := countermock.NewMockCounter(ctrl)
+	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(1), nil)
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
@@ -140,9 +128,8 @@ func TestLand_ReturnsErrorOnCounterFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
 
-	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
-		return 0, fmt.Errorf("counter unavailable")
-	}}
+	cnt := countermock.NewMockCounter(ctrl)
+	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(0), fmt.Errorf("counter unavailable"))
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
@@ -164,10 +151,13 @@ func TestLand_CounterDomainIncludesQueue(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
-	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
-		capturedDomain = domain
-		return 1, nil
-	}}
+	cnt := countermock.NewMockCounter(ctrl)
+	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, domain string) (int64, error) {
+			capturedDomain = domain
+			return 1, nil
+		},
+	)
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
@@ -185,9 +175,7 @@ func TestLand_ReturnsErrorOnEmptyQueue(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
 
-	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
-		return 1, nil
-	}}
+	cnt := countermock.NewMockCounter(ctrl)
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
@@ -205,9 +193,7 @@ func TestLand_ReturnsErrorOnEmptyChangeUri(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
 
-	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
-		return 1, nil
-	}}
+	cnt := countermock.NewMockCounter(ctrl)
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
@@ -225,9 +211,7 @@ func TestLand_ReturnsErrorOnNilChange(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
 
-	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
-		return 1, nil
-	}}
+	cnt := countermock.NewMockCounter(ctrl)
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, store, cnt, noopPublisher(), "request")
 	ctx := context.Background()
 
@@ -251,9 +235,8 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
-	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
-		return 123, nil
-	}}
+	cnt := countermock.NewMockCounter(ctrl)
+	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(123), nil)
 	publisher := &mockPublisher{publishFunc: func(ctx context.Context, topic string, msg queue.Message) error {
 		publishedTopic = topic
 		publishedMessage = msg
@@ -296,9 +279,8 @@ func TestLand_ContinuesWhenPublishFails(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
-	cnt := &mockCounter{nextFunc: func(ctx context.Context, domain string) (int64, error) {
-		return 999, nil
-	}}
+	cnt := countermock.NewMockCounter(ctrl)
+	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(999), nil)
 	publisher := &mockPublisher{publishFunc: func(ctx context.Context, topic string, msg queue.Message) error {
 		return fmt.Errorf("queue unavailable")
 	}}
