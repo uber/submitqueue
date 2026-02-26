@@ -124,6 +124,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		})
 	}
 
+	// TODO:
+	// - Add batch to DB
+	// - Create batch dependent entity
+	// - Add to batch dependent DB
+
 	c.logger.Infow("batch created",
 		"batch_id", batch.ID,
 		"request_id", request.ID,
