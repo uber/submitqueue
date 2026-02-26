@@ -22,7 +22,7 @@ type BuildManager interface {
     ) (string, error)
 
     // Poll retrieves the current status of a build from the CI provider
-    Poll(ctx context.Context, buildID string) (entity.BuildStatus, map[string]string, error)
+    Poll(ctx context.Context, buildID string) (entity.BuildStatus, entity.BuildMetadata, error)
 
     // CancelBuild requests cancellation of a build (asynchronous operation)
     CancelBuild(ctx context.Context, buildID string) error
@@ -107,7 +107,7 @@ func (s BuildStatus) IsTerminal() bool
 
 ### Build Metadata
 
-The `Poll` method returns a `map[string]string` containing additional metadata about the build. The specific keys and values are implementation-defined, but common examples include:
+The `Poll` method returns `entity.BuildMetadata` containing additional metadata about the build. The specific keys and values are implementation-defined, but common examples include:
 
 **Common metadata keys:**
 - `build_url` - Direct link to the build in the CI provider's UI
