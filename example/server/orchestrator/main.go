@@ -21,6 +21,8 @@ import (
 	githubchecker "github.com/uber/submitqueue/extension/mergechecker/github"
 	extqueue "github.com/uber/submitqueue/extension/queue"
 	queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
+	mysqlstorage "github.com/uber/submitqueue/extension/storage/mysql"
+	"github.com/uber/submitqueue/extension/storage"
 	"github.com/uber/submitqueue/orchestrator/controller"
 	"github.com/uber/submitqueue/orchestrator/controller/batch"
 	"github.com/uber/submitqueue/orchestrator/controller/build"
@@ -111,6 +113,11 @@ func run() error {
 
 	cnt := mysqlcounter.NewCounter(appDB)
 
+	store, err := mysqlstorage.NewStorage(appDB)
+	if err != nil {
+		return fmt.Errorf("failed to create storage: %w", err)
+	}
+
 	// Open queue database connection
 	// Docker Compose healthchecks ensure MySQL is ready before service starts
 	queueDSN := os.Getenv("QUEUE_MYSQL_DSN")
@@ -154,7 +161,7 @@ func run() error {
 	mc := newMergeChecker(logger, scope)
 
 	// Register controllers
-	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cnt); err != nil {
+	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cnt, store); err != nil {
 		return err
 	}
 
@@ -291,7 +298,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 //	→ merge → merge-signal
 //	finalize (terminal)
 
-func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cnt counter.Counter) error {
+func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cnt counter.Counter, store storage.Storage) error {
 	requestController := request.NewController(
 		logger,
 		scope,
@@ -309,6 +316,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		scope,
 		registry,
 		cnt,
+		store,
 		consumer.TopicKeyToBatch,
 		"orchestrator-batch",
 	)
