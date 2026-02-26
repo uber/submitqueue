@@ -12,6 +12,7 @@ import (
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
 	consumermock "github.com/uber/submitqueue/core/consumer/mock"
+	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity/queue"
 	extqueue "github.com/uber/submitqueue/extension/queue"
 	queuemock "github.com/uber/submitqueue/extension/queue/mock"
@@ -279,7 +280,7 @@ func TestConsumer_ProcessDelivery_Error(t *testing.T) {
 	handler := consumermock.NewMockController(ctrl)
 	setupController(handler, "test-handler", consumer.TopicKeyRequest, "test-group",
 		func(ctx context.Context, delivery consumer.Delivery) error {
-			return fmt.Errorf("processing failed")
+			return errs.NewRetryableError(fmt.Errorf("processing failed"))
 		},
 	)
 
@@ -321,7 +322,7 @@ func TestConsumer_ProcessDelivery_NonRetryableError(t *testing.T) {
 	handler := consumermock.NewMockController(ctrl)
 	setupController(handler, "test-handler", consumer.TopicKeyRequest, "test-group",
 		func(ctx context.Context, delivery consumer.Delivery) error {
-			return consumer.NewNonRetryableError(fmt.Errorf("bad payload"))
+			return fmt.Errorf("bad payload")
 		},
 	)
 
@@ -403,7 +404,7 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 		},
 		{
 			name:           "failure with nack",
-			handlerError:   fmt.Errorf("handler failed"),
+			handlerError:   errs.NewRetryableError(fmt.Errorf("handler failed")),
 			nackError:      nil,
 			expectSuccess:  false,
 			expectAckCount: false,
@@ -550,7 +551,7 @@ func TestConsumer_ErrorMetrics(t *testing.T) {
 	handler := consumermock.NewMockController(ctrl)
 	setupController(handler, "test-handler", consumer.TopicKeyRequest, "test-group",
 		func(ctx context.Context, delivery consumer.Delivery) error {
-			return fmt.Errorf("processing failed")
+			return errs.NewRetryableError(fmt.Errorf("processing failed"))
 		},
 	)
 

@@ -43,8 +43,8 @@ A restricted view of a queue delivery exposed to controllers. Hides Ack/Nack (ha
 Controllers signal processing outcome via the return value of `Process()`:
 
 - **`return nil`** — success, message is acked.
-- **`return err`** — retryable failure, message is nacked for retry.
-- **`return consumer.NewNonRetryableError(err)`** — poison pill, message is acked and removed from the queue to prevent infinite retry loops.
+- **`return errs.NewRetryableError(err)`** — retryable failure, message is nacked for retry.
+- **`return err`** — non-retryable error (e.g. poison pill), message is rejected and removed from the queue to prevent infinite retry loops.
 
 ## Lifecycle
 

@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//core/consumer",
+        "//core/errs",
         "//entity",
         "//entity/queue",
         "@com_github_uber_go_tally_v4//:tally",
@@ -20,6 +21,7 @@ go_test(
     embed = [":build"],
     deps = [
         "//core/consumer",
+        "//core/errs",
         "//entity",
         "//entity/queue",
         "//extension/queue/mock",

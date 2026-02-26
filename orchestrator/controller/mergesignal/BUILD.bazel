@@ -19,6 +19,7 @@ go_test(
     embed = [":mergesignal"],
     deps = [
         "//core/consumer",
+        "//core/errs",
         "//entity",
         "//entity/queue",
         "//extension/queue/mock",

@@ -60,7 +60,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		)
 		c.metricsScope.Counter("deserialize_errors").Inc(1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
-		return consumer.NewNonRetryableError(fmt.Errorf("failed to deserialize request: %w", err))
+		return fmt.Errorf("failed to deserialize request: %w", err)
 	}
 
 	c.logger.Infow("received merge signal event",

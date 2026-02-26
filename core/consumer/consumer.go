@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/uber-go/tally/v4"
+	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/extension/queue"
 	"go.uber.org/zap"
 )
@@ -251,7 +252,7 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 
 	if err != nil {
 		// Check if the error is non-retryable (poison pill message)
-		if IsNonRetryable(err) {
+		if !errs.IsRetryable(err) {
 			m.logger.Errorw("non-retryable controller error, rejecting message",
 				"controller", controller.Name(),
 				"topic_key", controller.TopicKey(),

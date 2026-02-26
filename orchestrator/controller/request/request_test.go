@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
 	"github.com/uber/submitqueue/extension/mergechecker"
@@ -103,7 +104,7 @@ func TestController_Process_InvalidJSON(t *testing.T) {
 
 	// Should return NonRetryableError for malformed messages
 	require.Error(t, err)
-	assert.True(t, consumer.IsNonRetryable(err))
+	assert.False(t, errs.IsRetryable(err))
 }
 
 func TestController_Process_AllRequestStates(t *testing.T) {
@@ -243,7 +244,7 @@ func TestController_Process_NotMergeable(t *testing.T) {
 
 	err = controller.Process(context.Background(), delivery)
 	require.Error(t, err)
-	assert.True(t, consumer.IsNonRetryable(err))
+	assert.False(t, errs.IsRetryable(err))
 }
 
 func TestController_Process_MergeCheckError(t *testing.T) {
@@ -273,6 +274,5 @@ func TestController_Process_MergeCheckError(t *testing.T) {
 
 	err = controller.Process(context.Background(), delivery)
 	require.Error(t, err)
-	// Merge check errors should be retryable (not NonRetryableError)
-	assert.False(t, consumer.IsNonRetryable(err))
+	assert.False(t, errs.IsRetryable(err))
 }

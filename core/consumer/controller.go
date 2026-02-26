@@ -18,7 +18,7 @@ import (
 // To signal outcome from Process():
 //   - Return nil to ack the message (success).
 //   - Return an error to nack the message for retry.
-//   - Return NonRetryableError to ack a poison pill message (removes it from the queue).
+//   - Return a non-retryable error to reject a poison pill message (removes it from the queue).
 type Delivery interface {
 	// Message returns the delivered message.
 	Message() queue.Message
