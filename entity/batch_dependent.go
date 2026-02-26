@@ -1,7 +1,6 @@
 package entity
 
 // BatchDependent represents the downstream batches that depend on a given batch.
-// The object is immutable after creation.
 type BatchDependent struct {
 	// BatchID is the globally unique identifier representing a batch.
 	BatchID string
@@ -17,4 +16,7 @@ type BatchDependent struct {
 	// - queueA/batch/3 will be empty
 	//
 	Dependents []string
+	// Version is the version of the object. It is used for optimistic locking.
+	// Versioning starts at 1 and is incremented for each change to the object.
+	Version int32
 }

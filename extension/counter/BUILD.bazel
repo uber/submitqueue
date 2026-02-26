@@ -1,5 +1,10 @@
 load("@rules_go//go:def.bzl", "go_library")
 
+exports_files(
+    ["counter.go"],
+    visibility = ["//extension/counter/mock:__pkg__"],
+)
+
 go_library(
     name = "counter",
     srcs = ["counter.go"],

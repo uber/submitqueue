@@ -1,5 +1,7 @@
 package counter
 
+//go:generate mockgen -source=counter.go -destination=mock/counter.go -package=mock
+
 import "context"
 
 // Counter provides atomic sequential number generation for a given domain.

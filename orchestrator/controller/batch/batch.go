@@ -9,6 +9,7 @@ import (
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
 	"github.com/uber/submitqueue/extension/counter"
+	"github.com/uber/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -20,6 +21,7 @@ type Controller struct {
 	metricsScope  tally.Scope
 	registry      consumer.TopicRegistry
 	counter       counter.Counter
+	store         storage.Storage
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -33,6 +35,7 @@ func NewController(
 	scope tally.Scope,
 	registry consumer.TopicRegistry,
 	counter counter.Counter,
+	store storage.Storage,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
@@ -41,6 +44,7 @@ func NewController(
 		metricsScope:  scope.SubScope("batch_controller"),
 		registry:      registry,
 		counter:       counter,
+		store:         store,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
@@ -93,21 +97,66 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		ID:       fmt.Sprintf("%s/batch/%d", request.Queue, seq),
 		Queue:    request.Queue,
 		Contains: []string{request.ID},
-		// TODO Dependencies
 		State:    entity.BatchStateCreated,
 		Version:  1,
 	}
+
+	// Get active batches for this queue to set as dependencies.
+	activeBatches, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, []entity.BatchState{
+		entity.BatchStateCreated,
+		entity.BatchStateSpeculating,
+		entity.BatchStateFinalizing,
+	})
+	if err != nil {
+		c.logger.Errorw("failed to get active batches",
+			"request_id", request.ID,
+			"queue", request.Queue,
+			"error", err,
+		)
+		c.metricsScope.Counter("batch_store_errors").Inc(1)
+		return fmt.Errorf("failed to get active batches for queue=%s: %w", request.Queue, err)
+	}
+
+	for _, dep := range activeBatches {
+		batch.Dependencies = append(batch.Dependencies, map[string]interface{}{
+			"id":    dep.ID,
+			"state": string(dep.State),
+		})
+	}
+
+	// Create batch dependent entities (reverse relationship of batch.Dependencies).
+	// For each dependency, record the new batch as a dependent.
+	// If existing dependents are found in the store, append them.
+	for _, dep := range activeBatches {
+		bd := entity.BatchDependent{
+			BatchID:    dep.ID,
+			Dependents: []string{batch.ID},
+		}
+
+		existing, err := c.store.GetBatchDependentStore().Get(ctx, dep.ID)
+		if err != nil && !storage.IsNotFound(err) {
+			c.logger.Errorw("failed to get existing batch dependent",
+				"batch_id", dep.ID,
+				"error", err,
+			)
+			c.metricsScope.Counter("batch_dependent_store_errors").Inc(1)
+			return fmt.Errorf("failed to get batch dependent for batchID=%s: %w", dep.ID, err)
+		}
+		if err == nil {
+			bd.Dependents = append(existing.Dependents, bd.Dependents...)
+		}
+	}
+
+	// TODO:
+	// - Add batch to DB
+	// - Add to batch dependent DB
 
 	c.logger.Infow("batch created",
 		"batch_id", batch.ID,
 		"request_id", request.ID,
 		"queue", request.Queue,
+		"dependency_count", len(batch.Dependencies),
 	)
-
-	// TODO:
-	// - Add batch to DB
-	// - Create batch dependent entity
-	// - Add to batch dependent DB
 
 	// Publish to speculate topic
 	if err := c.publish(ctx, consumer.TopicKeyBatched, batch); err != nil {
