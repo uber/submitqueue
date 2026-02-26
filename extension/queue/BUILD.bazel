@@ -1,5 +1,15 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
+exports_files(
+    [
+        "delivery.go",
+        "publisher.go",
+        "queue.go",
+        "subscriber.go",
+    ],
+    visibility = ["//extension/queue/mock:__pkg__"],
+)
+
 go_library(
     name = "queue",
     srcs = [
