@@ -24,6 +24,7 @@ go_test(
         "//core/consumer",
         "//entity",
         "//entity/queue",
+        "//extension/counter/mock",
         "//extension/queue/mock",
         "//extension/storage",
         "//extension/storage/mock",
