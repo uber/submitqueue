@@ -36,17 +36,17 @@ func (m *MockBuildManager) EXPECT() *MockBuildManagerMockRecorder {
 }
 
 // CancelBuild mocks base method.
-func (m *MockBuildManager) CancelBuild(ctx context.Context, id string) error {
+func (m *MockBuildManager) CancelBuild(ctx context.Context, buildID string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CancelBuild", ctx, id)
+	ret := m.ctrl.Call(m, "CancelBuild", ctx, buildID)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CancelBuild indicates an expected call of CancelBuild.
-func (mr *MockBuildManagerMockRecorder) CancelBuild(ctx, id interface{}) *gomock.Call {
+func (mr *MockBuildManagerMockRecorder) CancelBuild(ctx, buildID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelBuild", reflect.TypeOf((*MockBuildManager)(nil).CancelBuild), ctx, id)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelBuild", reflect.TypeOf((*MockBuildManager)(nil).CancelBuild), ctx, buildID)
 }
 
 // Close mocks base method.
@@ -64,9 +64,9 @@ func (mr *MockBuildManagerMockRecorder) Close() *gomock.Call {
 }
 
 // Poll mocks base method.
-func (m *MockBuildManager) Poll(ctx context.Context, id string) (entity.BuildStatus, map[string]string, error) {
+func (m *MockBuildManager) Poll(ctx context.Context, buildID string) (entity.BuildStatus, map[string]string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Poll", ctx, id)
+	ret := m.ctrl.Call(m, "Poll", ctx, buildID)
 	ret0, _ := ret[0].(entity.BuildStatus)
 	ret1, _ := ret[1].(map[string]string)
 	ret2, _ := ret[2].(error)
@@ -74,9 +74,9 @@ func (m *MockBuildManager) Poll(ctx context.Context, id string) (entity.BuildSta
 }
 
 // Poll indicates an expected call of Poll.
-func (mr *MockBuildManagerMockRecorder) Poll(ctx, id interface{}) *gomock.Call {
+func (mr *MockBuildManagerMockRecorder) Poll(ctx, buildID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Poll", reflect.TypeOf((*MockBuildManager)(nil).Poll), ctx, id)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Poll", reflect.TypeOf((*MockBuildManager)(nil).Poll), ctx, buildID)
 }
 
 // Schedule mocks base method.

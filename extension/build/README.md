@@ -22,10 +22,10 @@ type BuildManager interface {
     ) (string, error)
 
     // Poll retrieves the current status of a build from the CI provider
-    Poll(ctx context.Context, id string) (entity.BuildStatus, map[string]string, error)
+    Poll(ctx context.Context, buildID string) (entity.BuildStatus, map[string]string, error)
 
     // CancelBuild requests cancellation of a build (asynchronous operation)
-    CancelBuild(ctx context.Context, id string) error
+    CancelBuild(ctx context.Context, buildID string) error
 
     // Close gracefully shuts down the build manager
     Close() error

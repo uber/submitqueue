@@ -40,13 +40,13 @@ type BuildManager interface {
 	// This is a synchronous call that queries the provider's API.
 	//
 	// Parameters:
-	//   - id: Build ID string
+	//   - buildID: Build ID string
 	//
 	// Returns:
 	//   - BuildStatus: Current state of the build
 	//   - map[string]string: Additional metadata about the build (e.g., build URL, commit SHA, duration)
 	//   - error: ErrBuildNotFound if the build doesn't exist
-	Poll(ctx context.Context, id string) (entity.BuildStatus, map[string]string, error)
+	Poll(ctx context.Context, buildID string) (entity.BuildStatus, map[string]string, error)
 
 	// CancelBuild requests cancellation of a build.
 	//
@@ -60,12 +60,12 @@ type BuildManager interface {
 	// ignore the request, or handle it in a provider-specific way.
 	//
 	// Parameters:
-	//   - id: Build ID string
+	//   - buildID: Build ID string
 	//
 	// Returns:
 	//   - error: ErrBuildNotFound if the build doesn't exist,
 	//            ErrBuildNotCancellable if the build cannot be cancelled (implementation-specific)
-	CancelBuild(ctx context.Context, id string) error
+	CancelBuild(ctx context.Context, buildID string) error
 
 	// Close gracefully shuts down the build manager.
 	// Implementations should cancel pending requests, close HTTP clients, and clean up resources.
