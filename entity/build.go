@@ -64,7 +64,7 @@ const (
 	ChangeActionUnknown ChangeAction = ""
 	// ChangeActionApply applies the change to the target branch.
 	ChangeActionApply ChangeAction = "apply"
-	// ChangeActionValidate applies the change and runs validation/testing on it.
+	// ChangeActionValidate applies the change first, and then validates the change by running respective validation/test suites.
 	ChangeActionValidate ChangeAction = "validate"
 )
 

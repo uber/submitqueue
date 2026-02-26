@@ -63,7 +63,7 @@ type ChangeAction string
 const (
     ChangeActionUnknown   ChangeAction = ""         // Sentinel value
     ChangeActionApply     ChangeAction = "apply"    // Apply the change to the target branch
-    ChangeActionValidate  ChangeAction = "validate" // Apply the change and run validation/testing on it
+    ChangeActionValidate  ChangeAction = "validate" // Applies the change first, and then validates the change by running respective validation/test suites
 )
 ```
 
