@@ -13,7 +13,6 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally/v4"
-	"github.com/uber/submitqueue/core/consumer"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
 	"github.com/uber/submitqueue/extension/storage/mysql"
@@ -142,7 +141,7 @@ func run() error {
 
 	// Create controllers and wrap them for gRPC
 	pingController := controller.NewPingController(logger, scope)
-	landController := controller.NewLandController(logger.Sugar(), scope, store, cnt, mysqlQueue.Publisher(), consumer.TopicRequest.String())
+	landController := controller.NewLandController(logger.Sugar(), scope, store, cnt, mysqlQueue.Publisher(), "request")
 	gatewayServer := &GatewayServer{
 		pingController: pingController,
 		landController: landController,

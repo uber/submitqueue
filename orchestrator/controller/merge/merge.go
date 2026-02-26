@@ -18,7 +18,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	registry      consumer.TopicRegistry
-	topic         consumer.Topic
+	topicKey      consumer.TopicKey
 	consumerGroup string
 }
 
@@ -30,14 +30,14 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	registry consumer.TopicRegistry,
-	topic consumer.Topic,
+	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
 		logger:        logger.Named("merge_controller"),
 		metricsScope:  scope.SubScope("merge_controller"),
 		registry:      registry,
-		topic:         topic,
+		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
 }
@@ -78,10 +78,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// - Handle merge conflicts
 
 	// Publish to merge signal topic
-	if err := c.publish(ctx, consumer.TopicMergeSignal, request); err != nil {
+	if err := c.publish(ctx, consumer.TopicKeyMergeSignal, request); err != nil {
 		c.logger.Errorw("failed to publish output",
 			"request_id", request.ID,
-			"topic", consumer.TopicMergeSignal,
+			"topic_key", consumer.TopicKeyMergeSignal,
 			"error", err,
 		)
 		c.metricsScope.Counter("publish_errors").Inc(1)
@@ -90,7 +90,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	c.logger.Infow("published request to next stage",
 		"request_id", request.ID,
-		"topic", consumer.TopicMergeSignal,
+		"topic_key", consumer.TopicKeyMergeSignal,
 	)
 
 	c.metricsScope.Counter("processed").Inc(1)
@@ -98,8 +98,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	return nil // Success - message will be acked
 }
 
-// publish publishes a request to the specified topic.
-func (c *Controller) publish(ctx context.Context, topic consumer.Topic, request entity.Request) error {
+// publish publishes a request to the specified topic key.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, request entity.Request) error {
 	payload, err := request.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize request: %w", err)
@@ -107,12 +107,17 @@ func (c *Controller) publish(ctx context.Context, topic consumer.Topic, request 
 
 	msg := entityqueue.NewMessage(request.ID, payload, request.Queue, nil)
 
-	q, ok := c.registry.Queue(topic)
+	q, ok := c.registry.Queue(key)
 	if !ok {
-		return fmt.Errorf("no queue registered for topic %s", topic)
+		return fmt.Errorf("no queue registered for topic key %s", key)
 	}
 
-	if err := q.Publisher().Publish(ctx, topic.String(), msg); err != nil {
+	topicName, ok := c.registry.TopicName(key)
+	if !ok {
+		return fmt.Errorf("no topic name registered for topic key %s", key)
+	}
+
+	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 
@@ -124,9 +129,9 @@ func (c *Controller) Name() string {
 	return "merge"
 }
 
-// Topic returns the topic this controller subscribes to.
-func (c *Controller) Topic() consumer.Topic {
-	return c.topic
+// TopicKey returns the topic key this controller subscribes to.
+func (c *Controller) TopicKey() consumer.TopicKey {
+	return c.topicKey
 }
 
 // ConsumerGroup returns the consumer group for offset tracking.

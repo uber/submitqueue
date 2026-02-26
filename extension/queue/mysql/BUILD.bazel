@@ -13,7 +13,6 @@ go_library(
         "sql.go",
         "stores.go",
         "subscriber.go",
-        "validation.go",
     ],
     importpath = "github.com/uber/submitqueue/extension/queue/mysql",
     visibility = ["//visibility:public"],
@@ -38,7 +37,6 @@ go_test(
     ],
     embed = [":mysql"],
     deps = [
-        "//core/consumer",
         "//entity/queue",
         "//extension/queue",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",

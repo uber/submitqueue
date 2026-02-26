@@ -142,7 +142,10 @@ func run() error {
 		subscriberName = fmt.Sprintf("orchestrator-%d", time.Now().Unix())
 	}
 
-	registry := newTopicRegistry(mysqlQueue, subscriberName)
+	registry, err := newTopicRegistry(mysqlQueue, subscriberName)
+	if err != nil {
+		return fmt.Errorf("failed to create topic registry: %w", err)
+	}
 
 	// Create consumer
 	c := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry)
@@ -213,61 +216,73 @@ func run() error {
 }
 
 // newTopicRegistry builds the TopicRegistry with all topic and subscription configs.
-func newTopicRegistry(q extqueue.Queue, subscriberName string) consumer.TopicRegistry {
-	return consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{
-			{Topic: consumer.TopicRequest, Queue: q},
-			{Topic: consumer.TopicToBatch, Queue: q},
-			{Topic: consumer.TopicBatched, Queue: q},
-			{Topic: consumer.TopicBuild, Queue: q},
-			{Topic: consumer.TopicBuildSignal, Queue: q},
-			{Topic: consumer.TopicToMerge, Queue: q},
-			{Topic: consumer.TopicMergeSignal, Queue: q},
-			{Topic: consumer.TopicFinalize, Queue: q},
-		},
-		[]extqueue.SubscriptionConfig{
-			extqueue.DefaultSubscriptionConfig(
-				consumer.TopicRequest.String(),
-				subscriberName,
-				"orchestrator-request",
-			),
-			extqueue.DefaultSubscriptionConfig(
-				consumer.TopicToBatch.String(),
-				subscriberName,
-				"orchestrator-batch",
-			),
-			extqueue.DefaultSubscriptionConfig(
-				consumer.TopicBatched.String(),
-				subscriberName,
-				"orchestrator-speculate",
-			),
-			extqueue.DefaultSubscriptionConfig(
-				consumer.TopicBuild.String(),
-				subscriberName,
-				"orchestrator-build",
-			),
-			extqueue.DefaultSubscriptionConfig(
-				consumer.TopicBuildSignal.String(),
-				subscriberName,
-				"orchestrator-buildsignal",
-			),
-			extqueue.DefaultSubscriptionConfig(
-				consumer.TopicToMerge.String(),
-				subscriberName,
-				"orchestrator-merge",
-			),
-			extqueue.DefaultSubscriptionConfig(
-				consumer.TopicMergeSignal.String(),
-				subscriberName,
-				"orchestrator-mergesignal",
-			),
-			extqueue.DefaultSubscriptionConfig(
-				consumer.TopicFinalize.String(),
-				subscriberName,
-				"orchestrator-finalize",
+func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRegistry, error) {
+	return consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{
+			Key:   consumer.TopicKeyRequest,
+			Name:  "request",
+			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "orchestrator-request",
 			),
 		},
-	)
+		{
+			Key:   consumer.TopicKeyToBatch,
+			Name:  "to-batch",
+			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "orchestrator-batch",
+			),
+		},
+		{
+			Key:   consumer.TopicKeyBatched,
+			Name:  "batched",
+			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "orchestrator-speculate",
+			),
+		},
+		{
+			Key:   consumer.TopicKeyBuild,
+			Name:  "build",
+			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "orchestrator-build",
+			),
+		},
+		{
+			Key:   consumer.TopicKeyBuildSignal,
+			Name:  "build-signal",
+			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "orchestrator-buildsignal",
+			),
+		},
+		{
+			Key:   consumer.TopicKeyToMerge,
+			Name:  "to-merge",
+			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "orchestrator-merge",
+			),
+		},
+		{
+			Key:   consumer.TopicKeyMergeSignal,
+			Name:  "merge-signal",
+			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "orchestrator-mergesignal",
+			),
+		},
+		{
+			Key:   consumer.TopicKeyFinalize,
+			Name:  "finalize",
+			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "orchestrator-finalize",
+			),
+		},
+	})
 }
 
 // registerControllers creates all pipeline controllers and registers them with the consumer.
@@ -282,7 +297,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		scope,
 		registry,
 		mc,
-		consumer.TopicRequest,
+		consumer.TopicKeyRequest,
 		"orchestrator-request",
 	)
 	if err := c.Register(requestController); err != nil {
@@ -294,7 +309,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		scope,
 		registry,
 		cnt,
-		consumer.TopicToBatch,
+		consumer.TopicKeyToBatch,
 		"orchestrator-batch",
 	)
 	if err := c.Register(batchController); err != nil {
@@ -305,7 +320,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		registry,
-		consumer.TopicBatched,
+		consumer.TopicKeyBatched,
 		"orchestrator-speculate",
 	)
 	if err := c.Register(speculateController); err != nil {
@@ -316,7 +331,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		registry,
-		consumer.TopicBuild,
+		consumer.TopicKeyBuild,
 		"orchestrator-build",
 	)
 	if err := c.Register(buildController); err != nil {
@@ -327,7 +342,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		registry,
-		consumer.TopicBuildSignal,
+		consumer.TopicKeyBuildSignal,
 		"orchestrator-buildsignal",
 	)
 	if err := c.Register(buildSignalController); err != nil {
@@ -338,7 +353,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		registry,
-		consumer.TopicToMerge,
+		consumer.TopicKeyToMerge,
 		"orchestrator-merge",
 	)
 	if err := c.Register(mergeController); err != nil {
@@ -349,7 +364,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		registry,
-		consumer.TopicMergeSignal,
+		consumer.TopicKeyMergeSignal,
 		"orchestrator-mergesignal",
 	)
 	if err := c.Register(mergeSignalController); err != nil {
@@ -360,7 +375,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		registry,
-		consumer.TopicFinalize,
+		consumer.TopicKeyFinalize,
 		"orchestrator-finalize",
 	)
 	if err := c.Register(finalizeController); err != nil {

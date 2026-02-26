@@ -20,7 +20,7 @@ type Controller struct {
 	metricsScope  tally.Scope
 	registry      consumer.TopicRegistry
 	counter       counter.Counter
-	topic         consumer.Topic
+	topicKey      consumer.TopicKey
 	consumerGroup string
 }
 
@@ -33,7 +33,7 @@ func NewController(
 	scope tally.Scope,
 	registry consumer.TopicRegistry,
 	counter counter.Counter,
-	topic consumer.Topic,
+	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
@@ -41,7 +41,7 @@ func NewController(
 		metricsScope:  scope.SubScope("batch_controller"),
 		registry:      registry,
 		counter:       counter,
-		topic:         topic,
+		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
 }
@@ -110,10 +110,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// - Add to batch dependent DB
 
 	// Publish to speculate topic
-	if err := c.publish(ctx, consumer.TopicBatched, batch); err != nil {
+	if err := c.publish(ctx, consumer.TopicKeyBatched, batch); err != nil {
 		c.logger.Errorw("failed to publish output",
 			"batch_id", batch.ID,
-			"topic", consumer.TopicBatched,
+			"topic_key", consumer.TopicKeyBatched,
 			"error", err,
 		)
 		c.metricsScope.Counter("publish_errors").Inc(1)
@@ -122,7 +122,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	c.logger.Infow("published batch to next stage",
 		"batch_id", batch.ID,
-		"topic", consumer.TopicBatched,
+		"topic_key", consumer.TopicKeyBatched,
 	)
 
 	c.metricsScope.Counter("processed").Inc(1)
@@ -130,8 +130,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	return nil // Success - message will be acked
 }
 
-// publish publishes a batch to the specified topic.
-func (c *Controller) publish(ctx context.Context, topic consumer.Topic, batch entity.Batch) error {
+// publish publishes a batch to the specified topic key.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batch entity.Batch) error {
 	payload, err := batch.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch: %w", err)
@@ -139,12 +139,17 @@ func (c *Controller) publish(ctx context.Context, topic consumer.Topic, batch en
 
 	msg := entityqueue.NewMessage(batch.ID, payload, batch.Queue, nil)
 
-	q, ok := c.registry.Queue(topic)
+	q, ok := c.registry.Queue(key)
 	if !ok {
-		return fmt.Errorf("no queue registered for topic %s", topic)
+		return fmt.Errorf("no queue registered for topic key %s", key)
 	}
 
-	if err := q.Publisher().Publish(ctx, topic.String(), msg); err != nil {
+	topicName, ok := c.registry.TopicName(key)
+	if !ok {
+		return fmt.Errorf("no topic name registered for topic key %s", key)
+	}
+
+	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 
@@ -156,9 +161,9 @@ func (c *Controller) Name() string {
 	return "batch"
 }
 
-// Topic returns the topic this controller subscribes to.
-func (c *Controller) Topic() consumer.Topic {
-	return c.topic
+// TopicKey returns the topic key this controller subscribes to.
+func (c *Controller) TopicKey() consumer.TopicKey {
+	return c.topicKey
 }
 
 // ConsumerGroup returns the consumer group for offset tracking.
