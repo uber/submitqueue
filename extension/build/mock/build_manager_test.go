@@ -39,7 +39,7 @@ func TestMockBuildManager_Compilation(t *testing.T) {
 	}
 
 	// Test Poll
-	expectedMetadata := map[string]string{
+	expectedMetadata := entity.BuildMetadata{
 		"build_url": "https://ci.example.com/builds/123",
 		"commit_sha": "abc123",
 	}

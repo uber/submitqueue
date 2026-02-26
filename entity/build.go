@@ -76,3 +76,7 @@ type BuildChange struct {
 	// Action specifies what operation to perform on this change.
 	Action ChangeAction
 }
+
+// BuildMetadata contains additional metadata about a build returned by the build system.
+// The specific keys and values are implementation-defined.
+type BuildMetadata map[string]string

@@ -44,9 +44,9 @@ type BuildManager interface {
 	//
 	// Returns:
 	//   - BuildStatus: Current state of the build
-	//   - map[string]string: Additional metadata about the build (e.g., build URL, commit SHA, duration)
+	//   - BuildMetadata: Additional metadata about the build (e.g., build URL, commit SHA, duration)
 	//   - error: ErrBuildNotFound if the build doesn't exist
-	Poll(ctx context.Context, buildID string) (entity.BuildStatus, map[string]string, error)
+	Poll(ctx context.Context, buildID string) (entity.BuildStatus, entity.BuildMetadata, error)
 
 	// CancelBuild requests cancellation of a build.
 	//
