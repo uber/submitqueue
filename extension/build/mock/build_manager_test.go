@@ -23,8 +23,8 @@ func TestMockBuildManager_Compilation(t *testing.T) {
 
 	queueName := "test-queue"
 	changes := []entity.BuildChange{
-		{ChangeID: "D12345", Action: entity.BuildActionApply},
-		{ChangeID: "D12346", Action: entity.BuildActionValidate},
+		{ChangeID: "D12345", Action: entity.ChangeActionApply},
+		{ChangeID: "D12346", Action: entity.ChangeActionValidate},
 	}
 
 	buildID, err := mockBuildMgr.Schedule(

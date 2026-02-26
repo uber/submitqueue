@@ -51,34 +51,34 @@ func TestBuildChange_Creation(t *testing.T) {
 		name     string
 		change   BuildChange
 		wantID   string
-		wantAction BuildAction
+		wantAction ChangeAction
 	}{
 		{
 			name: "apply action",
 			change: BuildChange{
 				ChangeID: "PR-42",
-				Action:   BuildActionApply,
+				Action:   ChangeActionApply,
 			},
 			wantID:   "PR-42",
-			wantAction: BuildActionApply,
+			wantAction: ChangeActionApply,
 		},
 		{
 			name: "validate action",
 			change: BuildChange{
 				ChangeID: "D12345",
-				Action:   BuildActionValidate,
+				Action:   ChangeActionValidate,
 			},
 			wantID:   "D12345",
-			wantAction: BuildActionValidate,
+			wantAction: ChangeActionValidate,
 		},
 		{
 			name: "unknown action",
 			change: BuildChange{
 				ChangeID: "123",
-				Action:   BuildActionUnknown,
+				Action:   ChangeActionUnknown,
 			},
 			wantID:   "123",
-			wantAction: BuildActionUnknown,
+			wantAction: ChangeActionUnknown,
 		},
 	}
 

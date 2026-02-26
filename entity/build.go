@@ -54,16 +54,16 @@ type Build struct {
 	Status BuildStatus
 }
 
-// BuildAction defines the action to perform on a change submitted to the build system.
-type BuildAction string
+// ChangeAction defines the action to perform on a change submitted to the build system.
+type ChangeAction string
 
 const (
-	// BuildActionUnknown is the sentinel value for uninitialized actions.
-	BuildActionUnknown BuildAction = ""
-	// BuildActionApply applies the change to the target branch.
-	BuildActionApply BuildAction = "apply"
-	// BuildActionValidate runs validation/testing on the change without applying it.
-	BuildActionValidate BuildAction = "validate"
+	// ChangeActionUnknown is the sentinel value for uninitialized actions.
+	ChangeActionUnknown ChangeAction = ""
+	// ChangeActionApply applies the change to the target branch.
+	ChangeActionApply ChangeAction = "apply"
+	// ChangeActionValidate runs validation/testing on the change without applying it.
+	ChangeActionValidate ChangeAction = "validate"
 )
 
 // BuildChange represents a code change to be processed by the build system.
@@ -74,5 +74,5 @@ type BuildChange struct {
 	// depending on the source control provider.
 	ChangeID string
 	// Action specifies what operation to perform on this change.
-	Action BuildAction
+	Action ChangeAction
 }

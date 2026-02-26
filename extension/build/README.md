@@ -47,21 +47,21 @@ type BuildChange struct {
     // ChangeID is the unique identifier for this change (diff ID, PR number, etc.)
     ChangeID string
     // Action specifies what operation to perform on this change
-    Action BuildAction
+    Action ChangeAction
 }
 ```
 
-### BuildAction
+### ChangeAction
 
 Defines the action to perform on a change.
 
 ```go
-type BuildAction string
+type ChangeAction string
 
 const (
-    BuildActionUnknown   BuildAction = ""         // Sentinel value
-    BuildActionApply     BuildAction = "apply"    // Apply the change to the target branch
-    BuildActionValidate  BuildAction = "validate" // Run validation/testing without applying
+    ChangeActionUnknown   ChangeAction = ""         // Sentinel value
+    ChangeActionApply     ChangeAction = "apply"    // Apply the change to the target branch
+    ChangeActionValidate  ChangeAction = "validate" // Run validation/testing without applying
 )
 ```
 
@@ -146,8 +146,8 @@ if build.IsBuildNotFound(err) {
 ```go
 // 1. Schedule a build with changes
 changes := []entity.BuildChange{
-    {ChangeID: "D12345", Action: entity.BuildActionApply},
-    {ChangeID: "D12346", Action: entity.BuildActionValidate},
+    {ChangeID: "D12345", Action: entity.ChangeActionApply},
+    {ChangeID: "D12346", Action: entity.ChangeActionValidate},
 }
 
 buildID, err := buildMgr.Schedule(ctx, "my-queue", changes)
@@ -192,7 +192,7 @@ func TestMyController(t *testing.T) {
 
     // Set up expectations
     changes := []entity.BuildChange{
-        {ChangeID: "D12345", Action: entity.BuildActionValidate},
+        {ChangeID: "D12345", Action: entity.ChangeActionValidate},
     }
 
     mockBuildMgr.EXPECT().
@@ -264,7 +264,7 @@ To add support for a new CI provider:
 
 5. **Implement Schedule method**:
    - Look up job name from queue config using `queueName` parameter
-   - Handle both `BuildActionApply` and `BuildActionValidate` actions
+   - Handle both `ChangeActionApply` and `ChangeActionValidate` actions
    - Create appropriate builds/jobs for each change
    - Return unique build ID
 
