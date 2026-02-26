@@ -8,7 +8,7 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "go.uber.org/mock/gomock"
+	gomock "github.com/golang/mock/gomock"
 	entity "github.com/uber/submitqueue/entity"
 )
 
@@ -50,17 +50,17 @@ func (mr *MockBuildManagerMockRecorder) CancelBuild(ctx, buildID interface{}) *g
 }
 
 // Close mocks base method.
-func (m *MockBuildManager) Close() error {
+func (m *MockBuildManager) Close(ctx context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Close")
+	ret := m.ctrl.Call(m, "Close", ctx)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Close indicates an expected call of Close.
-func (mr *MockBuildManagerMockRecorder) Close() *gomock.Call {
+func (mr *MockBuildManagerMockRecorder) Close(ctx interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockBuildManager)(nil).Close))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockBuildManager)(nil).Close), ctx)
 }
 
 // Poll mocks base method.

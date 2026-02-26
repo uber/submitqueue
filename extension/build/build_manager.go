@@ -12,9 +12,9 @@ import (
 // Implementations provide integration with specific CI systems (BuildKite, Jenkins, etc.)
 // to schedule builds, poll their status, and cancel running builds.
 //
-// Implementations may be designed as heavy singletons (with connection pooling and caching)
-// or lightweight instances created on-demand, depending on the CI provider's requirements
-// and implementation strategy.
+// Implementations are long-lived singletons (one per build provider) initialized at service
+// startup, similar to Storage and other extension components. They should manage connection
+// pooling, caching, and other resources for the lifetime of the service.
 //
 // All implementations must be thread-safe and support concurrent operations.
 type BuildManager interface {
@@ -52,24 +52,24 @@ type BuildManager interface {
 	//
 	// This operation is asynchronous and does not wait for the cancellation to complete.
 	// The implementation should initiate the cancellation request with the CI provider
-	// and return immediately. Use Poll to check if the build has transitioned to
-	// BuildStatusCancelled.
+	// and return immediately.
 	//
-	// The implementation decides how to handle cancellation requests for builds in
-	// terminal states (succeeded, failed, cancelled). It may return an error, silently
-	// ignore the request, or handle it in a provider-specific way.
+	// SubmitQueue will mark the build as BuildStatusCancelled immediately without waiting
+	// for confirmation from the build system.
 	//
 	// Parameters:
 	//   - buildID: Build ID string
 	//
 	// Returns:
-	//   - error: ErrBuildNotFound if the build doesn't exist,
-	//            ErrBuildNotCancellable if the build cannot be cancelled (implementation-specific)
+	//   - error: ErrBuildNotFound if the build doesn't exist
 	CancelBuild(ctx context.Context, buildID string) error
 
 	// Close gracefully shuts down the build manager.
-	// Implementations should cancel pending requests, close HTTP clients, and clean up resources.
+	// Implementations should close HTTP clients and clean up resources.
 	// After Close is called, all other methods should return errors.
 	// Close is idempotent and safe to call multiple times.
-	Close() error
+	//
+	// The context controls the shutdown timeout. If the context is cancelled before
+	// cleanup completes, Close should stop cleanup operations and return the context error.
+	Close(ctx context.Context) error
 }

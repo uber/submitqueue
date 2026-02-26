@@ -18,8 +18,10 @@ const (
 	// This is a terminal state.
 	BuildStatusFailed BuildStatus = "failed"
 
-	// BuildStatusCancelled indicates the build was cancelled before completion.
+	// BuildStatusCancelled indicates the build was cancelled by SubmitQueue via CancelBuild.
 	// This is a terminal state.
+	// Note: If the build system cancels a build for external reasons (e.g., timeout, resource limits),
+	// this should be reported as BuildStatusFailed, not BuildStatusCancelled.
 	BuildStatusCancelled BuildStatus = "cancelled"
 )
 
@@ -62,17 +64,17 @@ const (
 	ChangeActionUnknown ChangeAction = ""
 	// ChangeActionApply applies the change to the target branch.
 	ChangeActionApply ChangeAction = "apply"
-	// ChangeActionValidate runs validation/testing on the change without applying it.
+	// ChangeActionValidate applies the change and runs validation/testing on it.
 	ChangeActionValidate ChangeAction = "validate"
 )
 
 // BuildChange represents a code change to be processed by the build system.
 // This is used by BuildManager to specify what changes to build and what action to perform.
 type BuildChange struct {
-	// ChangeID is the unique identifier for this change.
-	// This is typically a diff ID (e.g., "D12345") or PR number (e.g., "42"),
-	// depending on the source control provider.
-	ChangeID string
+	// Change is the code change to process.
+	// This references the same Change entity used in Request, containing the source provider
+	// and list of change IDs (e.g., PR numbers, diff IDs).
+	Change Change
 	// Action specifies what operation to perform on this change.
 	Action ChangeAction
 }

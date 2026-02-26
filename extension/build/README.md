@@ -28,13 +28,13 @@ type BuildManager interface {
     CancelBuild(ctx context.Context, buildID string) error
 
     // Close gracefully shuts down the build manager
-    Close() error
+    Close(ctx context.Context) error
 }
 ```
 
 **Thread-safety**: All implementations must be thread-safe and support concurrent operations.
 
-**Implementation Design**: Implementations may be designed as heavy singletons (with connection pooling and caching) or lightweight instances created on-demand, depending on the CI provider's requirements and implementation strategy.
+**Implementation Design**: Implementations are long-lived singletons (one per build provider) initialized at service startup, similar to Storage and other extension components. They should manage connection pooling, caching, and other resources for the lifetime of the service.
 
 ## Types
 
@@ -44,8 +44,10 @@ Represents a code change to be processed by the build system.
 
 ```go
 type BuildChange struct {
-    // ChangeID is the unique identifier for this change (diff ID, PR number, etc.)
-    ChangeID string
+    // Change is the code change to process.
+    // This references the same Change entity used in Request, containing the source provider
+    // and list of change IDs (e.g., PR numbers, diff IDs).
+    Change Change
     // Action specifies what operation to perform on this change
     Action ChangeAction
 }
@@ -61,7 +63,7 @@ type ChangeAction string
 const (
     ChangeActionUnknown   ChangeAction = ""         // Sentinel value
     ChangeActionApply     ChangeAction = "apply"    // Apply the change to the target branch
-    ChangeActionValidate  ChangeAction = "validate" // Run validation/testing without applying
+    ChangeActionValidate  ChangeAction = "validate" // Apply the change and run validation/testing on it
 )
 ```
 
@@ -70,7 +72,7 @@ const (
 **queueName** (string, required): Name of the queue processing these changes. Used to look up job configuration from queue config.
 
 **changes** ([]entity.BuildChange, required): List of changes to process. Each change includes:
-- **ChangeID**: Unique identifier (e.g., "D12345" for Phabricator, "42" for GitHub PR)
+- **Change**: The code change entity containing source provider and list of change IDs (e.g., "D12345" for Phabricator, "42" for GitHub PR)
 - **Action**: What to do with the change (validate or apply)
 
 Order of changes may be significant for dependencies.
@@ -96,7 +98,8 @@ const (
     BuildStatusAccepted   BuildStatus = "accepted"   // Accepted by CI provider
     BuildStatusSucceeded  BuildStatus = "succeeded"  // Completed successfully (terminal)
     BuildStatusFailed     BuildStatus = "failed"     // Completed with failures (terminal)
-    BuildStatusCancelled  BuildStatus = "cancelled"  // Cancelled before completion (terminal)
+    BuildStatusCancelled  BuildStatus = "cancelled"  // Cancelled by SubmitQueue via CancelBuild (terminal)
+                                                      // Note: Build system cancellations should be reported as BuildStatusFailed
 )
 
 // IsTerminal returns true for succeeded/failed/cancelled states
@@ -124,7 +127,6 @@ Implementations may include additional provider-specific metadata. Consumers sho
 The extension defines sentinel errors following the SubmitQueue pattern:
 
 - **`ErrBuildNotFound`** - Build doesn't exist or was deleted
-- **`ErrBuildNotCancellable`** - Build cannot be cancelled (implementation-specific)
 - **`ErrInvalidRequest`** - Request validation failed
 
 Each error has helper functions:
@@ -146,8 +148,14 @@ if build.IsBuildNotFound(err) {
 ```go
 // 1. Schedule a build with changes
 changes := []entity.BuildChange{
-    {ChangeID: "D12345", Action: entity.ChangeActionApply},
-    {ChangeID: "D12346", Action: entity.ChangeActionValidate},
+    {
+        Change: entity.Change{Source: "github", IDs: []string{"123"}},
+        Action: entity.ChangeActionApply,
+    },
+    {
+        Change: entity.Change{Source: "github", IDs: []string{"124"}},
+        Action: entity.ChangeActionValidate,
+    },
 }
 
 buildID, err := buildMgr.Schedule(ctx, "my-queue", changes)
@@ -192,7 +200,10 @@ func TestMyController(t *testing.T) {
 
     // Set up expectations
     changes := []entity.BuildChange{
-        {ChangeID: "D12345", Action: entity.ChangeActionValidate},
+        {
+            Change: entity.Change{Source: "github", IDs: []string{"123"}},
+            Action: entity.ChangeActionValidate,
+        },
     }
 
     mockBuildMgr.EXPECT().
@@ -205,24 +216,21 @@ func TestMyController(t *testing.T) {
 
 ### Cancelling Builds
 
-Cancellation is **asynchronous** - the method initiates the cancellation request and returns immediately. Use `Poll` to check if the build has transitioned to `BuildStatusCancelled`.
+Cancellation is **asynchronous** - the method initiates the cancellation request and returns immediately.
+
+**Important**: SubmitQueue sets `BuildStatusCancelled` immediately upon calling `CancelBuild`, without waiting for confirmation from the build system. The build status reflects SubmitQueue's decision to cancel, not the build system's actual state.
 
 ```go
 err := mgr.CancelBuild(ctx, buildID)
-if build.IsBuildNotCancellable(err) {
-    // Build cannot be cancelled (implementation-specific)
+if build.IsBuildNotFound(err) {
+    // Build doesn't exist
 } else if err != nil {
     // Other error
 }
 
-// Poll to verify cancellation
-status, _ := mgr.Poll(ctx, buildID)
-if status == entity.BuildStatusCancelled {
-    // Cancellation successful
-}
+// SubmitQueue will have already marked the build as BuildStatusCancelled
+// No need to poll for confirmation
 ```
-
-**Note**: The implementation decides how to handle cancellation requests for builds in terminal states (succeeded, failed, cancelled). It may return an error, silently ignore the request, or handle it in a provider-specific way.
 
 ## Implementing a New Provider
 
@@ -271,20 +279,15 @@ To add support for a new CI provider:
 6. **Implement CancelBuild**:
    - Make asynchronous cancellation request to CI provider
    - Return immediately after initiating request
-   - Decide how to handle terminal state cancellations
 
-7. **Choose implementation design**:
-   - **Singleton**: If provider needs connection pooling, auth token caching, rate limiting
-   - **Lightweight**: If provider SDK handles resource management or implementation is stateless
-
-8. **Add tests**:
+7. **Add tests**:
    - Unit tests with mock HTTP server
    - Validation tests for all required fields
    - Error mapping tests
    - Thread-safety tests
    - Test both validate and apply actions
 
-9. **Update BUILD.bazel**:
+8. **Update BUILD.bazel**:
    ```bazel
    go_library(
        name = "jenkins",
@@ -326,10 +329,10 @@ extension/build/
 ### Design Principles
 
 1. **Vendor-agnostic**: Interface doesn't leak provider-specific details
-2. **Change-focused**: Operates on individual changes (diff IDs, PR numbers) with explicit actions
+2. **Change-focused**: Operates on individual changes with explicit actions
 3. **Thread-safe**: All implementations support concurrent operations
 4. **Error transparency**: Sentinel errors for common failure modes
-5. **Implementation flexibility**: Supports both heavy singleton and lightweight on-demand designs
+5. **Long-lived singletons**: Implementations are initialized once per build provider at service startup
 6. **Asynchronous cancellation**: CancelBuild initiates request and returns immediately
 
 ## Future Enhancements
@@ -342,4 +345,3 @@ Potential improvements not in the current implementation:
 - **Batch operations**: Poll/cancel multiple builds at once
 - **Streaming logs**: Real-time log streaming from builds
 - **Build caching**: Cache build status to reduce API calls
-- **Partial cancellation**: Cancel individual changes in a multi-change build
