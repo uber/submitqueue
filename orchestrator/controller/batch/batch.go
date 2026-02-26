@@ -124,15 +124,38 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		})
 	}
 
+	// Create batch dependent entities (reverse relationship of batch.Dependencies).
+	// For each dependency, record the new batch as a dependent.
+	// If existing dependents are found in the store, append them.
+	for _, dep := range activeBatches {
+		bd := entity.BatchDependent{
+			BatchID:    dep.ID,
+			Dependents: []string{batch.ID},
+		}
+
+		existing, err := c.store.GetBatchDependentStore().Get(ctx, dep.ID)
+		if err != nil && !storage.IsNotFound(err) {
+			c.logger.Errorw("failed to get existing batch dependent",
+				"batch_id", dep.ID,
+				"error", err,
+			)
+			c.metricsScope.Counter("batch_dependent_store_errors").Inc(1)
+			return fmt.Errorf("failed to get batch dependent for batchID=%s: %w", dep.ID, err)
+		}
+		if err == nil {
+			bd.Dependents = append(existing.Dependents, bd.Dependents...)
+		}
+	}
+
 	// TODO:
 	// - Add batch to DB
-	// - Create batch dependent entity
 	// - Add to batch dependent DB
 
 	c.logger.Infow("batch created",
 		"batch_id", batch.ID,
 		"request_id", request.ID,
 		"queue", request.Queue,
+		"dependency_count", len(batch.Dependencies),
 	)
 
 	// Publish to speculate topic
