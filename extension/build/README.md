@@ -98,7 +98,7 @@ const (
     BuildStatusAccepted   BuildStatus = "accepted"   // Accepted by CI provider
     BuildStatusSucceeded  BuildStatus = "succeeded"  // Completed successfully (terminal)
     BuildStatusFailed     BuildStatus = "failed"     // Completed with failures (terminal)
-    BuildStatusCancelled  BuildStatus = "cancelled"  // Cancelled by SubmitQueue via CancelBuild (terminal)
+    BuildStatusCancelled  BuildStatus = "cancelled"  // Cancelled by SubmitQueue (terminal)
                                                       // Note: Build system cancellations should be reported as BuildStatusFailed
 )
 

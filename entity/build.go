@@ -18,7 +18,7 @@ const (
 	// This is a terminal state.
 	BuildStatusFailed BuildStatus = "failed"
 
-	// BuildStatusCancelled indicates the build was cancelled by SubmitQueue via CancelBuild.
+	// BuildStatusCancelled indicates the build was cancelled by SubmitQueue.
 	// This is a terminal state.
 	// Note: If the build system cancels a build for external reasons (e.g., timeout, resource limits),
 	// this should be reported as BuildStatusFailed, not BuildStatusCancelled.
