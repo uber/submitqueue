@@ -68,6 +68,57 @@ func (s *batchDependentStore) Create(ctx context.Context, batchDependent entity.
 	return nil
 }
 
+// Upsert creates or updates a batch dependent. If the batch dependent does not exist, it is inserted
+// with the provided version. If the batch dependent already exists and the current version matches the
+// expected version, all fields are overwritten and the version is incremented by 1.
+// If versions do not match, returns ErrVersionMismatch.
+func (s *batchDependentStore) Upsert(ctx context.Context, batchDependent entity.BatchDependent) error {
+	dependentsJSON, err := json.Marshal(batchDependent.Dependents)
+	if err != nil {
+		return fmt.Errorf("failed to marshal dependents batchID=%s for Upsert batch dependent entity: %w", batchDependent.BatchID, err)
+	}
+
+	// Try insert first.
+	_, err = s.db.ExecContext(ctx,
+		"INSERT INTO batch_dependent (batch_id, dependents, version) VALUES (?, ?, ?)",
+		batchDependent.BatchID, dependentsJSON, batchDependent.Version,
+	)
+	if err == nil {
+		return nil
+	}
+
+	var mysqlErr *mysql.MySQLError
+	if !errors.As(err, &mysqlErr) || mysqlErr.Number != 1062 {
+		return fmt.Errorf("failed to upsert batch dependent entity batchID=%s: %w", batchDependent.BatchID, err)
+	}
+
+	// Row already exists; update only if the version matches.
+	result, err := s.db.ExecContext(ctx,
+		"UPDATE batch_dependent SET dependents = ?, version = version + 1 WHERE batch_id = ? AND version = ?",
+		dependentsJSON, batchDependent.BatchID, batchDependent.Version,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to upsert batch dependent entity batchID=%s: %w", batchDependent.BatchID, err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf(
+			"failed to get rows affected from upsert for batchID=%q version=%d: %w",
+			batchDependent.BatchID, batchDependent.Version, err,
+		)
+	}
+
+	if rowsAffected != 1 {
+		return fmt.Errorf(
+			"version mismatch for batch dependent upsert: batchID=%q expected_version=%d: %w",
+			batchDependent.BatchID, batchDependent.Version, storage.ErrVersionMismatch,
+		)
+	}
+
+	return nil
+}
+
 // UpdateDependents updates the dependents of a batch dependent if the current version matches the expected version.
 // If versions do not match, returns ErrVersionMismatch.
 // The implementation increments the version by 1 atomically with the dependents update.

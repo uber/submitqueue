@@ -111,6 +111,61 @@ func (s *batchStore) UpdateState(ctx context.Context, id string, version int32, 
 	return nil
 }
 
+// Upsert creates or updates a batch. If the batch does not exist, it is inserted with the provided version.
+// If the batch already exists and the current version matches the expected version, all fields are overwritten
+// and the version is incremented by 1. If versions do not match, returns ErrVersionMismatch.
+func (s *batchStore) Upsert(ctx context.Context, batch entity.Batch) error {
+	containsJSON, err := json.Marshal(batch.Contains)
+	if err != nil {
+		return fmt.Errorf("failed to marshal contains=%v id=%s for Upsert batch entity: %w", batch.Contains, batch.ID, err)
+	}
+
+	dependenciesJSON, err := json.Marshal(batch.Dependencies)
+	if err != nil {
+		return fmt.Errorf("failed to marshal dependencies=%v id=%s for Upsert batch entity: %w", batch.Dependencies, batch.ID, err)
+	}
+
+	// Try insert first.
+	_, err = s.db.ExecContext(ctx,
+		"INSERT INTO batch (id, queue, contains, dependencies, state, version) VALUES (?, ?, ?, ?, ?, ?)",
+		batch.ID, batch.Queue, containsJSON, dependenciesJSON, batch.State, batch.Version,
+	)
+	if err == nil {
+		return nil
+	}
+
+	var mysqlErr *mysql.MySQLError
+	if !errors.As(err, &mysqlErr) || mysqlErr.Number != 1062 {
+		return fmt.Errorf("failed to upsert batch entity id=%s: %w", batch.ID, err)
+	}
+
+	// Row already exists; update only if the version matches.
+	result, err := s.db.ExecContext(ctx,
+		"UPDATE batch SET queue = ?, contains = ?, dependencies = ?, state = ?, version = version + 1 WHERE id = ? AND version = ?",
+		batch.Queue, containsJSON, dependenciesJSON, batch.State, batch.ID, batch.Version,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to upsert batch entity id=%s: %w", batch.ID, err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf(
+			"failed to get rows affected from upsert for id=%q version=%d: %w",
+			batch.ID, batch.Version, err,
+		)
+	}
+
+	if rowsAffected != 1 {
+		return fmt.Errorf(
+			"version mismatch for batch upsert: id=%q expected_version=%d: %w",
+			batch.ID, batch.Version, storage.ErrVersionMismatch,
+		)
+	}
+
+	return nil
+}
+
 // GetByQueueAndStates retrieves all batches that belong to the given queue and are in the given states.
 func (s *batchStore) GetByQueueAndStates(ctx context.Context, queue string, states []entity.BatchState) ([]entity.Batch, error) {
 	if len(states) == 0 {

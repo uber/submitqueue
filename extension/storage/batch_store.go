@@ -23,4 +23,9 @@ type BatchStore interface {
 
 	// GetByQueueAndStates retrieves all batches that belong to the given queue and are in the given states.
 	GetByQueueAndStates(ctx context.Context, queue string, states []entity.BatchState) ([]entity.Batch, error)
+
+	// Upsert creates or updates a batch. If the batch does not exist, it is inserted with the provided version.
+	// If the batch already exists and the current version matches the expected version, all fields are overwritten
+	// and the version is incremented by 1. If versions do not match, returns ErrVersionMismatch.
+	Upsert(ctx context.Context, batch entity.Batch) error
 }

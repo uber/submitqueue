@@ -21,4 +21,10 @@ type BatchDependentStore interface {
 	// UpdateDependents updates the dependents of a batch dependent if the current version matches the expected version.
 	// If versions do not match, returns ErrVersionMismatch.
 	UpdateDependents(ctx context.Context, batchID string, version int32, dependents []string) error
+
+	// Upsert creates or updates a batch dependent. If the batch dependent does not exist, it is inserted
+	// with the provided version. If the batch dependent already exists and the current version matches the
+	// expected version, all fields are overwritten and the version is incremented by 1.
+	// If versions do not match, returns ErrVersionMismatch.
+	Upsert(ctx context.Context, batchDependent entity.BatchDependent) error
 }
