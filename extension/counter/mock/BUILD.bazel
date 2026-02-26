@@ -1,0 +1,27 @@
+load("@rules_go//extras:gomock.bzl", "gomock")
+load("@rules_go//go:def.bzl", "go_library")
+
+_MOCKGEN = "@org_uber_go_mock//mockgen"
+
+gomock(
+    name = "mock_counter_src",
+    out = "counter_mock.go",
+    mockgen_tool = _MOCKGEN,
+    package = "mock",
+    source = "//extension/counter:counter.go",
+    source_importpath = "github.com/uber/submitqueue/extension/counter",
+)
+
+# gazelle:ignore
+go_library(
+    name = "mock",
+    srcs = [
+        ":mock_counter_src",
+    ],
+    importpath = "github.com/uber/submitqueue/extension/counter/mock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//extension/counter",
+        "@org_uber_go_mock//gomock",
+    ],
+)
