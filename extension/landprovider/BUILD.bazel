@@ -2,8 +2,17 @@ load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "landprovider",
-    srcs = ["land_provider.go"],
+    srcs = [
+        "errors.go",
+        "land_entry.go",
+        "land_provider.go",
+    ],
     importpath = "github.com/uber/submitqueue/extension/landprovider",
     visibility = ["//visibility:public"],
     deps = ["//entity"],
+)
+
+exports_files(
+    ["land_provider.go"],
+    visibility = ["//extension/landprovider/mock:__pkg__"],
 )

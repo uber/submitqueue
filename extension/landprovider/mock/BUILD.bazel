@@ -1,8 +1,21 @@
+load("@rules_go//extras:gomock.bzl", "gomock")
 load("@rules_go//go:def.bzl", "go_library")
 
+_MOCKGEN = "@org_uber_go_mock//mockgen"
+
+gomock(
+    name = "mock_land_provider_src",
+    out = "land_provider_mock.go",
+    mockgen_tool = _MOCKGEN,
+    package = "mock",
+    source = "//extension/landprovider:land_provider.go",
+    source_importpath = "github.com/uber/submitqueue/extension/landprovider",
+)
+
+# gazelle:ignore
 go_library(
     name = "mock",
-    srcs = ["land_provider_mock.go"],
+    srcs = [":mock_land_provider_src"],
     importpath = "github.com/uber/submitqueue/extension/landprovider/mock",
     visibility = ["//visibility:public"],
     deps = [
