@@ -13,8 +13,8 @@ func TestBuildStatus_IsTerminal(t *testing.T) {
 		expected bool
 	}{
 		{
-			name:     "passed is terminal",
-			status:   BuildStatusPassed,
+			name:     "succeeded is terminal",
+			status:   BuildStatusSucceeded,
 			expected: true,
 		},
 		{
@@ -28,18 +28,8 @@ func TestBuildStatus_IsTerminal(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "queued is not terminal",
-			status:   BuildStatusQueued,
-			expected: false,
-		},
-		{
-			name:     "running is not terminal",
-			status:   BuildStatusRunning,
-			expected: false,
-		},
-		{
-			name:     "blocked is not terminal",
-			status:   BuildStatusBlocked,
+			name:     "accepted is not terminal",
+			status:   BuildStatusAccepted,
 			expected: false,
 		},
 		{

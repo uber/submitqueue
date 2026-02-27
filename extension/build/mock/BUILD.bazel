@@ -1,0 +1,28 @@
+load("@rules_go//extras:gomock.bzl", "gomock")
+load("@rules_go//go:def.bzl", "go_library")
+
+_MOCKGEN = "@org_uber_go_mock//mockgen"
+
+gomock(
+    name = "mock_build_manager_src",
+    out = "build_manager_mock.go",
+    mockgen_tool = _MOCKGEN,
+    package = "mock",
+    source = "//extension/build:build_manager.go",
+    source_importpath = "github.com/uber/submitqueue/extension/build",
+)
+
+# gazelle:ignore
+go_library(
+    name = "mock",
+    srcs = [
+        ":mock_build_manager_src",
+    ],
+    importpath = "github.com/uber/submitqueue/extension/build/mock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//entity",
+        "//extension/build",
+        "@org_uber_go_mock//gomock",
+    ],
+)

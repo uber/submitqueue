@@ -7,34 +7,28 @@ const (
 	// BuildStatusUnknown is the unreachable state. It is set by default when the structure is initialized. It should never be seen in the system.
 	BuildStatusUnknown BuildStatus = ""
 
-	// BuildStatusQueued indicates the build has been scheduled but not yet started.
-	BuildStatusQueued BuildStatus = "queued"
+	// BuildStatusAccepted indicates the build has been accepted by the CI provider.
+	BuildStatusAccepted BuildStatus = "accepted"
 
-	// BuildStatusRunning indicates the build is currently executing.
-	BuildStatusRunning BuildStatus = "running"
-
-	// BuildStatusPassed indicates the build completed successfully.
+	// BuildStatusSucceeded indicates the build completed successfully.
 	// This is a terminal state.
-	BuildStatusPassed BuildStatus = "passed"
+	BuildStatusSucceeded BuildStatus = "succeeded"
 
 	// BuildStatusFailed indicates the build completed with failures.
 	// This is a terminal state.
 	BuildStatusFailed BuildStatus = "failed"
 
-	// BuildStatusCancelled indicates the build was cancelled before completion.
+	// BuildStatusCancelled indicates the build was cancelled by SubmitQueue.
 	// This is a terminal state.
+	// Note: If the build system cancels a build for external reasons (e.g., timeout, resource limits),
+	// this should be reported as BuildStatusFailed, not BuildStatusCancelled.
 	BuildStatusCancelled BuildStatus = "cancelled"
-
-	// BuildStatusBlocked indicates the build is waiting for manual approval or unblocking.
-	// Some CI systems (like BuildKite) support manual approval steps.
-	BuildStatusBlocked BuildStatus = "blocked"
 )
 
-// IsTerminal returns true if the build state represents a final state (passed, failed, or cancelled).
+// IsTerminal returns true if the build state represents a final state (succeeded, failed, or cancelled).
 // Terminal states indicate the build has finished and will not change state again.
-// Note: BuildStatusBlocked is NOT terminal as blocked builds can be unblocked and continue execution.
 func (s BuildStatus) IsTerminal() bool {
-	return s == BuildStatusPassed || s == BuildStatusFailed || s == BuildStatusCancelled
+	return s == BuildStatusSucceeded || s == BuildStatusFailed || s == BuildStatusCancelled
 }
 
 
@@ -61,3 +55,29 @@ type Build struct {
 	// Status represents the state of the build lifecycle this build is in.
 	Status BuildStatus
 }
+
+// ChangeAction defines the action to perform on a change submitted to the build system.
+type ChangeAction string
+
+const (
+	// ChangeActionUnknown is the sentinel value for uninitialized actions.
+	ChangeActionUnknown ChangeAction = ""
+	// ChangeActionApply applies the change to the target branch.
+	ChangeActionApply ChangeAction = "apply"
+	// ChangeActionValidate applies the change first, and then validates the change by running respective validation/test suites.
+	ChangeActionValidate ChangeAction = "validate"
+)
+
+// BuildChange represents a code change to be processed by the build system.
+// This is used by BuildManager to specify what changes to build and what action to perform.
+type BuildChange struct {
+	// Change is a list of URLs where the provider is encoded in the schema part.
+	// Example: "github://uber/submitqueue/pull/123/abc123def"
+	Change Change
+	// Action specifies what operation to perform on this change.
+	Action ChangeAction
+}
+
+// BuildMetadata contains additional metadata about a build returned by the build system.
+// The specific keys and values are implementation-defined.
+type BuildMetadata map[string]string

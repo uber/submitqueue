@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+exports_files(
+    ["build_manager.go"],
+    visibility = ["//extension/build/mock:__pkg__"],
+)
+
+go_library(
+    name = "build",
+    srcs = [
+        "build_manager.go",
+        "errors.go",
+    ],
+    importpath = "github.com/uber/submitqueue/extension/build",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//entity",
+    ],
+)
