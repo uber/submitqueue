@@ -2,18 +2,16 @@
 
 ## Services
 
-Submit Queue consists of three main services:
+Submit Queue consists of two main services:
 
 - **Gateway**: Entry point for external requests (port 8081)
 - **Orchestrator**: Coordinates job execution (port 8082)
-- **Speculator**: Performs speculative builds (port 8083)
 
 ## gRPC API
 
 Each service has its own proto definitions and exposes its own gRPC API:
-- **SubmitQueueGateway**: Gateway API with Ping method (port 8081)
+- **SubmitQueueGateway**: Gateway API with Ping and Land methods (port 8081)
 - **SubmitQueueOrchestrator**: Orchestrator API with Ping method (port 8082)
-- **SubmitQueueSpeculator**: Speculator API with Ping method (port 8083)
 
 ### Quick Start
 
@@ -185,12 +183,10 @@ make proto
 # Run servers
 make run-gateway        # Gateway on port 8081
 make run-orchestrator   # Orchestrator on port 8082
-make run-speculator     # Speculator on port 8083
 
 # Run clients
 make run-client-gateway MESSAGE="hello"
 make run-client-orchestrator MESSAGE="hello"
-make run-client-speculator MESSAGE="hello"
 
 # Clean binaries
 make clean
@@ -211,12 +207,10 @@ go build ./...
 # Build example servers
 go build -o bin/gateway_server ./example/server/gateway/
 go build -o bin/orchestrator_server ./example/server/orchestrator/
-go build -o bin/speculator_server ./example/server/speculator/
 
 # Build clients
 go build -o bin/gateway_client ./example/client/gateway/
 go build -o bin/orchestrator_client ./example/client/orchestrator/
-go build -o bin/speculator_client ./example/client/speculator/
 
 # Run a server
 ./bin/gateway_server
@@ -354,13 +348,9 @@ make run-gateway
 # Terminal 2: Start orchestrator
 make run-orchestrator
 
-# Terminal 3: Start speculator
-make run-speculator
-
-# Terminal 4: Test each service
+# Terminal 3: Test each service
 make run-client-gateway MESSAGE="test gateway"
 make run-client-orchestrator MESSAGE="test orchestrator"
-make run-client-speculator MESSAGE="test speculator"
 ```
 
 #### Using Bazel for Testing

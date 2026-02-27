@@ -28,9 +28,9 @@ func (s *batchDependentStore) Get(ctx context.Context, batchID string) (entity.B
 	var dependentsJSON []byte
 
 	err := s.db.QueryRowContext(ctx,
-		"SELECT batch_id, dependents FROM batch_dependent WHERE batch_id = ?",
+		"SELECT batch_id, dependents, version FROM batch_dependent WHERE batch_id = ?",
 		batchID,
-	).Scan(&bd.BatchID, &dependentsJSON)
+	).Scan(&bd.BatchID, &dependentsJSON, &bd.Version)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.BatchDependent{}, storage.WrapNotFound(err)
@@ -54,8 +54,8 @@ func (s *batchDependentStore) Create(ctx context.Context, batchDependent entity.
 	}
 
 	_, err = s.db.ExecContext(ctx,
-		"INSERT INTO batch_dependent (batch_id, dependents) VALUES (?, ?)",
-		batchDependent.BatchID, dependentsJSON,
+		"INSERT INTO batch_dependent (batch_id, dependents, version) VALUES (?, ?, ?)",
+		batchDependent.BatchID, dependentsJSON, batchDependent.Version,
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
@@ -63,6 +63,44 @@ func (s *batchDependentStore) Create(ctx context.Context, batchDependent entity.
 			return fmt.Errorf("batch dependent entity batchID=%s: %w", batchDependent.BatchID, storage.ErrAlreadyExists)
 		}
 		return fmt.Errorf("failed to insert batch dependent entity batchID=%s: %w", batchDependent.BatchID, err)
+	}
+
+	return nil
+}
+
+// UpdateDependents updates the dependents of a batch dependent if the current version matches the expected version.
+// If versions do not match, returns ErrVersionMismatch.
+// The implementation increments the version by 1 atomically with the dependents update.
+func (s *batchDependentStore) UpdateDependents(ctx context.Context, batchID string, version int32, dependents []string) error {
+	dependentsJSON, err := json.Marshal(dependents)
+	if err != nil {
+		return fmt.Errorf("failed to marshal dependents batchID=%s for UpdateDependents batch dependent entity: %w", batchID, err)
+	}
+
+	result, err := s.db.ExecContext(ctx,
+		"UPDATE batch_dependent SET dependents = ?, version = version + 1 WHERE batch_id = ? AND version = ?",
+		dependentsJSON, batchID, version,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"failed to update batch dependent dependents for batchID=%q version=%d: %w",
+			batchID, version, err,
+		)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf(
+			"failed to get rows affected from update for batchID=%q version=%d: %w",
+			batchID, version, err,
+		)
+	}
+
+	if rowsAffected != 1 {
+		return fmt.Errorf(
+			"version mismatch for batch dependent update: batchID=%q expected_version=%d: %w",
+			batchID, version, storage.ErrVersionMismatch,
+		)
 	}
 
 	return nil

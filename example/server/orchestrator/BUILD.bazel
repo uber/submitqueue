@@ -18,6 +18,8 @@ go_library(
         "//extension/mergechecker/github",
         "//extension/queue",
         "//extension/queue/mysql",
+        "//extension/storage",
+        "//extension/storage/mysql",
         "//orchestrator/controller",
         "//orchestrator/controller/batch",
         "//orchestrator/controller/build",
