@@ -6,19 +6,23 @@ import (
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
-	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
+	"github.com/uber/submitqueue/extension/landprovider"
+	"github.com/uber/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
 
 // Controller handles merge queue messages.
-// It consumes merge requests, performs merges, and publishes results to the merge signal stage.
+// It consumes batches, fetches the contained requests from storage,
+// lands the changes via the LandProvider, and publishes results to the merge signal stage.
 // Implements consumer.Controller interface for integration with the consumer.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	registry      consumer.TopicRegistry
+	landProvider  landprovider.LandProvider
+	storage       storage.Storage
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -31,6 +35,8 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	registry consumer.TopicRegistry,
+	landProvider landprovider.LandProvider,
+	storage storage.Storage,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
@@ -38,75 +44,175 @@ func NewController(
 		logger:        logger.Named("merge_controller"),
 		metricsScope:  scope.SubScope("merge_controller"),
 		registry:      registry,
+		landProvider:  landProvider,
+		storage:       storage,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
 }
 
 // Process processes a merge delivery from the queue.
-// Deserializes the request, performs the merge, and publishes to the merge signal topic.
+// Deserializes the batch, fetches contained requests, lands the changes,
+// and publishes the batch to the merge signal topic.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	c.metricsScope.Counter("received").Inc(1)
 
 	msg := delivery.Message()
 
-	// Deserialize request entity
-	request, err := entity.RequestFromBytes(msg.Payload)
+	// Deserialize batch entity
+	batch, err := entity.BatchFromBytes(msg.Payload)
 	if err != nil {
-		c.logger.Errorw("failed to deserialize request",
+		c.logger.Errorw("failed to deserialize batch",
 			"message_id", msg.ID,
 			"partition_key", msg.PartitionKey,
 			"attempt", delivery.Attempt(),
 			"error", err,
 		)
 		c.metricsScope.Counter("deserialize_errors").Inc(1)
-		// Non-retryable: malformed messages will never succeed regardless of retry count
-		return fmt.Errorf("failed to deserialize request: %w", err)
+		// Non-retryable: malformed messages will never succeed
+		return fmt.Errorf("failed to deserialize batch: %w", err)
 	}
 
 	c.logger.Infow("received merge event",
-		"request_id", request.ID,
-		"queue", request.Queue,
-		"state", string(request.State),
-		"version", request.Version,
+		"batch_id", batch.ID,
+		"queue", batch.Queue,
+		"request_count", len(batch.Contains),
+		"state", string(batch.State),
+		"version", batch.Version,
 		"attempt", delivery.Attempt(),
 		"partition_key", msg.PartitionKey,
 	)
 
-	// TODO: Add merge logic
-	// - Perform source control merge operation
-	// - Handle merge conflicts
+	// Idempotency guard: re-fetch the batch from storage to check current state.
+	// On retries (e.g., land succeeded but publish failed), this prevents calling
+	// Land again for changes that were already merged.
+	currentBatch, err := c.storage.GetBatchStore().Get(ctx, batch.ID)
+	if err != nil {
+		c.logger.Errorw("failed to fetch current batch state",
+			"batch_id", batch.ID,
+			"error", err,
+		)
+		c.metricsScope.Counter("batch_fetch_errors").Inc(1)
+		return fmt.Errorf("failed to fetch batch %s: %w", batch.ID, err)
+	}
+
+	// Use the current version from storage for subsequent operations
+	batch = currentBatch
+
+	switch batch.State {
+	case entity.BatchStateLandSucceeded, entity.BatchStateLandFailed:
+		c.logger.Infow("batch already landed, skipping to publish",
+			"batch_id", batch.ID,
+			"state", string(batch.State),
+		)
+		c.metricsScope.Counter("idempotent_skip").Inc(1)
+	case entity.BatchStateLanding:
+		newState, err := c.land(ctx, batch)
+		if err != nil {
+			return err
+		}
+
+		if err := c.storage.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newState); err != nil {
+			c.logger.Errorw("failed to update batch state",
+				"batch_id", batch.ID,
+				"target_state", string(newState),
+				"error", err,
+			)
+			c.metricsScope.Counter("batch_update_errors").Inc(1)
+			return fmt.Errorf("failed to update batch state: %w", err)
+		}
+
+		batch.State = newState
+		batch.Version++
+	default:
+		c.logger.Errorw("unexpected batch state for merge",
+			"batch_id", batch.ID,
+			"state", string(batch.State),
+		)
+		c.metricsScope.Counter("unexpected_state").Inc(1)
+		return fmt.Errorf("unexpected batch state %s for batch %s", batch.State, batch.ID)
+	}
 
 	// Publish to merge signal topic
-	if err := c.publish(ctx, consumer.TopicKeyMergeSignal, request); err != nil {
+	if err := c.publish(ctx, consumer.TopicKeyMergeSignal, batch); err != nil {
 		c.logger.Errorw("failed to publish output",
-			"request_id", request.ID,
+			"batch_id", batch.ID,
 			"topic_key", consumer.TopicKeyMergeSignal,
 			"error", err,
 		)
 		c.metricsScope.Counter("publish_errors").Inc(1)
-		return errs.NewRetryableError(fmt.Errorf("failed to publish to merge-signal: %w", err))
+		return fmt.Errorf("failed to publish to merge-signal: %w", err)
 	}
 
-	c.logger.Infow("published request to next stage",
-		"request_id", request.ID,
+	c.logger.Infow("published batch to next stage",
+		"batch_id", batch.ID,
+		"state", string(batch.State),
 		"topic_key", consumer.TopicKeyMergeSignal,
 	)
 
 	c.metricsScope.Counter("processed").Inc(1)
-
-	return nil // Success - message will be acked
+	return nil
 }
 
-// publish publishes a request to the specified topic key.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, request entity.Request) error {
-	payload, err := request.ToBytes()
-	if err != nil {
-		return fmt.Errorf("failed to serialize request: %w", err)
+// land fetches the requests in the batch, lands them via the LandProvider,
+// and classifies the outcome into a batch state.
+func (c *Controller) land(ctx context.Context, batch entity.Batch) (entity.BatchState, error) {
+	requestStore := c.storage.GetRequestStore()
+	entries := make([]landprovider.LandEntry, 0, len(batch.Contains))
+
+	for _, requestID := range batch.Contains {
+		request, err := requestStore.Get(ctx, requestID)
+		if err != nil {
+			c.logger.Errorw("failed to fetch request",
+				"batch_id", batch.ID,
+				"request_id", requestID,
+				"error", err,
+			)
+			c.metricsScope.Counter("request_fetch_errors").Inc(1)
+			return "", fmt.Errorf("failed to fetch request %s: %w", requestID, err)
+		}
+
+		entries = append(entries, landprovider.LandEntry{
+			Strategy: request.LandStrategy,
+			Change:   request.Change,
+		})
 	}
 
-	msg := entityqueue.NewMessage(request.ID, payload, request.Queue, nil)
+	landResult, err := c.landProvider.Land(ctx, batch.Queue, entries)
+
+	switch {
+	case err == nil:
+		c.logger.Infow("land succeeded",
+			"batch_id", batch.ID,
+			"sha", landResult.SHA,
+		)
+		return entity.BatchStateLandSucceeded, nil
+	case landprovider.IsLandRejected(err):
+		c.logger.Errorw("land rejected",
+			"batch_id", batch.ID,
+			"error", err,
+		)
+		c.metricsScope.Counter("land_rejected").Inc(1)
+		return entity.BatchStateLandFailed, nil
+	default:
+		c.logger.Errorw("land failed",
+			"batch_id", batch.ID,
+			"error", err,
+		)
+		c.metricsScope.Counter("land_errors").Inc(1)
+		return "", fmt.Errorf("land failed: %w", err)
+	}
+}
+
+// publish publishes a batch to the specified topic key.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batch entity.Batch) error {
+	payload, err := batch.ToBytes()
+	if err != nil {
+		return fmt.Errorf("failed to serialize batch: %w", err)
+	}
+
+	msg := entityqueue.NewMessage(batch.ID, payload, batch.Queue, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

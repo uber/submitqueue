@@ -12,8 +12,12 @@ const (
 	BatchStateCreated BatchState = "created"
 	// BatchStateSpeculating is the state of a batch that is undergoing speculative execution.
 	BatchStateSpeculating BatchState = "speculating"
-	// BatchStateFinalizing is the state of a batch that is being finalized after speculative execution.
-	BatchStateFinalizing BatchState = "finalizing"
+	// BatchStateLanding is the state of a batch that is being landed.
+	BatchStateLanding BatchState = "landing"
+	// BatchStateLandFailed is the state of a batch that has failed to land.
+	BatchStateLandFailed BatchState = "land_failed"
+	// BatchStateLandSucceeded is the state of a batch that has successfully landed.
+	BatchStateLandSucceeded BatchState = "land_succeeded"
 	// BatchStateSucceeded is the terminal state of a batch that has been successfully landed.
 	BatchStateSucceeded BatchState = "succeeded"
 	// BatchStateFailed is the terminal state of a batch that has failed.

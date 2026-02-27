@@ -361,6 +361,8 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		registry,
+		nil, // TODO: wire LandProvider implementation
+		nil, // TODO: wire Storage implementation
 		consumer.TopicKeyToMerge,
 		"orchestrator-merge",
 	)
