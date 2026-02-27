@@ -25,6 +25,8 @@ const (
 	RequestStateUnknown RequestState = ""
 	// RequestStateNew is the initial state of a land request. It is confirmed by the system but the processing is not started yet.
 	RequestStateNew RequestState = "new"
+	// RequestStateValidated indicates that the request has been validated (duplicate check, merge check etc.).
+	RequestStateValidated RequestState = "validated"
 	// RequestStateProcessing is the state of a land request that is being processed.
 	RequestStateProcessing RequestState = "processing"
 	// RequestStateLanded is the state of a land request that has been successfully processed and landed. This is the final state.
