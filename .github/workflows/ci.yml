@@ -9,6 +9,7 @@ on:
       - opened
       - reopened
       - synchronize
+  merge_group:
 
 permissions:
   contents: read
