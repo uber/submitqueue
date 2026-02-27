@@ -12,6 +12,7 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//core/consumer",
+        "//core/speculation",
         "//extension/counter",
         "//extension/counter/mysql",
         "//extension/mergechecker",

@@ -15,6 +15,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/core/speculation"
 	"github.com/uber/submitqueue/extension/counter"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	"github.com/uber/submitqueue/extension/mergechecker"
@@ -153,8 +154,11 @@ func run() error {
 	// Create merge checker
 	mc := newMergeChecker(logger, scope)
 
+	// Create speculation strategy (top-K with default probabilities).
+	strategy := speculation.NewTopKStrategy(nil, speculation.DefaultK)
+
 	// Register controllers
-	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cnt); err != nil {
+	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cnt, strategy); err != nil {
 		return err
 	}
 
@@ -291,7 +295,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 //	→ merge → merge-signal
 //	finalize (terminal)
 
-func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cnt counter.Counter) error {
+func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cnt counter.Counter, strategy speculation.Strategy) error {
 	requestController := request.NewController(
 		logger,
 		scope,
@@ -320,6 +324,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		registry,
+		strategy,
 		consumer.TopicKeyBatched,
 		"orchestrator-speculate",
 	)

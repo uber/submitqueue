@@ -1,0 +1,42 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+exports_files(
+    ["strategy.go"],
+    visibility = ["//core/speculation/mock:__pkg__"],
+)
+
+go_library(
+    name = "speculation",
+    srcs = [
+        "exhaustive.go",
+        "shadow_strategy.go",
+        "strategy.go",
+        "topk.go",
+        "topk_strategy.go",
+    ],
+    importpath = "github.com/uber/submitqueue/core/speculation",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//entity",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "speculation_test",
+    srcs = [
+        "exhaustive_test.go",
+        "shadow_strategy_test.go",
+        "topk_strategy_test.go",
+        "topk_test.go",
+    ],
+    embed = [":speculation"],
+    deps = [
+        "//entity",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_zap//zaptest",
+    ],
+)
