@@ -30,6 +30,8 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/extension/changeprovider"
+	githubprovider "github.com/uber/submitqueue/extension/changeprovider/github"
 	"github.com/uber/submitqueue/extension/counter"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	"github.com/uber/submitqueue/extension/mergechecker"
@@ -188,8 +190,11 @@ func run() error {
 	// Create merge checker
 	mc := newMergeChecker(logger, scope)
 
+	// Create change provider
+	cp := newChangeProvider(logger, scope)
+
 	// Register controllers
-	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cnt, store); err != nil {
+	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cp, cnt, store); err != nil {
 		return err
 	}
 
@@ -374,7 +379,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 //                                        │        │                        │
 //                                        └────────┴────────────────────────┘
 
-func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cnt counter.Counter, store storage.Storage) error {
+func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cp changeprovider.ChangeProvider, cnt counter.Counter, store storage.Storage) error {
 	requestController := start.NewController(
 		logger,
 		scope,
@@ -393,6 +398,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		store,
 		registry,
 		mc,
+		cp,
 		consumer.TopicKeyValidate,
 		"orchestrator-validate",
 	)
@@ -521,6 +527,28 @@ func newMergeChecker(logger *zap.Logger, scope tally.Scope) mergechecker.MergeCh
 
 	return mergechecker.NewMultiChecker(map[string]mergechecker.MergeChecker{
 		"github": github,
+	})
+}
+
+// newChangeProvider creates a ChangeProvider for GitHub (github.com).
+// Configured via GITHUB_TOKEN and GITHUB_GRAPHQL_URL environment variables.
+// Reuses the same HTTP client configuration as the mergechecker.
+func newChangeProvider(logger *zap.Logger, scope tally.Scope) changeprovider.ChangeProvider {
+	graphQLURL := os.Getenv("GITHUB_GRAPHQL_URL")
+	if graphQLURL == "" {
+		graphQLURL = "https://api.github.com/graphql"
+	}
+
+	httpClient := &http.Client{}
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		httpClient.Transport = &bearerTransport{token: token}
+	}
+
+	return githubprovider.NewProvider(githubprovider.Params{
+		HTTPClient:   httpClient,
+		GraphQLURL:   graphQLURL,
+		Logger:       logger.Sugar(),
+		MetricsScope: scope.SubScope("changeprovider"),
 	})
 }
 

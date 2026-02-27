@@ -44,8 +44,9 @@ type ChangedFile struct {
 
 // ChangeInfo contains metadata and file changes for a code change.
 type ChangeInfo struct {
-	// ID is the change identifier (e.g., "PR: uber-code/go-code/1" or "diff: uber-code/go-code/D1").
-	ID string
+	// URI is the full change URI for correlation with the input request
+	// (e.g., "github://uber/repo/98/abc123sha" or "phab://D123/xyz789").
+	URI string
 	// User is the author of the change.
 	User User
 	// ChangedFiles is the list of files modified in this change. Order is unspecified.
@@ -56,6 +57,7 @@ type ChangeInfo struct {
 // Each implementation is configured for a specific provider (GitHub, GitLab, Phabricator).
 type ChangeProvider interface {
 	// Get retrieves change information for the provided Change.
-	// Returns the change info containing metadata and file changes.
-	Get(ctx context.Context, change entity.Change) (ChangeInfo, error)
+	// For a Change with multiple URIs (e.g., stacked PRs), returns one ChangeInfo per URI.
+	// Returns a slice of ChangeInfo, one for each change in the stack.
+	Get(ctx context.Context, change entity.Change) ([]ChangeInfo, error)
 }

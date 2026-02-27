@@ -23,6 +23,7 @@ import (
 	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
+	"github.com/uber/submitqueue/extension/changeprovider"
 	"github.com/uber/submitqueue/extension/mergechecker"
 	"github.com/uber/submitqueue/extension/storage"
 	"go.uber.org/zap"
@@ -33,13 +34,14 @@ import (
 // and publishes to the batch stage. Validation logic is extensible to support additional checks.
 // Implements consumer.Controller interface for integration with the consumer.
 type Controller struct {
-	logger        *zap.SugaredLogger
-	metricsScope  tally.Scope
-	store         storage.Storage
-	registry      consumer.TopicRegistry
-	mergeChecker  mergechecker.MergeChecker
-	topicKey      consumer.TopicKey
-	consumerGroup string
+	logger         *zap.SugaredLogger
+	metricsScope   tally.Scope
+	store          storage.Storage
+	registry       consumer.TopicRegistry
+	mergeChecker   mergechecker.MergeChecker
+	changeProvider changeprovider.ChangeProvider
+	topicKey       consumer.TopicKey
+	consumerGroup  string
 }
 
 // Verify Controller implements consumer.Controller interface at compile time.
@@ -52,17 +54,19 @@ func NewController(
 	store storage.Storage,
 	registry consumer.TopicRegistry,
 	mergeChecker mergechecker.MergeChecker,
+	changeProvider changeprovider.ChangeProvider,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
-		logger:        logger.Named("validate_controller"),
-		metricsScope:  scope.SubScope("validate_controller"),
-		store:         store,
-		registry:      registry,
-		mergeChecker:  mergeChecker,
-		topicKey:      topicKey,
-		consumerGroup: consumerGroup,
+		logger:         logger.Named("validate_controller"),
+		metricsScope:   scope.SubScope("validate_controller"),
+		store:          store,
+		registry:       registry,
+		mergeChecker:   mergeChecker,
+		changeProvider: changeProvider,
+		topicKey:       topicKey,
+		consumerGroup:  consumerGroup,
 	}
 }
 
@@ -113,6 +117,24 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return errs.NewUserError(fmt.Errorf("request %s is not mergeable: %s", request.ID, mergeResult.Reason))
 	}
 
+	// Fetch change metadata
+	changeInfos, err := c.changeProvider.Get(ctx, request.Change)
+	if err != nil {
+		c.logger.Errorw("failed to fetch change information",
+			"request_id", request.ID,
+			"change_uris", request.Change.URIs,
+			"error", err,
+		)
+		c.metricsScope.Counter("change_provider_errors").Inc(1)
+		return fmt.Errorf("failed to fetch change information: %w", err)
+	}
+
+	c.logger.Infow("fetched change information",
+		"request_id", request.ID,
+		"change_count", len(changeInfos),
+		"total_files", totalFiles(changeInfos),
+	)
+
 	// Publish to batch topic
 	if err := c.publish(ctx, consumer.TopicKeyBatch, request.ID, request.Queue); err != nil {
 		c.metricsScope.Counter("publish_errors").Inc(1)
@@ -154,6 +176,15 @@ func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, request
 	}
 
 	return nil
+}
+
+// totalFiles returns the total number of files across all changeInfos.
+func totalFiles(infos []changeprovider.ChangeInfo) int {
+	total := 0
+	for _, info := range infos {
+		total += len(info.ChangedFiles)
+	}
+	return total
 }
 
 // Name returns the controller name for logging and metrics.
