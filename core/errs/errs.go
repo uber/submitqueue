@@ -5,24 +5,19 @@ import (
 )
 
 // userError represents an error caused by invalid user input or actions.
-// Use NewUserError or NewRetryableUserError to wrap an underlying cause.
+// User errors are never retryable — only infrastructure errors can be retryable.
+// Use NewUserError to wrap an underlying cause.
 type userError struct {
 	// cause is the underlying error.
 	cause error
-	// retryable indicates whether the operation can be retried.
-	retryable bool
 }
 
-// NewUserError creates a non-retryable user error wrapping the given cause.
-// A user error is an error that is caused by the user's action or input, for example an invalid input or a merge conflict.
+// NewUserError creates a user error wrapping the given cause.
+// A user error is an error that is caused by the user's action or input,
+// for example an invalid input or a merge conflict. User errors are never
+// retryable — only infrastructure errors can be retryable.
 func NewUserError(cause error) error {
-	return &userError{cause: cause, retryable: false}
-}
-
-// NewRetryableUserError creates a retryable user error wrapping the given cause. It is very rare for the user
-// error to be retryable and often a result of misclassification. Please know what you are doing when you use this.
-func NewRetryableUserError(cause error) error {
-	return &userError{cause: cause, retryable: true}
+	return &userError{cause: cause}
 }
 
 // Error returns the error message.
@@ -104,14 +99,10 @@ func IsUserError(err error) bool {
 }
 
 // IsRetryable checks if err is retryable. Returns true only when err is or
-// wraps an error whose retryable flag is set. A generic
-// error (not wrapped) returns false, consistent
+// wraps an infrastructure error whose retryable flag is set. User errors are
+// never retryable. A generic error (not wrapped) returns false, consistent
 // with the convention that unclassified errors are non-retryable.
 func IsRetryable(err error) bool {
-	var ue *userError
-	if errors.As(err, &ue) {
-		return ue.retryable
-	}
 	var ie *infraError
 	if errors.As(err, &ie) {
 		return ie.retryable

@@ -8,13 +8,15 @@ Errors are classified along two axes:
 
 |               | Non-retryable (default) | Retryable                        |
 |---------------|-------------------------|----------------------------------|
-| **User**      | `NewUserError`          | `NewRetryableUserError`          |
+| **User**      | `NewUserError`          | *(not supported)*                |
 | **Infra**     | *(any unclassified error)* | `NewRetryableError`           |
-| **Dependency**| `NewDependencyError`    | `NewRetryableDependencyError`    |
+| **Infra dep** | `NewDependencyError`    | `NewRetryableDependencyError`    |
 
-**Non-retryable by default.** A plain `fmt.Errorf(...)` is treated as a non-retryable infra error. Retryability must be explicitly opted into by wrapping with `NewRetryableError` or `NewRetryableUserError`. This prevents accidental infinite retry loops from unclassified errors.
+**Non-retryable by default.** A plain `fmt.Errorf(...)` is treated as a non-retryable infra error. Retryability must be explicitly opted into by wrapping with `NewRetryableError`. This prevents accidental infinite retry loops from unclassified errors.
 
-**Infra by default.** Any error that is not explicitly wrapped with `NewUserError` or `NewRetryableUserError` is an infra error. There is no `NewInfraError` constructor — infra is the default classification.
+**Only infra errors can be retryable.** User errors are never retryable — if a user action caused the failure, retrying the same operation will produce the same result. If an error is retryable, it is by definition an infrastructure issue.
+
+**Infra by default.** Any error that is not explicitly wrapped with `NewUserError` is an infra error. There is no `NewInfraError` constructor — infra is the default classification.
 
 ## Who Classifies Errors
 
@@ -58,7 +60,7 @@ return errs.NewUserError(fmt.Errorf("lookup failed: %w", extensionErr))
 
 // All of these work on the resulting error:
 errs.IsUserError(err)             // true — framework classification
-errs.IsRetryable(err)             // false — non-retryable user error
+errs.IsRetryable(err)             // false — user errors are never retryable
 errors.Is(err, ErrNotFound)       // true — cause is in the chain
 ```
 
@@ -67,5 +69,5 @@ errors.Is(err, ErrNotFound)       // true — cause is in the chain
 | Helper              | Returns `true` when                                          |
 |---------------------|--------------------------------------------------------------|
 | `IsUserError(err)`  | `err` is or wraps a `userError`                              |
-| `IsRetryable(err)`  | `err` is or wraps an error with the retryable flag set       |
+| `IsRetryable(err)`  | `err` is or wraps an infra error with the retryable flag set |
 | `IsDependencyError(err)` | `err` is or wraps an infra error marked as dependency   |

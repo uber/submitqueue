@@ -47,11 +47,6 @@ func TestIsUserError(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "retryable user error",
-			err:  NewRetryableUserError(errors.New("rate limited")),
-			want: true,
-		},
-		{
 			name: "retryable infra error",
 			err:  NewRetryableError(errors.New("db down")),
 			want: false,
@@ -87,14 +82,9 @@ func TestIsRetryable(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "non-retryable user error",
+			name: "user error is not retryable",
 			err:  NewUserError(errors.New("bad input")),
 			want: false,
-		},
-		{
-			name: "retryable user error",
-			err:  NewRetryableUserError(errors.New("rate limited")),
-			want: true,
 		},
 		{
 			name: "retryable infra error",
@@ -107,7 +97,7 @@ func TestIsRetryable(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "wrapped non-retryable user error",
+			name: "wrapped user error is not retryable",
 			err:  fmt.Errorf("handler: %w", NewUserError(errors.New("invalid"))),
 			want: false,
 		},
@@ -183,11 +173,10 @@ func TestIsDependencyError(t *testing.T) {
 func TestErrorsAs(t *testing.T) {
 	t.Run("extract user error from chain", func(t *testing.T) {
 		cause := errors.New("invalid email")
-		wrapped := fmt.Errorf("validation: %w", NewRetryableUserError(cause))
+		wrapped := fmt.Errorf("validation: %w", NewUserError(cause))
 
 		var ue *userError
 		require.True(t, errors.As(wrapped, &ue))
-		assert.True(t, ue.retryable)
 		assert.True(t, errors.Is(ue, cause))
 	})
 
