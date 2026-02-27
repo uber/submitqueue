@@ -1,5 +1,7 @@
 package mergechecker
 
+//go:generate mockgen -source=mergechecker.go -destination=mock/mergechecker_mock.go -package=mock
+
 import (
 	"context"
 

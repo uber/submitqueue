@@ -1,5 +1,10 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
+exports_files(
+    ["mergechecker.go"],
+    visibility = ["//extension/mergechecker/mock:__pkg__"],
+)
+
 go_library(
     name = "mergechecker",
     srcs = [

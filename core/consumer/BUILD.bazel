@@ -1,5 +1,10 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
+exports_files(
+    ["controller.go"],
+    visibility = ["//core/consumer/mock:__pkg__"],
+)
+
 go_library(
     name = "consumer",
     srcs = [

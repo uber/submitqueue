@@ -1,6 +1,6 @@
 package mysql
 
-//go:generate mockgen -source=stores.go -destination=mock_stores.go -package=sql
+//go:generate mockgen -source=stores.go -destination=mock_stores.go -package=mysql
 
 import (
 	"context"
