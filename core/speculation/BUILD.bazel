@@ -10,6 +10,7 @@ go_library(
     srcs = [
         "exhaustive.go",
         "shadow_strategy.go",
+        "speculator.go",
         "strategy.go",
         "topk.go",
         "topk_strategy.go",
@@ -28,6 +29,7 @@ go_test(
     srcs = [
         "exhaustive_test.go",
         "shadow_strategy_test.go",
+        "speculator_test.go",
         "topk_strategy_test.go",
         "topk_test.go",
     ],

@@ -57,6 +57,9 @@ type Batch struct {
 	// - queueA/batch/3 will contain queueA/batch/1
 	//
 	Dependencies []map[string]interface{}
+	// Score is the batch-level build prediction score, representing how likely the
+	// batch's build is to pass. Placeholder for the scoring pipeline.
+	Score float32
 	// The state of the batch lifecycle this batch is in.
 	State BatchState
 	// Version is the version of the object. It is used for optimistic locking.
