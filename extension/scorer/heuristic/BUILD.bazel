@@ -5,7 +5,10 @@ go_library(
     srcs = ["scorer.go"],
     importpath = "github.com/uber/submitqueue/extension/scorer/heuristic",
     visibility = ["//visibility:public"],
-    deps = ["//extension/scorer"],
+    deps = [
+        "//entity",
+        "//extension/scorer",
+    ],
 )
 
 go_test(
@@ -13,7 +16,7 @@ go_test(
     srcs = ["scorer_test.go"],
     embed = [":heuristic"],
     deps = [
-        "//extension/scorer",
+        "//entity",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
     ],

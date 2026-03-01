@@ -7,128 +7,126 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/extension/scorer"
-	"github.com/uber/submitqueue/extension/scorer/heuristic"
 )
 
+// fixedScorer always returns a fixed score.
+type fixedScorer struct {
+	score float64
+}
+
+func (f *fixedScorer) Score(_ context.Context, _ entity.Change) (float64, error) {
+	return f.score, nil
+}
+
+// errorScorer always returns an error.
+type errorScorer struct{}
+
+func (e *errorScorer) Score(_ context.Context, _ entity.Change) (float64, error) {
+	return 0, fmt.Errorf("scorer failed")
+}
+
 func TestScorer_Score(t *testing.T) {
-	fileScorer, err := heuristic.New([]heuristic.Bucket{
-		{Min: 0, Max: 5, Score: 0.9},
-		{Min: 6, Max: 50, Score: 0.7},
-		{Min: 51, Max: 1000, Score: 0.4},
-	}, heuristic.FilesChanged)
-	require.NoError(t, err)
-
-	depScorer, err := heuristic.New([]heuristic.Bucket{
-		{Min: 0, Max: 10, Score: 0.95},
-		{Min: 11, Max: 100, Score: 0.6},
-		{Min: 101, Max: 10000, Score: 0.3},
-	}, heuristic.DependencyCount)
-	require.NoError(t, err)
-
-	linesScorer, err := heuristic.New([]heuristic.Bucket{
-		{Min: 0, Max: 100, Score: 0.85},
-		{Min: 101, Max: 500, Score: 0.5},
-	}, heuristic.LinesAdded)
-	require.NoError(t, err)
-
 	tests := []struct {
 		name    string
-		scorers []scorer.Scorer
+		scorers map[string]scorer.Scorer
 		reduce  ReduceFunc
-		stats   scorer.ChangeStats
 		want    float64
-		wantErr bool
 	}{
 		{
-			name:    "min of two scorers",
-			scorers: []scorer.Scorer{fileScorer, depScorer},
-			reduce:  Min,
-			stats:   scorer.ChangeStats{FilesChanged: 3, DependencyCount: 50},
-			want:    0.6,
+			name: "min of two scorers",
+			scorers: map[string]scorer.Scorer{
+				"files": &fixedScorer{0.9},
+				"deps":  &fixedScorer{0.6},
+			},
+			reduce: Min,
+			want:   0.6,
 		},
 		{
-			name:    "max of two scorers",
-			scorers: []scorer.Scorer{fileScorer, depScorer},
-			reduce:  Max,
-			stats:   scorer.ChangeStats{FilesChanged: 3, DependencyCount: 50},
-			want:    0.9,
+			name: "max of two scorers",
+			scorers: map[string]scorer.Scorer{
+				"files": &fixedScorer{0.9},
+				"deps":  &fixedScorer{0.6},
+			},
+			reduce: Max,
+			want:   0.9,
 		},
 		{
-			name:    "avg of two scorers",
-			scorers: []scorer.Scorer{fileScorer, depScorer},
-			reduce:  Avg,
-			stats:   scorer.ChangeStats{FilesChanged: 3, DependencyCount: 50},
-			want:    0.75,
+			name: "avg of two scorers",
+			scorers: map[string]scorer.Scorer{
+				"files": &fixedScorer{0.9},
+				"deps":  &fixedScorer{0.6},
+			},
+			reduce: Avg,
+			want:   0.75,
 		},
 		{
-			name:    "single scorer passthrough",
-			scorers: []scorer.Scorer{fileScorer},
-			reduce:  Avg,
-			stats:   scorer.ChangeStats{FilesChanged: 3},
-			want:    0.9,
+			name: "single scorer passthrough",
+			scorers: map[string]scorer.Scorer{
+				"files": &fixedScorer{0.9},
+			},
+			reduce: Avg,
+			want:   0.9,
 		},
 		{
-			name:    "child scorer error propagates",
-			scorers: []scorer.Scorer{fileScorer, depScorer},
-			reduce:  Min,
-			stats:   scorer.ChangeStats{FilesChanged: 3, DependencyCount: -1},
-			wantErr: true,
-		},
-		{
-			name:    "avg of three scorers",
-			scorers: []scorer.Scorer{fileScorer, depScorer, linesScorer},
-			reduce:  Avg,
-			stats:   scorer.ChangeStats{FilesChanged: 3, DependencyCount: 5, LinesAdded: 50},
-			want:    0.9,
+			name: "avg of three scorers",
+			scorers: map[string]scorer.Scorer{
+				"files": &fixedScorer{0.9},
+				"deps":  &fixedScorer{0.95},
+				"lines": &fixedScorer{0.85},
+			},
+			reduce: Avg,
+			want:   0.9,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s, err := New(tt.scorers, tt.reduce)
-			require.NoError(t, err)
-			got, err := s.Score(context.Background(), tt.stats)
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
+			s := New(tt.scorers, tt.reduce)
+			got, err := s.Score(context.Background(), entity.Change{})
 			require.NoError(t, err)
 			assert.InDelta(t, tt.want, got, 1e-9)
 		})
 	}
 }
 
-// errorScorer always returns an error.
-type errorScorer struct{}
-
-func (e *errorScorer) Score(_ context.Context, _ scorer.ChangeStats) (float64, error) {
-	return 0, fmt.Errorf("scorer failed")
-}
-
-func TestScorer_Score_ErrorFromFirstScorer(t *testing.T) {
-	h, err := heuristic.New([]heuristic.Bucket{
-		{Min: 0, Max: 1000, Score: 0.9},
-	}, heuristic.FilesChanged)
-	require.NoError(t, err)
-
-	s, err := New([]scorer.Scorer{&errorScorer{}, h}, Min)
-	require.NoError(t, err)
-	_, err = s.Score(context.Background(), scorer.ChangeStats{})
+func TestScorer_Score_ChildError(t *testing.T) {
+	s := New(map[string]scorer.Scorer{
+		"error": &errorScorer{},
+		"files": &fixedScorer{0.9},
+	}, Min)
+	_, err := s.Score(context.Background(), entity.Change{})
 	require.Error(t, err)
 }
 
 func TestNew_EmptyScorers(t *testing.T) {
-	_, err := New([]scorer.Scorer{}, Min)
-	require.Error(t, err)
+	assert.Panics(t, func() {
+		New(map[string]scorer.Scorer{}, Min)
+	})
 }
 
 func TestNew_NilReduce(t *testing.T) {
-	h, err := heuristic.New([]heuristic.Bucket{
-		{Min: 0, Max: 1000, Score: 0.9},
-	}, heuristic.FilesChanged)
-	require.NoError(t, err)
+	assert.Panics(t, func() {
+		New(map[string]scorer.Scorer{"files": &fixedScorer{0.9}}, nil)
+	})
+}
 
-	_, err = New([]scorer.Scorer{h}, nil)
-	require.Error(t, err)
+func TestReduceFunc_ReceivesNames(t *testing.T) {
+	var receivedNames []string
+	custom := func(scores map[string]float64) float64 {
+		for name := range scores {
+			receivedNames = append(receivedNames, name)
+		}
+		return scores["files"]
+	}
+
+	s := New(map[string]scorer.Scorer{
+		"files": &fixedScorer{0.9},
+		"deps":  &fixedScorer{0.95},
+	}, custom)
+	got, err := s.Score(context.Background(), entity.Change{})
+	require.NoError(t, err)
+	assert.Equal(t, 0.9, got)
+	assert.ElementsMatch(t, []string{"files", "deps"}, receivedNames)
 }

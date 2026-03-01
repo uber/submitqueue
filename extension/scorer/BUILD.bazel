@@ -10,4 +10,5 @@ go_library(
     srcs = ["scorer.go"],
     importpath = "github.com/uber/submitqueue/extension/scorer",
     visibility = ["//visibility:public"],
+    deps = ["//entity"],
 )
