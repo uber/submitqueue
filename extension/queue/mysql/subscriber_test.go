@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -252,5 +253,204 @@ func TestSubscriber_Close(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestSubscriber_ReconcilePartitionWorkers tests that workers are started/stopped
+// based on lease changes.
+func TestSubscriber_ReconcilePartitionWorkers(t *testing.T) {
+	tests := []struct {
+		name          string
+		initialLeases []string
+		updatedLeases []string
+	}{
+		{
+			name:          "start workers for new leases",
+			initialLeases: []string{},
+			updatedLeases: []string{"part-1", "part-2"},
+		},
+		{
+			name:          "stop workers for lost leases",
+			initialLeases: []string{"part-1", "part-2"},
+			updatedLeases: []string{"part-1"},
+		},
+		{
+			name:          "no changes when leases unchanged",
+			initialLeases: []string{"part-1"},
+			updatedLeases: []string{"part-1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+
+			mockMessageStore := NewMockmessageStore(ctrl)
+			mockOffsetStore := NewMockoffsetStore(ctrl)
+			mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+
+			s := NewSubscriber(
+				zaptest.NewLogger(t).Sugar(),
+				tally.NoopScope,
+				mockMessageStore,
+				mockOffsetStore,
+				mockLeaseStore,
+			)
+
+			// Allow offset initialization and fetch calls from workers
+			mockOffsetStore.EXPECT().Initialize(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+			mockOffsetStore.EXPECT().GetAckedOffset(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), nil).AnyTimes()
+			mockMessageStore.EXPECT().FetchByOffset(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			sub := &subscription{
+				topic:      "test_topic",
+				config:     testSubscriptionConfig(),
+				deliveryCh: make(chan extqueue.Delivery, 100),
+				workers:    make(map[string]*partitionWorker),
+			}
+
+			// Start initial workers
+			s.reconcilePartitionWorkers(ctx, sub, tt.initialLeases)
+
+			sub.workersMu.Lock()
+			assert.Equal(t, len(tt.initialLeases), len(sub.workers))
+			sub.workersMu.Unlock()
+
+			// Reconcile with updated leases
+			s.reconcilePartitionWorkers(ctx, sub, tt.updatedLeases)
+
+			sub.workersMu.Lock()
+			assert.Equal(t, len(tt.updatedLeases), len(sub.workers))
+			for _, pk := range tt.updatedLeases {
+				assert.Contains(t, sub.workers, pk)
+			}
+			sub.workersMu.Unlock()
+
+			// Cleanup: stop all workers
+			cancel()
+			s.stopAllWorkers(sub)
+		})
+	}
+}
+
+// TestSubscriber_PartitionWorkerPollAndDeliver verifies a partition worker delivers messages.
+func TestSubscriber_PartitionWorkerPollAndDeliver(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	mockMessageStore := NewMockmessageStore(ctrl)
+	mockOffsetStore := NewMockoffsetStore(ctrl)
+	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+
+	s := NewSubscriber(
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+		mockMessageStore,
+		mockOffsetStore,
+		mockLeaseStore,
+	)
+
+	cfg := testSubscriptionConfig()
+	deliveryCh := make(chan extqueue.Delivery, 10)
+	sub := &subscription{
+		topic:      "test_topic",
+		config:     cfg,
+		deliveryCh: deliveryCh,
+		workers:    make(map[string]*partitionWorker),
+	}
+
+	ctx := context.Background()
+
+	mockOffsetStore.EXPECT().Initialize(gomock.Any(), "test_topic", "part-1", cfg.ConsumerGroup).Return(nil)
+	mockOffsetStore.EXPECT().GetAckedOffset(gomock.Any(), "test_topic", "part-1", cfg.ConsumerGroup).Return(int64(0), nil)
+
+	row := messageRow{
+		ID:           "msg-1",
+		Offset:       1,
+		PartitionKey: "part-1",
+		Payload:      []byte("payload"),
+		PublishedAt:  time.Now().UnixMilli(),
+		RetryCount:   0,
+	}
+	mockMessageStore.EXPECT().FetchByOffset(gomock.Any(), "test_topic", "part-1", int64(0), cfg.BatchSize, cfg.VisibilityTimeoutMs).
+		Return([]messageRow{row}, nil)
+
+	w := &partitionWorker{
+		partitionKey: "part-1",
+		sub:          sub,
+		subscriber:   s,
+		done:         make(chan struct{}),
+	}
+
+	w.pollAndDeliver(ctx)
+
+	// Verify message was delivered
+	select {
+	case del := <-deliveryCh:
+		assert.Equal(t, "msg-1", del.Message().ID)
+	default:
+		t.Fatal("expected delivery but channel was empty")
+	}
+
+	// Verify offset was initialized only once
+	assert.True(t, w.offsetInitialized)
+}
+
+// TestSubscriber_StopAllWorkers tests that all workers are stopped gracefully.
+func TestSubscriber_StopAllWorkers(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	mockMessageStore := NewMockmessageStore(ctrl)
+	mockOffsetStore := NewMockoffsetStore(ctrl)
+	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+
+	s := NewSubscriber(
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+		mockMessageStore,
+		mockOffsetStore,
+		mockLeaseStore,
+	)
+
+	// Allow worker polling
+	mockOffsetStore.EXPECT().Initialize(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockOffsetStore.EXPECT().GetAckedOffset(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), nil).AnyTimes()
+	mockMessageStore.EXPECT().FetchByOffset(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sub := &subscription{
+		topic:      "test_topic",
+		config:     testSubscriptionConfig(),
+		deliveryCh: make(chan extqueue.Delivery, 100),
+		workers:    make(map[string]*partitionWorker),
+	}
+
+	// Start 3 workers
+	s.startPartitionWorker(ctx, sub, "part-1")
+	s.startPartitionWorker(ctx, sub, "part-2")
+	s.startPartitionWorker(ctx, sub, "part-3")
+
+	sub.workersMu.Lock()
+	assert.Equal(t, 3, len(sub.workers))
+	sub.workersMu.Unlock()
+
+	// Collect done channels before stopping
+	sub.workersMu.Lock()
+	var doneChans []chan struct{}
+	for _, w := range sub.workers {
+		doneChans = append(doneChans, w.done)
+	}
+	sub.workersMu.Unlock()
+
+	// Stop all workers
+	s.stopAllWorkers(sub)
+
+	// Verify all done channels are closed (test timeout handles hangs)
+	for _, doneCh := range doneChans {
+		<-doneCh
 	}
 }

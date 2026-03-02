@@ -12,6 +12,12 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	// startupCleanupTimeoutMs is the timeout for cleaning up subscriptions when
+	// a controller fails to start during Start().
+	startupCleanupTimeoutMs = 30000
+)
+
 // Consumer orchestrates multiple queue consumers. It handles subscription lifecycle,
 // message consumption, ack/nack, and graceful shutdown for the entire pipeline.
 type Consumer interface {
@@ -109,9 +115,9 @@ func (m *consumer) Start(ctx context.Context) error {
 
 	for _, controller := range m.controllers {
 		if err := m.subscribe(ctx, controller); err != nil {
-			// Cleanup any started controllers with short timeout (30 seconds).
-			// Ignore error since we're returning the subscribe error.
-			_ = m.unsubscribeAll(30000)
+			// Cleanup any started controllers. Ignore error since we're returning
+			// the subscribe error.
+			_ = m.unsubscribeAll(startupCleanupTimeoutMs)
 			return fmt.Errorf("failed to start controller %s: %w", controller.Name(), err)
 		}
 	}
@@ -165,7 +171,7 @@ func (m *consumer) subscribe(ctx context.Context, controller Controller) error {
 	m.subscriptions[topicKey] = sub
 
 	// Spawn consumption goroutine
-	go m.consumeLoop(controllerCtx, controller, deliveryChan, done)
+	go m.consumeLoop(controllerCtx, controller, deliveryChan, done, config.BatchSize)
 
 	m.logger.Infow("controller started",
 		"controller", controller.Name(),
@@ -176,8 +182,29 @@ func (m *consumer) subscribe(ctx context.Context, controller Controller) error {
 	return nil
 }
 
-// consumeLoop processes deliveries for a controller, calling ack/nack based on controller result.
-func (m *consumer) consumeLoop(ctx context.Context, controller Controller, deliveryChan <-chan queue.Delivery, done chan struct{}) {
+// consumeLoop dispatches deliveries to per-partition worker goroutines.
+// Each partition gets its own goroutine, so a slow message on one partition
+// does not block other partitions. Per-partition ordering is preserved.
+//
+// Goroutine model:
+//
+//	consumeLoop (this goroutine)        ← reads from deliveryChan
+//	  ├── processPartition("part-1")    ← spawned lazily on first message
+//	  ├── processPartition("part-2")
+//	  └── processPartition("part-N")
+//
+// Shutdown sequence:
+//  1. ctx is cancelled (by Stop or parent context)
+//  2. consumeLoop exits the select loop and runs the deferred cleanup
+//  3. All partition channels are closed, causing processPartition goroutines to
+//     drain remaining buffered messages and return (range loop ends)
+//  4. wg.Wait() blocks until all partition goroutines have exited
+//  5. close(done) signals to unsubscribeAll that this controller is fully stopped
+//
+// Any messages buffered in partition channels but not processed before ctx
+// cancellation are safe to drop — the queue's visibility timeout will make
+// them visible again for redelivery (at-least-once semantics).
+func (m *consumer) consumeLoop(ctx context.Context, controller Controller, deliveryChan <-chan queue.Delivery, done chan struct{}, batchSize int) {
 	defer close(done)
 
 	topicKey := controller.TopicKey()
@@ -192,6 +219,12 @@ func (m *consumer) consumeLoop(ctx context.Context, controller Controller, deliv
 		"topic_key", topicKey,
 	)
 
+	// partitionChs maps partition keys to per-partition delivery channels.
+	// Each channel is created lazily on the first message for that partition
+	// and is never removed — partitions are stable for the lifetime of a subscription.
+	partitionChs := make(map[string]chan queue.Delivery)
+	var wg sync.WaitGroup
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -199,6 +232,7 @@ func (m *consumer) consumeLoop(ctx context.Context, controller Controller, deliv
 				"controller", controller.Name(),
 				"topic_key", topicKey,
 			)
+			m.shutdownPartitions(partitionChs, &wg)
 			return
 
 		case delivery, ok := <-deliveryChan:
@@ -207,10 +241,66 @@ func (m *consumer) consumeLoop(ctx context.Context, controller Controller, deliv
 					"controller", controller.Name(),
 					"topic_key", topicKey,
 				)
+				m.shutdownPartitions(partitionChs, &wg)
 				return
 			}
 
-			m.processDelivery(ctx, controller, delivery, controllerScope)
+			// Route delivery to its partition's channel, creating the channel
+			// and spawning a processPartition goroutine if this is the first
+			// message for that partition.
+			partitionKey := delivery.Message().PartitionKey
+			ch, exists := partitionChs[partitionKey]
+			if !exists {
+				ch = make(chan queue.Delivery, batchSize)
+				partitionChs[partitionKey] = ch
+				wg.Add(1)
+				go func(pCh <-chan queue.Delivery) {
+					defer wg.Done()
+					m.processPartition(ctx, controller, pCh, controllerScope)
+				}(ch)
+			}
+
+			// Send to the partition channel. If ctx is cancelled while the
+			// channel buffer is full, we exit — the undelivered message will
+			// be retried after visibility timeout.
+			select {
+			case ch <- delivery:
+			case <-ctx.Done():
+				m.shutdownPartitions(partitionChs, &wg)
+				return
+			}
+		}
+	}
+}
+
+// shutdownPartitions closes all partition channels to signal processPartition
+// goroutines to exit, then waits for them to finish draining.
+func (m *consumer) shutdownPartitions(partitionChs map[string]chan queue.Delivery, wg *sync.WaitGroup) {
+	for _, ch := range partitionChs {
+		close(ch)
+	}
+	wg.Wait()
+}
+
+// processPartition drains a per-partition channel and processes deliveries serially.
+// It runs in its own goroutine (one per partition key). Deliveries within a partition
+// are processed in order — the next delivery is not started until the current one
+// completes (ack/nack/reject).
+//
+// The loop exits when either:
+//   - deliveryCh is closed (consumeLoop cleanup)
+//   - ctx is cancelled (graceful shutdown)
+//
+// On context cancellation, the current delivery being read from the channel is
+// dropped without processing. This is safe because the queue's visibility timeout
+// ensures unprocessed messages are redelivered.
+func (m *consumer) processPartition(ctx context.Context, controller Controller, deliveryCh <-chan queue.Delivery, scope tally.Scope) {
+	for delivery := range deliveryCh {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			m.processDelivery(ctx, controller, delivery, scope)
 		}
 	}
 }
@@ -370,7 +460,13 @@ func (m *consumer) Stop(timeoutMs int64) error {
 	return err
 }
 
-// unsubscribeAll stops all active controllers (must be called with lock held).
+// unsubscribeAll cancels all subscription contexts and waits for their consumeLoop
+// goroutines to exit.
+//
+// The timeout budget is shared across all subscriptions — each subscription gets
+// the remaining time after the previous one finishes. This ensures Stop() returns
+// within the caller's specified timeoutMs even if some controllers are slow to drain.
+//
 // timeoutMs is the maximum time in milliseconds to wait for all controllers to stop.
 // Returns error on timeout, nil on success.
 func (m *consumer) unsubscribeAll(timeoutMs int64) error {

@@ -142,6 +142,7 @@ Generated proto files are committed. When modifying `.proto` files:
 - **Directories**: singular (`mock/`, `entity/`, not `mocks/`, `entities/`)
 - **Files**: `{method}.go`, `{entity}.go`, `{file}_test.go`, `BUILD.bazel`
 - **Proto files**: `{service}.proto`
+- **README files**: Do not duplicate interface or type definitions as code blocks in READMEs. Describe behavior in prose and let readers navigate to the source. Only include code samples when explicitly instructed.
 
 ### Makefile
 

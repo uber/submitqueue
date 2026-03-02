@@ -4,10 +4,11 @@ MySQL-based distributed queue with partition leasing, visibility timeout, and at
 
 ## Key Features
 
-- **Partition leasing** - Workers coordinate via database leases with automatic failover
-- **Visibility timeout** - Messages retry automatically if worker crashes
-- **At-least-once delivery** - Offset tracking for crash recovery
-- **Dead letter queue** - Failed messages moved to DLQ after max retries
+- **Partition leasing** — workers coordinate via database leases with automatic failover
+- **Per-partition workers** — each leased partition gets its own goroutine for isolation
+- **Visibility timeout** — messages retry automatically if worker crashes
+- **At-least-once delivery** — offset tracking for crash recovery
+- **Dead letter queue** — failed messages moved to DLQ after max retries
 
 ## Quick Start
 
@@ -85,8 +86,51 @@ deliveryCh, _ := q.Subscriber().Subscribe(ctx, "my-topic", subConfig)
 - `Retry.InitialBackoffMs`: Initial retry backoff delay (milliseconds)
 - `Retry.MaxBackoffMs`: Maximum retry backoff delay (milliseconds)
 - `Retry.BackoffMultiplier`: Multiplier for exponential backoff
-- `DLQ.TopicSuffix`: Suffix appended to topic name for DLQ (e.g., "orders" → "orders_dlq")
+- `DLQ.TopicSuffix`: Suffix appended to topic name for DLQ (e.g., "orders" -> "orders_dlq")
+
+## Architecture
+
+### Goroutine Model
+
+Each subscription has a **supervisor goroutine** (`managePartitions`) that:
+1. Discovers partitions from the messages table
+2. Acquires and renews partition leases
+3. Reconciles **per-partition worker goroutines** based on current leases
+
+Each partition worker goroutine polls and delivers messages for its partition independently. This provides fault isolation — a slow or blocked partition does not affect other partitions.
+
 ```
+Subscribe()
+  └── managePartitions (supervisor)
+        ├── partitionWorker("part-1")  ← polls & delivers
+        ├── partitionWorker("part-2")  ← polls & delivers
+        └── partitionWorker("part-3")  ← polls & delivers
+```
+
+### Shutdown Sequence
+
+Shutdown uses two `sync.WaitGroup`s to ensure correctness:
+- `wg` tracks the supervisor goroutine (`managePartitions`)
+- `workerWg` tracks all partition worker goroutines
+
+When `Close()` is called:
+1. Subscription context is cancelled
+2. `managePartitions` calls `stopAllWorkers` — cancels each worker and waits up to 5s per worker
+3. Partition leases are released
+4. `workerWg.Wait()` blocks until all workers have fully exited
+5. `deliveryCh` is closed — safe because no workers can send after step 4
+6. `managePartitions` returns, `wg.Done()` fires
+7. `Close()` returns
+
+The `workerWg.Wait()` step prevents a race where a slow worker (blocked on I/O past the 5s timeout) could send on a closed channel.
+
+### Worker Stop Behavior
+
+When a partition worker is stopped (lease lost or shutdown):
+- The worker is immediately removed from the workers map and its context is cancelled
+- The caller waits up to 5s for the worker to confirm exit (logging a warning on timeout)
+- `workerWg` tracks the worker regardless, so `Close()` always waits for full exit
+- If the worker times out, reconciliation is free to start a replacement — any brief overlap is harmless with at-least-once delivery semantics
 
 ## How It Works
 

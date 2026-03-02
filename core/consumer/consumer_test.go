@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -583,6 +585,214 @@ func TestConsumer_ErrorMetrics(t *testing.T) {
 	}
 	assert.True(t, hasErrorMetrics, "Should track error metrics")
 
+	err = c.Stop(30000)
+	require.NoError(t, err)
+}
+
+// TestConsumer_PerPartitionProcessing verifies that a slow message on partition A
+// does not block partition B from being processed.
+func TestConsumer_PerPartitionProcessing(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	logger := zaptest.NewLogger(t).Sugar()
+
+	deliveryChan := make(chan extqueue.Delivery, 10)
+	mockSub := queuemock.NewMockSubscriber(ctrl)
+	mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
+
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Subscriber().Return(mockSub)
+
+	reg := newRegistry(t, mockQ, consumer.TopicKeyRequest, "test-group")
+
+	c := consumer.New(logger, tally.NoopScope, reg)
+
+	// Track processing by partition
+	partBDone := make(chan struct{})
+	partABlocking := make(chan struct{})
+	var partBProcessed atomic.Bool
+
+	handler := consumermock.NewMockController(ctrl)
+	setupController(handler, "test-handler", consumer.TopicKeyRequest, "test-group",
+		func(ctx context.Context, delivery consumer.Delivery) error {
+			pk := delivery.Message().PartitionKey
+			if pk == "partition-a" {
+				// Signal that partition A is blocking
+				close(partABlocking)
+				// Block until test is done
+				<-ctx.Done()
+				return nil
+			}
+			// Partition B processes immediately
+			partBProcessed.Store(true)
+			close(partBDone)
+			return nil
+		},
+	)
+
+	err := c.Register(handler)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err = c.Start(ctx)
+	require.NoError(t, err)
+
+	// Send message to partition A (will block in controller)
+	msgA := queue.NewMessage("msg-a", []byte("payload-a"), "partition-a", nil)
+	mockDelA := queuemock.NewMockDelivery(ctrl)
+	mockDelA.EXPECT().Message().Return(msgA).AnyTimes()
+	mockDelA.EXPECT().Attempt().Return(1).AnyTimes()
+	mockDelA.EXPECT().ReceivedAt().Return(time.Now().UnixMilli()).AnyTimes()
+	mockDelA.EXPECT().Metadata().Return(nil).AnyTimes()
+	mockDelA.EXPECT().DeliveryID().Return(msgA.ID).AnyTimes()
+	mockDelA.EXPECT().Ack(gomock.Any()).Return(nil).MaxTimes(1)
+	mockDelA.EXPECT().Nack(gomock.Any(), gomock.Any()).Return(nil).MaxTimes(1)
+
+	deliveryChan <- mockDelA
+
+	// Wait for partition A to start blocking
+	<-partABlocking
+
+	// Send message to partition B (should process despite A being blocked)
+	msgB := queue.NewMessage("msg-b", []byte("payload-b"), "partition-b", nil)
+	mockDelB := queuemock.NewMockDelivery(ctrl)
+	mockDelB.EXPECT().Message().Return(msgB).AnyTimes()
+	mockDelB.EXPECT().Attempt().Return(1).AnyTimes()
+	mockDelB.EXPECT().ReceivedAt().Return(time.Now().UnixMilli()).AnyTimes()
+	mockDelB.EXPECT().Metadata().Return(nil).AnyTimes()
+	mockDelB.EXPECT().DeliveryID().Return(msgB.ID).AnyTimes()
+	mockDelB.EXPECT().Ack(gomock.Any()).Return(nil).MaxTimes(1)
+
+	deliveryChan <- mockDelB
+
+	// Partition B should be processed (test timeout handles hangs)
+	<-partBDone
+	assert.True(t, partBProcessed.Load(), "partition B should have been processed")
+
+	err = c.Stop(30000)
+	require.NoError(t, err)
+}
+
+// TestConsumer_PartitionOrdering verifies that messages within a single partition
+// are processed in order.
+func TestConsumer_PartitionOrdering(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	logger := zaptest.NewLogger(t).Sugar()
+
+	deliveryChan := make(chan extqueue.Delivery, 10)
+	mockSub := queuemock.NewMockSubscriber(ctrl)
+	mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
+
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Subscriber().Return(mockSub)
+
+	reg := newRegistry(t, mockQ, consumer.TopicKeyRequest, "test-group")
+
+	c := consumer.New(logger, tally.NoopScope, reg)
+
+	// Mutex + shared slice captures processing order for assertion;
+	// a channel would only signal completion, not record the sequence.
+	var mu sync.Mutex
+	var order []string
+	allDone := make(chan struct{})
+
+	handler := consumermock.NewMockController(ctrl)
+	setupController(handler, "test-handler", consumer.TopicKeyRequest, "test-group",
+		func(ctx context.Context, delivery consumer.Delivery) error {
+			mu.Lock()
+			order = append(order, delivery.Message().ID)
+			if len(order) == 3 {
+				close(allDone)
+			}
+			mu.Unlock()
+			return nil
+		},
+	)
+
+	err := c.Register(handler)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err = c.Start(ctx)
+	require.NoError(t, err)
+
+	// Send 3 messages to the same partition
+	for i, id := range []string{"msg-1", "msg-2", "msg-3"} {
+		msg := queue.NewMessage(id, []byte("payload"), "same-partition", nil)
+		mockDel := queuemock.NewMockDelivery(ctrl)
+		mockDel.EXPECT().Message().Return(msg).AnyTimes()
+		mockDel.EXPECT().Attempt().Return(1).AnyTimes()
+		mockDel.EXPECT().ReceivedAt().Return(time.Now().UnixMilli()).AnyTimes()
+		mockDel.EXPECT().Metadata().Return(nil).AnyTimes()
+		mockDel.EXPECT().DeliveryID().Return(fmt.Sprintf("del-%d", i)).AnyTimes()
+		mockDel.EXPECT().Ack(gomock.Any()).Return(nil).MaxTimes(1)
+
+		deliveryChan <- mockDel
+	}
+
+	// Wait for all messages (test timeout handles hangs)
+	<-allDone
+	mu.Lock()
+	assert.Equal(t, []string{"msg-1", "msg-2", "msg-3"}, order, "messages should be processed in order within a partition")
+	mu.Unlock()
+
+	err = c.Stop(30000)
+	require.NoError(t, err)
+}
+
+// TestConsumer_PartitionWorkerCleanup verifies that all partition goroutines
+// exit cleanly on Stop().
+func TestConsumer_PartitionWorkerCleanup(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	logger := zaptest.NewLogger(t).Sugar()
+
+	deliveryChan := make(chan extqueue.Delivery, 10)
+	mockSub := queuemock.NewMockSubscriber(ctrl)
+	mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
+
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Subscriber().Return(mockSub)
+
+	reg := newRegistry(t, mockQ, consumer.TopicKeyRequest, "test-group")
+
+	c := consumer.New(logger, tally.NoopScope, reg)
+
+	processedCount := int64(0)
+
+	handler := consumermock.NewMockController(ctrl)
+	setupController(handler, "test-handler", consumer.TopicKeyRequest, "test-group",
+		func(ctx context.Context, delivery consumer.Delivery) error {
+			atomic.AddInt64(&processedCount, 1)
+			return nil
+		},
+	)
+
+	err := c.Register(handler)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err = c.Start(ctx)
+	require.NoError(t, err)
+
+	// Send messages to multiple partitions to spawn multiple goroutines
+	for i := 0; i < 5; i++ {
+		pk := fmt.Sprintf("partition-%d", i)
+		msg := queue.NewMessage(fmt.Sprintf("msg-%d", i), []byte("payload"), pk, nil)
+		mockDel := queuemock.NewMockDelivery(ctrl)
+		done := setupDelivery(mockDel, msg, nil, nil)
+		deliveryChan <- mockDel
+		<-done
+	}
+
+	// All messages should have been processed
+	assert.Equal(t, int64(5), atomic.LoadInt64(&processedCount))
+
+	// Stop should complete cleanly (no goroutine leaks or deadlocks)
 	err = c.Stop(30000)
 	require.NoError(t, err)
 }

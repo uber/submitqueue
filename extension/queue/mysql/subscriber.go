@@ -14,6 +14,20 @@ import (
 	extqueue "github.com/uber/submitqueue/extension/queue"
 )
 
+const (
+	// workerStopTimeout is the maximum time to wait for a partition worker to
+	// exit after its context is cancelled.
+	workerStopTimeout = 30 * time.Second
+
+	// leaseReleaseTimeout is the timeout for releasing partition leases during
+	// shutdown. Uses a fresh context since the subscription context is cancelled.
+	leaseReleaseTimeout = 30 * time.Second
+
+	// subscriptionShutdownTimeout is the maximum time to wait for the
+	// managePartitions goroutine to finish during Close().
+	subscriptionShutdownTimeout = 30 * time.Second
+)
+
 type subscriber struct {
 	logger       *zap.SugaredLogger
 	metrics      tally.Scope
@@ -33,7 +47,39 @@ type subscription struct {
 	config     extqueue.SubscriptionConfig
 	deliveryCh chan extqueue.Delivery
 	cancelFunc context.CancelFunc
-	wg         sync.WaitGroup
+
+	// wg tracks the single managePartitions supervisor goroutine.
+	// Close() waits on this to know the entire subscription is shut down.
+	wg sync.WaitGroup
+
+	// workerWg tracks all partition worker goroutines independently of wg.
+	// During shutdown, managePartitions waits on workerWg before closing
+	// deliveryCh to guarantee no worker can send on a closed channel.
+	workerWg sync.WaitGroup
+
+	// workers maps partition keys to their active worker goroutines.
+	// Only accessed by the managePartitions goroutine for reads/reconciliation,
+	// but mutations are protected by workersMu since stopPartitionWorker may
+	// be called during shutdown.
+	workers   map[string]*partitionWorker
+	workersMu sync.Mutex
+}
+
+// partitionWorker handles polling and delivering messages for a single partition.
+// Each worker runs in its own goroutine, polling the DB on a ticker and sending
+// deliveries to the shared deliveryCh.
+type partitionWorker struct {
+	partitionKey string
+	sub          *subscription
+	subscriber   *subscriber
+	// cancelFunc cancels this worker's context, causing run() to exit.
+	cancelFunc context.CancelFunc
+	// done is closed when run() returns, signaling the worker has fully stopped.
+	done chan struct{}
+	// offsetInitialized tracks whether the offset has been initialized for this
+	// partition. Set once on the first successful poll, avoiding repeated
+	// initialization calls on every tick.
+	offsetInitialized bool
 }
 
 // sqlDelivery implements extqueue.Delivery for SQL queue
@@ -302,6 +348,7 @@ func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueu
 		config:     config,
 		deliveryCh: make(chan extqueue.Delivery, config.BatchSize*2),
 		cancelFunc: cancel,
+		workers:    make(map[string]*partitionWorker),
 	}
 
 	s.subscriptions[subKey] = sub
@@ -309,7 +356,9 @@ func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueu
 	// Track active subscription
 	s.metrics.Tagged(map[string]string{"topic": topic}).Gauge("active_subscriptions").Update(1)
 
-	// Start partition leasing and polling goroutine
+	// Start the supervisor goroutine. It will discover partitions, acquire
+	// leases, and spawn per-partition worker goroutines. The supervisor runs
+	// until the subscription context is cancelled (via Close or explicit cancel).
 	sub.wg.Add(1)
 	go s.managePartitions(subCtx, sub)
 
@@ -317,13 +366,32 @@ func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueu
 	return sub.deliveryCh, nil
 }
 
-// managePartitions discovers partitions, acquires leases, and polls messages
+// managePartitions is the supervisor goroutine. It discovers partitions, reconciles
+// workers, and renews leases. Each partition gets its own worker goroutine.
+//
+// There is exactly one managePartitions goroutine per subscription, started by
+// Subscribe(). It is the only goroutine that calls reconcilePartitionWorkers,
+// so no concurrent reconciliation can occur.
+//
+// Goroutine hierarchy:
+//
+//	managePartitions (this goroutine)    ← supervisor, tracked by sub.wg
+//	  ├── partitionWorker("part-1")     ← tracked by sub.workerWg
+//	  ├── partitionWorker("part-2")
+//	  └── partitionWorker("part-N")
+//
+// Shutdown sequence (triggered by ctx cancellation):
+//  1. stopAllWorkers: cancels each worker's context and removes from map
+//  2. releaseAllLeases: releases DB partition leases (fresh context, not cancelled)
+//  3. workerWg.Wait(): blocks until all workers have fully exited — this ensures
+//     no worker can send on deliveryCh after step 4
+//  4. close(deliveryCh): safe because step 3 guarantees no senders remain
+//  5. managePartitions returns → wg.Done() fires → Close() unblocks
 func (s *subscriber) managePartitions(ctx context.Context, sub *subscription) {
 	defer sub.wg.Done()
-	defer close(sub.deliveryCh)
 
-	pollTicker := time.NewTicker(time.Duration(sub.config.PollIntervalMs) * time.Millisecond)
-	defer pollTicker.Stop()
+	discoveryTicker := time.NewTicker(time.Duration(sub.config.PollIntervalMs) * time.Millisecond)
+	defer discoveryTicker.Stop()
 
 	leaseTicker := time.NewTicker(time.Duration(sub.config.LeaseRenewalIntervalMs) * time.Millisecond)
 	defer leaseTicker.Stop()
@@ -331,86 +399,29 @@ func (s *subscriber) managePartitions(ctx context.Context, sub *subscription) {
 	for {
 		select {
 		case <-ctx.Done():
+			s.stopAllWorkers(sub)
 			// Release all leases on shutdown with a fresh context
-			// The passed context is already cancelled, so we create a new one with timeout
-			// to allow graceful lease release operations to complete
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), leaseReleaseTimeout)
 			defer cancel()
 			s.releaseAllLeases(cleanupCtx, sub)
+			// Wait for all workers to fully exit, then close channel
+			sub.workerWg.Wait()
+			close(sub.deliveryCh)
 			return
 
 		case <-leaseTicker.C:
-			// Renew existing leases
 			s.renewLeases(ctx, sub)
 
-		case <-pollTicker.C:
-			// Fetch and deliver messages from leased partitions
-			s.pollLeasedPartitions(ctx, sub)
+		case <-discoveryTicker.C:
+			s.discoverAndReconcileWorkers(ctx, sub)
 		}
 	}
 }
 
-// renewLeases renews leases for all partitions owned by this worker
-func (s *subscriber) renewLeases(ctx context.Context, sub *subscription) {
+// discoverAndReconcileWorkers discovers new partitions and reconciles workers.
+func (s *subscriber) discoverAndReconcileWorkers(ctx context.Context, sub *subscription) {
 	cfg := sub.config
-	leasedPartitions, err := s.leaseStore.GetLeasedPartitions(ctx, sub.topic, cfg.SubscriberName, cfg.ConsumerGroup)
-	if err != nil {
-		s.logger.Errorw("failed to get leased partitions for renewal",
-			"topic", sub.topic,
-			"error", err,
-		)
-		// Error suppressed: lease renewal is best-effort. If we can't get leases,
-		// they will eventually expire and be reacquired by this or another worker.
-		// Failing the entire renewal cycle would be worse than skipping one iteration.
-		s.metrics.Tagged(map[string]string{"topic": sub.topic}).Counter("lease_renewal.get_partitions_errors").Inc(1)
-		return
-	}
 
-	for _, partitionKey := range leasedPartitions {
-		if err := s.leaseStore.RenewLease(ctx, sub.topic, partitionKey, cfg.SubscriberName, cfg.ConsumerGroup, cfg.LeaseDurationMs); err != nil {
-			s.logger.Warnw("failed to renew lease",
-				"topic", sub.topic,
-				"partition_key", partitionKey,
-				"error", err,
-			)
-			// Error suppressed: Continue trying to renew other leases even if one fails.
-			// The partition will eventually expire and be re-acquired by this or another worker.
-			// Failing fast would prevent other partitions from being renewed.
-			s.metrics.Tagged(map[string]string{
-				"topic":         sub.topic,
-				"partition_key": partitionKey,
-			}).Counter("lease_renewal.renew_errors").Inc(1)
-		}
-	}
-}
-
-// releaseAllLeases releases all leases for a topic
-func (s *subscriber) releaseAllLeases(ctx context.Context, sub *subscription) {
-	cfg := sub.config
-	leasedPartitions, err := s.leaseStore.GetLeasedPartitions(ctx, sub.topic, cfg.SubscriberName, cfg.ConsumerGroup)
-	if err != nil {
-		s.logger.Errorw("failed to get leased partitions for release",
-			"topic", sub.topic,
-			"error", err,
-		)
-		return
-	}
-
-	for _, partitionKey := range leasedPartitions {
-		if err := s.leaseStore.ReleaseLease(ctx, sub.topic, partitionKey, cfg.SubscriberName, cfg.ConsumerGroup); err != nil {
-			s.logger.Warnw("failed to release lease",
-				"topic", sub.topic,
-				"partition_key", partitionKey,
-				"error", err,
-			)
-			// Continue trying to release other leases even if one fails
-		}
-	}
-}
-
-// pollLeasedPartitions fetches and delivers messages from all leased partitions
-func (s *subscriber) pollLeasedPartitions(ctx context.Context, sub *subscription) {
-	cfg := sub.config
 	// Discover and try to acquire leases for new partitions
 	acquiredCount, err := s.leaseStore.DiscoverAndAcquirePartitions(ctx, sub.topic, cfg.SubscriberName, cfg.ConsumerGroup, cfg.LeaseDurationMs)
 	if err == nil && acquiredCount > 0 {
@@ -424,27 +435,177 @@ func (s *subscriber) pollLeasedPartitions(ctx context.Context, sub *subscription
 		return
 	}
 
-	// Poll each leased partition
-	for _, partitionKey := range leasedPartitions {
-		// Check if context was cancelled before processing next partition
+	s.reconcilePartitionWorkers(ctx, sub, leasedPartitions)
+}
+
+// reconcilePartitionWorkers diffs the current set of workers against the current
+// set of leases and starts/stops workers to match. This is the core of the
+// supervisor's control loop.
+//
+// Thread safety: only called from the single managePartitions goroutine, so the
+// snapshot of workers read under the lock does not change between unlock and the
+// subsequent start/stop calls. The lock is held briefly to read state, then
+// released before blocking operations (stop may wait up to workerStopTimeout).
+func (s *subscriber) reconcilePartitionWorkers(ctx context.Context, sub *subscription, currentLeases []string) {
+	leaseSet := make(map[string]struct{}, len(currentLeases))
+	for _, pk := range currentLeases {
+		leaseSet[pk] = struct{}{}
+	}
+
+	sub.workersMu.Lock()
+
+	// Find workers to stop (no longer leased)
+	var toStop []string
+	for pk := range sub.workers {
+		if _, ok := leaseSet[pk]; !ok {
+			toStop = append(toStop, pk)
+		}
+	}
+
+	// Find partitions to start (newly leased)
+	var toStart []string
+	for _, pk := range currentLeases {
+		if _, ok := sub.workers[pk]; !ok {
+			toStart = append(toStart, pk)
+		}
+	}
+
+	sub.workersMu.Unlock()
+
+	// Stop workers for partitions no longer leased
+	for _, pk := range toStop {
+		s.stopPartitionWorker(sub, pk)
+	}
+
+	// Start workers for newly leased partitions
+	for _, pk := range toStart {
+		s.startPartitionWorker(ctx, sub, pk)
+	}
+}
+
+// startPartitionWorker creates and starts a worker goroutine for a partition.
+// The worker is tracked in sub.workers (for reconciliation) and sub.workerWg
+// (for shutdown synchronization).
+func (s *subscriber) startPartitionWorker(ctx context.Context, sub *subscription, partitionKey string) {
+	workerCtx, cancel := context.WithCancel(ctx)
+
+	w := &partitionWorker{
+		partitionKey: partitionKey,
+		sub:          sub,
+		subscriber:   s,
+		cancelFunc:   cancel,
+		done:         make(chan struct{}),
+	}
+
+	sub.workersMu.Lock()
+	sub.workers[partitionKey] = w
+	sub.workersMu.Unlock()
+
+	sub.workerWg.Add(1)
+	go w.run(workerCtx)
+
+	s.logger.Debugw("started partition worker",
+		"topic", sub.topic,
+		"partition_key", partitionKey,
+	)
+}
+
+// stopPartitionWorker cancels a worker's context and removes it from the workers
+// map. The worker is removed immediately (before confirming exit) so that
+// reconciliation can start a replacement if the lease is re-acquired. The old
+// worker's context is cancelled, so its DB calls will fail and it will exit
+// imminently. workerWg still tracks the old goroutine, so Close() blocks until
+// it fully exits — preventing sends on a closed deliveryCh.
+//
+// The select with workerStopTimeout is purely for observability: if the worker
+// takes longer than expected to exit, a warning is logged but no action is needed
+// since workerWg handles the hard guarantee.
+func (s *subscriber) stopPartitionWorker(sub *subscription, partitionKey string) {
+	sub.workersMu.Lock()
+	w, ok := sub.workers[partitionKey]
+	if !ok {
+		sub.workersMu.Unlock()
+		return
+	}
+	sub.workersMu.Unlock()
+
+	w.cancelFunc()
+
+	// Always remove from map so reconcile can start a replacement if needed.
+	// The old worker's context is cancelled so it will exit imminently.
+	// workerWg still tracks it for shutdown — Close() won't return until it exits.
+	sub.workersMu.Lock()
+	delete(sub.workers, partitionKey)
+	sub.workersMu.Unlock()
+
+	select {
+	case <-w.done:
+		s.logger.Debugw("stopped partition worker",
+			"topic", sub.topic,
+			"partition_key", partitionKey,
+		)
+	case <-time.After(workerStopTimeout):
+		s.logger.Warnw("partition worker stop timeout, worker will drain in background",
+			"topic", sub.topic,
+			"partition_key", partitionKey,
+		)
+	}
+}
+
+// stopAllWorkers stops all partition workers for a subscription.
+func (s *subscriber) stopAllWorkers(sub *subscription) {
+	sub.workersMu.Lock()
+	keys := make([]string, 0, len(sub.workers))
+	for pk := range sub.workers {
+		keys = append(keys, pk)
+	}
+	sub.workersMu.Unlock()
+
+	for _, pk := range keys {
+		s.stopPartitionWorker(sub, pk)
+	}
+}
+
+// run is the per-partition goroutine loop. It polls the DB on a ticker and
+// sends fetched messages to the shared deliveryCh. Each partition worker runs
+// independently — a slow or blocked partition does not affect other partitions.
+//
+// Lifecycle:
+//   - Started by startPartitionWorker, tracked by sub.workerWg
+//   - Stopped when ctx is cancelled (lease lost, shutdown, or explicit stop)
+//   - Closing w.done signals stopPartitionWorker that the goroutine has exited
+func (w *partitionWorker) run(ctx context.Context) {
+	defer close(w.done)
+	defer w.sub.workerWg.Done()
+
+	pollTicker := time.NewTicker(time.Duration(w.sub.config.PollIntervalMs) * time.Millisecond)
+	defer pollTicker.Stop()
+
+	for {
 		select {
 		case <-ctx.Done():
 			return
-		default:
-			s.fetchAndDeliverPartition(ctx, sub, partitionKey)
+		case <-pollTicker.C:
+			w.pollAndDeliver(ctx)
 		}
 	}
 }
 
-// fetchAndDeliverPartition fetches messages from a specific partition and delivers them
-func (s *subscriber) fetchAndDeliverPartition(ctx context.Context, sub *subscription, partitionKey string) {
+// pollAndDeliver fetches messages from this worker's partition and delivers them.
+func (w *partitionWorker) pollAndDeliver(ctx context.Context) {
 	start := time.Now()
+	s := w.subscriber
+	sub := w.sub
 	cfg := sub.config
+	partitionKey := w.partitionKey
 
-	// Initialize offset for this partition if needed
-	if err := s.offsetStore.Initialize(ctx, sub.topic, partitionKey, cfg.ConsumerGroup); err != nil {
-		s.logger.Errorw("offset initialization failure", "topic", sub.topic, "partition_key", partitionKey, "error", err)
-		return
+	// Initialize offset for this partition once per worker lifetime
+	if !w.offsetInitialized {
+		if err := s.offsetStore.Initialize(ctx, sub.topic, partitionKey, cfg.ConsumerGroup); err != nil {
+			s.logger.Errorw("offset initialization failure", "topic", sub.topic, "partition_key", partitionKey, "error", err)
+			return
+		}
+		w.offsetInitialized = true
 	}
 
 	// Get current offset for this partition
@@ -586,7 +747,65 @@ func (s *subscriber) fetchAndDeliverPartition(ctx context.Context, sub *subscrip
 	}
 }
 
-// Close gracefully shuts down the subscriber
+// renewLeases renews leases for all partitions owned by this worker
+func (s *subscriber) renewLeases(ctx context.Context, sub *subscription) {
+	cfg := sub.config
+	leasedPartitions, err := s.leaseStore.GetLeasedPartitions(ctx, sub.topic, cfg.SubscriberName, cfg.ConsumerGroup)
+	if err != nil {
+		s.logger.Errorw("failed to get leased partitions for renewal",
+			"topic", sub.topic,
+			"error", err,
+		)
+		s.metrics.Tagged(map[string]string{"topic": sub.topic}).Counter("lease_renewal.get_partitions_errors").Inc(1)
+		return
+	}
+
+	for _, partitionKey := range leasedPartitions {
+		if err := s.leaseStore.RenewLease(ctx, sub.topic, partitionKey, cfg.SubscriberName, cfg.ConsumerGroup, cfg.LeaseDurationMs); err != nil {
+			s.logger.Warnw("failed to renew lease",
+				"topic", sub.topic,
+				"partition_key", partitionKey,
+				"error", err,
+			)
+			s.metrics.Tagged(map[string]string{
+				"topic":         sub.topic,
+				"partition_key": partitionKey,
+			}).Counter("lease_renewal.renew_errors").Inc(1)
+		}
+	}
+}
+
+// releaseAllLeases releases all leases for a topic
+func (s *subscriber) releaseAllLeases(ctx context.Context, sub *subscription) {
+	cfg := sub.config
+	leasedPartitions, err := s.leaseStore.GetLeasedPartitions(ctx, sub.topic, cfg.SubscriberName, cfg.ConsumerGroup)
+	if err != nil {
+		s.logger.Errorw("failed to get leased partitions for release",
+			"topic", sub.topic,
+			"error", err,
+		)
+		return
+	}
+
+	for _, partitionKey := range leasedPartitions {
+		if err := s.leaseStore.ReleaseLease(ctx, sub.topic, partitionKey, cfg.SubscriberName, cfg.ConsumerGroup); err != nil {
+			s.logger.Warnw("failed to release lease",
+				"topic", sub.topic,
+				"partition_key", partitionKey,
+				"error", err,
+			)
+		}
+	}
+}
+
+// Close gracefully shuts down the subscriber and all its subscriptions.
+//
+// For each subscription:
+//  1. Cancels the subscription context, triggering managePartitions shutdown
+//  2. Wraps sub.wg.Wait() in a goroutine with subscriptionShutdownTimeout so
+//     Close() does not block indefinitely if a subscription hangs
+//  3. managePartitions internally handles stopping workers and closing deliveryCh
+//     (see managePartitions shutdown sequence)
 func (s *subscriber) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -605,7 +824,10 @@ func (s *subscriber) Close() error {
 		s.logger.Debugw("closing subscription", "topic", topic)
 		sub.cancelFunc()
 
-		// Wait for goroutine to finish with timeout
+		// Wait for the managePartitions goroutine to finish. We wrap the
+		// blocking Wait in a goroutine so we can enforce a timeout — if
+		// managePartitions is stuck, we log a warning and move on rather
+		// than blocking Close() indefinitely.
 		done := make(chan struct{})
 		go func() {
 			sub.wg.Wait()
@@ -615,7 +837,7 @@ func (s *subscriber) Close() error {
 		select {
 		case <-done:
 			// Graceful shutdown completed
-		case <-time.After(30 * time.Second):
+		case <-time.After(subscriptionShutdownTimeout):
 			s.logger.Warnw("subscription shutdown timeout", "topic", topic)
 		}
 

@@ -18,11 +18,11 @@ type Publisher interface {
 ```
 
 ### Subscriber
-Consumes messages from topics.
+Consumes messages from topics with per-subscription configuration.
 
 ```go
 type Subscriber interface {
-    Subscribe(ctx context.Context, topic string) (<-chan Delivery, error)
+    Subscribe(ctx context.Context, topic string, config SubscriptionConfig) (<-chan Delivery, error)
     Close() error
 }
 ```
@@ -35,6 +35,7 @@ type Delivery interface {
     Message() queue.Message
     Ack(ctx context.Context) error
     Nack(ctx context.Context, requeueAfterMillis int64) error
+    Reject(ctx context.Context, reason string) error
     ExtendVisibilityTimeout(ctx context.Context, durationMillis int64) error
     DeliveryID() string
     Attempt() int
@@ -42,6 +43,26 @@ type Delivery interface {
     Metadata() map[string]string
 }
 ```
+
+- **Ack** — message processed successfully, remove from queue
+- **Nack** — processing failed, requeue for retry after delay
+- **Reject** — poison pill, move to DLQ (or ack if DLQ disabled)
+- **ExtendVisibilityTimeout** — extend processing window for long-running work
+
+### SubscriptionConfig
+
+Per-subscription configuration for polling, batching, leasing, retries, and DLQ:
+
+```go
+cfg := extqueue.DefaultSubscriptionConfig("worker-1", "consumer-group")
+cfg.PollIntervalMs = 50
+cfg.BatchSize = 20
+cfg.VisibilityTimeoutMs = 60000
+cfg.Retry.MaxAttempts = 3
+cfg.DLQ.Enabled = true
+```
+
+See `subscription_config.go` for all fields and defaults.
 
 ## Usage
 
@@ -51,14 +72,18 @@ defer q.Close()
 
 // Publish
 pub := q.Publisher()
-msg := queue.NewMessage("id", []byte("payload"))
+msg := queue.NewMessage("id", []byte("payload"), "partition-key", nil)
 pub.Publish(ctx, "topic", msg)
 
 // Subscribe
 sub := q.Subscriber()
-deliveries, _ := sub.Subscribe(ctx, "topic")
+cfg := extqueue.DefaultSubscriptionConfig("worker-1", "consumer-group")
+deliveries, _ := sub.Subscribe(ctx, "topic", cfg)
 for delivery := range deliveries {
-    process(delivery.Message().Payload)
+    if err := process(delivery.Message().Payload); err != nil {
+        delivery.Nack(ctx, 0)  // Retry
+        continue
+    }
     delivery.Ack(ctx)
 }
 ```
@@ -69,3 +94,4 @@ for delivery := range deliveries {
 2. Implement `Queue`, `Publisher`, `Subscriber`, `Delivery` interfaces
 3. Map `queue.Message` to backend format
 
+See `extension/queue/mysql/` for the reference implementation.
