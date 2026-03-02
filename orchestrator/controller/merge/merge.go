@@ -149,7 +149,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // and classifies the outcome into a batch state.
 func (c *Controller) land(ctx context.Context, batch entity.Batch) (entity.BatchState, error) {
 	requestStore := c.storage.GetRequestStore()
-	entries := make([]landprovider.LandEntry, 0, len(batch.Contains))
+	entries := make([]entity.LandEntry, 0, len(batch.Contains))
 
 	for _, requestID := range batch.Contains {
 		request, err := requestStore.Get(ctx, requestID)
@@ -163,7 +163,7 @@ func (c *Controller) land(ctx context.Context, batch entity.Batch) (entity.Batch
 			return "", fmt.Errorf("failed to fetch request %s: %w", requestID, err)
 		}
 
-		entries = append(entries, landprovider.LandEntry{
+		entries = append(entries, entity.LandEntry{
 			Strategy: request.LandStrategy,
 			Change:   request.Change,
 		})

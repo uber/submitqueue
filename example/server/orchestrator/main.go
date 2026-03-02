@@ -17,8 +17,10 @@ import (
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/extension/counter"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
+	"github.com/uber/submitqueue/extension/landprovider"
 	"github.com/uber/submitqueue/extension/mergechecker"
 	githubchecker "github.com/uber/submitqueue/extension/mergechecker/github"
+	githublander "github.com/uber/submitqueue/extension/landprovider/github"
 	extqueue "github.com/uber/submitqueue/extension/queue"
 	queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
 	mysqlstorage "github.com/uber/submitqueue/extension/storage/mysql"
@@ -160,8 +162,11 @@ func run() error {
 	// Create merge checker
 	mc := newMergeChecker(logger, scope)
 
+	// Create land provider
+	lp := newLandProvider(logger, scope)
+
 	// Register controllers
-	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cnt, store); err != nil {
+	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, lp, cnt, store); err != nil {
 		return err
 	}
 
@@ -298,7 +303,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 //	→ merge → merge-signal
 //	finalize (terminal)
 
-func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cnt counter.Counter, store storage.Storage) error {
+func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, lp landprovider.LandProvider, cnt counter.Counter, store storage.Storage) error {
 	requestController := request.NewController(
 		logger,
 		scope,
@@ -361,8 +366,8 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		registry,
-		nil, // TODO: wire LandProvider implementation
-		nil, // TODO: wire Storage implementation
+		lp,
+		store,
 		consumer.TopicKeyToMerge,
 		"orchestrator-merge",
 	)
@@ -417,6 +422,27 @@ func newMergeChecker(logger *zap.Logger, scope tally.Scope) mergechecker.MergeCh
 
 	return mergechecker.NewMultiChecker(map[string]mergechecker.MergeChecker{
 		"github": github,
+	})
+}
+
+// newLandProvider creates a LandProvider for GitHub (github.com).
+// Configured via GITHUB_TOKEN and GITHUB_API_URL environment variables.
+func newLandProvider(logger *zap.Logger, scope tally.Scope) landprovider.LandProvider {
+	apiURL := os.Getenv("GITHUB_API_URL")
+	if apiURL == "" {
+		apiURL = "https://api.github.com"
+	}
+
+	httpClient := &http.Client{}
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		httpClient.Transport = &bearerTransport{token: token}
+	}
+
+	return githublander.NewLandProvider(githublander.Params{
+		HTTPClient:   httpClient,
+		APIURL:       apiURL,
+		Logger:       logger.Sugar(),
+		MetricsScope: scope.SubScope("landprovider"),
 	})
 }
 
