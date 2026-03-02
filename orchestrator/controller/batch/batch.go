@@ -106,7 +106,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	activeBatches, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, []entity.BatchState{
 		entity.BatchStateCreated,
 		entity.BatchStateSpeculating,
-		entity.BatchStateLanding,
 	})
 	if err != nil {
 		c.logger.Errorw("failed to get active batches",

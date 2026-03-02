@@ -6,6 +6,7 @@ import (
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
 	"github.com/uber/submitqueue/extension/landprovider"
@@ -15,7 +16,8 @@ import (
 
 // Controller handles merge queue messages.
 // It consumes batches, fetches the contained requests from storage,
-// lands the changes via the LandProvider, and publishes results to the merge signal stage.
+// lands the changes via the LandProvider, and publishes results
+// to the merge-signal and speculator stages.
 // Implements consumer.Controller interface for integration with the consumer.
 type Controller struct {
 	logger        *zap.SugaredLogger
@@ -53,7 +55,7 @@ func NewController(
 
 // Process processes a merge delivery from the queue.
 // Extracts the batch ID from the message, fetches the batch from storage,
-// lands the changes, and publishes the batch ID to the merge signal topic.
+// lands the changes, and publishes the batch ID to downstream topics.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	c.metricsScope.Counter("received").Inc(1)
@@ -78,8 +80,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	// Fetch the batch from storage — this is the single source of truth.
-	// On retries (e.g., land succeeded but publish failed), reading current
-	// state prevents calling Land again for changes that were already merged.
+	// Terminal states mean the land outcome was already persisted on a
+	// previous attempt; skip straight to publish.
 	batch, err := c.storage.GetBatchStore().Get(ctx, batchID)
 	if err != nil {
 		c.logger.Errorw("failed to fetch batch",
@@ -87,20 +89,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			"error", err,
 		)
 		c.metricsScope.Counter("batch_fetch_errors").Inc(1)
-		return fmt.Errorf("failed to fetch batch %s: %w", batchID, err)
+		return errs.NewRetryableError(fmt.Errorf("failed to fetch batch %s: %w", batchID, err))
 	}
 
-	switch batch.State {
-	case entity.BatchStateLandSucceeded, entity.BatchStateLandFailed:
-		c.logger.Infow("batch already landed, skipping to publish",
-			"batch_id", batch.ID,
-			"state", string(batch.State),
-		)
-		c.metricsScope.Counter("idempotent_skip").Inc(1)
-	case entity.BatchStateLanding:
+	if !batch.State.IsTerminal() {
 		newState, err := c.land(ctx, batch)
 		if err != nil {
-			return err
+			return fmt.Errorf("batch %s: %w", batch.ID, err)
 		}
 
 		if err := c.storage.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newState); err != nil {
@@ -110,35 +105,37 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 				"error", err,
 			)
 			c.metricsScope.Counter("batch_update_errors").Inc(1)
-			return fmt.Errorf("failed to update batch state: %w", err)
+			return errs.NewRetryableError(fmt.Errorf("failed to update batch state: %w", err))
 		}
 
 		batch.State = newState
-		batch.Version++
-	default:
-		c.logger.Errorw("unexpected batch state for merge",
+	} else {
+		c.logger.Infow("batch already in terminal state, skipping to publish",
 			"batch_id", batch.ID,
 			"state", string(batch.State),
 		)
-		c.metricsScope.Counter("unexpected_state").Inc(1)
-		return fmt.Errorf("unexpected batch state %s for batch %s", batch.State, batch.ID)
+		c.metricsScope.Counter("idempotent_skip").Inc(1)
 	}
 
-	// Publish batch ID to merge signal topic
-	if err := c.publish(ctx, consumer.TopicKeyMergeSignal, batch.ID, batch.Queue); err != nil {
-		c.logger.Errorw("failed to publish output",
-			"batch_id", batch.ID,
-			"topic_key", consumer.TopicKeyMergeSignal,
-			"error", err,
-		)
-		c.metricsScope.Counter("publish_errors").Inc(1)
-		return fmt.Errorf("failed to publish to merge-signal: %w", err)
+	// Publish batch ID to merge-signal and speculator topics.
+	// On retry, a topic that already received this message may get a duplicate;
+	// this is safe because downstream consumers are idempotent.
+	for _, key := range []consumer.TopicKey{consumer.TopicKeyMergeSignal, consumer.TopicKeyBatched} {
+		if err := c.publish(ctx, key, batch.ID, batch.Queue); err != nil {
+			c.logger.Errorw("failed to publish output",
+				"batch_id", batch.ID,
+				"topic_key", key,
+				"error", err,
+			)
+			c.metricsScope.Counter("publish_errors").Inc(1)
+			return errs.NewRetryableError(fmt.Errorf("failed to publish to %s: %w", key, err))
+		}
 	}
 
-	c.logger.Infow("published batch to next stage",
+	c.logger.Infow("published batch to next stages",
 		"batch_id", batch.ID,
 		"state", string(batch.State),
-		"topic_key", consumer.TopicKeyMergeSignal,
+		"topic_keys", []string{consumer.TopicKeyMergeSignal.String(), consumer.TopicKeyBatched.String()},
 	)
 
 	c.metricsScope.Counter("processed").Inc(1)
@@ -160,7 +157,7 @@ func (c *Controller) land(ctx context.Context, batch entity.Batch) (entity.Batch
 				"error", err,
 			)
 			c.metricsScope.Counter("request_fetch_errors").Inc(1)
-			return "", fmt.Errorf("failed to fetch request %s: %w", requestID, err)
+			return "", errs.NewRetryableError(fmt.Errorf("failed to fetch request %s: %w", requestID, err))
 		}
 
 		entries = append(entries, entity.LandEntry{
@@ -172,25 +169,26 @@ func (c *Controller) land(ctx context.Context, batch entity.Batch) (entity.Batch
 	err := c.landProvider.Land(ctx, batch.Queue, entries)
 
 	switch {
-	case err == nil:
+	case err == nil, landprovider.IsAlreadyLanded(err):
 		c.logger.Infow("land succeeded",
 			"batch_id", batch.ID,
+			"already_landed", landprovider.IsAlreadyLanded(err),
 		)
-		return entity.BatchStateLandSucceeded, nil
+		return entity.BatchStateSucceeded, nil
 	case landprovider.IsLandRejected(err):
 		c.logger.Errorw("land rejected",
 			"batch_id", batch.ID,
 			"error", err,
 		)
 		c.metricsScope.Counter("land_rejected").Inc(1)
-		return entity.BatchStateLandFailed, nil
+		return entity.BatchStateFailed, nil
 	default:
 		c.logger.Errorw("land failed",
 			"batch_id", batch.ID,
 			"error", err,
 		)
 		c.metricsScope.Counter("land_errors").Inc(1)
-		return "", fmt.Errorf("land failed: %w", err)
+		return "", errs.NewRetryableError(fmt.Errorf("land failed: %w", err))
 	}
 }
 
