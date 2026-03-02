@@ -172,6 +172,7 @@ func (c *Controller) land(ctx context.Context, batch entity.Batch) (entity.Batch
 	case err == nil, landprovider.IsAlreadyLanded(err):
 		c.logger.Infow("land succeeded",
 			"batch_id", batch.ID,
+			"request_ids", batch.Contains,
 			"already_landed", landprovider.IsAlreadyLanded(err),
 		)
 		return entity.BatchStateSucceeded, nil
