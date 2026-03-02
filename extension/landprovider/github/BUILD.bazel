@@ -1,0 +1,37 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "github",
+    srcs = [
+        "land.go",
+        "merge.go",
+        "validate.go",
+    ],
+    importpath = "github.com/uber/submitqueue/extension/landprovider/github",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//entity",
+        "//entity/github",
+        "//extension/landprovider",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "github_test",
+    srcs = [
+        "land_test.go",
+        "merge_test.go",
+        "validate_test.go",
+    ],
+    embed = [":github"],
+    deps = [
+        "//entity",
+        "//extension/landprovider",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_zap//zaptest",
+    ],
+)
