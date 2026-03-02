@@ -6,46 +6,45 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/entity"
-	"github.com/uber/submitqueue/extension/landprovider"
 )
 
 func TestValidateSinglePR(t *testing.T) {
-	validEntry := landprovider.LandEntry{
+	validEntry := entity.LandEntry{
 		Strategy: entity.RequestLandStrategyRebase,
 		Change:   entity.Change{URIs: []string{"github://uber/repo/1/abc123"}},
 	}
 
 	tests := []struct {
 		name    string
-		entries []landprovider.LandEntry
+		entries []entity.LandEntry
 		wantErr bool
 	}{
 		{
 			name:    "single entry single URI",
-			entries: []landprovider.LandEntry{validEntry},
+			entries: []entity.LandEntry{validEntry},
 		},
 		{
 			// len(entries) == 0
 			name:    "no entries",
-			entries: []landprovider.LandEntry{},
+			entries: []entity.LandEntry{},
 			wantErr: true,
 		},
 		{
 			// totalURIs == 0
 			name:    "entry with no URIs",
-			entries: []landprovider.LandEntry{{Strategy: entity.RequestLandStrategyRebase, Change: entity.Change{URIs: []string{}}}},
+			entries: []entity.LandEntry{{Strategy: entity.RequestLandStrategyRebase, Change: entity.Change{URIs: []string{}}}},
 			wantErr: true,
 		},
 		{
 			// totalURIs > 1 via multiple entries
 			name:    "multiple entries",
-			entries: []landprovider.LandEntry{validEntry, validEntry},
+			entries: []entity.LandEntry{validEntry, validEntry},
 			wantErr: true,
 		},
 		{
 			// totalURIs > 1 via multiple URIs in one entry
 			name: "multiple URIs in single entry",
-			entries: []landprovider.LandEntry{{
+			entries: []entity.LandEntry{{
 				Strategy: entity.RequestLandStrategyRebase,
 				Change:   entity.Change{URIs: []string{"github://uber/repo/1/sha1", "github://uber/repo/2/sha2"}},
 			}},
@@ -54,7 +53,7 @@ func TestValidateSinglePR(t *testing.T) {
 		{
 			// len(entries[0].Change.URIs) == 0 with URI in second entry
 			name: "first entry empty second has URI",
-			entries: []landprovider.LandEntry{
+			entries: []entity.LandEntry{
 				{Strategy: entity.RequestLandStrategyRebase, Change: entity.Change{URIs: []string{}}},
 				validEntry,
 			},

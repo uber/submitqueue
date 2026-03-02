@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/uber-go/tally/v4"
+	"github.com/uber/submitqueue/entity"
 	entitygithub "github.com/uber/submitqueue/entity/github"
 	"github.com/uber/submitqueue/extension/landprovider"
 	"go.uber.org/zap"
@@ -56,7 +57,7 @@ func NewLandProvider(params Params) landprovider.LandProvider {
 // Returns an error if entries contain more than one PR, since merging multiple PRs
 // is not idempotent — a partial failure leaves already-merged PRs in a state that
 // cannot be retried.
-func (l *landProvider) Land(ctx context.Context, queue string, entries []landprovider.LandEntry) error {
+func (l *landProvider) Land(ctx context.Context, queue string, entries []entity.LandEntry) error {
 	l.metricsScope.Counter("land_started").Inc(1)
 
 	if err := validateSinglePR(entries); err != nil {

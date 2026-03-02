@@ -40,8 +40,8 @@ func mergeHandler(t *testing.T, statusCode int, message string) http.HandlerFunc
 }
 
 func TestLandProvider_Land(t *testing.T) {
-	singleEntry := func(uri string) []landprovider.LandEntry {
-		return []landprovider.LandEntry{{
+	singleEntry := func(uri string) []entity.LandEntry {
+		return []entity.LandEntry{{
 			Strategy: entity.RequestLandStrategyRebase,
 			Change:   entity.Change{URIs: []string{uri}},
 		}}
@@ -50,7 +50,7 @@ func TestLandProvider_Land(t *testing.T) {
 	tests := []struct {
 		name     string
 		handler  http.HandlerFunc
-		entries  []landprovider.LandEntry
+		entries  []entity.LandEntry
 		wantErr  bool
 		rejected bool
 	}{

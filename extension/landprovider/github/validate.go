@@ -3,13 +3,13 @@ package github
 import (
 	"fmt"
 
-	"github.com/uber/submitqueue/extension/landprovider"
+	"github.com/uber/submitqueue/entity"
 )
 
 // validateSinglePR ensures entries contain exactly one PR.
 // This implementation does not support batch landing because the GitHub merge API
 // operates on individual PRs, making multi-PR landing non-idempotent on retry.
-func validateSinglePR(entries []landprovider.LandEntry) error {
+func validateSinglePR(entries []entity.LandEntry) error {
 	if len(entries) == 0 {
 		return fmt.Errorf("no entries to land")
 	}
