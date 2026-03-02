@@ -54,7 +54,22 @@ func mapStrategyToMergeMethod(strategy entity.RequestLandStrategy) (mergeMethod,
 }
 
 // mergePR calls the GitHub REST API to merge a single pull request.
+// Checks if the PR is already merged before attempting, to ensure idempotency.
 func (l *landProvider) mergePR(ctx context.Context, cid entitygithub.ChangeID, strategy entity.RequestLandStrategy) error {
+	// Check if already merged before attempting the merge.
+	merged, err := l.isPRMerged(ctx, cid)
+	if err != nil {
+		return fmt.Errorf("failed to check PR merge status: %w", err)
+	}
+	if merged {
+		l.logger.Infow("PR already merged",
+			"pr", cid.PRNumber,
+			"owner", cid.Org,
+			"repo", cid.Repo,
+		)
+		return landprovider.ErrAlreadyLanded
+	}
+
 	method, err := mapStrategyToMergeMethod(strategy)
 	if err != nil {
 		return err
@@ -115,4 +130,31 @@ func (l *landProvider) mergePR(ctx context.Context, cid entitygithub.ChangeID, s
 	)
 
 	return nil
+}
+
+// isPRMerged checks whether a pull request has already been merged.
+// Uses the dedicated GitHub "check if merged" endpoint which returns
+// 204 if merged, 404 if not merged (empty response body).
+func (l *landProvider) isPRMerged(ctx context.Context, cid entitygithub.ChangeID) (bool, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/merge", l.apiURL, cid.Org, cid.Repo, cid.PRNumber)
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false, fmt.Errorf("failed to create http request: %w", err)
+	}
+
+	resp, err := l.httpClient.Do(httpReq)
+	if err != nil {
+		return false, fmt.Errorf("failed to check PR merge status: %w", err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusNoContent:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		return false, fmt.Errorf("unexpected status %d checking merge status of PR #%d", resp.StatusCode, cid.PRNumber)
+	}
 }

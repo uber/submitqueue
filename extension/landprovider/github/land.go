@@ -57,6 +57,9 @@ func NewLandProvider(params Params) landprovider.LandProvider {
 // Returns an error if entries contain more than one PR, since merging multiple PRs
 // is not idempotent — a partial failure leaves already-merged PRs in a state that
 // cannot be retried.
+//
+// For single-PR landing, idempotency is ensured by checking if the PR is already
+// merged before attempting the merge. Returns ErrAlreadyLanded if so.
 func (l *landProvider) Land(ctx context.Context, queue string, entries []entity.LandEntry) error {
 	l.metricsScope.Counter("land_started").Inc(1)
 
@@ -75,9 +78,12 @@ func (l *landProvider) Land(ctx context.Context, queue string, entries []entity.
 	}
 
 	if err := l.mergePR(ctx, cid, entry.Strategy); err != nil {
-		if landprovider.IsLandRejected(err) {
+		switch {
+		case landprovider.IsAlreadyLanded(err):
+			l.metricsScope.Counter("already_landed").Inc(1)
+		case landprovider.IsLandRejected(err):
 			l.metricsScope.Counter("land_rejected").Inc(1)
-		} else {
+		default:
 			l.metricsScope.Counter("api_errors").Inc(1)
 		}
 		return err

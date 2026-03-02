@@ -39,6 +39,32 @@ func mergeHandler(t *testing.T, statusCode int, message string) http.HandlerFunc
 	}
 }
 
+// prMergedHandler returns a handler for GET /repos/{owner}/{repo}/pulls/{number}/merge.
+// Returns 204 if merged, 404 if not (empty body, matching the GitHub API).
+func prMergedHandler(merged bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if merged {
+			w.WriteHeader(http.StatusNoContent)
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}
+}
+
+// routingHandler routes PUT (merge) and GET (PR state) requests to separate handlers.
+func routingHandler(putHandler, getHandler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			putHandler(w, r)
+		case http.MethodGet:
+			getHandler(w, r)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}
+}
+
 func TestLandProvider_Land(t *testing.T) {
 	singleEntry := func(uri string) []entity.LandEntry {
 		return []entity.LandEntry{{
@@ -48,20 +74,21 @@ func TestLandProvider_Land(t *testing.T) {
 	}
 
 	tests := []struct {
-		name     string
-		handler  http.HandlerFunc
-		entries  []entity.LandEntry
-		wantErr  bool
-		rejected bool
+		name          string
+		handler       http.HandlerFunc
+		entries       []entity.LandEntry
+		wantErr       bool
+		rejected      bool
+		alreadyLanded bool
 	}{
 		{
-			// Land → mergePR → 200 OK
+			// isPRMerged → not merged → mergePR → 200 OK
 			name:    "success",
-			handler: mergeHandler(t, http.StatusOK, "Pull Request successfully merged"),
+			handler: routingHandler(mergeHandler(t, http.StatusOK, "Pull Request successfully merged"), prMergedHandler(false)),
 			entries: singleEntry("github://uber/repo/1/abc123"),
 		},
 		{
-			// Land → ParseChangeID fails
+			// Land → ParseChangeID fails (no server call)
 			name: "invalid change ID",
 			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				require.Fail(t, "should not reach server")
@@ -70,20 +97,43 @@ func TestLandProvider_Land(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			// Land → mergePR → 405/409/422 → WrapLandRejected
+			// isPRMerged → not merged → mergePR → 409 → WrapLandRejected
 			name:     "land rejected",
-			handler:  mergeHandler(t, http.StatusConflict, "Head branch was modified"),
+			handler:  routingHandler(mergeHandler(t, http.StatusConflict, "Head branch was modified"), prMergedHandler(false)),
 			entries:  singleEntry("github://uber/repo/1/abc123"),
 			wantErr:  true,
 			rejected: true,
 		},
 		{
-			// Land → mergePR → unexpected status → plain error
+			// isPRMerged → already merged → ErrAlreadyLanded (no merge attempt)
+			name:          "already merged - idempotent retry",
+			handler:       routingHandler(mergeHandler(t, http.StatusOK, "should not be called"), prMergedHandler(true)),
+			entries:       singleEntry("github://uber/repo/1/abc123"),
+			wantErr:       true,
+			alreadyLanded: true,
+		},
+		{
+			// isPRMerged → not merged → mergePR → 500 → plain error
 			name: "server error",
-			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte("internal server error"))
-			}),
+			handler: routingHandler(
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(http.StatusInternalServerError)
+					_, _ = w.Write([]byte("internal server error"))
+				}),
+				prMergedHandler(false),
+			),
+			entries: singleEntry("github://uber/repo/1/abc123"),
+			wantErr: true,
+		},
+		{
+			// isPRMerged → unexpected status code (500) → error propagated
+			name: "merge status check error",
+			handler: routingHandler(
+				mergeHandler(t, http.StatusOK, "should not be called"),
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(http.StatusInternalServerError)
+				}),
+			),
 			entries: singleEntry("github://uber/repo/1/abc123"),
 			wantErr: true,
 		},
@@ -100,6 +150,9 @@ func TestLandProvider_Land(t *testing.T) {
 				require.Error(t, err)
 				if tt.rejected {
 					assert.True(t, landprovider.IsLandRejected(err))
+				}
+				if tt.alreadyLanded {
+					assert.True(t, landprovider.IsAlreadyLanded(err))
 				}
 				return
 			}
