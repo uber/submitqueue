@@ -7,6 +7,7 @@ go_library(
         "batch_dependent.go",
         "build.go",
         "change_provider.go",
+        "land_entry.go",
         "queue_config.go",
         "request.go",
         "speculation_tree.go",

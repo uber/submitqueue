@@ -2,7 +2,11 @@ package landprovider
 
 //go:generate mockgen -source=land_provider.go -destination=mock/land_provider_mock.go -package=mock
 
-import "context"
+import (
+	"context"
+
+	"github.com/uber/submitqueue/entity"
+)
 
 // LandProvider lands (merges) code changes into the target branch of a source
 // control repository. Each implementation is configured for a specific provider
@@ -12,5 +16,5 @@ type LandProvider interface {
 	// The queue identifies the repository and target branch.
 	// Each entry contains a change and the strategy to use for landing it.
 	// Returns ErrLandRejected if the land was rejected due to the changes themselves.
-	Land(ctx context.Context, queue string, entries []LandEntry) error
+	Land(ctx context.Context, queue string, entries []entity.LandEntry) error
 }

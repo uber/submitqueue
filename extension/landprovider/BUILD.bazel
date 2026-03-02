@@ -4,7 +4,6 @@ go_library(
     name = "landprovider",
     srcs = [
         "errors.go",
-        "land_entry.go",
         "land_provider.go",
     ],
     importpath = "github.com/uber/submitqueue/extension/landprovider",

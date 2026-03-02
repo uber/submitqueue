@@ -19,6 +19,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/extension/landprovider/mock",
     visibility = ["//visibility:public"],
     deps = [
+        "//entity",
         "//extension/landprovider",
         "@org_uber_go_mock//gomock",
     ],
