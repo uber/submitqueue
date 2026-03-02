@@ -70,6 +70,7 @@ func (l *landProvider) mergePR(ctx context.Context, cid entitygithub.ChangeID, s
 		return landprovider.ErrAlreadyLanded
 	}
 
+	// Build the merge request
 	method, err := mapStrategyToMergeMethod(strategy)
 	if err != nil {
 		return err
@@ -83,6 +84,7 @@ func (l *landProvider) mergePR(ctx context.Context, cid entitygithub.ChangeID, s
 		return fmt.Errorf("failed to marshal merge request: %w", err)
 	}
 
+	// PUT /repos/{owner}/{repo}/pulls/{number}/merge
 	url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/merge", l.apiURL, cid.Org, cid.Repo, cid.PRNumber)
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(reqBody))
@@ -102,6 +104,8 @@ func (l *landProvider) mergePR(ctx context.Context, cid entitygithub.ChangeID, s
 		return fmt.Errorf("failed to read merge response: %w", err)
 	}
 
+	// Classify the response: rejection statuses are terminal (no retry),
+	// 200 is success, anything else is an infra error (retryable).
 	switch resp.StatusCode {
 	case http.StatusMethodNotAllowed, http.StatusConflict, http.StatusUnprocessableEntity:
 		// 405: merge cannot be performed (conflicts, draft, closed).
@@ -136,6 +140,8 @@ func (l *landProvider) mergePR(ctx context.Context, cid entitygithub.ChangeID, s
 // Uses the dedicated GitHub "check if merged" endpoint which returns
 // 204 if merged, 404 if not merged (empty response body).
 func (l *landProvider) isPRMerged(ctx context.Context, cid entitygithub.ChangeID) (bool, error) {
+	// GET /repos/{owner}/{repo}/pulls/{number}/merge
+	// Returns 204 (merged) or 404 (not merged) with an empty body.
 	url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/merge", l.apiURL, cid.Org, cid.Repo, cid.PRNumber)
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
