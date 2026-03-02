@@ -1,4 +1,4 @@
-package merge
+package score
 
 import (
 	"context"
@@ -12,8 +12,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// Controller handles merge queue messages.
-// It consumes batches, performs merges, and publishes to both conclude and speculate stages.
+// Controller handles score queue messages.
+// It consumes batches, scores them, and publishes to the speculate stage.
 // Implements consumer.Controller interface for integration with the consumer.
 type Controller struct {
 	logger        *zap.SugaredLogger
@@ -26,7 +26,7 @@ type Controller struct {
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
 
-// NewController creates a new merge controller for the orchestrator.
+// NewController creates a new score controller for the orchestrator.
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
@@ -35,16 +35,16 @@ func NewController(
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
-		logger:        logger.Named("merge_controller"),
-		metricsScope:  scope.SubScope("merge_controller"),
+		logger:        logger.Named("score_controller"),
+		metricsScope:  scope.SubScope("score_controller"),
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
 }
 
-// Process processes a merge delivery from the queue.
-// Deserializes the batch, performs the merge, and publishes to both conclude and speculate topics.
+// Process processes a score delivery from the queue.
+// Deserializes the batch, scores it, and publishes to the speculate topic.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	c.metricsScope.Counter("received").Inc(1)
@@ -65,7 +65,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to deserialize batch: %w", err)
 	}
 
-	c.logger.Infow("received merge event",
+	c.logger.Infow("received score event",
 		"batch_id", batch.ID,
 		"queue", batch.Queue,
 		"state", string(batch.State),
@@ -74,29 +74,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"partition_key", msg.PartitionKey,
 	)
 
-	// TODO: Add merge logic
-	// - Perform source control merge operation
-	// - Handle merge conflicts
-
-	// Publish to conclude topic
-	if err := c.publish(ctx, consumer.TopicKeyConclude, batch); err != nil {
-		c.logger.Errorw("failed to publish to conclude",
-			"batch_id", batch.ID,
-			"topic_key", consumer.TopicKeyConclude,
-			"error", err,
-		)
-		c.metricsScope.Counter("publish_errors").Inc(1)
-		return errs.NewRetryableError(fmt.Errorf("failed to publish to conclude: %w", err))
-	}
-
-	c.logger.Infow("published batch to conclude",
-		"batch_id", batch.ID,
-		"topic_key", consumer.TopicKeyConclude,
-	)
+	// TODO: Add scoring logic
+	// - Evaluate batch priority
+	// - Apply scoring heuristics
 
 	// Publish to speculate topic
 	if err := c.publish(ctx, consumer.TopicKeySpeculate, batch); err != nil {
-		c.logger.Errorw("failed to publish to speculate",
+		c.logger.Errorw("failed to publish output",
 			"batch_id", batch.ID,
 			"topic_key", consumer.TopicKeySpeculate,
 			"error", err,
@@ -143,7 +127,7 @@ func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batch e
 
 // Name returns the controller name for logging and metrics.
 func (c *Controller) Name() string {
-	return "merge"
+	return "score"
 }
 
 // TopicKey returns the topic key this controller subscribes to.

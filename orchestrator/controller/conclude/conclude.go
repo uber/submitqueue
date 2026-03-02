@@ -1,4 +1,4 @@
-package finalize
+package conclude
 
 import (
 	"context"
@@ -10,8 +10,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// Controller handles finalize queue messages.
-// It consumes finalization requests and completes the pipeline.
+// Controller handles conclude queue messages.
+// It consumes batches and completes the pipeline.
 // Implements consumer.Controller interface for integration with the consumer.
 type Controller struct {
 	logger        *zap.SugaredLogger
@@ -24,7 +24,7 @@ type Controller struct {
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
 
-// NewController creates a new finalize controller for the orchestrator.
+// NewController creates a new conclude controller for the orchestrator.
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
@@ -33,26 +33,26 @@ func NewController(
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
-		logger:        logger.Named("finalize_controller"),
-		metricsScope:  scope.SubScope("finalize_controller"),
+		logger:        logger.Named("conclude_controller"),
+		metricsScope:  scope.SubScope("conclude_controller"),
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
 }
 
-// Process processes a finalize delivery from the queue.
-// Deserializes the request and completes the pipeline processing.
+// Process processes a conclude delivery from the queue.
+// Deserializes the batch and completes the pipeline processing.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	c.metricsScope.Counter("received").Inc(1)
 
 	msg := delivery.Message()
 
-	// Deserialize request entity
-	request, err := entity.RequestFromBytes(msg.Payload)
+	// Deserialize batch entity
+	batch, err := entity.BatchFromBytes(msg.Payload)
 	if err != nil {
-		c.logger.Errorw("failed to deserialize request",
+		c.logger.Errorw("failed to deserialize batch",
 			"message_id", msg.ID,
 			"partition_key", msg.PartitionKey,
 			"attempt", delivery.Attempt(),
@@ -60,20 +60,20 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		)
 		c.metricsScope.Counter("deserialize_errors").Inc(1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
-		return fmt.Errorf("failed to deserialize request: %w", err)
+		return fmt.Errorf("failed to deserialize batch: %w", err)
 	}
 
-	c.logger.Infow("received finalize event",
-		"request_id", request.ID,
-		"queue", request.Queue,
-		"state", string(request.State),
-		"version", request.Version,
+	c.logger.Infow("received conclude event",
+		"batch_id", batch.ID,
+		"queue", batch.Queue,
+		"state", string(batch.State),
+		"version", batch.Version,
 		"attempt", delivery.Attempt(),
 		"partition_key", msg.PartitionKey,
 	)
 
-	// TODO: Add finalization logic
-	// - Mark request as landed or error
+	// TODO: Add conclusion logic
+	// - Mark batch as succeeded or failed
 	// - Send notifications
 	// - Clean up resources
 
@@ -84,7 +84,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 // Name returns the controller name for logging and metrics.
 func (c *Controller) Name() string {
-	return "finalize"
+	return "conclude"
 }
 
 // TopicKey returns the topic key this controller subscribes to.

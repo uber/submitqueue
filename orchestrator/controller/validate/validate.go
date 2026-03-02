@@ -1,4 +1,4 @@
-package merge
+package validate
 
 import (
 	"context"
@@ -9,16 +9,19 @@ import (
 	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
+	"github.com/uber/submitqueue/extension/mergechecker"
 	"go.uber.org/zap"
 )
 
-// Controller handles merge queue messages.
-// It consumes batches, performs merges, and publishes to both conclude and speculate stages.
+// Controller handles validate queue messages.
+// It consumes requests, performs validation checks (merge conflicts, duplicate requests, etc.),
+// and publishes to the batch stage. Validation logic is extensible to support additional checks.
 // Implements consumer.Controller interface for integration with the consumer.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	registry      consumer.TopicRegistry
+	mergeChecker  mergechecker.MergeChecker
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -26,35 +29,37 @@ type Controller struct {
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
 
-// NewController creates a new merge controller for the orchestrator.
+// NewController creates a new validate controller for the orchestrator.
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	registry consumer.TopicRegistry,
+	mergeChecker mergechecker.MergeChecker,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
-		logger:        logger.Named("merge_controller"),
-		metricsScope:  scope.SubScope("merge_controller"),
+		logger:        logger.Named("validate_controller"),
+		metricsScope:  scope.SubScope("validate_controller"),
 		registry:      registry,
+		mergeChecker:  mergeChecker,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
 }
 
-// Process processes a merge delivery from the queue.
-// Deserializes the batch, performs the merge, and publishes to both conclude and speculate topics.
+// Process processes a validate delivery from the queue.
+// Deserializes the request and publishes to the batch topic.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	c.metricsScope.Counter("received").Inc(1)
 
 	msg := delivery.Message()
 
-	// Deserialize batch entity
-	batch, err := entity.BatchFromBytes(msg.Payload)
+	// Deserialize request entity
+	request, err := entity.RequestFromBytes(msg.Payload)
 	if err != nil {
-		c.logger.Errorw("failed to deserialize batch",
+		c.logger.Errorw("failed to deserialize request",
 			"message_id", msg.ID,
 			"partition_key", msg.PartitionKey,
 			"attempt", delivery.Attempt(),
@@ -62,52 +67,52 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		)
 		c.metricsScope.Counter("deserialize_errors").Inc(1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
-		return fmt.Errorf("failed to deserialize batch: %w", err)
+		return fmt.Errorf("failed to deserialize request: %w", err)
 	}
 
-	c.logger.Infow("received merge event",
-		"batch_id", batch.ID,
-		"queue", batch.Queue,
-		"state", string(batch.State),
-		"version", batch.Version,
+	c.logger.Infow("received validate event",
+		"request_id", request.ID,
+		"queue", request.Queue,
+		"state", string(request.State),
+		"version", request.Version,
 		"attempt", delivery.Attempt(),
 		"partition_key", msg.PartitionKey,
 	)
 
-	// TODO: Add merge logic
-	// - Perform source control merge operation
-	// - Handle merge conflicts
+	// Merge conflict check
+	mergeResult, err := c.mergeChecker.Check(ctx, request.Queue, request.Change)
+	if err != nil {
+		c.logger.Errorw("merge check failed",
+			"request_id", request.ID,
+			"error", err,
+		)
+		c.metricsScope.Counter("merge_check_errors").Inc(1)
+		return fmt.Errorf("merge check failed: %w", err)
+	}
+	if !mergeResult.Mergeable {
+		c.logger.Infow("request not mergeable",
+			"request_id", request.ID,
+			"queue", request.Queue,
+			"reason", mergeResult.Reason,
+		)
+		c.metricsScope.Counter("not_mergeable").Inc(1)
+		return errs.NewUserError(fmt.Errorf("request %s is not mergeable: %s", request.ID, mergeResult.Reason))
+	}
 
-	// Publish to conclude topic
-	if err := c.publish(ctx, consumer.TopicKeyConclude, batch); err != nil {
-		c.logger.Errorw("failed to publish to conclude",
-			"batch_id", batch.ID,
-			"topic_key", consumer.TopicKeyConclude,
+	// Publish to batch topic
+	if err := c.publish(ctx, consumer.TopicKeyBatch, request); err != nil {
+		c.logger.Errorw("failed to publish output",
+			"request_id", request.ID,
+			"topic_key", consumer.TopicKeyBatch,
 			"error", err,
 		)
 		c.metricsScope.Counter("publish_errors").Inc(1)
-		return errs.NewRetryableError(fmt.Errorf("failed to publish to conclude: %w", err))
+		return errs.NewRetryableError(fmt.Errorf("failed to publish to batch: %w", err))
 	}
 
-	c.logger.Infow("published batch to conclude",
-		"batch_id", batch.ID,
-		"topic_key", consumer.TopicKeyConclude,
-	)
-
-	// Publish to speculate topic
-	if err := c.publish(ctx, consumer.TopicKeySpeculate, batch); err != nil {
-		c.logger.Errorw("failed to publish to speculate",
-			"batch_id", batch.ID,
-			"topic_key", consumer.TopicKeySpeculate,
-			"error", err,
-		)
-		c.metricsScope.Counter("publish_errors").Inc(1)
-		return errs.NewRetryableError(fmt.Errorf("failed to publish to speculate: %w", err))
-	}
-
-	c.logger.Infow("published batch to speculate",
-		"batch_id", batch.ID,
-		"topic_key", consumer.TopicKeySpeculate,
+	c.logger.Infow("published request to batch",
+		"request_id", request.ID,
+		"topic_key", consumer.TopicKeyBatch,
 	)
 
 	c.metricsScope.Counter("processed").Inc(1)
@@ -115,14 +120,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	return nil // Success - message will be acked
 }
 
-// publish publishes a batch to the specified topic key.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batch entity.Batch) error {
-	payload, err := batch.ToBytes()
+// publish publishes a request to the specified topic key.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, request entity.Request) error {
+	payload, err := request.ToBytes()
 	if err != nil {
-		return fmt.Errorf("failed to serialize batch: %w", err)
+		return fmt.Errorf("failed to serialize request: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(batch.ID, payload, batch.Queue, nil)
+	msg := entityqueue.NewMessage(request.ID, payload, request.Queue, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {
@@ -143,7 +148,7 @@ func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batch e
 
 // Name returns the controller name for logging and metrics.
 func (c *Controller) Name() string {
-	return "merge"
+	return "validate"
 }
 
 // TopicKey returns the topic key this controller subscribes to.

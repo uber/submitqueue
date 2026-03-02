@@ -35,12 +35,12 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, publishErr error) 
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
 			{Key: consumer.TopicKeyBuild, Name: "build", Queue: mockQ},
-			{Key: consumer.TopicKeyToMerge, Name: "to-merge", Queue: mockQ},
+			{Key: consumer.TopicKeyMerge, Name: "merge", Queue: mockQ},
 		},
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, registry, consumer.TopicKeyBatched, "orchestrator-speculate")
+	return NewController(logger, scope, registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
 }
 
 func TestNewController(t *testing.T) {
@@ -48,7 +48,7 @@ func TestNewController(t *testing.T) {
 	controller := newTestController(t, ctrl, nil)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicKeyBatched, controller.TopicKey())
+	assert.Equal(t, consumer.TopicKeySpeculate, controller.TopicKey())
 	assert.Equal(t, "orchestrator-speculate", controller.ConsumerGroup())
 	assert.Equal(t, "speculate", controller.Name())
 }
@@ -58,19 +58,17 @@ func TestController_Process_Success(t *testing.T) {
 
 	controller := newTestController(t, ctrl, nil)
 
-	request := entity.Request{
-		ID:           "test-queue/123",
-		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/456/abc123def"}},
-		LandStrategy: entity.RequestLandStrategyRebase,
-		State:        entity.RequestStateNew,
-		Version:      1,
+	batch := entity.Batch{
+		ID:      "test-queue/batch/1",
+		Queue:   "test-queue",
+		State:   entity.BatchStateCreated,
+		Version: 1,
 	}
 
-	payload, err := request.ToBytes()
+	payload, err := batch.ToBytes()
 	require.NoError(t, err)
 
-	msg := queue.NewMessage("test-queue/123", payload, "test-queue", nil)
+	msg := queue.NewMessage("test-queue/batch/1", payload, "test-queue", nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -101,19 +99,17 @@ func TestController_Process_PublishFailure(t *testing.T) {
 
 	controller := newTestController(t, ctrl, fmt.Errorf("publish failed"))
 
-	request := entity.Request{
-		ID:           "test-queue/123",
-		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/xyz789abc"}},
-		LandStrategy: entity.RequestLandStrategyRebase,
-		State:        entity.RequestStateNew,
-		Version:      1,
+	batch := entity.Batch{
+		ID:      "test-queue/batch/1",
+		Queue:   "test-queue",
+		State:   entity.BatchStateCreated,
+		Version: 1,
 	}
 
-	payload, err := request.ToBytes()
+	payload, err := batch.ToBytes()
 	require.NoError(t, err)
 
-	msg := queue.NewMessage(request.ID, payload, request.Queue, nil)
+	msg := queue.NewMessage(batch.ID, payload, batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()

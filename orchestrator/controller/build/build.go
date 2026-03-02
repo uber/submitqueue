@@ -13,7 +13,7 @@ import (
 )
 
 // Controller handles build queue messages.
-// It consumes build requests, triggers builds, and publishes results to the build signal stage.
+// It consumes batches, triggers builds, and publishes scheduled builds to the poll stage (which polls for build results).
 // Implements consumer.Controller interface for integration with the consumer.
 type Controller struct {
 	logger        *zap.SugaredLogger
@@ -44,17 +44,17 @@ func NewController(
 }
 
 // Process processes a build delivery from the queue.
-// Deserializes the request, triggers a build, and publishes to the build signal topic.
+// Deserializes the batch, triggers a build, and publishes a build entity to the poll topic.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	c.metricsScope.Counter("received").Inc(1)
 
 	msg := delivery.Message()
 
-	// Deserialize request entity
-	request, err := entity.RequestFromBytes(msg.Payload)
+	// Deserialize batch entity
+	batch, err := entity.BatchFromBytes(msg.Payload)
 	if err != nil {
-		c.logger.Errorw("failed to deserialize request",
+		c.logger.Errorw("failed to deserialize batch",
 			"message_id", msg.ID,
 			"partition_key", msg.PartitionKey,
 			"attempt", delivery.Attempt(),
@@ -62,14 +62,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		)
 		c.metricsScope.Counter("deserialize_errors").Inc(1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
-		return fmt.Errorf("failed to deserialize request: %w", err)
+		return fmt.Errorf("failed to deserialize batch: %w", err)
 	}
 
 	c.logger.Infow("received build event",
-		"request_id", request.ID,
-		"queue", request.Queue,
-		"state", string(request.State),
-		"version", request.Version,
+		"batch_id", batch.ID,
+		"queue", batch.Queue,
+		"state", string(batch.State),
+		"version", batch.Version,
 		"attempt", delivery.Attempt(),
 		"partition_key", msg.PartitionKey,
 	)
@@ -78,20 +78,28 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// - Trigger CI build
 	// - Track build status
 
-	// Publish to build signal topic
-	if err := c.publish(ctx, consumer.TopicKeyBuildSignal, request); err != nil {
+	build := entity.Build{
+		ID:      batch.ID,
+		BatchID: batch.ID,
+		Status:  entity.BuildStatusQueued,
+	}
+
+	// Publish build to poll topic
+	if err := c.publish(ctx, consumer.TopicKeyPoll, build); err != nil {
 		c.logger.Errorw("failed to publish output",
-			"request_id", request.ID,
-			"topic_key", consumer.TopicKeyBuildSignal,
+			"batch_id", batch.ID,
+			"build_id", build.ID,
+			"topic_key", consumer.TopicKeyPoll,
 			"error", err,
 		)
 		c.metricsScope.Counter("publish_errors").Inc(1)
-		return errs.NewRetryableError(fmt.Errorf("failed to publish to build-signal: %w", err))
+		return errs.NewRetryableError(fmt.Errorf("failed to publish to poll: %w", err))
 	}
 
-	c.logger.Infow("published request to next stage",
-		"request_id", request.ID,
-		"topic_key", consumer.TopicKeyBuildSignal,
+	c.logger.Infow("published build to poll",
+		"batch_id", batch.ID,
+		"build_id", build.ID,
+		"topic_key", consumer.TopicKeyPoll,
 	)
 
 	c.metricsScope.Counter("processed").Inc(1)
@@ -99,14 +107,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	return nil // Success - message will be acked
 }
 
-// publish publishes a request to the specified topic key.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, request entity.Request) error {
-	payload, err := request.ToBytes()
+// publish publishes a build to the specified topic key.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, build entity.Build) error {
+	payload, err := build.ToBytes()
 	if err != nil {
-		return fmt.Errorf("failed to serialize request: %w", err)
+		return fmt.Errorf("failed to serialize build: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(request.ID, payload, request.Queue, nil)
+	msg := entityqueue.NewMessage(build.ID, payload, build.BatchID, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

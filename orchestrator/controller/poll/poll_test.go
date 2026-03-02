@@ -1,4 +1,4 @@
-package build
+package poll
 
 import (
 	"context"
@@ -33,11 +33,11 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, publishErr error) 
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeyPoll, Name: "poll", Queue: mockQ}},
+		[]consumer.TopicConfig{{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: mockQ}},
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, registry, consumer.TopicKeyBuild, "orchestrator-build")
+	return NewController(logger, scope, registry, consumer.TopicKeyPoll, "orchestrator-poll")
 }
 
 func TestNewController(t *testing.T) {
@@ -45,9 +45,9 @@ func TestNewController(t *testing.T) {
 	controller := newTestController(t, ctrl, nil)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicKeyBuild, controller.TopicKey())
-	assert.Equal(t, "orchestrator-build", controller.ConsumerGroup())
-	assert.Equal(t, "build", controller.Name())
+	assert.Equal(t, consumer.TopicKeyPoll, controller.TopicKey())
+	assert.Equal(t, "orchestrator-poll", controller.ConsumerGroup())
+	assert.Equal(t, "poll", controller.Name())
 }
 
 func TestController_Process_Success(t *testing.T) {
@@ -55,17 +55,16 @@ func TestController_Process_Success(t *testing.T) {
 
 	controller := newTestController(t, ctrl, nil)
 
-	batch := entity.Batch{
-		ID:      "test-queue/batch/1",
-		Queue:   "test-queue",
-		State:   entity.BatchStateCreated,
-		Version: 1,
+	build := entity.Build{
+		ID:      "build-123",
+		BatchID: "test-queue/batch/1",
+		Status:  entity.BuildStatusQueued,
 	}
 
-	payload, err := batch.ToBytes()
+	payload, err := build.ToBytes()
 	require.NoError(t, err)
 
-	msg := queue.NewMessage("test-queue/batch/1", payload, "test-queue", nil)
+	msg := queue.NewMessage("build-123", payload, "test-queue/batch/1", nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -96,17 +95,16 @@ func TestController_Process_PublishFailure(t *testing.T) {
 
 	controller := newTestController(t, ctrl, fmt.Errorf("publish failed"))
 
-	batch := entity.Batch{
-		ID:      "test-queue/batch/1",
-		Queue:   "test-queue",
-		State:   entity.BatchStateCreated,
-		Version: 1,
+	build := entity.Build{
+		ID:      "build-456",
+		BatchID: "test-queue/batch/2",
+		Status:  entity.BuildStatusRunning,
 	}
 
-	payload, err := batch.ToBytes()
+	payload, err := build.ToBytes()
 	require.NoError(t, err)
 
-	msg := queue.NewMessage(batch.ID, payload, batch.Queue, nil)
+	msg := queue.NewMessage(build.ID, payload, build.BatchID, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()

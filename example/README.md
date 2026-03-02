@@ -5,7 +5,7 @@ Example gRPC servers and clients for running the submitqueue services locally.
 ## Services
 
 - **Gateway** (port 8081) — entry point for land requests. Exposes `Ping` and `Land` RPCs.
-- **Orchestrator** (port 8082) — coordinates the pipeline. Exposes `Ping` RPC and consumes queue messages across 8 pipeline topics.
+- **Orchestrator** (port 8082) — coordinates the pipeline. Exposes `Ping` RPC and consumes queue messages across 9 pipeline topics.
 
 Both services require MySQL (app database + queue database). Docker Compose handles this automatically.
 

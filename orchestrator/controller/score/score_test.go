@@ -1,4 +1,4 @@
-package build
+package score
 
 import (
 	"context"
@@ -33,11 +33,11 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, publishErr error) 
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeyPoll, Name: "poll", Queue: mockQ}},
+		[]consumer.TopicConfig{{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: mockQ}},
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, registry, consumer.TopicKeyBuild, "orchestrator-build")
+	return NewController(logger, scope, registry, consumer.TopicKeyScore, "orchestrator-score")
 }
 
 func TestNewController(t *testing.T) {
@@ -45,9 +45,9 @@ func TestNewController(t *testing.T) {
 	controller := newTestController(t, ctrl, nil)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicKeyBuild, controller.TopicKey())
-	assert.Equal(t, "orchestrator-build", controller.ConsumerGroup())
-	assert.Equal(t, "build", controller.Name())
+	assert.Equal(t, consumer.TopicKeyScore, controller.TopicKey())
+	assert.Equal(t, "orchestrator-score", controller.ConsumerGroup())
+	assert.Equal(t, "score", controller.Name())
 }
 
 func TestController_Process_Success(t *testing.T) {

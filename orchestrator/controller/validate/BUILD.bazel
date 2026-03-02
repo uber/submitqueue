@@ -1,27 +1,32 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "finalize",
-    srcs = ["finalize.go"],
-    importpath = "github.com/uber/submitqueue/orchestrator/controller/finalize",
+    name = "validate",
+    srcs = ["validate.go"],
+    importpath = "github.com/uber/submitqueue/orchestrator/controller/validate",
     visibility = ["//visibility:public"],
     deps = [
         "//core/consumer",
+        "//core/errs",
         "//entity",
+        "//entity/queue",
+        "//extension/mergechecker",
         "@com_github_uber_go_tally_v4//:tally",
         "@org_uber_go_zap//:zap",
     ],
 )
 
 go_test(
-    name = "finalize_test",
-    srcs = ["finalize_test.go"],
-    embed = [":finalize"],
+    name = "validate_test",
+    srcs = ["validate_test.go"],
+    embed = [":validate"],
     deps = [
         "//core/consumer",
         "//core/errs",
         "//entity",
         "//entity/queue",
+        "//extension/mergechecker",
+        "//extension/mergechecker/mock",
         "//extension/queue/mock",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
