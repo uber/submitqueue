@@ -52,53 +52,43 @@ func NewController(
 }
 
 // Process processes a merge delivery from the queue.
-// Deserializes the batch, fetches contained requests, lands the changes,
-// and publishes the batch to the merge signal topic.
+// Extracts the batch ID from the message, fetches the batch from storage,
+// lands the changes, and publishes the batch ID to the merge signal topic.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	c.metricsScope.Counter("received").Inc(1)
 
 	msg := delivery.Message()
-
-	// Deserialize batch entity
-	batch, err := entity.BatchFromBytes(msg.Payload)
-	if err != nil {
-		c.logger.Errorw("failed to deserialize batch",
-			"message_id", msg.ID,
-			"partition_key", msg.PartitionKey,
-			"attempt", delivery.Attempt(),
-			"error", err,
-		)
-		c.metricsScope.Counter("deserialize_errors").Inc(1)
-		// Non-retryable: malformed messages will never succeed
-		return fmt.Errorf("failed to deserialize batch: %w", err)
-	}
+	batchID := string(msg.Payload)
 
 	c.logger.Infow("received merge event",
-		"batch_id", batch.ID,
-		"queue", batch.Queue,
-		"request_count", len(batch.Contains),
-		"state", string(batch.State),
-		"version", batch.Version,
+		"batch_id", batchID,
 		"attempt", delivery.Attempt(),
 		"partition_key", msg.PartitionKey,
 	)
 
-	// Idempotency guard: re-fetch the batch from storage to check current state.
-	// On retries (e.g., land succeeded but publish failed), this prevents calling
-	// Land again for changes that were already merged.
-	currentBatch, err := c.storage.GetBatchStore().Get(ctx, batch.ID)
+	if batchID == "" {
+		c.logger.Errorw("empty batch ID in message",
+			"message_id", msg.ID,
+			"partition_key", msg.PartitionKey,
+			"attempt", delivery.Attempt(),
+		)
+		c.metricsScope.Counter("deserialize_errors").Inc(1)
+		return fmt.Errorf("empty batch ID in message %s", msg.ID)
+	}
+
+	// Fetch the batch from storage — this is the single source of truth.
+	// On retries (e.g., land succeeded but publish failed), reading current
+	// state prevents calling Land again for changes that were already merged.
+	batch, err := c.storage.GetBatchStore().Get(ctx, batchID)
 	if err != nil {
-		c.logger.Errorw("failed to fetch current batch state",
-			"batch_id", batch.ID,
+		c.logger.Errorw("failed to fetch batch",
+			"batch_id", batchID,
 			"error", err,
 		)
 		c.metricsScope.Counter("batch_fetch_errors").Inc(1)
-		return fmt.Errorf("failed to fetch batch %s: %w", batch.ID, err)
+		return fmt.Errorf("failed to fetch batch %s: %w", batchID, err)
 	}
-
-	// Use the current version from storage for subsequent operations
-	batch = currentBatch
 
 	switch batch.State {
 	case entity.BatchStateLandSucceeded, entity.BatchStateLandFailed:
@@ -134,8 +124,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("unexpected batch state %s for batch %s", batch.State, batch.ID)
 	}
 
-	// Publish to merge signal topic
-	if err := c.publish(ctx, consumer.TopicKeyMergeSignal, batch); err != nil {
+	// Publish batch ID to merge signal topic
+	if err := c.publish(ctx, consumer.TopicKeyMergeSignal, batch.ID, batch.Queue); err != nil {
 		c.logger.Errorw("failed to publish output",
 			"batch_id", batch.ID,
 			"topic_key", consumer.TopicKeyMergeSignal,
@@ -179,13 +169,12 @@ func (c *Controller) land(ctx context.Context, batch entity.Batch) (entity.Batch
 		})
 	}
 
-	landResult, err := c.landProvider.Land(ctx, batch.Queue, entries)
+	err := c.landProvider.Land(ctx, batch.Queue, entries)
 
 	switch {
 	case err == nil:
 		c.logger.Infow("land succeeded",
 			"batch_id", batch.ID,
-			"sha", landResult.SHA,
 		)
 		return entity.BatchStateLandSucceeded, nil
 	case landprovider.IsLandRejected(err):
@@ -205,14 +194,9 @@ func (c *Controller) land(ctx context.Context, batch entity.Batch) (entity.Batch
 	}
 }
 
-// publish publishes a batch to the specified topic key.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batch entity.Batch) error {
-	payload, err := batch.ToBytes()
-	if err != nil {
-		return fmt.Errorf("failed to serialize batch: %w", err)
-	}
-
-	msg := entityqueue.NewMessage(batch.ID, payload, batch.Queue, nil)
+// publish publishes a batch ID to the specified topic key.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, id string, partitionKey string) error {
+	msg := entityqueue.NewMessage(id, []byte(id), partitionKey, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

@@ -60,14 +60,14 @@ func TestController_Process(t *testing.T) {
 	tests := []struct {
 		name       string
 		setupMocks func(*gomock.Controller) (landprovider.LandProvider, *storagemock.MockStorage, error)
-		payload    []byte
+		payload    string
 		wantErr    bool
 	}{
 		{
 			name: "success",
 			setupMocks: func(ctrl *gomock.Controller) (landprovider.LandProvider, *storagemock.MockStorage, error) {
 				lp := landprovidermock.NewMockLandProvider(ctrl)
-				lp.EXPECT().Land(gomock.Any(), gomock.Any(), gomock.Any()).Return(landprovider.Result{SHA: "abc123def"}, nil)
+				lp.EXPECT().Land(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
 				mockReqStore := storagemock.NewMockRequestStore(ctrl)
 				mockReqStore.EXPECT().Get(gomock.Any(), "test-queue/123").Return(testRequest, nil)
@@ -82,21 +82,34 @@ func TestController_Process(t *testing.T) {
 
 				return lp, mockStorage, nil
 			},
-			payload: func() []byte {
-				b, _ := testBatch.ToBytes()
-				return b
-			}(),
+			payload: "test-queue/batch/1",
 			wantErr: false,
 		},
 		{
-			name: "invalid json",
+			name: "empty batch ID",
 			setupMocks: func(ctrl *gomock.Controller) (landprovider.LandProvider, *storagemock.MockStorage, error) {
 				lp := landprovidermock.NewMockLandProvider(ctrl)
 				mockStorage := storagemock.NewMockStorage(ctrl)
 				return lp, mockStorage, nil
 			},
-			payload:          []byte(`{"invalid": json"}`),
-			wantErr:          true,
+			payload: "",
+			wantErr: true,
+		},
+		{
+			name: "batch not found",
+			setupMocks: func(ctrl *gomock.Controller) (landprovider.LandProvider, *storagemock.MockStorage, error) {
+				lp := landprovidermock.NewMockLandProvider(ctrl)
+
+				mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+				mockBatchStore.EXPECT().Get(gomock.Any(), "test-queue/batch/1").Return(entity.Batch{}, fmt.Errorf("not found"))
+
+				mockStorage := storagemock.NewMockStorage(ctrl)
+				mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+
+				return lp, mockStorage, nil
+			},
+			payload: "test-queue/batch/1",
+			wantErr: true,
 		},
 		{
 			name: "idempotent - already land_succeeded",
@@ -115,10 +128,7 @@ func TestController_Process(t *testing.T) {
 
 				return lp, mockStorage, nil
 			},
-			payload: func() []byte {
-				b, _ := testBatch.ToBytes()
-				return b
-			}(),
+			payload: "test-queue/batch/1",
 			wantErr: false,
 		},
 		{
@@ -138,10 +148,7 @@ func TestController_Process(t *testing.T) {
 
 				return lp, mockStorage, nil
 			},
-			payload: func() []byte {
-				b, _ := testBatch.ToBytes()
-				return b
-			}(),
+			payload: "test-queue/batch/1",
 			wantErr: false,
 		},
 		{
@@ -161,17 +168,14 @@ func TestController_Process(t *testing.T) {
 
 				return lp, mockStorage, nil
 			},
-			payload: func() []byte {
-				b, _ := testBatch.ToBytes()
-				return b
-			}(),
+			payload: "test-queue/batch/1",
 			wantErr: true,
 		},
 		{
 			name: "land rejected - batch marked as failed and published",
 			setupMocks: func(ctrl *gomock.Controller) (landprovider.LandProvider, *storagemock.MockStorage, error) {
 				lp := landprovidermock.NewMockLandProvider(ctrl)
-				lp.EXPECT().Land(gomock.Any(), gomock.Any(), gomock.Any()).Return(landprovider.Result{}, landprovider.WrapLandRejected(fmt.Errorf("merge conflict")))
+				lp.EXPECT().Land(gomock.Any(), gomock.Any(), gomock.Any()).Return(landprovider.WrapLandRejected(fmt.Errorf("merge conflict")))
 
 				mockReqStore := storagemock.NewMockRequestStore(ctrl)
 				mockReqStore.EXPECT().Get(gomock.Any(), "test-queue/123").Return(testRequest, nil)
@@ -186,17 +190,14 @@ func TestController_Process(t *testing.T) {
 
 				return lp, mockStorage, nil
 			},
-			payload: func() []byte {
-				b, _ := testBatch.ToBytes()
-				return b
-			}(),
-			wantErr: false, // Acked — terminal failure handled
+			payload: "test-queue/batch/1",
+			wantErr: false,
 		},
 		{
 			name: "land error - not rejected",
 			setupMocks: func(ctrl *gomock.Controller) (landprovider.LandProvider, *storagemock.MockStorage, error) {
 				lp := landprovidermock.NewMockLandProvider(ctrl)
-				lp.EXPECT().Land(gomock.Any(), gomock.Any(), gomock.Any()).Return(landprovider.Result{}, fmt.Errorf("generic error"))
+				lp.EXPECT().Land(gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("generic error"))
 
 				mockReqStore := storagemock.NewMockRequestStore(ctrl)
 				mockReqStore.EXPECT().Get(gomock.Any(), "test-queue/123").Return(testRequest, nil)
@@ -210,17 +211,14 @@ func TestController_Process(t *testing.T) {
 
 				return lp, mockStorage, nil
 			},
-			payload: func() []byte {
-				b, _ := testBatch.ToBytes()
-				return b
-			}(),
-			wantErr:       true,
+			payload: "test-queue/batch/1",
+			wantErr: true,
 		},
 		{
 			name: "batch update error after successful land",
 			setupMocks: func(ctrl *gomock.Controller) (landprovider.LandProvider, *storagemock.MockStorage, error) {
 				lp := landprovidermock.NewMockLandProvider(ctrl)
-				lp.EXPECT().Land(gomock.Any(), gomock.Any(), gomock.Any()).Return(landprovider.Result{SHA: "abc123def"}, nil)
+				lp.EXPECT().Land(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
 				mockReqStore := storagemock.NewMockRequestStore(ctrl)
 				mockReqStore.EXPECT().Get(gomock.Any(), "test-queue/123").Return(testRequest, nil)
@@ -235,17 +233,14 @@ func TestController_Process(t *testing.T) {
 
 				return lp, mockStorage, nil
 			},
-			payload: func() []byte {
-				b, _ := testBatch.ToBytes()
-				return b
-			}(),
+			payload: "test-queue/batch/1",
 			wantErr: true,
 		},
 		{
 			name: "batch update error after land rejection",
 			setupMocks: func(ctrl *gomock.Controller) (landprovider.LandProvider, *storagemock.MockStorage, error) {
 				lp := landprovidermock.NewMockLandProvider(ctrl)
-				lp.EXPECT().Land(gomock.Any(), gomock.Any(), gomock.Any()).Return(landprovider.Result{}, landprovider.WrapLandRejected(fmt.Errorf("merge conflict")))
+				lp.EXPECT().Land(gomock.Any(), gomock.Any(), gomock.Any()).Return(landprovider.WrapLandRejected(fmt.Errorf("merge conflict")))
 
 				mockReqStore := storagemock.NewMockRequestStore(ctrl)
 				mockReqStore.EXPECT().Get(gomock.Any(), "test-queue/123").Return(testRequest, nil)
@@ -260,17 +255,14 @@ func TestController_Process(t *testing.T) {
 
 				return lp, mockStorage, nil
 			},
-			payload: func() []byte {
-				b, _ := testBatch.ToBytes()
-				return b
-			}(),
+			payload: "test-queue/batch/1",
 			wantErr: true,
 		},
 		{
 			name: "publish failure",
 			setupMocks: func(ctrl *gomock.Controller) (landprovider.LandProvider, *storagemock.MockStorage, error) {
 				lp := landprovidermock.NewMockLandProvider(ctrl)
-				lp.EXPECT().Land(gomock.Any(), gomock.Any(), gomock.Any()).Return(landprovider.Result{SHA: "abc123def"}, nil)
+				lp.EXPECT().Land(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
 				mockReqStore := storagemock.NewMockRequestStore(ctrl)
 				mockReqStore.EXPECT().Get(gomock.Any(), "test-queue/123").Return(testRequest, nil)
@@ -285,11 +277,8 @@ func TestController_Process(t *testing.T) {
 
 				return lp, mockStorage, fmt.Errorf("publish failed")
 			},
-			payload: func() []byte {
-				b, _ := testBatch.ToBytes()
-				return b
-			}(),
-			wantErr:       true,
+			payload: "test-queue/batch/1",
+			wantErr: true,
 		},
 	}
 
@@ -318,7 +307,7 @@ func TestController_Process(t *testing.T) {
 
 			controller := NewController(logger, scope, registry, lp, mockStorage, consumer.TopicKeyToMerge, "orchestrator-merge")
 
-			msg := queue.NewMessage("test-batch-id", tt.payload, "test-queue", nil)
+			msg := queue.NewMessage("test-msg-id", []byte(tt.payload), "test-queue", nil)
 			delivery := queuemock.NewMockDelivery(ctrl)
 			delivery.EXPECT().Message().Return(msg).AnyTimes()
 			delivery.EXPECT().Attempt().Return(1).AnyTimes()
