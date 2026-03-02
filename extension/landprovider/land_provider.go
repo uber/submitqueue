@@ -16,5 +16,6 @@ type LandProvider interface {
 	// The queue identifies the repository and target branch.
 	// Each entry contains a change and the strategy to use for landing it.
 	// Returns ErrLandRejected if the land was rejected due to the changes themselves.
+	// Returns ErrAlreadyLanded if the changes have already been landed.
 	Land(ctx context.Context, queue string, entries []entity.LandEntry) error
 }
