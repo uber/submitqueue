@@ -99,7 +99,7 @@ func TestProvider_Get_Success(t *testing.T) {
 	require.Len(t, changeInfo, 1, "should return 1 ChangeInfo for 1 PR")
 
 	info := changeInfo[0]
-	assert.Equal(t, "PR: uber/submitqueue/123", info.ID)
+	assert.Equal(t, "github://uber/submitqueue/123/abc123def456", info.URI)
 	assert.Equal(t, "Test User", info.User.Name)
 	assert.Equal(t, "test@example.com", info.User.Email)
 	assert.Len(t, info.ChangedFiles, 2)
@@ -456,14 +456,14 @@ func TestProvider_Get_MultiplePRs(t *testing.T) {
 	require.Len(t, changeInfo, 2, "should return 2 ChangeInfo for 2 PRs")
 
 	// First PR
-	assert.Equal(t, "PR: uber/submitqueue/123", changeInfo[0].ID)
+	assert.Equal(t, "github://uber/submitqueue/123/abc123", changeInfo[0].URI)
 	assert.Equal(t, "User One", changeInfo[0].User.Name)
 	assert.Equal(t, "user1@example.com", changeInfo[0].User.Email)
 	assert.Len(t, changeInfo[0].ChangedFiles, 1)
 	assert.Equal(t, "file1.go", changeInfo[0].ChangedFiles[0].Path)
 
 	// Second PR
-	assert.Equal(t, "PR: uber/submitqueue/456", changeInfo[1].ID)
+	assert.Equal(t, "github://uber/submitqueue/456/def456", changeInfo[1].URI)
 	assert.Equal(t, "User One", changeInfo[1].User.Name)
 	assert.Equal(t, "user1@example.com", changeInfo[1].User.Email)
 	assert.Len(t, changeInfo[1].ChangedFiles, 1)
@@ -679,6 +679,6 @@ func TestProvider_Get_PartialSuccess(t *testing.T) {
 
 	// Should have 2 successful PRs
 	require.Len(t, changeInfo, 2, "should return 2 successful ChangeInfo despite 1 failure")
-	assert.Equal(t, "PR: uber/submitqueue/123", changeInfo[0].ID)
-	assert.Equal(t, "PR: uber/submitqueue/789", changeInfo[1].ID)
+	assert.Equal(t, "github://uber/submitqueue/123/abc123", changeInfo[0].URI)
+	assert.Equal(t, "github://uber/submitqueue/789/ghi789", changeInfo[1].URI)
 }

@@ -57,18 +57,11 @@ func (p *provider) Get(ctx context.Context, change entity.Change) ([]changeprovi
 		p.metrics.Timer("get_change_info_latency").Record(time.Since(startTime))
 	}()
 
-	if len(change.URIs) == 0 {
-		p.logger.Errorw("no URIs provided in change")
-		p.metrics.Counter("get_change_info_errors").Inc(1)
-		return nil, fmt.Errorf("no URIs provided")
-	}
-
 	// Parse all change IDs
 	changeIDs := make([]entitygithub.ChangeID, 0, len(change.URIs))
 	for _, uri := range change.URIs {
 		parsed, err := entitygithub.ParseChangeID(uri)
 		if err != nil {
-			p.logger.Errorw("failed to parse GitHub change ID", "uri", uri, "error", err)
 			p.metrics.Counter("get_change_info_errors").Inc(1)
 			return nil, fmt.Errorf("failed to parse GitHub change ID %q: %w", uri, err)
 		}
@@ -81,7 +74,7 @@ func (p *provider) Get(ctx context.Context, change entity.Change) ([]changeprovi
 	)
 
 	// Validate stacked changes are consistent (same provider, org, and repo)
-	org, repo, err := validateChangeConsistency(changeIDs, p.logger, p.metrics)
+	org, repo, err := validateChangeConsistency(changeIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +94,7 @@ func (p *provider) Get(ctx context.Context, change entity.Change) ([]changeprovi
 			len(fetchErrors), len(changeIDs), failedPRs, fetchErrors)
 	}
 
-	p.logger.Infow("successfully fetched PR data",
+	p.logger.Debugw("successfully fetched PR data",
 		"pr_count", len(changeIDs),
 	)
 
@@ -143,7 +136,7 @@ func (p *provider) fetchAllPRs(
 		}
 
 		// Validate PR hasn't changed since submission
-		if err := validatePRStaleness(cid, prData, p.logger, p.metrics); err != nil {
+		if err := validatePRStaleness(cid, prData); err != nil {
 			fetchErrors = append(fetchErrors, err)
 			failedPRs = append(failedPRs, cid.PRNumber)
 			continue // Continue to next PR
