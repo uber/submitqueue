@@ -1,9 +1,9 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "poll",
-    srcs = ["poll.go"],
-    importpath = "github.com/uber/submitqueue/orchestrator/controller/poll",
+    name = "buildsignal",
+    srcs = ["buildsignal.go"],
+    importpath = "github.com/uber/submitqueue/orchestrator/controller/buildsignal",
     visibility = ["//visibility:public"],
     deps = [
         "//core/consumer",
@@ -16,9 +16,9 @@ go_library(
 )
 
 go_test(
-    name = "poll_test",
-    srcs = ["poll_test.go"],
-    embed = [":poll"],
+    name = "buildsignal_test",
+    srcs = ["buildsignal_test.go"],
+    embed = [":buildsignal"],
     deps = [
         "//core/consumer",
         "//core/errs",

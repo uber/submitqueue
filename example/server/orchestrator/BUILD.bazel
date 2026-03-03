@@ -25,7 +25,7 @@ go_library(
         "//orchestrator/controller/build",
         "//orchestrator/controller/conclude",
         "//orchestrator/controller/merge",
-        "//orchestrator/controller/poll",
+        "//orchestrator/controller/buildsignal",
         "//orchestrator/controller/request",
         "//orchestrator/controller/score",
         "//orchestrator/controller/speculate",

@@ -33,7 +33,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, publishErr error) 
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeyPoll, Name: "poll", Queue: mockQ}},
+		[]consumer.TopicConfig{{Key: consumer.TopicKeyBuildSignal, Name: "buildsignal", Queue: mockQ}},
 	)
 	require.NoError(t, err)
 

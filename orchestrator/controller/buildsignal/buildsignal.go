@@ -1,4 +1,4 @@
-package poll
+package buildsignal
 
 import (
 	"context"
@@ -12,8 +12,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// Controller handles poll queue messages.
-// It consumes builds from the poll topic and publishes batch results to the speculate stage only if the build has reached a terminal state.
+// Controller handles build signal queue messages.
+// It consumes builds from the build signal topic and publishes batch results to the speculate stage only if the build has reached a terminal state.
 // Implements consumer.Controller interface for integration with the consumer.
 type Controller struct {
 	logger        *zap.SugaredLogger
@@ -26,7 +26,7 @@ type Controller struct {
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
 
-// NewController creates a new poll controller for the orchestrator.
+// NewController creates a new build signal controller for the orchestrator.
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
@@ -35,15 +35,15 @@ func NewController(
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
-		logger:        logger.Named("poll_controller"),
-		metricsScope:  scope.SubScope("poll_controller"),
+		logger:        logger.Named("buildsignal_controller"),
+		metricsScope:  scope.SubScope("buildsignal_controller"),
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
 }
 
-// Process processes a poll delivery from the queue.
+// Process processes a build signal delivery from the queue.
 // Deserializes the build and publishes a batch result to the speculate topic.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
@@ -65,7 +65,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to deserialize build: %w", err)
 	}
 
-	c.logger.Infow("received poll event",
+	c.logger.Infow("received build signal event",
 		"build_id", build.ID,
 		"batch_id", build.BatchID,
 		"status", string(build.Status),
@@ -73,7 +73,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"partition_key", msg.PartitionKey,
 	)
 
-	// TODO: Add build poll processing logic
+	// TODO: Add build signal processing logic
 	// - Evaluate build result (pass/fail)
 	// - Update batch state based on build outcome
 
@@ -132,7 +132,7 @@ func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batch e
 
 // Name returns the controller name for logging and metrics.
 func (c *Controller) Name() string {
-	return "poll"
+	return "buildsignal"
 }
 
 // TopicKey returns the topic key this controller subscribes to.

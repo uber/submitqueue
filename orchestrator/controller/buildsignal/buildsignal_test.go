@@ -1,4 +1,4 @@
-package poll
+package buildsignal
 
 import (
 	"context"
@@ -37,7 +37,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, publishErr error) 
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, registry, consumer.TopicKeyPoll, "orchestrator-poll")
+	return NewController(logger, scope, registry, consumer.TopicKeyBuildSignal, "orchestrator-buildsignal")
 }
 
 func TestNewController(t *testing.T) {
@@ -45,9 +45,9 @@ func TestNewController(t *testing.T) {
 	controller := newTestController(t, ctrl, nil)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicKeyPoll, controller.TopicKey())
-	assert.Equal(t, "orchestrator-poll", controller.ConsumerGroup())
-	assert.Equal(t, "poll", controller.Name())
+	assert.Equal(t, consumer.TopicKeyBuildSignal, controller.TopicKey())
+	assert.Equal(t, "orchestrator-buildsignal", controller.ConsumerGroup())
+	assert.Equal(t, "buildsignal", controller.Name())
 }
 
 func TestController_Process_Success(t *testing.T) {

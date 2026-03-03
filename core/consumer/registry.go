@@ -26,8 +26,8 @@ const (
 	TopicKeySpeculate TopicKey = "speculate"
 	// TopicKeyBuild is the pipeline stage where speculated batches are published for builds.
 	TopicKeyBuild TopicKey = "build"
-	// TopicKeyPoll is the pipeline stage where builds are published for polling.
-	TopicKeyPoll TopicKey = "poll"
+	// TopicKeyBuildSignal is the pipeline stage where builds are published for build signal processing.
+	TopicKeyBuildSignal TopicKey = "buildsignal"
 	// TopicKeyMerge is the pipeline stage where speculated batches are published for merging.
 	TopicKeyMerge TopicKey = "merge"
 	// TopicKeyConclude is the pipeline stage where merged requests are published for conclusion.

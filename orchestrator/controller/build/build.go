@@ -13,7 +13,7 @@ import (
 )
 
 // Controller handles build queue messages.
-// It consumes batches, triggers builds, and publishes scheduled builds to the poll stage (which polls for build results).
+// It consumes batches, triggers builds, and publishes scheduled builds to the build signal stage (which processes build results).
 // Implements consumer.Controller interface for integration with the consumer.
 type Controller struct {
 	logger        *zap.SugaredLogger
@@ -44,7 +44,7 @@ func NewController(
 }
 
 // Process processes a build delivery from the queue.
-// Deserializes the batch, triggers a build, and publishes a build entity to the poll topic.
+// Deserializes the batch, triggers a build, and publishes a build entity to the build signal topic.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	c.metricsScope.Counter("received").Inc(1)
@@ -84,22 +84,22 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		Status:  entity.BuildStatusQueued,
 	}
 
-	// Publish build to poll topic
-	if err := c.publish(ctx, consumer.TopicKeyPoll, build); err != nil {
+	// Publish build to build signal topic
+	if err := c.publish(ctx, consumer.TopicKeyBuildSignal, build); err != nil {
 		c.logger.Errorw("failed to publish output",
 			"batch_id", batch.ID,
 			"build_id", build.ID,
-			"topic_key", consumer.TopicKeyPoll,
+			"topic_key", consumer.TopicKeyBuildSignal,
 			"error", err,
 		)
 		c.metricsScope.Counter("publish_errors").Inc(1)
-		return errs.NewRetryableError(fmt.Errorf("failed to publish to poll: %w", err))
+		return errs.NewRetryableError(fmt.Errorf("failed to publish to buildsignal: %w", err))
 	}
 
-	c.logger.Infow("published build to poll",
+	c.logger.Infow("published build to buildsignal",
 		"batch_id", batch.ID,
 		"build_id", build.ID,
-		"topic_key", consumer.TopicKeyPoll,
+		"topic_key", consumer.TopicKeyBuildSignal,
 	)
 
 	c.metricsScope.Counter("processed").Inc(1)
