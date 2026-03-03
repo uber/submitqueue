@@ -162,7 +162,7 @@ func TestTopicRegistry_Queue_PerTopic(t *testing.T) {
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
 			{Key: consumer.TopicKeyRequest, Name: "request", Queue: mockQ1},
-			{Key: consumer.TopicKeyToBatch, Name: "to-batch", Queue: mockQ2},
+			{Key: consumer.TopicKeyValidate, Name: "validate", Queue: mockQ2},
 		},
 	)
 	require.NoError(t, err)
@@ -171,7 +171,7 @@ func TestTopicRegistry_Queue_PerTopic(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, mockQ1, q1)
 
-	q2, ok := registry.Queue(consumer.TopicKeyToBatch)
+	q2, ok := registry.Queue(consumer.TopicKeyValidate)
 	require.True(t, ok)
 	assert.Equal(t, mockQ2, q2)
 

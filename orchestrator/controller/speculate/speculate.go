@@ -13,7 +13,7 @@ import (
 )
 
 // Controller handles speculate queue messages.
-// It consumes batched requests, performs speculation, and publishes to both build and merge stages.
+// It consumes batches, performs speculation, and publishes to both build and merge stages.
 // Implements consumer.Controller interface for integration with the consumer.
 type Controller struct {
 	logger        *zap.SugaredLogger
@@ -44,17 +44,17 @@ func NewController(
 }
 
 // Process processes a speculate delivery from the queue.
-// Deserializes the request, performs speculation, and publishes to both build and merge topics.
+// Deserializes the batch, performs speculation, and publishes to both build and merge topics.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	c.metricsScope.Counter("received").Inc(1)
 
 	msg := delivery.Message()
 
-	// Deserialize request entity
-	request, err := entity.RequestFromBytes(msg.Payload)
+	// Deserialize batch entity
+	batch, err := entity.BatchFromBytes(msg.Payload)
 	if err != nil {
-		c.logger.Errorw("failed to deserialize request",
+		c.logger.Errorw("failed to deserialize batch",
 			"message_id", msg.ID,
 			"partition_key", msg.PartitionKey,
 			"attempt", delivery.Attempt(),
@@ -62,14 +62,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		)
 		c.metricsScope.Counter("deserialize_errors").Inc(1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
-		return fmt.Errorf("failed to deserialize request: %w", err)
+		return fmt.Errorf("failed to deserialize batch: %w", err)
 	}
 
 	c.logger.Infow("received speculate event",
-		"request_id", request.ID,
-		"queue", request.Queue,
-		"state", string(request.State),
-		"version", request.Version,
+		"batch_id", batch.ID,
+		"queue", batch.Queue,
+		"state", string(batch.State),
+		"version", batch.Version,
 		"attempt", delivery.Attempt(),
 		"partition_key", msg.PartitionKey,
 	)
@@ -77,11 +77,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// TODO: Add speculation logic
 	// - Speculative merge/rebase
 	// - Conflict detection
+	// - Publish to build only if speculation is in progress (needs CI verification)
+	// - Publish to merge only if speculation is complete and successful (ready to land)
 
 	// Publish to build topic
-	if err := c.publish(ctx, consumer.TopicKeyBuild, request); err != nil {
+	if err := c.publish(ctx, consumer.TopicKeyBuild, batch); err != nil {
 		c.logger.Errorw("failed to publish to build",
-			"request_id", request.ID,
+			"batch_id", batch.ID,
 			"topic_key", consumer.TopicKeyBuild,
 			"error", err,
 		)
@@ -89,20 +91,25 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return errs.NewRetryableError(fmt.Errorf("failed to publish to build: %w", err))
 	}
 
+	c.logger.Infow("published batch to build",
+		"batch_id", batch.ID,
+		"topic_key", consumer.TopicKeyBuild,
+	)
+
 	// Publish to merge topic
-	if err := c.publish(ctx, consumer.TopicKeyToMerge, request); err != nil {
+	if err := c.publish(ctx, consumer.TopicKeyMerge, batch); err != nil {
 		c.logger.Errorw("failed to publish to merge",
-			"request_id", request.ID,
-			"topic_key", consumer.TopicKeyToMerge,
+			"batch_id", batch.ID,
+			"topic_key", consumer.TopicKeyMerge,
 			"error", err,
 		)
 		c.metricsScope.Counter("publish_errors").Inc(1)
 		return errs.NewRetryableError(fmt.Errorf("failed to publish to merge: %w", err))
 	}
 
-	c.logger.Infow("published request to next stages",
-		"request_id", request.ID,
-		"topic_keys", []string{consumer.TopicKeyBuild.String(), consumer.TopicKeyToMerge.String()},
+	c.logger.Infow("published batch to merge",
+		"batch_id", batch.ID,
+		"topic_key", consumer.TopicKeyMerge,
 	)
 
 	c.metricsScope.Counter("processed").Inc(1)
@@ -110,14 +117,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	return nil // Success - message will be acked
 }
 
-// publish publishes a request to the specified topic key.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, request entity.Request) error {
-	payload, err := request.ToBytes()
+// publish publishes a batch to the specified topic key.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batch entity.Batch) error {
+	payload, err := batch.ToBytes()
 	if err != nil {
-		return fmt.Errorf("failed to serialize request: %w", err)
+		return fmt.Errorf("failed to serialize batch: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(request.ID, payload, request.Queue, nil)
+	msg := entityqueue.NewMessage(batch.ID, payload, batch.Queue, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

@@ -1,5 +1,7 @@
 package entity
 
+import "encoding/json"
+
 // BuildStatus defines the possible states of a build.
 type BuildStatus string
 
@@ -60,4 +62,16 @@ type Build struct {
 	Score float32
 	// Status represents the state of the build lifecycle this build is in.
 	Status BuildStatus
+}
+
+// ToBytes serializes the Build to JSON bytes for queue message payload.
+func (b Build) ToBytes() ([]byte, error) {
+	return json.Marshal(b)
+}
+
+// BuildFromBytes deserializes a Build from JSON bytes.
+func BuildFromBytes(data []byte) (Build, error) {
+	var build Build
+	err := json.Unmarshal(data, &build)
+	return build, err
 }

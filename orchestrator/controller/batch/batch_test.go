@@ -58,11 +58,11 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeyBatched, Name: "batched", Queue: mockQ}},
+		[]consumer.TopicConfig{{Key: consumer.TopicKeyScore, Name: "score", Queue: mockQ}},
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, registry, cnt, mockStorage, consumer.TopicKeyToBatch, "orchestrator-batch")
+	return NewController(logger, scope, registry, cnt, mockStorage, consumer.TopicKeyBatch, "orchestrator-batch")
 }
 
 func TestNewController(t *testing.T) {
@@ -70,7 +70,7 @@ func TestNewController(t *testing.T) {
 	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), nil, nil)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicKeyToBatch, controller.TopicKey())
+	assert.Equal(t, consumer.TopicKeyBatch, controller.TopicKey())
 	assert.Equal(t, "orchestrator-batch", controller.ConsumerGroup())
 	assert.Equal(t, "batch", controller.Name())
 }

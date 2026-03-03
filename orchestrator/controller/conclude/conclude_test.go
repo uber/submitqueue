@@ -1,4 +1,4 @@
-package finalize
+package conclude
 
 import (
 	"context"
@@ -24,16 +24,16 @@ func newTestController(t *testing.T) *Controller {
 	registry, err := consumer.NewTopicRegistry(nil)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, registry, consumer.TopicKeyFinalize, "orchestrator-finalize")
+	return NewController(logger, scope, registry, consumer.TopicKeyConclude, "orchestrator-conclude")
 }
 
 func TestNewController(t *testing.T) {
 	controller := newTestController(t)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicKeyFinalize, controller.TopicKey())
-	assert.Equal(t, "orchestrator-finalize", controller.ConsumerGroup())
-	assert.Equal(t, "finalize", controller.Name())
+	assert.Equal(t, consumer.TopicKeyConclude, controller.TopicKey())
+	assert.Equal(t, "orchestrator-conclude", controller.ConsumerGroup())
+	assert.Equal(t, "conclude", controller.Name())
 }
 
 func TestController_Process_Success(t *testing.T) {
@@ -41,19 +41,17 @@ func TestController_Process_Success(t *testing.T) {
 
 	controller := newTestController(t)
 
-	request := entity.Request{
-		ID:           "test-queue/123",
-		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/456/abc123def"}},
-		LandStrategy: entity.RequestLandStrategyRebase,
-		State:        entity.RequestStateNew,
-		Version:      1,
+	batch := entity.Batch{
+		ID:      "test-queue/batch/1",
+		Queue:   "test-queue",
+		State:   entity.BatchStateCreated,
+		Version: 1,
 	}
 
-	payload, err := request.ToBytes()
+	payload, err := batch.ToBytes()
 	require.NoError(t, err)
 
-	msg := queue.NewMessage("test-queue/123", payload, "test-queue", nil)
+	msg := queue.NewMessage("test-queue/batch/1", payload, "test-queue", nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()

@@ -9,18 +9,16 @@ import (
 	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
-	"github.com/uber/submitqueue/extension/mergechecker"
 	"go.uber.org/zap"
 )
 
 // Controller handles request queue messages.
-// It consumes requests, validates them, and publishes to the next stage.
+// It consumes requests and publishes to the validate stage.
 // Implements consumer.Controller interface for integration with the consumer.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	registry      consumer.TopicRegistry
-	mergeChecker  mergechecker.MergeChecker
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -33,7 +31,6 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	registry consumer.TopicRegistry,
-	mergeChecker mergechecker.MergeChecker,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
@@ -41,14 +38,13 @@ func NewController(
 		logger:        logger.Named("request_controller"),
 		metricsScope:  scope.SubScope("request_controller"),
 		registry:      registry,
-		mergeChecker:  mergeChecker,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
 }
 
 // Process processes a request delivery from the queue.
-// Deserializes the request, validates it, and publishes to the batch topic.
+// Deserializes the request and publishes to the validate topic.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	c.metricsScope.Counter("received").Inc(1)
@@ -81,40 +77,20 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"partition_key", msg.PartitionKey,
 	)
 
-	// Merge conflict check
-	mergeResult, err := c.mergeChecker.Check(ctx, request.Queue, request.Change)
-	if err != nil {
-		c.logger.Errorw("merge check failed",
-			"request_id", request.ID,
-			"error", err,
-		)
-		c.metricsScope.Counter("merge_check_errors").Inc(1)
-		return fmt.Errorf("merge check failed: %w", err)
-	}
-	if !mergeResult.Mergeable {
-		c.logger.Infow("request not mergeable",
-			"request_id", request.ID,
-			"queue", request.Queue,
-			"reason", mergeResult.Reason,
-		)
-		c.metricsScope.Counter("not_mergeable").Inc(1)
-		return errs.NewUserError(fmt.Errorf("request %s is not mergeable: %s", request.ID, mergeResult.Reason))
-	}
-
-	// Publish to batch topic
-	if err := c.publish(ctx, consumer.TopicKeyToBatch, request); err != nil {
+	// Publish to validate topic
+	if err := c.publish(ctx, consumer.TopicKeyValidate, request); err != nil {
 		c.logger.Errorw("failed to publish output",
 			"request_id", request.ID,
-			"topic_key", "to-batch",
+			"topic_key", consumer.TopicKeyValidate,
 			"error", err,
 		)
 		c.metricsScope.Counter("publish_errors").Inc(1)
-		return errs.NewRetryableError(fmt.Errorf("failed to publish to batch: %w", err))
+		return errs.NewRetryableError(fmt.Errorf("failed to publish to validate: %w", err))
 	}
 
-	c.logger.Infow("published request to next stage",
+	c.logger.Infow("published request to validate",
 		"request_id", request.ID,
-		"topic_key", "to-batch",
+		"topic_key", consumer.TopicKeyValidate,
 	)
 
 	c.metricsScope.Counter("processed").Inc(1)

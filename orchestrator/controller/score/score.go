@@ -1,4 +1,4 @@
-package buildsignal
+package score
 
 import (
 	"context"
@@ -12,8 +12,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// Controller handles build signal queue messages.
-// It consumes builds from the build signal topic and publishes batch results to the speculate stage only if the build has reached a terminal state.
+// Controller handles score queue messages.
+// It consumes batches, scores them, and publishes to the speculate stage.
 // Implements consumer.Controller interface for integration with the consumer.
 type Controller struct {
 	logger        *zap.SugaredLogger
@@ -26,7 +26,7 @@ type Controller struct {
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
 
-// NewController creates a new build signal controller for the orchestrator.
+// NewController creates a new score controller for the orchestrator.
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
@@ -35,26 +35,26 @@ func NewController(
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
-		logger:        logger.Named("buildsignal_controller"),
-		metricsScope:  scope.SubScope("buildsignal_controller"),
+		logger:        logger.Named("score_controller"),
+		metricsScope:  scope.SubScope("score_controller"),
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
 }
 
-// Process processes a build signal delivery from the queue.
-// Deserializes the build and publishes a batch result to the speculate topic.
+// Process processes a score delivery from the queue.
+// Deserializes the batch, scores it, and publishes to the speculate topic.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	c.metricsScope.Counter("received").Inc(1)
 
 	msg := delivery.Message()
 
-	// Deserialize build entity
-	build, err := entity.BuildFromBytes(msg.Payload)
+	// Deserialize batch entity
+	batch, err := entity.BatchFromBytes(msg.Payload)
 	if err != nil {
-		c.logger.Errorw("failed to deserialize build",
+		c.logger.Errorw("failed to deserialize batch",
 			"message_id", msg.ID,
 			"partition_key", msg.PartitionKey,
 			"attempt", delivery.Attempt(),
@@ -62,30 +62,26 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		)
 		c.metricsScope.Counter("deserialize_errors").Inc(1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
-		return fmt.Errorf("failed to deserialize build: %w", err)
+		return fmt.Errorf("failed to deserialize batch: %w", err)
 	}
 
-	c.logger.Infow("received build signal event",
-		"build_id", build.ID,
-		"batch_id", build.BatchID,
-		"status", string(build.Status),
+	c.logger.Infow("received score event",
+		"batch_id", batch.ID,
+		"queue", batch.Queue,
+		"state", string(batch.State),
+		"version", batch.Version,
 		"attempt", delivery.Attempt(),
 		"partition_key", msg.PartitionKey,
 	)
 
-	// TODO: Add build signal processing logic
-	// - Evaluate build result (pass/fail)
-	// - Update batch state based on build outcome
+	// TODO: Add scoring logic
+	// - Evaluate batch priority
+	// - Apply scoring heuristics
 
-	batch := entity.Batch{
-		ID: build.BatchID,
-	}
-
-	// Publish batch to speculate topic
+	// Publish to speculate topic
 	if err := c.publish(ctx, consumer.TopicKeySpeculate, batch); err != nil {
 		c.logger.Errorw("failed to publish output",
-			"build_id", build.ID,
-			"batch_id", build.BatchID,
+			"batch_id", batch.ID,
 			"topic_key", consumer.TopicKeySpeculate,
 			"error", err,
 		)
@@ -94,8 +90,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	c.logger.Infow("published batch to speculate",
-		"build_id", build.ID,
-		"batch_id", build.BatchID,
+		"batch_id", batch.ID,
 		"topic_key", consumer.TopicKeySpeculate,
 	)
 
@@ -132,7 +127,7 @@ func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batch e
 
 // Name returns the controller name for logging and metrics.
 func (c *Controller) Name() string {
-	return "buildsignal"
+	return "score"
 }
 
 // TopicKey returns the topic key this controller subscribes to.

@@ -33,7 +33,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, publishErr error) 
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeyBuildSignal, Name: "build-signal", Queue: mockQ}},
+		[]consumer.TopicConfig{{Key: consumer.TopicKeyBuildSignal, Name: "buildsignal", Queue: mockQ}},
 	)
 	require.NoError(t, err)
 
@@ -55,19 +55,17 @@ func TestController_Process_Success(t *testing.T) {
 
 	controller := newTestController(t, ctrl, nil)
 
-	request := entity.Request{
-		ID:           "test-queue/123",
-		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/456/abc123def"}},
-		LandStrategy: entity.RequestLandStrategyRebase,
-		State:        entity.RequestStateNew,
-		Version:      1,
+	batch := entity.Batch{
+		ID:      "test-queue/batch/1",
+		Queue:   "test-queue",
+		State:   entity.BatchStateCreated,
+		Version: 1,
 	}
 
-	payload, err := request.ToBytes()
+	payload, err := batch.ToBytes()
 	require.NoError(t, err)
 
-	msg := queue.NewMessage("test-queue/123", payload, "test-queue", nil)
+	msg := queue.NewMessage("test-queue/batch/1", payload, "test-queue", nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -98,19 +96,17 @@ func TestController_Process_PublishFailure(t *testing.T) {
 
 	controller := newTestController(t, ctrl, fmt.Errorf("publish failed"))
 
-	request := entity.Request{
-		ID:           "test-queue/123",
-		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/xyz789abc"}},
-		LandStrategy: entity.RequestLandStrategyRebase,
-		State:        entity.RequestStateNew,
-		Version:      1,
+	batch := entity.Batch{
+		ID:      "test-queue/batch/1",
+		Queue:   "test-queue",
+		State:   entity.BatchStateCreated,
+		Version: 1,
 	}
 
-	payload, err := request.ToBytes()
+	payload, err := batch.ToBytes()
 	require.NoError(t, err)
 
-	msg := queue.NewMessage(request.ID, payload, request.Queue, nil)
+	msg := queue.NewMessage(batch.ID, payload, batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()

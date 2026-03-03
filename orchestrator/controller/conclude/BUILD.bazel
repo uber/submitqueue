@@ -1,9 +1,9 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "finalize",
-    srcs = ["finalize.go"],
-    importpath = "github.com/uber/submitqueue/orchestrator/controller/finalize",
+    name = "conclude",
+    srcs = ["conclude.go"],
+    importpath = "github.com/uber/submitqueue/orchestrator/controller/conclude",
     visibility = ["//visibility:public"],
     deps = [
         "//core/consumer",
@@ -14,9 +14,9 @@ go_library(
 )
 
 go_test(
-    name = "finalize_test",
-    srcs = ["finalize_test.go"],
-    embed = [":finalize"],
+    name = "conclude_test",
+    srcs = ["conclude_test.go"],
+    embed = [":conclude"],
     deps = [
         "//core/consumer",
         "//core/errs",

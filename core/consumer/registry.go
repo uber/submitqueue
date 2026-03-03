@@ -16,20 +16,22 @@ type TopicKey string
 const (
 	// TopicKeyRequest is the pipeline stage where new requests arrive from the gateway.
 	TopicKeyRequest TopicKey = "request"
-	// TopicKeyToBatch is the pipeline stage where validated requests are published for batching.
-	TopicKeyToBatch TopicKey = "to-batch"
-	// TopicKeyBatched is the pipeline stage where batched requests are published for speculation.
-	TopicKeyBatched TopicKey = "batched"
-	// TopicKeyBuild is the pipeline stage where requests are published for builds.
+	// TopicKeyValidate is the pipeline stage where requests are published for validation.
+	TopicKeyValidate TopicKey = "validate"
+	// TopicKeyBatch is the pipeline stage where validated requests are published for batching.
+	TopicKeyBatch TopicKey = "batch"
+	// TopicKeyScore is the pipeline stage where batches are published for scoring.
+	TopicKeyScore TopicKey = "score"
+	// TopicKeySpeculate is the pipeline stage where scored batches are published for speculation.
+	TopicKeySpeculate TopicKey = "speculate"
+	// TopicKeyBuild is the pipeline stage where speculated batches are published for builds.
 	TopicKeyBuild TopicKey = "build"
-	// TopicKeyBuildSignal is the pipeline stage where build signals are published for processing.
-	TopicKeyBuildSignal TopicKey = "build-signal"
-	// TopicKeyToMerge is the pipeline stage where requests are published for merging.
-	TopicKeyToMerge TopicKey = "to-merge"
-	// TopicKeyMergeSignal is the pipeline stage where merge signals are published for processing.
-	TopicKeyMergeSignal TopicKey = "merge-signal"
-	// TopicKeyFinalize is the pipeline stage where requests are published for finalization.
-	TopicKeyFinalize TopicKey = "finalize"
+	// TopicKeyBuildSignal is the pipeline stage where builds are published for build signal processing.
+	TopicKeyBuildSignal TopicKey = "buildsignal"
+	// TopicKeyMerge is the pipeline stage where speculated batches are published for merging.
+	TopicKeyMerge TopicKey = "merge"
+	// TopicKeyConclude is the pipeline stage where merged requests are published for conclusion.
+	TopicKeyConclude TopicKey = "conclude"
 )
 
 // String returns the topic key as a string.

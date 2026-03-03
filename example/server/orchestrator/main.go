@@ -26,12 +26,13 @@ import (
 	"github.com/uber/submitqueue/orchestrator/controller"
 	"github.com/uber/submitqueue/orchestrator/controller/batch"
 	"github.com/uber/submitqueue/orchestrator/controller/build"
-	"github.com/uber/submitqueue/orchestrator/controller/buildsignal"
-	"github.com/uber/submitqueue/orchestrator/controller/finalize"
+	"github.com/uber/submitqueue/orchestrator/controller/conclude"
 	"github.com/uber/submitqueue/orchestrator/controller/merge"
-	"github.com/uber/submitqueue/orchestrator/controller/mergesignal"
+	"github.com/uber/submitqueue/orchestrator/controller/buildsignal"
 	"github.com/uber/submitqueue/orchestrator/controller/request"
+	"github.com/uber/submitqueue/orchestrator/controller/score"
 	"github.com/uber/submitqueue/orchestrator/controller/speculate"
+	"github.com/uber/submitqueue/orchestrator/controller/validate"
 	pb "github.com/uber/submitqueue/orchestrator/protopb"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -165,7 +166,7 @@ func run() error {
 		return err
 	}
 
-	logger.Info("controllers registered", zap.Int("count", 8))
+	logger.Info("controllers registered", zap.Int("count", 9))
 
 	// Start consumers
 	if err := c.Start(ctx); err != nil {
@@ -234,16 +235,32 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			),
 		},
 		{
-			Key:   consumer.TopicKeyToBatch,
-			Name:  "to-batch",
+			Key:   consumer.TopicKeyValidate,
+			Name:  "validate",
+			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "orchestrator-validate",
+			),
+		},
+		{
+			Key:   consumer.TopicKeyBatch,
+			Name:  "batch",
 			Queue: q,
 			Subscription: extqueue.DefaultSubscriptionConfig(
 				subscriberName, "orchestrator-batch",
 			),
 		},
 		{
-			Key:   consumer.TopicKeyBatched,
-			Name:  "batched",
+			Key:   consumer.TopicKeyScore,
+			Name:  "score",
+			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "orchestrator-score",
+			),
+		},
+		{
+			Key:   consumer.TopicKeySpeculate,
+			Name:  "speculate",
 			Queue: q,
 			Subscription: extqueue.DefaultSubscriptionConfig(
 				subscriberName, "orchestrator-speculate",
@@ -259,56 +276,62 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 		},
 		{
 			Key:   consumer.TopicKeyBuildSignal,
-			Name:  "build-signal",
+			Name:  "buildsignal",
 			Queue: q,
 			Subscription: extqueue.DefaultSubscriptionConfig(
 				subscriberName, "orchestrator-buildsignal",
 			),
 		},
 		{
-			Key:   consumer.TopicKeyToMerge,
-			Name:  "to-merge",
+			Key:   consumer.TopicKeyMerge,
+			Name:  "merge",
 			Queue: q,
 			Subscription: extqueue.DefaultSubscriptionConfig(
 				subscriberName, "orchestrator-merge",
 			),
 		},
 		{
-			Key:   consumer.TopicKeyMergeSignal,
-			Name:  "merge-signal",
+			Key:   consumer.TopicKeyConclude,
+			Name:  "conclude",
 			Queue: q,
 			Subscription: extqueue.DefaultSubscriptionConfig(
-				subscriberName, "orchestrator-mergesignal",
-			),
-		},
-		{
-			Key:   consumer.TopicKeyFinalize,
-			Name:  "finalize",
-			Queue: q,
-			Subscription: extqueue.DefaultSubscriptionConfig(
-				subscriberName, "orchestrator-finalize",
+				subscriberName, "orchestrator-conclude",
 			),
 		},
 	})
 }
 
 // registerControllers creates all pipeline controllers and registers them with the consumer.
-// Pipeline: request → batch → speculate → build → build-signal
+// Pipeline:
 //
-//	→ merge → merge-signal
-//	finalize (terminal)
+//   request → validate → batch → score → speculate → build → buildsignal ─┐
+//                                        ↑     ↘                           │
+//                                        │      merge → conclude           │
+//                                        │        │                        │
+//                                        └────────┴────────────────────────┘
 
 func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cnt counter.Counter, store storage.Storage) error {
 	requestController := request.NewController(
 		logger,
 		scope,
 		registry,
-		mc,
 		consumer.TopicKeyRequest,
 		"orchestrator-request",
 	)
 	if err := c.Register(requestController); err != nil {
 		return fmt.Errorf("failed to register request controller: %w", err)
+	}
+
+	validateController := validate.NewController(
+		logger,
+		scope,
+		registry,
+		mc,
+		consumer.TopicKeyValidate,
+		"orchestrator-validate",
+	)
+	if err := c.Register(validateController); err != nil {
+		return fmt.Errorf("failed to register validate controller: %w", err)
 	}
 
 	batchController := batch.NewController(
@@ -317,18 +340,29 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		registry,
 		cnt,
 		store,
-		consumer.TopicKeyToBatch,
+		consumer.TopicKeyBatch,
 		"orchestrator-batch",
 	)
 	if err := c.Register(batchController); err != nil {
 		return fmt.Errorf("failed to register batch controller: %w", err)
 	}
 
+	scoreController := score.NewController(
+		logger,
+		scope,
+		registry,
+		consumer.TopicKeyScore,
+		"orchestrator-score",
+	)
+	if err := c.Register(scoreController); err != nil {
+		return fmt.Errorf("failed to register score controller: %w", err)
+	}
+
 	speculateController := speculate.NewController(
 		logger,
 		scope,
 		registry,
-		consumer.TopicKeyBatched,
+		consumer.TopicKeySpeculate,
 		"orchestrator-speculate",
 	)
 	if err := c.Register(speculateController); err != nil {
@@ -346,14 +380,14 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		return fmt.Errorf("failed to register build controller: %w", err)
 	}
 
-	buildSignalController := buildsignal.NewController(
+	buildsignalController := buildsignal.NewController(
 		logger,
 		scope,
 		registry,
 		consumer.TopicKeyBuildSignal,
 		"orchestrator-buildsignal",
 	)
-	if err := c.Register(buildSignalController); err != nil {
+	if err := c.Register(buildsignalController); err != nil {
 		return fmt.Errorf("failed to register buildsignal controller: %w", err)
 	}
 
@@ -361,33 +395,22 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		registry,
-		consumer.TopicKeyToMerge,
+		consumer.TopicKeyMerge,
 		"orchestrator-merge",
 	)
 	if err := c.Register(mergeController); err != nil {
 		return fmt.Errorf("failed to register merge controller: %w", err)
 	}
 
-	mergeSignalController := mergesignal.NewController(
+	concludeController := conclude.NewController(
 		logger,
 		scope,
 		registry,
-		consumer.TopicKeyMergeSignal,
-		"orchestrator-mergesignal",
+		consumer.TopicKeyConclude,
+		"orchestrator-conclude",
 	)
-	if err := c.Register(mergeSignalController); err != nil {
-		return fmt.Errorf("failed to register mergesignal controller: %w", err)
-	}
-
-	finalizeController := finalize.NewController(
-		logger,
-		scope,
-		registry,
-		consumer.TopicKeyFinalize,
-		"orchestrator-finalize",
-	)
-	if err := c.Register(finalizeController); err != nil {
-		return fmt.Errorf("failed to register finalize controller: %w", err)
+	if err := c.Register(concludeController); err != nil {
+		return fmt.Errorf("failed to register conclude controller: %w", err)
 	}
 
 	return nil

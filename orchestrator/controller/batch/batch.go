@@ -15,7 +15,7 @@ import (
 )
 
 // Controller handles batch queue messages.
-// It consumes validated requests, groups them into batches, and publishes to the speculate stage.
+// It consumes validated requests, groups them into batches, and publishes to the score stage.
 // Implements consumer.Controller interface for integration with the consumer.
 type Controller struct {
 	logger        *zap.SugaredLogger
@@ -52,7 +52,7 @@ func NewController(
 }
 
 // Process processes a batch delivery from the queue.
-// Deserializes the request, groups into batch, and publishes to the speculate topic.
+// Deserializes the request, groups into batch, and publishes to the score topic.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	c.metricsScope.Counter("received").Inc(1)
@@ -159,20 +159,20 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"dependency_count", len(batch.Dependencies),
 	)
 
-	// Publish to speculate topic
-	if err := c.publish(ctx, consumer.TopicKeyBatched, batch); err != nil {
+	// Publish to score topic
+	if err := c.publish(ctx, consumer.TopicKeyScore, batch); err != nil {
 		c.logger.Errorw("failed to publish output",
 			"batch_id", batch.ID,
-			"topic_key", consumer.TopicKeyBatched,
+			"topic_key", consumer.TopicKeyScore,
 			"error", err,
 		)
 		c.metricsScope.Counter("publish_errors").Inc(1)
-		return errs.NewRetryableError(fmt.Errorf("failed to publish to speculate: %w", err))
+		return errs.NewRetryableError(fmt.Errorf("failed to publish to score: %w", err))
 	}
 
-	c.logger.Infow("published batch to next stage",
+	c.logger.Infow("published batch to score",
 		"batch_id", batch.ID,
-		"topic_key", consumer.TopicKeyBatched,
+		"topic_key", consumer.TopicKeyScore,
 	)
 
 	c.metricsScope.Counter("processed").Inc(1)
