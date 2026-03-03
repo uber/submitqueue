@@ -8,18 +8,21 @@ import (
 	"fmt"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/uber-go/tally/v4"
 
+	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/extension/storage"
 )
 
 type changeProviderStore struct {
-	db *sql.DB
+	db    *sql.DB
+	scope tally.Scope
 }
 
 // NewChangeProviderStore creates a new MySQL-backed ChangeProviderStore.
-func NewChangeProviderStore(db *sql.DB) storage.ChangeProviderStore {
-	return &changeProviderStore{db: db}
+func NewChangeProviderStore(db *sql.DB, scope tally.Scope) storage.ChangeProviderStore {
+	return &changeProviderStore{db: db, scope: scope}
 }
 
 // Get retrieves change provider(s) by request ID. Returns ErrNotFound if the change provider is not found.
@@ -29,7 +32,10 @@ func NewChangeProviderStore(db *sql.DB) storage.ChangeProviderStore {
 // for inspecting and mapping the result of this function to the
 // order of changes within the original request.
 //
-func (s *changeProviderStore) Get(ctx context.Context, requestID string) ([]entity.ChangeProvider, error) {
+func (s *changeProviderStore) Get(ctx context.Context, requestID string) (ret []entity.ChangeProvider, retErr error) {
+	op := metrics.Begin(s.scope, "get")
+	defer func() { op.Complete(retErr) }()
+
 	rows, err := s.db.QueryContext(ctx,
 		"SELECT request_id, change_provider_src, change_provider_id, metadata FROM change_provider WHERE request_id = ?",
 		requestID,
@@ -66,7 +72,10 @@ func (s *changeProviderStore) Get(ctx context.Context, requestID string) ([]enti
 }
 
 // Create creates a new change provider. Returns ErrAlreadyExists if the entry already exists.
-func (s *changeProviderStore) Create(ctx context.Context, changeProvider entity.ChangeProvider) error {
+func (s *changeProviderStore) Create(ctx context.Context, changeProvider entity.ChangeProvider) (retErr error) {
+	op := metrics.Begin(s.scope, "create")
+	defer func() { op.Complete(retErr) }()
+
 	metadataJSON, err := json.Marshal(changeProvider.Metadata)
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata id=%s for Create change provider entity: %w", changeProvider.RequestID, err)

@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/extension/scorer"
 )
@@ -83,7 +84,7 @@ func TestScorer_Score(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := New(tt.scorers, tt.reduce)
+			s := New(tt.scorers, tt.reduce, tally.NoopScope)
 			got, err := s.Score(context.Background(), entity.Change{})
 			require.NoError(t, err)
 			assert.InDelta(t, tt.want, got, 1e-9)
@@ -95,20 +96,20 @@ func TestScorer_Score_ChildError(t *testing.T) {
 	s := New(map[string]scorer.Scorer{
 		"error": &errorScorer{},
 		"files": &fixedScorer{0.9},
-	}, Min)
+	}, Min, tally.NoopScope)
 	_, err := s.Score(context.Background(), entity.Change{})
 	require.Error(t, err)
 }
 
 func TestNew_EmptyScorers(t *testing.T) {
 	assert.Panics(t, func() {
-		New(map[string]scorer.Scorer{}, Min)
+		New(map[string]scorer.Scorer{}, Min, tally.NoopScope)
 	})
 }
 
 func TestNew_NilReduce(t *testing.T) {
 	assert.Panics(t, func() {
-		New(map[string]scorer.Scorer{"files": &fixedScorer{0.9}}, nil)
+		New(map[string]scorer.Scorer{"files": &fixedScorer{0.9}}, nil, tally.NoopScope)
 	})
 }
 
@@ -124,7 +125,7 @@ func TestReduceFunc_ReceivesNames(t *testing.T) {
 	s := New(map[string]scorer.Scorer{
 		"files": &fixedScorer{0.9},
 		"deps":  &fixedScorer{0.95},
-	}, custom)
+	}, custom, tally.NoopScope)
 	got, err := s.Score(context.Background(), entity.Change{})
 	require.NoError(t, err)
 	assert.Equal(t, 0.9, got)

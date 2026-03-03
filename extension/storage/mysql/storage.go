@@ -4,6 +4,7 @@ import (
 	"database/sql"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/uber-go/tally/v4"
 
 	"github.com/uber/submitqueue/extension/storage"
 )
@@ -19,15 +20,15 @@ type mysqlStorage struct {
 }
 
 // NewStorage creates a new MySQL storage.
-func NewStorage(db *sql.DB) (storage.Storage, error) {
+func NewStorage(db *sql.DB, scope tally.Scope) (storage.Storage, error) {
 	return &mysqlStorage{
 		db:                    db,
-		requestStore:          NewRequestStore(db),
-		changeProviderStore:   NewChangeProviderStore(db),
-		batchStore:            NewBatchStore(db),
-		batchDependentStore:   NewBatchDependentStore(db),
-		buildStore:            NewBuildStore(db),
-		speculationTreeStore:  NewSpeculationTreeStore(db),
+		requestStore:          NewRequestStore(db, scope.SubScope("request_store")),
+		changeProviderStore:   NewChangeProviderStore(db, scope.SubScope("change_provider_store")),
+		batchStore:            NewBatchStore(db, scope.SubScope("batch_store")),
+		batchDependentStore:   NewBatchDependentStore(db, scope.SubScope("batch_dependent_store")),
+		buildStore:            NewBuildStore(db, scope.SubScope("build_store")),
+		speculationTreeStore:  NewSpeculationTreeStore(db, scope.SubScope("speculation_tree_store")),
 	}, nil
 }
 

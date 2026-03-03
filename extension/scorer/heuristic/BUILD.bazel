@@ -6,8 +6,10 @@ go_library(
     importpath = "github.com/uber/submitqueue/extension/scorer/heuristic",
     visibility = ["//visibility:public"],
     deps = [
+        "//core/metrics",
         "//entity",
         "//extension/scorer",
+        "@com_github_uber_go_tally_v4//:tally",
     ],
 )
 
@@ -19,5 +21,6 @@ go_test(
         "//entity",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
+        "@com_github_uber_go_tally_v4//:tally",
     ],
 )

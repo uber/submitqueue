@@ -15,5 +15,6 @@ go_test(
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",
+        "@com_github_uber_go_tally_v4//:tally",
     ],
 )

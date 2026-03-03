@@ -8,22 +8,28 @@ import (
 	"fmt"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/uber-go/tally/v4"
 
+	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/extension/storage"
 )
 
 type buildStore struct {
-	db *sql.DB
+	db    *sql.DB
+	scope tally.Scope
 }
 
 // NewBuildStore creates a new MySQL-backed BuildStore.
-func NewBuildStore(db *sql.DB) storage.BuildStore {
-	return &buildStore{db: db}
+func NewBuildStore(db *sql.DB, scope tally.Scope) storage.BuildStore {
+	return &buildStore{db: db, scope: scope}
 }
 
 // Get retrieves a build by ID. Returns ErrNotFound if the build is not found.
-func (s *buildStore) Get(ctx context.Context, id string) (entity.Build, error) {
+func (s *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retErr error) {
+	op := metrics.Begin(s.scope, "get")
+	defer func() { op.Complete(retErr) }()
+
 	var build entity.Build
 	var speculationPathJSON []byte
 
@@ -47,7 +53,10 @@ func (s *buildStore) Get(ctx context.Context, id string) (entity.Build, error) {
 }
 
 // Create creates a new build. The build must have a unique ID already assigned. Returns ErrAlreadyExists if the build ID already exists.
-func (s *buildStore) Create(ctx context.Context, build entity.Build) error {
+func (s *buildStore) Create(ctx context.Context, build entity.Build) (retErr error) {
+	op := metrics.Begin(s.scope, "create")
+	defer func() { op.Complete(retErr) }()
+
 	speculationPathJSON, err := json.Marshal(build.SpeculationPath)
 	if err != nil {
 		return fmt.Errorf("failed to marshal speculation_path id=%s for Create build entity: %w", build.ID, err)
@@ -69,7 +78,10 @@ func (s *buildStore) Create(ctx context.Context, build entity.Build) error {
 }
 
 // UpdateStatus updates the status of a build. Returns ErrNotFound if the build is not found.
-func (s *buildStore) UpdateStatus(ctx context.Context, id string, newStatus entity.BuildStatus) error {
+func (s *buildStore) UpdateStatus(ctx context.Context, id string, newStatus entity.BuildStatus) (retErr error) {
+	op := metrics.Begin(s.scope, "update_status")
+	defer func() { op.Complete(retErr) }()
+
 	result, err := s.db.ExecContext(ctx,
 		"UPDATE build SET status = ? WHERE id = ?",
 		newStatus, id,

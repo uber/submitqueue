@@ -8,22 +8,28 @@ import (
 	"fmt"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/uber-go/tally/v4"
 
+	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/extension/storage"
 )
 
 type speculationTreeStore struct {
-	db *sql.DB
+	db    *sql.DB
+	scope tally.Scope
 }
 
 // NewSpeculationTreeStore creates a new MySQL-backed SpeculationTreeStore.
-func NewSpeculationTreeStore(db *sql.DB) storage.SpeculationTreeStore {
-	return &speculationTreeStore{db: db}
+func NewSpeculationTreeStore(db *sql.DB, scope tally.Scope) storage.SpeculationTreeStore {
+	return &speculationTreeStore{db: db, scope: scope}
 }
 
 // Get retrieves the speculation tree by batch ID. Returns ErrNotFound if the speculation tree is not found.
-func (s *speculationTreeStore) Get(ctx context.Context, batchID string) (entity.SpeculationTree, error) {
+func (s *speculationTreeStore) Get(ctx context.Context, batchID string) (ret entity.SpeculationTree, retErr error) {
+	op := metrics.Begin(s.scope, "get")
+	defer func() { op.Complete(retErr) }()
+
 	var st entity.SpeculationTree
 	var speculationsJSON []byte
 
@@ -47,7 +53,10 @@ func (s *speculationTreeStore) Get(ctx context.Context, batchID string) (entity.
 }
 
 // Create creates a new speculation tree. Returns ErrAlreadyExists if the entry already exists.
-func (s *speculationTreeStore) Create(ctx context.Context, speculationTree entity.SpeculationTree) error {
+func (s *speculationTreeStore) Create(ctx context.Context, speculationTree entity.SpeculationTree) (retErr error) {
+	op := metrics.Begin(s.scope, "create")
+	defer func() { op.Complete(retErr) }()
+
 	speculationsJSON, err := json.Marshal(speculationTree.Speculations)
 	if err != nil {
 		return fmt.Errorf("failed to marshal speculations batchID=%s for Create speculation tree entity: %w", speculationTree.BatchID, err)
@@ -69,7 +78,10 @@ func (s *speculationTreeStore) Create(ctx context.Context, speculationTree entit
 }
 
 // UpdateSpeculations updates the speculations of a speculation tree. Returns ErrNotFound if the speculation tree is not found.
-func (s *speculationTreeStore) UpdateSpeculations(ctx context.Context, batchID string, speculations []entity.SpeculationInfo) error {
+func (s *speculationTreeStore) UpdateSpeculations(ctx context.Context, batchID string, speculations []entity.SpeculationInfo) (retErr error) {
+	op := metrics.Begin(s.scope, "update_speculations")
+	defer func() { op.Complete(retErr) }()
+
 	speculationsJSON, err := json.Marshal(speculations)
 	if err != nil {
 		return fmt.Errorf("failed to marshal speculations batchID=%s for UpdateSpeculations: %w", batchID, err)

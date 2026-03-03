@@ -8,6 +8,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"github.com/uber-go/tally/v4"
 	mysqlstorage "github.com/uber/submitqueue/extension/storage/mysql"
 	storagesuite "github.com/uber/submitqueue/test/integration/extension/storage"
 	"github.com/uber/submitqueue/test/testutil"
@@ -59,7 +60,7 @@ func (s *MySQLStorageIntegrationSuite) SetupSuite() {
 	s.log.Logf("Schemas applied successfully")
 
 	// Create storage instance using the existing database connection
-	store, err := mysqlstorage.NewStorage(s.db)
+	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
 	require.NoError(t, err, "failed to create storage")
 
 	// Provide the storage instance to the contract suite

@@ -8,22 +8,28 @@ import (
 	"fmt"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/uber-go/tally/v4"
 
+	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/extension/storage"
 )
 
 type batchDependentStore struct {
-	db *sql.DB
+	db    *sql.DB
+	scope tally.Scope
 }
 
 // NewBatchDependentStore creates a new MySQL-backed BatchDependentStore.
-func NewBatchDependentStore(db *sql.DB) storage.BatchDependentStore {
-	return &batchDependentStore{db: db}
+func NewBatchDependentStore(db *sql.DB, scope tally.Scope) storage.BatchDependentStore {
+	return &batchDependentStore{db: db, scope: scope}
 }
 
 // Get retrieves the batch dependent by batch ID. Returns ErrNotFound if the batch dependent is not found.
-func (s *batchDependentStore) Get(ctx context.Context, batchID string) (entity.BatchDependent, error) {
+func (s *batchDependentStore) Get(ctx context.Context, batchID string) (ret entity.BatchDependent, retErr error) {
+	op := metrics.Begin(s.scope, "get")
+	defer func() { op.Complete(retErr) }()
+
 	var bd entity.BatchDependent
 	var dependentsJSON []byte
 
@@ -47,7 +53,10 @@ func (s *batchDependentStore) Get(ctx context.Context, batchID string) (entity.B
 }
 
 // Create creates a new batch dependent. Returns ErrAlreadyExists if the entry already exists.
-func (s *batchDependentStore) Create(ctx context.Context, batchDependent entity.BatchDependent) error {
+func (s *batchDependentStore) Create(ctx context.Context, batchDependent entity.BatchDependent) (retErr error) {
+	op := metrics.Begin(s.scope, "create")
+	defer func() { op.Complete(retErr) }()
+
 	dependentsJSON, err := json.Marshal(batchDependent.Dependents)
 	if err != nil {
 		return fmt.Errorf("failed to marshal dependents batchID=%s for Create batch dependent entity: %w", batchDependent.BatchID, err)
@@ -71,7 +80,10 @@ func (s *batchDependentStore) Create(ctx context.Context, batchDependent entity.
 // UpdateDependents updates the dependents of a batch dependent if the current version matches the expected version.
 // If versions do not match, returns ErrVersionMismatch.
 // The implementation increments the version by 1 atomically with the dependents update.
-func (s *batchDependentStore) UpdateDependents(ctx context.Context, batchID string, version int32, dependents []string) error {
+func (s *batchDependentStore) UpdateDependents(ctx context.Context, batchID string, version int32, dependents []string) (retErr error) {
+	op := metrics.Begin(s.scope, "update_dependents")
+	defer func() { op.Complete(retErr) }()
+
 	dependentsJSON, err := json.Marshal(dependents)
 	if err != nil {
 		return fmt.Errorf("failed to marshal dependents batchID=%s for UpdateDependents batch dependent entity: %w", batchID, err)

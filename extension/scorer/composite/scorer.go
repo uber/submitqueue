@@ -3,6 +3,8 @@ package composite
 import (
 	"context"
 
+	"github.com/uber-go/tally/v4"
+	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/extension/scorer"
 )
@@ -51,12 +53,14 @@ type compositeScorer struct {
 	scorers map[string]scorer.Scorer
 	// reduce combines named scores into a single value.
 	reduce ReduceFunc
+	// scope is the tally scope for emitting metrics.
+	scope tally.Scope
 }
 
 // New creates a composite Scorer that evaluates all named child scorers and combines
 // their results using the given reduce function.
 // Panics if scorers is empty or reduce is nil.
-func New(scorers map[string]scorer.Scorer, reduce ReduceFunc) scorer.Scorer {
+func New(scorers map[string]scorer.Scorer, reduce ReduceFunc, scope tally.Scope) scorer.Scorer {
 	if len(scorers) == 0 {
 		panic("composite.New: scorers must not be empty")
 	}
@@ -66,12 +70,16 @@ func New(scorers map[string]scorer.Scorer, reduce ReduceFunc) scorer.Scorer {
 	return &compositeScorer{
 		scorers: scorers,
 		reduce:  reduce,
+		scope:   scope,
 	}
 }
 
 // Score evaluates all child scorers and combines their results using the reduce function.
 // If any child scorer returns an error, that error is returned immediately.
-func (c *compositeScorer) Score(ctx context.Context, change entity.Change) (float64, error) {
+func (c *compositeScorer) Score(ctx context.Context, change entity.Change) (ret float64, retErr error) {
+	op := metrics.Begin(c.scope, "score")
+	defer func() { op.Complete(retErr) }()
+
 	scores := make(map[string]float64, len(c.scorers))
 	for name, s := range c.scorers {
 		score, err := s.Score(ctx, change)

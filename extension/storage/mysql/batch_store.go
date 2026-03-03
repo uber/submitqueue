@@ -9,22 +9,28 @@ import (
 	"strings"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/uber-go/tally/v4"
 
+	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/extension/storage"
 )
 
 type batchStore struct {
-	db *sql.DB
+	db    *sql.DB
+	scope tally.Scope
 }
 
 // NewBatchStore creates a new MySQL-backed BatchStore.
-func NewBatchStore(db *sql.DB) storage.BatchStore {
-	return &batchStore{db: db}
+func NewBatchStore(db *sql.DB, scope tally.Scope) storage.BatchStore {
+	return &batchStore{db: db, scope: scope}
 }
 
 // Get retrieves a batch by ID. Returns ErrNotFound if the batch is not found.
-func (s *batchStore) Get(ctx context.Context, id string) (entity.Batch, error) {
+func (s *batchStore) Get(ctx context.Context, id string) (ret entity.Batch, retErr error) {
+	op := metrics.Begin(s.scope, "get")
+	defer func() { op.Complete(retErr) }()
+
 	var batch entity.Batch
 	var containsJSON []byte
 	var dependenciesJSON []byte
@@ -53,7 +59,10 @@ func (s *batchStore) Get(ctx context.Context, id string) (entity.Batch, error) {
 }
 
 // Create creates a new batch. The batch must have a unique ID already assigned. Returns ErrAlreadyExists if the batch ID already exists.
-func (s *batchStore) Create(ctx context.Context, batch entity.Batch) error {
+func (s *batchStore) Create(ctx context.Context, batch entity.Batch) (retErr error) {
+	op := metrics.Begin(s.scope, "create")
+	defer func() { op.Complete(retErr) }()
+
 	containsJSON, err := json.Marshal(batch.Contains)
 	if err != nil {
 		return fmt.Errorf("failed to marshal contains=%v id=%s for Create batch entity: %w", batch.Contains, batch.ID, err)
@@ -81,7 +90,10 @@ func (s *batchStore) Create(ctx context.Context, batch entity.Batch) error {
 
 // UpdateState updates the state of a batch if the current version matches the expected version. If versions do not match, returns ErrVersionMismatch.
 // The implementation increments the version by 1 atomically with the state update.
-func (s *batchStore) UpdateState(ctx context.Context, id string, version int32, newState entity.BatchState) error {
+func (s *batchStore) UpdateState(ctx context.Context, id string, version int32, newState entity.BatchState) (retErr error) {
+	op := metrics.Begin(s.scope, "update_state")
+	defer func() { op.Complete(retErr) }()
+
 	result, err := s.db.ExecContext(ctx,
 		"UPDATE batch SET state = ?, version = version + 1 WHERE id = ? AND version = ?",
 		newState, id, version,
@@ -112,7 +124,10 @@ func (s *batchStore) UpdateState(ctx context.Context, id string, version int32, 
 }
 
 // GetByQueueAndStates retrieves all batches that belong to the given queue and are in the given states.
-func (s *batchStore) GetByQueueAndStates(ctx context.Context, queue string, states []entity.BatchState) ([]entity.Batch, error) {
+func (s *batchStore) GetByQueueAndStates(ctx context.Context, queue string, states []entity.BatchState) (ret []entity.Batch, retErr error) {
+	op := metrics.Begin(s.scope, "get_by_queue_and_states")
+	defer func() { op.Complete(retErr) }()
+
 	if len(states) == 0 {
 		return nil, nil
 	}

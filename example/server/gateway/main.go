@@ -102,7 +102,7 @@ func run() error {
 	defer appDB.Close()
 
 	// Initialize counter from shared app database connection
-	cnt := mysqlcounter.NewCounter(appDB)
+	cnt := mysqlcounter.NewCounter(appDB, scope.SubScope("counter"))
 
 	// Open queue database connection
 	queueDSN := os.Getenv("QUEUE_MYSQL_DSN")

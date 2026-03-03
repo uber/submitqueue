@@ -8,22 +8,28 @@ import (
 	"fmt"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/uber-go/tally/v4"
 
+	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/extension/storage"
 )
 
 type requestStore struct {
-	db *sql.DB
+	db    *sql.DB
+	scope tally.Scope
 }
 
 // NewRequestStore creates a new MySQL-backed RequestStore.
-func NewRequestStore(db *sql.DB) storage.RequestStore {
-	return &requestStore{db: db}
+func NewRequestStore(db *sql.DB, scope tally.Scope) storage.RequestStore {
+	return &requestStore{db: db, scope: scope}
 }
 
 // Get retrieves a land request by ID. Returns ErrNotFound if the request is not found.
-func (r *requestStore) Get(ctx context.Context, id string) (entity.Request, error) {
+func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, retErr error) {
+	op := metrics.Begin(r.scope, "get")
+	defer func() { op.Complete(retErr) }()
+
 	var req entity.Request
 	var changeURIsJSON []byte
 
@@ -48,7 +54,10 @@ func (r *requestStore) Get(ctx context.Context, id string) (entity.Request, erro
 }
 
 // Create creates a new land request. The request must have a unique ID already assigned. Returns ErrAlreadyExists if the request ID already exists.
-func (r *requestStore) Create(ctx context.Context, request entity.Request) error {
+func (r *requestStore) Create(ctx context.Context, request entity.Request) (retErr error) {
+	op := metrics.Begin(r.scope, "create")
+	defer func() { op.Complete(retErr) }()
+
 	// Marshal the change URIs to JSON
 	changeURIsJSON, err := json.Marshal(request.Change.URIs)
 	if err != nil {
@@ -74,7 +83,10 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) error
 
 // UpdateState updates the state of a land request if the current version matches the expected version. If versions do not match, returns ErrVersionMismatch.
 // The implementation increments the version by 1 atomically with the state update.
-func (r *requestStore) UpdateState(ctx context.Context, id string, version int32, newState entity.RequestState) error {
+func (r *requestStore) UpdateState(ctx context.Context, id string, version int32, newState entity.RequestState) (retErr error) {
+	op := metrics.Begin(r.scope, "update_state")
+	defer func() { op.Complete(retErr) }()
+
 	result, err := r.db.ExecContext(ctx,
 		"UPDATE request SET state = ?, version = version + 1 WHERE id = ? AND version = ?",
 		newState, id, version,

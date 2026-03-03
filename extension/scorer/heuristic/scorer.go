@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/uber-go/tally/v4"
+	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/extension/scorer"
 )
@@ -28,23 +30,28 @@ type heuristicScorer struct {
 	buckets []Bucket
 	// valueFunc extracts the numeric value from a Change.
 	valueFunc ValueFunc
+	// scope is the tally scope for emitting metrics.
+	scope tally.Scope
 }
 
 // New creates a new heuristic Scorer with the given buckets and value function.
 // Panics if valueFunc is nil.
-func New(buckets []Bucket, valueFunc ValueFunc) scorer.Scorer {
+func New(buckets []Bucket, valueFunc ValueFunc, scope tally.Scope) scorer.Scorer {
 	if valueFunc == nil {
 		panic("heuristic.New: valueFunc must not be nil")
 	}
 	return &heuristicScorer{
 		buckets:   buckets,
 		valueFunc: valueFunc,
+		scope:     scope,
 	}
 }
 
 // Score extracts the value from the change, then returns the probability score for the first
 // bucket whose range [Min, Max] contains the value. Returns an error if no bucket matches.
-func (s *heuristicScorer) Score(ctx context.Context, change entity.Change) (float64, error) {
+func (s *heuristicScorer) Score(ctx context.Context, change entity.Change) (ret float64, retErr error) {
+	op := metrics.Begin(s.scope, "score")
+	defer func() { op.Complete(retErr) }()
 	value, err := s.valueFunc(ctx, change)
 	if err != nil {
 		return 0, err

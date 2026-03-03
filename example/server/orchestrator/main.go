@@ -112,9 +112,9 @@ func run() error {
 	}
 	defer appDB.Close()
 
-	cnt := mysqlcounter.NewCounter(appDB)
+	cnt := mysqlcounter.NewCounter(appDB, scope.SubScope("counter"))
 
-	store, err := mysqlstorage.NewStorage(appDB)
+	store, err := mysqlstorage.NewStorage(appDB, scope.SubScope("storage"))
 	if err != nil {
 		return fmt.Errorf("failed to create storage: %w", err)
 	}

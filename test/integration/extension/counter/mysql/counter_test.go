@@ -8,6 +8,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"github.com/uber-go/tally/v4"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	countersuite "github.com/uber/submitqueue/test/integration/extension/counter"
 	"github.com/uber/submitqueue/test/testutil"
@@ -59,7 +60,7 @@ func (s *MySQLCounterIntegrationSuite) SetupSuite() {
 	s.log.Logf("Schemas applied successfully")
 
 	// Create counter instance
-	cnt := mysqlcounter.NewCounter(s.db)
+	cnt := mysqlcounter.NewCounter(s.db, tally.NoopScope)
 
 	// Provide the counter instance to the contract suite
 	s.SetContext(ctx)
