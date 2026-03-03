@@ -15,20 +15,6 @@ import (
 	"github.com/uber/submitqueue/extension/changeprovider"
 )
 
-// Params holds the dependencies for the GitHub ChangeProvider.
-type Params struct {
-	// HTTPClient is a pre-configured HTTP client with auth (bearer token, GitHub App JWT, etc.).
-	// Auth is the caller's responsibility via HTTP transport/round-tripper.
-	HTTPClient *http.Client
-	// GraphQLURL is the GitHub GraphQL API endpoint
-	// (e.g., "https://api.github.com/graphql" or "https://ghe.example.com/api/graphql").
-	GraphQLURL string
-	// Logger is the structured logger.
-	Logger *zap.SugaredLogger
-	// MetricsScope is the metrics scope for instrumentation.
-	MetricsScope tally.Scope
-}
-
 // provider implements the ChangeProvider interface for GitHub.
 type provider struct {
 	httpClient *http.Client
@@ -37,14 +23,67 @@ type provider struct {
 	metrics    tally.Scope
 }
 
-// NewProvider creates a new GitHub ChangeProvider.
-func NewProvider(params Params) changeprovider.ChangeProvider {
-	return &provider{
-		httpClient: params.HTTPClient,
-		graphQLURL: params.GraphQLURL,
-		logger:     params.Logger.Named("github_changeprovider"),
-		metrics:    params.MetricsScope.SubScope("github_changeprovider"),
+// NewProvider creates a new GitHub ChangeProvider from configuration.
+func NewProvider(config Config, logger *zap.SugaredLogger, metrics tally.Scope) changeprovider.ChangeProvider {
+	if err := config.Validate(); err != nil {
+		panic(fmt.Sprintf("invalid GitHub config: %v", err))
 	}
+
+	// Derive GraphQL URL from base URL
+	graphQLURL := config.BaseURL + "/graphql"
+
+	// Use provided client or create default
+	httpClient := config.HTTPClient
+	if httpClient == nil {
+		timeout := config.Timeout
+		if timeout <= 0 {
+			timeout = DefaultTimeout
+		}
+		httpClient = createDefaultClient(config.Token, timeout)
+	}
+
+	return &provider{
+		httpClient: httpClient,
+		graphQLURL: graphQLURL,
+		logger:     logger.Named("github_changeprovider"),
+		metrics:    metrics.SubScope("github_changeprovider"),
+	}
+}
+
+// createDefaultClient creates an HTTP client with the given token and timeout.
+func createDefaultClient(token string, timeout time.Duration) *http.Client {
+	transport := createTransport(token)
+
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
+	}
+}
+
+// createTransport creates an HTTP transport with optional bearer token authentication.
+func createTransport(token string) http.RoundTripper {
+	base := http.DefaultTransport
+
+	if token == "" {
+		return base
+	}
+
+	return &bearerTransport{
+		token: token,
+		base:  base,
+	}
+}
+
+// bearerTransport is an http.RoundTripper that adds a Bearer token to requests.
+type bearerTransport struct {
+	token string
+	base  http.RoundTripper
+}
+
+func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Header.Set("Authorization", "Bearer "+t.token)
+	return t.base.RoundTrip(req)
 }
 
 // Get retrieves change information from GitHub for the provided Change.

@@ -531,25 +531,10 @@ func newMergeChecker(logger *zap.Logger, scope tally.Scope) mergechecker.MergeCh
 }
 
 // newChangeProvider creates a ChangeProvider for GitHub (github.com).
-// Configured via GITHUB_TOKEN and GITHUB_GRAPHQL_URL environment variables.
-// Reuses the same HTTP client configuration as the mergechecker.
+// Configured via GITHUB_BASE_URL and GITHUB_TOKEN environment variables.
 func newChangeProvider(logger *zap.Logger, scope tally.Scope) changeprovider.ChangeProvider {
-	graphQLURL := os.Getenv("GITHUB_GRAPHQL_URL")
-	if graphQLURL == "" {
-		graphQLURL = "https://api.github.com/graphql"
-	}
-
-	httpClient := &http.Client{}
-	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
-		httpClient.Transport = &bearerTransport{token: token}
-	}
-
-	return githubprovider.NewProvider(githubprovider.Params{
-		HTTPClient:   httpClient,
-		GraphQLURL:   graphQLURL,
-		Logger:       logger.Sugar(),
-		MetricsScope: scope.SubScope("changeprovider"),
-	})
+	config := githubprovider.DefaultConfig()
+	return githubprovider.NewProvider(config, logger.Sugar(), scope.SubScope("changeprovider"))
 }
 
 // bearerTransport is an http.RoundTripper that adds a Bearer token to requests.
