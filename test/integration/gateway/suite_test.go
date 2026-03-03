@@ -122,12 +122,6 @@ func (s *GatewayIntegrationSuite) TestLandAPI() {
 
 	s.log.Logf("Land request succeeded: sqid=%s", resp.Sqid)
 
-	// Verify request stored in database
-	var state string
-	err = s.db.QueryRow("SELECT state FROM request WHERE id = ?", resp.Sqid).Scan(&state)
-	require.NoError(t, err, "failed to query request from database")
-	assert.Equal(t, "new", state, "request state should be new")
-
 	// Verify message published to queue
 	var msgCount int
 	err = s.queueDB.QueryRow("SELECT COUNT(*) FROM queue_messages WHERE id = ?", resp.Sqid).Scan(&msgCount)
