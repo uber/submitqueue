@@ -314,6 +314,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	requestController := request.NewController(
 		logger,
 		scope,
+		store,
 		registry,
 		consumer.TopicKeyRequest,
 		"orchestrator-request",
