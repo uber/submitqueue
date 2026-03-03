@@ -15,7 +15,6 @@ import (
 	"github.com/uber-go/tally/v4"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
-	"github.com/uber/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/gateway/controller"
 	pb "github.com/uber/submitqueue/gateway/protopb"
 	"go.uber.org/zap"
@@ -102,11 +101,7 @@ func run() error {
 	}
 	defer appDB.Close()
 
-	// Initialize storage and counter from shared app database connection
-	store, err := mysql.NewStorage(appDB)
-	if err != nil {
-		return fmt.Errorf("failed to create storage: %w", err)
-	}
+	// Initialize counter from shared app database connection
 	cnt := mysqlcounter.NewCounter(appDB)
 
 	// Open queue database connection
@@ -141,7 +136,7 @@ func run() error {
 
 	// Create controllers and wrap them for gRPC
 	pingController := controller.NewPingController(logger, scope)
-	landController := controller.NewLandController(logger.Sugar(), scope, store, cnt, mysqlQueue.Publisher(), "request")
+	landController := controller.NewLandController(logger.Sugar(), scope, cnt, mysqlQueue.Publisher(), "request")
 	gatewayServer := &GatewayServer{
 		pingController: pingController,
 		landController: landController,

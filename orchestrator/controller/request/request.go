@@ -2,6 +2,7 @@ package request
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/uber-go/tally/v4"
@@ -9,15 +10,17 @@ import (
 	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
+	"github.com/uber/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
 
 // Controller handles request queue messages.
-// It consumes requests and publishes to the validate stage.
+// It consumes requests, persists them to storage, and publishes to the validate stage.
 // Implements consumer.Controller interface for integration with the consumer.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
+	store         storage.Storage
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -30,6 +33,7 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
+	store storage.Storage,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -37,6 +41,7 @@ func NewController(
 	return &Controller{
 		logger:        logger.Named("request_controller"),
 		metricsScope:  scope.SubScope("request_controller"),
+		store:         store,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -76,6 +81,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"attempt", delivery.Attempt(),
 		"partition_key", msg.PartitionKey,
 	)
+
+	// Persist request to storage (idempotent — ErrAlreadyExists means a retry)
+	if err := c.store.GetRequestStore().Create(ctx, request); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+		c.logger.Errorw("failed to create request in storage",
+			"request_id", request.ID,
+			"error", err,
+		)
+		c.metricsScope.Counter("storage_errors").Inc(1)
+		return errs.NewRetryableError(fmt.Errorf("failed to create request: %w", err))
+	}
 
 	// Publish to validate topic
 	if err := c.publish(ctx, consumer.TopicKeyValidate, request); err != nil {
