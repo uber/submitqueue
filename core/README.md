@@ -5,3 +5,5 @@ Shared infrastructure packages reused across services. These are internal buildi
 ## Packages
 
 - **consumer/** — Queue message consumption framework. Manages subscription lifecycle, message routing to controllers, automatic ack/nack, error classification (retryable vs. poison pill), and graceful shutdown. Services register `Controller` implementations and the consumer handles the rest.
+- **errs/** — Error classification framework. Classifies errors by origin (user vs. infra) and retryability. Extensions return plain errors; service controllers classify them.
+- **metrics/** — Metrics utility helpers for `tally.Scope`. Provides standardized counters, timers, and histograms with error-aware tagging via `core/errs` integration.
