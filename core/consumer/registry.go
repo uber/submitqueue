@@ -32,6 +32,8 @@ const (
 	TopicKeyMerge TopicKey = "merge"
 	// TopicKeyConclude is the pipeline stage where merged requests are published for conclusion.
 	TopicKeyConclude TopicKey = "conclude"
+	// TopicKeyCancel is the pipeline stage where cancellation requests are published for processing.
+	TopicKeyCancel TopicKey = "cancel"
 )
 
 // String returns the topic key as a string.

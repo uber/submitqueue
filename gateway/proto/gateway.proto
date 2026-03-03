@@ -73,6 +73,18 @@ message LandResponse {
     string sqid = 1;
 }
 
+// CancelRequest defines a request to cancel a previously submitted land request.
+message CancelRequest {
+    // Globally unique identifier for the land request to cancel, as returned by Land.
+    string sqid = 1;
+}
+
+// CancelResponse defines the response to a cancel request.
+message CancelResponse {
+    // Globally unique identifier for the land request that was cancelled.
+    string sqid = 1;
+}
+
 // ***************
 // Error messages, returned as `google.rpc.Status` messages.
 // ***************
@@ -103,4 +115,8 @@ service SubmitQueueGateway {
     // Land lands a set of code changes into a target branch, performing the necessary validations across all other changes in the queue.
     // The processing is asynchronous and returns a LandResponse immediately. The land request is processed in the background.
     rpc Land(LandRequest) returns (LandResponse) {}
+
+    // Cancel cancels a previously submitted land request. The cancellation is asynchronous and
+    // published to a queue for processing. No validation is performed on whether the request exists.
+    rpc Cancel(CancelRequest) returns (CancelResponse) {}
 }

@@ -19,8 +19,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SubmitQueueGateway_Ping_FullMethodName = "/uber.devexp.submitqueue.gateway.SubmitQueueGateway/Ping"
-	SubmitQueueGateway_Land_FullMethodName = "/uber.devexp.submitqueue.gateway.SubmitQueueGateway/Land"
+	SubmitQueueGateway_Ping_FullMethodName   = "/uber.devexp.submitqueue.gateway.SubmitQueueGateway/Ping"
+	SubmitQueueGateway_Land_FullMethodName   = "/uber.devexp.submitqueue.gateway.SubmitQueueGateway/Land"
+	SubmitQueueGateway_Cancel_FullMethodName = "/uber.devexp.submitqueue.gateway.SubmitQueueGateway/Cancel"
 )
 
 // SubmitQueueGatewayClient is the client API for SubmitQueueGateway service.
@@ -34,6 +35,9 @@ type SubmitQueueGatewayClient interface {
 	// Land lands a set of code changes into a target branch, performing the necessary validations across all other changes in the queue.
 	// The processing is asynchronous and returns a LandResponse immediately. The land request is processed in the background.
 	Land(ctx context.Context, in *LandRequest, opts ...grpc.CallOption) (*LandResponse, error)
+	// Cancel cancels a previously submitted land request. The cancellation is asynchronous and
+	// published to a queue for processing. No validation is performed on whether the request exists.
+	Cancel(ctx context.Context, in *CancelRequest, opts ...grpc.CallOption) (*CancelResponse, error)
 }
 
 type submitQueueGatewayClient struct {
@@ -64,6 +68,16 @@ func (c *submitQueueGatewayClient) Land(ctx context.Context, in *LandRequest, op
 	return out, nil
 }
 
+func (c *submitQueueGatewayClient) Cancel(ctx context.Context, in *CancelRequest, opts ...grpc.CallOption) (*CancelResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CancelResponse)
+	err := c.cc.Invoke(ctx, SubmitQueueGateway_Cancel_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SubmitQueueGatewayServer is the server API for SubmitQueueGateway service.
 // All implementations must embed UnimplementedSubmitQueueGatewayServer
 // for forward compatibility.
@@ -75,6 +89,9 @@ type SubmitQueueGatewayServer interface {
 	// Land lands a set of code changes into a target branch, performing the necessary validations across all other changes in the queue.
 	// The processing is asynchronous and returns a LandResponse immediately. The land request is processed in the background.
 	Land(context.Context, *LandRequest) (*LandResponse, error)
+	// Cancel cancels a previously submitted land request. The cancellation is asynchronous and
+	// published to a queue for processing. No validation is performed on whether the request exists.
+	Cancel(context.Context, *CancelRequest) (*CancelResponse, error)
 	mustEmbedUnimplementedSubmitQueueGatewayServer()
 }
 
@@ -90,6 +107,9 @@ func (UnimplementedSubmitQueueGatewayServer) Ping(context.Context, *PingRequest)
 }
 func (UnimplementedSubmitQueueGatewayServer) Land(context.Context, *LandRequest) (*LandResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Land not implemented")
+}
+func (UnimplementedSubmitQueueGatewayServer) Cancel(context.Context, *CancelRequest) (*CancelResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Cancel not implemented")
 }
 func (UnimplementedSubmitQueueGatewayServer) mustEmbedUnimplementedSubmitQueueGatewayServer() {}
 func (UnimplementedSubmitQueueGatewayServer) testEmbeddedByValue()                            {}
@@ -148,6 +168,24 @@ func _SubmitQueueGateway_Land_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SubmitQueueGateway_Cancel_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SubmitQueueGatewayServer).Cancel(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SubmitQueueGateway_Cancel_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SubmitQueueGatewayServer).Cancel(ctx, req.(*CancelRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SubmitQueueGateway_ServiceDesc is the grpc.ServiceDesc for SubmitQueueGateway service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -162,6 +200,10 @@ var SubmitQueueGateway_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Land",
 			Handler:    _SubmitQueueGateway_Land_Handler,
+		},
+		{
+			MethodName: "Cancel",
+			Handler:    _SubmitQueueGateway_Cancel_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

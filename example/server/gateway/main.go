@@ -25,8 +25,9 @@ import (
 // GatewayServer wraps the controller and implements the gRPC service interface
 type GatewayServer struct {
 	pb.UnimplementedSubmitQueueGatewayServer
-	pingController *controller.PingController
-	landController *controller.LandController
+	pingController   *controller.PingController
+	landController   *controller.LandController
+	cancelController *controller.CancelController
 }
 
 // Ping delegates to the controller
@@ -37,6 +38,11 @@ func (s *GatewayServer) Ping(ctx context.Context, req *pb.PingRequest) (*pb.Ping
 // Land delegates to the controller
 func (s *GatewayServer) Land(ctx context.Context, req *pb.LandRequest) (*pb.LandResponse, error) {
 	return s.landController.Land(ctx, req)
+}
+
+// Cancel delegates to the controller
+func (s *GatewayServer) Cancel(ctx context.Context, req *pb.CancelRequest) (*pb.CancelResponse, error) {
+	return s.cancelController.Cancel(ctx, req)
 }
 
 func main() {
@@ -137,9 +143,12 @@ func run() error {
 	// Create controllers and wrap them for gRPC
 	pingController := controller.NewPingController(logger, scope)
 	landController := controller.NewLandController(logger.Sugar(), scope, cnt, mysqlQueue.Publisher(), "request")
+	cancelController := controller.NewCancelController(logger.Sugar(), scope, mysqlQueue.Publisher(), "cancel")
+
 	gatewayServer := &GatewayServer{
-		pingController: pingController,
-		landController: landController,
+		pingController:   pingController,
+		landController:   landController,
+		cancelController: cancelController,
 	}
 
 	pb.RegisterSubmitQueueGatewayServer(grpcServer, gatewayServer)
