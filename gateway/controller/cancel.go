@@ -44,6 +44,8 @@ func (c *CancelController) Cancel(ctx context.Context, req *pb.CancelRequest) (*
 
 	sqid := req.Sqid
 
+	// TODO: Insert the request to the event store
+
 	if err := c.publishToQueue(ctx, sqid); err != nil {
 		c.logger.Errorw("failed to publish cancel request to queue",
 			"sqid", sqid,
