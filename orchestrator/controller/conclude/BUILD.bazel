@@ -7,7 +7,9 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//core/consumer",
+        "//core/errs",
         "//entity",
+        "//extension/storage",
         "@com_github_uber_go_tally_v4//:tally",
         "@org_uber_go_zap//:zap",
     ],
@@ -23,6 +25,8 @@ go_test(
         "//entity",
         "//entity/queue",
         "//extension/queue/mock",
+        "//extension/storage",
+        "//extension/storage/mock",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_uber_go_tally_v4//:tally",
