@@ -6,6 +6,7 @@ go_library(
         "batch.go",
         "batch_dependent.go",
         "build.go",
+        "cancel.go",
         "change_provider.go",
         "queue_config.go",
         "request.go",
@@ -20,6 +21,7 @@ go_test(
     srcs = [
         "batch_test.go",
         "build_test.go",
+        "cancel_test.go",
         "request_test.go",
     ],
     embed = [":entity"],

@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally/v4"
+	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
 	queuemock "github.com/uber/submitqueue/extension/queue/mock"
 	pb "github.com/uber/submitqueue/gateway/protopb"
@@ -21,6 +22,21 @@ func TestNewCancelController(t *testing.T) {
 	require.NotNil(t, controller)
 }
 
+func TestCancel_ReturnsErrorOnEmptySqid(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, noopPublisher(ctrl), "cancel")
+	ctx := context.Background()
+
+	req := &pb.CancelRequest{Sqid: ""}
+	resp, err := controller.Cancel(ctx, req)
+
+	require.NoError(t, err)
+	assert.Empty(t, resp.Sqid)
+	assert.Equal(t, pb.RequestStatus_UNKNOWN, resp.CurrentStatus)
+	require.NotNil(t, resp.Error)
+	assert.Equal(t, "sqid is required", resp.Error.Message)
+}
+
 func TestCancel_ReturnsSqid(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, noopPublisher(ctrl), "cancel")
@@ -31,6 +47,7 @@ func TestCancel_ReturnsSqid(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "test-queue/123", resp.Sqid)
+	assert.Equal(t, pb.RequestStatus_CANCELLATION_ACCEPTED, resp.CurrentStatus)
 }
 
 func TestCancel_PublishesToQueue(t *testing.T) {
@@ -55,12 +72,17 @@ func TestCancel_PublishesToQueue(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "my-queue/42", resp.Sqid)
+	assert.Equal(t, pb.RequestStatus_CANCELLATION_ACCEPTED, resp.CurrentStatus)
 
 	// Verify message was published to the cancel topic
 	assert.Equal(t, "cancel", publishedTopic)
 	assert.Equal(t, "my-queue/42", publishedMessage.ID)
 	assert.Equal(t, "my-queue/42", publishedMessage.PartitionKey)
-	assert.Equal(t, []byte("my-queue/42"), publishedMessage.Payload)
+
+	// Verify payload is a serialized Cancel entity
+	cancel, err := entity.CancelFromBytes(publishedMessage.Payload)
+	require.NoError(t, err)
+	assert.Equal(t, "my-queue/42", cancel.Sqid)
 }
 
 func TestCancel_ReturnsErrorOnPublishFailure(t *testing.T) {

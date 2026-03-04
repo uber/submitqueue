@@ -6,6 +6,7 @@ import (
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/metrics"
+	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
 	extqueue "github.com/uber/submitqueue/extension/queue"
 	pb "github.com/uber/submitqueue/gateway/protopb"
@@ -40,9 +41,25 @@ func (c *CancelController) Cancel(ctx context.Context, req *pb.CancelRequest) (r
 
 	sqid := req.Sqid
 
-	// TODO: Insert the request to the event store
+	if sqid == "" {
+		return &pb.CancelResponse{
+			Error: &pb.Error{Message: "sqid is required"},
+		}, nil
+	}
 
-	if err := c.publishToQueue(ctx, sqid); err != nil {
+	// TODO -
+	// Look up event store to see if sqid exists -
+	//  - if found and request is already in a terminal state; return cancellation failed with appropriate
+	//    error message.
+	//  - if found and request is not in a terminal state; publish a cancel entity onto the cancel topic
+	//    to be picked up by the orchestrator.
+	//  - if not found; publish a cancel entity onto the cancel topic
+	//    to be picked up by the orchestrator.
+	cancel := entity.Cancel{
+		Sqid: sqid,
+	}
+
+	if err := c.publishToQueue(ctx, cancel); err != nil {
 		c.logger.Errorw("failed to publish cancel request to queue",
 			"sqid", sqid,
 			"error", err,
@@ -56,19 +73,23 @@ func (c *CancelController) Cancel(ctx context.Context, req *pb.CancelRequest) (r
 	)
 
 	return &pb.CancelResponse{
-		Sqid: sqid,
+		Sqid:          sqid,
+		CurrentStatus: pb.RequestStatus_CANCELLATION_ACCEPTED,
 	}, nil
 }
 
-// publishToQueue publishes a cancel request to the cancel queue for async processing.
-func (c *CancelController) publishToQueue(ctx context.Context, sqid string) error {
-	payload := []byte(sqid)
+// publishToQueue publishes a cancel entity to the cancel queue for async processing.
+func (c *CancelController) publishToQueue(ctx context.Context, cancel entity.Cancel) error {
+	payload, err := cancel.ToBytes()
+	if err != nil {
+		return fmt.Errorf("failed to serialize cancel entity: %w", err)
+	}
 
 	// Create queue message
 	// - Message ID: sqid for idempotency
-	// - Payload: sqid as bytes
-	// - Partition key: sqid (ensures ordering per request)
-	msg := queue.NewMessage(sqid, payload, sqid, nil)
+	// - Payload: serialized Cancel entity
+	// - Partition key: empty (no inherent ordering for cancel requests)
+	msg := queue.NewMessage(cancel.Sqid, payload, "", nil)
 
 	if err := c.publisher.Publish(ctx, c.topic, msg); err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)

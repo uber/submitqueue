@@ -78,6 +78,75 @@ func (Strategy) EnumDescriptor() ([]byte, []int) {
 	return file_gateway_proto_rawDescGZIP(), []int{0}
 }
 
+// RequestStatus defines the possible states of a land request.
+type RequestStatus int32
+
+const (
+	// Unknown status. Should never be seen in the system.
+	RequestStatus_UNKNOWN RequestStatus = 0
+	// Initial state of a land request. Confirmed by the system but processing has not started.
+	RequestStatus_NEW RequestStatus = 1
+	// The request has been validated (duplicate check, merge check etc.) successfully.
+	RequestStatus_VALIDATED RequestStatus = 2
+	// The request is being processed.
+	RequestStatus_PROCESSING RequestStatus = 3
+	// The request has been successfully processed and landed. Terminal state.
+	RequestStatus_LANDED RequestStatus = 4
+	// The cancellation request has been accepted and is being processed.
+	RequestStatus_CANCELLATION_ACCEPTED RequestStatus = 5
+	// The request has been cancelled. Terminal state.
+	RequestStatus_CANCELLED RequestStatus = 6
+)
+
+// Enum value maps for RequestStatus.
+var (
+	RequestStatus_name = map[int32]string{
+		0: "UNKNOWN",
+		1: "NEW",
+		2: "VALIDATED",
+		3: "PROCESSING",
+		4: "LANDED",
+		5: "CANCELLATION_ACCEPTED",
+		6: "CANCELLED",
+	}
+	RequestStatus_value = map[string]int32{
+		"UNKNOWN":               0,
+		"NEW":                   1,
+		"VALIDATED":             2,
+		"PROCESSING":            3,
+		"LANDED":                4,
+		"CANCELLATION_ACCEPTED": 5,
+		"CANCELLED":             6,
+	}
+)
+
+func (x RequestStatus) Enum() *RequestStatus {
+	p := new(RequestStatus)
+	*p = x
+	return p
+}
+
+func (x RequestStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (RequestStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_gateway_proto_enumTypes[1].Descriptor()
+}
+
+func (RequestStatus) Type() protoreflect.EnumType {
+	return &file_gateway_proto_enumTypes[1]
+}
+
+func (x RequestStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use RequestStatus.Descriptor instead.
+func (RequestStatus) EnumDescriptor() ([]byte, []int) {
+	return file_gateway_proto_rawDescGZIP(), []int{1}
+}
+
 // PingRequest is the request for the Ping method
 type PingRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -414,7 +483,11 @@ func (x *CancelRequest) GetSqid() string {
 type CancelResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Globally unique identifier for the land request that was cancelled.
-	Sqid          string `protobuf:"bytes,1,opt,name=sqid,proto3" json:"sqid,omitempty"`
+	Sqid string `protobuf:"bytes,1,opt,name=sqid,proto3" json:"sqid,omitempty"`
+	// Current status of the land request at the time of cancellation.
+	CurrentStatus RequestStatus `protobuf:"varint,2,opt,name=current_status,json=currentStatus,proto3,enum=uber.devexp.submitqueue.gateway.RequestStatus" json:"current_status,omitempty"`
+	// Optional error describing why the cancellation could not be completed.
+	Error         *Error `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -454,6 +527,20 @@ func (x *CancelResponse) GetSqid() string {
 		return x.Sqid
 	}
 	return ""
+}
+
+func (x *CancelResponse) GetCurrentStatus() RequestStatus {
+	if x != nil {
+		return x.CurrentStatus
+	}
+	return RequestStatus_UNKNOWN
+}
+
+func (x *CancelResponse) GetError() *Error {
+	if x != nil {
+		return x.Error
+	}
+	return nil
 }
 
 // Generic error with metadata. Each custom error type should extend this message.
@@ -578,9 +665,11 @@ const file_gateway_proto_rawDesc = "" +
 	"\fLandResponse\x12\x12\n" +
 	"\x04sqid\x18\x01 \x01(\tR\x04sqid\"#\n" +
 	"\rCancelRequest\x12\x12\n" +
-	"\x04sqid\x18\x01 \x01(\tR\x04sqid\"$\n" +
+	"\x04sqid\x18\x01 \x01(\tR\x04sqid\"\xb9\x01\n" +
 	"\x0eCancelResponse\x12\x12\n" +
-	"\x04sqid\x18\x01 \x01(\tR\x04sqid\"!\n" +
+	"\x04sqid\x18\x01 \x01(\tR\x04sqid\x12U\n" +
+	"\x0ecurrent_status\x18\x02 \x01(\x0e2..uber.devexp.submitqueue.gateway.RequestStatusR\rcurrentStatus\x12<\n" +
+	"\x05error\x18\x03 \x01(\v2&.uber.devexp.submitqueue.gateway.ErrorR\x05error\"!\n" +
 	"\x05Error\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"l\n" +
 	"\x16UnrecognizedQueueError\x12<\n" +
@@ -591,7 +680,17 @@ const file_gateway_proto_rawDesc = "" +
 	"\n" +
 	"\x06REBASE\x10\x01\x12\x11\n" +
 	"\rSQUASH_REBASE\x10\x02\x12\t\n" +
-	"\x05MERGE\x10\x032\xcf\x02\n" +
+	"\x05MERGE\x10\x03*z\n" +
+	"\rRequestStatus\x12\v\n" +
+	"\aUNKNOWN\x10\x00\x12\a\n" +
+	"\x03NEW\x10\x01\x12\r\n" +
+	"\tVALIDATED\x10\x02\x12\x0e\n" +
+	"\n" +
+	"PROCESSING\x10\x03\x12\n" +
+	"\n" +
+	"\x06LANDED\x10\x04\x12\x19\n" +
+	"\x15CANCELLATION_ACCEPTED\x10\x05\x12\r\n" +
+	"\tCANCELLED\x10\x062\xcf\x02\n" +
 	"\x12SubmitQueueGateway\x12e\n" +
 	"\x04Ping\x12,.uber.devexp.submitqueue.gateway.PingRequest\x1a-.uber.devexp.submitqueue.gateway.PingResponse\"\x00\x12e\n" +
 	"\x04Land\x12,.uber.devexp.submitqueue.gateway.LandRequest\x1a-.uber.devexp.submitqueue.gateway.LandResponse\"\x00\x12k\n" +
@@ -610,35 +709,38 @@ func file_gateway_proto_rawDescGZIP() []byte {
 	return file_gateway_proto_rawDescData
 }
 
-var file_gateway_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_gateway_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_gateway_proto_goTypes = []any{
 	(Strategy)(0),                  // 0: uber.devexp.submitqueue.gateway.Strategy
-	(*PingRequest)(nil),            // 1: uber.devexp.submitqueue.gateway.PingRequest
-	(*PingResponse)(nil),           // 2: uber.devexp.submitqueue.gateway.PingResponse
-	(*Change)(nil),                 // 3: uber.devexp.submitqueue.gateway.Change
-	(*LandRequest)(nil),            // 4: uber.devexp.submitqueue.gateway.LandRequest
-	(*LandResponse)(nil),           // 5: uber.devexp.submitqueue.gateway.LandResponse
-	(*CancelRequest)(nil),          // 6: uber.devexp.submitqueue.gateway.CancelRequest
-	(*CancelResponse)(nil),         // 7: uber.devexp.submitqueue.gateway.CancelResponse
-	(*Error)(nil),                  // 8: uber.devexp.submitqueue.gateway.Error
-	(*UnrecognizedQueueError)(nil), // 9: uber.devexp.submitqueue.gateway.UnrecognizedQueueError
+	(RequestStatus)(0),             // 1: uber.devexp.submitqueue.gateway.RequestStatus
+	(*PingRequest)(nil),            // 2: uber.devexp.submitqueue.gateway.PingRequest
+	(*PingResponse)(nil),           // 3: uber.devexp.submitqueue.gateway.PingResponse
+	(*Change)(nil),                 // 4: uber.devexp.submitqueue.gateway.Change
+	(*LandRequest)(nil),            // 5: uber.devexp.submitqueue.gateway.LandRequest
+	(*LandResponse)(nil),           // 6: uber.devexp.submitqueue.gateway.LandResponse
+	(*CancelRequest)(nil),          // 7: uber.devexp.submitqueue.gateway.CancelRequest
+	(*CancelResponse)(nil),         // 8: uber.devexp.submitqueue.gateway.CancelResponse
+	(*Error)(nil),                  // 9: uber.devexp.submitqueue.gateway.Error
+	(*UnrecognizedQueueError)(nil), // 10: uber.devexp.submitqueue.gateway.UnrecognizedQueueError
 }
 var file_gateway_proto_depIdxs = []int32{
-	3, // 0: uber.devexp.submitqueue.gateway.LandRequest.change:type_name -> uber.devexp.submitqueue.gateway.Change
+	4, // 0: uber.devexp.submitqueue.gateway.LandRequest.change:type_name -> uber.devexp.submitqueue.gateway.Change
 	0, // 1: uber.devexp.submitqueue.gateway.LandRequest.strategy:type_name -> uber.devexp.submitqueue.gateway.Strategy
-	8, // 2: uber.devexp.submitqueue.gateway.UnrecognizedQueueError.error:type_name -> uber.devexp.submitqueue.gateway.Error
-	1, // 3: uber.devexp.submitqueue.gateway.SubmitQueueGateway.Ping:input_type -> uber.devexp.submitqueue.gateway.PingRequest
-	4, // 4: uber.devexp.submitqueue.gateway.SubmitQueueGateway.Land:input_type -> uber.devexp.submitqueue.gateway.LandRequest
-	6, // 5: uber.devexp.submitqueue.gateway.SubmitQueueGateway.Cancel:input_type -> uber.devexp.submitqueue.gateway.CancelRequest
-	2, // 6: uber.devexp.submitqueue.gateway.SubmitQueueGateway.Ping:output_type -> uber.devexp.submitqueue.gateway.PingResponse
-	5, // 7: uber.devexp.submitqueue.gateway.SubmitQueueGateway.Land:output_type -> uber.devexp.submitqueue.gateway.LandResponse
-	7, // 8: uber.devexp.submitqueue.gateway.SubmitQueueGateway.Cancel:output_type -> uber.devexp.submitqueue.gateway.CancelResponse
-	6, // [6:9] is the sub-list for method output_type
-	3, // [3:6] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	1, // 2: uber.devexp.submitqueue.gateway.CancelResponse.current_status:type_name -> uber.devexp.submitqueue.gateway.RequestStatus
+	9, // 3: uber.devexp.submitqueue.gateway.CancelResponse.error:type_name -> uber.devexp.submitqueue.gateway.Error
+	9, // 4: uber.devexp.submitqueue.gateway.UnrecognizedQueueError.error:type_name -> uber.devexp.submitqueue.gateway.Error
+	2, // 5: uber.devexp.submitqueue.gateway.SubmitQueueGateway.Ping:input_type -> uber.devexp.submitqueue.gateway.PingRequest
+	5, // 6: uber.devexp.submitqueue.gateway.SubmitQueueGateway.Land:input_type -> uber.devexp.submitqueue.gateway.LandRequest
+	7, // 7: uber.devexp.submitqueue.gateway.SubmitQueueGateway.Cancel:input_type -> uber.devexp.submitqueue.gateway.CancelRequest
+	3, // 8: uber.devexp.submitqueue.gateway.SubmitQueueGateway.Ping:output_type -> uber.devexp.submitqueue.gateway.PingResponse
+	6, // 9: uber.devexp.submitqueue.gateway.SubmitQueueGateway.Land:output_type -> uber.devexp.submitqueue.gateway.LandResponse
+	8, // 10: uber.devexp.submitqueue.gateway.SubmitQueueGateway.Cancel:output_type -> uber.devexp.submitqueue.gateway.CancelResponse
+	8, // [8:11] is the sub-list for method output_type
+	5, // [5:8] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_gateway_proto_init() }
@@ -651,7 +753,7 @@ func file_gateway_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gateway_proto_rawDesc), len(file_gateway_proto_rawDesc)),
-			NumEnums:      1,
+			NumEnums:      2,
 			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,

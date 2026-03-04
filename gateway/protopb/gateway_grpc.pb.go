@@ -35,8 +35,12 @@ type SubmitQueueGatewayClient interface {
 	// Land lands a set of code changes into a target branch, performing the necessary validations across all other changes in the queue.
 	// The processing is asynchronous and returns a LandResponse immediately. The land request is processed in the background.
 	Land(ctx context.Context, in *LandRequest, opts ...grpc.CallOption) (*LandResponse, error)
-	// Cancel cancels a previously submitted land request. The cancellation is asynchronous and
-	// published to a queue for processing. No validation is performed on whether the request exists.
+	// Cancel requests cancellation of a previously submitted land request.
+	// The cancellation is asynchronous and published to a queue for
+	// processing. Note that cancellation is best effort and not guaranteed.
+	// To check for the status of the request, use Status API (TODO). A
+	// "Cancelled" status indicates that the requested cancellation was
+	// successful.
 	Cancel(ctx context.Context, in *CancelRequest, opts ...grpc.CallOption) (*CancelResponse, error)
 }
 
@@ -89,8 +93,12 @@ type SubmitQueueGatewayServer interface {
 	// Land lands a set of code changes into a target branch, performing the necessary validations across all other changes in the queue.
 	// The processing is asynchronous and returns a LandResponse immediately. The land request is processed in the background.
 	Land(context.Context, *LandRequest) (*LandResponse, error)
-	// Cancel cancels a previously submitted land request. The cancellation is asynchronous and
-	// published to a queue for processing. No validation is performed on whether the request exists.
+	// Cancel requests cancellation of a previously submitted land request.
+	// The cancellation is asynchronous and published to a queue for
+	// processing. Note that cancellation is best effort and not guaranteed.
+	// To check for the status of the request, use Status API (TODO). A
+	// "Cancelled" status indicates that the requested cancellation was
+	// successful.
 	Cancel(context.Context, *CancelRequest) (*CancelResponse, error)
 	mustEmbedUnimplementedSubmitQueueGatewayServer()
 }

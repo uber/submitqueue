@@ -79,10 +79,32 @@ message CancelRequest {
     string sqid = 1;
 }
 
+// RequestStatus defines the possible states of a land request.
+enum RequestStatus {
+    // Unknown status.
+    UNKNOWN = 0;
+    // Initial state of a land request. Confirmed by the system but processing has not started.
+    NEW = 1;
+    // The request has been validated (duplicate check, merge check etc.) successfully.
+    VALIDATED = 2;
+    // The request is being processed.
+    PROCESSING = 3;
+    // The request has been successfully processed and landed. Terminal state.
+    LANDED = 4;
+    // The cancellation request has been accepted and is being processed.
+    CANCELLATION_ACCEPTED = 5;
+    // The request has been cancelled. Terminal state.
+    CANCELLED = 6;
+}
+
 // CancelResponse defines the response to a cancel request.
 message CancelResponse {
-    // Globally unique identifier for the land request that was cancelled.
+    // Globally unique identifier for the land request that was requested to be cancelled.
     string sqid = 1;
+    // Current status of the land request at the time of cancellation request.
+    RequestStatus current_status = 2;
+    // Optional error describing why the cancellation could not be completed.
+    Error error = 3;
 }
 
 // ***************
@@ -116,7 +138,11 @@ service SubmitQueueGateway {
     // The processing is asynchronous and returns a LandResponse immediately. The land request is processed in the background.
     rpc Land(LandRequest) returns (LandResponse) {}
 
-    // Cancel cancels a previously submitted land request. The cancellation is asynchronous and
-    // published to a queue for processing. No validation is performed on whether the request exists.
+    // Cancel requests cancellation of a previously submitted land request.
+    // The cancellation is asynchronous and published to a queue for
+    // processing. Note that cancellation is best effort and not guaranteed.
+    // To check for the status of the request, use Status API (TODO). A
+    // "Cancelled" status indicates that the requested cancellation was
+    // successful.
     rpc Cancel(CancelRequest) returns (CancelResponse) {}
 }
