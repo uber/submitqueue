@@ -17,6 +17,7 @@ type mysqlStorage struct {
 	batchDependentStore   storage.BatchDependentStore
 	buildStore            storage.BuildStore
 	speculationTreeStore  storage.SpeculationTreeStore
+	requestLogStore       storage.RequestLogStore
 }
 
 // NewStorage creates a new MySQL storage.
@@ -29,6 +30,7 @@ func NewStorage(db *sql.DB, scope tally.Scope) (storage.Storage, error) {
 		batchDependentStore:   NewBatchDependentStore(db, scope.SubScope("batch_dependent_store")),
 		buildStore:            NewBuildStore(db, scope.SubScope("build_store")),
 		speculationTreeStore:  NewSpeculationTreeStore(db, scope.SubScope("speculation_tree_store")),
+		requestLogStore:       NewRequestLogStore(db, scope.SubScope("request_log_store")),
 	}, nil
 }
 
@@ -60,6 +62,11 @@ func (f *mysqlStorage) GetBuildStore() storage.BuildStore {
 // GetSpeculationTreeStore returns the MySQL-backed SpeculationTreeStore.
 func (f *mysqlStorage) GetSpeculationTreeStore() storage.SpeculationTreeStore {
 	return f.speculationTreeStore
+}
+
+// GetRequestLogStore returns the MySQL-backed RequestLogStore.
+func (f *mysqlStorage) GetRequestLogStore() storage.RequestLogStore {
+	return f.requestLogStore
 }
 
 // Close closes the underlying database connection.

@@ -13,6 +13,7 @@ go_library(
     deps = [
         "//extension/counter/mysql",
         "//extension/queue/mysql",
+        "//extension/storage/mysql",
         "//gateway/controller",
         "//gateway/protopb",
         "@com_github_go_sql_driver_mysql//:mysql",
