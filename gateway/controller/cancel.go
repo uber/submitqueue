@@ -3,9 +3,9 @@ package controller
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/uber-go/tally/v4"
+	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity/queue"
 	extqueue "github.com/uber/submitqueue/extension/queue"
 	pb "github.com/uber/submitqueue/gateway/protopb"
@@ -34,13 +34,9 @@ func NewCancelController(logger *zap.SugaredLogger, scope tally.Scope, publisher
 // Cancel handles the cancel request and returns a response.
 // It publishes the sqid to the cancel topic for async processing.
 // No validation is performed — the orchestrator handles that.
-func (c *CancelController) Cancel(ctx context.Context, req *pb.CancelRequest) (*pb.CancelResponse, error) {
-	start := time.Now()
-	defer func() {
-		c.metricsScope.Timer("cancel_request_latency").Record(time.Since(start))
-	}()
-
-	c.metricsScope.Counter("cancel_request_count").Inc(1)
+func (c *CancelController) Cancel(ctx context.Context, req *pb.CancelRequest) (resp *pb.CancelResponse, retErr error) {
+	op := metrics.Begin(c.metricsScope, "cancel")
+	defer func() { op.Complete(retErr) }()
 
 	sqid := req.Sqid
 
@@ -58,7 +54,6 @@ func (c *CancelController) Cancel(ctx context.Context, req *pb.CancelRequest) (*
 		"sqid", sqid,
 		"topic", c.topic,
 	)
-	c.metricsScope.Counter("cancel_publish_success").Inc(1)
 
 	return &pb.CancelResponse{
 		Sqid: sqid,
