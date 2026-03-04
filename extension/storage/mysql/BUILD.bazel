@@ -7,6 +7,7 @@ go_library(
         "batch_store.go",
         "build_store.go",
         "change_provider_store.go",
+        "request_log_store.go",
         "request_store.go",
         "speculation_tree_store.go",
         "storage.go",

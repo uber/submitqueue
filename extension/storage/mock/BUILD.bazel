@@ -66,6 +66,15 @@ gomock(
     source_importpath = "github.com/uber/submitqueue/extension/storage",
 )
 
+gomock(
+    name = "mock_request_log_store_src",
+    out = "request_log_store_mock.go",
+    mockgen_tool = _MOCKGEN,
+    package = "mock",
+    source = "//extension/storage:request_log_store.go",
+    source_importpath = "github.com/uber/submitqueue/extension/storage",
+)
+
 # gazelle:ignore
 go_library(
     name = "mock",
@@ -74,6 +83,7 @@ go_library(
         ":mock_batch_store_src",
         ":mock_build_store_src",
         ":mock_change_provider_store_src",
+        ":mock_request_log_store_src",
         ":mock_request_store_src",
         ":mock_speculation_tree_store_src",
         ":mock_storage_src",

@@ -46,6 +46,9 @@ type Storage interface {
 	// GetSpeculationTreeStore returns the SpeculationTreeStore instance.
 	GetSpeculationTreeStore() SpeculationTreeStore
 
+	// GetRequestLogStore returns the RequestLogStore instance.
+	GetRequestLogStore() RequestLogStore
+
 	// Close closes the storage and all underlying connections. Should only be called once at the end of the program.
 	Close() error
 }

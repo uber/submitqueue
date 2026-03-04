@@ -12,6 +12,7 @@ import (
 	"github.com/uber/submitqueue/entity/queue"
 	"github.com/uber/submitqueue/extension/counter"
 	extqueue "github.com/uber/submitqueue/extension/queue"
+	"github.com/uber/submitqueue/extension/storage"
 	pb "github.com/uber/submitqueue/gateway/protopb"
 	"go.uber.org/zap"
 )
@@ -27,22 +28,24 @@ func IsInvalidRequest(err error) bool {
 
 // LandController handles land business logic for the gateway
 type LandController struct {
-	logger       *zap.SugaredLogger
-	metricsScope tally.Scope
-	counter      counter.Counter
-	publisher    extqueue.Publisher
-	topic        string // Topic to publish requests to (e.g., "request", "land_request")
+	logger          *zap.SugaredLogger
+	metricsScope    tally.Scope
+	counter         counter.Counter
+	publisher       extqueue.Publisher
+	requestLogStore storage.RequestLogStore
+	topic           string // Topic to publish requests to (e.g., "request", "land_request")
 }
 
 // NewLandController creates a new instance of the gateway land controller.
 // topic: the queue topic to publish requests to (e.g., "request", "land_request")
-func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter counter.Counter, publisher extqueue.Publisher, topic string) *LandController {
+func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter counter.Counter, publisher extqueue.Publisher, requestLogStore storage.RequestLogStore, topic string) *LandController {
 	return &LandController{
-		logger:       logger,
-		metricsScope: scope,
-		counter:      counter,
-		publisher:    publisher,
-		topic:        topic,
+		logger:          logger,
+		metricsScope:    scope,
+		counter:         counter,
+		publisher:       publisher,
+		requestLogStore: requestLogStore,
+		topic:           topic,
 	}
 }
 
@@ -91,6 +94,12 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 		Version:      1,
 	}
 
+	// Record the accepted status in the request log for reconciliation. Once the request materializes as a Request entity, the status might be updated to "new".
+	logEntry := entity.NewRequestLog(request.ID, "accepted", 0, "", nil)
+	if err := c.requestLogStore.Insert(ctx, logEntry); err != nil {
+		return nil, fmt.Errorf("LandController failed to insert request log for sqid=%s: %w", request.ID, err)
+	}
+
 	c.logger.Debugw("land request created",
 		"queue", req.Queue,
 		"sqid", request.ID,
@@ -98,9 +107,6 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 		"change_count", len(change.URIs),
 		"strategy", string(strategy),
 	)
-
-	// TODO: Insert the created request to the
-	// event store
 
 	// Publish to queue for async processing
 	if err := c.publishToQueue(ctx, request); err != nil {
