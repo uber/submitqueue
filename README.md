@@ -39,7 +39,7 @@ make run-client-gateway MESSAGE="hello"
 go run example/client/gateway/main.go -message "hello"
 
 # Or using grpcurl
-grpcurl -plaintext -d '{"message": "hello"}' localhost:8081 uber.devexp.submitqueue.gateway.SubmitQueueGateway/Ping
+grpcurl -plaintext -d '{"message": "hello"}' localhost:8081 uber.submitqueue.gateway.SubmitQueueGateway/Ping
 ```
 
 For detailed instructions, see [example/README.md](example/README.md).
@@ -336,7 +336,7 @@ make proto
 3. **Or use grpcurl:**
    ```bash
    grpcurl -plaintext -d '{"message": "hello"}' \
-     localhost:8081 uber.devexp.submitqueue.gateway.SubmitQueueGateway/Ping
+     localhost:8081 uber.submitqueue.gateway.SubmitQueueGateway/Ping
    ```
 
 #### Testing All Services

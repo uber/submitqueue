@@ -1,11 +1,11 @@
 syntax = "proto3";
 
-package uber.devexp.submitqueue.gateway;
+package uber.submitqueue.gateway;
 
 option go_package = "github.com/uber/submitqueue/gateway/protopb";
 option java_multiple_files = true;
 option java_outer_classname = "GatewayProto";
-option java_package = "com.uber.devexp.submitqueue.gateway";
+option java_package = "com.uber.submitqueue.gateway";
 
 // ***************
 // API domain definitions.
