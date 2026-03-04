@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//core/consumer",
         "//core/errs",
+        "//core/metrics",
         "//entity",
         "//extension/storage",
         "@com_github_uber_go_tally_v4//:tally",

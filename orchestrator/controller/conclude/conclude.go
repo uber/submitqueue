@@ -7,6 +7,7 @@ import (
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
+	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/extension/storage"
 	"go.uber.org/zap"
@@ -49,8 +50,9 @@ func NewController(
 // Process processes a conclude delivery from the queue.
 // Deserializes the batch and completes the pipeline processing.
 // Returns nil to ack (success), or error to nack (retry).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
-	c.metricsScope.Counter("received").Inc(1)
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+	op := metrics.Begin(c.metricsScope, "process")
+	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
@@ -63,8 +65,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			"attempt", delivery.Attempt(),
 			"error", err,
 		)
-		c.metricsScope.Counter("deserialize_errors").Inc(1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
+		metrics.NamedCounter(c.metricsScope, "process", "deserialize_errors", 1)
 		return fmt.Errorf("failed to deserialize batch: %w", err)
 	}
 
@@ -88,7 +90,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			"batch_id", batch.ID,
 			"state", string(batch.State),
 		)
-		c.metricsScope.Counter("unexpected_state_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "unexpected_state_errors", 1)
 		return fmt.Errorf("unexpected batch state %q for batch %s: %w", batch.State, batch.ID, err)
 	}
 
@@ -101,7 +103,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 				"request_id", requestID,
 				"error", err,
 			)
-			c.metricsScope.Counter("request_store_errors").Inc(1)
+			metrics.NamedCounter(c.metricsScope, "process", "request_store_errors", 1)
 			return errs.NewRetryableError(fmt.Errorf("failed to get request %s: %w", requestID, err))
 		}
 
@@ -113,7 +115,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 				"to_state", string(requestState),
 				"error", err,
 			)
-			c.metricsScope.Counter("request_update_errors").Inc(1)
+			metrics.NamedCounter(c.metricsScope, "process", "request_update_errors", 1)
 			return errs.NewRetryableError(fmt.Errorf("failed to update request %s state to %s: %w", requestID, requestState, err))
 		}
 
@@ -123,8 +125,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			"new_state", string(requestState),
 		)
 	}
-
-	c.metricsScope.Counter("processed").Inc(1)
 
 	return nil // Success - message will be acked
 }
