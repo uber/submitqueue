@@ -24,7 +24,6 @@ import (
 	"go.uber.org/zap"
 )
 
-
 // sqlpartitionLeaseStore is the SQL implementation of partitionLeaseStore
 type sqlpartitionLeaseStore struct {
 	db      *sql.DB
@@ -34,10 +33,10 @@ type sqlpartitionLeaseStore struct {
 
 // Metric names for partition lease store
 const (
-	metricTryAcquireLeaseErrors       = "try_acquire_lease.errors"
-	metricRenewLeaseErrors            = "renew_lease.errors"
-	metricGetLeasedPartitionsErrors   = "get_leased_partitions.errors"
-	metricDiscoverAndAcquireErrors    = "discover_and_acquire.errors"
+	metricTryAcquireLeaseErrors     = "try_acquire_lease.errors"
+	metricRenewLeaseErrors          = "renew_lease.errors"
+	metricGetLeasedPartitionsErrors = "get_leased_partitions.errors"
+	metricDiscoverAndAcquireErrors  = "discover_and_acquire.errors"
 )
 
 // newPartitionLeaseStore creates a new SQL partition lease store

@@ -15,8 +15,8 @@
 package errs
 
 import (
-	"errors"
 	"context"
+	"errors"
 )
 
 // userError represents an error caused by invalid user input or actions.

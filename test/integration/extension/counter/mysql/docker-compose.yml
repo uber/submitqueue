@@ -9,7 +9,7 @@ services:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: submitqueue
     ports:
-      - "3306"  # Random ephemeral port to avoid conflicts
+      - "3306" # Random ephemeral port to avoid conflicts
     healthcheck:
       # Use 127.0.0.1 (TCP) instead of localhost (Unix socket). MySQL treats
       # "localhost" as a socket connection, which can be ready before the TCP

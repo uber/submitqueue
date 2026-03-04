@@ -45,7 +45,6 @@ func NewChangeProviderStore(db *sql.DB, scope tally.Scope) storage.ChangeProvide
 // to be the same as the request to which it belongs. The caller is repsonsible
 // for inspecting and mapping the result of this function to the
 // order of changes within the original request.
-//
 func (s *changeProviderStore) Get(ctx context.Context, requestID string) (ret []entity.ChangeProvider, retErr error) {
 	op := metrics.Begin(s.scope, "get")
 	defer func() { op.Complete(retErr) }()

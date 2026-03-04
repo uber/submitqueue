@@ -24,27 +24,27 @@ import (
 )
 
 type mysqlStorage struct {
-	db                    *sql.DB
-	requestStore          storage.RequestStore
-	changeProviderStore   storage.ChangeProviderStore
-	batchStore            storage.BatchStore
-	batchDependentStore   storage.BatchDependentStore
-	buildStore            storage.BuildStore
-	speculationTreeStore  storage.SpeculationTreeStore
-	requestLogStore       storage.RequestLogStore
+	db                   *sql.DB
+	requestStore         storage.RequestStore
+	changeProviderStore  storage.ChangeProviderStore
+	batchStore           storage.BatchStore
+	batchDependentStore  storage.BatchDependentStore
+	buildStore           storage.BuildStore
+	speculationTreeStore storage.SpeculationTreeStore
+	requestLogStore      storage.RequestLogStore
 }
 
 // NewStorage creates a new MySQL storage.
 func NewStorage(db *sql.DB, scope tally.Scope) (storage.Storage, error) {
 	return &mysqlStorage{
-		db:                    db,
-		requestStore:          NewRequestStore(db, scope.SubScope("request_store")),
-		changeProviderStore:   NewChangeProviderStore(db, scope.SubScope("change_provider_store")),
-		batchStore:            NewBatchStore(db, scope.SubScope("batch_store")),
-		batchDependentStore:   NewBatchDependentStore(db, scope.SubScope("batch_dependent_store")),
-		buildStore:            NewBuildStore(db, scope.SubScope("build_store")),
-		speculationTreeStore:  NewSpeculationTreeStore(db, scope.SubScope("speculation_tree_store")),
-		requestLogStore:       NewRequestLogStore(db, scope.SubScope("request_log_store")),
+		db:                   db,
+		requestStore:         NewRequestStore(db, scope.SubScope("request_store")),
+		changeProviderStore:  NewChangeProviderStore(db, scope.SubScope("change_provider_store")),
+		batchStore:           NewBatchStore(db, scope.SubScope("batch_store")),
+		batchDependentStore:  NewBatchDependentStore(db, scope.SubScope("batch_dependent_store")),
+		buildStore:           NewBuildStore(db, scope.SubScope("build_store")),
+		speculationTreeStore: NewSpeculationTreeStore(db, scope.SubScope("speculation_tree_store")),
+		requestLogStore:      NewRequestLogStore(db, scope.SubScope("request_log_store")),
 	}, nil
 }
 

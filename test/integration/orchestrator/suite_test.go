@@ -45,8 +45,8 @@ type OrchestratorIntegrationSuite struct {
 	log     *testutil.TestLogger
 	stack   *testutil.ComposeStack
 	client  pb.SubmitQueueOrchestratorClient
-	db      *sql.DB  // App database
-	queueDB *sql.DB  // Queue database
+	db      *sql.DB // App database
+	queueDB *sql.DB // Queue database
 }
 
 func TestOrchestratorIntegration(t *testing.T) {
@@ -118,4 +118,3 @@ func (s *OrchestratorIntegrationSuite) TestPingAPI() {
 
 	s.log.Logf("Orchestrator Ping test passed: %s", resp.Message)
 }
-

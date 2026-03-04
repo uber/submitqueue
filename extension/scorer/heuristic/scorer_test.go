@@ -33,11 +33,11 @@ func staticValue(value int) ValueFunc {
 
 func TestScorer_Score(t *testing.T) {
 	tests := []struct {
-		name       string
-		buckets    []Bucket
+		name      string
+		buckets   []Bucket
 		valueFunc ValueFunc
-		want       float64
-		wantErr    bool
+		want      float64
+		wantErr   bool
 	}{
 		{
 			name: "single bucket covering all values",
@@ -45,7 +45,7 @@ func TestScorer_Score(t *testing.T) {
 				{Min: 0, Max: 1000, Score: 0.9},
 			},
 			valueFunc: staticValue(5),
-			want:       0.9,
+			want:      0.9,
 		},
 		{
 			name: "multiple buckets with different ranges",
@@ -55,7 +55,7 @@ func TestScorer_Score(t *testing.T) {
 				{Min: 21, Max: 100, Score: 0.5},
 			},
 			valueFunc: staticValue(10),
-			want:       0.75,
+			want:      0.75,
 		},
 		{
 			name: "exact min boundary",
@@ -64,7 +64,7 @@ func TestScorer_Score(t *testing.T) {
 				{Min: 6, Max: 20, Score: 0.75},
 			},
 			valueFunc: staticValue(6),
-			want:       0.75,
+			want:      0.75,
 		},
 		{
 			name: "exact max boundary",
@@ -91,7 +91,7 @@ func TestScorer_Score(t *testing.T) {
 				{Min: 1, Max: 100, Score: 0.8},
 			},
 			valueFunc: staticValue(0),
-			want:       1.0,
+			want:      1.0,
 		},
 		{
 			name: "first matching bucket wins",

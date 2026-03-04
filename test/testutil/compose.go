@@ -38,8 +38,8 @@ type ComposeStack struct {
 	t           *testing.T
 	log         *TestLogger
 	ctx         context.Context
-	composeCmd  []string    // docker-compose command (either ["docker-compose"] or ["docker", "compose"])
-	logCmd      *exec.Cmd   // background "docker compose logs -f" process
+	composeCmd  []string  // docker-compose command (either ["docker-compose"] or ["docker", "compose"])
+	logCmd      *exec.Cmd // background "docker compose logs -f" process
 }
 
 // getDockerComposeCommand returns the docker-compose command to use.

@@ -16,7 +16,6 @@ package entity
 
 import "encoding/json"
 
-
 // RequestLandStrategy defines the possible source control integration methods.
 type RequestLandStrategy string
 

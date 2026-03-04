@@ -27,7 +27,6 @@ import (
 	"github.com/uber/submitqueue/entity/queue"
 )
 
-
 // sqlmessageStore is the SQL implementation of messageStore
 type sqlmessageStore struct {
 	db      *sql.DB
@@ -37,8 +36,8 @@ type sqlmessageStore struct {
 
 // Metric names for message store
 const (
-	metricInsertErrors   = "insert.errors"
-	metricFetchErrors    = "fetch.errors"
+	metricInsertErrors    = "insert.errors"
+	metricFetchErrors     = "fetch.errors"
 	metricMoveToDLQErrors = "move_to_dlq.errors"
 )
 

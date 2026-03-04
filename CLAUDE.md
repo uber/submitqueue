@@ -48,9 +48,10 @@ submitqueue/
 │   ├── counter/                # Sequential number generation (interface + mysql/)
 │   ├── queue/                  # Messaging queue abstraction (interface + sql/)
 │   └── storage/                # Storage abstraction (interface + mysql/)
-├── core/                        # Shared infrastructure packages reused across services
+├── core/                       # Shared infrastructure packages reused across services
 │   ├── consumer/               # Queue consumption framework (lifecycle, ack/nack, routing)
 │   └── errs/                   # Error classification framework (user vs infra, retryability)
+├── tool/                       # Development and CI tooling
 ├── example/server/             # Runnable servers with Docker Compose
 ├── test/
 │   ├── e2e/                    # End-to-end tests (full stack)
@@ -157,10 +158,15 @@ integration-test: build-all-linux ## Run all integration tests (auto-builds bina
 ```bash
 make build              # Build all services
 make test               # Run unit tests
+make lint               # Run all linters (fmt + YAML)
+make fmt                # Format Go and YAML code
+make check-tidy         # Check go.mod and MODULE.bazel are tidy
+make check-gazelle      # Check BUILD.bazel files are up to date
+make tidy               # Run go mod tidy + bazel mod tidy
+make gazelle            # Update BUILD.bazel files
 make integration-test   # Run all integration tests (Docker-based)
 make e2e-test           # Run end-to-end tests
 make proto              # Regenerate proto files
-make gazelle            # Update BUILD.bazel files
 make local-start        # Start full stack with Docker Compose
 make local-ps           # Show running containers and ports
 make local-logs         # View logs from all services
@@ -255,6 +261,15 @@ deps = [
 - Use `testutil.NewComposeStack()` with meaningful context (e.g., `"ext-storage-mysql"`)
 
 See [doc/howto/TESTING.md](doc/howto/TESTING.md) for full testing guide.
+
+### CI and Validation
+
+CI runs on every PR and enforces all checks via a `required-checks` gate. **Before committing, validate locally:**
+
+1. `make fmt` — format Go and YAML code (CI will reject unformatted code)
+2. `make lint` — run all linters (formatting check)
+3. `make check-tidy` — ensure `go.mod` and `MODULE.bazel` are tidy
+4. `make check-gazelle` — ensure `BUILD.bazel` files are up to date
 
 ### Code Style
 

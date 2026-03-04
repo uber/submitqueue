@@ -36,14 +36,14 @@ import (
 	githubchecker "github.com/uber/submitqueue/extension/mergechecker/github"
 	extqueue "github.com/uber/submitqueue/extension/queue"
 	queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
-	mysqlstorage "github.com/uber/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/extension/storage"
+	mysqlstorage "github.com/uber/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/orchestrator/controller"
 	"github.com/uber/submitqueue/orchestrator/controller/batch"
 	"github.com/uber/submitqueue/orchestrator/controller/build"
+	"github.com/uber/submitqueue/orchestrator/controller/buildsignal"
 	"github.com/uber/submitqueue/orchestrator/controller/conclude"
 	"github.com/uber/submitqueue/orchestrator/controller/merge"
-	"github.com/uber/submitqueue/orchestrator/controller/buildsignal"
 	"github.com/uber/submitqueue/orchestrator/controller/request"
 	"github.com/uber/submitqueue/orchestrator/controller/score"
 	"github.com/uber/submitqueue/orchestrator/controller/speculate"
@@ -264,7 +264,7 @@ func run() error {
 	}
 
 	// Stop consumers with 30s timeout, by this time the context should be cancelled and the processing threads may already be exiting; recollect them
-	errStop := c.Stop(30000);
+	errStop := c.Stop(30000)
 	if errStop != nil {
 		errStop = fmt.Errorf("failed to stop consumers: %w", errStop)
 	}

@@ -45,8 +45,8 @@ type GatewayIntegrationSuite struct {
 	log     *testutil.TestLogger
 	stack   *testutil.ComposeStack
 	client  pb.SubmitQueueGatewayClient
-	db      *sql.DB  // App database
-	queueDB *sql.DB  // Queue database
+	db      *sql.DB // App database
+	queueDB *sql.DB // Queue database
 }
 
 func TestGatewayIntegration(t *testing.T) {

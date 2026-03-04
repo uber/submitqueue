@@ -162,8 +162,8 @@ func (s *ConsumerIntegrationSuite) TestConsumerPerPartitionIsolation() {
 	publisher := q.Publisher()
 
 	// Channels for synchronizing the test with the controller
-	partAStarted := make(chan struct{})  // signals partition-a processing began
-	partAUnblock := make(chan struct{})  // unblocks partition-a processing
+	partAStarted := make(chan struct{})   // signals partition-a processing began
+	partAUnblock := make(chan struct{})   // unblocks partition-a processing
 	partBProcessed := make(chan struct{}) // signals partition-b was processed
 
 	ctrl := &testController{

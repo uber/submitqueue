@@ -376,8 +376,8 @@ func (s *SQLQueueIntegrationSuite) TestVisibilityTimeoutAndRetry() {
 
 	// Use short visibility timeout for faster test
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "retry-consumer")
-	subConfig.VisibilityTimeoutMs = 2000      // 2 seconds
-	subConfig.PollIntervalMs = 100            // 100 milliseconds
+	subConfig.VisibilityTimeoutMs = 2000 // 2 seconds
+	subConfig.PollIntervalMs = 100       // 100 milliseconds
 
 	// Subscribe
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
@@ -617,10 +617,10 @@ func (s *SQLQueueIntegrationSuite) TestCrashRecovery() {
 
 	// Use short timeouts for faster test
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "crash-consumer")
-	subConfig.VisibilityTimeoutMs = 2000          // 2 seconds
-	subConfig.PollIntervalMs = 100                // 100 milliseconds
-	subConfig.LeaseDurationMs = 3000              // 3 seconds - short lease for testing crash recovery
-	subConfig.LeaseRenewalIntervalMs = 1000       // 1 second - must be less than LeaseDuration
+	subConfig.VisibilityTimeoutMs = 2000    // 2 seconds
+	subConfig.PollIntervalMs = 100          // 100 milliseconds
+	subConfig.LeaseDurationMs = 3000        // 3 seconds - short lease for testing crash recovery
+	subConfig.LeaseRenewalIntervalMs = 1000 // 1 second - must be less than LeaseDuration
 
 	// Subscribe with first worker
 	deliveryChan1, err := subscriber1.Subscribe(s.ctx, topic, subConfig)
@@ -656,10 +656,10 @@ func (s *SQLQueueIntegrationSuite) TestCrashRecovery() {
 	subscriber2 := q2.Subscriber()
 
 	subConfig2 := extqueue.DefaultSubscriptionConfig("worker-2", "crash-consumer")
-	subConfig2.VisibilityTimeoutMs = 2000          // 2 seconds
-	subConfig2.PollIntervalMs = 100                // 100 milliseconds
-	subConfig2.LeaseDurationMs = 3000              // 3 seconds
-	subConfig2.LeaseRenewalIntervalMs = 1000       // 1 second
+	subConfig2.VisibilityTimeoutMs = 2000    // 2 seconds
+	subConfig2.PollIntervalMs = 100          // 100 milliseconds
+	subConfig2.LeaseDurationMs = 3000        // 3 seconds
+	subConfig2.LeaseRenewalIntervalMs = 1000 // 1 second
 
 	deliveryChan2, err := subscriber2.Subscribe(s.ctx, topic, subConfig2)
 	require.NoError(t, err)

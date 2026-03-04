@@ -83,11 +83,11 @@ func DefaultSubscriptionConfig(subscriberName, consumerGroup string) Subscriptio
 	return SubscriptionConfig{
 		SubscriberName:         subscriberName,
 		ConsumerGroup:          consumerGroup,
-		PollIntervalMs:         100,      // 100ms
+		PollIntervalMs:         100, // 100ms
 		BatchSize:              10,
-		VisibilityTimeoutMs:    60000,    // 60s
-		LeaseRenewalIntervalMs: 10000,    // 10s
-		LeaseDurationMs:        30000,    // 30s
+		VisibilityTimeoutMs:    60000, // 60s
+		LeaseRenewalIntervalMs: 10000, // 10s
+		LeaseDurationMs:        30000, // 30s
 		Retry: RetryConfig{
 			MaxAttempts:       3,
 			InitialBackoffMs:  1000,  // 1s

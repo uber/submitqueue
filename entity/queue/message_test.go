@@ -76,4 +76,3 @@ func TestMessage_Fields(t *testing.T) {
 	assert.Equal(t, msg.PublishedAt, copied.PublishedAt)
 	assert.Equal(t, msg.Metadata, copied.Metadata)
 }
-

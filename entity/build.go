@@ -53,7 +53,6 @@ func (s BuildStatus) IsTerminal() bool {
 	return s == BuildStatusPassed || s == BuildStatusFailed || s == BuildStatusCancelled
 }
 
-
 // SpeculationPathInfo represents the base and head commits of a speculation path used in a build.
 type SpeculationPathInfo struct {
 	// Base is a list of batchIDs(in order) that form the base of this speculation path.

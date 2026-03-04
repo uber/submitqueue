@@ -32,8 +32,8 @@ func TestNewTopicRegistry(t *testing.T) {
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
 			{
-				Key:  consumer.TopicKeyRequest,
-				Name: "request",
+				Key:   consumer.TopicKeyRequest,
+				Name:  "request",
 				Queue: mockQ,
 				Subscription: extqueue.DefaultSubscriptionConfig(
 					"worker-1", "group-a",
@@ -58,7 +58,7 @@ func TestNewTopicRegistry(t *testing.T) {
 
 func TestNewTopicRegistry_InvalidTopicName(t *testing.T) {
 	tests := []struct {
-		name string
+		name      string
 		topicName string
 	}{
 		{

@@ -24,7 +24,6 @@ import (
 	"go.uber.org/zap"
 )
 
-
 // sqloffsetStore is the SQL implementation of offsetStore
 type sqloffsetStore struct {
 	db      *sql.DB

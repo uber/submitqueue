@@ -94,14 +94,14 @@ func TestSubscriber_Subscribe(t *testing.T) {
 
 func TestSQLDelivery_Reject(t *testing.T) {
 	tests := []struct {
-		name           string
-		dlqEnabled     bool
-		alreadyAcked   bool
-		moveToDLQErr   error
-		ackMessageErr  error
-		expectErr      bool
-		expectMoveDLQ  bool
-		expectAck      bool
+		name          string
+		dlqEnabled    bool
+		alreadyAcked  bool
+		moveToDLQErr  error
+		ackMessageErr error
+		expectErr     bool
+		expectMoveDLQ bool
+		expectAck     bool
 	}{
 		{
 			name:          "DLQ enabled moves message to DLQ",

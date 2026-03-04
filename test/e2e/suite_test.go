@@ -44,8 +44,8 @@ type E2EIntegrationSuite struct {
 	stack              *testutil.ComposeStack
 	gatewayClient      gatewaypb.SubmitQueueGatewayClient
 	orchestratorClient orchestratorpb.SubmitQueueOrchestratorClient
-	db                 *sql.DB  // App database
-	queueDB            *sql.DB  // Queue database
+	db                 *sql.DB // App database
+	queueDB            *sql.DB // Queue database
 }
 
 func TestE2EIntegration(t *testing.T) {

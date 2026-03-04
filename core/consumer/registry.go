@@ -71,8 +71,8 @@ type TopicConfig struct {
 // TopicRegistry provides queue, topic name, and subscription config for topics.
 // Each topic can have a different queue backend and topic name.
 type TopicRegistry struct {
-	queues     map[TopicKey]queue.Queue
-	topicNames map[TopicKey]string
+	queues              map[TopicKey]queue.Queue
+	topicNames          map[TopicKey]string
 	subscriptionConfigs map[topicGroup]queue.SubscriptionConfig
 }
 

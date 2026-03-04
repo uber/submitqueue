@@ -10,10 +10,27 @@ ORCHESTRATOR_COMPOSE_FILE = example/server/orchestrator/docker-compose.yml
 # Fixed project name for local manual testing (tests use unique random names)
 LOCAL_PROJECT = submitqueue
 
+# yamlfmt version for YAML formatting (override with: make fmt YAMLFMT_VERSION=v0.16.0)
+YAMLFMT_VERSION ?= v0.16.0
+
+# goimports version for Go formatting + import fixing
+GOIMPORTS_VERSION ?= v0.33.0
+
 # Set REPO_ROOT for docker-compose
 export REPO_ROOT := $(shell pwd)
 
-.PHONY: build build-all-linux build-gateway-linux build-orchestrator-linux clean clean-proto deps e2e-test gazelle integration-test integration-test-consumer integration-test-extensions integration-test-gateway integration-test-orchestrator license-fix lint lint-license local-clean local-gateway-start local-gateway-stop local-init-schemas local-logs local-orchestrator-start local-orchestrator-stop local-ps local-restart local-start local-stop proto query-deps query-targets run-client-gateway run-client-orchestrator run-queue-admin test test-no-cache help
+# Fails if git working tree is dirty. Usage: $(call assert_clean,fix command)
+define assert_clean
+	@if ! git diff --quiet; then \
+		echo "The following files need updating:" >&2; \
+		git diff --name-only >&2; \
+		echo "" >&2; \
+		echo "Please run '$(1)' locally and commit the changes." >&2; \
+		exit 1; \
+	fi
+endef
+
+.PHONY: build build-all-linux build-gateway-linux build-orchestrator-linux check-gazelle check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-consumer integration-test-extensions integration-test-gateway integration-test-orchestrator license-fix lint lint-fmt lint-license local-clean local-gateway-start local-gateway-stop local-init-schemas local-logs local-orchestrator-start local-orchestrator-stop local-ps local-restart local-start local-stop proto query-deps query-targets run-client-gateway run-client-orchestrator run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
 
 
 build: ## Build all services and examples
@@ -41,6 +58,16 @@ build-orchestrator-linux: ## Build Orchestrator Linux binary for Docker
 	 cp -f bazel-bin/example/server/orchestrator/orchestrator .docker-bin/orchestrator
 	@echo "Orchestrator Linux binary ready at .docker-bin/orchestrator"
 
+check-gazelle: ## Check BUILD.bazel files are up to date
+	@echo "Running Gazelle to check BUILD files..."
+	@$(BAZEL) run //:gazelle
+	$(call assert_clean,make gazelle)
+	@echo "BUILD files are up to date."
+
+check-tidy: tidy ## Check that go.mod and MODULE.bazel are tidy
+	$(call assert_clean,make tidy)
+	@echo "Module files are up to date."
+
 clean: ## Clean generated files and binaries
 	@echo "Cleaning with Bazel..."
 	@$(BAZEL) clean
@@ -53,15 +80,19 @@ clean-proto: ## Clean generated proto files
 	@rm -rf orchestrator/protopb/*.pb.go
 	@echo "Proto clean complete!"
 
-deps: ## Install Go dependencies
-	@echo "Installing Go dependencies..."
-	@go mod download
-	@go mod tidy
+deps: tidy-go ## Download and tidy Go dependencies
 	@echo "Dependencies installed!"
 
 e2e-test: build-all-linux ## Run end-to-end tests (hermetic, auto-builds binaries)
 	@echo "Running end-to-end tests..."
 	@$(BAZEL) test //test/e2e:e2e_test --test_output=streamed
+
+fmt: ## Format Go and YAML code
+	@echo "Formatting Go code..."
+	@$(BAZEL) run @rules_go//go -- run golang.org/x/tools/cmd/goimports@$(GOIMPORTS_VERSION) -w .
+	@echo "Formatting YAML files..."
+	@$(BAZEL) run @rules_go//go -- run github.com/google/yamlfmt/cmd/yamlfmt@$(YAMLFMT_VERSION)
+	@echo "Formatting complete!"
 
 gazelle: ## Update BUILD.bazel files
 	@echo "Running Gazelle to update BUILD files..."
@@ -90,7 +121,12 @@ integration-test-orchestrator: build-orchestrator-linux ## Run Orchestrator inte
 license-fix: ## Add missing license headers to source files
 	@$(BAZEL) run //tool/linter/licenseheader -- --fix
 
-lint: lint-license ## Run all linters
+lint: lint-fmt lint-license ## Run all linters
+	@echo "All lint checks passed."
+
+lint-fmt: fmt ## Check code formatting (fails if unformatted)
+	$(call assert_clean,make fmt)
+	@echo "All code is properly formatted."
 
 lint-license: ## Check license headers on all source files
 	@$(BAZEL) run //tool/linter/licenseheader -- --check
@@ -240,6 +276,16 @@ test: ## Run unit tests
 test-no-cache: ## Run unit tests without cache (force re-run)
 	@echo "Running unit tests (no cache)..."
 	@$(BAZEL) test //... --test_tag_filters=-manual,-integration --nocache_test_results
+
+tidy: tidy-go tidy-bazel ## Run go mod tidy and bazel mod tidy
+
+tidy-bazel: ## Run bazel mod tidy
+	@echo "Running bazel mod tidy..."
+	@$(BAZEL) mod tidy
+
+tidy-go: ## Run go mod tidy
+	@echo "Running go mod tidy..."
+	@$(BAZEL) run @rules_go//go -- mod tidy -e
 
 help: ## Show this help message
 	@echo "Available targets:"

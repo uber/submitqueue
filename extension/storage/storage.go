@@ -16,8 +16,10 @@ package storage
 
 //go:generate mockgen -source=storage.go -destination=mock/storage.go -package=mock
 
-import "errors"
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // ErrNotFound is returned by storage implementations when the requested record is not found in the database.
 var ErrNotFound = errors.New("record not found")
