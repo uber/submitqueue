@@ -91,23 +91,23 @@ go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
 
 ```bash
 # Ping
-grpcurl -plaintext -d '{"message": "hello"}' localhost:8081 uber.devexp.submitqueue.gateway.SubmitQueueGateway/Ping
-grpcurl -plaintext -d '{"message": "hello"}' localhost:8082 uber.devexp.submitqueue.orchestrator.SubmitQueueOrchestrator/Ping
+grpcurl -plaintext -d '{"message": "hello"}' localhost:8081 uber.submitqueue.gateway.SubmitQueueGateway/Ping
+grpcurl -plaintext -d '{"message": "hello"}' localhost:8082 uber.submitqueue.orchestrator.SubmitQueueOrchestrator/Ping
 
 # List services
 grpcurl -plaintext localhost:8081 list
 grpcurl -plaintext localhost:8082 list
 
 # Describe a service
-grpcurl -plaintext localhost:8081 describe uber.devexp.submitqueue.gateway.SubmitQueueGateway
-grpcurl -plaintext localhost:8082 describe uber.devexp.submitqueue.orchestrator.SubmitQueueOrchestrator
+grpcurl -plaintext localhost:8081 describe uber.submitqueue.gateway.SubmitQueueGateway
+grpcurl -plaintext localhost:8082 describe uber.submitqueue.orchestrator.SubmitQueueOrchestrator
 ```
 
 ## API Reference
 
 ### Gateway Service
 
-**Service**: `uber.devexp.submitqueue.gateway.SubmitQueueGateway`
+**Service**: `uber.submitqueue.gateway.SubmitQueueGateway`
 **Proto**: `gateway/proto/gateway.proto`
 
 | Method | Description |
@@ -117,7 +117,7 @@ grpcurl -plaintext localhost:8082 describe uber.devexp.submitqueue.orchestrator.
 
 ### Orchestrator Service
 
-**Service**: `uber.devexp.submitqueue.orchestrator.SubmitQueueOrchestrator`
+**Service**: `uber.submitqueue.orchestrator.SubmitQueueOrchestrator`
 **Proto**: `orchestrator/proto/orchestrator.proto`
 
 | Method | Description |

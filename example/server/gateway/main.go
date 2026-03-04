@@ -15,6 +15,7 @@ import (
 	"github.com/uber-go/tally/v4"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
+	mysqlstorage "github.com/uber/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/gateway/controller"
 	pb "github.com/uber/submitqueue/gateway/protopb"
 	"go.uber.org/zap"
@@ -134,9 +135,12 @@ func run() error {
 	// Create gRPC server
 	grpcServer := grpc.NewServer()
 
+	// Initialize request log store from shared app database connection
+	requestLogStore := mysqlstorage.NewRequestLogStore(appDB, scope.SubScope("request_log_store"))
+
 	// Create controllers and wrap them for gRPC
 	pingController := controller.NewPingController(logger, scope)
-	landController := controller.NewLandController(logger.Sugar(), scope, cnt, mysqlQueue.Publisher(), "request")
+	landController := controller.NewLandController(logger.Sugar(), scope, cnt, mysqlQueue.Publisher(), requestLogStore, "request")
 	gatewayServer := &GatewayServer{
 		pingController: pingController,
 		landController: landController,

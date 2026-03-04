@@ -35,6 +35,11 @@ const (
 	RequestStateError RequestState = "error"
 )
 
+// IsRequestStateTerminal returns true if the state represents a final, irreversible state (landed or error).
+func IsRequestStateTerminal(s RequestState) bool {
+	return s == RequestStateLanded || s == RequestStateError
+}
+
 // Change represents a code change identified by URIs from a code change provider (e.g., GitHub Pull Request, Phabricator Diff).
 // The provider is extracted from the URI scheme. The object is immutable after creation.
 type Change struct {

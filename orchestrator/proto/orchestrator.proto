@@ -1,11 +1,11 @@
 syntax = "proto3";
 
-package uber.devexp.submitqueue.orchestrator;
+package uber.submitqueue.orchestrator;
 
 option go_package = "github.com/uber/submitqueue/orchestrator/protopb";
 option java_multiple_files = true;
 option java_outer_classname = "OrchestratorProto";
-option java_package = "com.uber.devexp.submitqueue.orchestrator";
+option java_package = "com.uber.submitqueue.orchestrator";
 
 // PingRequest is the request for the Ping method
 message PingRequest {
