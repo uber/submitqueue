@@ -10,6 +10,8 @@ const (
 	BatchStateUnknown BatchState = ""
 	// BatchStateCreated is the state of a batch that has been created for processing.
 	BatchStateCreated BatchState = "created"
+	// BatchStateReady is the state of a batch that has been persisted and is ready for scoring.
+	BatchStateReady BatchState = "ready"
 	// BatchStateSpeculating is the state of a batch that is undergoing speculative execution.
 	BatchStateSpeculating BatchState = "speculating"
 	// BatchStateFinalizing is the state of a batch that is being finalized after speculative execution.
