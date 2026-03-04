@@ -8,6 +8,7 @@ import (
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
+	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
 	"github.com/uber/submitqueue/extension/counter"
@@ -55,8 +56,9 @@ func NewController(
 // Process processes a batch delivery from the queue.
 // Deserializes the request, groups into batch, and publishes to the score topic.
 // Returns nil to ack (success), or error to nack (retry).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
-	c.metricsScope.Counter("received").Inc(1)
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+	op := metrics.Begin(c.metricsScope, "process")
+	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
@@ -69,7 +71,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			"attempt", delivery.Attempt(),
 			"error", err,
 		)
-		c.metricsScope.Counter("deserialize_errors").Inc(1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
 		return fmt.Errorf("failed to deserialize request: %w", err)
 	}
@@ -84,14 +85,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	)
 
 	// Generate a globally unique batch ID.
+	counterOp := metrics.Begin(c.metricsScope, "counter_next")
 	seq, err := c.counter.Next(ctx, "batch/"+request.Queue)
+	counterOp.Complete(err)
 	if err != nil {
 		c.logger.Errorw("failed to generate batch ID",
 			"request_id", request.ID,
 			"queue", request.Queue,
 			"error", err,
 		)
-		c.metricsScope.Counter("counter_errors").Inc(1)
 		return errs.NewRetryableError(fmt.Errorf("failed to generate batch ID for queue=%s: %w", request.Queue, err))
 	}
 
@@ -105,31 +107,34 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	// Persist batch to storage.
 	// ErrAlreadyExists should never happen since batch IDs are generated from a unique counter.
+	batchCreateOp := metrics.Begin(c.metricsScope, "batch_store_create")
 	if err := c.store.GetBatchStore().Create(ctx, batch); err != nil {
+		batchCreateOp.Complete(err)
 		c.logger.Errorw("failed to create batch in storage",
 			"batch_id", batch.ID,
 			"error", err,
 		)
-		c.metricsScope.Counter("batch_store_errors").Inc(1)
 		if errors.Is(err, storage.ErrAlreadyExists) {
 			return fmt.Errorf("unexpected duplicate batch ID=%s: %w", batch.ID, err)
 		}
 		return errs.NewRetryableError(fmt.Errorf("failed to create batch: %w", err))
 	}
+	batchCreateOp.Complete(nil)
 
 	// Get active batches for this queue to set as dependencies.
+	getActiveOp := metrics.Begin(c.metricsScope, "batch_store_get_active")
 	activeBatches, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, []entity.BatchState{
 		entity.BatchStateReady,
 		entity.BatchStateSpeculating,
 		entity.BatchStateFinalizing,
 	})
+	getActiveOp.Complete(err)
 	if err != nil {
 		c.logger.Errorw("failed to get active batches",
 			"request_id", request.ID,
 			"queue", request.Queue,
 			"error", err,
 		)
-		c.metricsScope.Counter("batch_store_errors").Inc(1)
 		return errs.NewRetryableError(fmt.Errorf("failed to get active batches for queue=%s: %w", request.Queue, err))
 	}
 
@@ -151,15 +156,18 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		}
 
 		// Get existing dependents for this batch (already in store)
+		getDepOp := metrics.Begin(c.metricsScope, "batch_dependent_get")
 		existing, err := c.store.GetBatchDependentStore().Get(ctx, dep.ID)
 		if err != nil && !storage.IsNotFound(err) {
+			getDepOp.Complete(err)
 			c.logger.Errorw("failed to get existing batch dependent",
 				"batch_id", dep.ID,
 				"error", err,
 			)
-			c.metricsScope.Counter("batch_dependent_store_errors").Inc(1)
 			return errs.NewRetryableError(fmt.Errorf("failed to get batch dependent for batchID=%s: %w", dep.ID, err))
 		}
+		getDepOp.Complete(nil)
+
 		if err == nil {
 			// Existing record found — update with merged dependents list.
 			// Note: existing.Dependents may have batches that are in "new" state
@@ -167,48 +175,51 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			// should not be considered an active state for further processing. The
 			// callers of the batch dependents store should check for this.
 			bd.Dependents = append(existing.Dependents, bd.Dependents...)
+			updateOp := metrics.Begin(c.metricsScope, "batch_dependent_update")
 			if err := c.store.GetBatchDependentStore().UpdateDependents(ctx, dep.ID, existing.Version, bd.Dependents); err != nil {
+				updateOp.Complete(err)
 				c.logger.Errorw("failed to update batch dependent",
 					"batch_id", dep.ID,
 					"error", err,
 				)
-				c.metricsScope.Counter("batch_dependent_store_errors").Inc(1)
 				return errs.NewRetryableError(fmt.Errorf("failed to update batch dependent for batchID=%s: %w", dep.ID, err))
-			} else {
-				c.logger.Debugw("updated batch dependent",
-					"batch_id", dep.ID,
-					"dependent_count", len(bd.Dependents),
-				)
-				c.metricsScope.Counter("batch_dependents_updated").Inc(1)
 			}
+			updateOp.Complete(nil)
+			c.logger.Debugw("updated batch dependent",
+				"batch_id", dep.ID,
+				"dependent_count", len(bd.Dependents),
+			)
 		} else {
 			// No existing record — create new batch dependent entry.
-			if err := c.store.GetBatchDependentStore().Create(ctx, bd); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+			createDepOp := metrics.Begin(c.metricsScope, "batch_dependent_create")
+			createErr := c.store.GetBatchDependentStore().Create(ctx, bd)
+			if createErr != nil && !errors.Is(createErr, storage.ErrAlreadyExists) {
+				createDepOp.Complete(createErr)
 				c.logger.Errorw("failed to create batch dependent",
 					"batch_id", dep.ID,
-					"error", err,
+					"error", createErr,
 				)
-				c.metricsScope.Counter("batch_dependent_store_errors").Inc(1)
-				return errs.NewRetryableError(fmt.Errorf("failed to create batch dependent for batchID=%s: %w", dep.ID, err))
-			} else {
-				c.logger.Debugw("created batch dependent",
-					"batch_id", dep.ID,
-					"dependent_batch_id", batch.ID,
-				)
-				c.metricsScope.Counter("batch_dependents_created").Inc(1)
+				return errs.NewRetryableError(fmt.Errorf("failed to create batch dependent for batchID=%s: %w", dep.ID, createErr))
 			}
+			createDepOp.Complete(nil)
+			c.logger.Debugw("created batch dependent",
+				"batch_id", dep.ID,
+				"dependent_batch_id", batch.ID,
+			)
 		}
 	}
 
 	// Transition batch state from created to ready.
+	updateStateOp := metrics.Begin(c.metricsScope, "batch_store_update_state")
 	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, entity.BatchStateReady); err != nil {
+		updateStateOp.Complete(err)
 		c.logger.Errorw("failed to update batch state to ready",
 			"batch_id", batch.ID,
 			"error", err,
 		)
-		c.metricsScope.Counter("batch_store_errors").Inc(1)
 		return errs.NewRetryableError(fmt.Errorf("failed to update batch state to ready: %w", err))
 	}
+	updateStateOp.Complete(nil)
 
 	c.logger.Infow("batch ready",
 		"batch_id", batch.ID,
@@ -218,22 +229,22 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	)
 
 	// Publish to score topic
+	publishOp := metrics.Begin(c.metricsScope, "publish")
 	if err := c.publish(ctx, consumer.TopicKeyScore, batch); err != nil {
+		publishOp.Complete(err)
 		c.logger.Errorw("failed to publish output",
 			"batch_id", batch.ID,
 			"topic_key", consumer.TopicKeyScore,
 			"error", err,
 		)
-		c.metricsScope.Counter("publish_errors").Inc(1)
 		return errs.NewRetryableError(fmt.Errorf("failed to publish to score: %w", err))
 	}
+	publishOp.Complete(nil)
 
 	c.logger.Infow("published batch to score",
 		"batch_id", batch.ID,
 		"topic_key", consumer.TopicKeyScore,
 	)
-
-	c.metricsScope.Counter("processed").Inc(1)
 
 	return nil // Success - message will be acked
 }
