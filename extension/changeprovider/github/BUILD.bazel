@@ -22,7 +22,10 @@ go_library(
 
 go_test(
     name = "github_test",
-    srcs = ["provider_test.go"],
+    srcs = [
+        "config_test.go",
+        "provider_test.go",
+    ],
     embed = [":github"],
     deps = [
         "//entity",

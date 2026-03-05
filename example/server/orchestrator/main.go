@@ -533,8 +533,15 @@ func newMergeChecker(logger *zap.Logger, scope tally.Scope) mergechecker.MergeCh
 // newChangeProvider creates a ChangeProvider for GitHub (github.com).
 // Configured via GITHUB_BASE_URL and GITHUB_TOKEN environment variables.
 func newChangeProvider(logger *zap.Logger, scope tally.Scope) changeprovider.ChangeProvider {
-	config := githubprovider.DefaultConfig()
-	return githubprovider.NewProvider(config, logger.Sugar(), scope.SubScope("changeprovider"))
+	baseURL := os.Getenv("GITHUB_BASE_URL")
+	if baseURL == "" {
+		baseURL = "https://api.github.com"
+	}
+
+	token := os.Getenv("GITHUB_TOKEN")
+
+	client := githubprovider.NewAuthenticatedClient(token, baseURL, githubprovider.DefaultTimeout)
+	return githubprovider.NewProvider(client, logger.Sugar(), scope.SubScope("changeprovider"))
 }
 
 // bearerTransport is an http.RoundTripper that adds a Bearer token to requests.

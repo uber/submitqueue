@@ -84,10 +84,12 @@ func TestProvider_Get_Success(t *testing.T) {
 		}, nil
 	})
 
-	provider := NewProvider(Config{
-		BaseURL:    "https://api.github.test",
-		HTTPClient: mockClient,
-	}, zaptest.NewLogger(t).Sugar(), tally.NoopScope)
+	client := NewClient(mockClient, "https://api.github.test/graphql")
+	provider := NewProvider(
+		client,
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+	)
 
 	changeInfo, err := provider.Get(context.Background(), entity.Change{
 		URIs: []string{"github://uber/submitqueue/123/abc123def456"},
@@ -191,10 +193,12 @@ func TestProvider_Get_Pagination(t *testing.T) {
 		}, nil
 	})
 
-	provider := NewProvider(Config{
-		BaseURL:    "https://api.github.test",
-		HTTPClient: mockClient,
-	}, zaptest.NewLogger(t).Sugar(), tally.NoopScope)
+	client := NewClient(mockClient, "https://api.github.test/graphql")
+	provider := NewProvider(
+		client,
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+	)
 
 	changeInfo, err := provider.Get(context.Background(), entity.Change{
 		URIs: []string{"github://uber/submitqueue/456/xyz789"},
@@ -211,9 +215,12 @@ func TestProvider_Get_Pagination(t *testing.T) {
 }
 
 func TestProvider_Get_InvalidURI(t *testing.T) {
-	provider := NewProvider(Config{
-		BaseURL: "https://api.github.test",
-	}, zaptest.NewLogger(t).Sugar(), tally.NoopScope)
+	client := NewClient(&http.Client{}, "https://api.github.test/graphql")
+	provider := NewProvider(
+		client,
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+	)
 
 	_, err := provider.Get(context.Background(), entity.Change{
 		URIs: []string{"invalid://uri"},
@@ -228,10 +235,12 @@ func TestProvider_Get_HTTPError(t *testing.T) {
 		return nil, assert.AnError
 	})
 
-	provider := NewProvider(Config{
-		BaseURL:    "https://api.github.test",
-		HTTPClient: mockClient,
-	}, zaptest.NewLogger(t).Sugar(), tally.NoopScope)
+	client := NewClient(mockClient, "https://api.github.test/graphql")
+	provider := NewProvider(
+		client,
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+	)
 
 	_, err := provider.Get(context.Background(), entity.Change{
 		URIs: []string{"github://uber/submitqueue/pull/123/abc"},
@@ -250,10 +259,12 @@ func TestProvider_Get_APIError404(t *testing.T) {
 		}, nil
 	})
 
-	provider := NewProvider(Config{
-		BaseURL:    "https://api.github.test",
-		HTTPClient: mockClient,
-	}, zaptest.NewLogger(t).Sugar(), tally.NoopScope)
+	client := NewClient(mockClient, "https://api.github.test/graphql")
+	provider := NewProvider(
+		client,
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+	)
 
 	_, err := provider.Get(context.Background(), entity.Change{
 		URIs: []string{"github://uber/submitqueue/pull/999/abc"},
@@ -281,10 +292,12 @@ func TestProvider_Get_GraphQLError(t *testing.T) {
 		}, nil
 	})
 
-	provider := NewProvider(Config{
-		BaseURL:    "https://api.github.test",
-		HTTPClient: mockClient,
-	}, zaptest.NewLogger(t).Sugar(), tally.NoopScope)
+	client := NewClient(mockClient, "https://api.github.test/graphql")
+	provider := NewProvider(
+		client,
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+	)
 
 	_, err := provider.Get(context.Background(), entity.Change{
 		URIs: []string{"github://uber/submitqueue/pull/123/abc"},
@@ -303,10 +316,12 @@ func TestProvider_Get_InvalidJSON(t *testing.T) {
 		}, nil
 	})
 
-	provider := NewProvider(Config{
-		BaseURL:    "https://api.github.test",
-		HTTPClient: mockClient,
-	}, zaptest.NewLogger(t).Sugar(), tally.NoopScope)
+	client := NewClient(mockClient, "https://api.github.test/graphql")
+	provider := NewProvider(
+		client,
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+	)
 
 	_, err := provider.Get(context.Background(), entity.Change{
 		URIs: []string{"github://uber/submitqueue/pull/123/abc"},
@@ -316,15 +331,13 @@ func TestProvider_Get_InvalidJSON(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to decode GraphQL response")
 }
 
-func TestNewProvider_DefaultConfig(t *testing.T) {
+func TestNewProvider(t *testing.T) {
 	httpClient := &http.Client{Timeout: 30 * time.Second}
-	provider := NewProvider(Config{
-		BaseURL:    "https://api.github.com",
-		HTTPClient: httpClient,
-	}, zaptest.NewLogger(t).Sugar(), tally.NoopScope).(*provider)
+	client := NewClient(httpClient, "https://api.github.com/graphql")
 
-	assert.Equal(t, "https://api.github.com/graphql", provider.graphQLURL)
-	assert.NotNil(t, provider.httpClient)
+	provider := NewProvider(client, zaptest.NewLogger(t).Sugar(), tally.NoopScope)
+
+	assert.NotNil(t, provider)
 }
 
 func TestProvider_Get_MultiplePRs(t *testing.T) {
@@ -404,10 +417,12 @@ func TestProvider_Get_MultiplePRs(t *testing.T) {
 		}, nil
 	})
 
-	provider := NewProvider(Config{
-		BaseURL:    "https://api.github.test",
-		HTTPClient: mockClient,
-	}, zaptest.NewLogger(t).Sugar(), tally.NoopScope)
+	client := NewClient(mockClient, "https://api.github.test/graphql")
+	provider := NewProvider(
+		client,
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+	)
 
 	changeInfo, err := provider.Get(context.Background(), entity.Change{
 		URIs: []string{
@@ -436,9 +451,12 @@ func TestProvider_Get_MultiplePRs(t *testing.T) {
 }
 
 func TestProvider_Get_CrossRepoStack(t *testing.T) {
-	provider := NewProvider(Config{
-		BaseURL: "https://api.github.test",
-	}, zaptest.NewLogger(t).Sugar(), tally.NoopScope)
+	client := NewClient(&http.Client{}, "https://api.github.test/graphql")
+	provider := NewProvider(
+		client,
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+	)
 
 	_, err := provider.Get(context.Background(), entity.Change{
 		URIs: []string{
@@ -454,9 +472,12 @@ func TestProvider_Get_CrossRepoStack(t *testing.T) {
 }
 
 func TestProvider_Get_MixedProviderStack(t *testing.T) {
-	provider := NewProvider(Config{
-		BaseURL: "https://api.github.test",
-	}, zaptest.NewLogger(t).Sugar(), tally.NoopScope)
+	client := NewClient(&http.Client{}, "https://api.github.test/graphql")
+	provider := NewProvider(
+		client,
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+	)
 
 	_, err := provider.Get(context.Background(), entity.Change{
 		URIs: []string{
@@ -512,10 +533,12 @@ func TestProvider_Get_StalePR(t *testing.T) {
 		}, nil
 	})
 
-	provider := NewProvider(Config{
-		BaseURL:    "https://api.github.test",
-		HTTPClient: mockClient,
-	}, zaptest.NewLogger(t).Sugar(), tally.NoopScope)
+	client := NewClient(mockClient, "https://api.github.test/graphql")
+	provider := NewProvider(
+		client,
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+	)
 
 	_, err := provider.Get(context.Background(), entity.Change{
 		URIs: []string{"github://uber/submitqueue/123/oldsha456"}, // Different SHA!
@@ -614,10 +637,12 @@ func TestProvider_Get_PartialSuccess(t *testing.T) {
 		}, nil
 	})
 
-	provider := NewProvider(Config{
-		BaseURL:    "https://api.github.test",
-		HTTPClient: mockClient,
-	}, zaptest.NewLogger(t).Sugar(), tally.NoopScope)
+	client := NewClient(mockClient, "https://api.github.test/graphql")
+	provider := NewProvider(
+		client,
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+	)
 
 	changeInfo, err := provider.Get(context.Background(), entity.Change{
 		URIs: []string{

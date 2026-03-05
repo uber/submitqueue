@@ -121,19 +121,18 @@ func buildGraphQLRequest(org, repo string, prNumber int, cursor string) graphqlR
 func doGraphQLRequest(
 	ctx context.Context,
 	bodyBytes []byte,
-	graphQLURL string,
-	httpClient *http.Client,
+	client *Client,
 	org, repo string,
 	metrics tally.Scope,
 ) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, graphQLURL, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, client.GraphQLURL(), bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := httpClient.Do(req)
+	resp, err := client.HTTPClient().Do(req)
 	if err != nil {
 		metrics.Tagged(map[string]string{
 			"org":        org,

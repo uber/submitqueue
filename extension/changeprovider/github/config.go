@@ -1,9 +1,7 @@
 package github
 
 import (
-	"fmt"
 	"net/http"
-	"os"
 	"time"
 )
 
@@ -13,47 +11,91 @@ const (
 	DefaultTimeout = 30 * time.Second
 )
 
-// Config holds configuration for connecting to a GitHub backend.
-type Config struct {
-	// BaseURL is the GitHub instance base URL (without /graphql suffix).
-	// Examples: "https://api.github.com", "https://ghe.company.com"
-	BaseURL string
-
-	// Token for authenticating to this GitHub instance.
-	// Can be empty for unauthenticated requests.
-	Token string
-
-	// Timeout for HTTP requests to this GitHub instance.
-	// If zero or negative, defaults to DefaultTimeout (30s).
-	// Set this higher for slow GHE instances or flaky networks.
-	Timeout time.Duration
-
-	// HTTPClient provides complete control over the HTTP client.
-	// If set, BaseURL is still used but Token and Timeout are ignored.
-	// Use this for custom transports, connection pooling, or testing.
-	HTTPClient *http.Client
+// Client is a GitHub API client that encapsulates connection details and authentication.
+type Client struct {
+	httpClient *http.Client
+	graphQLURL string
 }
 
-// Validate checks if the config is valid.
-func (c Config) Validate() error {
-	if c.BaseURL == "" {
-		return fmt.Errorf("BaseURL is required")
-	}
-	return nil
-}
-
-// DefaultConfig returns a Config for github.com from environment.
-func DefaultConfig() Config {
-	return Config{
-		BaseURL: getEnvOrDefault("GITHUB_BASE_URL", "https://api.github.com"),
-		Token:   os.Getenv("GITHUB_TOKEN"),
-		Timeout: 0, // Will use DefaultTimeout
+// NewClient creates a new GitHub API client with a pre-configured HTTP client.
+// The caller is responsible for configuring authentication in the HTTP client.
+//
+// Parameters:
+//   - httpClient: Configured HTTP client (with auth, timeout, transport, etc.)
+//   - graphQLURL: GitHub GraphQL endpoint (e.g., "https://api.github.com/graphql")
+//
+// Example with custom HTTP client:
+//
+//	tokenSource := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "ghp_xxx"})
+//	httpClient := oauth2.NewClient(ctx, tokenSource)
+//	client := github.NewClient(httpClient, "https://api.github.com/graphql")
+func NewClient(httpClient *http.Client, graphQLURL string) *Client {
+	return &Client{
+		httpClient: httpClient,
+		graphQLURL: graphQLURL,
 	}
 }
 
-func getEnvOrDefault(key, defaultVal string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
+// NewAuthenticatedClient creates a GitHub API client with bearer token authentication.
+// This is a convenience helper for simple token-based auth.
+//
+// Parameters:
+//   - token: GitHub personal access token (can be empty for public access)
+//   - baseURL: GitHub instance base URL (e.g., "https://api.github.com" or "https://ghe.company.com")
+//   - timeout: HTTP request timeout (use DefaultTimeout if unsure)
+//
+// The GraphQL URL is derived by appending "/graphql" to baseURL.
+//
+// Example:
+//
+//	// GitHub.com
+//	client := github.NewAuthenticatedClient("ghp_xxx", "https://api.github.com", github.DefaultTimeout)
+//
+//	// GitHub Enterprise Server
+//	client := github.NewAuthenticatedClient("ghp_xxx", "https://ghe.company.com/api", github.DefaultTimeout)
+func NewAuthenticatedClient(token string, baseURL string, timeout time.Duration) *Client {
+	httpClient := &http.Client{
+		Timeout:   timeout,
+		Transport: newBearerTransport(token, http.DefaultTransport),
 	}
-	return defaultVal
+
+	return &Client{
+		httpClient: httpClient,
+		graphQLURL: baseURL + "/graphql",
+	}
+}
+
+// bearerTransport is an http.RoundTripper that adds a Bearer token to requests.
+type bearerTransport struct {
+	token string
+	base  http.RoundTripper
+}
+
+// newBearerTransport creates an HTTP transport with bearer token authentication.
+// If token is empty, returns the base transport unchanged.
+func newBearerTransport(token string, base http.RoundTripper) http.RoundTripper {
+	if token == "" {
+		return base
+	}
+
+	return &bearerTransport{
+		token: token,
+		base:  base,
+	}
+}
+
+func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Header.Set("Authorization", "Bearer "+t.token)
+	return t.base.RoundTrip(req)
+}
+
+// HTTPClient returns the configured HTTP client.
+func (c *Client) HTTPClient() *http.Client {
+	return c.httpClient
+}
+
+// GraphQLURL returns the configured GraphQL endpoint URL.
+func (c *Client) GraphQLURL() string {
+	return c.graphQLURL
 }

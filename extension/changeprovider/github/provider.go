@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/uber-go/tally/v4"
@@ -17,73 +16,29 @@ import (
 
 // provider implements the ChangeProvider interface for GitHub.
 type provider struct {
-	httpClient *http.Client
-	graphQLURL string
-	logger     *zap.SugaredLogger
-	metrics    tally.Scope
+	client  *Client
+	logger  *zap.SugaredLogger
+	metrics tally.Scope
 }
 
-// NewProvider creates a new GitHub ChangeProvider from configuration.
-func NewProvider(config Config, logger *zap.SugaredLogger, metrics tally.Scope) changeprovider.ChangeProvider {
-	if err := config.Validate(); err != nil {
-		panic(fmt.Sprintf("invalid GitHub config: %v", err))
-	}
-
-	// Derive GraphQL URL from base URL
-	graphQLURL := config.BaseURL + "/graphql"
-
-	// Use provided client or create default
-	httpClient := config.HTTPClient
-	if httpClient == nil {
-		timeout := config.Timeout
-		if timeout <= 0 {
-			timeout = DefaultTimeout
-		}
-		httpClient = createDefaultClient(config.Token, timeout)
-	}
-
+// NewProvider creates a new GitHub ChangeProvider.
+// The caller is responsible for providing a fully-configured Client with authentication.
+// Use NewAuthenticatedClient helper to create a client with bearer token auth.
+//
+// Parameters:
+//   - client: Pre-configured GitHub API client (encapsulates HTTP client and GraphQL URL)
+//   - logger: Structured logger
+//   - metrics: Metrics scope
+func NewProvider(
+	client *Client,
+	logger *zap.SugaredLogger,
+	metrics tally.Scope,
+) changeprovider.ChangeProvider {
 	return &provider{
-		httpClient: httpClient,
-		graphQLURL: graphQLURL,
-		logger:     logger.Named("github_changeprovider"),
-		metrics:    metrics.SubScope("github_changeprovider"),
+		client:  client,
+		logger:  logger.Named("github_changeprovider"),
+		metrics: metrics.SubScope("github_changeprovider"),
 	}
-}
-
-// createDefaultClient creates an HTTP client with the given token and timeout.
-func createDefaultClient(token string, timeout time.Duration) *http.Client {
-	transport := createTransport(token)
-
-	return &http.Client{
-		Timeout:   timeout,
-		Transport: transport,
-	}
-}
-
-// createTransport creates an HTTP transport with optional bearer token authentication.
-func createTransport(token string) http.RoundTripper {
-	base := http.DefaultTransport
-
-	if token == "" {
-		return base
-	}
-
-	return &bearerTransport{
-		token: token,
-		base:  base,
-	}
-}
-
-// bearerTransport is an http.RoundTripper that adds a Bearer token to requests.
-type bearerTransport struct {
-	token string
-	base  http.RoundTripper
-}
-
-func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	req = req.Clone(req.Context())
-	req.Header.Set("Authorization", "Bearer "+t.token)
-	return t.base.RoundTrip(req)
 }
 
 // Get retrieves change information from GitHub for the provided Change.
@@ -234,7 +189,7 @@ func (p *provider) fetchPullRequestPage(ctx context.Context, org, repo string, p
 		return nil, fmt.Errorf("failed to marshal GraphQL request: %w", err)
 	}
 
-	resp, err := doGraphQLRequest(ctx, bodyBytes, p.graphQLURL, p.httpClient, org, repo, p.metrics)
+	resp, err := doGraphQLRequest(ctx, bodyBytes, p.client, org, repo, p.metrics)
 	if err != nil {
 		return nil, err
 	}
