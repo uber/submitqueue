@@ -2,6 +2,7 @@ package score
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/uber-go/tally/v4"
@@ -9,6 +10,8 @@ import (
 	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
+	"github.com/uber/submitqueue/extension/scorer"
+	"github.com/uber/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -21,6 +24,8 @@ type Controller struct {
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
+	scorer        scorer.Scorer
+	store         storage.Storage
 }
 
 // Verify Controller implements consumer.Controller interface at compile time.
@@ -33,6 +38,8 @@ func NewController(
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
+	scorer scorer.Scorer,
+	store storage.Storage,
 ) *Controller {
 	return &Controller{
 		logger:        logger.Named("score_controller"),
@@ -40,6 +47,8 @@ func NewController(
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
+		scorer:        scorer,
+		store:         store,
 	}
 }
 
@@ -74,12 +83,81 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"partition_key", msg.PartitionKey,
 	)
 
-	// TODO: Add scoring logic
-	// - Evaluate batch priority
-	// - Apply scoring heuristics
+	// Validate batch contains exactly one request
+	if len(batch.Contains) == 0 {
+		c.metricsScope.Counter("empty_batch_errors").Inc(1)
+		return fmt.Errorf("batch %s contains no requests", batch.ID)
+	}
+	if len(batch.Contains) > 1 {
+		// TODO: multi-request batches will be supported later
+		c.metricsScope.Counter("multi_request_batch_errors").Inc(1)
+		return fmt.Errorf("batch %s contains %d requests, only single-request batches are supported", batch.ID, len(batch.Contains))
+	}
+
+	// Look up the request to get its Change
+	request, err := c.store.GetRequestStore().Get(ctx, batch.Contains[0])
+	if err != nil {
+		if storage.IsNotFound(err) {
+			c.logger.Errorw("request not found",
+				"batch_id", batch.ID,
+				"request_id", batch.Contains[0],
+				"error", err,
+			)
+			c.metricsScope.Counter("request_not_found_errors").Inc(1)
+			return fmt.Errorf("request %s not found: %w", batch.Contains[0], err)
+		}
+		c.logger.Errorw("failed to get request",
+			"batch_id", batch.ID,
+			"request_id", batch.Contains[0],
+			"error", err,
+		)
+		c.metricsScope.Counter("storage_errors").Inc(1)
+		return errs.NewRetryableError(fmt.Errorf("failed to get request %s: %w", batch.Contains[0], err))
+	}
+
+	// Score the change
+	score, err := c.scorer.Score(ctx, request.Change)
+	if err != nil {
+		c.logger.Errorw("failed to score change",
+			"batch_id", batch.ID,
+			"request_id", request.ID,
+			"error", err,
+		)
+		c.metricsScope.Counter("scorer_errors").Inc(1)
+		return errs.NewRetryableError(fmt.Errorf("failed to score change: %w", err))
+	}
+
+	batchScore := float32(score)
+
+	c.logger.Infow("scored batch",
+		"batch_id", batch.ID,
+		"score", batchScore,
+	)
+
+	// Update batch store with score and transition state to speculating
+	if err := c.store.GetBatchStore().UpdateScoreAndState(ctx, batch.ID, batch.Version, batchScore, entity.BatchStateSpeculating); err != nil {
+		if errors.Is(err, storage.ErrVersionMismatch) {
+			c.logger.Errorw("version mismatch updating batch score",
+				"batch_id", batch.ID,
+				"version", batch.Version,
+				"error", err,
+			)
+			c.metricsScope.Counter("version_mismatch_errors").Inc(1)
+			return fmt.Errorf("version mismatch updating batch %s: %w", batch.ID, err)
+		}
+		c.logger.Errorw("failed to update batch score",
+			"batch_id", batch.ID,
+			"error", err,
+		)
+		c.metricsScope.Counter("batch_store_errors").Inc(1)
+		return errs.NewRetryableError(fmt.Errorf("failed to update batch %s score: %w", batch.ID, err))
+	}
+
+	// Create new batch with updated state and version to reflect the store update
+	scored := batch.WithScoreAndState(batchScore, entity.BatchStateSpeculating)
 
 	// Publish to speculate topic
-	if err := c.publish(ctx, consumer.TopicKeySpeculate, batch); err != nil {
+	if err := c.publish(ctx, consumer.TopicKeySpeculate, scored); err != nil {
 		c.logger.Errorw("failed to publish output",
 			"batch_id", batch.ID,
 			"topic_key", consumer.TopicKeySpeculate,

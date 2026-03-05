@@ -21,6 +21,11 @@ type BatchStore interface {
 	// The implementation should increment the version by 1 atomically with the state update.
 	UpdateState(ctx context.Context, id string, version int32, newState entity.BatchState) error
 
+	// UpdateScoreAndState updates the score and state of a batch if the current version matches the expected version.
+	// If versions do not match, returns ErrVersionMismatch.
+	// The implementation should increment the version by 1 atomically with the score and state update.
+	UpdateScoreAndState(ctx context.Context, id string, version int32, score float32, newState entity.BatchState) error
+
 	// GetByQueueAndStates retrieves all batches that belong to the given queue and are in the given states.
 	GetByQueueAndStates(ctx context.Context, queue string, states []entity.BatchState) ([]entity.Batch, error)
 }

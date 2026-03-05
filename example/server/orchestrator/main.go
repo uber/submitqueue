@@ -15,12 +15,15 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/extension/counter"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	"github.com/uber/submitqueue/extension/mergechecker"
 	githubchecker "github.com/uber/submitqueue/extension/mergechecker/github"
 	extqueue "github.com/uber/submitqueue/extension/queue"
 	queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
+	"github.com/uber/submitqueue/extension/scorer"
+	heuristicscorer "github.com/uber/submitqueue/extension/scorer/heuristic"
 	mysqlstorage "github.com/uber/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/extension/storage"
 	"github.com/uber/submitqueue/orchestrator/controller"
@@ -161,8 +164,11 @@ func run() error {
 	// Create merge checker
 	mc := newMergeChecker(logger, scope)
 
+	// Create scorer
+	sc := newScorer(scope)
+
 	// Register controllers
-	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cnt, store); err != nil {
+	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cnt, store, sc); err != nil {
 		return err
 	}
 
@@ -310,7 +316,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 //                                        │        │                        │
 //                                        └────────┴────────────────────────┘
 
-func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cnt counter.Counter, store storage.Storage) error {
+func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cnt counter.Counter, store storage.Storage, sc scorer.Scorer) error {
 	requestController := request.NewController(
 		logger,
 		scope,
@@ -354,6 +360,8 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		registry,
 		consumer.TopicKeyScore,
 		"orchestrator-score",
+		sc,
+		store,
 	)
 	if err := c.Register(scoreController); err != nil {
 		return fmt.Errorf("failed to register score controller: %w", err)
@@ -440,6 +448,18 @@ func newMergeChecker(logger *zap.Logger, scope tally.Scope) mergechecker.MergeCh
 	return mergechecker.NewMultiChecker(map[string]mergechecker.MergeChecker{
 		"github": github,
 	})
+}
+
+func newScorer(scope tally.Scope) scorer.Scorer {
+	return heuristicscorer.New(
+		[]heuristicscorer.Bucket{
+			{Min: 0, Max: 100, Score: 1.0},
+		},
+		func(_ context.Context, _ entity.Change) (int, error) {
+			return 0, nil
+		},
+		scope.SubScope("scorer"),
+	)
 }
 
 // bearerTransport is an http.RoundTripper that adds a Bearer token to requests.

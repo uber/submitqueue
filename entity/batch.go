@@ -57,6 +57,8 @@ type Batch struct {
 	// - queueA/batch/3 will contain queueA/batch/1
 	//
 	Dependencies []map[string]interface{}
+	// Score is the probability of a successful land for the batch, between 0.0 and 1.0.
+	Score float32 `json:"score"`
 	// The state of the batch lifecycle this batch is in.
 	State BatchState
 	// Version is the version of the object. It is used for optimistic locking.
@@ -67,6 +69,14 @@ type Batch struct {
 // ToBytes serializes the Batch to JSON bytes for queue message payload.
 func (b Batch) ToBytes() ([]byte, error) {
 	return json.Marshal(b)
+}
+
+// WithScoreAndState returns a new Batch with the given score and state, incrementing the version.
+func (b Batch) WithScoreAndState(score float32, state BatchState) Batch {
+	b.Score = score
+	b.State = state
+	b.Version++
+	return b
 }
 
 // BatchFromBytes deserializes a Batch from JSON bytes.
