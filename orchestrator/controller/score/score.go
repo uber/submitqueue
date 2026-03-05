@@ -8,6 +8,7 @@ import (
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
+	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
 	"github.com/uber/submitqueue/extension/scorer"
@@ -55,8 +56,9 @@ func NewController(
 // Process processes a score delivery from the queue.
 // Deserializes the batch, scores it, and publishes to the speculate topic.
 // Returns nil to ack (success), or error to nack (retry).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
-	c.metricsScope.Counter("received").Inc(1)
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+	op := metrics.Begin(c.metricsScope, "process")
+	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
@@ -69,7 +71,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			"attempt", delivery.Attempt(),
 			"error", err,
 		)
-		c.metricsScope.Counter("deserialize_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "deserialize_errors", 1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
 		return fmt.Errorf("failed to deserialize batch: %w", err)
 	}
@@ -85,12 +87,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	// Validate batch contains exactly one request
 	if len(batch.Contains) == 0 {
-		c.metricsScope.Counter("empty_batch_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "empty_batch_errors", 1)
 		return fmt.Errorf("batch %s contains no requests", batch.ID)
 	}
 	if len(batch.Contains) > 1 {
 		// TODO: multi-request batches will be supported later
-		c.metricsScope.Counter("multi_request_batch_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "multi_request_batch_errors", 1)
 		return fmt.Errorf("batch %s contains %d requests, only single-request batches are supported", batch.ID, len(batch.Contains))
 	}
 
@@ -103,7 +105,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 				"request_id", batch.Contains[0],
 				"error", err,
 			)
-			c.metricsScope.Counter("request_not_found_errors").Inc(1)
+			metrics.NamedCounter(c.metricsScope, "process", "request_not_found_errors", 1)
 			return fmt.Errorf("request %s not found: %w", batch.Contains[0], err)
 		}
 		c.logger.Errorw("failed to get request",
@@ -111,7 +113,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			"request_id", batch.Contains[0],
 			"error", err,
 		)
-		c.metricsScope.Counter("storage_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
 		return errs.NewRetryableError(fmt.Errorf("failed to get request %s: %w", batch.Contains[0], err))
 	}
 
@@ -123,7 +125,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			"request_id", request.ID,
 			"error", err,
 		)
-		c.metricsScope.Counter("scorer_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "scorer_errors", 1)
 		return errs.NewRetryableError(fmt.Errorf("failed to score change: %w", err))
 	}
 
@@ -142,14 +144,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 				"version", batch.Version,
 				"error", err,
 			)
-			c.metricsScope.Counter("version_mismatch_errors").Inc(1)
+			metrics.NamedCounter(c.metricsScope, "process", "version_mismatch_errors", 1)
 			return fmt.Errorf("version mismatch updating batch %s: %w", batch.ID, err)
 		}
 		c.logger.Errorw("failed to update batch score",
 			"batch_id", batch.ID,
 			"error", err,
 		)
-		c.metricsScope.Counter("batch_store_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "batch_store_errors", 1)
 		return errs.NewRetryableError(fmt.Errorf("failed to update batch %s score: %w", batch.ID, err))
 	}
 
@@ -163,7 +165,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			"topic_key", consumer.TopicKeySpeculate,
 			"error", err,
 		)
-		c.metricsScope.Counter("publish_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1)
 		return errs.NewRetryableError(fmt.Errorf("failed to publish to speculate: %w", err))
 	}
 
@@ -171,8 +173,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"batch_id", batch.ID,
 		"topic_key", consumer.TopicKeySpeculate,
 	)
-
-	c.metricsScope.Counter("processed").Inc(1)
 
 	return nil // Success - message will be acked
 }
