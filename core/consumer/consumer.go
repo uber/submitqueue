@@ -2,6 +2,7 @@ package consumer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -20,16 +21,23 @@ const (
 
 // Consumer orchestrates multiple queue consumers. It handles subscription lifecycle,
 // message consumption, ack/nack, and graceful shutdown for the entire pipeline.
+// Start(), Register() and Stop() are always called in this order so they do not need to be concurrently-safe between
+// one another, but the implementation must be thread-safe between message processing and Register()/Stop() operations.
 type Consumer interface {
 	// Register adds a controller to the consumer. Must be called before Start().
 	Register(controller Controller) error
 
 	// Start subscribes to all registered controllers' topics and begins consuming messages.
+	// Context is cancelled when the consumer is stopped, the implementation should propagate it to the controllers
+	// running message processing. The implementation can react immediately to the context cancellation by returning `ctx.Err()` instead of starting the message processing,
+	// but can also opt out to defer the cancellation after the message processing routine is set up.
+	// Start() will only be called once at the application startup, so it does not need to be idempotent.
 	Start(ctx context.Context) error
 
 	// Stop gracefully shuts down all controllers with the specified timeout.
 	// timeoutMs is the maximum time in milliseconds to wait for graceful shutdown.
 	// Returns error if shutdown times out.
+	// Stop() will only be called once at the application shutdown, so it does not need to be idempotent.
 	Stop(timeoutMs int64) error
 }
 
@@ -115,10 +123,10 @@ func (m *consumer) Start(ctx context.Context) error {
 
 	for _, controller := range m.controllers {
 		if err := m.subscribe(ctx, controller); err != nil {
-			// Cleanup any started controllers. Ignore error since we're returning
-			// the subscribe error.
-			_ = m.unsubscribeAll(startupCleanupTimeoutMs)
-			return fmt.Errorf("failed to start controller %s: %w", controller.Name(), err)
+			// Cleanup any started controllers. Include cleanup error if any.
+			cleanupErr := m.unsubscribeAll(startupCleanupTimeoutMs)
+			startErr := fmt.Errorf("failed to start controller %s: %w", controller.Name(), err)
+			return errors.Join(startErr, cleanupErr)
 		}
 	}
 
@@ -329,10 +337,17 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 
 	elapsed := time.Since(start)
 
+	// By convention, Controller can only return context.Canceled if it is cancelled by the context, i.e. when consumer is stopped or application is shutting down
+	isCanceled := errors.Is(err, context.Canceled)
+
 	// Track latency with success/failure tags
 	successTag := "true"
 	if err != nil {
-		successTag = "false"
+		if isCanceled {
+			successTag = "cancel"
+		} else {
+			successTag = "false"
+		}
 	}
 
 	latencyScope := controllerScope.Tagged(map[string]string{
@@ -369,7 +384,13 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 		}
 
 		// Controller returned retryable error - nack message for retry
-		m.logger.Errorw("controller error, nacking message",
+		// This includes cancelled controllers.
+		what := "error"
+		if isCanceled {
+			what = "cancel"
+		}
+		m.logger.Errorw("controller error or cancel, nacking message",
+			"what", what,
 			"controller", controller.Name(),
 			"topic_key", topicKey,
 			"message_id", msg.ID,
@@ -443,6 +464,7 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 // Cancels all subscription contexts and waits for consumption goroutines to finish.
 // timeoutMs is the maximum time in milliseconds to wait for graceful shutdown.
 // Returns error if shutdown times out.
+// Stop() is not idempotent and can only be called once.
 func (m *consumer) Stop(timeoutMs int64) error {
 	m.mu.Lock()
 	m.stopped = true
@@ -481,7 +503,7 @@ func (m *consumer) unsubscribeAll(timeoutMs int64) error {
 
 	// Wait for each subscription to finish, splitting the timeout budget across them
 	remaining := time.Duration(timeoutMs) * time.Millisecond
-	var timedOut bool
+	var timedOutControllers []string
 	for topicKey, sub := range m.subscriptions {
 		start := time.Now()
 		select {
@@ -492,7 +514,7 @@ func (m *consumer) unsubscribeAll(timeoutMs int64) error {
 				"controller", sub.controller.Name(),
 				"topic_key", topicKey,
 			)
-			timedOut = true
+			timedOutControllers = append(timedOutControllers, sub.controller.Name())
 		}
 		elapsed := time.Since(start)
 		remaining -= elapsed
@@ -504,8 +526,8 @@ func (m *consumer) unsubscribeAll(timeoutMs int64) error {
 	// Clear subscriptions
 	m.subscriptions = make(map[TopicKey]*activeSubscription)
 
-	if timedOut {
-		return fmt.Errorf("timeout waiting for controllers to stop")
+	if len(timedOutControllers) > 0 {
+		return fmt.Errorf("timeout waiting for controllers to stop: %v", timedOutControllers)
 	}
 
 	m.logger.Debugw("all controllers stopped gracefully")

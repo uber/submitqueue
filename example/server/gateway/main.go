@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -41,10 +42,21 @@ func (s *GatewayServer) Land(ctx context.Context, req *pb.LandRequest) (*pb.Land
 }
 
 func main() {
+	code := 0
 	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Gateway server failure: %v\n", err)
-		os.Exit(1)
+		if errors.Is(err, context.Canceled) {
+			fmt.Println("Gateway server stopped by signal")
+
+			// Return 143 (128 + SIGTERM) as per POSIX standard if the application receives any termination signal from the OS. Ideally we should return 128+SIGINT for SIGINT and 128+SIGTERM for SIGTERM,
+			// but it will require a special processing not yet available in the standard library.
+			code = 128 + int(syscall.SIGTERM)
+		} else {
+			fmt.Fprintf(os.Stderr, "Gateway server failure: %v\n", err)
+			// TODO: classify errors and implement a binary protocol for exit codes, so far 1 for everything
+			code = 1
+		}
 	}
+	os.Exit(code)
 }
 
 func run() error {
@@ -162,7 +174,7 @@ func run() error {
 	}
 
 	fmt.Printf("Gateway gRPC server is running on %s\n", port)
-	fmt.Println("Press Ctrl+C to stop.")
+	fmt.Println("Press Ctrl+C to stop, or send a SIGTERM.")
 
 	// Start server in a goroutine and wait for it to finish
 	serverErrCh := make(chan error, 1)
@@ -170,16 +182,28 @@ func run() error {
 		serverErrCh <- grpcServer.Serve(listener)
 	}()
 
-	// Wait for interrupt signal or server exit
+	// Wait for interrupt signal or server critical error
+	// If interruption is signaled, gracefully stop the server
+	// If an error happens during shutdown, return the actual error, not the context cancellation error
+	var serverErr error
 	select {
 	case <-ctx.Done():
-		fmt.Println("\nShutting down gateway server...")
+		fmt.Println("Shutting down gateway server due to interruption signal...")
+
+		// Set the error to the context cancellation error to be surfaced as a desired exit code by the main function
+		// to indicate that the server was stopped as intended
+		// It may be overridden by the server error if any
+		err = ctx.Err()
+
+		// stop GRPC server and wait for it to exit
 		grpcServer.GracefulStop()
-		_ = <-serverErrCh // Wait for the server to exit and ignore the error
-	case errCh := <-serverErrCh:
-		if errCh != nil {
-			err = fmt.Errorf("\nServer exited with error: %w\n", errCh)
-		}
+		serverErr = <-serverErrCh
+	case serverErr = <-serverErrCh:
+		fmt.Println("Shutting down gateway server due to critical GRPC server error...")
+	}
+
+	if serverErr != nil {
+		err = fmt.Errorf("GRPC server exited with error: %w", serverErr)
 	}
 
 	return err

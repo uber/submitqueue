@@ -269,6 +269,64 @@ func (s *ComposeStack) ConnectGRPC(serviceName string, containerPort int) (*grpc
 	return conn, nil
 }
 
+// StopService sends SIGTERM to a service and waits for it to stop.
+// timeoutSec is the maximum time to wait before Docker sends SIGKILL.
+func (s *ComposeStack) StopService(serviceName string, timeoutSec int) error {
+	s.t.Helper()
+
+	s.log.Logf("Stopping service %s (timeout %ds)", serviceName, timeoutSec)
+
+	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName,
+		"stop", "-t", fmt.Sprintf("%d", timeoutSec), serviceName)
+	cmd := exec.CommandContext(s.ctx, s.composeCmd[0], args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to stop service %s: %w", serviceName, err)
+	}
+
+	s.log.Logf("Service %s stopped", serviceName)
+	return nil
+}
+
+// ServiceExitCode returns the exit code of a stopped service container.
+// Must be called after the service has exited.
+func (s *ComposeStack) ServiceExitCode(serviceName string) (int, error) {
+	s.t.Helper()
+
+	// Get container ID for the service
+	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName,
+		"ps", "-a", "-q", serviceName)
+	cmd := exec.CommandContext(s.ctx, s.composeCmd[0], args...)
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get container ID for service %s: %w", serviceName, err)
+	}
+
+	containerID := strings.TrimSpace(string(output))
+	if containerID == "" {
+		return 0, fmt.Errorf("no container found for service %s", serviceName)
+	}
+
+	// Get exit code via docker inspect
+	inspectCmd := exec.CommandContext(s.ctx, "docker", "inspect",
+		"--format", "{{.State.ExitCode}}", containerID)
+	inspectOutput, err := inspectCmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("failed to inspect container %s: %w", containerID, err)
+	}
+
+	var exitCode int
+	_, err = fmt.Sscanf(strings.TrimSpace(string(inspectOutput)), "%d", &exitCode)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse exit code from %q: %w", string(inspectOutput), err)
+	}
+
+	s.log.Logf("Service %s exit code: %d", serviceName, exitCode)
+	return exitCode, nil
+}
+
 // setupDockerEnv configures Docker environment for docker-compose.
 func setupDockerEnv(t *testing.T) {
 	t.Helper()

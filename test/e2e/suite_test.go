@@ -93,8 +93,35 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 }
 
 func (s *E2EIntegrationSuite) TearDownSuite() {
+	t := s.T()
 	s.log.Logf("Tearing down E2E integration test suite")
-	// Cleanup handled automatically by testutil.ComposeStack
+
+	// Gracefully stop services via SIGTERM and verify exit codes before compose teardown.
+	// Use a 60s timeout to exceed the orchestrator's 30s consumer drain window.
+	// Stop both services first so their shutdown runs in parallel, then check exit codes.
+	const stopTimeoutSec = 60
+	const wantExitCode = 143 // 128 + SIGTERM (15)
+
+	gatewayStopErr := s.stack.StopService("gateway-service", stopTimeoutSec)
+	orchestratorStopErr := s.stack.StopService("orchestrator-service", stopTimeoutSec)
+
+	if assert.NoError(t, gatewayStopErr, "failed to stop gateway service") {
+		exitCode, err := s.stack.ServiceExitCode("gateway-service")
+		if assert.NoError(t, err, "failed to get gateway exit code") {
+			assert.Equal(t, wantExitCode, exitCode,
+				"gateway should exit with 128+SIGTERM (%d) on graceful shutdown", wantExitCode)
+		}
+	}
+
+	if assert.NoError(t, orchestratorStopErr, "failed to stop orchestrator service") {
+		exitCode, err := s.stack.ServiceExitCode("orchestrator-service")
+		if assert.NoError(t, err, "failed to get orchestrator exit code") {
+			assert.Equal(t, wantExitCode, exitCode,
+				"orchestrator should exit with 128+SIGTERM (%d) on graceful shutdown", wantExitCode)
+		}
+	}
+
+	// Compose stack cleanup handled automatically by t.Cleanup
 }
 
 func (s *E2EIntegrationSuite) TestPingGateway() {

@@ -75,11 +75,20 @@ func (d *deliveryWrapper) Metadata() map[string]string {
 // The Controller interface enables clean separation of concerns:
 // - Controller focuses on business logic (deserialize, process, return error status)
 // - Consumer handles infrastructure (subscription, ack/nack, metrics, lifecycle)
+// The implementation of the controller should be idempotent and stateless. The controller is expected to be retried for the same message multiple times and should process side effects gracefully.
+// The implementation must be thread-safe.
 type Controller interface {
 	// Process processes a delivery. Controller receives consumer.Delivery (not extension/queue.Delivery)
 	// which prevents direct Ack/Nack calls - Consumer handles those automatically.
-	// Return nil to ack the message (success), error to nack and retry,
-	// or NonRetryableError to ack a poison pill message.
+	// Return nil to ack the message (success), error to nack and retry, or NonRetryableError to ack a poison pill message.
+	// Context controls the lifecycle of the service. It is cancelled when the consumer is stopped. The implementation should process it gracefully:
+	//  - Pass the context to the underlying services and wait for them to complete their operations.
+	//  - Proceed to the nearest safe state.
+	//  - If the nearest safe state is not the final state of the controller, return `ctx.Err()` and the message would be nacked and retried.
+	//  - If the nearest safe state is the final state of the controller, return either nil (if it is a successful state) or an actual error (and not `ctx.Err()`).
+	// It is strongly recommended to properly propagate the context all the way down to the long-running services and ensure they can process it "good enough", guided by the principles outlined above.
+	// Never return `context.Canceled` unless it is a result of a processing `ctx` cancellation!
+
 	Process(ctx context.Context, delivery Delivery) error
 
 	// Name returns the controller name for logging and metrics.

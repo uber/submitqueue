@@ -2,6 +2,7 @@ package errs
 
 import (
 	"errors"
+	"context"
 )
 
 // userError represents an error caused by invalid user input or actions.
@@ -98,11 +99,14 @@ func IsUserError(err error) bool {
 	return errors.As(err, &target)
 }
 
-// IsRetryable checks if err is retryable. Returns true only when err is or
-// wraps an infrastructure error whose retryable flag is set. User errors are
+// IsRetryable checks if err is retryable. Returns true when err is or
+// wraps an infrastructure error whose retryable flag is set or when err is context.Canceled. User errors are
 // never retryable. A generic error (not wrapped) returns false, consistent
 // with the convention that unclassified errors are non-retryable.
 func IsRetryable(err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
 	var ie *infraError
 	if errors.As(err, &ie) {
 		return ie.retryable

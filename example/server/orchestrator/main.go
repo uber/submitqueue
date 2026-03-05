@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -51,10 +52,21 @@ func (s *OrchestratorServer) Ping(ctx context.Context, req *pb.PingRequest) (*pb
 }
 
 func main() {
+	code := 0
 	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Orchestrator server failure: %v\n", err)
-		os.Exit(1)
+		if errors.Is(err, context.Canceled) {
+			fmt.Println("Orchestrator server stopped by signal")
+
+			// Return 143 (128 + SIGTERM) as per POSIX standard if the application receives any termination signal from the OS. Ideally we should return 128+SIGINT for SIGINT and 128+SIGTERM for SIGTERM,
+			// but it will require a special processing not yet available in the standard library.
+			code = 128 + int(syscall.SIGTERM)
+		} else {
+			fmt.Fprintf(os.Stderr, "Orchestrator server failure: %v\n", err)
+			// TODO: classify errors and implement a binary protocol for exit codes, so far 1 for everything
+			code = 1
+		}
 	}
+	os.Exit(code)
 }
 
 func run() error {
@@ -170,6 +182,8 @@ func run() error {
 
 	// Start consumers
 	if err := c.Start(ctx); err != nil {
+		// The error can also be a result of a context cancellation due to SIGINT or SIGTERM.
+		// This is expected, just propagate it.
 		return fmt.Errorf("failed to start consumers: %w", err)
 	}
 	logger.Info("consumer started")
@@ -198,7 +212,7 @@ func run() error {
 	}
 
 	fmt.Printf("Orchestrator gRPC server is running on %s\n", port)
-	fmt.Println("Press Ctrl+C to stop.")
+	fmt.Println("Press Ctrl+C to stop, or send a SIGTERM.")
 
 	// Start server in a goroutine and wait for it to finish
 	serverErrCh := make(chan error, 1)
@@ -206,20 +220,47 @@ func run() error {
 		serverErrCh <- grpcServer.Serve(listener)
 	}()
 
-	// Wait for interrupt signal or server exit
+	// Wait for interrupt signal or server critical error
+	// If interruption is signaled, gracefully stop the server
+	// If server exits with an error, cancel the context to signal cancellation to the queue consumers
+	// After this, stop consumers
+	// If an error happens during shutdown, return the actual error, not the context cancellation error
+	var serverErr error
 	select {
 	case <-ctx.Done():
-		fmt.Println("\nShutting down orchestrator server...")
-		c.Stop(30000) // Stop consumers with 30s timeout
+		fmt.Println("Shutting down orchestrator server due to interruption signal...")
+
+		// Set the error to the context cancellation error to be surfaced as a desired exit code by the main function
+		// to indicate that the server was stopped as intended
+		// It may be overridden by the server error if any
+		err = ctx.Err()
+
+		// stop GRPC server and wait for it to exit
 		grpcServer.GracefulStop()
-		_ = <-serverErrCh // Wait for the server to exit and ignore the error
-	case errCh := <-serverErrCh:
-		if errCh != nil {
-			err = fmt.Errorf("\nServer exited with error: %w\n", errCh)
-		}
-		c.Stop(30000) // Stop consumers with 30s timeout
+		serverErr = <-serverErrCh
+	case serverErr = <-serverErrCh:
+		fmt.Println("Shutting down orchestrator server due to critical GRPC server error...")
+
+		// Cancel the context to signal cancellation to the queue consumers
+		cancel()
 	}
 
+	if serverErr != nil {
+		serverErr = fmt.Errorf("GRPC server exited with error: %w", serverErr)
+	}
+
+	// Stop consumers with 30s timeout, by this time the context should be cancelled and the processing threads may already be exiting; recollect them
+	errStop := c.Stop(30000);
+	if errStop != nil {
+		errStop = fmt.Errorf("failed to stop consumers: %w", errStop)
+	}
+
+	if errStop != nil || serverErr != nil {
+		// Override context cancellation error with the shutdown error
+		err = errors.Join(errStop, serverErr)
+	}
+
+	// Return the error to be surfaced as a desired exit code by the main function
 	return err
 }
 
