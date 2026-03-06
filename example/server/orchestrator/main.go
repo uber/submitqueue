@@ -461,6 +461,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	concludeController := conclude.NewController(
 		logger,
 		scope,
+		store,
 		registry,
 		consumer.TopicKeyConclude,
 		"orchestrator-conclude",
