@@ -46,11 +46,7 @@ All submissions require review before merging. We use GitHub pull requests for t
 
 ## Reporting Issues
 
-Use GitHub Issues to report bugs or request features. Please check existing issues before creating a new one.
-
-## Shell Configuration (Optional)
-
-See [doc/howto/SHELL.md](doc/howto/SHELL.md) for direnv setup and Make target auto-completion.
+Use [GitHub Issues](https://github.com/uber/submitqueue/issues) to report bugs or request features. Please use the provided [issue templates](.github/ISSUE_TEMPLATE/) and check existing issues before creating a new one.
 
 ## Code of Conduct
 

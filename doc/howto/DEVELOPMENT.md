@@ -51,3 +51,11 @@ go install go.uber.org/yarpc/encoding/protobuf/protoc-gen-yarpc-go@latest
 **Bazel build issues:**
 - Version is pinned in `.bazelversion`; use `./tool/bazel` or `bazel` with direnv
 - Try `bazel shutdown` and rebuild
+
+## Testing
+
+See [TESTING.md](TESTING.md) for the full testing guide, including integration and end-to-end tests.
+
+## Shell Configuration (Optional)
+
+See [SHELL.md](SHELL.md) for direnv setup and Make target auto-completion.
