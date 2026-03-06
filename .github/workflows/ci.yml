@@ -114,6 +114,19 @@ jobs:
           target: //test/integration/extension/storage/...
 
   # ---------------------------------------------------------------------------
+  # CORE TESTS
+  # ---------------------------------------------------------------------------
+  consumer-integration-test:
+    name: Consumer Integration Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/run-bazel-test
+        with:
+          target: //test/integration/core/consumer/...
+
+  # ---------------------------------------------------------------------------
   # REQUIRED CHECKS GATE
   # ---------------------------------------------------------------------------
   required-checks:
@@ -127,6 +140,7 @@ jobs:
       - counter-integration-test
       - queue-integration-test
       - storage-integration-test
+      - consumer-integration-test
     steps:
       - name: All required checks passed
         run: |

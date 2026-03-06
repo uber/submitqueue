@@ -37,6 +37,9 @@ import (
 	"github.com/uber/submitqueue/test/testutil"
 )
 
+// testTimeout is the safety-net duration for channel waits in integration tests.
+const testTimeout = 10 * time.Second
+
 type SQLQueueIntegrationSuite struct {
 	suite.Suite
 	ctx   context.Context
@@ -201,6 +204,113 @@ func (s *SQLQueueIntegrationSuite) TestPublishAndSubscribe() {
 	})
 
 	t.Logf("Successfully received and acked 2 messages with metadata verified")
+}
+
+func (s *SQLQueueIntegrationSuite) TestSubscriberPerPartitionIsolation() {
+	t := s.T()
+
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB:           s.db,
+		Logger:       zaptest.NewLogger(t),
+		MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	publisher := q.Publisher()
+	subscriber := q.Subscriber()
+
+	topic := "subscriber_isolation_topic"
+
+	// Subscribe with short poll interval for fast test
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "isolation-consumer")
+	subConfig.PollIntervalMs = 100
+	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
+	require.NoError(t, err)
+
+	// Publish 1 message to partition-a and 1 to partition-b
+	msgA := queue.NewMessage("iso-msg-a", []byte("data-a"), "partition-a", nil)
+	msgB := queue.NewMessage("iso-msg-b", []byte("data-b"), "partition-b", nil)
+	require.NoError(t, publisher.Publish(s.ctx, topic, msgA))
+	require.NoError(t, publisher.Publish(s.ctx, topic, msgB))
+	t.Logf("Published 1 message to partition-a and 1 to partition-b")
+
+	// Receive first delivery — hold it without acking (simulates slow processing)
+	first := receiveWithTimeout(t, deliveryChan, 5*time.Second)
+	t.Logf("First delivery received: partition=%s id=%s (holding without ack)",
+		first.Message().PartitionKey, first.Message().ID)
+
+	// Receive second delivery — should arrive promptly even though first is unacked.
+	// If subscriber had head-of-line blocking, this would time out.
+	second := receiveWithTimeout(t, deliveryChan, 5*time.Second)
+	t.Logf("Second delivery received: partition=%s id=%s",
+		second.Message().PartitionKey, second.Message().ID)
+
+	// Verify both partitions are represented
+	partitions := map[string]bool{
+		first.Message().PartitionKey:  true,
+		second.Message().PartitionKey: true,
+	}
+	assert.True(t, partitions["partition-a"], "should have delivery from partition-a")
+	assert.True(t, partitions["partition-b"], "should have delivery from partition-b")
+
+	// Ack both
+	require.NoError(t, first.Ack(s.ctx))
+	require.NoError(t, second.Ack(s.ctx))
+
+	t.Logf("Per-partition isolation verified: slow ack on one partition did not block the other")
+}
+
+func (s *SQLQueueIntegrationSuite) TestSubscriberPartitionOrderPreserved() {
+	t := s.T()
+
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB:           s.db,
+		Logger:       zaptest.NewLogger(t),
+		MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	publisher := q.Publisher()
+	subscriber := q.Subscriber()
+
+	topic := "subscriber_order_topic"
+	partitionKey := "ordered-part"
+
+	// Publish 5 messages to the same partition
+	numMessages := 5
+	publishedIDs := make([]string, numMessages)
+	for i := 0; i < numMessages; i++ {
+		msgID := fmt.Sprintf("order-msg-%03d", i)
+		publishedIDs[i] = msgID
+		msg := queue.NewMessage(msgID, []byte(fmt.Sprintf("payload-%d", i)), partitionKey, nil)
+		require.NoError(t, publisher.Publish(s.ctx, topic, msg))
+	}
+	t.Logf("Published %d messages to partition %s", numMessages, partitionKey)
+
+	// Subscribe and receive all
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "order-consumer")
+	subConfig.PollIntervalMs = 100
+	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
+	require.NoError(t, err)
+
+	receivedIDs := make([]string, 0, numMessages)
+	receiveNWithTimeout(t, deliveryChan, numMessages, testTimeout, func(delivery extqueue.Delivery, index int) {
+		msgID := delivery.Message().ID
+		receivedIDs = append(receivedIDs, msgID)
+		t.Logf("Received: %s", msgID)
+		require.NoError(t, delivery.Ack(s.ctx))
+	})
+
+	// Assert the received order matches publish order
+	for i := 0; i < numMessages; i++ {
+		assert.Equal(t, publishedIDs[i], receivedIDs[i],
+			"Message at position %d out of order: expected %s, got %s",
+			i, publishedIDs[i], receivedIDs[i])
+	}
+
+	t.Logf("Partition ordering verified: all %d messages received in publish order", numMessages)
 }
 
 func (s *SQLQueueIntegrationSuite) TestMultiplePartitions() {

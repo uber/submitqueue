@@ -13,7 +13,7 @@ LOCAL_PROJECT = submitqueue
 # Set REPO_ROOT for docker-compose
 export REPO_ROOT := $(shell pwd)
 
-.PHONY: build build-all-linux build-gateway-linux build-orchestrator-linux clean clean-proto deps e2e-test gazelle integration-test integration-test-extensions integration-test-gateway integration-test-orchestrator license-fix lint lint-license local-clean local-gateway-start local-gateway-stop local-init-schemas local-logs local-orchestrator-start local-orchestrator-stop local-ps local-restart local-start local-stop proto query-deps query-targets run-client-gateway run-client-orchestrator run-queue-admin test test-no-cache help
+.PHONY: build build-all-linux build-gateway-linux build-orchestrator-linux clean clean-proto deps e2e-test gazelle integration-test integration-test-consumer integration-test-extensions integration-test-gateway integration-test-orchestrator license-fix lint lint-license local-clean local-gateway-start local-gateway-stop local-init-schemas local-logs local-orchestrator-start local-orchestrator-stop local-ps local-restart local-start local-stop proto query-deps query-targets run-client-gateway run-client-orchestrator run-queue-admin test test-no-cache help
 
 
 build: ## Build all services and examples
@@ -70,6 +70,10 @@ gazelle: ## Update BUILD.bazel files
 integration-test: build-all-linux ## Run all integration tests (auto-builds binaries)
 	@echo "Running all integration tests..."
 	@$(BAZEL) test //test/integration/... --test_output=streamed
+
+integration-test-consumer: ## Run Consumer integration tests
+	@echo "Running Consumer integration tests..."
+	@$(BAZEL) test //test/integration/core/consumer:consumer_test --test_output=streamed
 
 integration-test-extensions: ## Run extension integration tests
 	@echo "Running extension integration tests..."
