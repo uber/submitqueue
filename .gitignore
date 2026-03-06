@@ -5,6 +5,7 @@ MODULE.bazel.lock
 .vscode/
 .idea/
 .claude/
+.mcp.json
 .ijwb/
 
 

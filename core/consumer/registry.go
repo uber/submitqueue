@@ -46,6 +46,8 @@ const (
 	TopicKeyMerge TopicKey = "merge"
 	// TopicKeyConclude is the pipeline stage where merged requests are published for conclusion.
 	TopicKeyConclude TopicKey = "conclude"
+	// TopicKeyLog is the pipeline stage where per-request logs are written.
+	TopicKeyLog TopicKey = "log"
 )
 
 // String returns the topic key as a string.

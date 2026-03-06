@@ -109,7 +109,9 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 	}
 
 	// Record the accepted status in the request log for reconciliation. Once the request materializes as a Request entity, the status might be updated to "new".
-	logEntry := entity.NewRequestLog(request.ID, "accepted", 0, "", nil)
+	// It is important to record the status before publishing to the queue for processing. It is important to publish straight to the database and not via a queue.
+	// Gateway has to stay consistent with the request log.
+	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusAccepted, 0, "", nil)
 	if err := c.requestLogStore.Insert(ctx, logEntry); err != nil {
 		return nil, fmt.Errorf("LandController failed to insert request log for sqid=%s: %w", request.ID, err)
 	}

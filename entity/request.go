@@ -30,7 +30,7 @@ const (
 	RequestLandStrategyMerge RequestLandStrategy = "merge"
 )
 
-// RequestState defines the possible states of a land request.
+// RequestState defines the possible states of a land request. They are internal and used to implement a state machine. A separate RequestStatus type is used to track the customer-friendly status of a request.
 type RequestState string
 
 const (

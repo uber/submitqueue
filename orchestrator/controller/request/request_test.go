@@ -49,7 +49,10 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeyValidate, Name: "validate", Queue: mockQ}},
+		[]consumer.TopicConfig{
+			{Key: consumer.TopicKeyValidate, Name: "validate", Queue: mockQ},
+			{Key: consumer.TopicKeyLog, Name: "log", Queue: mockQ},
+		},
 	)
 	require.NoError(t, err)
 

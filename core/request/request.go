@@ -25,7 +25,7 @@ import (
 // CurrentState holds the current request status obtained from the request log. It is eventually consistent with the request status in the request store. It might take some time to converge, typically no more than a few seconds.
 type CurrentState struct {
 	// Status is the current request status obtained from the request log.
-	Status string
+	Status entity.RequestStatus
 	// LastError is the last error associated with the current status.
 	LastError string
 	// Metadata is the metadata associated with the current status.
@@ -68,7 +68,7 @@ func GetCurrentStateFromRequestLog(ctx context.Context, store storage.RequestLog
 		}
 
 		// A terminal candidate must have a version from the Request entity and a terminal status.
-		if log.RequestVersion > 0 && entity.IsRequestStateTerminal(entity.RequestState(log.Status)) {
+		if log.RequestVersion > 0 && entity.IsRequestStateTerminal(entity.RequestState(string(log.Status))) {
 			if bestTerminal == nil ||
 				log.RequestVersion > bestTerminal.RequestVersion ||
 				(log.RequestVersion == bestTerminal.RequestVersion && log.TimestampMs > bestTerminal.TimestampMs) {

@@ -106,6 +106,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return errs.NewRetryableError(fmt.Errorf("failed to create request: %w", err))
 	}
 
+	// Record the "new" status in the request log
+	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusNew, request.Version, "", nil)
+	// Using request.ID as the partition key to ensure ordering of log entries for the same request
+	// and parallel processing of log entries for different requests.
+	if err := c.publishLog(ctx, logEntry, request.ID); err != nil {
+		c.metricsScope.Counter("request_log_errors").Inc(1)
+		return fmt.Errorf("failed to publish request log: %w", err)
+	}
+
 	// Publish to validate topic
 	if err := c.publish(ctx, consumer.TopicKeyValidate, request); err != nil {
 		c.logger.Errorw("failed to publish output",
@@ -144,6 +153,32 @@ func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, request
 	topicName, ok := c.registry.TopicName(key)
 	if !ok {
 		return fmt.Errorf("no topic name registered for topic key %s", key)
+	}
+
+	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
+		return fmt.Errorf("failed to publish message: %w", err)
+	}
+
+	return nil
+}
+
+// publishLog publishes a request log entry to the log topic for async persistence.
+func (c *Controller) publishLog(ctx context.Context, logEntry entity.RequestLog, partitionKey string) error {
+	payload, err := logEntry.ToBytes()
+	if err != nil {
+		return fmt.Errorf("failed to serialize request log: %w", err)
+	}
+
+	msg := entityqueue.NewMessage(logEntry.RequestID, payload, partitionKey, nil)
+
+	q, ok := c.registry.Queue(consumer.TopicKeyLog)
+	if !ok {
+		return fmt.Errorf("no queue registered for topic key %s", consumer.TopicKeyLog)
+	}
+
+	topicName, ok := c.registry.TopicName(consumer.TopicKeyLog)
+	if !ok {
+		return fmt.Errorf("no topic name registered for topic key %s", consumer.TopicKeyLog)
 	}
 
 	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {

@@ -22,7 +22,7 @@ import (
 )
 
 func TestNewRequestLog_NilMetadata(t *testing.T) {
-	log := NewRequestLog("queue1/100", "new", 0, "", nil)
+	log := NewRequestLog("queue1/100", RequestStatusNew, 0, "", nil)
 
 	assert.NotNil(t, log.Metadata)
 	assert.Empty(t, log.Metadata)
@@ -32,7 +32,7 @@ func TestRequestLog_ToBytes(t *testing.T) {
 	log := RequestLog{
 		RequestID:      "test-queue/123",
 		TimestampMs:    1709568000000,
-		Status:         "new",
+		Status:         RequestStatusNew,
 		RequestVersion: 1,
 		LastError:      "",
 		Metadata:       map[string]string{"source": "gateway"},
@@ -52,7 +52,7 @@ func TestRequestLogFromBytes(t *testing.T) {
 	original := RequestLog{
 		RequestID:      "my-queue/999",
 		TimestampMs:    1709568000000,
-		Status:         "processing",
+		Status:         RequestStatusProcessing,
 		RequestVersion: 3,
 		LastError:      "timeout",
 		Metadata:       map[string]string{"step": "validation", "attempt": "2"},
@@ -104,7 +104,7 @@ func TestRequestLog_SerializationRoundTrip(t *testing.T) {
 			log: RequestLog{
 				RequestID:      "queue1/100",
 				TimestampMs:    1709568000000,
-				Status:         "landed",
+				Status:         RequestStatusLanded,
 				RequestVersion: 5,
 				LastError:      "",
 				Metadata:       map[string]string{"source": "orchestrator", "batch_id": "b-1"},
@@ -115,7 +115,7 @@ func TestRequestLog_SerializationRoundTrip(t *testing.T) {
 			log: RequestLog{
 				RequestID:      "queue2/200",
 				TimestampMs:    1709568001000,
-				Status:         "error",
+				Status:         RequestStatusError,
 				RequestVersion: 2,
 				LastError:      "merge conflict detected",
 				Metadata:       map[string]string{},
@@ -126,7 +126,7 @@ func TestRequestLog_SerializationRoundTrip(t *testing.T) {
 			log: RequestLog{
 				RequestID:      "queue3/300",
 				TimestampMs:    1709568002000,
-				Status:         "new",
+				Status:         RequestStatusNew,
 				RequestVersion: 0,
 				LastError:      "",
 				Metadata:       map[string]string{"key": "value"},

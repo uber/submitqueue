@@ -43,6 +43,7 @@ import (
 	"github.com/uber/submitqueue/orchestrator/controller/build"
 	"github.com/uber/submitqueue/orchestrator/controller/buildsignal"
 	"github.com/uber/submitqueue/orchestrator/controller/conclude"
+	logctrl "github.com/uber/submitqueue/orchestrator/controller/log"
 	"github.com/uber/submitqueue/orchestrator/controller/merge"
 	"github.com/uber/submitqueue/orchestrator/controller/request"
 	"github.com/uber/submitqueue/orchestrator/controller/score"
@@ -353,6 +354,14 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 				subscriberName, "orchestrator-conclude",
 			),
 		},
+		{
+			Key:   consumer.TopicKeyLog,
+			Name:  "log",
+			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "orchestrator-log",
+			),
+		},
 	})
 }
 
@@ -468,6 +477,17 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	)
 	if err := c.Register(concludeController); err != nil {
 		return fmt.Errorf("failed to register conclude controller: %w", err)
+	}
+
+	logController := logctrl.NewController(
+		logger,
+		scope,
+		store,
+		consumer.TopicKeyLog,
+		"orchestrator-log",
+	)
+	if err := c.Register(logController); err != nil {
+		return fmt.Errorf("failed to register log controller: %w", err)
 	}
 
 	return nil
