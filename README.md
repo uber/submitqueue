@@ -1,8 +1,16 @@
 # SubmitQueue
 
-SubmitQueue is a speculative merge queue that keeps the main branch green at scale. In large monorepo environments, concurrent changes can introduce conflicts and broken builds. SubmitQueue solves this by serializing and validating changes before they land on main, ensuring that every commit point passes defined validations.
+[![CI](https://github.com/uber/submitqueue/actions/workflows/ci.yml/badge.svg)](https://github.com/uber/submitqueue/actions/workflows/ci.yml)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/uber/submitqueue)](go.mod)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
+SubmitQueue is a high-performance speculative merge queue that keeps your trunk consistently green at scale. Rather than validating changes one at a time, SubmitQueue speculatively rebases and validates multiple changes in parallel against predicted future states of HEAD. When validations pass, changes land automatically. When they fail, SubmitQueue isolates the offending change and retries the rest — all without human intervention.
+
+Designed for large monorepos and fast-moving teams where concurrent changes can introduce subtle conflicts and destabilize builds.
 
 ## Quick Start
+
+Requires Docker and Docker Compose. See [Development Setup](doc/howto/DEVELOPMENT.md) for full prerequisites.
 
 ```bash
 # Build everything
@@ -23,10 +31,25 @@ make local-stop
 
 See [example/README.md](example/README.md) for more examples including running individual services and clients.
 
-## Developer Guide
+## Documentation
 
-See [CLAUDE.md](CLAUDE.md) for the full developer guide, including project layout, controller patterns, entity conventions, extension system, and development workflows.
+| Document | Description |
+|----------|-------------|
+| [Development Setup](doc/howto/DEVELOPMENT.md) | Prerequisites, build, environment, IDE setup |
+| [Contributing](CONTRIBUTING.md) | How to contribute, workflow, guidelines |
+| [Testing Guide](doc/howto/TESTING.md) | Unit, integration, and E2E testing patterns |
+| [Architecture Guide](CLAUDE.md) | Project layout, patterns, conventions |
+| [Examples](example/README.md) | Running services, clients, API reference |
+| [RFCs](doc/rfc/index.md) | Design documents and proposals |
+
+## Project Status
+
+SubmitQueue is under active development. We welcome contributions and feedback.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get started, development workflow, code style, and testing.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get started.
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).
