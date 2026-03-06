@@ -72,6 +72,8 @@ func (b Batch) ToBytes() ([]byte, error) {
 }
 
 // WithScoreAndState returns a new Batch with the given score and state, incrementing the version.
+// The version is only incremented after a successful write to the DB to reflect the update to the
+// batch.
 func (b Batch) WithScoreAndState(score float32, state BatchState) Batch {
 	b.Score = score
 	b.State = state

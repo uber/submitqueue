@@ -450,6 +450,9 @@ func newMergeChecker(logger *zap.Logger, scope tally.Scope) mergechecker.MergeCh
 	})
 }
 
+// newScorer returns a temporary scorer that assigns a success probability of
+// 1.0 to every change, regardless of its attributes.
+// TODO: Replace with a better heuristic as the pipeline evolves.
 func newScorer(scope tally.Scope) scorer.Scorer {
 	return heuristicscorer.New(
 		[]heuristicscorer.Bucket{
