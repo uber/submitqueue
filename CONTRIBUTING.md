@@ -6,7 +6,6 @@ Thank you for your interest in contributing to SubmitQueue! This document provid
 
 ### Prerequisites
 
-- **Go 1.24 or later** (optional — Bazel manages its own Go toolchain)
 - **Docker** and **Docker Compose** (for integration and e2e tests)
 - **direnv** (recommended — automatically loads `.envrc` so you can use `bazel` directly)
 
@@ -43,7 +42,7 @@ go install go.uber.org/yarpc/encoding/protobuf/protoc-gen-yarpc-go@latest
 ## Development Workflow
 
 1. Fork the repository and create a feature branch from `main`.
-2. Make your changes, following the code style and conventions below.
+2. Make your changes, following the project conventions.
 3. Add or update tests as appropriate.
 4. Run `make gazelle` if you added or removed Go files.
 5. Run `make test` to ensure unit tests pass.
@@ -52,13 +51,7 @@ go install go.uber.org/yarpc/encoding/protobuf/protoc-gen-yarpc-go@latest
 
 ## Code Style
 
-The project follows specific conventions for code style, error handling, logging, and entity design. See [CLAUDE.md](CLAUDE.md) for the full set of conventions, including:
-
-- Structured logging with `zap.SugaredLogger`
-- Interfaces for behavior, structs for data
-- Value types over pointers
-- Error classification with `core/errs`
-- Immutable entities and optimistic locking
+See [CLAUDE.md](CLAUDE.md) for code style conventions.
 
 ## Testing
 
@@ -74,83 +67,25 @@ make e2e-test            # End-to-end tests
 
 All tests use table-driven style with `t.Run` subtests. Use `assert`/`require` from testify.
 
-## Proto Changes
+## Pull Request Guidelines
 
-When modifying `.proto` files:
-
-1. Edit the proto file in `{service}/proto/`.
-2. Run `make proto` to regenerate `*.pb.go`, `*_grpc.pb.go`, and `*.pb.yarpc.go`.
-3. Update controllers and clients as needed.
-4. Commit all generated files.
-
-See [CLAUDE.md](CLAUDE.md) for detailed workflows (adding RPC methods, queue controllers, extensions, entities).
-
-## Adding Extensions
-
-Extensions follow a vendor-agnostic interface pattern:
-
-1. Define the interface at `extension/{ext}/`.
-2. Add implementations at `extension/{ext}/{impl}/`.
-3. Include a factory interface for dependency injection.
-4. Add `BUILD.bazel`, tests, and README.
-
-See [CLAUDE.md](CLAUDE.md) for the full extension guide and mock setup instructions.
-
-## Reporting Issues
-
-Use the [issue templates](.github/ISSUE_TEMPLATE/) when filing bugs or requesting features. Blank issues are disabled — please choose the appropriate template.
+- Keep PRs focused on a single change.
+- Include tests for new functionality.
+- Ensure all existing tests pass (`bazel test //...`).
+- Follow the existing code style and patterns (see [CLAUDE.md](CLAUDE.md) for detailed conventions).
+- Fill out the PR template with a description, motivation, and test plan.
 
 ## Code Review
 
-- All submissions require review before merging.
-- Maintainers may request changes or suggest improvements.
-- Keep PRs focused — one logical change per PR.
+All submissions require review before merging. We use GitHub pull requests for this purpose. A maintainer will review your PR and may request changes.
+
+## Reporting Issues
+
+Use GitHub Issues to report bugs or request features. Please check existing issues before creating a new one.
 
 ## Shell Configuration (Optional)
 
-### Using direnv (Recommended)
-
-```bash
-brew install direnv
-
-# Add to ~/.zshrc or ~/.bashrc
-eval "$(direnv hook zsh)"  # or bash, fish, etc.
-
-# In the project directory
-direnv allow
-```
-
-### Make Target Auto-Completion (zsh)
-
-Add to `~/.zshrc` for tab-completion of Makefile targets with descriptions:
-
-```bash
-autoload -Uz compinit
-compinit
-
-function _make_targets() {
-  local -a targets
-  local makefile_cache=".make_targets_cache"
-
-  if [[ -f Makefile ]]; then
-    if [[ ! -f $makefile_cache ]] || [[ Makefile -nt $makefile_cache ]]; then
-      awk -F':.*?## ' '/^[a-zA-Z0-9_-]+:.*?## / {printf "%s:%s\n", $1, $2}' Makefile > $makefile_cache
-    fi
-    targets=(${(f)"$(<$makefile_cache)"})
-    if [[ -s $makefile_cache ]] && grep -q ':' $makefile_cache 2>/dev/null; then
-      _describe 'make targets' targets
-    else
-      awk -F: '/^[a-zA-Z0-9_-]+:/ {print $1}' Makefile > $makefile_cache
-      targets=(${(f)"$(<$makefile_cache)"})
-      _describe 'make targets' targets
-    fi
-  fi
-}
-
-compdef _make_targets make
-```
-
-The completion cache (`.make_targets_cache`) is gitignored and automatically regenerates when the Makefile changes.
+See [doc/howto/SHELL.md](doc/howto/SHELL.md) for direnv setup and Make target auto-completion.
 
 ## Troubleshooting
 
@@ -168,3 +103,11 @@ The completion cache (`.make_targets_cache`) is gitignored and automatically reg
 **Bazel build issues:**
 - Version is pinned in `.bazelversion`; use `./tool/bazel` or `bazel` with direnv
 - Try `bazel shutdown` and rebuild
+
+## Code of Conduct
+
+This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code.
+
+## License
+
+By contributing to SubmitQueue, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).

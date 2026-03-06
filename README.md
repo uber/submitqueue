@@ -30,11 +30,3 @@ See [CLAUDE.md](CLAUDE.md) for the full architecture guide, including project la
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get started, development workflow, code style, and testing.
-
-## Code of Conduct
-
-This project is governed by the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code.
-
-## License
-
-[Apache 2.0](LICENSE)
