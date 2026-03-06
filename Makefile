@@ -13,7 +13,7 @@ LOCAL_PROJECT = submitqueue
 # Set REPO_ROOT for docker-compose
 export REPO_ROOT := $(shell pwd)
 
-.PHONY: build build-all-linux build-gateway-linux build-orchestrator-linux clean clean-proto deps e2e-test gazelle integration-test integration-test-extensions integration-test-gateway integration-test-orchestrator local-clean local-gateway-start local-gateway-stop local-init-schemas local-logs local-orchestrator-start local-orchestrator-stop local-ps local-restart local-start local-stop proto query-deps query-targets run-client-gateway run-client-orchestrator run-queue-admin test test-no-cache help
+.PHONY: build build-all-linux build-gateway-linux build-orchestrator-linux clean clean-proto deps e2e-test gazelle integration-test integration-test-extensions integration-test-gateway integration-test-orchestrator license-fix lint lint-license local-clean local-gateway-start local-gateway-stop local-init-schemas local-logs local-orchestrator-start local-orchestrator-stop local-ps local-restart local-start local-stop proto query-deps query-targets run-client-gateway run-client-orchestrator run-queue-admin test test-no-cache help
 
 
 build: ## Build all services and examples
@@ -82,6 +82,14 @@ integration-test-gateway: build-gateway-linux ## Run Gateway integration tests (
 integration-test-orchestrator: build-orchestrator-linux ## Run Orchestrator integration tests (auto-builds binary)
 	@echo "Running Orchestrator integration tests..."
 	@$(BAZEL) test //test/integration/orchestrator:orchestrator_test --test_output=streamed
+
+license-fix: ## Add missing license headers to source files
+	@$(BAZEL) run //tool/linter/licenseheader -- --fix
+
+lint: lint-license ## Run all linters
+
+lint-license: ## Check license headers on all source files
+	@$(BAZEL) run //tool/linter/licenseheader -- --check
 
 local-clean: ## Stop and remove all local services, volumes, and images
 	@echo "Cleaning all services and data..."

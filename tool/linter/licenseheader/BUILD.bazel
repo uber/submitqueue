@@ -1,0 +1,24 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "licenseheader_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/uber/submitqueue/tool/linter/licenseheader",
+    visibility = ["//visibility:private"],
+)
+
+go_binary(
+    name = "licenseheader",
+    embed = [":licenseheader_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "licenseheader_test",
+    srcs = ["main_test.go"],
+    embed = [":licenseheader_lib"],
+    deps = [
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)
