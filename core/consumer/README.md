@@ -26,7 +26,7 @@ The top-level orchestrator. Register controllers, start consuming, and stop grac
 
 ```go
 registry, _ := consumer.NewTopicRegistry([]consumer.TopicConfig{
-    {Key: consumer.TopicKeyRequest, Name: "request", Queue: q, Subscription: subConfig},
+    {Key: consumer.TopicKeyStart, Name: "request", Queue: q, Subscription: subConfig},
 })
 
 c := consumer.New(logger, scope, registry)
@@ -64,7 +64,7 @@ The `TopicRegistry` maps topic keys to queue backends, topic names, and subscrip
 ```go
 registry, _ := consumer.NewTopicRegistry([]consumer.TopicConfig{
     {
-        Key:          consumer.TopicKeyRequest,
+        Key:          consumer.TopicKeyStart,
         Name:         "request",
         Queue:        q,
         Subscription: extqueue.DefaultSubscriptionConfig("worker-1", "orchestrator"),
@@ -78,7 +78,7 @@ registry, _ := consumer.NewTopicRegistry([]consumer.TopicConfig{
 })
 ```
 
-**Topic keys** are fixed identifiers for pipeline stages (e.g., `TopicKeyRequest`, `TopicKeyBuild`). The actual queue topic name is configured separately, so library consumers can use their own naming conventions.
+**Topic keys** are fixed identifiers for pipeline stages (e.g., `TopicKeyStart`, `TopicKeyBuild`). The actual queue topic name is configured separately, so library consumers can use their own naming conventions.
 
 ## Error Handling
 

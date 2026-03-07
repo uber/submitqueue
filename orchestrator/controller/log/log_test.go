@@ -49,7 +49,7 @@ func TestController_Process(t *testing.T) {
 		{
 			name: "success",
 			logEntry: newRequestLog(
-				"test-queue/1", entity.RequestStatusNew, 1, "", nil,
+				"test-queue/1", entity.RequestStatusStarted, 1, "", nil,
 			),
 			setupStore: func(ctrl *gomock.Controller) *storagemock.MockStorage {
 				mockLogStore := storagemock.NewMockRequestLogStore(ctrl)

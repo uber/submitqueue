@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package request
+package start
 
 import (
 	"context"
@@ -28,7 +28,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Controller handles request queue messages.
+// Controller handles start queue messages.
 // It consumes requests, persists them to storage, and publishes to the validate stage.
 // Implements consumer.Controller interface for integration with the consumer.
 type Controller struct {
@@ -43,7 +43,7 @@ type Controller struct {
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
 
-// NewController creates a new request controller for the orchestrator.
+// NewController creates a new start controller for the orchestrator.
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
@@ -53,8 +53,8 @@ func NewController(
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
-		logger:        logger.Named("request_controller"),
-		metricsScope:  scope.SubScope("request_controller"),
+		logger:        logger.Named("start_controller"),
+		metricsScope:  scope.SubScope("start_controller"),
 		store:         store,
 		registry:      registry,
 		topicKey:      topicKey,
@@ -70,10 +70,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	msg := delivery.Message()
 
-	// Deserialize request entity
-	request, err := entity.RequestFromBytes(msg.Payload)
+	// Deserialize land request from gateway
+	landRequest, err := entity.LandRequestFromBytes(msg.Payload)
 	if err != nil {
-		c.logger.Errorw("failed to deserialize request",
+		c.logger.Errorw("failed to deserialize land request",
 			"message_id", msg.ID,
 			"partition_key", msg.PartitionKey,
 			"attempt", delivery.Attempt(),
@@ -81,7 +81,17 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		)
 		c.metricsScope.Counter("deserialize_errors").Inc(1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
-		return fmt.Errorf("failed to deserialize request: %w", err)
+		return fmt.Errorf("failed to deserialize land request: %w", err)
+	}
+
+	// Construct the full versioned Request entity with orchestrator-owned fields
+	request := entity.Request{
+		ID:           landRequest.ID,
+		Queue:        landRequest.Queue,
+		Change:       landRequest.Change,
+		LandStrategy: landRequest.LandStrategy,
+		State:        entity.RequestStateStarted,
+		Version:      1,
 	}
 
 	c.logger.Infow("received land request event",
@@ -107,7 +117,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	// Record the "new" status in the request log
-	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusNew, request.Version, "", nil)
+	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusStarted, request.Version, "", nil)
 	// Using request.ID as the partition key to ensure ordering of log entries for the same request
 	// and parallel processing of log entries for different requests.
 	if err := c.publishLog(ctx, logEntry, request.ID); err != nil {
@@ -190,7 +200,7 @@ func (c *Controller) publishLog(ctx context.Context, logEntry entity.RequestLog,
 
 // Name returns the controller name for logging and metrics.
 func (c *Controller) Name() string {
-	return "request"
+	return "start"
 }
 
 // TopicKey returns the topic key this controller subscribes to.

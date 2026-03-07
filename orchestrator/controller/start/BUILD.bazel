@@ -1,9 +1,9 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "request",
-    srcs = ["request.go"],
-    importpath = "github.com/uber/submitqueue/orchestrator/controller/request",
+    name = "start",
+    srcs = ["start.go"],
+    importpath = "github.com/uber/submitqueue/orchestrator/controller/start",
     visibility = ["//visibility:public"],
     deps = [
         "//core/consumer",
@@ -17,9 +17,9 @@ go_library(
 )
 
 go_test(
-    name = "request_test",
-    srcs = ["request_test.go"],
-    embed = [":request"],
+    name = "start_test",
+    srcs = ["start_test.go"],
+    embed = [":start"],
     deps = [
         "//core/consumer",
         "//core/errs",

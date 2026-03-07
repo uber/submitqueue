@@ -36,8 +36,8 @@ type RequestState string
 const (
 	// RequestStateUnknown is the unreachable state. It is set by default when the structure is initialized. It should never be seen in the system.
 	RequestStateUnknown RequestState = ""
-	// RequestStateNew is the initial state of a land request. It is confirmed by the system but the processing is not started yet.
-	RequestStateNew RequestState = "new"
+	// RequestStateStarted is the initial state of a land request. It is confirmed by the system but the processing is not started yet.
+	RequestStateStarted RequestState = "started"
 	// RequestStateValidated indicates that the request has been validated (duplicate check, merge check etc.) successfully.
 	RequestStateValidated RequestState = "validated"
 	// RequestStateProcessing is the state of a land request that is being processed.

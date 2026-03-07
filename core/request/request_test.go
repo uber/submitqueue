@@ -37,14 +37,14 @@ func TestGetCurrentStateFromRequestLog(t *testing.T) {
 		{
 			name: "single record",
 			logs: []entity.RequestLog{
-				{RequestID: "q/1", TimestampMs: 1000, Status: entity.RequestStatusNew, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
+				{RequestID: "q/1", TimestampMs: 1000, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
 			},
-			expected: CurrentState{Status: entity.RequestStatusNew, LastError: "", Metadata: map[string]string{}},
+			expected: CurrentState{Status: entity.RequestStatusStarted, LastError: "", Metadata: map[string]string{}},
 		},
 		{
 			name: "terminal status wins over later non-terminal",
 			logs: []entity.RequestLog{
-				{RequestID: "q/1", TimestampMs: 1000, Status: entity.RequestStatusNew, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
+				{RequestID: "q/1", TimestampMs: 1000, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
 				{RequestID: "q/1", TimestampMs: 2000, Status: entity.RequestStatusLanded, RequestVersion: 3, LastError: "", Metadata: map[string]string{"batch": "b1"}},
 				{RequestID: "q/1", TimestampMs: 3000, Status: entity.RequestStatusProcessing, RequestVersion: 0, LastError: "", Metadata: map[string]string{}},
 			},
@@ -53,7 +53,7 @@ func TestGetCurrentStateFromRequestLog(t *testing.T) {
 		{
 			name: "terminal error status with last error",
 			logs: []entity.RequestLog{
-				{RequestID: "q/1", TimestampMs: 1000, Status: entity.RequestStatusNew, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
+				{RequestID: "q/1", TimestampMs: 1000, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
 				{RequestID: "q/1", TimestampMs: 2000, Status: entity.RequestStatusError, RequestVersion: 4, LastError: "merge conflict", Metadata: map[string]string{"step": "merge"}},
 			},
 			expected: CurrentState{Status: entity.RequestStatusError, LastError: "merge conflict", Metadata: map[string]string{"step": "merge"}},
@@ -86,7 +86,7 @@ func TestGetCurrentStateFromRequestLog(t *testing.T) {
 		{
 			name: "no terminal records falls back to latest timestamp",
 			logs: []entity.RequestLog{
-				{RequestID: "q/1", TimestampMs: 1000, Status: entity.RequestStatusNew, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
+				{RequestID: "q/1", TimestampMs: 1000, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
 				{RequestID: "q/1", TimestampMs: 3000, Status: entity.RequestStatusValidated, RequestVersion: 2, LastError: "", Metadata: map[string]string{}},
 				{RequestID: "q/1", TimestampMs: 2000, Status: entity.RequestStatusProcessing, RequestVersion: 0, LastError: "", Metadata: map[string]string{}},
 			},

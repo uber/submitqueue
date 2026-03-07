@@ -34,8 +34,8 @@ const (
 	// RequestStatusAccepted indicates that the request has been accepted by the system. Typically a gateway service will set this status when the land request is received and persisted to the logging database.
 	RequestStatusAccepted RequestStatus = "accepted"
 
-	// RequestStatusNew is the initial status of a request. It corresponds to the RequestStateNew state and typically set by the orchestrator service when the request is received and persisted to the operating database.
-	RequestStatusNew RequestStatus = "new"
+	// RequestStatusStarted is the initial status of a request. It corresponds to the RequestStateStarted state and typically set by the orchestrator service when the request is received and persisted to the operating database.
+	RequestStatusStarted RequestStatus = "started"
 
 	// RequestStatusValidating indicates that the request is currently being validated (e.g., duplicate check, merge check, etc.).
 	RequestStatusValidating RequestStatus = "validating"

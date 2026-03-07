@@ -21,14 +21,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRequest_ToBytes(t *testing.T) {
-	req := Request{
+func TestLandRequest_ToBytes(t *testing.T) {
+	req := LandRequest{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
 		Change:       Change{URIs: []string{"github://uber/submitqueue/pull/456/abc123def", "github://uber/submitqueue/pull/789/def456abc"}},
 		LandStrategy: RequestLandStrategyRebase,
-		State:        RequestStateStarted,
-		Version:      1,
 	}
 
 	data, err := req.ToBytes()
@@ -40,17 +38,14 @@ func TestRequest_ToBytes(t *testing.T) {
 	assert.Contains(t, jsonStr, "test-queue/123")
 	assert.Contains(t, jsonStr, "github://uber/submitqueue/pull/456/abc123def")
 	assert.Contains(t, jsonStr, "rebase")
-	assert.Contains(t, jsonStr, "started")
 }
 
-func TestRequestFromBytes(t *testing.T) {
-	original := Request{
+func TestLandRequestFromBytes(t *testing.T) {
+	original := LandRequest{
 		ID:           "my-queue/999",
 		Queue:        "my-queue",
 		Change:       Change{URIs: []string{"code.uber.internal.com/D111"}},
 		LandStrategy: RequestLandStrategyMerge,
-		State:        RequestStateProcessing,
-		Version:      3,
 	}
 
 	// Serialize
@@ -58,7 +53,7 @@ func TestRequestFromBytes(t *testing.T) {
 	require.NoError(t, err)
 
 	// Deserialize
-	deserialized, err := RequestFromBytes(data)
+	deserialized, err := LandRequestFromBytes(data)
 	require.NoError(t, err)
 
 	// Verify all fields match
@@ -66,67 +61,57 @@ func TestRequestFromBytes(t *testing.T) {
 	assert.Equal(t, original.Queue, deserialized.Queue)
 	assert.Equal(t, original.Change.URIs, deserialized.Change.URIs)
 	assert.Equal(t, original.LandStrategy, deserialized.LandStrategy)
-	assert.Equal(t, original.State, deserialized.State)
-	assert.Equal(t, original.Version, deserialized.Version)
 }
 
-func TestRequestFromBytes_InvalidJSON(t *testing.T) {
+func TestLandRequestFromBytes_InvalidJSON(t *testing.T) {
 	invalidJSON := []byte(`{"invalid": json"}`)
 
-	_, err := RequestFromBytes(invalidJSON)
+	_, err := LandRequestFromBytes(invalidJSON)
 	assert.Error(t, err)
 }
 
-func TestRequestFromBytes_EmptyData(t *testing.T) {
+func TestLandRequestFromBytes_EmptyData(t *testing.T) {
 	emptyJSON := []byte(`{}`)
 
-	req, err := RequestFromBytes(emptyJSON)
+	req, err := LandRequestFromBytes(emptyJSON)
 	require.NoError(t, err)
 
 	// Empty JSON should deserialize with zero values
 	assert.Empty(t, req.ID)
 	assert.Empty(t, req.Queue)
-	assert.Equal(t, RequestStateUnknown, req.State)
 	assert.Equal(t, RequestLandStrategyUnknown, req.LandStrategy)
-	assert.Equal(t, int32(0), req.Version)
 }
 
-func TestRequest_SerializationRoundTrip(t *testing.T) {
+func TestLandRequest_SerializationRoundTrip(t *testing.T) {
 	tests := []struct {
 		name string
-		req  Request
+		req  LandRequest
 	}{
 		{
 			name: "github stacked diff",
-			req: Request{
+			req: LandRequest{
 				ID:           "queue1/100",
 				Queue:        "queue1",
 				Change:       Change{URIs: []string{"github://uber/repo-a/pull/101/aaa111", "github://uber/repo-a/pull/102/bbb222", "github://uber/repo-a/pull/103/ccc333"}},
 				LandStrategy: RequestLandStrategySquashRebase,
-				State:        RequestStateLanded,
-				Version:      5,
 			},
 		},
 		{
 			name: "phabricator revision",
-			req: Request{
+			req: LandRequest{
 				ID:           "queue2/200",
 				Queue:        "queue2",
 				Change:       Change{URIs: []string{"code.uber.internal.com/D12345"}},
 				LandStrategy: RequestLandStrategyRebase,
-				State:        RequestStateStarted,
-				Version:      1,
 			},
 		},
 		{
 			name: "github enterprise request",
-			req: Request{
+			req: LandRequest{
 				ID:           "queue3/300",
 				Queue:        "queue3",
 				Change:       Change{URIs: []string{"github.uber.com/internal/service/999/deadbeef12"}},
 				LandStrategy: RequestLandStrategyMerge,
-				State:        RequestStateError,
-				Version:      10,
 			},
 		},
 	}
@@ -138,7 +123,7 @@ func TestRequest_SerializationRoundTrip(t *testing.T) {
 			require.NoError(t, err)
 
 			// Deserialize
-			deserialized, err := RequestFromBytes(data)
+			deserialized, err := LandRequestFromBytes(data)
 			require.NoError(t, err)
 
 			// Verify complete equality

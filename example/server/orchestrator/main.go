@@ -45,9 +45,9 @@ import (
 	"github.com/uber/submitqueue/orchestrator/controller/conclude"
 	logctrl "github.com/uber/submitqueue/orchestrator/controller/log"
 	"github.com/uber/submitqueue/orchestrator/controller/merge"
-	"github.com/uber/submitqueue/orchestrator/controller/request"
 	"github.com/uber/submitqueue/orchestrator/controller/score"
 	"github.com/uber/submitqueue/orchestrator/controller/speculate"
+	"github.com/uber/submitqueue/orchestrator/controller/start"
 	"github.com/uber/submitqueue/orchestrator/controller/validate"
 	pb "github.com/uber/submitqueue/orchestrator/protopb"
 	"go.uber.org/zap"
@@ -283,7 +283,7 @@ func run() error {
 func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRegistry, error) {
 	return consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{
-			Key:   consumer.TopicKeyRequest,
+			Key:   consumer.TopicKeyStart,
 			Name:  "request",
 			Queue: q,
 			Subscription: extqueue.DefaultSubscriptionConfig(
@@ -375,12 +375,12 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 //                                        └────────┴────────────────────────┘
 
 func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cnt counter.Counter, store storage.Storage) error {
-	requestController := request.NewController(
+	requestController := start.NewController(
 		logger,
 		scope,
 		store,
 		registry,
-		consumer.TopicKeyRequest,
+		consumer.TopicKeyStart,
 		"orchestrator-request",
 	)
 	if err := c.Register(requestController); err != nil {

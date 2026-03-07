@@ -201,14 +201,12 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	assert.Equal(t, "test-queue", publishedMessage.PartitionKey)
 
 	// Verify payload can be deserialized
-	deserializedReq, err := entity.RequestFromBytes(publishedMessage.Payload)
+	deserializedReq, err := entity.LandRequestFromBytes(publishedMessage.Payload)
 	require.NoError(t, err)
 	assert.Equal(t, "test-queue/123", deserializedReq.ID)
 	assert.Equal(t, "test-queue", deserializedReq.Queue)
 	assert.Equal(t, []string{"github://uber/backend/pull/456/fed987cba"}, deserializedReq.Change.URIs)
 	assert.Equal(t, entity.RequestLandStrategyRebase, deserializedReq.LandStrategy)
-	assert.Equal(t, entity.RequestStateNew, deserializedReq.State)
-	assert.Equal(t, int32(1), deserializedReq.Version)
 }
 
 func TestLand_ContinuesWhenPublishFails(t *testing.T) {

@@ -22,7 +22,7 @@ import (
 )
 
 func TestNewRequestLog_NilMetadata(t *testing.T) {
-	log := NewRequestLog("queue1/100", RequestStatusNew, 0, "", nil)
+	log := NewRequestLog("queue1/100", RequestStatusStarted, 0, "", nil)
 
 	assert.NotNil(t, log.Metadata)
 	assert.Empty(t, log.Metadata)
@@ -32,7 +32,7 @@ func TestRequestLog_ToBytes(t *testing.T) {
 	log := RequestLog{
 		RequestID:      "test-queue/123",
 		TimestampMs:    1709568000000,
-		Status:         RequestStatusNew,
+		Status:         RequestStatusStarted,
 		RequestVersion: 1,
 		LastError:      "",
 		Metadata:       map[string]string{"source": "gateway"},
@@ -126,7 +126,7 @@ func TestRequestLog_SerializationRoundTrip(t *testing.T) {
 			log: RequestLog{
 				RequestID:      "queue3/300",
 				TimestampMs:    1709568002000,
-				Status:         RequestStatusNew,
+				Status:         RequestStatusStarted,
 				RequestVersion: 0,
 				LastError:      "",
 				Metadata:       map[string]string{"key": "value"},

@@ -32,7 +32,7 @@ func TestNewTopicRegistry(t *testing.T) {
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
 			{
-				Key:   consumer.TopicKeyRequest,
+				Key:   consumer.TopicKeyStart,
 				Name:  "request",
 				Queue: mockQ,
 				Subscription: extqueue.DefaultSubscriptionConfig(
@@ -43,15 +43,15 @@ func TestNewTopicRegistry(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	q, ok := registry.Queue(consumer.TopicKeyRequest)
+	q, ok := registry.Queue(consumer.TopicKeyStart)
 	require.True(t, ok)
 	assert.Equal(t, mockQ, q)
 
-	name, ok := registry.TopicName(consumer.TopicKeyRequest)
+	name, ok := registry.TopicName(consumer.TopicKeyStart)
 	require.True(t, ok)
 	assert.Equal(t, "request", name)
 
-	cfg, ok := registry.SubscriptionConfig(consumer.TopicKeyRequest, "group-a")
+	cfg, ok := registry.SubscriptionConfig(consumer.TopicKeyStart, "group-a")
 	require.True(t, ok)
 	assert.Equal(t, "group-a", cfg.ConsumerGroup)
 }
@@ -87,7 +87,7 @@ func TestNewTopicRegistry_InvalidTopicName(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := consumer.NewTopicRegistry(
 				[]consumer.TopicConfig{
-					{Key: consumer.TopicKeyRequest, Name: tt.topicName},
+					{Key: consumer.TopicKeyStart, Name: tt.topicName},
 				},
 			)
 			require.Error(t, err)
@@ -108,14 +108,14 @@ func TestTopicRegistry_SubscriptionConfig(t *testing.T) {
 			name: "found group-a",
 			configs: []consumer.TopicConfig{
 				{
-					Key:  consumer.TopicKeyRequest,
+					Key:  consumer.TopicKeyStart,
 					Name: "request",
 					Subscription: extqueue.DefaultSubscriptionConfig(
 						"worker-1", "group-a",
 					),
 				},
 			},
-			lookupKey:     consumer.TopicKeyRequest,
+			lookupKey:     consumer.TopicKeyStart,
 			lookupGroup:   "group-a",
 			expectFound:   true,
 			expectedGroup: "group-a",
@@ -124,14 +124,14 @@ func TestTopicRegistry_SubscriptionConfig(t *testing.T) {
 			name: "not found by group",
 			configs: []consumer.TopicConfig{
 				{
-					Key:  consumer.TopicKeyRequest,
+					Key:  consumer.TopicKeyStart,
 					Name: "request",
 					Subscription: extqueue.DefaultSubscriptionConfig(
 						"worker-1", "group-a",
 					),
 				},
 			},
-			lookupKey:   consumer.TopicKeyRequest,
+			lookupKey:   consumer.TopicKeyStart,
 			lookupGroup: "nonexistent",
 			expectFound: false,
 		},
@@ -139,7 +139,7 @@ func TestTopicRegistry_SubscriptionConfig(t *testing.T) {
 			name: "not found by topic key",
 			configs: []consumer.TopicConfig{
 				{
-					Key:  consumer.TopicKeyRequest,
+					Key:  consumer.TopicKeyStart,
 					Name: "request",
 					Subscription: extqueue.DefaultSubscriptionConfig(
 						"worker-1", "group-a",
@@ -175,13 +175,13 @@ func TestTopicRegistry_Queue_PerTopic(t *testing.T) {
 
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Key: consumer.TopicKeyRequest, Name: "request", Queue: mockQ1},
+			{Key: consumer.TopicKeyStart, Name: "request", Queue: mockQ1},
 			{Key: consumer.TopicKeyValidate, Name: "validate", Queue: mockQ2},
 		},
 	)
 	require.NoError(t, err)
 
-	q1, ok := registry.Queue(consumer.TopicKeyRequest)
+	q1, ok := registry.Queue(consumer.TopicKeyStart)
 	require.True(t, ok)
 	assert.Equal(t, mockQ1, q1)
 
@@ -201,8 +201,8 @@ func TestTopicKey_String(t *testing.T) {
 	}{
 		{
 			name:     "predefined topic key",
-			key:      consumer.TopicKeyRequest,
-			expected: "request",
+			key:      consumer.TopicKeyStart,
+			expected: "start",
 		},
 		{
 			name:     "custom topic key",
@@ -224,12 +224,12 @@ func TestTopicRegistry_TopicName(t *testing.T) {
 
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Key: consumer.TopicKeyRequest, Name: "my-custom-request", Queue: mockQ},
+			{Key: consumer.TopicKeyStart, Name: "my-custom-request", Queue: mockQ},
 		},
 	)
 	require.NoError(t, err)
 
-	name, ok := registry.TopicName(consumer.TopicKeyRequest)
+	name, ok := registry.TopicName(consumer.TopicKeyStart)
 	require.True(t, ok)
 	assert.Equal(t, "my-custom-request", name)
 

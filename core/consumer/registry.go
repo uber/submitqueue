@@ -28,8 +28,8 @@ import (
 type TopicKey string
 
 const (
-	// TopicKeyRequest is the pipeline stage where new requests arrive from the gateway.
-	TopicKeyRequest TopicKey = "request"
+	// TopicKeyStart is the pipeline stage where new requests arrive from the gateway.
+	TopicKeyStart TopicKey = "start"
 	// TopicKeyValidate is the pipeline stage where requests are published for validation.
 	TopicKeyValidate TopicKey = "validate"
 	// TopicKeyBatch is the pipeline stage where validated requests are published for batching.

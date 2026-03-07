@@ -58,7 +58,7 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet() {
 	request := entity.Request{
 		ID:    "test/create-get",
 		Queue: "test-queue",
-		State: entity.RequestStateNew,
+		State: entity.RequestStateStarted,
 		Change: entity.Change{
 			URIs: []string{"github://uber/storage-test/pull/123/abc123def"},
 		},
@@ -101,7 +101,7 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet_StackedPRs() {
 	request := entity.Request{
 		ID:    "test/stacked-prs",
 		Queue: "test-queue",
-		State: entity.RequestStateNew,
+		State: entity.RequestStateStarted,
 		Change: entity.Change{
 			URIs: stackedURIs,
 		},
@@ -133,7 +133,7 @@ func (s *StorageContractSuite) TestStorage_UpdateState() {
 	request := entity.Request{
 		ID:           "test/update",
 		Queue:        "test-queue",
-		State:        entity.RequestStateNew,
+		State:        entity.RequestStateStarted,
 		LandStrategy: entity.RequestLandStrategyMerge,
 		Version:      1,
 	}
@@ -163,7 +163,7 @@ func (s *StorageContractSuite) TestStorage_OptimisticLocking() {
 	request := entity.Request{
 		ID:           "test/optimistic-lock",
 		Queue:        "test-queue",
-		State:        entity.RequestStateNew,
+		State:        entity.RequestStateStarted,
 		LandStrategy: entity.RequestLandStrategyMerge,
 		Version:      1,
 	}
@@ -211,7 +211,7 @@ func (s *StorageContractSuite) TestStorage_CreateDuplicate() {
 	request := entity.Request{
 		ID:           "test/duplicate",
 		Queue:        "test-queue",
-		State:        entity.RequestStateNew,
+		State:        entity.RequestStateStarted,
 		LandStrategy: entity.RequestLandStrategyMerge,
 		Version:      1,
 	}

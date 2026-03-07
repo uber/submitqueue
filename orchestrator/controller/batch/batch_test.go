@@ -99,7 +99,7 @@ func TestController_Process_Success(t *testing.T) {
 		Queue:        "test-queue",
 		Change:       entity.Change{URIs: []string{"github://uber/service/pull/456/abc123def"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
-		State:        entity.RequestStateNew,
+		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
 
@@ -142,7 +142,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 		Queue:        "test-queue",
 		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/xyz789abc"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
-		State:        entity.RequestStateNew,
+		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
 
@@ -170,7 +170,7 @@ func TestController_Process_CounterFailure(t *testing.T) {
 		Queue:        "test-queue",
 		Change:       entity.Change{URIs: []string{"github://uber/service/pull/456/abc123def"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
-		State:        entity.RequestStateNew,
+		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
 
@@ -218,7 +218,7 @@ func TestController_Process_WithDependencies(t *testing.T) {
 		Queue:        "test-queue",
 		Change:       entity.Change{URIs: []string{"github://uber/service/pull/789/abc123def"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
-		State:        entity.RequestStateNew,
+		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
 

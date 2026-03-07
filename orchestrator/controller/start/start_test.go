@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package request
+package start
 
 import (
 	"context"
@@ -56,7 +56,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, store, registry, consumer.TopicKeyRequest, "orchestrator-request")
+	return NewController(logger, scope, store, registry, consumer.TopicKeyStart, "orchestrator-request")
 }
 
 // newMockStorage creates a MockStorage with a MockRequestStore that succeeds on Create.
@@ -74,9 +74,9 @@ func TestNewController(t *testing.T) {
 	controller := newTestController(t, ctrl, newMockStorage(ctrl), nil)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicKeyRequest, controller.TopicKey())
+	assert.Equal(t, consumer.TopicKeyStart, controller.TopicKey())
 	assert.Equal(t, "orchestrator-request", controller.ConsumerGroup())
-	assert.Equal(t, "request", controller.Name())
+	assert.Equal(t, "start", controller.Name())
 }
 
 func TestController_Process_Success(t *testing.T) {
@@ -84,16 +84,14 @@ func TestController_Process_Success(t *testing.T) {
 
 	controller := newTestController(t, ctrl, newMockStorage(ctrl), nil)
 
-	request := entity.Request{
+	landRequest := entity.LandRequest{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
 		Change:       entity.Change{URIs: []string{"github://uber/service/pull/456/abc123def"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
-		State:        entity.RequestStateNew,
-		Version:      1,
 	}
 
-	payload, err := request.ToBytes()
+	payload, err := landRequest.ToBytes()
 	require.NoError(t, err)
 
 	msg := queue.NewMessage("test-queue/123", payload, "test-queue", nil)
@@ -124,16 +122,58 @@ func TestController_Process_InvalidJSON(t *testing.T) {
 	assert.False(t, errs.IsRetryable(err))
 }
 
-func TestController_Process_AllRequestStates(t *testing.T) {
+func TestController_Process_ConstructsRequestWithStateAndVersion(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	// Capture the request passed to Create
+	var capturedRequest entity.Request
+	mockReqStore := storagemock.NewMockRequestStore(ctrl)
+	mockReqStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, req entity.Request) error {
+			capturedRequest = req
+			return nil
+		},
+	)
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
+
+	controller := newTestController(t, ctrl, store, nil)
+
+	landRequest := entity.LandRequest{
+		ID:           "test-queue/42",
+		Queue:        "test-queue",
+		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/abc123def"}},
+		LandStrategy: entity.RequestLandStrategySquashRebase,
+	}
+
+	payload, err := landRequest.ToBytes()
+	require.NoError(t, err)
+
+	msg := queue.NewMessage(landRequest.ID, payload, landRequest.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	err = controller.Process(context.Background(), delivery)
+	require.NoError(t, err)
+
+	// Verify the controller sets State and Version on the constructed Request
+	assert.Equal(t, landRequest.ID, capturedRequest.ID)
+	assert.Equal(t, landRequest.Queue, capturedRequest.Queue)
+	assert.Equal(t, landRequest.Change.URIs, capturedRequest.Change.URIs)
+	assert.Equal(t, landRequest.LandStrategy, capturedRequest.LandStrategy)
+	assert.Equal(t, entity.RequestStateStarted, capturedRequest.State)
+	assert.Equal(t, int32(1), capturedRequest.Version)
+}
+
+func TestController_Process_AllStrategies(t *testing.T) {
 	tests := []struct {
 		name     string
-		state    entity.RequestState
 		strategy entity.RequestLandStrategy
 	}{
-		{"new request", entity.RequestStateNew, entity.RequestLandStrategyRebase},
-		{"processing request", entity.RequestStateProcessing, entity.RequestLandStrategySquashRebase},
-		{"landed request", entity.RequestStateLanded, entity.RequestLandStrategyMerge},
-		{"error request", entity.RequestStateError, entity.RequestLandStrategyRebase},
+		{"rebase", entity.RequestLandStrategyRebase},
+		{"squash rebase", entity.RequestLandStrategySquashRebase},
+		{"merge", entity.RequestLandStrategyMerge},
 	}
 
 	for _, tt := range tests {
@@ -142,19 +182,17 @@ func TestController_Process_AllRequestStates(t *testing.T) {
 
 			controller := newTestController(t, ctrl, newMockStorage(ctrl), nil)
 
-			request := entity.Request{
-				ID:           fmt.Sprintf("queue/%s", tt.state),
+			landRequest := entity.LandRequest{
+				ID:           fmt.Sprintf("queue/%s", tt.strategy),
 				Queue:        "test-queue",
 				Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/aaa111bbb"}},
 				LandStrategy: tt.strategy,
-				State:        tt.state,
-				Version:      1,
 			}
 
-			payload, err := request.ToBytes()
+			payload, err := landRequest.ToBytes()
 			require.NoError(t, err)
 
-			msg := queue.NewMessage(request.ID, payload, request.Queue, nil)
+			msg := queue.NewMessage(landRequest.ID, payload, landRequest.Queue, nil)
 			delivery := queuemock.NewMockDelivery(ctrl)
 			delivery.EXPECT().Message().Return(msg).AnyTimes()
 			delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -170,7 +208,7 @@ func TestController_Process_MultipleChanges(t *testing.T) {
 
 	controller := newTestController(t, ctrl, newMockStorage(ctrl), nil)
 
-	request := entity.Request{
+	landRequest := entity.LandRequest{
 		ID:    "queue/999",
 		Queue: "test-queue",
 		Change: entity.Change{
@@ -181,14 +219,12 @@ func TestController_Process_MultipleChanges(t *testing.T) {
 			},
 		},
 		LandStrategy: entity.RequestLandStrategySquashRebase,
-		State:        entity.RequestStateNew,
-		Version:      1,
 	}
 
-	payload, err := request.ToBytes()
+	payload, err := landRequest.ToBytes()
 	require.NoError(t, err)
 
-	msg := queue.NewMessage(request.ID, payload, request.Queue, nil)
+	msg := queue.NewMessage(landRequest.ID, payload, landRequest.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -202,19 +238,17 @@ func TestController_Process_PublishFailure(t *testing.T) {
 
 	controller := newTestController(t, ctrl, newMockStorage(ctrl), fmt.Errorf("publish failed"))
 
-	request := entity.Request{
+	landRequest := entity.LandRequest{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
 		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/xyz789abc"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
-		State:        entity.RequestStateNew,
-		Version:      1,
 	}
 
-	payload, err := request.ToBytes()
+	payload, err := landRequest.ToBytes()
 	require.NoError(t, err)
 
-	msg := queue.NewMessage(request.ID, payload, request.Queue, nil)
+	msg := queue.NewMessage(landRequest.ID, payload, landRequest.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -233,19 +267,17 @@ func TestController_Process_StorageFailure(t *testing.T) {
 
 	controller := newTestController(t, ctrl, store, nil)
 
-	request := entity.Request{
+	landRequest := entity.LandRequest{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
 		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/xyz789abc"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
-		State:        entity.RequestStateNew,
-		Version:      1,
 	}
 
-	payload, err := request.ToBytes()
+	payload, err := landRequest.ToBytes()
 	require.NoError(t, err)
 
-	msg := queue.NewMessage(request.ID, payload, request.Queue, nil)
+	msg := queue.NewMessage(landRequest.ID, payload, landRequest.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -265,19 +297,17 @@ func TestController_Process_AlreadyExistsSucceeds(t *testing.T) {
 
 	controller := newTestController(t, ctrl, store, nil)
 
-	request := entity.Request{
+	landRequest := entity.LandRequest{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
 		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/xyz789abc"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
-		State:        entity.RequestStateNew,
-		Version:      1,
 	}
 
-	payload, err := request.ToBytes()
+	payload, err := landRequest.ToBytes()
 	require.NoError(t, err)
 
-	msg := queue.NewMessage(request.ID, payload, request.Queue, nil)
+	msg := queue.NewMessage(landRequest.ID, payload, landRequest.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()

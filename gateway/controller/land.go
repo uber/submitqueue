@@ -99,36 +99,34 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 		return nil, fmt.Errorf("LandController failed to generate request ID for queue=%s: %w", queue, err)
 	}
 
-	request := entity.Request{
+	landRequest := entity.LandRequest{
 		ID:           fmt.Sprintf("%s/%d", queue, seq),
 		Queue:        queue,
 		Change:       change,
 		LandStrategy: strategy,
-		State:        entity.RequestStateNew,
-		Version:      1,
 	}
 
 	// Record the accepted status in the request log for reconciliation. Once the request materializes as a Request entity, the status might be updated to "new".
 	// It is important to record the status before publishing to the queue for processing. It is important to publish straight to the database and not via a queue.
 	// Gateway has to stay consistent with the request log.
-	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusAccepted, 0, "", nil)
+	logEntry := entity.NewRequestLog(landRequest.ID, entity.RequestStatusAccepted, 0, "", nil)
 	if err := c.requestLogStore.Insert(ctx, logEntry); err != nil {
-		return nil, fmt.Errorf("LandController failed to insert request log for sqid=%s: %w", request.ID, err)
+		return nil, fmt.Errorf("LandController failed to insert request log for sqid=%s: %w", landRequest.ID, err)
 	}
 
 	c.logger.Debugw("land request created",
 		"queue", req.Queue,
-		"sqid", request.ID,
+		"sqid", landRequest.ID,
 		"change_uris", change.URIs,
 		"change_count", len(change.URIs),
 		"strategy", string(strategy),
 	)
 
 	// Publish to queue for async processing
-	if err := c.publishToQueue(ctx, request); err != nil {
+	if err := c.publishToQueue(ctx, landRequest); err != nil {
 		c.logger.Errorw("failed to publish request to queue",
 			"queue", req.Queue,
-			"sqid", request.ID,
+			"sqid", landRequest.ID,
 			"error", err,
 		)
 		return nil, fmt.Errorf("LandController failed to publish request to queue: %w", err)
@@ -136,33 +134,33 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 
 	c.logger.Infow("request published to queue",
 		"queue", req.Queue,
-		"sqid", request.ID,
+		"sqid", landRequest.ID,
 		"topic", c.topic,
 	)
 	c.metricsScope.Counter("publish_success").Inc(1)
 
 	return &pb.LandResponse{
-		Sqid: request.ID,
+		Sqid: landRequest.ID,
 	}, nil
 }
 
-// publishToQueue publishes a request to the request queue for async processing.
-func (c *LandController) publishToQueue(ctx context.Context, request entity.Request) error {
-	// Serialize request entity to JSON
-	payload, err := request.ToBytes()
+// publishToQueue publishes a land request to the request queue for async processing.
+func (c *LandController) publishToQueue(ctx context.Context, landRequest entity.LandRequest) error {
+	// Serialize land request entity to JSON
+	payload, err := landRequest.ToBytes()
 	if err != nil {
-		return fmt.Errorf("failed to serialize request: %w", err)
+		return fmt.Errorf("failed to serialize land request: %w", err)
 	}
 
 	// Create queue message
-	// - Message ID: request.ID for idempotency
-	// - Payload: serialized Request entity
-	// - Partition key: request.Queue (ensures ordering per queue)
-	msg := queue.NewMessage(request.ID, payload, request.Queue, nil)
+	// - Message ID: landRequest.ID for idempotency
+	// - Payload: serialized LandRequest entity
+	// - Partition key: landRequest.Queue (ensures ordering per queue)
+	msg := queue.NewMessage(landRequest.ID, payload, landRequest.Queue, nil)
 
 	// Publish to request topic
 	if err := c.publisher.Publish(ctx, c.topic, msg); err != nil {
-		return fmt.Errorf("failed to publish message: %w", err)
+		return fmt.Errorf("failed to publish land request message: %w", err)
 	}
 
 	return nil
@@ -181,6 +179,6 @@ func resolveRequestLandStrategy(s pb.Strategy) (entity.RequestLandStrategy, erro
 	case pb.Strategy_MERGE:
 		return entity.RequestLandStrategyMerge, nil
 	default:
-		return entity.RequestLandStrategyUnknown, fmt.Errorf("unknown proto strategy: %v", s)
+		return entity.RequestLandStrategyUnknown, fmt.Errorf("unknown land strategy in proto message: %v", s)
 	}
 }
