@@ -17,6 +17,7 @@ package mysql
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -43,13 +44,14 @@ const (
 )
 
 type subscriber struct {
-	logger       *zap.SugaredLogger
-	metrics      tally.Scope
-	messageStore messageStore
-	offsetStore  offsetStore
-	leaseStore   partitionLeaseStore
-	mu           sync.RWMutex
-	closed       bool
+	logger         *zap.SugaredLogger
+	metrics        tally.Scope
+	messageStore   messageStore
+	offsetStore    offsetStore
+	leaseStore     partitionLeaseStore
+	heartbeatStore subscriberHeartbeatStore
+	mu             sync.RWMutex
+	closed         bool
 
 	// Active subscriptions
 	subscriptions map[string]*subscription
@@ -263,6 +265,10 @@ func (d *sqlDelivery) Reject(ctx context.Context, reason string) error {
 				"message_id", d.messageID,
 				"error", err,
 			)
+			d.subscriber.metrics.Tagged(map[string]string{
+				"topic":         d.topic,
+				"partition_key": d.partitionKey,
+			}).Counter("offset_update_after_dlq.errors").Inc(1)
 		}
 
 		d.subscriber.metrics.Tagged(map[string]string{
@@ -309,16 +315,17 @@ func (d *sqlDelivery) ExtendVisibilityTimeout(ctx context.Context, durationMilli
 	return nil
 }
 
-func NewSubscriber(logger *zap.SugaredLogger, metrics tally.Scope, messageStore messageStore, offsetStore offsetStore, leaseStore partitionLeaseStore) *subscriber {
+func NewSubscriber(logger *zap.SugaredLogger, metrics tally.Scope, messageStore messageStore, offsetStore offsetStore, leaseStore partitionLeaseStore, heartbeatStore subscriberHeartbeatStore) *subscriber {
 	logger.Info("created subscriber")
 
 	return &subscriber{
-		logger:        logger,
-		metrics:       metrics,
-		messageStore:  messageStore,
-		offsetStore:   offsetStore,
-		leaseStore:    leaseStore,
-		subscriptions: make(map[string]*subscription),
+		logger:         logger,
+		metrics:        metrics,
+		messageStore:   messageStore,
+		offsetStore:    offsetStore,
+		leaseStore:     leaseStore,
+		heartbeatStore: heartbeatStore,
+		subscriptions:  make(map[string]*subscription),
 	}
 }
 
@@ -410,6 +417,11 @@ func (s *subscriber) managePartitions(ctx context.Context, sub *subscription) {
 	leaseTicker := time.NewTicker(time.Duration(sub.config.LeaseRenewalIntervalMs) * time.Millisecond)
 	defer leaseTicker.Stop()
 
+	// Send initial heartbeat so this subscriber is immediately visible to
+	// ActiveSubscribers. Without this, other subscribers compute incorrect
+	// fair shares until the first leaseTicker fires.
+	s.sendHeartbeat(ctx, sub)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -418,13 +430,16 @@ func (s *subscriber) managePartitions(ctx context.Context, sub *subscription) {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), leaseReleaseTimeout)
 			defer cancel()
 			s.releaseAllLeases(cleanupCtx, sub)
+			s.deregisterHeartbeat(cleanupCtx, sub)
 			// Wait for all workers to fully exit, then close channel
 			sub.workerWg.Wait()
 			close(sub.deliveryCh)
 			return
 
 		case <-leaseTicker.C:
+			s.rebalance(ctx, sub)
 			s.renewLeases(ctx, sub)
+			s.sendHeartbeat(ctx, sub)
 
 		case <-discoveryTicker.C:
 			s.discoverAndReconcileWorkers(ctx, sub)
@@ -433,11 +448,15 @@ func (s *subscriber) managePartitions(ctx context.Context, sub *subscription) {
 }
 
 // discoverAndReconcileWorkers discovers new partitions and reconciles workers.
+// Uses load-based fair share to limit how many partitions this subscriber acquires.
 func (s *subscriber) discoverAndReconcileWorkers(ctx context.Context, sub *subscription) {
 	cfg := sub.config
 
+	// Compute fair share cap based on partition weights and active subscribers
+	maxPartitions := s.computeMaxPartitions(ctx, sub)
+
 	// Discover and try to acquire leases for new partitions
-	acquiredCount, err := s.leaseStore.DiscoverAndAcquirePartitions(ctx, sub.topic, cfg.SubscriberName, cfg.ConsumerGroup, cfg.LeaseDurationMs)
+	acquiredCount, err := s.leaseStore.DiscoverAndAcquirePartitions(ctx, sub.topic, cfg.SubscriberName, cfg.ConsumerGroup, cfg.LeaseDurationMs, maxPartitions)
 	if err == nil && acquiredCount > 0 {
 		s.metrics.Tagged(map[string]string{"topic": sub.topic}).Counter("leases_acquired").Inc(int64(acquiredCount))
 	}
@@ -657,6 +676,10 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) {
 						"message_id", row.ID,
 						"error", err,
 					)
+					s.metrics.Tagged(map[string]string{
+						"topic":         sub.topic,
+						"partition_key": partitionKey,
+					}).Counter("dlq_move.errors").Inc(1)
 				} else {
 					s.logger.Infow("moved message to DLQ",
 						"topic", sub.topic,
@@ -677,6 +700,10 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) {
 							"offset", row.Offset,
 							"error", err,
 						)
+						s.metrics.Tagged(map[string]string{
+							"topic":         sub.topic,
+							"partition_key": partitionKey,
+						}).Counter("offset_update_after_dlq.errors").Inc(1)
 					}
 				}
 			}
@@ -808,8 +835,167 @@ func (s *subscriber) releaseAllLeases(ctx context.Context, sub *subscription) {
 				"partition_key", partitionKey,
 				"error", err,
 			)
+			s.metrics.Tagged(map[string]string{
+				"topic":         sub.topic,
+				"partition_key": partitionKey,
+			}).Counter("lease_release.errors").Inc(1)
 		}
 	}
+}
+
+// sendHeartbeat sends a heartbeat for this subscriber.
+// ctx is used for cancellation/timeout on the underlying DB call.
+// The function does not return an error because heartbeat failure is non-fatal;
+// it logs a warning and the next tick will retry.
+func (s *subscriber) sendHeartbeat(ctx context.Context, sub *subscription) {
+	cfg := sub.config
+	if err := s.heartbeatStore.Heartbeat(ctx, sub.topic, cfg.SubscriberName, cfg.ConsumerGroup); err != nil {
+		s.logger.Warnw("failed to send subscriber heartbeat",
+			"topic", sub.topic,
+			"error", err,
+		)
+		s.metrics.Tagged(map[string]string{"topic": sub.topic}).Counter("heartbeat.errors").Inc(1)
+		return
+	}
+	s.metrics.Tagged(map[string]string{"topic": sub.topic}).Counter("heartbeats_sent").Inc(1)
+}
+
+// deregisterHeartbeat removes this subscriber's heartbeat entry during shutdown.
+// ctx is a fresh timeout context created during shutdown cleanup.
+func (s *subscriber) deregisterHeartbeat(ctx context.Context, sub *subscription) {
+	cfg := sub.config
+	if err := s.heartbeatStore.Deregister(ctx, sub.topic, cfg.SubscriberName, cfg.ConsumerGroup); err != nil {
+		s.logger.Warnw("failed to deregister subscriber heartbeat",
+			"topic", sub.topic,
+			"error", err,
+		)
+		s.metrics.Tagged(map[string]string{"topic": sub.topic}).Counter("heartbeat.deregister_errors").Inc(1)
+		return
+	}
+	s.metrics.Tagged(map[string]string{"topic": sub.topic}).Counter("heartbeat.deregistrations").Inc(1)
+}
+
+// computeMaxPartitions returns the maximum number of partitions this subscriber
+// should own, based on even distribution across active subscribers.
+//
+// The formula is ceil(totalPartitions / activeSubscribers), which ensures all
+// partitions are assigned even when they don't divide evenly. At most one
+// subscriber will hold one extra partition.
+//
+// Returns 0 (unlimited) when fair share cannot be computed (error or single subscriber).
+func (s *subscriber) computeMaxPartitions(ctx context.Context, sub *subscription) int {
+	maxPart, _, err := s.fairShareCap(ctx, sub)
+	if err != nil {
+		s.logger.Warnw("failed to compute fair share cap",
+			"topic", sub.topic,
+			"error", err,
+		)
+		s.metrics.Tagged(map[string]string{"topic": sub.topic}).Counter("fair_share_cap.errors").Inc(1)
+		return 0
+	}
+	return maxPart
+}
+
+// rebalance checks if this subscriber holds more partitions than its fair share
+// and releases extras so other subscribers can pick them up.
+func (s *subscriber) rebalance(ctx context.Context, sub *subscription) {
+	cfg := sub.config
+
+	maxPart, owned, err := s.fairShareCap(ctx, sub)
+	if err != nil {
+		s.logger.Warnw("failed to compute fair share cap for rebalance",
+			"topic", sub.topic,
+			"error", err,
+		)
+		s.metrics.Tagged(map[string]string{"topic": sub.topic}).Counter("fair_share_cap.errors").Inc(1)
+		return
+	}
+	if maxPart == 0 || len(owned) <= maxPart {
+		return
+	}
+
+	// Sort deterministically so the same partitions are released across runs.
+	sort.Strings(owned)
+
+	// Release excess partitions
+	for _, pk := range owned[maxPart:] {
+		if err := s.leaseStore.ReleaseLease(ctx, sub.topic, pk, cfg.SubscriberName, cfg.ConsumerGroup); err != nil {
+			s.logger.Warnw("failed to release partition during rebalance",
+				"topic", sub.topic,
+				"partition_key", pk,
+				"error", err,
+			)
+			s.metrics.Tagged(map[string]string{
+				"topic":         sub.topic,
+				"partition_key": pk,
+			}).Counter("rebalance.release_errors").Inc(1)
+			continue
+		}
+
+		// Stop the worker immediately to prevent duplicate processing.
+		s.stopPartitionWorker(sub, pk)
+
+		s.logger.Infow("released partition for rebalance",
+			"topic", sub.topic,
+			"partition_key", pk,
+			"owned", len(owned),
+			"max_partitions", maxPart,
+		)
+		s.metrics.Tagged(map[string]string{
+			"topic": sub.topic,
+		}).Counter("rebalance.partitions_released").Inc(1)
+	}
+}
+
+// fairShareCap computes the max partitions this subscriber should own.
+// Returns (maxPart, ownedPartitions, error). maxPart=0 means unlimited.
+func (s *subscriber) fairShareCap(ctx context.Context, sub *subscription) (int, []string, error) {
+	cfg := sub.config
+
+	active, err := s.heartbeatStore.ActiveSubscribers(ctx, sub.topic, cfg.ConsumerGroup, cfg.LeaseDurationMs)
+	if err != nil {
+		return 0, nil, err
+	}
+	if len(active) <= 1 {
+		return 0, nil, nil
+	}
+
+	activeSubscribers := len(active)
+	s.metrics.Tagged(map[string]string{"topic": sub.topic}).Gauge("active_subscribers").Update(float64(activeSubscribers))
+
+	owned, err := s.leaseStore.GetLeasedPartitions(ctx, sub.topic, cfg.SubscriberName, cfg.ConsumerGroup)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	// Count all known partitions as the union of owned + discovered.
+	// Using max(owned, discovered) would undercount when some partitions
+	// have leases but no messages, or vice versa.
+	partitionSet := make(map[string]struct{}, len(owned))
+	for _, pk := range owned {
+		partitionSet[pk] = struct{}{}
+	}
+	allPartitions, err := s.leaseStore.DiscoverPartitions(ctx, sub.topic)
+	if err != nil {
+		s.logger.Warnw("failed to discover partitions, using owned partitions only",
+			"topic", sub.topic,
+			"error", err,
+		)
+		s.metrics.Tagged(map[string]string{"topic": sub.topic}).Counter("discover_partitions.errors").Inc(1)
+	} else {
+		for _, pk := range allPartitions {
+			partitionSet[pk] = struct{}{}
+		}
+	}
+	totalPartitions := len(partitionSet)
+
+	// ceil(totalPartitions / activeSubscribers)
+	maxPart := (totalPartitions + activeSubscribers - 1) / activeSubscribers
+	if maxPart < 1 {
+		maxPart = 1
+	}
+
+	return maxPart, owned, nil
 }
 
 // Close gracefully shuts down the subscriber and all its subscriptions.

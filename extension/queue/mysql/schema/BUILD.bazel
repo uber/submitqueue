@@ -4,6 +4,7 @@ filegroup(
         "queue_messages.sql",
         "queue_offsets.sql",
         "queue_partition_leases.sql",
+        "queue_subscriber_heartbeats.sql",
     ],
     visibility = ["//visibility:public"],
 )

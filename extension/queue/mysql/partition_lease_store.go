@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/uber-go/tally/v4"
+	coremetrics "github.com/uber/submitqueue/core/metrics"
 	"go.uber.org/zap"
 )
 
@@ -40,11 +41,11 @@ const (
 )
 
 // newPartitionLeaseStore creates a new SQL partition lease store
-func newPartitionLeaseStore(db *sql.DB, logger *zap.Logger, metrics tally.Scope) partitionLeaseStore {
+func newPartitionLeaseStore(db *sql.DB, logger *zap.Logger, scope tally.Scope) partitionLeaseStore {
 	return &sqlpartitionLeaseStore{
 		db:      db,
 		logger:  logger.Sugar().Named("partition_lease_store"),
-		metrics: metrics.SubScope("partition_lease_store"),
+		metrics: scope.SubScope("partition_lease_store"),
 	}
 }
 
@@ -261,6 +262,11 @@ func (s *sqlpartitionLeaseStore) GetLeasedPartitions(ctx context.Context, topic 
 		partitions = append(partitions, partition)
 	}
 
+	if err := rows.Err(); err != nil {
+		s.metrics.Tagged(map[string]string{tagErrorType: "row_iteration"}).Counter(metricGetLeasedPartitionsErrors).Inc(1)
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
 	s.metrics.Counter("get_leased_partitions.success").Inc(1)
 	s.metrics.Counter("partitions.leased").Inc(int64(len(partitions)))
 	s.logger.Debugw("retrieved leased partitions",
@@ -275,7 +281,8 @@ func (s *sqlpartitionLeaseStore) GetLeasedPartitions(ctx context.Context, topic 
 
 // DiscoverAndAcquirePartitions discovers partitions from messages table and tries to acquire leases
 // Returns the number of new leases acquired
-func (s *sqlpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string, leaseDurationMs int64) (int, error) {
+// maxPartitions limits how many total partitions this subscriber can own (0 = unlimited)
+func (s *sqlpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string, leaseDurationMs int64, maxPartitions int) (int, error) {
 	start := time.Now()
 	success := false
 	defer func() {
@@ -286,11 +293,11 @@ func (s *sqlpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Contex
 		s.metrics.Tagged(map[string]string{"result": result}).Timer("discover_and_acquire.latency").Record(time.Since(start))
 	}()
 
-	// Query distinct partition_keys from messages table
-	// LIMIT 100: Cap discovery to prevent overwhelming the system when there are many partitions.
-	// Workers will naturally discover and acquire partitions over multiple discovery cycles.
+	// Query distinct partition_keys from messages table.
+	// The maxPartitions cap limits how many leases this subscriber acquires,
+	// so we discover all partitions to ensure none are silently dropped.
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
-		SELECT DISTINCT partition_key FROM %s WHERE topic = ? LIMIT 100
+		SELECT DISTINCT partition_key FROM %s WHERE topic = ? ORDER BY partition_key
 	`, MessagesTableName), topic)
 	if err != nil {
 		s.logger.Errorw("failed to discover partitions",
@@ -316,14 +323,39 @@ func (s *sqlpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Contex
 		partitions = append(partitions, partitionKey)
 	}
 
+	if err := rows.Err(); err != nil {
+		s.metrics.Tagged(map[string]string{tagErrorType: "row_iteration"}).Counter(metricDiscoverAndAcquireErrors).Inc(1)
+		return 0, fmt.Errorf("row iteration error: %w", err)
+	}
+
 	s.logger.Debugw("discovered partitions",
 		logTopic, topic,
 		"count", len(partitions),
 	)
 
+	// Query owned partitions once before the loop to avoid N+1 queries
+	ownedCount := 0
+	if maxPartitions > 0 {
+		owned, err := s.GetLeasedPartitions(ctx, topic, subscriberName, consumerGroup)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get owned partitions for cap check: %w", err)
+		}
+		ownedCount = len(owned)
+	}
+
 	// Try to acquire leases for discovered partitions
 	acquiredCount := 0
 	for _, partitionKey := range partitions {
+		// Enforce maxPartitions cap using local count
+		if maxPartitions > 0 && ownedCount >= maxPartitions {
+			s.logger.Infow("reached max partitions cap, stopping acquisition",
+				logTopic, topic,
+				"max_partitions", maxPartitions,
+				"owned_count", ownedCount,
+			)
+			break
+		}
+
 		acquired, err := s.TryAcquireLease(ctx, topic, partitionKey, subscriberName, consumerGroup, leaseDurationMs)
 		if err != nil {
 			// Log but continue trying other partitions
@@ -336,6 +368,7 @@ func (s *sqlpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Contex
 		}
 		if acquired {
 			acquiredCount++
+			ownedCount++
 		}
 	}
 
@@ -351,4 +384,33 @@ func (s *sqlpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Contex
 
 	success = true
 	return acquiredCount, nil
+}
+
+// DiscoverPartitions returns all distinct partition keys for a topic from the messages table.
+func (s *sqlpartitionLeaseStore) DiscoverPartitions(ctx context.Context, topic string) (_ []string, retErr error) {
+	op := coremetrics.Begin(s.metrics, "discover_partitions")
+	defer func() { op.Complete(retErr) }()
+
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT DISTINCT partition_key FROM %s WHERE topic = ? ORDER BY partition_key
+	`, MessagesTableName), topic)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover partitions: %w", err)
+	}
+	defer rows.Close()
+
+	var partitions []string
+	for rows.Next() {
+		var partitionKey string
+		if err := rows.Scan(&partitionKey); err != nil {
+			return nil, fmt.Errorf("failed to scan partition key: %w", err)
+		}
+		partitions = append(partitions, partitionKey)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
+	return partitions, nil
 }

@@ -57,6 +57,7 @@ func NewQueue(params Params) (queue.Queue, error) {
 	messageStore := newMessageStore(params.DB, params.Logger, params.MetricsScope)
 	offsetStore := newOffsetStore(params.DB, params.Logger, params.MetricsScope)
 	leaseStore := newPartitionLeaseStore(params.DB, params.Logger, params.MetricsScope)
+	heartbeatStore := newSubscriberHeartbeatStore(params.DB, params.Logger, params.MetricsScope)
 
 	queueMetrics := params.MetricsScope.SubScope("queue")
 
@@ -73,6 +74,7 @@ func NewQueue(params Params) (queue.Queue, error) {
 		messageStore,
 		offsetStore,
 		leaseStore,
+		heartbeatStore,
 	)
 
 	return &queueImpl{

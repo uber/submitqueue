@@ -256,6 +256,7 @@ deps = [
 - **Use testify** — `assert`/`require` instead of `t.Fatal()`.
 
 **Integration tests** use Docker Compose via `testutil.ComposeStack`:
+- **Prerequisite**: Docker must be running before executing integration tests. Tests will fail if the Docker daemon is not available.
 - Package naming: folder name as package (NOT `*_test` suffix)
 - Bazel: add `tags = ["integration"]` and `data = [...]` for compose/schema files
 - Use `testutil.NewComposeStack()` with meaningful context (e.g., `"ext-storage-mysql"`)

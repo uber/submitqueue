@@ -34,9 +34,19 @@ func testSubscriptionConfig() extqueue.SubscriptionConfig {
 	return extqueue.DefaultSubscriptionConfig("test-subscriber", "test-consumer")
 }
 
+// newTestHeartbeatStore creates a mock heartbeat store that allows all calls
+func newTestHeartbeatStore(ctrl *gomock.Controller) *MocksubscriberHeartbeatStore {
+	mockHB := NewMocksubscriberHeartbeatStore(ctrl)
+	mockHB.EXPECT().Heartbeat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockHB.EXPECT().ActiveSubscribers(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]string{"self"}, nil).AnyTimes()
+	mockHB.EXPECT().Deregister(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	return mockHB
+}
+
 func setupSubscriberTest(t *testing.T, mockMessageStore *MockmessageStore, mockOffsetStore *MockoffsetStore, mockLeaseStore *MockpartitionLeaseStore) extqueue.Subscriber {
 	t.Helper()
-	return NewSubscriber(zaptest.NewLogger(t).Sugar().Named("subscriber"), tally.NoopScope.SubScope("subscriber"), mockMessageStore, mockOffsetStore, mockLeaseStore)
+	mockHeartbeatStore := newTestHeartbeatStore(gomock.NewController(t))
+	return NewSubscriber(zaptest.NewLogger(t).Sugar().Named("subscriber"), tally.NoopScope.SubScope("subscriber"), mockMessageStore, mockOffsetStore, mockLeaseStore, mockHeartbeatStore)
 }
 
 func TestSubscriber_Subscribe(t *testing.T) {
@@ -148,6 +158,7 @@ func TestSQLDelivery_Reject(t *testing.T) {
 				mockMsgStore,
 				mockOffStore,
 				mockLeaseStore,
+				newTestHeartbeatStore(ctrl),
 			)
 
 			msg := queue.NewMessage("msg-1", []byte("payload"), "part-1", nil)
@@ -309,6 +320,7 @@ func TestSubscriber_ReconcilePartitionWorkers(t *testing.T) {
 				mockMessageStore,
 				mockOffsetStore,
 				mockLeaseStore,
+				newTestHeartbeatStore(ctrl),
 			)
 
 			// Allow offset initialization and fetch calls from workers
@@ -364,6 +376,7 @@ func TestSubscriber_PartitionWorkerPollAndDeliver(t *testing.T) {
 		mockMessageStore,
 		mockOffsetStore,
 		mockLeaseStore,
+		newTestHeartbeatStore(ctrl),
 	)
 
 	cfg := testSubscriptionConfig()
@@ -426,6 +439,7 @@ func TestSubscriber_StopAllWorkers(t *testing.T) {
 		mockMessageStore,
 		mockOffsetStore,
 		mockLeaseStore,
+		newTestHeartbeatStore(ctrl),
 	)
 
 	// Allow worker polling

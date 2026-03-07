@@ -24,10 +24,11 @@ import (
 
 const (
 	// Fixed table names for single-table design
-	MessagesTableName        = "queue_messages"
-	PartitionLeasesTableName = "queue_partition_leases"
-	OffsetsTableName         = "queue_offsets"
-	DLQTableName             = "queue_dlq"
+	MessagesTableName             = "queue_messages"
+	PartitionLeasesTableName      = "queue_partition_leases"
+	OffsetsTableName              = "queue_offsets"
+	DLQTableName                  = "queue_dlq"
+	SubscriberHeartbeatsTableName = "queue_subscriber_heartbeats"
 )
 
 // messageRow represents a row from the messages table (internal use only)
@@ -116,5 +117,23 @@ type partitionLeaseStore interface {
 	// DiscoverAndAcquirePartitions discovers partitions from messages table and tries to acquire leases
 	// Returns the number of new leases acquired
 	// leaseDurationMs is how long the lease is valid (in milliseconds)
-	DiscoverAndAcquirePartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string, leaseDurationMs int64) (int, error)
+	// maxPartitions limits how many total partitions this subscriber can own (0 = unlimited)
+	DiscoverAndAcquirePartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string, leaseDurationMs int64, maxPartitions int) (int, error)
+
+	// DiscoverPartitions returns all distinct partition keys for a topic
+	DiscoverPartitions(ctx context.Context, topic string) ([]string, error)
+}
+
+// subscriberHeartbeatStore handles subscriber heartbeat operations for fair partition leasing (internal use only)
+type subscriberHeartbeatStore interface {
+	// Heartbeat registers or renews a subscriber's heartbeat
+	Heartbeat(ctx context.Context, topic string, subscriberName string, consumerGroup string) error
+
+	// ActiveSubscribers returns the names of subscribers with a recent heartbeat.
+	// staleDurationMs defines the staleness threshold: subscribers without a heartbeat
+	// within this duration are considered dead.
+	ActiveSubscribers(ctx context.Context, topic string, consumerGroup string, staleDurationMs int64) ([]string, error)
+
+	// Deregister removes a subscriber's heartbeat entry
+	Deregister(ctx context.Context, topic string, subscriberName string, consumerGroup string) error
 }
