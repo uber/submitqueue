@@ -40,6 +40,17 @@ import (
 // testTimeout is the safety-net duration for channel waits in integration tests.
 const testTimeout = 10 * time.Second
 
+// Timing constants for rebalance tests. Keep poll/lease intervals short to make
+// tests converge fast, but lease duration long enough that active subscribers
+// don't expire each other.
+const (
+	rebalancePollIntervalMs         = 100
+	rebalanceLeaseRenewalIntervalMs = 200
+	rebalanceLeaseDurationMs        = 1000
+	rebalanceConvergeTimeout        = 10 * time.Second
+	rebalanceConvergePollInterval   = 200 * time.Millisecond
+)
+
 type SQLQueueIntegrationSuite struct {
 	suite.Suite
 	ctx   context.Context
@@ -1619,4 +1630,476 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_ResetOffsetAndReleaseLease() {
 	}
 
 	t.Logf("Reset offset and release lease verified")
+}
+
+// --- Rebalance integration tests ---
+
+// getPartitionLeases queries the partition lease table and returns a map from
+// subscriber name to the set of partition keys it owns for the given topic and
+// consumer group.
+func getPartitionLeases(db *sql.DB, topic, consumerGroup string) (map[string][]string, error) {
+	rows, err := db.Query(
+		"SELECT leased_by, partition_key FROM queue_partition_leases WHERE topic = ? AND consumer_group = ? ORDER BY leased_by, partition_key",
+		topic, consumerGroup,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string][]string)
+	for rows.Next() {
+		var owner, pk string
+		if err := rows.Scan(&owner, &pk); err != nil {
+			return nil, err
+		}
+		result[owner] = append(result[owner], pk)
+	}
+	return result, nil
+}
+
+// rebalanceSubConfig returns a SubscriptionConfig tuned for fast rebalance tests.
+func rebalanceSubConfig(subscriberName, consumerGroup string) extqueue.SubscriptionConfig {
+	cfg := extqueue.DefaultSubscriptionConfig(subscriberName, consumerGroup)
+	cfg.PollIntervalMs = rebalancePollIntervalMs
+	cfg.LeaseRenewalIntervalMs = rebalanceLeaseRenewalIntervalMs
+	cfg.LeaseDurationMs = rebalanceLeaseDurationMs
+	return cfg
+}
+
+func (s *SQLQueueIntegrationSuite) TestRebalance_EvenDistribution() {
+	t := s.T()
+
+	topic := "rebalance_even_topic"
+	consumerGroup := "rebalance-even-cg"
+	partitions := []string{"pk-1", "pk-2", "pk-3", "pk-4"}
+
+	// Publish one message per partition so they are discoverable.
+	pubQ, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer pubQ.Close()
+
+	for i, pk := range partitions {
+		msg := queue.NewMessage(fmt.Sprintf("rb-even-%d", i), []byte("x"), pk, nil)
+		require.NoError(t, pubQ.Publisher().Publish(s.ctx, topic, msg))
+	}
+
+	// S1: subscribe, should acquire all 4 partitions (only subscriber).
+	q1, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer q1.Close()
+
+	_, err = q1.Subscriber().Subscribe(s.ctx, topic, rebalanceSubConfig("s1", consumerGroup))
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		leases, _ := getPartitionLeases(s.db, topic, consumerGroup)
+		return len(leases["s1"]) == 4
+	}, rebalanceConvergeTimeout, rebalanceConvergePollInterval, "S1 should acquire all 4 partitions")
+
+	// S2: subscribe. After rebalancing, each should own 2.
+	q2, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer q2.Close()
+
+	_, err = q2.Subscriber().Subscribe(s.ctx, topic, rebalanceSubConfig("s2", consumerGroup))
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		leases, _ := getPartitionLeases(s.db, topic, consumerGroup)
+		return len(leases["s1"]) == 2 && len(leases["s2"]) == 2
+	}, rebalanceConvergeTimeout, rebalanceConvergePollInterval, "each subscriber should own exactly 2 partitions")
+
+	t.Logf("Even distribution verified: 4 partitions split evenly across 2 subscribers")
+}
+
+func (s *SQLQueueIntegrationSuite) TestRebalance_SubscriberLeaves() {
+	t := s.T()
+
+	topic := "rebalance_leave_topic"
+	consumerGroup := "rebalance-leave-cg"
+	partitions := []string{"pk-1", "pk-2", "pk-3", "pk-4"}
+
+	// Publish messages.
+	pubQ, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer pubQ.Close()
+
+	for i, pk := range partitions {
+		msg := queue.NewMessage(fmt.Sprintf("rb-leave-%d", i), []byte("x"), pk, nil)
+		require.NoError(t, pubQ.Publisher().Publish(s.ctx, topic, msg))
+	}
+
+	// S1 + S2 start, wait for 2+2 split.
+	q1, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer q1.Close()
+
+	q2, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	// no defer close — we close explicitly below
+
+	_, err = q1.Subscriber().Subscribe(s.ctx, topic, rebalanceSubConfig("s1", consumerGroup))
+	require.NoError(t, err)
+	_, err = q2.Subscriber().Subscribe(s.ctx, topic, rebalanceSubConfig("s2", consumerGroup))
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		leases, _ := getPartitionLeases(s.db, topic, consumerGroup)
+		return len(leases["s1"])+len(leases["s2"]) == 4 && len(leases["s1"]) == 2 && len(leases["s2"]) == 2
+	}, rebalanceConvergeTimeout, rebalanceConvergePollInterval, "2+2 split should converge")
+
+	// S2 leaves: close releases leases and deregisters heartbeat.
+	require.NoError(t, q2.Close())
+
+	// S1's discovery loop will detect orphaned (expired) partitions and acquire them.
+	require.Eventually(t, func() bool {
+		leases, _ := getPartitionLeases(s.db, topic, consumerGroup)
+		return len(leases["s1"]) == 4
+	}, rebalanceConvergeTimeout, rebalanceConvergePollInterval, "S1 should reacquire all 4 partitions after S2 leaves")
+
+	t.Logf("Subscriber leave verified: S1 owns all 4 partitions after S2 departed")
+}
+
+func (s *SQLQueueIntegrationSuite) TestRebalance_OddPartitions() {
+	t := s.T()
+
+	topic := "rebalance_odd_topic"
+	consumerGroup := "rebalance-odd-cg"
+	partitions := []string{"pk-1", "pk-2", "pk-3", "pk-4", "pk-5"}
+
+	pubQ, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer pubQ.Close()
+
+	for i, pk := range partitions {
+		msg := queue.NewMessage(fmt.Sprintf("rb-odd-%d", i), []byte("x"), pk, nil)
+		require.NoError(t, pubQ.Publisher().Publish(s.ctx, topic, msg))
+	}
+
+	q1, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer q1.Close()
+
+	q2, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer q2.Close()
+
+	_, err = q1.Subscriber().Subscribe(s.ctx, topic, rebalanceSubConfig("s1", consumerGroup))
+	require.NoError(t, err)
+	_, err = q2.Subscriber().Subscribe(s.ctx, topic, rebalanceSubConfig("s2", consumerGroup))
+	require.NoError(t, err)
+
+	// maxPart = ceil(5/2) = 3. One gets 3, the other gets 2.
+	require.Eventually(t, func() bool {
+		leases, _ := getPartitionLeases(s.db, topic, consumerGroup)
+		total := len(leases["s1"]) + len(leases["s2"])
+		max := len(leases["s1"])
+		if len(leases["s2"]) > max {
+			max = len(leases["s2"])
+		}
+		min := len(leases["s1"])
+		if len(leases["s2"]) < min {
+			min = len(leases["s2"])
+		}
+		return total == 5 && max == 3 && min == 2
+	}, rebalanceConvergeTimeout, rebalanceConvergePollInterval, "5 partitions should split 3+2 across 2 subscribers")
+
+	t.Logf("Odd partition distribution verified: 5 partitions split 3+2")
+}
+
+func (s *SQLQueueIntegrationSuite) TestRebalance_NoOrphans() {
+	t := s.T()
+
+	topic := "rebalance_orphan_topic"
+	consumerGroup := "rebalance-orphan-cg"
+	partitions := []string{"pk-1", "pk-2", "pk-3", "pk-4", "pk-5", "pk-6"}
+
+	pubQ, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer pubQ.Close()
+
+	for i, pk := range partitions {
+		msg := queue.NewMessage(fmt.Sprintf("rb-orphan-%d", i), []byte("x"), pk, nil)
+		require.NoError(t, pubQ.Publisher().Publish(s.ctx, topic, msg))
+	}
+
+	// 3 subscribers → 2 each.
+	queues := make([]extqueue.Queue, 3)
+	subNames := []string{"s1", "s2", "s3"}
+	for i, name := range subNames {
+		q, err := queueMySQL.NewQueue(queueMySQL.Params{
+			DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+		})
+		require.NoError(t, err)
+		queues[i] = q
+		_, err = q.Subscriber().Subscribe(s.ctx, topic, rebalanceSubConfig(name, consumerGroup))
+		require.NoError(t, err)
+	}
+	defer queues[0].Close()
+	defer queues[1].Close()
+	// queues[2] will be closed explicitly
+
+	require.Eventually(t, func() bool {
+		leases, _ := getPartitionLeases(s.db, topic, consumerGroup)
+		total := 0
+		for _, pks := range leases {
+			total += len(pks)
+		}
+		return total == 6
+	}, rebalanceConvergeTimeout, rebalanceConvergePollInterval, "all 6 partitions should be assigned across 3 subscribers")
+
+	// Remove S3 → remaining 2 should pick up orphans. maxPart = ceil(6/2) = 3.
+	require.NoError(t, queues[2].Close())
+
+	// S1/S2 discovery loops will detect orphaned (expired) partitions and acquire them.
+	require.Eventually(t, func() bool {
+		leases, _ := getPartitionLeases(s.db, topic, consumerGroup)
+		total := len(leases["s1"]) + len(leases["s2"])
+		// s3 leases should be gone (released on close or expired)
+		return total == 6 && len(leases["s3"]) == 0
+	}, rebalanceConvergeTimeout, rebalanceConvergePollInterval, "remaining 2 subscribers should own all 6 partitions")
+
+	t.Logf("No orphan partitions: all 6 reassigned after subscriber left")
+}
+
+func (s *SQLQueueIntegrationSuite) TestRebalance_MoreSubscribersThanPartitions() {
+	t := s.T()
+
+	topic := "rebalance_excess_topic"
+	consumerGroup := "rebalance-excess-cg"
+	partitions := []string{"pk-1", "pk-2"}
+
+	pubQ, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer pubQ.Close()
+
+	for i, pk := range partitions {
+		msg := queue.NewMessage(fmt.Sprintf("rb-excess-%d", i), []byte("x"), pk, nil)
+		require.NoError(t, pubQ.Publisher().Publish(s.ctx, topic, msg))
+	}
+
+	// 4 subscribers competing for 2 partitions. maxPart = ceil(2/4) = 1.
+	subNames := []string{"s1", "s2", "s3", "s4"}
+	var queues []extqueue.Queue
+	for _, name := range subNames {
+		q, err := queueMySQL.NewQueue(queueMySQL.Params{
+			DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+		})
+		require.NoError(t, err)
+		queues = append(queues, q)
+		_, err = q.Subscriber().Subscribe(s.ctx, topic, rebalanceSubConfig(name, consumerGroup))
+		require.NoError(t, err)
+	}
+	defer func() {
+		for _, q := range queues {
+			q.Close()
+		}
+	}()
+
+	require.Eventually(t, func() bool {
+		leases, _ := getPartitionLeases(s.db, topic, consumerGroup)
+		total := 0
+		maxOwned := 0
+		for _, pks := range leases {
+			total += len(pks)
+			if len(pks) > maxOwned {
+				maxOwned = len(pks)
+			}
+		}
+		return total == 2 && maxOwned <= 1
+	}, rebalanceConvergeTimeout, rebalanceConvergePollInterval,
+		"2 partitions across 4 subscribers: total=2, max per subscriber=1")
+
+	t.Logf("More subscribers than partitions verified: 2 partitions, 4 subscribers, max 1 each")
+}
+
+// TestNackDoesNotBlockOtherMessages verifies that nacking a message does not
+// block delivery of subsequent messages in the same partition. The nacked
+// message should be skipped (invisible) while later messages are delivered.
+func (s *SQLQueueIntegrationSuite) TestNackDoesNotBlockOtherMessages() {
+	t := s.T()
+
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	topic := "nack_nonblocking_topic"
+	partition := "nack-nb-part"
+
+	// Subscribe with batch=10 to fetch multiple messages per poll
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "nack-nb-cg")
+	subConfig.PollIntervalMs = 50
+	subConfig.BatchSize = 10
+	deliveryCh, err := q.Subscriber().Subscribe(s.ctx, topic, subConfig)
+	require.NoError(t, err)
+
+	// Publish 3 messages in order
+	for i := 1; i <= 3; i++ {
+		msg := queue.NewMessage(fmt.Sprintf("msg-%d", i), []byte(fmt.Sprintf("payload-%d", i)), partition, nil)
+		require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg))
+	}
+
+	// Receive first message and nack it with a long delay
+	d1 := receiveWithTimeout(t, deliveryCh, testTimeout)
+	assert.Equal(t, "msg-1", d1.Message().ID)
+	require.NoError(t, d1.Nack(s.ctx, 30000)) // 30s delay — won't come back during test
+	t.Logf("Nacked msg-1 with 30s delay")
+
+	// Messages 2 and 3 should still be deliverable despite msg-1 being nacked
+	d2 := receiveWithTimeout(t, deliveryCh, testTimeout)
+	assert.Equal(t, "msg-2", d2.Message().ID)
+	require.NoError(t, d2.Ack(s.ctx))
+	t.Logf("Received and acked msg-2")
+
+	d3 := receiveWithTimeout(t, deliveryCh, testTimeout)
+	assert.Equal(t, "msg-3", d3.Message().ID)
+	require.NoError(t, d3.Ack(s.ctx))
+	t.Logf("Received and acked msg-3")
+
+	t.Logf("Verified: nacked message did not block subsequent messages")
+}
+
+// TestBatchSizeOneStrictSerialization verifies that with batchSize=1, messages
+// within a partition are processed strictly in order — only one message is
+// in-flight at a time.
+func (s *SQLQueueIntegrationSuite) TestBatchSizeOneStrictSerialization() {
+	t := s.T()
+
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	topic := "serial_topic"
+	partition := "serial-part"
+
+	// Subscribe with batchSize=1 for strict serialization
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "serial-cg")
+	subConfig.PollIntervalMs = 50
+	subConfig.BatchSize = 1
+	deliveryCh, err := q.Subscriber().Subscribe(s.ctx, topic, subConfig)
+	require.NoError(t, err)
+
+	// Publish 5 messages
+	for i := 1; i <= 5; i++ {
+		msg := queue.NewMessage(fmt.Sprintf("serial-%d", i), []byte(strconv.Itoa(i)), partition, nil)
+		require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg))
+	}
+
+	// Receive each message strictly in order, acking before receiving next
+	for i := 1; i <= 5; i++ {
+		delivery := receiveWithTimeout(t, deliveryCh, testTimeout)
+		assert.Equal(t, fmt.Sprintf("serial-%d", i), delivery.Message().ID,
+			"expected message %d but got %s", i, delivery.Message().ID)
+		require.NoError(t, delivery.Ack(s.ctx))
+		t.Logf("Strictly ordered delivery: serial-%d", i)
+	}
+
+	// Verify no more messages
+	select {
+	case d := <-deliveryCh:
+		t.Fatalf("unexpected extra delivery: %s", d.Message().ID)
+	case <-time.After(500 * time.Millisecond):
+		// Expected — no more messages
+	}
+
+	t.Logf("Verified: batchSize=1 enforces strict serialization")
+}
+
+// TestMultipleConsumerGroupsIndependentState verifies that two consumer groups
+// can independently process, nack, retry, and ack the same messages without
+// interfering with each other.
+func (s *SQLQueueIntegrationSuite) TestMultipleConsumerGroupsIndependentState() {
+	t := s.T()
+
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	topic := "multi_cg_state_topic"
+	partition := "multi-cg-part"
+
+	// Two consumer groups subscribing to the same topic
+	cfg1 := extqueue.DefaultSubscriptionConfig("worker-1", "cg-alpha")
+	cfg1.PollIntervalMs = 50
+	cfg2 := extqueue.DefaultSubscriptionConfig("worker-2", "cg-beta")
+	cfg2.PollIntervalMs = 50
+
+	ch1, err := q.Subscriber().Subscribe(s.ctx, topic, cfg1)
+	require.NoError(t, err)
+	ch2, err := q.Subscriber().Subscribe(s.ctx, topic, cfg2)
+	require.NoError(t, err)
+
+	// Publish 2 messages
+	for i := 1; i <= 2; i++ {
+		msg := queue.NewMessage(fmt.Sprintf("shared-%d", i), []byte(strconv.Itoa(i)), partition, nil)
+		require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg))
+	}
+
+	// CG-alpha: nack msg-1, ack msg-2
+	d1a := receiveWithTimeout(t, ch1, testTimeout)
+	assert.Equal(t, "shared-1", d1a.Message().ID)
+	require.NoError(t, d1a.Nack(s.ctx, 200)) // short nack delay
+	t.Logf("cg-alpha nacked shared-1")
+
+	d2a := receiveWithTimeout(t, ch1, testTimeout)
+	assert.Equal(t, "shared-2", d2a.Message().ID)
+	require.NoError(t, d2a.Ack(s.ctx))
+	t.Logf("cg-alpha acked shared-2")
+
+	// CG-beta: ack both messages immediately (independent state)
+	d1b := receiveWithTimeout(t, ch2, testTimeout)
+	assert.Equal(t, "shared-1", d1b.Message().ID)
+	require.NoError(t, d1b.Ack(s.ctx))
+	t.Logf("cg-beta acked shared-1")
+
+	d2b := receiveWithTimeout(t, ch2, testTimeout)
+	assert.Equal(t, "shared-2", d2b.Message().ID)
+	require.NoError(t, d2b.Ack(s.ctx))
+	t.Logf("cg-beta acked shared-2")
+
+	// CG-alpha should get shared-1 redelivered after nack delay
+	d1aRetry := receiveWithTimeout(t, ch1, testTimeout)
+	assert.Equal(t, "shared-1", d1aRetry.Message().ID)
+	assert.Greater(t, d1aRetry.Attempt(), 1, "should be a retry attempt")
+	require.NoError(t, d1aRetry.Ack(s.ctx))
+	t.Logf("cg-alpha received retry of shared-1 (attempt=%d)", d1aRetry.Attempt())
+
+	// CG-beta should NOT get shared-1 again (already acked independently)
+	select {
+	case d := <-ch2:
+		t.Fatalf("cg-beta should not receive more messages, got: %s", d.Message().ID)
+	case <-time.After(500 * time.Millisecond):
+		// Expected — cg-beta is done
+	}
+
+	t.Logf("Verified: consumer groups have fully independent delivery state")
 }
