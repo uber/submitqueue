@@ -28,7 +28,7 @@ import (
 	"github.com/uber/submitqueue/entity/queue"
 )
 
-// testMetrics returns a test metrics scope for use in tests
+// testMetrics returns a test scope scope for use in tests
 func testMetrics() tally.Scope {
 	return tally.NoopScope
 }
@@ -105,10 +105,10 @@ func TestmessageStore_Delete(t *testing.T) {
 	messageID := "msg1"
 
 	mock.ExpectExec("DELETE FROM queue_messages").
-		WithArgs(topic, messageID).
+		WithArgs(topic, "part1", messageID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	err := store.Delete(ctx, topic, messageID)
+	err := store.Delete(ctx, topic, "part1", messageID)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -159,10 +159,10 @@ func TestmessageStore_SetVisibilityTimeout(t *testing.T) {
 	visibilityTimeoutMillis := int64(5000)
 
 	mock.ExpectExec("UPDATE queue_messages").
-		WithArgs(sqlmock.AnyArg(), topic, messageID).
+		WithArgs(sqlmock.AnyArg(), topic, "part1", messageID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	err := store.SetVisibilityTimeout(ctx, topic, messageID, visibilityTimeoutMillis)
+	err := store.SetVisibilityTimeout(ctx, topic, "part1", messageID, visibilityTimeoutMillis)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -182,12 +182,12 @@ func TestmessageStore_MoveToDLQ(t *testing.T) {
 	// Expect transaction begin
 	mock.ExpectBegin()
 
-	// Mock query for fetching message - SELECT payload, metadata, partition_key, created_at, published_at, retry_count
-	rows := sqlmock.NewRows([]string{"payload", "metadata", "partition_key", "created_at", "published_at", "retry_count"}).
-		AddRow([]byte("payload1"), []byte(`{"key":"value"}`), "part1", time.Now().UnixMilli(), time.Now().UnixMilli(), failureCount)
+	// Mock query for fetching message - SELECT payload, metadata, created_at, published_at, retry_count
+	rows := sqlmock.NewRows([]string{"payload", "metadata", "created_at", "published_at", "retry_count"}).
+		AddRow([]byte("payload1"), []byte(`{"key":"value"}`), time.Now().UnixMilli(), time.Now().UnixMilli(), failureCount)
 
 	mock.ExpectQuery("SELECT (.+) FROM queue_messages").
-		WithArgs(topic, messageID).
+		WithArgs(topic, "part1", messageID).
 		WillReturnRows(rows)
 
 	// Expect insert into queue_messages with DLQ topic and DLQ-specific columns
@@ -199,13 +199,13 @@ func TestmessageStore_MoveToDLQ(t *testing.T) {
 
 	// Expect delete from main table
 	mock.ExpectExec("DELETE FROM queue_messages").
-		WithArgs(topic, messageID).
+		WithArgs(topic, "part1", messageID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	// Expect commit
 	mock.ExpectCommit()
 
-	err := store.MoveToDLQ(ctx, topic, messageID, failureCount, lastError, dlqTopicSuffix)
+	err := store.MoveToDLQ(ctx, topic, "part1", messageID, failureCount, lastError, dlqTopicSuffix)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

@@ -8,7 +8,8 @@ MySQL-based distributed queue with partition leasing, visibility timeout, and at
 - **Per-partition workers** — each leased partition gets its own goroutine for isolation
 - **Visibility timeout** — messages retry automatically if worker crashes
 - **At-least-once delivery** — offset tracking for crash recovery
-- **Dead letter queue** — failed messages moved to DLQ after max retries
+- **Dead letter queue** — failed messages moved to DLQ topic after max retries
+- **Fair share partitioning** — subscriber heartbeats enable even partition distribution across workers
 
 ## Quick Start
 
@@ -68,9 +69,6 @@ subConfig.Retry.MaxBackoffMs = 30000                  // Max retry backoff (mill
 subConfig.Retry.BackoffMultiplier = 2.0               // Backoff multiplier for exponential backoff
 subConfig.DLQ.Enabled = true                          // Enable dead letter queue
 subConfig.DLQ.TopicSuffix = "_dlq"                    // DLQ topic suffix
-
-// Use config when subscribing
-deliveryCh, _ := q.Subscriber().Subscribe(ctx, "my-topic", subConfig)
 ```
 
 **Key Configuration Fields:**
@@ -95,7 +93,9 @@ deliveryCh, _ := q.Subscriber().Subscribe(ctx, "my-topic", subConfig)
 Each subscription has a **supervisor goroutine** (`managePartitions`) that:
 1. Discovers partitions from the messages table
 2. Acquires and renews partition leases
-3. Reconciles **per-partition worker goroutines** based on current leases
+3. Sends heartbeats so other subscribers can compute fair shares
+4. Rebalances partitions when subscribers join or leave
+5. Reconciles **per-partition worker goroutines** based on current leases
 
 Each partition worker goroutine polls and delivers messages for its partition independently. This provides fault isolation — a slow or blocked partition does not affect other partitions.
 
@@ -107,6 +107,16 @@ Subscribe()
         └── partitionWorker("part-3")  ← polls & delivers
 ```
 
+### Fair Share Partitioning
+
+Subscribers register heartbeats in the `queue_subscriber_heartbeats` table. On each lease renewal tick, the supervisor:
+1. Queries active subscribers (those with recent heartbeats)
+2. Computes `ceil(totalPartitions / activeSubscribers)` as the fair share cap
+3. If this subscriber owns more partitions than its fair share, releases excess partitions
+4. On discovery, limits new lease acquisitions to the fair share cap
+
+This ensures even partition distribution when subscribers scale up or down.
+
 ### Shutdown Sequence
 
 Shutdown uses two `sync.WaitGroup`s to ensure correctness:
@@ -115,20 +125,21 @@ Shutdown uses two `sync.WaitGroup`s to ensure correctness:
 
 When `Close()` is called:
 1. Subscription context is cancelled
-2. `managePartitions` calls `stopAllWorkers` — cancels each worker and waits up to 5s per worker
+2. `managePartitions` calls `stopAllWorkers` — cancels each worker and waits up to 30s per worker
 3. Partition leases are released
-4. `workerWg.Wait()` blocks until all workers have fully exited
-5. `deliveryCh` is closed — safe because no workers can send after step 4
-6. `managePartitions` returns, `wg.Done()` fires
-7. `Close()` returns
+4. Subscriber heartbeat is deregistered
+5. `workerWg.Wait()` blocks until all workers have fully exited
+6. `deliveryCh` is closed — safe because no workers can send after step 5
+7. `managePartitions` returns, `wg.Done()` fires
+8. `Close()` returns
 
-The `workerWg.Wait()` step prevents a race where a slow worker (blocked on I/O past the 5s timeout) could send on a closed channel.
+The `workerWg.Wait()` step prevents a race where a slow worker (blocked on I/O past the 30s timeout) could send on a closed channel.
 
 ### Worker Stop Behavior
 
 When a partition worker is stopped (lease lost or shutdown):
 - The worker is immediately removed from the workers map and its context is cancelled
-- The caller waits up to 5s for the worker to confirm exit (logging a warning on timeout)
+- The caller waits up to 30s for the worker to confirm exit (logging a warning on timeout)
 - `workerWg` tracks the worker regardless, so `Close()` always waits for full exit
 - If the worker times out, reconciliation is free to start a replacement — any brief overlap is harmless with at-least-once delivery semantics
 
@@ -144,7 +155,7 @@ When a partition worker is stopped (lease lost or shutdown):
 2. Process message
 3. Ack: DELETE message, UPDATE offset
 4. Nack: Message becomes visible after timeout
-5. If retry_count >= MaxAttempts: Move to DLQ
+5. If retry_count >= MaxAttempts: Move to DLQ topic (reinsert into messages table with DLQ topic suffix)
 
 **Crash Recovery:**
 - Messages become visible after visibility timeout
@@ -158,3 +169,12 @@ Messages with same `PartitionKey` are processed in order by a single worker.
 ## Distributed Processing
 
 Multiple workers in the same consumer group share partitions. Workers in different consumer groups consume independently.
+
+## Error Types
+
+The package defines domain-specific sentinel errors for callers to check with `errors.Is` / `errors.As`:
+
+- `ErrPublisherClosed` — publishing to a closed publisher
+- `ErrSubscriberClosed` — subscribing on a closed subscriber
+- `ErrAlreadyAcknowledged` — ack/nack/reject on an already-processed delivery
+- `ErrLeaseExpired` — lease operation on a partition no longer owned by this worker

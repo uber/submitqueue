@@ -40,11 +40,16 @@ CREATE TABLE IF NOT EXISTS queue_messages (
     last_error TEXT NOT NULL,
     original_topic VARCHAR(255) NOT NULL,
 
-    -- Supports: SELECT ... WHERE topic=? AND partition_key=? AND invisible_until<=? ORDER BY offset
-    -- Used by subscribers to poll for ready-to-process messages within their assigned partition
+    -- Hot-path index for the subscriber poll loop (FetchByOffset).
+    -- Query: SELECT ... WHERE topic=? AND partition_key=? AND offset>? AND invisible_until<=? ORDER BY offset LIMIT ?
+    -- Also used by DiscoverPartitions: SELECT DISTINCT partition_key WHERE topic=? (leading prefix).
     INDEX idx_topic_partition_visible_offset (topic, partition_key, invisible_until, offset),
 
-    -- Supports: INSERT ... ON DUPLICATE KEY to enforce idempotent publishes
-    -- Also enables efficient lookups for message updates/deletes by ID
+    -- Enforces idempotent publishes — prevents duplicate message IDs within a partition.
+    -- Used by AckMessage: DELETE ... WHERE topic=? AND partition_key=? AND id=?
+    -- Used by FetchByOffset visibility update: UPDATE ... WHERE topic=? AND partition_key=? AND id IN (...)
+    -- Used by Delete: DELETE ... WHERE topic=? AND partition_key=? AND id=?
+    -- Used by MoveToDLQ: SELECT/DELETE ... WHERE topic=? AND partition_key=? AND id=?
+    -- Used by SetVisibilityTimeout: UPDATE ... WHERE topic=? AND partition_key=? AND id=?
     UNIQUE KEY idx_topic_partition_id (topic, partition_key, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

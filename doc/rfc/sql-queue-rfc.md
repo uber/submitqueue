@@ -115,6 +115,12 @@ We chose **custom database-backed queue** because:
 │  │  - consumer_group, topic      │  │
 │  │  - partition_key, offset      │  │
 │  └───────────────────────────────┘  │
+│  ┌───────────────────────────────┐  │
+│  │ queue_subscriber_heartbeats   │  │
+│  │  - consumer_group, topic      │  │
+│  │  - subscriber_name            │  │
+│  │  - heartbeat_at               │  │
+│  └───────────────────────────────┘  │
 └─────────────────────────────────────┘
                   │
                   ▼
@@ -140,6 +146,8 @@ We chose **custom database-backed queue** because:
 **Persistent Retry Tracking:** `retry_count` incremented atomically on fetch, survives crashes, triggers DLQ.
 
 **Offset Tracking:** Per-partition offsets enable crash recovery from last acked message.
+
+**Fair Share Partitioning:** Subscribers register heartbeats so peers can compute even partition distribution. On each tick, subscribers compute `ceil(totalPartitions / activeSubscribers)` and release excess partitions if they hold more than their fair share.
 
 ## Database Schema
 
@@ -186,21 +194,30 @@ See `extension/queue/mysql/schema/queue_partition_leases.sql` for full schema.
 
 See `extension/queue/mysql/schema/queue_offsets.sql` for full schema.
 
-### Dead Letter Queue Table
+### Subscriber Heartbeats Table
 
 **Key Fields:**
-- `offset` (PK): Auto-incrementing offset for DLQ ordering
-- `topic`, `partition_key`, `id`: Original message identification
-- `payload`, `metadata`: Original message content
-- `failed_at`: When message moved to DLQ
-- `failure_count`, `last_error`: Failure diagnostics
+- `consumer_group`, `topic`, `subscriber_name` (PK): Identifies the subscriber
+- `heartbeat_at`: Last heartbeat timestamp (epoch ms)
+- `deregistered_at`: When the subscriber was deregistered (0 = active)
 
-**Indexes:**
-- `(topic, partition_key, failed_at)`: Query DLQ by topic/partition, ordered by failure time
-- `(failed_at)`: Time-based queries and cleanup
-- `(topic, partition_key, id)`: Unique constraint, prevents duplicates
+Used for fair share partition leasing — active subscribers (recent heartbeat) are counted to compute even partition distribution.
 
-See `extension/queue/mysql/schema/queue_dlq.sql` for full schema.
+See `extension/queue/mysql/schema/queue_subscriber_heartbeats.sql` for full schema.
+
+### Dead Letter Queue
+
+DLQ messages are reinserted into the `queue_messages` table with a DLQ topic suffix (e.g., `merge_events_dlq`). This avoids a separate table and allows DLQ messages to be consumed using the normal subscriber.
+
+**DLQ-specific fields on `queue_messages`:**
+- `failed_at`: When the message was moved to DLQ (epoch ms)
+- `failure_count`: How many times the message failed on the original topic before DLQ move
+- `last_error`: The error message that triggered the DLQ move
+- `original_topic`: The topic the message was originally published to
+
+Normal messages have these fields set to zero/empty. DLQ messages have `retry_count` reset to 0 since DLQ processing starts fresh.
+
+See `extension/queue/mysql/schema/queue_messages.sql` for full schema.
 
 ## Message Flow
 
@@ -214,7 +231,7 @@ See `extension/queue/mysql/schema/queue_dlq.sql` for full schema.
 
 **5. Nack** - UPDATE `invisible_until` for retry after delay
 
-**6. DLQ** - If `retry_count >= MaxAttempts`: DELETE from messages + INSERT into dlq
+**6. DLQ** - If `retry_count >= MaxAttempts`: DELETE from messages + INSERT into messages with DLQ topic suffix
 
 ## Crash Recovery
 
@@ -304,15 +321,18 @@ With our custom implementation:
 
 ## Observability
 
-**Metrics (via tally):**
-- Publisher: `messages_published`, `publish_errors`
-- Subscriber: `messages_acked`, `messages_nacked`, `messages_moved_to_dlq`, `message_age`, `leases_acquired`
-- Stores: `insert.latency`, `fetch.latency`, `ack_message.latency`, `renew_lease.latency`
+**Metrics (via tally, scoped with `queue_mysql_` prefix):**
+- Publisher: `publish` (latency, success/error via `metrics.Begin`)
+- Subscriber: `ack.messages_acked`, `nack.messages_nacked`, `reject.messages_rejected_to_dlq`, `poll_and_deliver.message_age`, `poll_and_deliver.messages_received`, `discover_and_reconcile.leases_acquired`
+- Lease store: `try_acquire_lease`, `renew_lease`, `release_lease`, `get_leased_partitions`, `discover_and_acquire` (all with latency via `metrics.Begin`)
+- Message store: `insert`, `fetch`, `delete`, `move_to_dlq`, `set_visibility` (all with latency via `metrics.Begin`)
+- Heartbeat: `heartbeat.sent`, `heartbeat.errors`, `heartbeat.deregistrations`
+- Fair share: `fair_share_cap.active_subscribers`, `rebalance.partitions_released`
 
-**Logging (via zap):**
-- Debug: Message fetch, lease operations
-- Info: Publish success, DLQ moves, partition acquisition
-- Error: Database errors, unrecoverable failures
+**Logging (via zap, named with `queue_mysql_` prefix):**
+- Debug: Message fetch, lease operations, partition worker lifecycle
+- Info: Subscription creation, DLQ moves, partition acquisition, rebalance events
+- Warn: Lease renewal failures, heartbeat failures, retry limit exceeded, offset errors
 - Structured fields: `topic`, `partition_key`, `message_id`, `offset`, `retry_count`
 
 ## Performance

@@ -25,6 +25,7 @@ import (
 	"github.com/uber-go/tally/v4"
 	"go.uber.org/zap"
 
+	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity/queue"
 	extqueue "github.com/uber/submitqueue/extension/queue"
 )
@@ -45,7 +46,7 @@ const (
 
 type subscriber struct {
 	logger         *zap.SugaredLogger
-	metrics        tally.Scope
+	scope          tally.Scope
 	messageStore   messageStore
 	offsetStore    offsetStore
 	leaseStore     partitionLeaseStore
@@ -191,11 +192,10 @@ func (d *sqlDelivery) Ack(ctx context.Context) error {
 		return err
 	}
 
-	// Record metrics
-	d.subscriber.metrics.Tagged(map[string]string{
-		"topic":         d.topic,
-		"partition_key": d.partitionKey,
-	}).Counter("messages_acked").Inc(1)
+	metrics.NamedCounter(d.subscriber.scope, "ack", "messages_acked", 1,
+		metrics.Tag{Key: "topic", Value: d.topic},
+		metrics.Tag{Key: "partition_key", Value: d.partitionKey},
+	)
 
 	d.acknowledged = true
 	return nil
@@ -211,21 +211,14 @@ func (d *sqlDelivery) Nack(ctx context.Context, requeueAfterMillis int64) error 
 	}
 
 	// Set visibility timeout to make message visible after requeueAfter duration
-	if err := d.subscriber.messageStore.SetVisibilityTimeout(ctx, d.topic, d.messageID, requeueAfterMillis); err != nil {
-		d.subscriber.logger.Errorw("failed to set visibility timeout for nack",
-			"topic", d.topic,
-			"partition_key", d.partitionKey,
-			"message_id", d.messageID,
-			"error", err,
-		)
-		return err
+	if err := d.subscriber.messageStore.SetVisibilityTimeout(ctx, d.topic, d.partitionKey, d.messageID, requeueAfterMillis); err != nil {
+		return fmt.Errorf("failed to set visibility timeout for nack of message %s in topic %s partition %s: %w", d.messageID, d.topic, d.partitionKey, err)
 	}
 
-	// Record metrics
-	d.subscriber.metrics.Tagged(map[string]string{
-		"topic":         d.topic,
-		"partition_key": d.partitionKey,
-	}).Counter("messages_nacked").Inc(1)
+	metrics.NamedCounter(d.subscriber.scope, "nack", "messages_nacked", 1,
+		metrics.Tag{Key: "topic", Value: d.topic},
+		metrics.Tag{Key: "partition_key", Value: d.partitionKey},
+	)
 
 	d.subscriber.logger.Infow("message nacked",
 		"topic", d.topic,
@@ -250,7 +243,7 @@ func (d *sqlDelivery) Reject(ctx context.Context, reason string) error {
 	if d.dlqConfig.Enabled {
 		// Move to DLQ
 		if err := d.subscriber.messageStore.MoveToDLQ(
-			ctx, d.topic, d.messageID, d.attempt, reason, d.dlqConfig.TopicSuffix,
+			ctx, d.topic, d.partitionKey, d.messageID, d.attempt, reason, d.dlqConfig.TopicSuffix,
 		); err != nil {
 			return fmt.Errorf("failed to move message to DLQ: %w", err)
 		}
@@ -260,21 +253,21 @@ func (d *sqlDelivery) Reject(ctx context.Context, reason string) error {
 			ctx, d.topic, d.partitionKey, d.offset, d.consumerGroup,
 		); err != nil {
 			// Log but don't fail — message is already in DLQ
-			d.subscriber.logger.Errorw("failed to update offset after DLQ move",
+			d.subscriber.logger.Warnw("failed to update offset after DLQ move",
 				"topic", d.topic,
 				"message_id", d.messageID,
 				"error", err,
 			)
-			d.subscriber.metrics.Tagged(map[string]string{
-				"topic":         d.topic,
-				"partition_key": d.partitionKey,
-			}).Counter("offset_update_after_dlq.errors").Inc(1)
+			metrics.NamedCounter(d.subscriber.scope, "reject", "offset_update_after_dlq_errors", 1,
+				metrics.Tag{Key: "topic", Value: d.topic},
+				metrics.Tag{Key: "partition_key", Value: d.partitionKey},
+			)
 		}
 
-		d.subscriber.metrics.Tagged(map[string]string{
-			"topic":         d.topic,
-			"partition_key": d.partitionKey,
-		}).Counter("messages_rejected_to_dlq").Inc(1)
+		metrics.NamedCounter(d.subscriber.scope, "reject", "messages_rejected_to_dlq", 1,
+			metrics.Tag{Key: "topic", Value: d.topic},
+			metrics.Tag{Key: "partition_key", Value: d.partitionKey},
+		)
 	} else {
 		// DLQ disabled — fall back to ack (remove from queue)
 		if err := d.subscriber.offsetStore.AckMessage(
@@ -283,10 +276,10 @@ func (d *sqlDelivery) Reject(ctx context.Context, reason string) error {
 			return err
 		}
 
-		d.subscriber.metrics.Tagged(map[string]string{
-			"topic":         d.topic,
-			"partition_key": d.partitionKey,
-		}).Counter("messages_rejected_no_dlq").Inc(1)
+		metrics.NamedCounter(d.subscriber.scope, "reject", "messages_rejected_no_dlq", 1,
+			metrics.Tag{Key: "topic", Value: d.topic},
+			metrics.Tag{Key: "partition_key", Value: d.partitionKey},
+		)
 	}
 
 	d.acknowledged = true
@@ -299,28 +292,29 @@ func (d *sqlDelivery) ExtendVisibilityTimeout(ctx context.Context, durationMilli
 	defer d.mu.Unlock()
 
 	if d.acknowledged {
-		return fmt.Errorf("delivery %s already acknowledged, cannot extend visibility timeout", d.deliveryID)
+		return &ErrAlreadyAcknowledged{DeliveryID: d.deliveryID}
 	}
 
-	if err := d.subscriber.messageStore.SetVisibilityTimeout(ctx, d.topic, d.messageID, durationMillis); err != nil {
+	if err := d.subscriber.messageStore.SetVisibilityTimeout(ctx, d.topic, d.partitionKey, d.messageID, durationMillis); err != nil {
 		return err
 	}
 
-	// Record metrics
-	d.subscriber.metrics.Tagged(map[string]string{
-		"topic":         d.topic,
-		"partition_key": d.partitionKey,
-	}).Counter("visibility_extended").Inc(1)
+	metrics.NamedCounter(d.subscriber.scope, "extend_visibility", "visibility_extended", 1,
+		metrics.Tag{Key: "topic", Value: d.topic},
+		metrics.Tag{Key: "partition_key", Value: d.partitionKey},
+	)
 
 	return nil
 }
 
-func NewSubscriber(logger *zap.SugaredLogger, metrics tally.Scope, messageStore messageStore, offsetStore offsetStore, leaseStore partitionLeaseStore, heartbeatStore subscriberHeartbeatStore) *subscriber {
+func NewSubscriber(logger *zap.SugaredLogger, scope tally.Scope, messageStore messageStore, offsetStore offsetStore, leaseStore partitionLeaseStore, heartbeatStore subscriberHeartbeatStore) *subscriber {
+	logger = logger.Named("queue_mysql_subscriber")
+	scope = scope.SubScope("queue_mysql_subscriber")
 	logger.Info("created subscriber")
 
 	return &subscriber{
 		logger:         logger,
-		metrics:        metrics,
+		scope:          scope,
 		messageStore:   messageStore,
 		offsetStore:    offsetStore,
 		leaseStore:     leaseStore,
@@ -330,14 +324,16 @@ func NewSubscriber(logger *zap.SugaredLogger, metrics tally.Scope, messageStore 
 }
 
 // Subscribe starts consuming messages from the specified topic
-func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueue.SubscriptionConfig) (<-chan extqueue.Delivery, error) {
+func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueue.SubscriptionConfig) (_ <-chan extqueue.Delivery, retErr error) {
+	op := metrics.Begin(s.scope, "subscribe")
+	defer func() { op.Complete(retErr) }()
+
 	s.mu.RLock()
 	closed := s.closed
 	s.mu.RUnlock()
 
 	if closed {
-		s.logger.Errorw("subscribe failed: subscriber is closed", "topic", topic)
-		return nil, fmt.Errorf("subscriber is closed")
+		return nil, ErrSubscriberClosed
 	}
 
 	// Create subscription key (topic + consumer group must be unique)
@@ -374,8 +370,9 @@ func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueu
 
 	s.subscriptions[subKey] = sub
 
-	// Track active subscription
-	s.metrics.Tagged(map[string]string{"topic": topic}).Gauge("active_subscriptions").Update(1)
+	metrics.NamedGauge(s.scope, "subscribe", "active_subscriptions", 1,
+		metrics.Tag{Key: "topic", Value: topic},
+	)
 
 	// Start the supervisor goroutine. It will discover partitions, acquire
 	// leases, and spawn per-partition worker goroutines. The supervisor runs
@@ -383,7 +380,6 @@ func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueu
 	sub.wg.Add(1)
 	go s.managePartitions(subCtx, sub)
 
-	s.logger.Debugw("subscription created", "topic", topic, "consumer_group", config.ConsumerGroup, "subscriber_name", config.SubscriberName)
 	return sub.deliveryCh, nil
 }
 
@@ -458,13 +454,15 @@ func (s *subscriber) discoverAndReconcileWorkers(ctx context.Context, sub *subsc
 	// Discover and try to acquire leases for new partitions
 	acquiredCount, err := s.leaseStore.DiscoverAndAcquirePartitions(ctx, sub.topic, cfg.SubscriberName, cfg.ConsumerGroup, cfg.LeaseDurationMs, maxPartitions)
 	if err == nil && acquiredCount > 0 {
-		s.metrics.Tagged(map[string]string{"topic": sub.topic}).Counter("leases_acquired").Inc(int64(acquiredCount))
+		metrics.NamedCounter(s.scope, "discover_and_reconcile", "leases_acquired", int64(acquiredCount),
+			metrics.Tag{Key: "topic", Value: sub.topic},
+		)
 	}
 
 	// Get currently leased partitions
 	leasedPartitions, err := s.leaseStore.GetLeasedPartitions(ctx, sub.topic, cfg.SubscriberName, cfg.ConsumerGroup)
 	if err != nil {
-		s.logger.Errorw("failed to get leased partitions", "topic", sub.topic, "error", err)
+		s.logger.Warnw("failed to get leased partitions", "topic", sub.topic, "error", err)
 		return
 	}
 
@@ -635,7 +633,7 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) {
 	// Initialize offset for this partition once per worker lifetime
 	if !w.offsetInitialized {
 		if err := s.offsetStore.Initialize(ctx, sub.topic, partitionKey, cfg.ConsumerGroup); err != nil {
-			s.logger.Errorw("offset initialization failure", "topic", sub.topic, "partition_key", partitionKey, "error", err)
+			s.logger.Warnw("offset initialization failure", "topic", sub.topic, "partition_key", partitionKey, "error", err)
 			return
 		}
 		w.offsetInitialized = true
@@ -644,14 +642,14 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) {
 	// Get current offset for this partition
 	currentOffset, err := s.offsetStore.GetAckedOffset(ctx, sub.topic, partitionKey, cfg.ConsumerGroup)
 	if err != nil {
-		s.logger.Errorw("get current offset failure", "topic", sub.topic, "partition_key", partitionKey, "error", err)
+		s.logger.Warnw("get current offset failure", "topic", sub.topic, "partition_key", partitionKey, "error", err)
 		return
 	}
 
 	// Fetch messages for this partition
 	rows, err := s.messageStore.FetchByOffset(ctx, sub.topic, partitionKey, currentOffset, cfg.BatchSize, cfg.VisibilityTimeoutMs)
 	if err != nil {
-		s.logger.Errorw("fetch messages failure", "topic", sub.topic, "partition_key", partitionKey, "error", err)
+		s.logger.Warnw("fetch messages failure", "topic", sub.topic, "partition_key", partitionKey, "error", err)
 		return
 	}
 
@@ -669,17 +667,17 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) {
 			// Move to DLQ if enabled
 			if cfg.DLQ.Enabled {
 				dlqTopic := sub.topic + cfg.DLQ.TopicSuffix
-				if err := s.messageStore.MoveToDLQ(ctx, sub.topic, row.ID, row.RetryCount, "exceeded retry limit", cfg.DLQ.TopicSuffix); err != nil {
-					s.logger.Errorw("failed to move message to DLQ",
+				if err := s.messageStore.MoveToDLQ(ctx, sub.topic, partitionKey, row.ID, row.RetryCount, "exceeded retry limit", cfg.DLQ.TopicSuffix); err != nil {
+					s.logger.Warnw("failed to move message to DLQ",
 						"topic", sub.topic,
 						"dlq_topic", dlqTopic,
 						"message_id", row.ID,
 						"error", err,
 					)
-					s.metrics.Tagged(map[string]string{
-						"topic":         sub.topic,
-						"partition_key": partitionKey,
-					}).Counter("dlq_move.errors").Inc(1)
+					metrics.NamedCounter(s.scope, "poll_and_deliver", "dlq_move_errors", 1,
+						metrics.Tag{Key: "topic", Value: sub.topic},
+						metrics.Tag{Key: "partition_key", Value: partitionKey},
+					)
 				} else {
 					s.logger.Infow("moved message to DLQ",
 						"topic", sub.topic,
@@ -687,23 +685,23 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) {
 						"message_id", row.ID,
 						"retry_count", row.RetryCount,
 					)
-					s.metrics.Tagged(map[string]string{
-						"topic":         sub.topic,
-						"partition_key": partitionKey,
-					}).Counter("messages_moved_to_dlq").Inc(1)
+					metrics.NamedCounter(s.scope, "poll_and_deliver", "messages_moved_to_dlq", 1,
+						metrics.Tag{Key: "topic", Value: sub.topic},
+						metrics.Tag{Key: "partition_key", Value: partitionKey},
+					)
 
 					// Update offset since message is now processed (moved to DLQ)
 					if err := s.offsetStore.UpdateAckedOffset(ctx, sub.topic, partitionKey, row.Offset, cfg.ConsumerGroup); err != nil {
-						s.logger.Errorw("failed to update offset after DLQ move",
+						s.logger.Warnw("failed to update offset after DLQ move",
 							"topic", sub.topic,
 							"partition_key", partitionKey,
 							"offset", row.Offset,
 							"error", err,
 						)
-						s.metrics.Tagged(map[string]string{
-							"topic":         sub.topic,
-							"partition_key": partitionKey,
-						}).Counter("offset_update_after_dlq.errors").Inc(1)
+						metrics.NamedCounter(s.scope, "poll_and_deliver", "offset_update_after_dlq_errors", 1,
+							metrics.Tag{Key: "topic", Value: sub.topic},
+							metrics.Tag{Key: "partition_key", Value: partitionKey},
+						)
 					}
 				}
 			}
@@ -714,12 +712,12 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) {
 		msg := queue.NewMessage(row.ID, row.Payload, row.PartitionKey, row.Metadata)
 		msg.PublishedAt = row.PublishedAt
 
-		// Calculate message age for metrics
+		// Calculate message age for scope
 		messageAge := time.Duration(time.Now().UnixMilli()-row.PublishedAt) * time.Millisecond
-		s.metrics.Tagged(map[string]string{
-			"topic":         sub.topic,
-			"partition_key": partitionKey,
-		}).Timer("message_age").Record(messageAge)
+		metrics.NamedTimer(s.scope, "poll_and_deliver", "message_age", messageAge,
+			metrics.Tag{Key: "topic", Value: sub.topic},
+			metrics.Tag{Key: "partition_key", Value: partitionKey},
+		)
 
 		// Create delivery ID from offset
 		deliveryID := strconv.FormatInt(row.Offset, 10)
@@ -769,15 +767,15 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) {
 		}
 	}
 
-	// Record metrics
+	// Record scope
 	if messageCount > 0 {
 		elapsed := time.Since(start)
-		partitionTags := map[string]string{
-			"topic":         sub.topic,
-			"partition_key": partitionKey,
+		tags := []metrics.Tag{
+			{Key: "topic", Value: sub.topic},
+			{Key: "partition_key", Value: partitionKey},
 		}
-		s.metrics.Tagged(partitionTags).Counter("messages_received").Inc(int64(messageCount))
-		s.metrics.Tagged(partitionTags).Timer("poll_latency").Record(elapsed)
+		metrics.NamedCounter(s.scope, "poll_and_deliver", "messages_received", int64(messageCount), tags...)
+		metrics.NamedTimer(s.scope, "poll_and_deliver", "poll_latency", elapsed, tags...)
 
 		s.logger.Debugw("delivered messages",
 			"topic", sub.topic,
@@ -793,11 +791,13 @@ func (s *subscriber) renewLeases(ctx context.Context, sub *subscription) {
 	cfg := sub.config
 	leasedPartitions, err := s.leaseStore.GetLeasedPartitions(ctx, sub.topic, cfg.SubscriberName, cfg.ConsumerGroup)
 	if err != nil {
-		s.logger.Errorw("failed to get leased partitions for renewal",
+		s.logger.Warnw("failed to get leased partitions for renewal",
 			"topic", sub.topic,
 			"error", err,
 		)
-		s.metrics.Tagged(map[string]string{"topic": sub.topic}).Counter("lease_renewal.get_partitions_errors").Inc(1)
+		metrics.NamedCounter(s.scope, "renew_leases", "get_partitions_errors", 1,
+			metrics.Tag{Key: "topic", Value: sub.topic},
+		)
 		return
 	}
 
@@ -808,10 +808,10 @@ func (s *subscriber) renewLeases(ctx context.Context, sub *subscription) {
 				"partition_key", partitionKey,
 				"error", err,
 			)
-			s.metrics.Tagged(map[string]string{
-				"topic":         sub.topic,
-				"partition_key": partitionKey,
-			}).Counter("lease_renewal.renew_errors").Inc(1)
+			metrics.NamedCounter(s.scope, "renew_leases", "renew_errors", 1,
+				metrics.Tag{Key: "topic", Value: sub.topic},
+				metrics.Tag{Key: "partition_key", Value: partitionKey},
+			)
 		}
 	}
 }
@@ -821,7 +821,7 @@ func (s *subscriber) releaseAllLeases(ctx context.Context, sub *subscription) {
 	cfg := sub.config
 	leasedPartitions, err := s.leaseStore.GetLeasedPartitions(ctx, sub.topic, cfg.SubscriberName, cfg.ConsumerGroup)
 	if err != nil {
-		s.logger.Errorw("failed to get leased partitions for release",
+		s.logger.Warnw("failed to get leased partitions for release",
 			"topic", sub.topic,
 			"error", err,
 		)
@@ -835,10 +835,10 @@ func (s *subscriber) releaseAllLeases(ctx context.Context, sub *subscription) {
 				"partition_key", partitionKey,
 				"error", err,
 			)
-			s.metrics.Tagged(map[string]string{
-				"topic":         sub.topic,
-				"partition_key": partitionKey,
-			}).Counter("lease_release.errors").Inc(1)
+			metrics.NamedCounter(s.scope, "release_all_leases", "release_errors", 1,
+				metrics.Tag{Key: "topic", Value: sub.topic},
+				metrics.Tag{Key: "partition_key", Value: partitionKey},
+			)
 		}
 	}
 }
@@ -854,10 +854,14 @@ func (s *subscriber) sendHeartbeat(ctx context.Context, sub *subscription) {
 			"topic", sub.topic,
 			"error", err,
 		)
-		s.metrics.Tagged(map[string]string{"topic": sub.topic}).Counter("heartbeat.errors").Inc(1)
+		metrics.NamedCounter(s.scope, "heartbeat", "errors", 1,
+			metrics.Tag{Key: "topic", Value: sub.topic},
+		)
 		return
 	}
-	s.metrics.Tagged(map[string]string{"topic": sub.topic}).Counter("heartbeats_sent").Inc(1)
+	metrics.NamedCounter(s.scope, "heartbeat", "sent", 1,
+		metrics.Tag{Key: "topic", Value: sub.topic},
+	)
 }
 
 // deregisterHeartbeat removes this subscriber's heartbeat entry during shutdown.
@@ -869,10 +873,14 @@ func (s *subscriber) deregisterHeartbeat(ctx context.Context, sub *subscription)
 			"topic", sub.topic,
 			"error", err,
 		)
-		s.metrics.Tagged(map[string]string{"topic": sub.topic}).Counter("heartbeat.deregister_errors").Inc(1)
+		metrics.NamedCounter(s.scope, "heartbeat", "deregister_errors", 1,
+			metrics.Tag{Key: "topic", Value: sub.topic},
+		)
 		return
 	}
-	s.metrics.Tagged(map[string]string{"topic": sub.topic}).Counter("heartbeat.deregistrations").Inc(1)
+	metrics.NamedCounter(s.scope, "heartbeat", "deregistrations", 1,
+		metrics.Tag{Key: "topic", Value: sub.topic},
+	)
 }
 
 // computeMaxPartitions returns the maximum number of partitions this subscriber
@@ -890,7 +898,9 @@ func (s *subscriber) computeMaxPartitions(ctx context.Context, sub *subscription
 			"topic", sub.topic,
 			"error", err,
 		)
-		s.metrics.Tagged(map[string]string{"topic": sub.topic}).Counter("fair_share_cap.errors").Inc(1)
+		metrics.NamedCounter(s.scope, "fair_share_cap", "errors", 1,
+			metrics.Tag{Key: "topic", Value: sub.topic},
+		)
 		return 0
 	}
 	return maxPart
@@ -907,7 +917,9 @@ func (s *subscriber) rebalance(ctx context.Context, sub *subscription) {
 			"topic", sub.topic,
 			"error", err,
 		)
-		s.metrics.Tagged(map[string]string{"topic": sub.topic}).Counter("fair_share_cap.errors").Inc(1)
+		metrics.NamedCounter(s.scope, "fair_share_cap", "errors", 1,
+			metrics.Tag{Key: "topic", Value: sub.topic},
+		)
 		return
 	}
 	if maxPart == 0 || len(owned) <= maxPart {
@@ -925,10 +937,10 @@ func (s *subscriber) rebalance(ctx context.Context, sub *subscription) {
 				"partition_key", pk,
 				"error", err,
 			)
-			s.metrics.Tagged(map[string]string{
-				"topic":         sub.topic,
-				"partition_key": pk,
-			}).Counter("rebalance.release_errors").Inc(1)
+			metrics.NamedCounter(s.scope, "rebalance", "release_errors", 1,
+				metrics.Tag{Key: "topic", Value: sub.topic},
+				metrics.Tag{Key: "partition_key", Value: pk},
+			)
 			continue
 		}
 
@@ -941,9 +953,9 @@ func (s *subscriber) rebalance(ctx context.Context, sub *subscription) {
 			"owned", len(owned),
 			"max_partitions", maxPart,
 		)
-		s.metrics.Tagged(map[string]string{
-			"topic": sub.topic,
-		}).Counter("rebalance.partitions_released").Inc(1)
+		metrics.NamedCounter(s.scope, "rebalance", "partitions_released", 1,
+			metrics.Tag{Key: "topic", Value: sub.topic},
+		)
 	}
 }
 
@@ -961,7 +973,9 @@ func (s *subscriber) fairShareCap(ctx context.Context, sub *subscription) (int, 
 	}
 
 	activeSubscribers := len(active)
-	s.metrics.Tagged(map[string]string{"topic": sub.topic}).Gauge("active_subscribers").Update(float64(activeSubscribers))
+	metrics.NamedGauge(s.scope, "fair_share_cap", "active_subscribers", float64(activeSubscribers),
+		metrics.Tag{Key: "topic", Value: sub.topic},
+	)
 
 	owned, err := s.leaseStore.GetLeasedPartitions(ctx, sub.topic, cfg.SubscriberName, cfg.ConsumerGroup)
 	if err != nil {
@@ -981,7 +995,9 @@ func (s *subscriber) fairShareCap(ctx context.Context, sub *subscription) (int, 
 			"topic", sub.topic,
 			"error", err,
 		)
-		s.metrics.Tagged(map[string]string{"topic": sub.topic}).Counter("discover_partitions.errors").Inc(1)
+		metrics.NamedCounter(s.scope, "fair_share_cap", "discover_partitions_errors", 1,
+			metrics.Tag{Key: "topic", Value: sub.topic},
+		)
 	} else {
 		for _, pk := range allPartitions {
 			partitionSet[pk] = struct{}{}
@@ -1006,7 +1022,10 @@ func (s *subscriber) fairShareCap(ctx context.Context, sub *subscription) (int, 
 //     Close() does not block indefinitely if a subscription hangs
 //  3. managePartitions internally handles stopping workers and closing deliveryCh
 //     (see managePartitions shutdown sequence)
-func (s *subscriber) Close() error {
+func (s *subscriber) Close() (retErr error) {
+	op := metrics.Begin(s.scope, "close")
+	defer func() { op.Complete(retErr) }()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1041,8 +1060,9 @@ func (s *subscriber) Close() error {
 			s.logger.Warnw("subscription shutdown timeout", "topic", topic)
 		}
 
-		// Update metrics
-		s.metrics.Tagged(map[string]string{"topic": topic}).Gauge("active_subscriptions").Update(0)
+		metrics.NamedGauge(s.scope, "close", "active_subscriptions", 0,
+			metrics.Tag{Key: "topic", Value: topic},
+		)
 	}
 
 	s.subscriptions = make(map[string]*subscription)

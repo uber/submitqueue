@@ -22,16 +22,17 @@ CREATE TABLE IF NOT EXISTS queue_partition_leases (
     -- Used to detect stale leases
     lease_renewed_at BIGINT UNSIGNED NOT NULL,
 
-    -- Primary key ensures each partition can only be leased by one worker per consumer group
-    -- Supports: INSERT ... ON DUPLICATE KEY UPDATE for lease acquisition and renewal
-    -- Also enables efficient lookups: SELECT ... WHERE consumer_group=? AND topic=? AND partition_key=?
+    -- Ensures each partition can only be leased by one worker per consumer group.
+    -- Used by TryAcquireLease: INSERT ... ON DUPLICATE KEY UPDATE (exact PK match)
+    -- Used by RenewLease: UPDATE ... WHERE consumer_group=? AND topic=? AND partition_key=? AND leased_by=?
+    -- Used by ReleaseLease: DELETE ... WHERE consumer_group=? AND topic=? AND partition_key=? AND leased_by=?
+    -- Used by GetLeasedPartitions: SELECT ... WHERE consumer_group=? AND topic=? AND leased_by=?
+    --   (PK prefix consumer_group, topic narrows the scan; leased_by filtered on remaining rows.
+    --    Partition count per topic per consumer group is small, so no separate index needed.)
+    -- Note: idx_leased_by was removed — no query uses WHERE leased_by=? alone.
     PRIMARY KEY (consumer_group, topic, partition_key),
 
-    -- Supports: SELECT ... WHERE leased_by=?
-    -- Used for querying all partitions owned by a specific worker (e.g., for graceful shutdown or rebalancing)
-    INDEX idx_leased_by (leased_by),
-
-    -- Supports: SELECT ... WHERE lease_renewed_at<?
-    -- Used for finding stale leases that can be stolen by other workers
+    -- Used by admin StaleLeases: SELECT ... WHERE lease_renewed_at < ?
+    -- Enables efficient detection of stale leases that can be stolen by other workers.
     INDEX idx_lease_renewed (lease_renewed_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

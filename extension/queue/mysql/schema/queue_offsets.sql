@@ -18,16 +18,18 @@ CREATE TABLE IF NOT EXISTS queue_offsets (
     -- Last update timestamp (epoch milliseconds)
     updated_at BIGINT UNSIGNED NOT NULL,
 
-    -- Primary key ensures each consumer group has one offset per topic/partition
-    -- Supports: INSERT ... ON DUPLICATE KEY UPDATE for idempotent offset updates
-    -- Also enables efficient lookups: SELECT ... WHERE consumer_group=? AND topic=? AND partition_key=?
+    -- Ensures each consumer group has one offset per topic/partition.
+    -- Used by Initialize: INSERT IGNORE ... (exact PK match for duplicate check)
+    -- Used by GetAckedOffset: SELECT ... WHERE consumer_group=? AND topic=? AND partition_key=?
+    -- Used by UpdateAckedOffset: UPDATE ... WHERE consumer_group=? AND topic=? AND partition_key=?
+    -- Used by AckMessage: INSERT ... ON DUPLICATE KEY UPDATE (exact PK match)
+    -- Used by admin ListOffsets: SELECT ... WHERE consumer_group=? (PK leading prefix)
+    -- Note: idx_consumer_group was removed — consumer_group is the leading PK column,
+    --   so MySQL already uses the PK for WHERE consumer_group=? queries.
     PRIMARY KEY (consumer_group, topic, partition_key),
 
-    -- Supports: SELECT ... WHERE consumer_group=?
-    -- Used for querying all offsets for a specific consumer group (e.g., for monitoring or rebalancing)
-    INDEX idx_consumer_group (consumer_group),
-
-    -- Supports: SELECT ... WHERE topic=?
-    -- Used for querying all consumer groups consuming a specific topic
+    -- Used by admin queries: SELECT COUNT(DISTINCT consumer_group) WHERE topic=?
+    -- topic is the second column of the PK, so WHERE topic=? alone cannot use the PK.
+    -- This index enables admin/monitoring queries to find all consumer groups for a topic.
     INDEX idx_topic (topic)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

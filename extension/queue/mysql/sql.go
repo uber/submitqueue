@@ -39,7 +39,7 @@ type Params struct {
 	// Logger for debugging and observability (required)
 	Logger *zap.Logger
 
-	// MetricsScope for metrics collection (required)
+	// MetricsScope for scope collection (required)
 	MetricsScope tally.Scope
 }
 

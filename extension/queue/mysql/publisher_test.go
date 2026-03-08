@@ -198,7 +198,7 @@ func TestPublisher_PublishMetrics(t *testing.T) {
 	}
 
 	// Metrics should have been recorded (we're using NoopScope in tests, so just verify no errors)
-	// In a real implementation, you'd use a mock metrics scope to verify calls
+	// In a real implementation, you'd use a mock scope scope to verify calls
 }
 
 func TestPublisher_ConcurrentPublish(t *testing.T) {

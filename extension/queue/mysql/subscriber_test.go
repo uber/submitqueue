@@ -179,7 +179,7 @@ func TestSQLDelivery_Reject(t *testing.T) {
 
 			if tt.expectMoveDLQ {
 				mockMsgStore.EXPECT().MoveToDLQ(
-					gomock.Any(), "test_topic", "msg-1", 1, "bad payload", "_dlq",
+					gomock.Any(), "test_topic", "part-1", "msg-1", 1, "bad payload", "_dlq",
 				).Return(tt.moveToDLQErr)
 
 				if tt.moveToDLQErr == nil {

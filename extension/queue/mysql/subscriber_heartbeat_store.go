@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/uber-go/tally/v4"
-	coremetrics "github.com/uber/submitqueue/core/metrics"
+	"github.com/uber/submitqueue/core/metrics"
 	"go.uber.org/zap"
 )
 
@@ -29,21 +29,21 @@ import (
 type sqlSubscriberHeartbeatStore struct {
 	db      *sql.DB
 	logger  *zap.SugaredLogger
-	metrics tally.Scope
+	scope   tally.Scope
 }
 
 // newSubscriberHeartbeatStore creates a new SQL subscriber heartbeat store
 func newSubscriberHeartbeatStore(db *sql.DB, logger *zap.Logger, scope tally.Scope) subscriberHeartbeatStore {
 	return &sqlSubscriberHeartbeatStore{
 		db:      db,
-		logger:  logger.Sugar().Named("subscriber_heartbeat_store"),
-		metrics: scope.SubScope("subscriber_heartbeat_store"),
+		logger:  logger.Sugar().Named("queue_mysql_subscriber_heartbeat_store"),
+		scope:   scope.SubScope("queue_mysql_subscriber_heartbeat_store"),
 	}
 }
 
 // Heartbeat registers or renews a subscriber's heartbeat
 func (s *sqlSubscriberHeartbeatStore) Heartbeat(ctx context.Context, topic string, subscriberName string, consumerGroup string) (retErr error) {
-	op := coremetrics.Begin(s.metrics, "heartbeat")
+	op := metrics.Begin(s.scope, "heartbeat")
 	defer func() { op.Complete(retErr) }()
 
 	now := time.Now().UnixMilli()
@@ -63,7 +63,7 @@ func (s *sqlSubscriberHeartbeatStore) Heartbeat(ctx context.Context, topic strin
 
 // ActiveSubscribers returns the names of subscribers with a heartbeat newer than the stale threshold.
 func (s *sqlSubscriberHeartbeatStore) ActiveSubscribers(ctx context.Context, topic string, consumerGroup string, staleDurationMs int64) (_ []string, retErr error) {
-	op := coremetrics.Begin(s.metrics, "active_subscribers")
+	op := metrics.Begin(s.scope, "active_subscribers")
 	defer func() { op.Complete(retErr) }()
 
 	staleThreshold := time.Now().UnixMilli() - staleDurationMs
@@ -102,7 +102,7 @@ func (s *sqlSubscriberHeartbeatStore) ActiveSubscribers(ctx context.Context, top
 // Deregister soft-deletes a subscriber's heartbeat entry by setting deregistered_at.
 // Idempotent: no-op if already deregistered.
 func (s *sqlSubscriberHeartbeatStore) Deregister(ctx context.Context, topic string, subscriberName string, consumerGroup string) (retErr error) {
-	op := coremetrics.Begin(s.metrics, "deregister")
+	op := metrics.Begin(s.scope, "deregister")
 	defer func() { op.Complete(retErr) }()
 
 	now := time.Now().UnixMilli()

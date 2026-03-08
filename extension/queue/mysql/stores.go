@@ -62,8 +62,8 @@ type messageStore interface {
 	// Insert inserts messages into the topic table
 	Insert(ctx context.Context, topic string, messages []queue.Message) error
 
-	// Delete deletes a message by ID
-	Delete(ctx context.Context, topic string, messageID string) error
+	// Delete deletes a message by topic, partition key, and ID
+	Delete(ctx context.Context, topic string, partitionKey string, messageID string) error
 
 	// FetchByOffset fetches messages with offset > currentOffset for a specific partition
 	// Only fetches visible messages (invisible_until <= now)
@@ -73,13 +73,13 @@ type messageStore interface {
 
 	// MoveToDLQ moves a message to the dead letter queue
 	// dlqTopicSuffix is appended to the original topic to form the DLQ topic name
-	MoveToDLQ(ctx context.Context, topic string, messageID string, failureCount int, lastError string, dlqTopicSuffix string) error
+	MoveToDLQ(ctx context.Context, topic string, partitionKey string, messageID string, failureCount int, lastError string, dlqTopicSuffix string) error
 
 	// SetVisibilityTimeout sets the invisible_until timestamp for a message
 	// visibilityTimeoutMillis: milliseconds from now to hide the message
 	// If visibilityTimeoutMillis is 0, makes the message visible immediately
 	// If visibilityTimeoutMillis > 0, makes the message invisible until now + visibilityTimeoutMillis
-	SetVisibilityTimeout(ctx context.Context, topic string, messageID string, visibilityTimeoutMillis int64) error
+	SetVisibilityTimeout(ctx context.Context, topic string, partitionKey string, messageID string, visibilityTimeoutMillis int64) error
 }
 
 // offsetStore handles offset table operations for per-partition offset tracking (internal use only)
