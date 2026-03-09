@@ -24,10 +24,11 @@ import (
 
 const (
 	// Fixed table names for single-table design
-	MessagesTableName        = "queue_messages"
-	PartitionLeasesTableName = "queue_partition_leases"
-	OffsetsTableName         = "queue_offsets"
-	DLQTableName             = "queue_dlq"
+	MessagesTableName             = "queue_messages"
+	PartitionLeasesTableName      = "queue_partition_leases"
+	OffsetsTableName              = "queue_offsets"
+	SubscriberHeartbeatsTableName = "queue_subscriber_heartbeats"
+	DeliveryStateTableName        = "queue_delivery_state"
 )
 
 // messageRow represents a row from the messages table (internal use only)
@@ -42,8 +43,6 @@ type messageRow struct {
 	Metadata map[string]string
 	// PartitionKey determines which partition this message belongs to for ordering guarantees
 	PartitionKey string
-	// RetryCount tracks how many times this message has been retried on the current topic
-	RetryCount int
 	// PublishedAt is the Unix timestamp in milliseconds when message was published
 	PublishedAt int64
 	// FailedAt is the Unix timestamp in milliseconds when the message failed (0 for normal messages, >0 for DLQ)
@@ -61,24 +60,30 @@ type messageStore interface {
 	// Insert inserts messages into the topic table
 	Insert(ctx context.Context, topic string, messages []queue.Message) error
 
-	// Delete deletes a message by ID
-	Delete(ctx context.Context, topic string, messageID string) error
+	// Delete deletes a message by topic, partition key, and ID
+	Delete(ctx context.Context, topic string, partitionKey string, messageID string) error
 
-	// FetchByOffset fetches messages with offset > currentOffset for a specific partition
-	// Only fetches visible messages (invisible_until <= now)
-	// Atomically sets invisible_until and increments retry_count
-	// visibilityTimeoutMs specifies how long messages should be invisible after fetching (in milliseconds)
-	FetchByOffset(ctx context.Context, topic string, partitionKey string, currentOffset int64, limit int, visibilityTimeoutMs int64) ([]messageRow, error)
+	// FetchByOffset fetches messages with offset > currentOffset for a specific partition.
+	// Messages are returned from the immutable log; per-consumer-group visibility
+	// is handled by the deliveryStateStore.
+	FetchByOffset(ctx context.Context, topic string, partitionKey string, currentOffset int64, limit int) ([]messageRow, error)
 
 	// MoveToDLQ moves a message to the dead letter queue
 	// dlqTopicSuffix is appended to the original topic to form the DLQ topic name
-	MoveToDLQ(ctx context.Context, topic string, messageID string, failureCount int, lastError string, dlqTopicSuffix string) error
+	MoveToDLQ(ctx context.Context, topic string, partitionKey string, messageID string, failureCount int, lastError string, dlqTopicSuffix string) error
 
-	// SetVisibilityTimeout sets the invisible_until timestamp for a message
-	// visibilityTimeoutMillis: milliseconds from now to hide the message
-	// If visibilityTimeoutMillis is 0, makes the message visible immediately
-	// If visibilityTimeoutMillis > 0, makes the message invisible until now + visibilityTimeoutMillis
-	SetVisibilityTimeout(ctx context.Context, topic string, messageID string, visibilityTimeoutMillis int64) error
+	// GarbageCollect deletes messages with offset <= minAckedOffset.
+	// The caller (subscriber) is responsible for computing minAckedOffset from the
+	// offsetStore, keeping messageStore free of cross-table queries.
+	// Returns the number of rows deleted.
+	GarbageCollect(ctx context.Context, topic string, partitionKey string, minAckedOffset int64) (int64, error)
+
+	// GetOffsetsAbove returns message offsets above afterOffset for a partition,
+	// ordered ascending, up to limit rows. Used by the subscriber to drive
+	// watermark advancement without requiring a cross-table JOIN in the delivery
+	// state store. Watermark advancement is incremental and idempotent, so
+	// limiting the result set is safe — it converges over multiple calls.
+	GetOffsetsAbove(ctx context.Context, topic string, partitionKey string, afterOffset int64, limit int) ([]int64, error)
 }
 
 // offsetStore handles offset table operations for per-partition offset tracking (internal use only)
@@ -92,8 +97,11 @@ type offsetStore interface {
 	// UpdateAckedOffset updates the offset_acked for a topic+partition (only if new offset is greater)
 	UpdateAckedOffset(ctx context.Context, topic string, partitionKey string, offset int64, consumerGroup string) error
 
-	// AckMessage atomically deletes a message and updates the acked offset
-	AckMessage(ctx context.Context, topic string, partitionKey string, messageID string, offset int64, consumerGroup string, messageStore messageStore) error
+	// GetMinAckedOffset returns the minimum offset_acked across all consumer groups
+	// for a topic+partition. Returns (0, false, nil) if no offset rows exist.
+	// Used by the subscriber to compute the GC threshold without messageStore
+	// needing to query the offsets table.
+	GetMinAckedOffset(ctx context.Context, topic string, partitionKey string) (offset int64, found bool, err error)
 }
 
 // partitionLeaseStore handles partition lease operations (internal use only)
@@ -113,8 +121,61 @@ type partitionLeaseStore interface {
 	// GetLeasedPartitions returns all partitions currently leased by this worker
 	GetLeasedPartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string) ([]string, error)
 
-	// DiscoverAndAcquirePartitions discovers partitions from messages table and tries to acquire leases
-	// Returns the number of new leases acquired
+	// DiscoverAndAcquirePartitions discovers partitions from messages table and tries to acquire leases.
+	// Returns the number of new leases acquired and the full list of discovered partitions.
 	// leaseDurationMs is how long the lease is valid (in milliseconds)
-	DiscoverAndAcquirePartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string, leaseDurationMs int64) (int, error)
+	// maxPartitions limits how many total partitions this subscriber can own (0 = unlimited)
+	DiscoverAndAcquirePartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string, leaseDurationMs int64, maxPartitions int) (acquiredCount int, discoveredPartitions []string, err error)
+}
+
+// subscriberHeartbeatStore handles subscriber heartbeat operations for fair partition leasing (internal use only)
+type subscriberHeartbeatStore interface {
+	// Heartbeat registers or renews a subscriber's heartbeat
+	Heartbeat(ctx context.Context, topic string, subscriberName string, consumerGroup string) error
+
+	// ActiveSubscribers returns the names of subscribers with a recent heartbeat.
+	// staleDurationMs defines the staleness threshold: subscribers without a heartbeat
+	// within this duration are considered dead.
+	ActiveSubscribers(ctx context.Context, topic string, consumerGroup string, staleDurationMs int64) ([]string, error)
+
+	// Deregister removes a subscriber's heartbeat entry
+	Deregister(ctx context.Context, topic string, subscriberName string, consumerGroup string) error
+}
+
+// DeliveryState represents the full per-message delivery tracking state.
+type DeliveryState struct {
+	// Acked indicates whether this consumer group has processed the message
+	Acked bool
+	// InvisibleUntil is the epoch milliseconds until which the message is hidden
+	InvisibleUntil int64
+	// RetryCount tracks how many times the message has been delivered
+	RetryCount int
+}
+
+// deliveryStateStore handles per-consumer-group delivery tracking (internal use only)
+type deliveryStateStore interface {
+	// MarkDelivered inserts a row marking message as in-flight for this consumer group.
+	// Increments retry_count on redelivery (ON DUPLICATE KEY UPDATE).
+	// Returns the resulting retry_count after the operation.
+	MarkDelivered(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64, visibilityTimeoutMs int64) (retryCount int, err error)
+
+	// ExtendVisibility extends the visibility timeout for an in-flight message
+	// without incrementing retry_count.
+	ExtendVisibility(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64, visibilityTimeoutMs int64) error
+
+	// MarkAcked sets acked = TRUE to indicate this group has processed the message.
+	MarkAcked(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64) error
+
+	// MarkNacked sets invisible_until = now + delay to schedule redelivery.
+	MarkNacked(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64, delayMs int64) error
+
+	// GetDeliveryState returns the full delivery state for a message offset.
+	// Returns (state, found, error). found=false means no row (never delivered).
+	GetDeliveryState(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64) (DeliveryState, bool, error)
+
+	// AdvanceWatermark computes the new contiguous acked watermark and cleans up
+	// delivery state rows behind it.
+	// offsets are the actual message offsets above the current watermark (from messageStore).
+	// Returns the new watermark (highest contiguous acked offset from currentWatermark).
+	AdvanceWatermark(ctx context.Context, consumerGroup, topic, partitionKey string, currentWatermark int64, offsets []int64) (int64, error)
 }

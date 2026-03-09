@@ -1,6 +1,10 @@
 -- CONSUMER OFFSETS TABLE
 -- Tracks consumption progress per consumer group + topic + partition.
 -- Each partition has independent offset tracking for crash recovery.
+--
+-- The primary key (consumer_group, topic, partition_key) serves as the main
+-- lookup index for all queries in offsetStore. No additional indexes are needed
+-- because all queries filter by the full primary key or a left prefix of it.
 
 CREATE TABLE IF NOT EXISTS queue_offsets (
     -- Consumer group consuming the topic
@@ -18,14 +22,11 @@ CREATE TABLE IF NOT EXISTS queue_offsets (
     -- Last update timestamp (epoch milliseconds)
     updated_at BIGINT UNSIGNED NOT NULL,
 
-    -- Primary key ensures each consumer group has one offset per topic/partition
-    -- Supports: INSERT ... ON DUPLICATE KEY UPDATE for idempotent offset updates
+    -- Primary key ensures each consumer group has one offset per topic/partition.
+    -- Supports: INSERT ... ON DUPLICATE KEY UPDATE for idempotent offset updates.
     -- Also enables efficient lookups: SELECT ... WHERE consumer_group=? AND topic=? AND partition_key=?
+    -- Left-prefix covers: SELECT ... WHERE consumer_group=? (all offsets for a group)
     PRIMARY KEY (consumer_group, topic, partition_key),
-
-    -- Supports: SELECT ... WHERE consumer_group=?
-    -- Used for querying all offsets for a specific consumer group (e.g., for monitoring or rebalancing)
-    INDEX idx_consumer_group (consumer_group),
 
     -- Supports: SELECT ... WHERE topic=?
     -- Used for querying all consumer groups consuming a specific topic

@@ -22,46 +22,46 @@ import (
 	"github.com/uber-go/tally/v4"
 	"go.uber.org/zap"
 
+	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity/queue"
 )
 
 type publisher struct {
 	logger       *zap.SugaredLogger
-	metrics      tally.Scope
+	scope        tally.Scope
 	messageStore messageStore
 	mu           sync.RWMutex
 	closed       bool
 }
 
 // NewPublisher creates a publisher with the given dependencies
-func NewPublisher(logger *zap.SugaredLogger, metrics tally.Scope, messageStore messageStore) *publisher {
+func NewPublisher(logger *zap.SugaredLogger, scope tally.Scope, messageStore messageStore) *publisher {
 	return &publisher{
-		logger:       logger,
-		metrics:      metrics,
+		logger:       logger.Named("publisher"),
+		scope:        scope,
 		messageStore: messageStore,
 	}
 }
 
 // Publish sends a message to the specified topic
-func (p *publisher) Publish(ctx context.Context, topic string, message queue.Message) error {
+func (p *publisher) Publish(ctx context.Context, topic string, message queue.Message) (retErr error) {
+	op := metrics.Begin(p.scope, "publish", metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
+
 	// Check if closed (under lock)
 	p.mu.RLock()
 	closed := p.closed
 	p.mu.RUnlock()
 
 	if closed {
-		p.logger.Errorw("publish failure: publisher is closed", "topic", topic)
-		return fmt.Errorf("publisher is closed")
+		return ErrPublisherClosed
 	}
 
 	if err := p.messageStore.Insert(ctx, topic, []queue.Message{message}); err != nil {
-		p.metrics.Tagged(map[string]string{"topic": topic}).Counter("publish_errors").Inc(1)
-		p.logger.Errorw("publish failure: message store insert error", "topic", topic, "error", err)
 		return fmt.Errorf("publish message store insert error: %w", err)
 	}
 
-	p.metrics.Tagged(map[string]string{"topic": topic}).Counter("messages_published").Inc(1)
-	p.logger.Debugw("published message", "topic", topic, "message_id", message.ID)
+	p.logger.Debugw("published message", logTopic, topic, logMessageID, message.ID)
 
 	return nil
 }
@@ -72,6 +72,6 @@ func (p *publisher) Close() error {
 	p.closed = true
 	p.mu.Unlock()
 
-	p.logger.Info("publisher closed")
+	p.logger.Infow("publisher closed")
 	return nil
 }

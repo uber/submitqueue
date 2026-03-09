@@ -16,6 +16,7 @@ package mysql
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -34,9 +35,36 @@ func testSubscriptionConfig() extqueue.SubscriptionConfig {
 	return extqueue.DefaultSubscriptionConfig("test-subscriber", "test-consumer")
 }
 
+// newTestHeartbeatStore creates a mock heartbeat store that allows all calls
+func newTestHeartbeatStore(ctrl *gomock.Controller) *MocksubscriberHeartbeatStore {
+	mockHB := NewMocksubscriberHeartbeatStore(ctrl)
+	mockHB.EXPECT().Heartbeat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockHB.EXPECT().ActiveSubscribers(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]string{"self"}, nil).AnyTimes()
+	mockHB.EXPECT().Deregister(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	return mockHB
+}
+
+// newTestDeliveryStateStore creates a mock delivery state store that allows all calls
+func newTestDeliveryStateStore(ctrl *gomock.Controller) *MockdeliveryStateStore {
+	mockDS := NewMockdeliveryStateStore(ctrl)
+	mockDS.EXPECT().MarkDelivered(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(0, nil).AnyTimes()
+	mockDS.EXPECT().MarkAcked(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockDS.EXPECT().MarkNacked(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockDS.EXPECT().GetDeliveryState(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(DeliveryState{}, false, nil).AnyTimes()
+	mockDS.EXPECT().AdvanceWatermark(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), nil).AnyTimes()
+	mockDS.EXPECT().ExtendVisibility(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	return mockDS
+}
+
 func setupSubscriberTest(t *testing.T, mockMessageStore *MockmessageStore, mockOffsetStore *MockoffsetStore, mockLeaseStore *MockpartitionLeaseStore) extqueue.Subscriber {
 	t.Helper()
-	return NewSubscriber(zaptest.NewLogger(t).Sugar().Named("subscriber"), tally.NoopScope.SubScope("subscriber"), mockMessageStore, mockOffsetStore, mockLeaseStore)
+	ctrl := gomock.NewController(t)
+	mockHeartbeatStore := newTestHeartbeatStore(ctrl)
+	mockDeliveryStateStore := newTestDeliveryStateStore(ctrl)
+	// Allow watermark advancement calls from poll loop
+	mockOffsetStore.EXPECT().GetAckedOffset(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), nil).AnyTimes()
+	mockMessageStore.EXPECT().GetOffsetsAbove(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	return NewSubscriber(zaptest.NewLogger(t).Sugar().Named("subscriber"), tally.NoopScope.SubScope("subscriber"), mockMessageStore, mockOffsetStore, mockLeaseStore, mockHeartbeatStore, mockDeliveryStateStore)
 }
 
 func TestSubscriber_Subscribe(t *testing.T) {
@@ -92,13 +120,84 @@ func TestSubscriber_Subscribe(t *testing.T) {
 	}
 }
 
+func TestSQLDelivery_Ack(t *testing.T) {
+	tests := []struct {
+		name         string
+		alreadyAcked bool
+		markAckedErr error
+		expectErr    bool
+	}{
+		{
+			name: "successful ack",
+		},
+		{
+			name:         "already acknowledged returns error",
+			alreadyAcked: true,
+			expectErr:    true,
+		},
+		{
+			name:         "MarkAcked failure returns error",
+			markAckedErr: fmt.Errorf("db error"),
+			expectErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockMsgStore := NewMockmessageStore(ctrl)
+			mockOffStore := NewMockoffsetStore(ctrl)
+			mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+			mockDeliveryState := NewMockdeliveryStateStore(ctrl)
+
+			sub := NewSubscriber(
+				zaptest.NewLogger(t).Sugar(),
+				tally.NoopScope,
+				mockMsgStore,
+				mockOffStore,
+				mockLeaseStore,
+				newTestHeartbeatStore(ctrl),
+				mockDeliveryState,
+			)
+
+			msg := queue.NewMessage("msg-1", []byte("payload"), "part-1", nil)
+			d := newSQLDelivery(
+				msg, "1", 1, nil,
+				sub, "test_topic", "part-1", 100, "msg-1", "test-group",
+				extqueue.DLQConfig{},
+			)
+
+			if tt.alreadyAcked {
+				d.acknowledged = true
+			}
+
+			if !tt.alreadyAcked {
+				// Ack only calls MarkAcked — watermark is deferred to poll loop
+				mockDeliveryState.EXPECT().MarkAcked(
+					gomock.Any(), "test-group", "test_topic", "part-1", int64(100),
+				).Return(tt.markAckedErr)
+			}
+
+			err := d.Ack(context.Background())
+
+			if tt.expectErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.True(t, d.acknowledged)
+			}
+		})
+	}
+}
+
 func TestSQLDelivery_Reject(t *testing.T) {
 	tests := []struct {
 		name          string
 		dlqEnabled    bool
 		alreadyAcked  bool
 		moveToDLQErr  error
-		ackMessageErr error
 		expectErr     bool
 		expectMoveDLQ bool
 		expectAck     bool
@@ -109,7 +208,7 @@ func TestSQLDelivery_Reject(t *testing.T) {
 			expectMoveDLQ: true,
 		},
 		{
-			name:      "DLQ disabled falls back to ack",
+			name:      "DLQ disabled marks as acked",
 			expectAck: true,
 		},
 		{
@@ -125,12 +224,6 @@ func TestSQLDelivery_Reject(t *testing.T) {
 			expectErr:     true,
 			expectMoveDLQ: true,
 		},
-		{
-			name:          "DLQ disabled but AckMessage fails",
-			ackMessageErr: fmt.Errorf("db error"),
-			expectErr:     true,
-			expectAck:     true,
-		},
 	}
 
 	for _, tt := range tests {
@@ -141,6 +234,7 @@ func TestSQLDelivery_Reject(t *testing.T) {
 			mockMsgStore := NewMockmessageStore(ctrl)
 			mockOffStore := NewMockoffsetStore(ctrl)
 			mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+			mockDeliveryState := NewMockdeliveryStateStore(ctrl)
 
 			sub := NewSubscriber(
 				zaptest.NewLogger(t).Sugar(),
@@ -148,6 +242,8 @@ func TestSQLDelivery_Reject(t *testing.T) {
 				mockMsgStore,
 				mockOffStore,
 				mockLeaseStore,
+				newTestHeartbeatStore(ctrl),
+				mockDeliveryState,
 			)
 
 			msg := queue.NewMessage("msg-1", []byte("payload"), "part-1", nil)
@@ -168,20 +264,20 @@ func TestSQLDelivery_Reject(t *testing.T) {
 
 			if tt.expectMoveDLQ {
 				mockMsgStore.EXPECT().MoveToDLQ(
-					gomock.Any(), "test_topic", "msg-1", 1, "bad payload", "_dlq",
+					gomock.Any(), "test_topic", "part-1", "msg-1", 1, "bad payload", "_dlq",
 				).Return(tt.moveToDLQErr)
 
 				if tt.moveToDLQErr == nil {
-					mockOffStore.EXPECT().UpdateAckedOffset(
-						gomock.Any(), "test_topic", "part-1", int64(100), "test-group",
+					mockDeliveryState.EXPECT().MarkAcked(
+						gomock.Any(), "test-group", "test_topic", "part-1", int64(100),
 					).Return(nil)
 				}
 			}
 
 			if tt.expectAck {
-				mockOffStore.EXPECT().AckMessage(
-					gomock.Any(), "test_topic", "part-1", "msg-1", int64(100), "test-group", mockMsgStore,
-				).Return(tt.ackMessageErr)
+				mockDeliveryState.EXPECT().MarkAcked(
+					gomock.Any(), "test-group", "test_topic", "part-1", int64(100),
+				).Return(nil)
 			}
 
 			err := d.Reject(context.Background(), "bad payload")
@@ -260,6 +356,7 @@ func TestSubscriber_Close(t *testing.T) {
 				ch, err := sub.Subscribe(ctx, "test_topic", testSubscriptionConfig())
 				if tt.expectSubError {
 					require.Error(t, err)
+					require.True(t, errors.Is(err, ErrSubscriberClosed))
 					assert.Nil(t, ch)
 				} else {
 					require.NoError(t, err)
@@ -309,12 +406,17 @@ func TestSubscriber_ReconcilePartitionWorkers(t *testing.T) {
 				mockMessageStore,
 				mockOffsetStore,
 				mockLeaseStore,
+				newTestHeartbeatStore(ctrl),
+				newTestDeliveryStateStore(ctrl),
 			)
 
-			// Allow offset initialization and fetch calls from workers
+			// Allow offset initialization, fetch, and watermark calls from workers
 			mockOffsetStore.EXPECT().Initialize(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 			mockOffsetStore.EXPECT().GetAckedOffset(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), nil).AnyTimes()
-			mockMessageStore.EXPECT().FetchByOffset(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+			mockMessageStore.EXPECT().FetchByOffset(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+			mockMessageStore.EXPECT().GetOffsetsAbove(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+			mockMessageStore.EXPECT().GarbageCollect(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), nil).AnyTimes()
+			mockOffsetStore.EXPECT().GetMinAckedOffset(gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), false, nil).AnyTimes()
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -357,6 +459,7 @@ func TestSubscriber_PartitionWorkerPollAndDeliver(t *testing.T) {
 	mockMessageStore := NewMockmessageStore(ctrl)
 	mockOffsetStore := NewMockoffsetStore(ctrl)
 	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+	mockDeliveryState := NewMockdeliveryStateStore(ctrl)
 
 	s := NewSubscriber(
 		zaptest.NewLogger(t).Sugar(),
@@ -364,6 +467,8 @@ func TestSubscriber_PartitionWorkerPollAndDeliver(t *testing.T) {
 		mockMessageStore,
 		mockOffsetStore,
 		mockLeaseStore,
+		newTestHeartbeatStore(ctrl),
+		mockDeliveryState,
 	)
 
 	cfg := testSubscriptionConfig()
@@ -378,7 +483,8 @@ func TestSubscriber_PartitionWorkerPollAndDeliver(t *testing.T) {
 	ctx := context.Background()
 
 	mockOffsetStore.EXPECT().Initialize(gomock.Any(), "test_topic", "part-1", cfg.ConsumerGroup).Return(nil)
-	mockOffsetStore.EXPECT().GetAckedOffset(gomock.Any(), "test_topic", "part-1", cfg.ConsumerGroup).Return(int64(0), nil)
+	// GetAckedOffset is called twice: once by pollAndDeliver, once by advanceWatermark
+	mockOffsetStore.EXPECT().GetAckedOffset(gomock.Any(), "test_topic", "part-1", cfg.ConsumerGroup).Return(int64(0), nil).Times(2)
 
 	row := messageRow{
 		ID:           "msg-1",
@@ -386,10 +492,18 @@ func TestSubscriber_PartitionWorkerPollAndDeliver(t *testing.T) {
 		PartitionKey: "part-1",
 		Payload:      []byte("payload"),
 		PublishedAt:  time.Now().UnixMilli(),
-		RetryCount:   0,
 	}
-	mockMessageStore.EXPECT().FetchByOffset(gomock.Any(), "test_topic", "part-1", int64(0), cfg.BatchSize, cfg.VisibilityTimeoutMs).
+	mockMessageStore.EXPECT().FetchByOffset(gomock.Any(), "test_topic", "part-1", int64(0), cfg.BatchSize).
 		Return([]messageRow{row}, nil)
+
+	// Delivery state checks — GetDeliveryState returns not-found (new message)
+	mockDeliveryState.EXPECT().GetDeliveryState(gomock.Any(), cfg.ConsumerGroup, "test_topic", "part-1", int64(1)).Return(DeliveryState{}, false, nil)
+	// MarkDelivered returns retry count 0 (first delivery)
+	mockDeliveryState.EXPECT().MarkDelivered(gomock.Any(), cfg.ConsumerGroup, "test_topic", "part-1", int64(1), cfg.VisibilityTimeoutMs).Return(0, nil)
+
+	// advanceWatermark called at end of pollAndDeliver
+	mockMessageStore.EXPECT().GetOffsetsAbove(gomock.Any(), "test_topic", "part-1", int64(0), watermarkAdvancementLimit).Return([]int64{1}, nil)
+	mockDeliveryState.EXPECT().AdvanceWatermark(gomock.Any(), cfg.ConsumerGroup, "test_topic", "part-1", int64(0), []int64{1}).Return(int64(0), nil)
 
 	w := &partitionWorker{
 		partitionKey: "part-1",
@@ -426,12 +540,17 @@ func TestSubscriber_StopAllWorkers(t *testing.T) {
 		mockMessageStore,
 		mockOffsetStore,
 		mockLeaseStore,
+		newTestHeartbeatStore(ctrl),
+		newTestDeliveryStateStore(ctrl),
 	)
 
-	// Allow worker polling
+	// Allow worker polling and watermark advancement
 	mockOffsetStore.EXPECT().Initialize(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockOffsetStore.EXPECT().GetAckedOffset(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), nil).AnyTimes()
-	mockMessageStore.EXPECT().FetchByOffset(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	mockMessageStore.EXPECT().FetchByOffset(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	mockMessageStore.EXPECT().GetOffsetsAbove(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	mockMessageStore.EXPECT().GarbageCollect(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), nil).AnyTimes()
+	mockOffsetStore.EXPECT().GetMinAckedOffset(gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), false, nil).AnyTimes()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

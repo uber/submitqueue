@@ -50,29 +50,33 @@ func NewQueue(params Params) (queue.Queue, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	logger := params.Logger.Sugar().Named("queue.sql")
-	logger.Info("created SQL queue")
+	logger := params.Logger.Sugar().Named("queue_mysql")
+	logger.Infow("created SQL queue")
 
 	// Create stores
-	messageStore := newMessageStore(params.DB, params.Logger, params.MetricsScope)
-	offsetStore := newOffsetStore(params.DB, params.Logger, params.MetricsScope)
-	leaseStore := newPartitionLeaseStore(params.DB, params.Logger, params.MetricsScope)
+	messageStore := newMessageStore(params.DB, logger, params.MetricsScope)
+	offsetStore := newOffsetStore(params.DB, params.MetricsScope)
+	leaseStore := newPartitionLeaseStore(params.DB, logger, params.MetricsScope)
+	heartbeatStore := newSubscriberHeartbeatStore(params.DB, logger, params.MetricsScope)
+	deliveryStateStore := newDeliveryStateStore(params.DB, logger, params.MetricsScope)
 
 	queueMetrics := params.MetricsScope.SubScope("queue")
 
 	// Create publisher and subscriber
 	publisher := NewPublisher(
-		logger.Named("publisher"),
+		logger,
 		queueMetrics.SubScope("publisher"),
 		messageStore,
 	)
 
 	subscriber := NewSubscriber(
-		logger.Named("subscriber"),
+		logger,
 		queueMetrics.SubScope("subscriber"),
 		messageStore,
 		offsetStore,
 		leaseStore,
+		heartbeatStore,
+		deliveryStateStore,
 	)
 
 	return &queueImpl{

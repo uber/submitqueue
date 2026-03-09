@@ -89,7 +89,7 @@ e2e-test: build-all-linux ## Run end-to-end tests (hermetic, auto-builds binarie
 
 fmt: ## Format Go and YAML code
 	@echo "Formatting Go code..."
-	@$(BAZEL) run @rules_go//go -- run golang.org/x/tools/cmd/goimports@$(GOIMPORTS_VERSION) -w .
+	@find . -name '*.go' -not -path './pkg/*' -not -path './bazel-*' | xargs $(BAZEL) run @rules_go//go -- run golang.org/x/tools/cmd/goimports@$(GOIMPORTS_VERSION) -w
 	@echo "Formatting YAML files..."
 	@$(BAZEL) run @rules_go//go -- run github.com/google/yamlfmt/cmd/yamlfmt@$(YAMLFMT_VERSION)
 	@echo "Formatting complete!"

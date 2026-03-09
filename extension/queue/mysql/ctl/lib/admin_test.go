@@ -75,11 +75,6 @@ func TestGetTopicStats(t *testing.T) {
 		WithArgs("orders").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(100))
 
-	// Visible messages
-	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM queue_messages WHERE topic = \\? AND invisible_until <= \\?").
-		WithArgs("orders", sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(80))
-
 	// DLQ count
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM queue_messages WHERE topic = \\?").
 		WithArgs("orders_dlq").
@@ -99,8 +94,6 @@ func TestGetTopicStats(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "orders", stats.Topic)
 	assert.Equal(t, int64(100), stats.TotalMessages)
-	assert.Equal(t, int64(80), stats.VisibleMessages)
-	assert.Equal(t, int64(20), stats.InvisibleMessages)
 	assert.Equal(t, int64(3), stats.DLQCount)
 	assert.Equal(t, int64(4), stats.PartitionCount)
 	assert.Equal(t, int64(2), stats.ConsumerGroupCount)
@@ -114,9 +107,9 @@ func TestListMessages(t *testing.T) {
 
 	store := NewAdminStore(db)
 
-	rows := sqlmock.NewRows([]string{"offset", "id", "topic", "partition_key", "retry_count", "invisible_until", "created_at", "published_at"}).
-		AddRow(1, "msg-1", "orders", "repo-1", 0, 0, 1000, 1000).
-		AddRow(2, "msg-2", "orders", "repo-1", 1, 5000, 2000, 2000)
+	rows := sqlmock.NewRows([]string{"offset", "id", "topic", "partition_key", "created_at", "published_at"}).
+		AddRow(1, "msg-1", "orders", "repo-1", 1000, 1000).
+		AddRow(2, "msg-2", "orders", "repo-1", 2000, 2000)
 	mock.ExpectQuery("SELECT .+ FROM queue_messages WHERE topic = \\? ORDER BY `offset` LIMIT \\?").
 		WithArgs("orders", 50).
 		WillReturnRows(rows)
@@ -127,7 +120,6 @@ func TestListMessages(t *testing.T) {
 	assert.Equal(t, "msg-1", messages[0].ID)
 	assert.Equal(t, int64(1), messages[0].Offset)
 	assert.Equal(t, "msg-2", messages[1].ID)
-	assert.Equal(t, 1, messages[1].RetryCount)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -138,8 +130,8 @@ func TestListMessagesWithPartition(t *testing.T) {
 
 	store := NewAdminStore(db)
 
-	rows := sqlmock.NewRows([]string{"offset", "id", "topic", "partition_key", "retry_count", "invisible_until", "created_at", "published_at"}).
-		AddRow(1, "msg-1", "orders", "repo-1", 0, 0, 1000, 1000)
+	rows := sqlmock.NewRows([]string{"offset", "id", "topic", "partition_key", "created_at", "published_at"}).
+		AddRow(1, "msg-1", "orders", "repo-1", 1000, 1000)
 	mock.ExpectQuery("SELECT .+ FROM queue_messages WHERE topic = \\? AND partition_key = \\? ORDER BY `offset` LIMIT \\?").
 		WithArgs("orders", "repo-1", 10).
 		WillReturnRows(rows)
@@ -158,8 +150,8 @@ func TestInspectMessage(t *testing.T) {
 
 	store := NewAdminStore(db)
 
-	rows := sqlmock.NewRows([]string{"offset", "id", "topic", "partition_key", "retry_count", "invisible_until", "created_at", "published_at", "payload", "metadata", "failed_at", "failure_count", "last_error", "original_topic"}).
-		AddRow(1, "msg-1", "orders", "repo-1", 0, 0, 1000, 1000, []byte("hello"), []byte(`{"key":"val"}`), 0, 0, "", "")
+	rows := sqlmock.NewRows([]string{"offset", "id", "topic", "partition_key", "created_at", "published_at", "payload", "metadata", "failed_at", "failure_count", "last_error", "original_topic"}).
+		AddRow(1, "msg-1", "orders", "repo-1", 1000, 1000, []byte("hello"), []byte(`{"key":"val"}`), 0, 0, "", "")
 	mock.ExpectQuery("SELECT .+ FROM queue_messages WHERE topic = \\? AND id = \\?").
 		WithArgs("orders", "msg-1").
 		WillReturnRows(rows)
@@ -181,7 +173,7 @@ func TestInspectMessageNotFound(t *testing.T) {
 
 	store := NewAdminStore(db)
 
-	rows := sqlmock.NewRows([]string{"offset", "id", "topic", "partition_key", "retry_count", "invisible_until", "created_at", "published_at", "payload", "metadata", "failed_at", "failure_count", "last_error", "original_topic"})
+	rows := sqlmock.NewRows([]string{"offset", "id", "topic", "partition_key", "created_at", "published_at", "payload", "metadata", "failed_at", "failure_count", "last_error", "original_topic"})
 	mock.ExpectQuery("SELECT .+ FROM queue_messages WHERE topic = \\? AND id = \\?").
 		WithArgs("orders", "missing").
 		WillReturnRows(rows)

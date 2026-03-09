@@ -17,11 +17,11 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap/zaptest"
 )
 
 const (
@@ -35,12 +35,12 @@ func setupoffsetStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, offsetStore) 
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	store := newOffsetStore(db, zaptest.NewLogger(t), testMetrics())
+	store := newOffsetStore(db, testMetrics())
 
 	return db, mock, store
 }
 
-func TestoffsetStore_Initialize(t *testing.T) {
+func TestOffsetStore_Initialize(t *testing.T) {
 	db, mock, store := setupoffsetStoreTest(t)
 	defer db.Close()
 
@@ -57,7 +57,7 @@ func TestoffsetStore_Initialize(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestoffsetStore_GetAckedOffset(t *testing.T) {
+func TestOffsetStore_GetAckedOffset(t *testing.T) {
 	tests := []struct {
 		name           string
 		setup          func(mock sqlmock.Sqlmock)
@@ -110,7 +110,7 @@ func TestoffsetStore_GetAckedOffset(t *testing.T) {
 	}
 }
 
-func TestoffsetStore_UpdateAckedOffset(t *testing.T) {
+func TestOffsetStore_UpdateAckedOffset(t *testing.T) {
 	db, mock, store := setupoffsetStoreTest(t)
 	defer db.Close()
 
@@ -128,36 +128,35 @@ func TestoffsetStore_UpdateAckedOffset(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestoffsetStore_AckMessage(t *testing.T) {
+func TestOffsetStore_GetMinAckedOffset(t *testing.T) {
 	tests := []struct {
-		name    string
-		setup   func(mock sqlmock.Sqlmock)
-		wantErr bool
+		name       string
+		minOffset  sql.NullInt64
+		queryErr   bool
+		wantOffset int64
+		wantFound  bool
+		wantErr    bool
 	}{
 		{
-			name: "successful ack",
-			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectBegin()
-				mock.ExpectExec("DELETE FROM queue_messages").
-					WithArgs("test_topic", "part1", "msg1").
-					WillReturnResult(sqlmock.NewResult(0, 1))
-				mock.ExpectExec("INSERT INTO queue_offsets").
-					WithArgs(testConsumerGroup, "test_topic", "part1", int64(100), sqlmock.AnyArg()).
-					WillReturnResult(sqlmock.NewResult(1, 1))
-				mock.ExpectCommit()
-			},
-			wantErr: false,
+			name:       "returns min offset across consumer groups",
+			minOffset:  sql.NullInt64{Int64: 10, Valid: true},
+			wantOffset: 10,
+			wantFound:  true,
 		},
 		{
-			name: "transaction error",
-			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectBegin()
-				mock.ExpectExec("DELETE FROM queue_messages").
-					WithArgs("test_topic", "part1", "msg1").
-					WillReturnError(sql.ErrConnDone)
-				mock.ExpectRollback()
-			},
-			wantErr: true,
+			name:      "no offset rows returns not found",
+			minOffset: sql.NullInt64{Valid: false},
+			wantFound: false,
+		},
+		{
+			name:      "zero offset returns not found",
+			minOffset: sql.NullInt64{Int64: 0, Valid: true},
+			wantFound: false,
+		},
+		{
+			name:     "query error",
+			queryErr: true,
+			wantErr:  true,
 		},
 	}
 
@@ -166,19 +165,24 @@ func TestoffsetStore_AckMessage(t *testing.T) {
 			db, mock, store := setupoffsetStoreTest(t)
 			defer db.Close()
 
-			ctx := context.Background()
-			topic := "test_topic"
-			partitionKey := "part1"
-			messageID := "msg1"
-			offset := int64(100)
+			if tt.queryErr {
+				mock.ExpectQuery("SELECT MIN\\(offset_acked\\) FROM queue_offsets").
+					WithArgs("test_topic", "part-1").
+					WillReturnError(fmt.Errorf("db error"))
+			} else {
+				mock.ExpectQuery("SELECT MIN\\(offset_acked\\) FROM queue_offsets").
+					WithArgs("test_topic", "part-1").
+					WillReturnRows(sqlmock.NewRows([]string{"min"}).AddRow(tt.minOffset))
+			}
 
-			tt.setup(mock)
+			offset, found, err := store.GetMinAckedOffset(context.Background(), "test_topic", "part-1")
 
-			err := store.AckMessage(ctx, topic, partitionKey, messageID, offset, testConsumerGroup, nil)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
+				require.Equal(t, tt.wantFound, found)
+				require.Equal(t, tt.wantOffset, offset)
 			}
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
