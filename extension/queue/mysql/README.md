@@ -1,14 +1,8 @@
 # SQL Queue Implementation
 
-MySQL-based distributed queue with partition leasing, visibility timeout, and at-least-once delivery.
+MySQL-based distributed queue with partition leasing, delivery state tracking, and at-least-once delivery.
 
-## Key Features
-
-- **Partition leasing** — workers coordinate via database leases with automatic failover
-- **Per-partition workers** — each leased partition gets its own goroutine for isolation
-- **Visibility timeout** — messages retry automatically if worker crashes
-- **At-least-once delivery** — offset tracking for crash recovery
-- **Dead letter queue** — failed messages moved to DLQ after max retries
+For design rationale, guarantees, and trade-offs, see the [RFC](../../doc/rfc/sql-queue-rfc.md).
 
 ## Quick Start
 
@@ -53,10 +47,8 @@ Per-subscription configuration enables different settings for each topic:
 ```go
 import extqueue "github.com/uber/submitqueue/extension/queue"
 
-// Default config
 subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "consumer-group")
 
-// Customize for this subscription
 subConfig.PollIntervalMs = 50                         // Poll frequency (milliseconds)
 subConfig.BatchSize = 20                              // Messages per poll
 subConfig.VisibilityTimeoutMs = 60000                 // Retry delay (milliseconds)
@@ -68,93 +60,136 @@ subConfig.Retry.MaxBackoffMs = 30000                  // Max retry backoff (mill
 subConfig.Retry.BackoffMultiplier = 2.0               // Backoff multiplier for exponential backoff
 subConfig.DLQ.Enabled = true                          // Enable dead letter queue
 subConfig.DLQ.TopicSuffix = "_dlq"                    // DLQ topic suffix
-
-// Use config when subscribing
-deliveryCh, _ := q.Subscriber().Subscribe(ctx, "my-topic", subConfig)
 ```
 
 **Key Configuration Fields:**
 
-- `SubscriberName`: Unique worker identifier for partition leasing (e.g., hostname, pod name)
-- `ConsumerGroup`: Consumer group for independent offset tracking
-- `PollIntervalMs`: How often to poll for new messages (milliseconds)
-- `BatchSize`: Maximum messages to fetch per poll
-- `VisibilityTimeoutMs`: How long messages are invisible after being fetched (milliseconds)
-- `LeaseRenewalIntervalMs`: How often to renew partition leases (milliseconds)
-- `LeaseDurationMs`: How long leases remain valid without renewal (milliseconds)
-- `Retry.MaxAttempts`: Maximum processing attempts before moving to DLQ
-- `Retry.InitialBackoffMs`: Initial retry backoff delay (milliseconds)
-- `Retry.MaxBackoffMs`: Maximum retry backoff delay (milliseconds)
-- `Retry.BackoffMultiplier`: Multiplier for exponential backoff
-- `DLQ.TopicSuffix`: Suffix appended to topic name for DLQ (e.g., "orders" -> "orders_dlq")
+| Field | Description |
+|-------|-------------|
+| `SubscriberName` | Unique worker identifier for partition leasing (e.g., hostname, pod name) |
+| `ConsumerGroup` | Consumer group for independent offset tracking |
+| `PollIntervalMs` | How often to poll for new messages |
+| `BatchSize` | Maximum messages to fetch per poll. Set to `1` for strict serialization |
+| `VisibilityTimeoutMs` | How long messages are invisible after fetch. Must exceed max processing time for `BatchSize=1` |
+| `LeaseRenewalIntervalMs` | How often to renew partition leases |
+| `LeaseDurationMs` | How long leases remain valid without renewal |
+| `Retry.MaxAttempts` | Maximum processing attempts before DLQ |
+| `DLQ.TopicSuffix` | Suffix appended to topic name for DLQ (e.g., `"orders"` → `"orders_dlq"`) |
 
-## Architecture
+## Package Layout
+
+```
+extension/queue/mysql/
+├── sql.go                          # NewQueue constructor, wires stores → publisher/subscriber
+├── stores.go                       # Internal store interfaces (messageStore, offsetStore, etc.)
+├── message_store.go                # queue_messages table operations (immutable log)
+├── delivery_state_store.go         # queue_delivery_state table operations (per-consumer-group)
+├── offset_store.go                 # queue_offsets table operations (watermark tracking)
+├── partition_lease_store.go        # queue_partition_leases table operations
+├── subscriber_heartbeat_store.go   # queue_subscriber_heartbeats table operations
+├── publisher.go                    # Publisher implementation
+├── subscriber.go                   # Subscriber, delivery, goroutine management
+├── constants.go                    # Log key constants
+├── errors.go                       # Error types
+├── schema/                         # SQL schema files (one per table)
+│   ├── queue_messages.sql
+│   ├── queue_delivery_state.sql
+│   ├── queue_offsets.sql
+│   ├── queue_partition_leases.sql
+│   └── queue_subscriber_heartbeats.sql
+└── ctl/                            # Admin CLI (see ctl/README.md)
+```
+
+## Internal Architecture
+
+### Database Tables
+
+| Table | Purpose | Scoped To |
+|-------|---------|-----------|
+| `queue_messages` | Immutable append-only message log | `(topic, partition_key)` — shared across consumer groups |
+| `queue_delivery_state` | Visibility, ack state, retry count | `(consumer_group, topic, partition_key, offset)` |
+| `queue_offsets` | Contiguous acked watermark | `(consumer_group, topic, partition_key)` |
+| `queue_partition_leases` | Partition lease coordination | `(consumer_group, topic, partition_key)` |
+| `queue_subscriber_heartbeats` | Active subscriber tracking | `(consumer_group, topic, subscriber_name)` |
+
+See `schema/` for full SQL definitions. See the [RFC](../../doc/rfc/sql-queue-rfc.md#database-schema) for field-level documentation.
+
+### Store Architecture
+
+Each table is backed by an internal store interface defined in `stores.go`. Stores:
+- Query only their own table (no cross-table JOINs)
+- Return errors via `fmt.Errorf` (no logging, no error classification)
+- Use `metrics.Begin`/`Complete` for latency and success/failure tracking
+
+The subscriber layer orchestrates cross-store operations (e.g., watermark advancement queries both `messageStore` and `deliveryStateStore`) and owns all logging and error classification.
 
 ### Goroutine Model
 
-Each subscription has a **supervisor goroutine** (`managePartitions`) that:
-1. Discovers partitions from the messages table
-2. Acquires and renews partition leases
-3. Reconciles **per-partition worker goroutines** based on current leases
-
-Each partition worker goroutine polls and delivers messages for its partition independently. This provides fault isolation — a slow or blocked partition does not affect other partitions.
+Each subscription has a **supervisor goroutine** (`managePartitions`) that discovers partitions, acquires leases, sends heartbeats, rebalances, and reconciles per-partition worker goroutines.
 
 ```
 Subscribe()
-  └── managePartitions (supervisor)
-        ├── partitionWorker("part-1")  ← polls & delivers
-        ├── partitionWorker("part-2")  ← polls & delivers
-        └── partitionWorker("part-3")  ← polls & delivers
+  └── managePartitions (supervisor)       ← tracked by sub.wg
+        ├── partitionWorker("part-1")     ← tracked by sub.workerWg
+        ├── partitionWorker("part-2")
+        └── partitionWorker("part-3")
 ```
+
+Each partition worker runs independently — polls the DB on a ticker, checks deliverability via `GetDeliveryState` per message, and sends deliveries to the shared channel. A slow or blocked partition does not affect other partitions.
 
 ### Shutdown Sequence
 
-Shutdown uses two `sync.WaitGroup`s to ensure correctness:
-- `wg` tracks the supervisor goroutine (`managePartitions`)
-- `workerWg` tracks all partition worker goroutines
-
 When `Close()` is called:
 1. Subscription context is cancelled
-2. `managePartitions` calls `stopAllWorkers` — cancels each worker and waits up to 5s per worker
-3. Partition leases are released
-4. `workerWg.Wait()` blocks until all workers have fully exited
-5. `deliveryCh` is closed — safe because no workers can send after step 4
-6. `managePartitions` returns, `wg.Done()` fires
-7. `Close()` returns
+2. `managePartitions` calls `stopAllWorkers` — cancels each worker's context, waits up to 30s
+3. Partition leases are released (fresh context, not cancelled)
+4. Subscriber heartbeat is deregistered
+5. `workerWg.Wait()` — blocks until all workers have fully exited
+6. `deliveryCh` is closed — safe because no senders remain after step 5
+7. `managePartitions` returns → `wg.Done()` → `Close()` unblocks
 
-The `workerWg.Wait()` step prevents a race where a slow worker (blocked on I/O past the 5s timeout) could send on a closed channel.
+The `workerWg.Wait()` before `close(deliveryCh)` prevents a race where a slow worker could send on a closed channel.
 
 ### Worker Stop Behavior
 
 When a partition worker is stopped (lease lost or shutdown):
-- The worker is immediately removed from the workers map and its context is cancelled
-- The caller waits up to 5s for the worker to confirm exit (logging a warning on timeout)
-- `workerWg` tracks the worker regardless, so `Close()` always waits for full exit
-- If the worker times out, reconciliation is free to start a replacement — any brief overlap is harmless with at-least-once delivery semantics
+- Immediately removed from workers map and context cancelled
+- Caller waits up to 30s for exit confirmation (warning logged on timeout)
+- `workerWg` tracks the goroutine regardless — `Close()` always waits for full exit
+- Reconciliation can start a replacement immediately — brief overlap is harmless with at-least-once semantics
 
-## How It Works
+### Logger Hierarchy
 
-**Partition Leasing:**
-1. Workers discover partitions from messages table
-2. Workers acquire leases (one worker per partition)
-3. Stale leases can be stolen by other workers
+`sql.go` creates a root `queue_mysql` logger and passes named children to each component:
 
-**Message Flow:**
-1. Fetch visible messages (invisible_until <= now)
-2. Process message
-3. Ack: DELETE message, UPDATE offset
-4. Nack: Message becomes visible after timeout
-5. If retry_count >= MaxAttempts: Move to DLQ
+```
+queue_mysql
+  ├── .publisher
+  ├── .subscriber
+  ├── .message_store
+  ├── .delivery_state_store
+  ├── .offset_store
+  ├── .partition_lease_store
+  └── .subscriber_heartbeat_store
+```
 
-**Crash Recovery:**
-- Messages become visible after visibility timeout
-- Other workers steal stale leases
-- Resume from last acked offset
+Stores do not log errors — they return them. The subscriber propagates all errors to the top call site (`managePartitions` or `run`), which logs once with full context (`topic`, `consumer_group`, `subscriber_name`).
 
-## Partition Ordering
+## Testing
 
-Messages with same `PartitionKey` are processed in order by a single worker.
+### Unit Tests
 
-## Distributed Processing
+```bash
+bazel test //extension/queue/mysql:mysql_test --test_output=streamed
+bazel test //extension/queue/mysql/ctl/...:all --test_output=streamed
+```
 
-Multiple workers in the same consumer group share partitions. Workers in different consumer groups consume independently.
+### Integration Tests
+
+Requires Docker running:
+
+```bash
+bazel test //test/integration/extension/queue/... --test_output=streamed
+```
+
+Integration tests cover: publish/subscribe, partition isolation, ordering, visibility timeout, nack with delay, idempotent publish, concurrent publishers, crash recovery, multiple consumer groups, rebalancing, DLQ, graceful shutdown, non-blocking nack, strict serialization (`BatchSize=1`), and independent consumer group state.
