@@ -55,6 +55,21 @@ const (
 	gcIdleTickInterval = 100
 )
 
+// HookSignal identifies the type of subscriber lifecycle event.
+// Named after behavioral concerns (what happened) rather than implementation
+// details (which loop ran), so signal names remain stable across refactors.
+type HookSignal int
+
+const (
+	// SignalDeliveryCheck is sent after the subscriber checks a partition for
+	// deliverable messages (including watermark advancement).
+	SignalDeliveryCheck HookSignal = iota
+
+	// SignalPartitionUpdate is sent after the subscriber evaluates partition
+	// ownership (discovery, rebalance, lease renewal, heartbeat).
+	SignalPartitionUpdate
+)
+
 type subscriber struct {
 	logger             *zap.SugaredLogger
 	scope              tally.Scope
@@ -69,6 +84,10 @@ type subscriber struct {
 	// Active subscriptions
 	subscriptions map[string]*subscription
 	subMu         sync.Mutex
+
+	// OnSignal receives typed lifecycle signals. Nil in production.
+	// Consumers filter by signal type to wait for specific events.
+	OnSignal chan HookSignal
 }
 
 type subscription struct {
@@ -309,6 +328,15 @@ func NewSubscriber(logger *zap.SugaredLogger, scope tally.Scope, messageStore me
 	}
 }
 
+// emitSignal sends a signal on OnSignal if set. Blocks until the signal is
+// received, allowing tests to synchronize by controlling when signals are drained.
+// Production code does not set OnSignal, so this is a no-op outside tests.
+func (s *subscriber) emitSignal(sig HookSignal) {
+	if ch := s.OnSignal; ch != nil {
+		ch <- sig
+	}
+}
+
 // advanceWatermark advances offset_acked to the highest contiguous acked offset.
 // All operations are idempotent — safe to call from multiple paths (Reject, retry-limit,
 // poll loop) and safe to retry on failure.
@@ -476,6 +504,7 @@ func (s *subscriber) managePartitions(ctx context.Context, sub *subscription) {
 				if err := s.sendHeartbeat(ctx, sub); err != nil {
 					s.logger.Errorw("heartbeat failed during lease error recovery", append(logFields, "error", err)...)
 				}
+				s.emitSignal(SignalPartitionUpdate)
 				continue
 			}
 
@@ -490,11 +519,13 @@ func (s *subscriber) managePartitions(ctx context.Context, sub *subscription) {
 			if err := s.sendHeartbeat(ctx, sub); err != nil {
 				s.logger.Errorw("periodic heartbeat failed", append(logFields, "error", err)...)
 			}
+			s.emitSignal(SignalPartitionUpdate)
 
 		case <-discoveryTicker.C:
 			if err := s.discoverAndReconcileWorkers(ctx, sub); err != nil {
 				s.logger.Errorw("partition discovery failed, will retry on next tick", append(logFields, "error", err)...)
 			}
+			s.emitSignal(SignalPartitionUpdate)
 		}
 	}
 }
@@ -705,6 +736,7 @@ func (w *partitionWorker) run(ctx context.Context) {
 					"error", err,
 				)
 			}
+			w.subscriber.emitSignal(SignalDeliveryCheck)
 		}
 	}
 }

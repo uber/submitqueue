@@ -42,6 +42,10 @@ type Params struct {
 
 	// MetricsScope for metrics collection (required)
 	MetricsScope tally.Scope
+
+	// OnSignal receives typed subscriber lifecycle signals (HookSignal).
+	// Nil in production; used by integration tests for event-driven waits.
+	OnSignal chan HookSignal
 }
 
 // NewQueue creates a new SQL-based queue
@@ -79,6 +83,7 @@ func NewQueue(params Params) (queue.Queue, error) {
 		heartbeatStore,
 		deliveryStateStore,
 	)
+	subscriber.OnSignal = params.OnSignal
 
 	return &queueImpl{
 		publisher:  publisher,
