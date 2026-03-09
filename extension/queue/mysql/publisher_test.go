@@ -16,6 +16,7 @@ package mysql
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -156,6 +157,7 @@ func TestPublisher_PublishAfterClose(t *testing.T) {
 	msg := queue.NewMessage("msg1", []byte("payload"), "part1", nil)
 	err = pub.Publish(ctx, "test_topic", msg)
 	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrPublisherClosed))
 }
 
 func TestPublisher_Close(t *testing.T) {

@@ -151,8 +151,6 @@ func newTopicStatsCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
 			rows := [][]string{
 				{"Topic", stats.Topic},
 				{"Total Messages", strconv.FormatInt(stats.TotalMessages, 10)},
-				{"Visible Messages", strconv.FormatInt(stats.VisibleMessages, 10)},
-				{"Invisible Messages", strconv.FormatInt(stats.InvisibleMessages, 10)},
 				{"DLQ Count", strconv.FormatInt(stats.DLQCount, 10)},
 				{"Partitions", strconv.FormatInt(stats.PartitionCount, 10)},
 				{"Consumer Groups", strconv.FormatInt(stats.ConsumerGroupCount, 10)},
@@ -181,16 +179,15 @@ func newListMessagesCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
 			if *jsonOut {
 				return lib.FormatJSON(os.Stdout, messages)
 			}
-			headers := []string{"OFFSET", "ID", "PARTITION", "RETRIES", "INVISIBLE_UNTIL", "CREATED_AT"}
+			headers := []string{"OFFSET", "ID", "PARTITION", "CREATED_AT", "PUBLISHED_AT"}
 			var rows [][]string
 			for _, m := range messages {
 				rows = append(rows, []string{
 					strconv.FormatInt(m.Offset, 10),
 					m.ID,
 					m.PartitionKey,
-					strconv.Itoa(m.RetryCount),
-					lib.FormatMillis(m.InvisibleUntil),
 					lib.FormatMillis(m.CreatedAt),
+					lib.FormatMillis(m.PublishedAt),
 				})
 			}
 			lib.FormatTable(os.Stdout, headers, rows)
@@ -226,8 +223,6 @@ func newInspectMessageCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command 
 				{"ID", detail.ID},
 				{"Topic", detail.Topic},
 				{"Partition", detail.PartitionKey},
-				{"Retry Count", strconv.Itoa(detail.RetryCount)},
-				{"Invisible Until", lib.FormatMillis(detail.InvisibleUntil)},
 				{"Created At", lib.FormatMillis(detail.CreatedAt)},
 				{"Published At", lib.FormatMillis(detail.PublishedAt)},
 				{"Payload", string(detail.Payload)},
@@ -321,14 +316,13 @@ func newListDLQCmd(store **lib.AdminStore, jsonOut *bool) *cobra.Command {
 			if *jsonOut {
 				return lib.FormatJSON(os.Stdout, messages)
 			}
-			headers := []string{"OFFSET", "ID", "PARTITION", "RETRIES", "CREATED_AT"}
+			headers := []string{"OFFSET", "ID", "PARTITION", "CREATED_AT"}
 			var rows [][]string
 			for _, m := range messages {
 				rows = append(rows, []string{
 					strconv.FormatInt(m.Offset, 10),
 					m.ID,
 					m.PartitionKey,
-					strconv.Itoa(m.RetryCount),
 					lib.FormatMillis(m.CreatedAt),
 				})
 			}

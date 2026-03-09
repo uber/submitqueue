@@ -1,9 +1,11 @@
 filegroup(
     name = "schema",
     srcs = [
+        "queue_delivery_state.sql",
         "queue_messages.sql",
         "queue_offsets.sql",
         "queue_partition_leases.sql",
+        "queue_subscriber_heartbeats.sql",
     ],
     visibility = ["//visibility:public"],
 )

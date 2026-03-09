@@ -18,49 +18,36 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/uber-go/tally/v4"
+	"github.com/uber/submitqueue/core/metrics"
 	"go.uber.org/zap"
 )
 
 // sqlpartitionLeaseStore is the SQL implementation of partitionLeaseStore
 type sqlpartitionLeaseStore struct {
-	db      *sql.DB
-	logger  *zap.SugaredLogger
-	metrics tally.Scope
+	db     *sql.DB
+	logger *zap.SugaredLogger
+	scope  tally.Scope
 }
 
-// Metric names for partition lease store
-const (
-	metricTryAcquireLeaseErrors     = "try_acquire_lease.errors"
-	metricRenewLeaseErrors          = "renew_lease.errors"
-	metricGetLeasedPartitionsErrors = "get_leased_partitions.errors"
-	metricDiscoverAndAcquireErrors  = "discover_and_acquire.errors"
-)
-
 // newPartitionLeaseStore creates a new SQL partition lease store
-func newPartitionLeaseStore(db *sql.DB, logger *zap.Logger, metrics tally.Scope) partitionLeaseStore {
+func newPartitionLeaseStore(db *sql.DB, logger *zap.SugaredLogger, scope tally.Scope) partitionLeaseStore {
 	return &sqlpartitionLeaseStore{
-		db:      db,
-		logger:  logger.Sugar().Named("partition_lease_store"),
-		metrics: metrics.SubScope("partition_lease_store"),
+		db:     db,
+		logger: logger.Named("partition_lease_store"),
+		scope:  scope.SubScope("partition_lease_store"),
 	}
 }
 
 // TryAcquireLease attempts to acquire or renew a lease for a partition
-func (s *sqlpartitionLeaseStore) TryAcquireLease(ctx context.Context, topic string, partitionKey string, subscriberName string, consumerGroup string, leaseDurationMs int64) (bool, error) {
-	start := time.Now()
-	success := false
-	defer func() {
-		result := "error"
-		if success {
-			result = "success"
-		}
-		s.metrics.Tagged(map[string]string{"result": result}).Timer("try_acquire_lease.latency").Record(time.Since(start))
-	}()
+func (s *sqlpartitionLeaseStore) TryAcquireLease(ctx context.Context, topic string, partitionKey string, subscriberName string, consumerGroup string, leaseDurationMs int64) (_ bool, retErr error) {
+	op := metrics.Begin(s.scope, "try_acquire_lease", metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
 
-	now := start.UnixMilli()
+	now := currentTimeMillis()
 	staleThreshold := now - leaseDurationMs
 
 	// Try to insert or update stale lease
@@ -76,13 +63,7 @@ func (s *sqlpartitionLeaseStore) TryAcquireLease(ctx context.Context, topic stri
 		staleThreshold, staleThreshold, staleThreshold)
 
 	if err != nil {
-		s.logger.Errorw("failed to acquire lease",
-			logTopic, topic,
-			logPartitionKey, partitionKey,
-			logError, err,
-		)
-		s.metrics.Tagged(map[string]string{tagErrorType: "exec_acquire"}).Counter(metricTryAcquireLeaseErrors).Inc(1)
-		return false, fmt.Errorf("failed to acquire lease: %w", err)
+		return false, fmt.Errorf("acquire lease topic=%s partition=%s: %w", topic, partitionKey, err)
 	}
 
 	// Check if we own the lease
@@ -93,43 +74,29 @@ func (s *sqlpartitionLeaseStore) TryAcquireLease(ctx context.Context, topic stri
 	`, PartitionLeasesTableName), consumerGroup, topic, partitionKey).Scan(&owner)
 
 	if err != nil {
-		s.logger.Errorw("failed to check lease ownership",
-			logTopic, topic,
-			logPartitionKey, partitionKey,
-			logError, err,
-		)
-		s.metrics.Tagged(map[string]string{tagErrorType: "check_ownership"}).Counter(metricTryAcquireLeaseErrors).Inc(1)
-		return false, fmt.Errorf("failed to check lease ownership: %w", err)
+		return false, fmt.Errorf("check lease ownership topic=%s partition=%s: %w", topic, partitionKey, err)
 	}
 
 	acquired := owner == subscriberName
 	if acquired {
-		s.metrics.Counter("try_acquire_lease.acquired").Inc(1)
+		metrics.NamedCounter(s.scope, "try_acquire_lease", "acquired", 1, metrics.NewTag("topic", topic))
 		s.logger.Debugw("acquired lease",
 			logTopic, topic,
 			logPartitionKey, partitionKey,
 		)
 	} else {
-		s.metrics.Counter("try_acquire_lease.not_acquired").Inc(1)
+		metrics.NamedCounter(s.scope, "try_acquire_lease", "not_acquired", 1, metrics.NewTag("topic", topic))
 	}
 
-	success = true
 	return acquired, nil
 }
 
 // RenewLease renews the lease for a partition owned by this worker
-func (s *sqlpartitionLeaseStore) RenewLease(ctx context.Context, topic string, partitionKey string, subscriberName string, consumerGroup string, leaseDurationMs int64) error {
-	start := time.Now()
-	success := false
-	defer func() {
-		result := "error"
-		if success {
-			result = "success"
-		}
-		s.metrics.Tagged(map[string]string{"result": result}).Timer("renew_lease.latency").Record(time.Since(start))
-	}()
+func (s *sqlpartitionLeaseStore) RenewLease(ctx context.Context, topic string, partitionKey string, subscriberName string, consumerGroup string, leaseDurationMs int64) (retErr error) {
+	op := metrics.Begin(s.scope, "renew_lease", metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
 
-	now := start.UnixMilli()
+	now := currentTimeMillis()
 
 	result, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE %s
@@ -138,57 +105,30 @@ func (s *sqlpartitionLeaseStore) RenewLease(ctx context.Context, topic string, p
 	`, PartitionLeasesTableName), now, consumerGroup, topic, partitionKey, subscriberName)
 
 	if err != nil {
-		s.logger.Errorw("failed to renew lease",
-			logTopic, topic,
-			logPartitionKey, partitionKey,
-			logError, err,
-		)
-		s.metrics.Tagged(map[string]string{tagErrorType: "exec_renew"}).Counter(metricRenewLeaseErrors).Inc(1)
-		return fmt.Errorf("failed to renew lease: %w", err)
+		return fmt.Errorf("renew lease topic=%s partition=%s: %w", topic, partitionKey, err)
 	}
 
 	rows, err := result.RowsAffected()
 	if err != nil {
-		s.logger.Errorw("failed to check renewal result",
-			logTopic, topic,
-			logPartitionKey, partitionKey,
-			logError, err,
-		)
-		s.metrics.Tagged(map[string]string{tagErrorType: "check_rows_affected"}).Counter(metricRenewLeaseErrors).Inc(1)
-		return fmt.Errorf("failed to check renewal result: %w", err)
+		return fmt.Errorf("check renewal result topic=%s partition=%s: %w", topic, partitionKey, err)
 	}
 
 	if rows == 0 {
-		s.logger.Warnw("lease not owned by this worker or already expired",
-			logTopic, topic,
-			logPartitionKey, partitionKey,
-		)
-		s.metrics.Tagged(map[string]string{tagErrorType: "not_owned"}).Counter(metricRenewLeaseErrors).Inc(1)
-		return fmt.Errorf("lease not owned by this worker or already expired")
+		return &ErrLeaseExpired{Topic: topic, PartitionKey: partitionKey}
 	}
 
-	s.metrics.Counter("renew_lease.success").Inc(1)
 	s.logger.Debugw("renewed lease",
 		logTopic, topic,
 		logPartitionKey, partitionKey,
-		"duration_ms", time.Since(start).Milliseconds(),
 	)
 
-	success = true
 	return nil
 }
 
 // ReleaseLease releases the lease for a partition owned by this worker
-func (s *sqlpartitionLeaseStore) ReleaseLease(ctx context.Context, topic string, partitionKey string, subscriberName string, consumerGroup string) error {
-	start := time.Now()
-	success := false
-	defer func() {
-		result := "error"
-		if success {
-			result = "success"
-		}
-		s.metrics.Tagged(map[string]string{"result": result}).Timer("release_lease.latency").Record(time.Since(start))
-	}()
+func (s *sqlpartitionLeaseStore) ReleaseLease(ctx context.Context, topic string, partitionKey string, subscriberName string, consumerGroup string) (retErr error) {
+	op := metrics.Begin(s.scope, "release_lease", metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
 
 	result, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		DELETE FROM %s
@@ -196,41 +136,34 @@ func (s *sqlpartitionLeaseStore) ReleaseLease(ctx context.Context, topic string,
 	`, PartitionLeasesTableName), consumerGroup, topic, partitionKey, subscriberName)
 
 	if err != nil {
-		s.logger.Errorw("failed to release lease",
+		return fmt.Errorf("release lease topic=%s partition=%s: %w", topic, partitionKey, err)
+	}
+
+	// RowsAffected error is swallowed because the DELETE query itself succeeded.
+	// This is a driver-level diagnostic failure — the lease is already released.
+	// We log for visibility but the release operation is complete.
+	rows, err := result.RowsAffected()
+	if err != nil {
+		s.logger.Warnw("failed to get rows affected after release lease",
 			logTopic, topic,
 			logPartitionKey, partitionKey,
 			logError, err,
 		)
-		s.metrics.Tagged(map[string]string{tagErrorType: "exec_release"}).Counter("release_lease.errors").Inc(1)
-		return fmt.Errorf("failed to release lease: %w", err)
 	}
-
-	// Only increment success counter if we actually deleted a row (idempotent)
-	rows, _ := result.RowsAffected()
 	if rows > 0 {
-		s.metrics.Counter("release_lease.success").Inc(1)
 		s.logger.Debugw("released lease",
 			logTopic, topic,
 			logPartitionKey, partitionKey,
-			"duration_ms", time.Since(start).Milliseconds(),
 		)
 	}
 
-	success = true
 	return nil
 }
 
 // GetLeasedPartitions returns all partitions currently leased by this worker
-func (s *sqlpartitionLeaseStore) GetLeasedPartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string) ([]string, error) {
-	start := time.Now()
-	success := false
-	defer func() {
-		result := "error"
-		if success {
-			result = "success"
-		}
-		s.metrics.Tagged(map[string]string{"result": result}).Timer("get_leased_partitions.latency").Record(time.Since(start))
-	}()
+func (s *sqlpartitionLeaseStore) GetLeasedPartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string) (_ []string, retErr error) {
+	op := metrics.Begin(s.scope, "get_leased_partitions", metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
 
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT partition_key FROM %s
@@ -238,12 +171,7 @@ func (s *sqlpartitionLeaseStore) GetLeasedPartitions(ctx context.Context, topic 
 	`, PartitionLeasesTableName), consumerGroup, topic, subscriberName)
 
 	if err != nil {
-		s.logger.Errorw("failed to get leased partitions",
-			logTopic, topic,
-			logError, err,
-		)
-		s.metrics.Tagged(map[string]string{tagErrorType: "query"}).Counter(metricGetLeasedPartitionsErrors).Inc(1)
-		return nil, fmt.Errorf("failed to get leased partitions: %w", err)
+		return nil, fmt.Errorf("get leased partitions topic=%s: %w", topic, err)
 	}
 	defer rows.Close()
 
@@ -251,54 +179,40 @@ func (s *sqlpartitionLeaseStore) GetLeasedPartitions(ctx context.Context, topic 
 	for rows.Next() {
 		var partition string
 		if err := rows.Scan(&partition); err != nil {
-			s.logger.Errorw("failed to scan partition",
-				logTopic, topic,
-				logError, err,
-			)
-			s.metrics.Tagged(map[string]string{tagErrorType: "scan_partition"}).Counter(metricGetLeasedPartitionsErrors).Inc(1)
-			return nil, fmt.Errorf("failed to scan partition: %w", err)
+			return nil, fmt.Errorf("scan partition topic=%s: %w", topic, err)
 		}
 		partitions = append(partitions, partition)
 	}
 
-	s.metrics.Counter("get_leased_partitions.success").Inc(1)
-	s.metrics.Counter("partitions.leased").Inc(int64(len(partitions)))
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration topic=%s: %w", topic, err)
+	}
+
 	s.logger.Debugw("retrieved leased partitions",
 		logTopic, topic,
 		"count", len(partitions),
-		"duration_ms", time.Since(start).Milliseconds(),
 	)
 
-	success = true
 	return partitions, nil
 }
 
-// DiscoverAndAcquirePartitions discovers partitions from messages table and tries to acquire leases
-// Returns the number of new leases acquired
-func (s *sqlpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string, leaseDurationMs int64) (int, error) {
-	start := time.Now()
-	success := false
-	defer func() {
-		result := "error"
-		if success {
-			result = "success"
-		}
-		s.metrics.Tagged(map[string]string{"result": result}).Timer("discover_and_acquire.latency").Record(time.Since(start))
-	}()
+// DiscoverAndAcquirePartitions discovers partitions from messages table and tries to acquire leases.
+// Returns the number of new leases acquired and the full list of discovered partitions.
+// maxPartitions limits how many total partitions this subscriber can own (0 = unlimited)
+func (s *sqlpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string, leaseDurationMs int64, maxPartitions int) (_ int, _ []string, retErr error) {
+	op := metrics.Begin(s.scope, "discover_and_acquire", metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
 
-	// Query distinct partition_keys from messages table
-	// LIMIT 100: Cap discovery to prevent overwhelming the system when there are many partitions.
-	// Workers will naturally discover and acquire partitions over multiple discovery cycles.
+	// Query distinct partition_keys from messages table.
+	// No LIMIT is applied because all partitions must be discoverable for fair
+	// share computation to be accurate — a LIMIT would silently exclude partitions,
+	// making them permanently unprocessable. The maxPartitions cap only limits how
+	// many leases this subscriber acquires, not how many partitions are visible.
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
-		SELECT DISTINCT partition_key FROM %s WHERE topic = ? LIMIT 100
+		SELECT DISTINCT partition_key FROM %s WHERE topic = ? ORDER BY partition_key
 	`, MessagesTableName), topic)
 	if err != nil {
-		s.logger.Errorw("failed to discover partitions",
-			logTopic, topic,
-			logError, err,
-		)
-		s.metrics.Tagged(map[string]string{tagErrorType: "query_partitions"}).Counter(metricDiscoverAndAcquireErrors).Inc(1)
-		return 0, fmt.Errorf("failed to discover partitions: %w", err)
+		return 0, nil, fmt.Errorf("discover partitions topic=%s: %w", topic, err)
 	}
 	defer rows.Close()
 
@@ -306,14 +220,13 @@ func (s *sqlpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Contex
 	for rows.Next() {
 		var partitionKey string
 		if err := rows.Scan(&partitionKey); err != nil {
-			s.logger.Errorw("failed to scan partition key",
-				logTopic, topic,
-				logError, err,
-			)
-			s.metrics.Tagged(map[string]string{tagErrorType: "scan_partition"}).Counter(metricDiscoverAndAcquireErrors).Inc(1)
-			return 0, fmt.Errorf("failed to scan partition key: %w", err)
+			return 0, nil, fmt.Errorf("scan partition key topic=%s: %w", topic, err)
 		}
 		partitions = append(partitions, partitionKey)
+	}
+
+	if err := rows.Err(); err != nil {
+		return 0, nil, fmt.Errorf("row iteration topic=%s: %w", topic, err)
 	}
 
 	s.logger.Debugw("discovered partitions",
@@ -321,13 +234,44 @@ func (s *sqlpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Contex
 		"count", len(partitions),
 	)
 
+	// Query owned partitions once before the loop to avoid N+1 queries.
+	// Build a set of already-owned partition keys so we can distinguish
+	// re-acquiring an already-owned partition from acquiring a new one.
+	ownedCount := 0
+	ownedSet := make(map[string]struct{})
+	if maxPartitions > 0 {
+		owned, err := s.GetLeasedPartitions(ctx, topic, subscriberName, consumerGroup)
+		if err != nil {
+			return 0, nil, fmt.Errorf("get owned partitions for cap check topic=%s: %w", topic, err)
+		}
+		ownedCount = len(owned)
+		for _, pk := range owned {
+			ownedSet[pk] = struct{}{}
+		}
+	}
+
+	// Sort partitions deterministically
+	sort.Strings(partitions)
+
 	// Try to acquire leases for discovered partitions
 	acquiredCount := 0
 	for _, partitionKey := range partitions {
+		// Enforce maxPartitions cap using local count
+		if maxPartitions > 0 && ownedCount >= maxPartitions {
+			s.logger.Infow("reached max partitions cap, stopping acquisition",
+				logTopic, topic,
+				"max_partitions", maxPartitions,
+				"owned_count", ownedCount,
+			)
+			break
+		}
+
 		acquired, err := s.TryAcquireLease(ctx, topic, partitionKey, subscriberName, consumerGroup, leaseDurationMs)
 		if err != nil {
-			// Log but continue trying other partitions
-			s.logger.Warnw("failed to acquire lease for partition",
+			// Per-partition error is swallowed because one partition's DB failure
+			// should not prevent acquiring leases for other partitions. The failed
+			// partition is retried on the next discovery cycle.
+			s.logger.Errorw("failed to acquire lease for partition",
 				logTopic, topic,
 				logPartitionKey, partitionKey,
 				logError, err,
@@ -335,20 +279,28 @@ func (s *sqlpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Contex
 			continue
 		}
 		if acquired {
-			acquiredCount++
+			// Only count as newly acquired if not already owned.
+			// TryAcquireLease returns true for already-owned partitions (renew),
+			// so we must not double-count them against the maxPartitions cap.
+			if _, alreadyOwned := ownedSet[partitionKey]; !alreadyOwned {
+				acquiredCount++
+				ownedCount++
+			}
 		}
 	}
 
-	s.metrics.Counter("discover_and_acquire.success").Inc(1)
-	s.metrics.Counter("partitions.discovered").Inc(int64(len(partitions)))
-	s.metrics.Counter("partitions.acquired").Inc(int64(acquiredCount))
+	metrics.NamedCounter(s.scope, "discover_and_acquire", "partitions_discovered", int64(len(partitions)), metrics.NewTag("topic", topic))
+	metrics.NamedCounter(s.scope, "discover_and_acquire", "partitions_acquired", int64(acquiredCount), metrics.NewTag("topic", topic))
 	s.logger.Infow("completed partition discovery and acquisition",
 		logTopic, topic,
 		"discovered_count", len(partitions),
 		"acquired_count", acquiredCount,
-		"duration_ms", time.Since(start).Milliseconds(),
 	)
 
-	success = true
-	return acquiredCount, nil
+	return acquiredCount, partitions, nil
+}
+
+// currentTimeMillis returns the current time in milliseconds since epoch.
+func currentTimeMillis() int64 {
+	return time.Now().UnixMilli()
 }

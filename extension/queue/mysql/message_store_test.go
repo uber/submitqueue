@@ -17,10 +17,12 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally/v4"
 	"go.uber.org/zap/zaptest"
@@ -39,12 +41,12 @@ func setupmessageStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, messageStore
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	store := newMessageStore(db, zaptest.NewLogger(t), testMetrics())
+	store := newMessageStore(db, zaptest.NewLogger(t).Sugar(), testMetrics())
 
 	return db, mock, store
 }
 
-func TestmessageStore_Insert(t *testing.T) {
+func TestMessageStore_Insert(t *testing.T) {
 	tests := []struct {
 		name     string
 		messages []queue.Message
@@ -96,24 +98,25 @@ func TestmessageStore_Insert(t *testing.T) {
 	}
 }
 
-func TestmessageStore_Delete(t *testing.T) {
+func TestMessageStore_Delete(t *testing.T) {
 	db, mock, store := setupmessageStoreTest(t)
 	defer db.Close()
 
 	ctx := context.Background()
 	topic := "test_topic"
+	partitionKey := "part1"
 	messageID := "msg1"
 
 	mock.ExpectExec("DELETE FROM queue_messages").
-		WithArgs(topic, messageID).
+		WithArgs(topic, partitionKey, messageID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	err := store.Delete(ctx, topic, messageID)
+	err := store.Delete(ctx, topic, partitionKey, messageID)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestmessageStore_FetchByOffset(t *testing.T) {
+func TestMessageStore_FetchByOffset(t *testing.T) {
 	db, mock, store := setupmessageStoreTest(t)
 	defer db.Close()
 
@@ -122,57 +125,29 @@ func TestmessageStore_FetchByOffset(t *testing.T) {
 	partitionKey := "part1"
 	currentOffset := int64(0)
 	limit := 10
-	visibilityTimeoutMs := int64(60000) // 60 seconds in milliseconds
 
-	// Expect transaction begin
-	mock.ExpectBegin()
-
-	// Mock query results (including DLQ columns)
-	rows := sqlmock.NewRows([]string{"offset", "id", "payload", "metadata", "partition_key", "retry_count", "published_at", "failed_at", "failure_count", "last_error", "original_topic"}).
-		AddRow(int64(1), "msg1", []byte("payload1"), []byte("{}"), "part1", 0, time.Now().UnixMilli(), int64(0), 0, "", "")
+	// Mock query results (no transaction, simple SELECT)
+	rows := sqlmock.NewRows([]string{"offset", "id", "payload", "metadata", "partition_key", "published_at", "failed_at", "failure_count", "last_error", "original_topic"}).
+		AddRow(int64(1), "msg1", []byte("payload1"), []byte("{}"), "part1", time.Now().UnixMilli(), int64(0), 0, "", "")
 
 	mock.ExpectQuery("SELECT (.+) FROM queue_messages").
-		WithArgs(topic, partitionKey, currentOffset, sqlmock.AnyArg(), limit).
+		WithArgs(topic, partitionKey, currentOffset, limit).
 		WillReturnRows(rows)
 
-	// Expect update for visibility timeout
-	mock.ExpectExec("UPDATE queue_messages").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	// Expect commit
-	mock.ExpectCommit()
-
-	results, err := store.FetchByOffset(ctx, topic, partitionKey, currentOffset, limit, visibilityTimeoutMs)
+	results, err := store.FetchByOffset(ctx, topic, partitionKey, currentOffset, limit)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	require.Equal(t, "msg1", results[0].ID)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestmessageStore_SetVisibilityTimeout(t *testing.T) {
+func TestMessageStore_MoveToDLQ(t *testing.T) {
 	db, mock, store := setupmessageStoreTest(t)
 	defer db.Close()
 
 	ctx := context.Background()
 	topic := "test_topic"
-	messageID := "msg1"
-	visibilityTimeoutMillis := int64(5000)
-
-	mock.ExpectExec("UPDATE queue_messages").
-		WithArgs(sqlmock.AnyArg(), topic, messageID).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err := store.SetVisibilityTimeout(ctx, topic, messageID, visibilityTimeoutMillis)
-	require.NoError(t, err)
-	require.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestmessageStore_MoveToDLQ(t *testing.T) {
-	db, mock, store := setupmessageStoreTest(t)
-	defer db.Close()
-
-	ctx := context.Background()
-	topic := "test_topic"
+	partitionKey := "part1"
 	messageID := "msg1"
 	failureCount := 3
 	lastError := "test error"
@@ -182,30 +157,150 @@ func TestmessageStore_MoveToDLQ(t *testing.T) {
 	// Expect transaction begin
 	mock.ExpectBegin()
 
-	// Mock query for fetching message - SELECT payload, metadata, partition_key, created_at, published_at, retry_count
-	rows := sqlmock.NewRows([]string{"payload", "metadata", "partition_key", "created_at", "published_at", "retry_count"}).
-		AddRow([]byte("payload1"), []byte(`{"key":"value"}`), "part1", time.Now().UnixMilli(), time.Now().UnixMilli(), failureCount)
+	// Mock query for fetching message (now includes partition_key in WHERE)
+	rows := sqlmock.NewRows([]string{"payload", "metadata", "partition_key", "created_at", "published_at"}).
+		AddRow([]byte("payload1"), []byte(`{"key":"value"}`), "part1", time.Now().UnixMilli(), time.Now().UnixMilli())
 
 	mock.ExpectQuery("SELECT (.+) FROM queue_messages").
-		WithArgs(topic, messageID).
+		WithArgs(topic, partitionKey, messageID).
 		WillReturnRows(rows)
 
-	// Expect insert into queue_messages with DLQ topic and DLQ-specific columns
-	// Columns: topic, id, payload, metadata, partition_key, created_at, published_at, invisible_until, retry_count, failed_at, failure_count, last_error, original_topic
-	// Note: retry_count is reset to 0 for DLQ processing, but failure_count preserves the original attempts
+	// Expect insert into queue_messages with DLQ topic
 	mock.ExpectExec("INSERT INTO queue_messages").
-		WithArgs(dlqTopic, messageID, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), int64(0), 0, sqlmock.AnyArg(), failureCount, lastError, topic).
+		WithArgs(dlqTopic, messageID, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), failureCount, lastError, topic).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
-	// Expect delete from main table
+	// Expect delete from main table (now includes partition_key in WHERE)
 	mock.ExpectExec("DELETE FROM queue_messages").
-		WithArgs(topic, messageID).
+		WithArgs(topic, partitionKey, messageID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	// Expect commit
 	mock.ExpectCommit()
 
-	err := store.MoveToDLQ(ctx, topic, messageID, failureCount, lastError, dlqTopicSuffix)
+	err := store.MoveToDLQ(ctx, topic, partitionKey, messageID, failureCount, lastError, dlqTopicSuffix)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMessageStore_GetOffsetsAbove(t *testing.T) {
+	tests := []struct {
+		name        string
+		afterOffset int64
+		limit       int
+		offsets     []int64
+		wantErr     bool
+	}{
+		{
+			name:        "returns offsets in ascending order",
+			afterOffset: 5,
+			limit:       1000,
+			offsets:     []int64{6, 7, 8},
+		},
+		{
+			name:        "returns offsets with AUTO_INCREMENT gaps",
+			afterOffset: 5,
+			limit:       1000,
+			offsets:     []int64{6, 9, 15},
+		},
+		{
+			name:        "no messages above offset",
+			afterOffset: 100,
+			limit:       1000,
+			offsets:     nil,
+		},
+		{
+			name:        "db error",
+			afterOffset: 0,
+			limit:       1000,
+			wantErr:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, store := setupmessageStoreTest(t)
+			defer db.Close()
+
+			if tt.wantErr {
+				mock.ExpectQuery("SELECT offset FROM queue_messages").
+					WithArgs("test_topic", "part-1", tt.afterOffset, tt.limit).
+					WillReturnError(fmt.Errorf("db error"))
+			} else {
+				rows := sqlmock.NewRows([]string{"offset"})
+				for _, offset := range tt.offsets {
+					rows.AddRow(offset)
+				}
+				mock.ExpectQuery("SELECT offset FROM queue_messages").
+					WithArgs("test_topic", "part-1", tt.afterOffset, tt.limit).
+					WillReturnRows(rows)
+			}
+
+			offsets, err := store.GetOffsetsAbove(context.Background(), "test_topic", "part-1", tt.afterOffset, tt.limit)
+
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tt.offsets, offsets)
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestMessageStore_GarbageCollect(t *testing.T) {
+	tests := []struct {
+		name           string
+		minAckedOffset int64
+		deleteErr      bool
+		wantDeleted    int64
+		wantErr        bool
+	}{
+		{
+			name:           "deletes messages up to min offset",
+			minAckedOffset: 10,
+			wantDeleted:    5,
+		},
+		{
+			name:           "zero offset returns 0 deleted",
+			minAckedOffset: 0,
+			wantDeleted:    0,
+		},
+		{
+			name:           "delete error",
+			minAckedOffset: 10,
+			deleteErr:      true,
+			wantErr:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, store := setupmessageStoreTest(t)
+			defer db.Close()
+
+			if tt.minAckedOffset > 0 {
+				if tt.deleteErr {
+					mock.ExpectExec("DELETE FROM queue_messages").
+						WithArgs("test_topic", "part-1", tt.minAckedOffset).
+						WillReturnError(fmt.Errorf("db error"))
+				} else {
+					mock.ExpectExec("DELETE FROM queue_messages").
+						WithArgs("test_topic", "part-1", tt.minAckedOffset).
+						WillReturnResult(sqlmock.NewResult(0, tt.wantDeleted))
+				}
+			}
+
+			deleted, err := store.GarbageCollect(context.Background(), "test_topic", "part-1", tt.minAckedOffset)
+
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantDeleted, deleted)
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }

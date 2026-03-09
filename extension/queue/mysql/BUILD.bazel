@@ -8,6 +8,7 @@ gomock(
     out = "mock_stores.go",
     mockgen_tool = _MOCKGEN,
     package = "mysql",
+    self_package = "github.com/uber/submitqueue/extension/queue/mysql",
     source = "stores.go",
     source_importpath = "github.com/uber/submitqueue/extension/queue/mysql",
 )
@@ -17,6 +18,7 @@ go_library(
     name = "mysql",
     srcs = [
         "constants.go",
+        "delivery_state_store.go",
         "errors.go",
         "message_store.go",
         ":mock_stores_src",
@@ -26,10 +28,12 @@ go_library(
         "sql.go",
         "stores.go",
         "subscriber.go",
+        "subscriber_heartbeat_store.go",
     ],
     importpath = "github.com/uber/submitqueue/extension/queue/mysql",
     visibility = ["//visibility:public"],
     deps = [
+        "//core/metrics",
         "//entity/queue",
         "//extension/queue",
         "@com_github_uber_go_tally_v4//:tally",
@@ -41,11 +45,13 @@ go_library(
 go_test(
     name = "mysql_test",
     srcs = [
+        "delivery_state_store_test.go",
         "message_store_test.go",
         "offset_store_test.go",
         "partition_lease_store_test.go",
         "publisher_test.go",
         "sql_test.go",
+        "subscriber_heartbeat_store_test.go",
         "subscriber_test.go",
     ],
     embed = [":mysql"],

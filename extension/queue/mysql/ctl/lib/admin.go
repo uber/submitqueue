@@ -45,10 +45,6 @@ type MessageSummary struct {
 	Topic string
 	// PartitionKey determines message distribution
 	PartitionKey string
-	// RetryCount tracks retries on the current topic
-	RetryCount int
-	// InvisibleUntil is the epoch milliseconds until which the message is hidden
-	InvisibleUntil int64
 	// CreatedAt is the epoch milliseconds when the message was created
 	CreatedAt int64
 	// PublishedAt is the epoch milliseconds when the message was published
@@ -116,10 +112,6 @@ type TopicStats struct {
 	Topic string
 	// TotalMessages is the total number of messages
 	TotalMessages int64
-	// VisibleMessages is the count of messages currently visible for consumption
-	VisibleMessages int64
-	// InvisibleMessages is the count of messages hidden by visibility timeout
-	InvisibleMessages int64
 	// DLQCount is the number of messages in the DLQ for this topic
 	DLQCount int64
 	// PartitionCount is the number of distinct partitions
@@ -154,7 +146,6 @@ func (s *AdminStore) ListTopics(ctx context.Context) ([]TopicInfo, error) {
 // GetTopicStats returns detailed statistics for a topic.
 func (s *AdminStore) GetTopicStats(ctx context.Context, topic string, dlqSuffix string) (TopicStats, error) {
 	stats := TopicStats{Topic: topic}
-	nowMs := time.Now().UnixMilli()
 
 	// Total messages
 	err := s.db.QueryRowContext(ctx,
@@ -164,18 +155,6 @@ func (s *AdminStore) GetTopicStats(ctx context.Context, topic string, dlqSuffix 
 	if err != nil {
 		return stats, fmt.Errorf("count total: %w", err)
 	}
-
-	// Visible messages (invisible_until <= now)
-	err = s.db.QueryRowContext(ctx,
-		fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE topic = ? AND invisible_until <= ?", mysql.MessagesTableName),
-		topic, nowMs,
-	).Scan(&stats.VisibleMessages)
-	if err != nil {
-		return stats, fmt.Errorf("count visible: %w", err)
-	}
-
-	// Invisible messages
-	stats.InvisibleMessages = stats.TotalMessages - stats.VisibleMessages
 
 	// DLQ count
 	dlqTopic := topic + dlqSuffix
@@ -215,12 +194,12 @@ func (s *AdminStore) ListMessages(ctx context.Context, topic string, partition s
 
 	if partition != "" {
 		rows, err = s.db.QueryContext(ctx,
-			fmt.Sprintf("SELECT `offset`, id, topic, partition_key, retry_count, invisible_until, created_at, published_at FROM %s WHERE topic = ? AND partition_key = ? ORDER BY `offset` LIMIT ?", mysql.MessagesTableName),
+			fmt.Sprintf("SELECT `offset`, id, topic, partition_key, created_at, published_at FROM %s WHERE topic = ? AND partition_key = ? ORDER BY `offset` LIMIT ?", mysql.MessagesTableName),
 			topic, partition, limit,
 		)
 	} else {
 		rows, err = s.db.QueryContext(ctx,
-			fmt.Sprintf("SELECT `offset`, id, topic, partition_key, retry_count, invisible_until, created_at, published_at FROM %s WHERE topic = ? ORDER BY `offset` LIMIT ?", mysql.MessagesTableName),
+			fmt.Sprintf("SELECT `offset`, id, topic, partition_key, created_at, published_at FROM %s WHERE topic = ? ORDER BY `offset` LIMIT ?", mysql.MessagesTableName),
 			topic, limit,
 		)
 	}
@@ -232,7 +211,7 @@ func (s *AdminStore) ListMessages(ctx context.Context, topic string, partition s
 	var messages []MessageSummary
 	for rows.Next() {
 		var m MessageSummary
-		if err := rows.Scan(&m.Offset, &m.ID, &m.Topic, &m.PartitionKey, &m.RetryCount, &m.InvisibleUntil, &m.CreatedAt, &m.PublishedAt); err != nil {
+		if err := rows.Scan(&m.Offset, &m.ID, &m.Topic, &m.PartitionKey, &m.CreatedAt, &m.PublishedAt); err != nil {
 			return nil, fmt.Errorf("scan message row: %w", err)
 		}
 		messages = append(messages, m)
@@ -246,9 +225,9 @@ func (s *AdminStore) InspectMessage(ctx context.Context, topic string, messageID
 	var metadataJSON []byte
 
 	err := s.db.QueryRowContext(ctx,
-		fmt.Sprintf("SELECT `offset`, id, topic, partition_key, retry_count, invisible_until, created_at, published_at, payload, metadata, failed_at, failure_count, last_error, original_topic FROM %s WHERE topic = ? AND id = ?", mysql.MessagesTableName),
+		fmt.Sprintf("SELECT `offset`, id, topic, partition_key, created_at, published_at, payload, metadata, failed_at, failure_count, last_error, original_topic FROM %s WHERE topic = ? AND id = ?", mysql.MessagesTableName),
 		topic, messageID,
-	).Scan(&d.Offset, &d.ID, &d.Topic, &d.PartitionKey, &d.RetryCount, &d.InvisibleUntil, &d.CreatedAt, &d.PublishedAt, &d.Payload, &metadataJSON, &d.FailedAt, &d.FailureCount, &d.LastError, &d.OriginalTopic)
+	).Scan(&d.Offset, &d.ID, &d.Topic, &d.PartitionKey, &d.CreatedAt, &d.PublishedAt, &d.Payload, &metadataJSON, &d.FailedAt, &d.FailureCount, &d.LastError, &d.OriginalTopic)
 	if err == sql.ErrNoRows {
 		return d, false, nil
 	}
@@ -323,7 +302,7 @@ func (s *AdminStore) RequeueDLQ(ctx context.Context, topic string, messageID str
 	// Insert into original topic with reset fields
 	nowMs := time.Now().UnixMilli()
 	_, err = tx.ExecContext(ctx,
-		fmt.Sprintf("INSERT INTO %s (topic, partition_key, id, payload, metadata, retry_count, invisible_until, created_at, published_at, failed_at, failure_count, last_error, original_topic) VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, 0, 0, '', '')", mysql.MessagesTableName),
+		fmt.Sprintf("INSERT INTO %s (topic, partition_key, id, payload, metadata, created_at, published_at, failed_at, failure_count, last_error, original_topic) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, '', '')", mysql.MessagesTableName),
 		topic, partitionKey, messageID, payload, metadataJSON, createdAt, nowMs,
 	)
 	if err != nil {
