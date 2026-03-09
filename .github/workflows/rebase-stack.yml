@@ -1,0 +1,249 @@
+# Rebase Stacked PRs
+#
+# Problem:
+#   When using stacked PRs (main -> PR1 -> PR2 -> PR3), merging PR1 via
+#   squash or rebase causes GitHub to retarget PR2's base to main. However,
+#   PR2's branch still contains PR1's original commits, so its diff shows
+#   both PR1 and PR2 changes — a broken diff that confuses reviewers.
+#
+# Solution:
+#   This workflow triggers when any PR is merged and automatically:
+#   1. Finds all open PRs whose base branch is the merged PR's head branch
+#      (i.e., the next PR in the stack).
+#   2. Rebases each child PR onto the merged PR's base (e.g., main), using
+#      "git rebase --onto" to replay only the child's own commits.
+#   3. Walks the full chain recursively — if PR2 is rebased, PR3 (based on
+#      PR2) is also rebased onto the new PR2, and so on to any depth.
+#   4. Validates the diff is identical before and after rebase — if the
+#      rebase silently altered code, it refuses to force-push.
+#   5. If a rebase hits conflicts, it leaves a comment with manual fix
+#      instructions and stops processing that chain.
+#   6. Deletes the merged PR's head branch (replaces GitHub's auto-delete).
+#
+# Why "rebase --onto" instead of "--fork-point":
+#   GitHub Actions runs on a fresh clone with no reflog, so --fork-point
+#   (which arh uses locally) cannot detect fork points. Instead, we use
+#   the merged PR's head SHA from the event payload as the explicit old
+#   base, achieving the same result.
+#
+# Example: main -> PR1(branch1, C1) -> PR2(branch2, C2) -> PR3(branch3, C3)
+#   PR1 merges into main:
+#     1. rebase --onto origin/main <old-branch1-sha> branch2  (replays C2)
+#     2. rebase --onto <new-branch2-sha> <old-branch2-sha> branch3  (replays C3)
+#     3. Delete branch1
+#   Result: main -> PR2(branch2, C2') -> PR3(branch3, C3')
+
+name: Rebase Stacked PRs
+
+on:
+  pull_request:
+    types:
+      - closed
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  rebase-stack:
+    name: Rebase Stack
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Fetch full history so rebase --onto works correctly.
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Rebase stacked PRs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MERGED_HEAD: ${{ github.event.pull_request.head.ref }}
+          MERGED_BASE: ${{ github.event.pull_request.base.ref }}
+          MERGED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # rebase_chain walks the stack depth-first, rebasing each child PR
+          # onto its new base and recursing into grandchildren.
+          #
+          # It uses "git rebase --onto" to replay only a branch's OWN commits:
+          #   git rebase --onto <new_base> <old_base_sha> <branch>
+          # This takes the commits between old_base_sha and branch tip, and
+          # replays them onto new_base — discarding the parent's commits that
+          # the child was carrying.
+          #
+          # Args:
+          #   $1 - lookup_base:  branch name to find child PRs (gh pr list --base)
+          #   $2 - rebase_onto:  SHA or ref to rebase onto
+          #   $3 - old_base_sha: SHA of the old base tip; commits between this and
+          #                      the child branch tip are the child's own commits
+          #   $4 - new_pr_base:  branch name to set as the PR's new base in GitHub
+          rebase_chain() {
+            local lookup_base="$1"
+            local rebase_onto="$2"
+            local old_base_sha="$3"
+            local new_pr_base="$4"
+
+            # Find open PRs whose base branch matches the lookup branch.
+            local prs
+            prs=$(gh pr list \
+              --base "$lookup_base" \
+              --state open \
+              --json number,headRefName \
+              --jq '.[] | "\(.number) \(.headRefName)"')
+
+            if [ -z "$prs" ]; then
+              return 0
+            fi
+
+            while IFS=' ' read -r pr_number pr_branch; do
+              echo ""
+              echo "=== Rebasing PR #${pr_number} (${pr_branch}) ==="
+              echo "    onto: ${rebase_onto}"
+              echo "    old base SHA: ${old_base_sha}"
+
+              git fetch origin "$pr_branch"
+              git checkout -B "$pr_branch" "origin/$pr_branch"
+
+              # Save the pre-rebase tip. When we recurse into grandchildren,
+              # this becomes their old_base_sha (the boundary between this
+              # branch's commits and the grandchild's commits).
+              local old_child_tip
+              old_child_tip=$(git rev-parse HEAD)
+
+              # Capture the patch (code changes only) before rebase. After
+              # rebase we compare this to the new patch — a correct rebase
+              # must produce an identical diff. If it doesn't, the rebase
+              # silently altered code and we refuse to force-push.
+              local diff_before
+              diff_before=$(git diff "$old_base_sha"..HEAD)
+
+              # Replay only this branch's own commits onto the new base.
+              if ! git rebase --onto "$rebase_onto" "$old_base_sha" "$pr_branch" 2>&1; then
+                echo "::warning::Rebase failed for PR #${pr_number} (${pr_branch})."
+                git rebase --abort 2>/dev/null || true
+
+                # Leave instructions for manual resolution.
+                local comment_body
+                comment_body=$(cat <<EOF
+          :warning: **Automatic stack rebase failed**
+
+          This PR could not be automatically rebased after its base PR was merged. The rebase hit conflicts that need manual resolution.
+
+          **To fix manually:**
+          \`\`\`bash
+          git fetch origin
+          git checkout ${pr_branch}
+          git rebase --onto origin/${new_pr_base} ${old_base_sha} ${pr_branch}
+          # resolve conflicts, then:
+          git push --force-with-lease
+          \`\`\`
+
+          Then update this PR's base branch:
+          \`\`\`bash
+          gh pr edit ${pr_number} --base ${new_pr_base}
+          \`\`\`
+          EOF
+          )
+                gh pr comment "$pr_number" --body "$comment_body"
+
+                # Update the base even on failure so GitHub shows the correct
+                # target branch, even if the diff is still wrong.
+                gh pr edit "$pr_number" --base "$new_pr_base"
+
+                echo "::warning::Stopping chain at PR #${pr_number} due to conflicts."
+                return 1
+              fi
+
+              local new_child_tip
+              new_child_tip=$(git rev-parse HEAD)
+
+              echo "    rebased: ${old_child_tip} -> ${new_child_tip}"
+
+              # Safety check: verify the rebase preserved the exact same code
+              # changes. The diff of the branch's own commits against its base
+              # must be identical before and after rebase. If not, the rebase
+              # altered code (e.g., bad conflict auto-resolution) and we refuse
+              # to force-push.
+              local diff_after
+              diff_after=$(git diff "$rebase_onto"..HEAD)
+
+              if [ "$diff_before" != "$diff_after" ]; then
+                echo "::error::Diff mismatch after rebase for PR #${pr_number} (${pr_branch})!"
+                echo "    The rebase changed the code content. Refusing to force-push."
+
+                gh pr comment "$pr_number" --body ":stop_sign: **Automatic stack rebase aborted — diff mismatch**
+
+          The rebase of \`$pr_branch\` completed without conflicts, but the resulting code diff does not match the original. This means the rebase silently altered code content. The branch was **not** force-pushed.
+
+          Please rebase manually and verify the changes are correct."
+
+                gh pr edit "$pr_number" --base "$new_pr_base"
+                return 1
+              fi
+
+              echo "    diff validated: content unchanged after rebase"
+
+              # Push the rebased branch. --force-with-lease fails if someone
+              # else pushed to this branch concurrently, preventing data loss.
+              if ! git push --force-with-lease origin "$pr_branch" 2>&1; then
+                echo "::warning::Force push failed for PR #${pr_number} (${pr_branch})."
+
+                gh pr comment "$pr_number" --body ":warning: **Automatic stack rebase failed**
+
+          The rebase succeeded but force-push failed for \`$pr_branch\`. This may be due to a concurrent push. Please rebase manually."
+
+                gh pr edit "$pr_number" --base "$new_pr_base"
+                return 1
+              fi
+
+              # Point the PR at the correct base branch in GitHub.
+              gh pr edit "$pr_number" --base "$new_pr_base"
+              echo "    PR #${pr_number} base updated to '${new_pr_base}'."
+
+              # Recurse into grandchildren: PRs whose base is this child's
+              # branch. They need to rebase onto the NEW child tip (post-rebase),
+              # using the OLD child tip as their fork point. Their GitHub base
+              # stays as pr_branch since that branch still exists.
+              rebase_chain "$pr_branch" "$new_child_tip" "$old_child_tip" "$pr_branch" || return 1
+
+            done <<< "$prs"
+
+            return 0
+          }
+
+          echo "Merged PR: ${MERGED_HEAD} -> ${MERGED_BASE}"
+          echo "Merged head SHA: ${MERGED_HEAD_SHA}"
+
+          git fetch origin "$MERGED_BASE"
+
+          # Kick off the recursive rebase. Immediate children of the merged PR
+          # get rebased onto MERGED_BASE, using MERGED_HEAD_SHA as the old
+          # fork point (the tip of the now-merged branch before it was deleted).
+          # "|| rebase_result=$?" prevents set -e from aborting — we always
+          # want to clean up the merged branch regardless of rebase outcome.
+          rebase_result=0
+          rebase_chain \
+            "$MERGED_HEAD" \
+            "origin/$MERGED_BASE" \
+            "$MERGED_HEAD_SHA" \
+            "$MERGED_BASE" \
+          || rebase_result=$?
+
+          # Delete the merged PR's head branch. This replaces GitHub's
+          # auto-delete-head-branch setting, giving us control over timing
+          # (we delete only after the stack is rebased).
+          echo ""
+          echo "Deleting merged branch: $MERGED_HEAD"
+          git push origin --delete "$MERGED_HEAD" 2>/dev/null || echo "Branch already deleted."
+
+          if [ "$rebase_result" -eq 0 ]; then
+            echo "=== All stacked PRs rebased successfully ==="
+          else
+            echo "=== Rebase chain stopped due to conflicts ==="
+          fi
