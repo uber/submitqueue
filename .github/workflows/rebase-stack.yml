@@ -54,11 +54,11 @@ jobs:
         with:
           # Fetch full history so rebase --onto works correctly.
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.STACK_REBASE_TOKEN }}
 
       - name: Rebase stacked PRs
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.STACK_REBASE_TOKEN }}
           MERGED_HEAD: ${{ github.event.pull_request.head.ref }}
           MERGED_BASE: ${{ github.event.pull_request.base.ref }}
           MERGED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
