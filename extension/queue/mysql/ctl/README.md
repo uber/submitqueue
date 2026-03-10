@@ -43,7 +43,7 @@ bazel run //extension/queue/mysql/ctl -- topic-stats --topic merge_queue
 # List all topics with message counts
 queue-admin list-topics
 
-# Detailed stats for a topic (visible/invisible messages, DLQ count, partitions, consumer groups)
+# Detailed stats for a topic (total messages, DLQ count, partitions, consumer groups)
 queue-admin topic-stats --topic merge_queue
 ```
 
