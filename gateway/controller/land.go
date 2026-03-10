@@ -124,11 +124,6 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 
 	// Publish to queue for async processing
 	if err := c.publishToQueue(ctx, landRequest); err != nil {
-		c.logger.Errorw("failed to publish request to queue",
-			"queue", req.Queue,
-			"sqid", landRequest.ID,
-			"error", err,
-		)
 		return nil, fmt.Errorf("LandController failed to publish request to queue: %w", err)
 	}
 

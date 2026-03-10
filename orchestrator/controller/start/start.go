@@ -21,7 +21,6 @@ import (
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
-	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
 	"github.com/uber/submitqueue/extension/storage"
@@ -73,12 +72,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Deserialize land request from gateway
 	landRequest, err := entity.LandRequestFromBytes(msg.Payload)
 	if err != nil {
-		c.logger.Errorw("failed to deserialize land request",
-			"message_id", msg.ID,
-			"partition_key", msg.PartitionKey,
-			"attempt", delivery.Attempt(),
-			"error", err,
-		)
 		c.metricsScope.Counter("deserialize_errors").Inc(1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
 		return fmt.Errorf("failed to deserialize land request: %w", err)
@@ -108,12 +101,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	// Persist request to storage (idempotent — ErrAlreadyExists means a retry)
 	if err := c.store.GetRequestStore().Create(ctx, request); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
-		c.logger.Errorw("failed to create request in storage",
-			"request_id", request.ID,
-			"error", err,
-		)
 		c.metricsScope.Counter("storage_errors").Inc(1)
-		return errs.NewRetryableError(fmt.Errorf("failed to create request: %w", err))
+		return fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// Record the "new" status in the request log
@@ -127,13 +116,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	// Publish to validate topic
 	if err := c.publish(ctx, consumer.TopicKeyValidate, request); err != nil {
-		c.logger.Errorw("failed to publish output",
-			"request_id", request.ID,
-			"topic_key", consumer.TopicKeyValidate,
-			"error", err,
-		)
 		c.metricsScope.Counter("publish_errors").Inc(1)
-		return errs.NewRetryableError(fmt.Errorf("failed to publish to validate: %w", err))
+		return fmt.Errorf("failed to publish to validate: %w", err)
 	}
 
 	c.logger.Infow("published request to validate",

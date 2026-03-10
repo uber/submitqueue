@@ -20,7 +20,6 @@ import (
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
-	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/extension/storage"
@@ -73,12 +72,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// Deserialize batch entity
 	batch, err := entity.BatchFromBytes(msg.Payload)
 	if err != nil {
-		c.logger.Errorw("failed to deserialize batch",
-			"message_id", msg.ID,
-			"partition_key", msg.PartitionKey,
-			"attempt", delivery.Attempt(),
-			"error", err,
-		)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
 		metrics.NamedCounter(c.metricsScope, "process", "deserialize_errors", 1)
 		return fmt.Errorf("failed to deserialize batch: %w", err)
@@ -100,10 +93,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// as updated by the merge controller.
 	requestState, err := batchStateToRequestState(batch.State)
 	if err != nil {
-		c.logger.Errorw("unexpected batch state",
-			"batch_id", batch.ID,
-			"state", string(batch.State),
-		)
 		metrics.NamedCounter(c.metricsScope, "process", "unexpected_state_errors", 1)
 		return fmt.Errorf("unexpected batch state %q for batch %s: %w", batch.State, batch.ID, err)
 	}
@@ -112,25 +101,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	for _, requestID := range batch.Contains {
 		request, err := c.store.GetRequestStore().Get(ctx, requestID)
 		if err != nil {
-			c.logger.Errorw("failed to get request from storage",
-				"batch_id", batch.ID,
-				"request_id", requestID,
-				"error", err,
-			)
 			metrics.NamedCounter(c.metricsScope, "process", "request_store_errors", 1)
-			return errs.NewRetryableError(fmt.Errorf("failed to get request %s: %w", requestID, err))
+			return fmt.Errorf("failed to get request %s: %w", requestID, err)
 		}
 
 		if err := c.store.GetRequestStore().UpdateState(ctx, requestID, request.Version, requestState); err != nil {
-			c.logger.Errorw("failed to update request state",
-				"batch_id", batch.ID,
-				"request_id", requestID,
-				"from_version", request.Version,
-				"to_state", string(requestState),
-				"error", err,
-			)
 			metrics.NamedCounter(c.metricsScope, "process", "request_update_errors", 1)
-			return errs.NewRetryableError(fmt.Errorf("failed to update request %s state to %s: %w", requestID, requestState, err))
+			return fmt.Errorf("failed to update request %s state to %s: %w", requestID, requestState, err)
 		}
 
 		c.logger.Infow("updated request state",

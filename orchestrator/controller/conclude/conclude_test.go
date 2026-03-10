@@ -156,7 +156,7 @@ func TestController_Process(t *testing.T) {
 				return mockStorage
 			},
 			wantErr:   true,
-			retryable: true,
+			retryable: false,
 		},
 		{
 			name: "request store update failure is retryable",
@@ -179,7 +179,7 @@ func TestController_Process(t *testing.T) {
 				return mockStorage
 			},
 			wantErr:   true,
-			retryable: true,
+			retryable: false,
 		},
 		{
 			name: "empty contains list succeeds",

@@ -20,7 +20,6 @@ import (
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
-	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
 	"github.com/uber/submitqueue/extension/counter"
@@ -76,12 +75,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Deserialize request entity
 	request, err := entity.RequestFromBytes(msg.Payload)
 	if err != nil {
-		c.logger.Errorw("failed to deserialize request",
-			"message_id", msg.ID,
-			"partition_key", msg.PartitionKey,
-			"attempt", delivery.Attempt(),
-			"error", err,
-		)
 		c.metricsScope.Counter("deserialize_errors").Inc(1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
 		return fmt.Errorf("failed to deserialize request: %w", err)
@@ -99,11 +92,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Generate a globally unique batch ID.
 	seq, err := c.counter.Next(ctx, "batch/"+request.Queue)
 	if err != nil {
-		c.logger.Errorw("failed to generate batch ID",
-			"request_id", request.ID,
-			"queue", request.Queue,
-			"error", err,
-		)
 		c.metricsScope.Counter("counter_errors").Inc(1)
 		return fmt.Errorf("failed to generate batch ID for queue=%s: %w", request.Queue, err)
 	}
@@ -123,11 +111,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		entity.BatchStateFinalizing,
 	})
 	if err != nil {
-		c.logger.Errorw("failed to get active batches",
-			"request_id", request.ID,
-			"queue", request.Queue,
-			"error", err,
-		)
 		c.metricsScope.Counter("batch_store_errors").Inc(1)
 		return fmt.Errorf("failed to get active batches for queue=%s: %w", request.Queue, err)
 	}
@@ -150,10 +133,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 		existing, err := c.store.GetBatchDependentStore().Get(ctx, dep.ID)
 		if err != nil && !storage.IsNotFound(err) {
-			c.logger.Errorw("failed to get existing batch dependent",
-				"batch_id", dep.ID,
-				"error", err,
-			)
 			c.metricsScope.Counter("batch_dependent_store_errors").Inc(1)
 			return fmt.Errorf("failed to get batch dependent for batchID=%s: %w", dep.ID, err)
 		}
@@ -175,13 +154,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	// Publish to score topic
 	if err := c.publish(ctx, consumer.TopicKeyScore, batch); err != nil {
-		c.logger.Errorw("failed to publish output",
-			"batch_id", batch.ID,
-			"topic_key", consumer.TopicKeyScore,
-			"error", err,
-		)
 		c.metricsScope.Counter("publish_errors").Inc(1)
-		return errs.NewRetryableError(fmt.Errorf("failed to publish to score: %w", err))
+		return fmt.Errorf("failed to publish to score: %w", err)
 	}
 
 	c.logger.Infow("published batch to score",

@@ -20,7 +20,6 @@ import (
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
-	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
 	"go.uber.org/zap"
@@ -68,12 +67,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Deserialize build entity
 	build, err := entity.BuildFromBytes(msg.Payload)
 	if err != nil {
-		c.logger.Errorw("failed to deserialize build",
-			"message_id", msg.ID,
-			"partition_key", msg.PartitionKey,
-			"attempt", delivery.Attempt(),
-			"error", err,
-		)
 		c.metricsScope.Counter("deserialize_errors").Inc(1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
 		return fmt.Errorf("failed to deserialize build: %w", err)
@@ -97,14 +90,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	// Publish batch to speculate topic
 	if err := c.publish(ctx, consumer.TopicKeySpeculate, batch); err != nil {
-		c.logger.Errorw("failed to publish output",
-			"build_id", build.ID,
-			"batch_id", build.BatchID,
-			"topic_key", consumer.TopicKeySpeculate,
-			"error", err,
-		)
 		c.metricsScope.Counter("publish_errors").Inc(1)
-		return errs.NewRetryableError(fmt.Errorf("failed to publish to speculate: %w", err))
+		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}
 
 	c.logger.Infow("published batch to speculate",

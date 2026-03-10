@@ -284,7 +284,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 
 	err = controller.Process(context.Background(), delivery)
 	require.Error(t, err)
-	assert.True(t, errs.IsRetryable(err))
+	assert.False(t, errs.IsRetryable(err))
 }
 
 func TestController_Process_AlreadyExistsSucceeds(t *testing.T) {

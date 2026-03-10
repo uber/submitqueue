@@ -20,7 +20,6 @@ import (
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
-	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
 	"go.uber.org/zap"
@@ -68,12 +67,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Deserialize batch entity
 	batch, err := entity.BatchFromBytes(msg.Payload)
 	if err != nil {
-		c.logger.Errorw("failed to deserialize batch",
-			"message_id", msg.ID,
-			"partition_key", msg.PartitionKey,
-			"attempt", delivery.Attempt(),
-			"error", err,
-		)
 		c.metricsScope.Counter("deserialize_errors").Inc(1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
 		return fmt.Errorf("failed to deserialize batch: %w", err)
@@ -96,13 +89,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	// Publish to build topic
 	if err := c.publish(ctx, consumer.TopicKeyBuild, batch); err != nil {
-		c.logger.Errorw("failed to publish to build",
-			"batch_id", batch.ID,
-			"topic_key", consumer.TopicKeyBuild,
-			"error", err,
-		)
 		c.metricsScope.Counter("publish_errors").Inc(1)
-		return errs.NewRetryableError(fmt.Errorf("failed to publish to build: %w", err))
+		return fmt.Errorf("failed to publish to build: %w", err)
 	}
 
 	c.logger.Infow("published batch to build",
@@ -112,13 +100,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	// Publish to merge topic
 	if err := c.publish(ctx, consumer.TopicKeyMerge, batch); err != nil {
-		c.logger.Errorw("failed to publish to merge",
-			"batch_id", batch.ID,
-			"topic_key", consumer.TopicKeyMerge,
-			"error", err,
-		)
 		c.metricsScope.Counter("publish_errors").Inc(1)
-		return errs.NewRetryableError(fmt.Errorf("failed to publish to merge: %w", err))
+		return fmt.Errorf("failed to publish to merge: %w", err)
 	}
 
 	c.logger.Infow("published batch to merge",

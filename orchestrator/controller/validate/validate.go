@@ -73,12 +73,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Deserialize request entity
 	request, err := entity.RequestFromBytes(msg.Payload)
 	if err != nil {
-		c.logger.Errorw("failed to deserialize request",
-			"message_id", msg.ID,
-			"partition_key", msg.PartitionKey,
-			"attempt", delivery.Attempt(),
-			"error", err,
-		)
 		c.metricsScope.Counter("deserialize_errors").Inc(1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
 		return fmt.Errorf("failed to deserialize request: %w", err)
@@ -96,10 +90,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Merge conflict check
 	mergeResult, err := c.mergeChecker.Check(ctx, request.Queue, request.Change)
 	if err != nil {
-		c.logger.Errorw("merge check failed",
-			"request_id", request.ID,
-			"error", err,
-		)
 		c.metricsScope.Counter("merge_check_errors").Inc(1)
 		return fmt.Errorf("merge check failed: %w", err)
 	}
@@ -115,13 +105,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	// Publish to batch topic
 	if err := c.publish(ctx, consumer.TopicKeyBatch, request); err != nil {
-		c.logger.Errorw("failed to publish output",
-			"request_id", request.ID,
-			"topic_key", consumer.TopicKeyBatch,
-			"error", err,
-		)
 		c.metricsScope.Counter("publish_errors").Inc(1)
-		return errs.NewRetryableError(fmt.Errorf("failed to publish to batch: %w", err))
+		return fmt.Errorf("failed to publish to batch: %w", err)
 	}
 
 	c.logger.Infow("published request to batch",
