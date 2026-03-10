@@ -1,92 +1,16 @@
-load("@rules_go//extras:gomock.bzl", "gomock")
 load("@rules_go//go:def.bzl", "go_library")
 
-_MOCKGEN = "@org_uber_go_mock//mockgen"
-
-gomock(
-    name = "mock_storage_src",
-    out = "storage_mock.go",
-    mockgen_tool = _MOCKGEN,
-    package = "mock",
-    source = "//extension/storage:storage.go",
-    source_importpath = "github.com/uber/submitqueue/extension/storage",
-)
-
-gomock(
-    name = "mock_request_store_src",
-    out = "request_store_mock.go",
-    mockgen_tool = _MOCKGEN,
-    package = "mock",
-    source = "//extension/storage:request_store.go",
-    source_importpath = "github.com/uber/submitqueue/extension/storage",
-)
-
-gomock(
-    name = "mock_change_provider_store_src",
-    out = "change_provider_store_mock.go",
-    mockgen_tool = _MOCKGEN,
-    package = "mock",
-    source = "//extension/storage:change_provider_store.go",
-    source_importpath = "github.com/uber/submitqueue/extension/storage",
-)
-
-gomock(
-    name = "mock_batch_store_src",
-    out = "batch_store_mock.go",
-    mockgen_tool = _MOCKGEN,
-    package = "mock",
-    source = "//extension/storage:batch_store.go",
-    source_importpath = "github.com/uber/submitqueue/extension/storage",
-)
-
-gomock(
-    name = "mock_batch_dependent_store_src",
-    out = "batch_dependent_store_mock.go",
-    mockgen_tool = _MOCKGEN,
-    package = "mock",
-    source = "//extension/storage:batch_dependent_store.go",
-    source_importpath = "github.com/uber/submitqueue/extension/storage",
-)
-
-gomock(
-    name = "mock_build_store_src",
-    out = "build_store_mock.go",
-    mockgen_tool = _MOCKGEN,
-    package = "mock",
-    source = "//extension/storage:build_store.go",
-    source_importpath = "github.com/uber/submitqueue/extension/storage",
-)
-
-gomock(
-    name = "mock_speculation_tree_store_src",
-    out = "speculation_tree_store_mock.go",
-    mockgen_tool = _MOCKGEN,
-    package = "mock",
-    source = "//extension/storage:speculation_tree_store.go",
-    source_importpath = "github.com/uber/submitqueue/extension/storage",
-)
-
-gomock(
-    name = "mock_request_log_store_src",
-    out = "request_log_store_mock.go",
-    mockgen_tool = _MOCKGEN,
-    package = "mock",
-    source = "//extension/storage:request_log_store.go",
-    source_importpath = "github.com/uber/submitqueue/extension/storage",
-)
-
-# gazelle:ignore
 go_library(
     name = "mock",
     srcs = [
-        ":mock_batch_dependent_store_src",
-        ":mock_batch_store_src",
-        ":mock_build_store_src",
-        ":mock_change_provider_store_src",
-        ":mock_request_log_store_src",
-        ":mock_request_store_src",
-        ":mock_speculation_tree_store_src",
-        ":mock_storage_src",
+        "batch_dependent_store_mock.go",
+        "batch_store_mock.go",
+        "build_store_mock.go",
+        "change_provider_store_mock.go",
+        "request_log_store_mock.go",
+        "request_store_mock.go",
+        "speculation_tree_store_mock.go",
+        "storage_mock.go",
     ],
     importpath = "github.com/uber/submitqueue/extension/storage/mock",
     visibility = ["//visibility:public"],

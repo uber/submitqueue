@@ -14,7 +14,7 @@
 
 package counter
 
-//go:generate mockgen -source=counter.go -destination=mock/counter.go -package=mock
+//go:generate mockgen -source=counter.go -destination=mock/counter_mock.go -package=mock
 
 import "context"
 

@@ -14,7 +14,7 @@
 
 package queue
 
-//go:generate mockgen -source=queue.go -destination=mock/queue.go -package=mock
+//go:generate mockgen -source=queue.go -destination=mock/queue_mock.go -package=mock
 
 // Queue creates and manages queue publishers and subscribers.
 // Implementations handle connection pooling, consumer group configuration,

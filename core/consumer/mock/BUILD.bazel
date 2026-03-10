@@ -1,23 +1,8 @@
-load("@rules_go//extras:gomock.bzl", "gomock")
 load("@rules_go//go:def.bzl", "go_library")
 
-_MOCKGEN = "@org_uber_go_mock//mockgen"
-
-gomock(
-    name = "mock_controller_src",
-    out = "controller_mock.go",
-    mockgen_tool = _MOCKGEN,
-    package = "mock",
-    source = "//core/consumer:controller.go",
-    source_importpath = "github.com/uber/submitqueue/core/consumer",
-)
-
-# gazelle:ignore
 go_library(
     name = "mock",
-    srcs = [
-        ":mock_controller_src",
-    ],
+    srcs = ["controller_mock.go"],
     importpath = "github.com/uber/submitqueue/core/consumer/mock",
     visibility = ["//visibility:public"],
     deps = [

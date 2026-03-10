@@ -1,28 +1,12 @@
-load("@rules_go//extras:gomock.bzl", "gomock")
 load("@rules_go//go:def.bzl", "go_library")
 
-_MOCKGEN = "@org_uber_go_mock//mockgen"
-
-gomock(
-    name = "mock_scorer_src",
-    out = "scorer_mock.go",
-    mockgen_tool = _MOCKGEN,
-    package = "mock",
-    source = "//extension/scorer:scorer.go",
-    source_importpath = "github.com/uber/submitqueue/extension/scorer",
-)
-
-# gazelle:ignore
 go_library(
     name = "mock",
-    srcs = [
-        ":mock_scorer_src",
-    ],
+    srcs = ["scorer_mock.go"],
     importpath = "github.com/uber/submitqueue/extension/scorer/mock",
     visibility = ["//visibility:public"],
     deps = [
         "//entity",
-        "//extension/scorer",
         "@org_uber_go_mock//gomock",
     ],
 )

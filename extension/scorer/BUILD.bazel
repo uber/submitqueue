@@ -1,10 +1,5 @@
 load("@rules_go//go:def.bzl", "go_library")
 
-exports_files(
-    ["scorer.go"],
-    visibility = ["//extension/scorer/mock:__pkg__"],
-)
-
 go_library(
     name = "scorer",
     srcs = ["scorer.go"],

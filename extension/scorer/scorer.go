@@ -14,7 +14,7 @@
 
 package scorer
 
-//go:generate mockgen -source=scorer.go -destination=mock/scorer.go -package=mock
+//go:generate mockgen -source=scorer.go -destination=mock/scorer_mock.go -package=mock
 
 import (
 	"context"

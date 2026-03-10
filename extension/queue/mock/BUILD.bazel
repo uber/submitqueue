@@ -1,52 +1,12 @@
-load("@rules_go//extras:gomock.bzl", "gomock")
 load("@rules_go//go:def.bzl", "go_library")
 
-_MOCKGEN = "@org_uber_go_mock//mockgen"
-
-gomock(
-    name = "mock_delivery_src",
-    out = "delivery_mock.go",
-    mockgen_tool = _MOCKGEN,
-    package = "mock",
-    source = "//extension/queue:delivery.go",
-    source_importpath = "github.com/uber/submitqueue/extension/queue",
-)
-
-gomock(
-    name = "mock_publisher_src",
-    out = "publisher_mock.go",
-    mockgen_tool = _MOCKGEN,
-    package = "mock",
-    source = "//extension/queue:publisher.go",
-    source_importpath = "github.com/uber/submitqueue/extension/queue",
-)
-
-gomock(
-    name = "mock_queue_src",
-    out = "queue_mock.go",
-    mockgen_tool = _MOCKGEN,
-    package = "mock",
-    source = "//extension/queue:queue.go",
-    source_importpath = "github.com/uber/submitqueue/extension/queue",
-)
-
-gomock(
-    name = "mock_subscriber_src",
-    out = "subscriber_mock.go",
-    mockgen_tool = _MOCKGEN,
-    package = "mock",
-    source = "//extension/queue:subscriber.go",
-    source_importpath = "github.com/uber/submitqueue/extension/queue",
-)
-
-# gazelle:ignore
 go_library(
     name = "mock",
     srcs = [
-        ":mock_delivery_src",
-        ":mock_publisher_src",
-        ":mock_queue_src",
-        ":mock_subscriber_src",
+        "delivery_mock.go",
+        "publisher_mock.go",
+        "queue_mock.go",
+        "subscriber_mock.go",
     ],
     importpath = "github.com/uber/submitqueue/extension/queue/mock",
     visibility = ["//visibility:public"],

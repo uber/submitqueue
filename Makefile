@@ -30,7 +30,7 @@ define assert_clean
 	fi
 endef
 
-.PHONY: build build-all-linux build-gateway-linux build-orchestrator-linux check-gazelle check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-consumer integration-test-extensions integration-test-gateway integration-test-orchestrator license-fix lint lint-fmt lint-license local-clean local-gateway-start local-gateway-stop local-init-schemas local-logs local-orchestrator-start local-orchestrator-stop local-ps local-restart local-start local-stop proto query-deps query-targets run-client-gateway run-client-orchestrator run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
+.PHONY: build build-all-linux build-gateway-linux build-orchestrator-linux check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-consumer integration-test-extensions integration-test-gateway integration-test-orchestrator license-fix lint lint-fmt lint-license local-clean local-gateway-start local-gateway-stop local-init-schemas local-logs local-orchestrator-start local-orchestrator-stop local-ps local-restart local-start local-stop mocks proto query-deps query-targets run-client-gateway run-client-orchestrator run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
 
 
 build: ## Build all services and examples
@@ -63,6 +63,10 @@ check-gazelle: ## Check BUILD.bazel files are up to date
 	@$(BAZEL) run //:gazelle
 	$(call assert_clean,make gazelle)
 	@echo "BUILD files are up to date."
+
+check-mocks: mocks ## Check mock files are up to date
+	$(call assert_clean,make mocks)
+	@echo "Mock files are up to date."
 
 check-tidy: tidy ## Check that go.mod and MODULE.bazel are tidy
 	$(call assert_clean,make tidy)
@@ -238,6 +242,11 @@ local-stop: ## Stop all services (keep data)
 	@echo "Stopping all services..."
 	@$(COMPOSE) -f $(COMPOSE_FILE) -p $(LOCAL_PROJECT) down
 	@echo "Services stopped. Data volumes preserved."
+
+mocks: ## Generate mock files using mockgen
+	@echo "Generating mocks..."
+	@$(BAZEL) run @rules_go//go -- generate ./extension/storage/... ./extension/counter/... ./extension/queue/... ./extension/mergechecker/... ./extension/scorer/... ./core/consumer/...
+	@echo "Mocks generated successfully!"
 
 proto: ## Generate protobuf files from .proto definitions
 	@echo "Generating protobuf files with protoc..."

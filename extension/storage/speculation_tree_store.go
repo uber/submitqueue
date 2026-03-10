@@ -14,7 +14,7 @@
 
 package storage
 
-//go:generate mockgen -source=speculation_tree_store.go -destination=mock/speculation_tree_store.go -package=mock
+//go:generate mockgen -source=speculation_tree_store.go -destination=mock/speculation_tree_store_mock.go -package=mock
 
 import (
 	"context"

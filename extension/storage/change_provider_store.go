@@ -14,7 +14,7 @@
 
 package storage
 
-//go:generate mockgen -source=change_provider_store.go -destination=mock/change_provider_store.go -package=mock
+//go:generate mockgen -source=change_provider_store.go -destination=mock/change_provider_store_mock.go -package=mock
 
 import (
 	"context"

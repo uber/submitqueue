@@ -14,7 +14,7 @@
 
 package queue
 
-//go:generate mockgen -source=publisher.go -destination=mock/publisher.go -package=mock
+//go:generate mockgen -source=publisher.go -destination=mock/publisher_mock.go -package=mock
 
 import (
 	"context"

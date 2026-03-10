@@ -1,19 +1,5 @@
-load("@rules_go//extras:gomock.bzl", "gomock")
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
-_MOCKGEN = "@org_uber_go_mock//mockgen"
-
-gomock(
-    name = "mock_stores_src",
-    out = "mock_stores.go",
-    mockgen_tool = _MOCKGEN,
-    package = "mysql",
-    self_package = "github.com/uber/submitqueue/extension/queue/mysql",
-    source = "stores.go",
-    source_importpath = "github.com/uber/submitqueue/extension/queue/mysql",
-)
-
-# gazelle:ignore
 go_library(
     name = "mysql",
     srcs = [
@@ -21,7 +7,7 @@ go_library(
         "delivery_state_store.go",
         "errors.go",
         "message_store.go",
-        ":mock_stores_src",
+        "mock_stores.go",
         "offset_store.go",
         "partition_lease_store.go",
         "publisher.go",

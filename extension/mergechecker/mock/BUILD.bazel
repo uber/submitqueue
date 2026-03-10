@@ -1,23 +1,8 @@
-load("@rules_go//extras:gomock.bzl", "gomock")
 load("@rules_go//go:def.bzl", "go_library")
 
-_MOCKGEN = "@org_uber_go_mock//mockgen"
-
-gomock(
-    name = "mock_mergechecker_src",
-    out = "mergechecker_mock.go",
-    mockgen_tool = _MOCKGEN,
-    package = "mock",
-    source = "//extension/mergechecker:mergechecker.go",
-    source_importpath = "github.com/uber/submitqueue/extension/mergechecker",
-)
-
-# gazelle:ignore
 go_library(
     name = "mock",
-    srcs = [
-        ":mock_mergechecker_src",
-    ],
+    srcs = ["mergechecker_mock.go"],
     importpath = "github.com/uber/submitqueue/extension/mergechecker/mock",
     visibility = ["//visibility:public"],
     deps = [
