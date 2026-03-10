@@ -390,6 +390,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	validateController := validate.NewController(
 		logger,
 		scope,
+		store,
 		registry,
 		mc,
 		consumer.TopicKeyValidate,
@@ -415,6 +416,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	scoreController := score.NewController(
 		logger,
 		scope,
+		store,
 		registry,
 		consumer.TopicKeyScore,
 		"orchestrator-score",
@@ -426,6 +428,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	speculateController := speculate.NewController(
 		logger,
 		scope,
+		store,
 		registry,
 		consumer.TopicKeySpeculate,
 		"orchestrator-speculate",
@@ -437,6 +440,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	buildController := build.NewController(
 		logger,
 		scope,
+		store,
 		registry,
 		consumer.TopicKeyBuild,
 		"orchestrator-build",
@@ -448,6 +452,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	buildsignalController := buildsignal.NewController(
 		logger,
 		scope,
+		store,
 		registry,
 		consumer.TopicKeyBuildSignal,
 		"orchestrator-buildsignal",
@@ -459,6 +464,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	mergeController := merge.NewController(
 		logger,
 		scope,
+		store,
 		registry,
 		consumer.TopicKeyMerge,
 		"orchestrator-merge",

@@ -104,3 +104,21 @@ func RequestFromBytes(data []byte) (Request, error) {
 	err := json.Unmarshal(data, &req)
 	return req, err
 }
+
+// RequestID is a lightweight entity for publishing and consuming just the request identifier via the queue.
+type RequestID struct {
+	// ID is the globally unique identifier for the land request.
+	ID string `json:"id"`
+}
+
+// ToBytes serializes the RequestID to JSON bytes for queue message payload.
+func (r RequestID) ToBytes() ([]byte, error) {
+	return json.Marshal(r)
+}
+
+// RequestIDFromBytes deserializes a RequestID from JSON bytes.
+func RequestIDFromBytes(data []byte) (RequestID, error) {
+	var rid RequestID
+	err := json.Unmarshal(data, &rid)
+	return rid, err
+}

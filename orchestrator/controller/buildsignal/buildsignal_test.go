@@ -27,12 +27,26 @@ import (
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
 	queuemock "github.com/uber/submitqueue/extension/queue/mock"
+	storagemock "github.com/uber/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
 
+// newMockStorage creates a MockStorage with a MockBatchStore that returns a batch for the given batchID.
+func newMockStorage(ctrl *gomock.Controller, batchID string) *storagemock.MockStorage {
+	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+	mockBatchStore.EXPECT().Get(gomock.Any(), batchID).Return(entity.Batch{
+		ID:    batchID,
+		Queue: "test-queue",
+	}, nil).AnyTimes()
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	return store
+}
+
 // newTestController creates a controller with test dependencies.
-func newTestController(t *testing.T, ctrl *gomock.Controller, publishErr error) *Controller {
+func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock.MockStorage, publishErr error) *Controller {
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
 
@@ -51,12 +65,13 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, publishErr error) 
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, registry, consumer.TopicKeyBuildSignal, "orchestrator-buildsignal")
+	return NewController(logger, scope, store, registry, consumer.TopicKeyBuildSignal, "orchestrator-buildsignal")
 }
 
 func TestNewController(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	controller := newTestController(t, ctrl, nil)
+	store := newMockStorage(ctrl, "test-queue/batch/1")
+	controller := newTestController(t, ctrl, store, nil)
 
 	require.NotNil(t, controller)
 	assert.Equal(t, consumer.TopicKeyBuildSignal, controller.TopicKey())
@@ -67,7 +82,8 @@ func TestNewController(t *testing.T) {
 func TestController_Process_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	controller := newTestController(t, ctrl, nil)
+	store := newMockStorage(ctrl, "test-queue/batch/1")
+	controller := newTestController(t, ctrl, store, nil)
 
 	build := entity.Build{
 		ID:      "build-123",
@@ -90,7 +106,8 @@ func TestController_Process_Success(t *testing.T) {
 func TestController_Process_InvalidJSON(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	controller := newTestController(t, ctrl, nil)
+	store := newMockStorage(ctrl, "test-queue/batch/1")
+	controller := newTestController(t, ctrl, store, nil)
 
 	invalidPayload := []byte(`{"invalid": json"}`)
 	msg := queue.NewMessage("invalid-msg", invalidPayload, "partition1", nil)
@@ -107,7 +124,8 @@ func TestController_Process_InvalidJSON(t *testing.T) {
 func TestController_Process_PublishFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	controller := newTestController(t, ctrl, fmt.Errorf("publish failed"))
+	store := newMockStorage(ctrl, "test-queue/batch/2")
+	controller := newTestController(t, ctrl, store, fmt.Errorf("publish failed"))
 
 	build := entity.Build{
 		ID:      "build-456",
@@ -129,7 +147,8 @@ func TestController_Process_PublishFailure(t *testing.T) {
 
 func TestController_InterfaceImplementation(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	controller := newTestController(t, ctrl, nil)
+	store := newMockStorage(ctrl, "test-queue/batch/1")
+	controller := newTestController(t, ctrl, store, nil)
 
 	var _ consumer.Controller = controller
 }

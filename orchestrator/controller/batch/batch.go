@@ -16,6 +16,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/uber-go/tally/v4"
@@ -72,12 +73,18 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	msg := delivery.Message()
 
-	// Deserialize request entity
-	request, err := entity.RequestFromBytes(msg.Payload)
+	// Deserialize request ID from payload
+	rid, err := entity.RequestIDFromBytes(msg.Payload)
 	if err != nil {
 		c.metricsScope.Counter("deserialize_errors").Inc(1)
-		// Non-retryable: malformed messages will never succeed regardless of retry count
-		return fmt.Errorf("failed to deserialize request: %w", err)
+		return fmt.Errorf("failed to deserialize request ID: %w", err)
+	}
+
+	// Fetch request from storage
+	request, err := c.store.GetRequestStore().Get(ctx, rid.ID)
+	if err != nil {
+		c.metricsScope.Counter("storage_errors").Inc(1)
+		return fmt.Errorf("failed to get request %s: %w", rid.ID, err)
 	}
 
 	c.logger.Infow("received batch event",
@@ -139,11 +146,18 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		if err == nil {
 			bd.Dependents = append(existing.Dependents, bd.Dependents...)
 		}
+
+		if err := c.store.GetBatchDependentStore().Create(ctx, bd); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+			c.metricsScope.Counter("batch_dependent_store_errors").Inc(1)
+			return fmt.Errorf("failed to create batch dependent for batchID=%s: %w", dep.ID, err)
+		}
 	}
 
-	// TODO:
-	// - Add batch to DB
-	// - Add to batch dependent DB
+	// Persist batch to storage (idempotent — ErrAlreadyExists means a retry)
+	if err := c.store.GetBatchStore().Create(ctx, batch); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+		c.metricsScope.Counter("batch_store_errors").Inc(1)
+		return fmt.Errorf("failed to create batch: %w", err)
+	}
 
 	c.logger.Infow("batch created",
 		"batch_id", batch.ID,
@@ -153,7 +167,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	)
 
 	// Publish to score topic
-	if err := c.publish(ctx, consumer.TopicKeyScore, batch); err != nil {
+	if err := c.publish(ctx, consumer.TopicKeyScore, batch.ID, batch.Queue); err != nil {
 		c.metricsScope.Counter("publish_errors").Inc(1)
 		return fmt.Errorf("failed to publish to score: %w", err)
 	}
@@ -168,14 +182,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	return nil // Success - message will be acked
 }
 
-// publish publishes a batch to the specified topic key.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batch entity.Batch) error {
-	payload, err := batch.ToBytes()
+// publish publishes a batch ID to the specified topic key.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID string, partitionKey string) error {
+	bid := entity.BatchID{ID: batchID}
+	payload, err := bid.ToBytes()
 	if err != nil {
-		return fmt.Errorf("failed to serialize batch: %w", err)
+		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(batch.ID, payload, batch.Queue, nil)
+	msg := entityqueue.NewMessage(batchID, payload, partitionKey, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

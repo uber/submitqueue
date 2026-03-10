@@ -22,6 +22,7 @@ import (
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
+	"github.com/uber/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -31,6 +32,7 @@ import (
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
+	store         storage.Storage
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -43,6 +45,7 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
+	store storage.Storage,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -50,6 +53,7 @@ func NewController(
 	return &Controller{
 		logger:        logger.Named("build_controller"),
 		metricsScope:  scope.SubScope("build_controller"),
+		store:         store,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -64,12 +68,18 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	msg := delivery.Message()
 
-	// Deserialize batch entity
-	batch, err := entity.BatchFromBytes(msg.Payload)
+	// Deserialize batch ID from payload
+	bid, err := entity.BatchIDFromBytes(msg.Payload)
 	if err != nil {
 		c.metricsScope.Counter("deserialize_errors").Inc(1)
-		// Non-retryable: malformed messages will never succeed regardless of retry count
-		return fmt.Errorf("failed to deserialize batch: %w", err)
+		return fmt.Errorf("failed to deserialize batch ID: %w", err)
+	}
+
+	// Fetch batch from storage
+	batch, err := c.store.GetBatchStore().Get(ctx, bid.ID)
+	if err != nil {
+		c.metricsScope.Counter("storage_errors").Inc(1)
+		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
 	}
 
 	c.logger.Infow("received build event",

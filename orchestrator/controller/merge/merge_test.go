@@ -27,12 +27,40 @@ import (
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
 	queuemock "github.com/uber/submitqueue/extension/queue/mock"
+	storagemock "github.com/uber/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
 
+// batchIDPayload serializes a BatchID to JSON bytes for test message payloads.
+func batchIDPayload(t *testing.T, id string) []byte {
+	payload, err := entity.BatchID{ID: id}.ToBytes()
+	require.NoError(t, err)
+	return payload
+}
+
+// testBatch returns a standard test batch for merge tests.
+func testBatch() entity.Batch {
+	return entity.Batch{
+		ID:      "test-queue/batch/1",
+		Queue:   "test-queue",
+		State:   entity.BatchStateCreated,
+		Version: 1,
+	}
+}
+
+// newMockStorage creates a MockStorage with a MockBatchStore that returns the given batch on Get.
+func newMockStorage(ctrl *gomock.Controller, batch entity.Batch) *storagemock.MockStorage {
+	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+	mockBatchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil).AnyTimes()
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	return store
+}
+
 // newTestController creates a controller with test dependencies.
-func newTestController(t *testing.T, ctrl *gomock.Controller, publishErr error) *Controller {
+func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock.MockStorage, publishErr error) *Controller {
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
 
@@ -54,12 +82,14 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, publishErr error) 
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, registry, consumer.TopicKeyMerge, "orchestrator-merge")
+	return NewController(logger, scope, store, registry, consumer.TopicKeyMerge, "orchestrator-merge")
 }
 
 func TestNewController(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	controller := newTestController(t, ctrl, nil)
+	batch := testBatch()
+	store := newMockStorage(ctrl, batch)
+	controller := newTestController(t, ctrl, store, nil)
 
 	require.NotNil(t, controller)
 	assert.Equal(t, consumer.TopicKeyMerge, controller.TopicKey())
@@ -70,40 +100,35 @@ func TestNewController(t *testing.T) {
 func TestController_Process_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	controller := newTestController(t, ctrl, nil)
+	batch := testBatch()
+	store := newMockStorage(ctrl, batch)
+	controller := newTestController(t, ctrl, store, nil)
 
-	batch := entity.Batch{
-		ID:      "test-queue/batch/1",
-		Queue:   "test-queue",
-		State:   entity.BatchStateCreated,
-		Version: 1,
-	}
-
-	payload, err := batch.ToBytes()
-	require.NoError(t, err)
-
-	msg := queue.NewMessage("test-queue/batch/1", payload, "test-queue", nil)
-	delivery := queuemock.NewMockDelivery(ctrl)
-	delivery.EXPECT().Message().Return(msg).AnyTimes()
-	delivery.EXPECT().Attempt().Return(1).AnyTimes()
-
-	err = controller.Process(context.Background(), delivery)
-	require.NoError(t, err)
-}
-
-func TestController_Process_InvalidJSON(t *testing.T) {
-	ctrl := gomock.NewController(t)
-
-	controller := newTestController(t, ctrl, nil)
-
-	invalidPayload := []byte(`{"invalid": json"}`)
-	msg := queue.NewMessage("invalid-msg", invalidPayload, "partition1", nil)
+	msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
 	err := controller.Process(context.Background(), delivery)
+	require.NoError(t, err)
+}
 
+func TestController_Process_StorageFailure(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+	mockBatchStore.EXPECT().Get(gomock.Any(), "test-queue/batch/1").Return(entity.Batch{}, fmt.Errorf("db connection lost"))
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+
+	controller := newTestController(t, ctrl, store, nil)
+
+	msg := queue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1"), "test-queue", nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	err := controller.Process(context.Background(), delivery)
 	require.Error(t, err)
 	assert.False(t, errs.IsRetryable(err))
 }
@@ -111,30 +136,24 @@ func TestController_Process_InvalidJSON(t *testing.T) {
 func TestController_Process_PublishFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	controller := newTestController(t, ctrl, fmt.Errorf("publish failed"))
+	batch := testBatch()
+	store := newMockStorage(ctrl, batch)
+	controller := newTestController(t, ctrl, store, fmt.Errorf("publish failed"))
 
-	batch := entity.Batch{
-		ID:      "test-queue/batch/1",
-		Queue:   "test-queue",
-		State:   entity.BatchStateCreated,
-		Version: 1,
-	}
-
-	payload, err := batch.ToBytes()
-	require.NoError(t, err)
-
-	msg := queue.NewMessage(batch.ID, payload, batch.Queue, nil)
+	msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
-	err = controller.Process(context.Background(), delivery)
+	err := controller.Process(context.Background(), delivery)
 	assert.Error(t, err)
 }
 
 func TestController_InterfaceImplementation(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	controller := newTestController(t, ctrl, nil)
+	batch := testBatch()
+	store := newMockStorage(ctrl, batch)
+	controller := newTestController(t, ctrl, store, nil)
 
 	var _ consumer.Controller = controller
 }

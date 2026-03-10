@@ -22,6 +22,7 @@ import (
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
+	"github.com/uber/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -31,6 +32,7 @@ import (
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
+	store         storage.Storage
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -43,6 +45,7 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
+	store storage.Storage,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -50,6 +53,7 @@ func NewController(
 	return &Controller{
 		logger:        logger.Named("speculate_controller"),
 		metricsScope:  scope.SubScope("speculate_controller"),
+		store:         store,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -64,12 +68,18 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	msg := delivery.Message()
 
-	// Deserialize batch entity
-	batch, err := entity.BatchFromBytes(msg.Payload)
+	// Deserialize batch ID from payload
+	bid, err := entity.BatchIDFromBytes(msg.Payload)
 	if err != nil {
 		c.metricsScope.Counter("deserialize_errors").Inc(1)
-		// Non-retryable: malformed messages will never succeed regardless of retry count
-		return fmt.Errorf("failed to deserialize batch: %w", err)
+		return fmt.Errorf("failed to deserialize batch ID: %w", err)
+	}
+
+	// Fetch batch from storage
+	batch, err := c.store.GetBatchStore().Get(ctx, bid.ID)
+	if err != nil {
+		c.metricsScope.Counter("storage_errors").Inc(1)
+		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
 	}
 
 	c.logger.Infow("received speculate event",
@@ -88,7 +98,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// - Publish to merge only if speculation is complete and successful (ready to land)
 
 	// Publish to build topic
-	if err := c.publish(ctx, consumer.TopicKeyBuild, batch); err != nil {
+	if err := c.publish(ctx, consumer.TopicKeyBuild, batch.ID, batch.Queue); err != nil {
 		c.metricsScope.Counter("publish_errors").Inc(1)
 		return fmt.Errorf("failed to publish to build: %w", err)
 	}
@@ -99,7 +109,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	)
 
 	// Publish to merge topic
-	if err := c.publish(ctx, consumer.TopicKeyMerge, batch); err != nil {
+	if err := c.publish(ctx, consumer.TopicKeyMerge, batch.ID, batch.Queue); err != nil {
 		c.metricsScope.Counter("publish_errors").Inc(1)
 		return fmt.Errorf("failed to publish to merge: %w", err)
 	}
@@ -114,14 +124,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	return nil // Success - message will be acked
 }
 
-// publish publishes a batch to the specified topic key.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batch entity.Batch) error {
-	payload, err := batch.ToBytes()
+// publish publishes a batch ID to the specified topic key.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID string, partitionKey string) error {
+	bid := entity.BatchID{ID: batchID}
+	payload, err := bid.ToBytes()
 	if err != nil {
-		return fmt.Errorf("failed to serialize batch: %w", err)
+		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(batch.ID, payload, batch.Queue, nil)
+	msg := entityqueue.NewMessage(batchID, payload, partitionKey, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

@@ -89,3 +89,21 @@ func BatchFromBytes(data []byte) (Batch, error) {
 	err := json.Unmarshal(data, &batch)
 	return batch, err
 }
+
+// BatchID is a lightweight entity for publishing and consuming just the batch identifier via the queue.
+type BatchID struct {
+	// ID is the globally unique identifier for the batch.
+	ID string `json:"id"`
+}
+
+// ToBytes serializes the BatchID to JSON bytes for queue message payload.
+func (b BatchID) ToBytes() ([]byte, error) {
+	return json.Marshal(b)
+}
+
+// BatchIDFromBytes deserializes a BatchID from JSON bytes.
+func BatchIDFromBytes(data []byte) (BatchID, error) {
+	var bid BatchID
+	err := json.Unmarshal(data, &bid)
+	return bid, err
+}

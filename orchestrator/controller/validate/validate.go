@@ -24,6 +24,7 @@ import (
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
 	"github.com/uber/submitqueue/extension/mergechecker"
+	"github.com/uber/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -34,6 +35,7 @@ import (
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
+	store         storage.Storage
 	registry      consumer.TopicRegistry
 	mergeChecker  mergechecker.MergeChecker
 	topicKey      consumer.TopicKey
@@ -47,6 +49,7 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
+	store storage.Storage,
 	registry consumer.TopicRegistry,
 	mergeChecker mergechecker.MergeChecker,
 	topicKey consumer.TopicKey,
@@ -55,6 +58,7 @@ func NewController(
 	return &Controller{
 		logger:        logger.Named("validate_controller"),
 		metricsScope:  scope.SubScope("validate_controller"),
+		store:         store,
 		registry:      registry,
 		mergeChecker:  mergeChecker,
 		topicKey:      topicKey,
@@ -70,12 +74,18 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	msg := delivery.Message()
 
-	// Deserialize request entity
-	request, err := entity.RequestFromBytes(msg.Payload)
+	// Deserialize request ID from payload
+	rid, err := entity.RequestIDFromBytes(msg.Payload)
 	if err != nil {
 		c.metricsScope.Counter("deserialize_errors").Inc(1)
-		// Non-retryable: malformed messages will never succeed regardless of retry count
-		return fmt.Errorf("failed to deserialize request: %w", err)
+		return fmt.Errorf("failed to deserialize request ID: %w", err)
+	}
+
+	// Fetch request from storage
+	request, err := c.store.GetRequestStore().Get(ctx, rid.ID)
+	if err != nil {
+		c.metricsScope.Counter("storage_errors").Inc(1)
+		return fmt.Errorf("failed to get request %s: %w", rid.ID, err)
 	}
 
 	c.logger.Infow("received validate event",
@@ -104,7 +114,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	// Publish to batch topic
-	if err := c.publish(ctx, consumer.TopicKeyBatch, request); err != nil {
+	if err := c.publish(ctx, consumer.TopicKeyBatch, request.ID, request.Queue); err != nil {
 		c.metricsScope.Counter("publish_errors").Inc(1)
 		return fmt.Errorf("failed to publish to batch: %w", err)
 	}
@@ -119,14 +129,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	return nil // Success - message will be acked
 }
 
-// publish publishes a request to the specified topic key.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, request entity.Request) error {
-	payload, err := request.ToBytes()
+// publish publishes a request ID to the specified topic key.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, requestID string, partitionKey string) error {
+	rid := entity.RequestID{ID: requestID}
+	payload, err := rid.ToBytes()
 	if err != nil {
-		return fmt.Errorf("failed to serialize request: %w", err)
+		return fmt.Errorf("failed to serialize request ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(request.ID, payload, request.Queue, nil)
+	msg := entityqueue.NewMessage(requestID, payload, partitionKey, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

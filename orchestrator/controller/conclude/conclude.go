@@ -69,12 +69,18 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	msg := delivery.Message()
 
-	// Deserialize batch entity
-	batch, err := entity.BatchFromBytes(msg.Payload)
+	// Deserialize batch ID from payload
+	bid, err := entity.BatchIDFromBytes(msg.Payload)
 	if err != nil {
-		// Non-retryable: malformed messages will never succeed regardless of retry count
 		metrics.NamedCounter(c.metricsScope, "process", "deserialize_errors", 1)
-		return fmt.Errorf("failed to deserialize batch: %w", err)
+		return fmt.Errorf("failed to deserialize batch ID: %w", err)
+	}
+
+	// Fetch batch from storage
+	batch, err := c.store.GetBatchStore().Get(ctx, bid.ID)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
+		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
 	}
 
 	c.logger.Infow("received conclude event",

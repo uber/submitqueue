@@ -22,7 +22,6 @@ go_test(
     embed = [":batch"],
     deps = [
         "//core/consumer",
-        "//core/errs",
         "//entity",
         "//entity/queue",
         "//extension/counter/mock",

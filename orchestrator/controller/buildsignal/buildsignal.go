@@ -22,6 +22,7 @@ import (
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
+	"github.com/uber/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -31,6 +32,7 @@ import (
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
+	store         storage.Storage
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -43,6 +45,7 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
+	store storage.Storage,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -50,6 +53,7 @@ func NewController(
 	return &Controller{
 		logger:        logger.Named("buildsignal_controller"),
 		metricsScope:  scope.SubScope("buildsignal_controller"),
+		store:         store,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -84,19 +88,22 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// - Evaluate build result (pass/fail)
 	// - Update batch state based on build outcome
 
-	batch := entity.Batch{
-		ID: build.BatchID,
+	// Fetch batch from storage to get the partition key (queue)
+	batch, err := c.store.GetBatchStore().Get(ctx, build.BatchID)
+	if err != nil {
+		c.metricsScope.Counter("storage_errors").Inc(1)
+		return fmt.Errorf("failed to get batch %s: %w", build.BatchID, err)
 	}
 
 	// Publish batch to speculate topic
-	if err := c.publish(ctx, consumer.TopicKeySpeculate, batch); err != nil {
+	if err := c.publish(ctx, consumer.TopicKeySpeculate, batch.ID, batch.Queue); err != nil {
 		c.metricsScope.Counter("publish_errors").Inc(1)
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}
 
 	c.logger.Infow("published batch to speculate",
 		"build_id", build.ID,
-		"batch_id", build.BatchID,
+		"batch_id", batch.ID,
 		"topic_key", consumer.TopicKeySpeculate,
 	)
 
@@ -105,14 +112,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	return nil // Success - message will be acked
 }
 
-// publish publishes a batch to the specified topic key.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batch entity.Batch) error {
-	payload, err := batch.ToBytes()
+// publish publishes a batch ID to the specified topic key.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID string, partitionKey string) error {
+	bid := entity.BatchID{ID: batchID}
+	payload, err := bid.ToBytes()
 	if err != nil {
-		return fmt.Errorf("failed to serialize batch: %w", err)
+		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(batch.ID, payload, batch.Queue, nil)
+	msg := entityqueue.NewMessage(batchID, payload, partitionKey, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

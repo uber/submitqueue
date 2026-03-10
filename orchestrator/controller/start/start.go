@@ -115,7 +115,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	// Publish to validate topic
-	if err := c.publish(ctx, consumer.TopicKeyValidate, request); err != nil {
+	if err := c.publish(ctx, consumer.TopicKeyValidate, request.ID, request.Queue); err != nil {
 		c.metricsScope.Counter("publish_errors").Inc(1)
 		return fmt.Errorf("failed to publish to validate: %w", err)
 	}
@@ -130,14 +130,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	return nil // Success - message will be acked
 }
 
-// publish publishes a request to the specified topic key.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, request entity.Request) error {
-	payload, err := request.ToBytes()
+// publish publishes a request ID to the specified topic key.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, requestID string, partitionKey string) error {
+	rid := entity.RequestID{ID: requestID}
+	payload, err := rid.ToBytes()
 	if err != nil {
-		return fmt.Errorf("failed to serialize request: %w", err)
+		return fmt.Errorf("failed to serialize request ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(request.ID, payload, request.Queue, nil)
+	msg := entityqueue.NewMessage(requestID, payload, partitionKey, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {
