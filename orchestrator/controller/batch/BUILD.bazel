@@ -26,7 +26,6 @@ go_test(
         "//entity/queue",
         "//extension/counter/mock",
         "//extension/queue/mock",
-        "//extension/storage",
         "//extension/storage/mock",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

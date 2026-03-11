@@ -16,7 +16,6 @@ package batch
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/uber-go/tally/v4"
@@ -96,6 +95,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"partition_key", msg.PartitionKey,
 	)
 
+	// TODO: if capacity is full, wait here for other requests to accumulate to batch them together, or include a request into an existing batch if it's not too late.
+
 	// Generate a globally unique batch ID.
 	seq, err := c.counter.Next(ctx, "batch/"+request.Queue)
 	if err != nil {
@@ -111,6 +112,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		Version:  1,
 	}
 
+	// TODO: run Target Analyzer to understand new batch's dependency graph, run it against other active batches to understand the conflicts.
+	// So far we'll just assume that the new batch conflicts with all active batches, which results in a serial non-parallelized queue.
+
 	// Get active batches for this queue to set as dependencies.
 	activeBatches, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, []entity.BatchState{
 		entity.BatchStateCreated,
@@ -123,40 +127,46 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	for _, dep := range activeBatches {
-		batch.Dependencies = append(batch.Dependencies, map[string]interface{}{
-			"id":    dep.ID,
-			"state": string(dep.State),
-		})
+		batch.Dependencies = append(batch.Dependencies, dep.ID)
 	}
 
 	// Create batch dependent entities (reverse relationship of batch.Dependencies).
 	// For each dependency, record the new batch as a dependent.
 	// If existing dependents are found in the store, append them.
 	for _, dep := range activeBatches {
-		bd := entity.BatchDependent{
-			BatchID:    dep.ID,
-			Dependents: []string{batch.ID},
-		}
-
+		// Get existing reverse index entry for the dependency.
 		existing, err := c.store.GetBatchDependentStore().Get(ctx, dep.ID)
-		if err != nil && !storage.IsNotFound(err) {
+		if err != nil {
 			c.metricsScope.Counter("batch_dependent_store_errors").Inc(1)
 			return fmt.Errorf("failed to get batch dependent for batchID=%s: %w", dep.ID, err)
 		}
-		if err == nil {
-			bd.Dependents = append(existing.Dependents, bd.Dependents...)
-		}
 
-		if err := c.store.GetBatchDependentStore().Create(ctx, bd); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+		dependents := append(existing.Dependents, batch.ID)
+
+		if err := c.store.GetBatchDependentStore().UpdateDependents(ctx, dep.ID, existing.Version, dependents); err != nil {
 			c.metricsScope.Counter("batch_dependent_store_errors").Inc(1)
-			return fmt.Errorf("failed to create batch dependent for batchID=%s: %w", dep.ID, err)
+			return fmt.Errorf("failed to update batch dependent index for existing batchID=%s and new batchID=%s: %w", dep.ID, batch.ID, err)
 		}
 	}
 
-	// Persist batch to storage (idempotent — ErrAlreadyExists means a retry)
-	if err := c.store.GetBatchStore().Create(ctx, batch); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+	// Create new reverse index entry for the new batch. It would be empty for now, but will be updated as new batches are created that conflict with this batch.
+	bd := entity.BatchDependent{
+		BatchID:    batch.ID,
+		Dependents: []string{},
+		Version:    1,
+	}
+
+	if err := c.store.GetBatchDependentStore().Create(ctx, bd); err != nil {
+		c.metricsScope.Counter("batch_dependent_store_errors").Inc(1)
+		return fmt.Errorf("failed to create batch dependent index for new batchID=%s: %w", batch.ID, err)
+	}
+
+	// Persist batch to storage.
+	// This is the final operation that concludes the batch creation process. If it fails, BatchDependents will be pointing to a batch id that does not exist.
+	// We do not reuse batch ids, a retry of this operation will create a new batch with a new ID. The downstream logic that operates on BatchDependent should be able to handle stale entries.
+	if err := c.store.GetBatchStore().Create(ctx, batch); err != nil {
 		c.metricsScope.Counter("batch_store_errors").Inc(1)
-		return fmt.Errorf("failed to create batch: %w", err)
+		return fmt.Errorf("failed to create batch in batch store: %w", err)
 	}
 
 	c.logger.Infow("batch created",
@@ -166,13 +176,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"dependency_count", len(batch.Dependencies),
 	)
 
-	// Publish to score topic
+	// Publish to score topic for further processing.
+	// If it fails and the controller retries, a new batch will be created with the new batch ID but the same request ID.
+	// The downstream logic should be able to handle stale entries by looking at the state of the batch.
 	if err := c.publish(ctx, consumer.TopicKeyScore, batch.ID, batch.Queue); err != nil {
 		c.metricsScope.Counter("publish_errors").Inc(1)
-		return fmt.Errorf("failed to publish to score: %w", err)
+		return fmt.Errorf("failed to publish batch ID to score topic: %w", err)
 	}
 
-	c.logger.Infow("published batch to score",
+	c.logger.Infow("published batch to score topic",
 		"batch_id", batch.ID,
 		"topic_key", consumer.TopicKeyScore,
 	)

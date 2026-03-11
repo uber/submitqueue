@@ -75,9 +75,9 @@ func TestBatch_SerializationRoundTrip(t *testing.T) {
 				ID:       "queueA/batch/3",
 				Queue:    "queueA",
 				Contains: []string{"queueA/5"},
-				Dependencies: []map[string]interface{}{
-					{"id": "queueA/batch/1"},
-					{"id": "queueA/batch/2"},
+				Dependencies: []string{
+					"queueA/batch/1",
+					"queueA/batch/2",
 				},
 				State:   BatchStateCreated,
 				Version: 1,

@@ -28,7 +28,6 @@ import (
 	"github.com/uber/submitqueue/entity/queue"
 	countermock "github.com/uber/submitqueue/extension/counter/mock"
 	queuemock "github.com/uber/submitqueue/extension/queue/mock"
-	"github.com/uber/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
@@ -80,8 +79,12 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 		req := testRequest()
 		mockReqStore.EXPECT().Get(gomock.Any(), req.ID).Return(req, nil).AnyTimes()
 
+		mockBatchDependentStore := storagemock.NewMockBatchDependentStore(ctrl)
+		mockBatchDependentStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+
 		mockStorage = storagemock.NewMockStorage(ctrl)
 		mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+		mockStorage.EXPECT().GetBatchDependentStore().Return(mockBatchDependentStore).AnyTimes()
 		mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 	}
 
@@ -204,13 +207,19 @@ func TestController_Process_WithDependencies(t *testing.T) {
 
 	mockBatchDependentStore := storagemock.NewMockBatchDependentStore(ctrl)
 	// batch/1 has no existing dependents.
-	mockBatchDependentStore.EXPECT().Get(gomock.Any(), "test-queue/batch/1").Return(entity.BatchDependent{}, storage.ErrNotFound)
-	mockBatchDependentStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+	mockBatchDependentStore.EXPECT().Get(gomock.Any(), "test-queue/batch/1").Return(entity.BatchDependent{
+		BatchID: "test-queue/batch/1",
+		Version: 1,
+	}, nil)
+	mockBatchDependentStore.EXPECT().UpdateDependents(gomock.Any(), "test-queue/batch/1", int32(1), gomock.Any()).Return(nil)
 	// batch/2 already has an existing dependent.
 	mockBatchDependentStore.EXPECT().Get(gomock.Any(), "test-queue/batch/2").Return(entity.BatchDependent{
 		BatchID:    "test-queue/batch/2",
 		Dependents: []string{"test-queue/batch/99"},
+		Version:    2,
 	}, nil)
+	mockBatchDependentStore.EXPECT().UpdateDependents(gomock.Any(), "test-queue/batch/2", int32(2), gomock.Any()).Return(nil)
+	// Create empty reverse index for the new batch.
 	mockBatchDependentStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)

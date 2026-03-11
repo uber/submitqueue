@@ -6,6 +6,7 @@ MODULE.bazel.lock
 .idea/
 .claude/
 .mcp.json
+.mcp.json.bak
 .ijwb/
 
 

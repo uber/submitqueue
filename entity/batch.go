@@ -51,28 +51,39 @@ func (s BatchState) IsTerminal() bool {
 type Batch struct {
 	// ID is the globally unique identifier for the batch. Format: "<queue>/batch/<counter_value>".
 	ID string
+
 	// Queue is the name of the queue processing the land request. Queue name is defined in the configuration and should be unique within the system.
 	Queue string
+
 	// Contains is a list of land request IDs that are part of this batch.
 	// Request IDs will always be part of the same queue.
 	//
 	// For e.g. - [queueA/1, queueA/2, queueA/3].
 	//
 	Contains []string
-	// Dependencies is a list of batch IDs (and associated metadata) for this batch.
-	// Dependencies will always be part of the same queue.
+
+	// Dependencies is a list of other batch IDs that this batch depends on.
+	// Dependencies will always be part of the same queue. This way batches form a directed acyclic graph (DAG).
+	// If a batch A depends on batch B directly, it means that some request in batch A has overlapping changed targets with
+	// some another request in batch B. The Dependencies list contains all the transitive closure of all the dependencies, both direct and indirect.
+	// The order is not specified. Only active batches are considered for dependencies, i.e. if the batch is in a terminal state, it does not need to be included.
+	// Because batch states are eventually consistent, dependent batches identified at the time of batch creation may move to terminal states. The interpretation logic
+	// should reconcile batch states separately (i.e. ignore them for processing).
 	//
-	// For e.g - Consider batches - queueA/batch/1, queueA/batch/2, queueA/batch/3
-	// such that - queueA/batch/2 and queueA/batch/3 depend on queueA/batch/1
+	//This field is ok to be updated whether the state of the dependency graph changes. Update should use Version property for optimistic locking.
+	//
+	// Example: consider batches - queueA/batch/1, queueA/batch/2, queueA/batch/3
+	// such that - queueA/batch/2 and queueA/batch/3 have overlapping targets with requests in queueA/batch/1, but queueA/batch/2 and queueA/batch/3 do not have overlapping targets with each other.
 	//
 	// In this case, the Dependencies field for -
 	// - queueA/batch/1 will be empty
 	// - queueA/batch/2 will contain queueA/batch/1
 	// - queueA/batch/3 will contain queueA/batch/1
-	//
-	Dependencies []map[string]interface{}
-	// The state of the batch lifecycle this batch is in.
+	Dependencies []string
+
+	// The state of the batch lifecycle this batch is in. Updateable field with Version for optimistic locking.
 	State BatchState
+
 	// Version is the version of the object. It is used for optimistic locking.
 	// Versioning starts at 1 and is incremented for each change to the object.
 	Version int32
