@@ -18,7 +18,9 @@
 #      rebase silently altered code, it refuses to force-push.
 #   5. If a rebase hits conflicts, it leaves a comment with manual fix
 #      instructions and stops processing that chain.
-#   6. Deletes the merged PR's head branch (replaces GitHub's auto-delete).
+#   6. Deletes the merged PR's head branch after all child PRs have been
+#      retargeted and rebased. If the chain failed, the branch is kept
+#      to avoid closing child PRs whose base was not yet updated.
 #
 # Why "rebase --onto" instead of "--fork-point":
 #   GitHub Actions runs on a fresh clone with no reflog, so --fork-point
@@ -41,6 +43,7 @@ on:
       - closed
 
 permissions:
+  checks: write
   contents: write
   pull-requests: write
 
@@ -54,11 +57,10 @@ jobs:
         with:
           # Fetch full history so rebase --onto works correctly.
           fetch-depth: 0
-          token: ${{ secrets.STACK_REBASE_TOKEN }}
 
       - name: Rebase stacked PRs
         env:
-          GH_TOKEN: ${{ secrets.STACK_REBASE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           MERGED_HEAD: ${{ github.event.pull_request.head.ref }}
           MERGED_BASE: ${{ github.event.pull_request.base.ref }}
           MERGED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -152,10 +154,6 @@ jobs:
           )
                 gh pr comment "$pr_number" --body "$comment_body"
 
-                # Update the base even on failure so GitHub shows the correct
-                # target branch, even if the diff is still wrong.
-                gh pr edit "$pr_number" --base "$new_pr_base"
-
                 echo "::warning::Stopping chain at PR #${pr_number} due to conflicts."
                 return 1
               fi
@@ -183,7 +181,6 @@ jobs:
 
           Please rebase manually and verify the changes are correct."
 
-                gh pr edit "$pr_number" --base "$new_pr_base"
                 return 1
               fi
 
@@ -198,9 +195,15 @@ jobs:
 
           The rebase succeeded but force-push failed for \`$pr_branch\`. This may be due to a concurrent push. Please rebase manually."
 
-                gh pr edit "$pr_number" --base "$new_pr_base"
                 return 1
               fi
+
+              # Pushes made with GITHUB_TOKEN don't trigger other workflows
+              # (GitHub's anti-recursion protection). Explicitly request a
+              # check suite so CI runs on the rebased branch.
+              echo "    requesting check suite for CI"
+              gh api "repos/${GITHUB_REPOSITORY}/check-suites" \
+                -X POST -f "head_sha=${new_child_tip}" --silent || true
 
               # Point the PR at the correct base branch in GitHub.
               gh pr edit "$pr_number" --base "$new_pr_base"
@@ -235,15 +238,16 @@ jobs:
             "$MERGED_BASE" \
           || rebase_result=$?
 
-          # Delete the merged PR's head branch. This replaces GitHub's
-          # auto-delete-head-branch setting, giving us control over timing
-          # (we delete only after the stack is rebased).
+          # Delete the merged PR's head branch only if the rebase chain
+          # succeeded. If it failed, some child PRs may still have this
+          # branch as their base — deleting it would cause GitHub to close
+          # those child PRs.
           echo ""
-          echo "Deleting merged branch: $MERGED_HEAD"
-          git push origin --delete "$MERGED_HEAD" 2>/dev/null || echo "Branch already deleted."
-
           if [ "$rebase_result" -eq 0 ]; then
+            echo "Deleting merged branch: $MERGED_HEAD"
+            git push origin --delete "$MERGED_HEAD" 2>/dev/null || echo "Branch already deleted."
             echo "=== All stacked PRs rebased successfully ==="
           else
+            echo "Keeping merged branch '$MERGED_HEAD' to avoid closing child PRs whose base was not updated."
             echo "=== Rebase chain stopped due to conflicts ==="
           fi
