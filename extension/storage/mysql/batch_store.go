@@ -50,9 +50,9 @@ func (s *batchStore) Get(ctx context.Context, id string) (ret entity.Batch, retE
 	var dependenciesJSON []byte
 
 	err := s.db.QueryRowContext(ctx,
-		"SELECT id, queue, contains, dependencies, state, version FROM batch WHERE id = ?",
+		"SELECT id, queue, contains, dependencies, score, state, version FROM batch WHERE id = ?",
 		id,
-	).Scan(&batch.ID, &batch.Queue, &containsJSON, &dependenciesJSON, &batch.State, &batch.Version)
+	).Scan(&batch.ID, &batch.Queue, &containsJSON, &dependenciesJSON, &batch.Score, &batch.State, &batch.Version)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.Batch{}, storage.WrapNotFound(err)
@@ -88,8 +88,8 @@ func (s *batchStore) Create(ctx context.Context, batch entity.Batch) (retErr err
 	}
 
 	_, err = s.db.ExecContext(ctx,
-		"INSERT INTO batch (id, queue, contains, dependencies, state, version) VALUES (?, ?, ?, ?, ?, ?)",
-		batch.ID, batch.Queue, containsJSON, dependenciesJSON, batch.State, batch.Version,
+		"INSERT INTO batch (id, queue, contains, dependencies, score, state, version) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		batch.ID, batch.Queue, containsJSON, dependenciesJSON, batch.Score, batch.State, batch.Version,
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
@@ -137,6 +137,41 @@ func (s *batchStore) UpdateState(ctx context.Context, id string, version int32, 
 	return nil
 }
 
+// UpdateScoreAndState atomically updates the score and state of a batch if the current version matches the expected version.
+// If versions do not match, returns ErrVersionMismatch. The implementation increments the version by 1 atomically.
+func (s *batchStore) UpdateScoreAndState(ctx context.Context, id string, version int32, score float64, newState entity.BatchState) (retErr error) {
+	op := metrics.Begin(s.scope, "update_score_and_state")
+	defer func() { op.Complete(retErr) }()
+
+	result, err := s.db.ExecContext(ctx,
+		"UPDATE batch SET score = ?, state = ?, version = version + 1 WHERE id = ? AND version = ?",
+		score, newState, id, version,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"failed to update batch score and state for id=%q version=%d score=%f newState=%v: %w",
+			id, version, score, newState, err,
+		)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf(
+			"failed to get rows affected from update score and state for id=%q version=%d score=%f newState=%v: %w",
+			id, version, score, newState, err,
+		)
+	}
+
+	if rowsAffected != 1 {
+		return fmt.Errorf(
+			"version mismatch for batch update score and state: id=%q expected_version=%d score=%f newState=%v: %w",
+			id, version, score, newState, storage.ErrVersionMismatch,
+		)
+	}
+
+	return nil
+}
+
 // GetByQueueAndStates retrieves all batches that belong to the given queue and are in the given states.
 func (s *batchStore) GetByQueueAndStates(ctx context.Context, queue string, states []entity.BatchState) (ret []entity.Batch, retErr error) {
 	op := metrics.Begin(s.scope, "get_by_queue_and_states")
@@ -146,7 +181,7 @@ func (s *batchStore) GetByQueueAndStates(ctx context.Context, queue string, stat
 		return nil, nil
 	}
 
-	query := "SELECT id, queue, contains, dependencies, state, version FROM batch WHERE queue = ? AND state IN (?" + strings.Repeat(", ?", len(states)-1) + ")"
+	query := "SELECT id, queue, contains, dependencies, score, state, version FROM batch WHERE queue = ? AND state IN (?" + strings.Repeat(", ?", len(states)-1) + ")"
 
 	args := make([]any, 1+len(states))
 	args[0] = queue
@@ -166,7 +201,7 @@ func (s *batchStore) GetByQueueAndStates(ctx context.Context, queue string, stat
 		var containsJSON []byte
 		var dependenciesJSON []byte
 
-		if err := rows.Scan(&batch.ID, &batch.Queue, &containsJSON, &dependenciesJSON, &batch.State, &batch.Version); err != nil {
+		if err := rows.Scan(&batch.ID, &batch.Queue, &containsJSON, &dependenciesJSON, &batch.Score, &batch.State, &batch.Version); err != nil {
 			return nil, fmt.Errorf("failed to scan batch entity by queue=%q states=%v from the database: %w", queue, states, err)
 		}
 
