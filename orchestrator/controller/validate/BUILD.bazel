@@ -8,8 +8,10 @@ go_library(
     deps = [
         "//core/consumer",
         "//core/errs",
+        "//core/metrics",
         "//entity",
         "//entity/queue",
+        "//extension/changeprovider",
         "//extension/mergechecker",
         "//extension/storage",
         "@com_github_uber_go_tally_v4//:tally",
@@ -26,6 +28,7 @@ go_test(
         "//core/errs",
         "//entity",
         "//entity/queue",
+        "//extension/changeprovider",
         "//extension/mergechecker",
         "//extension/mergechecker/mock",
         "//extension/queue/mock",

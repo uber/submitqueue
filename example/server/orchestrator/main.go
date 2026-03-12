@@ -31,6 +31,8 @@ import (
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/entity"
+	"github.com/uber/submitqueue/extension/changeprovider"
+	githubprovider "github.com/uber/submitqueue/extension/changeprovider/github"
 	"github.com/uber/submitqueue/extension/counter"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	"github.com/uber/submitqueue/extension/mergechecker"
@@ -190,8 +192,11 @@ func run() error {
 	// Create merge checker
 	mc := newMergeChecker(logger, scope)
 
+	// Create change provider
+	cp := newChangeProvider(logger, scope)
+
 	// Register controllers
-	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cnt, store); err != nil {
+	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cp, cnt, store); err != nil {
 		return err
 	}
 
@@ -376,7 +381,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 //                                        │        │                        │
 //                                        └────────┴────────────────────────┘
 
-func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cnt counter.Counter, store storage.Storage) error {
+func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cp changeprovider.ChangeProvider, cnt counter.Counter, store storage.Storage) error {
 	requestController := start.NewController(
 		logger,
 		scope,
@@ -395,6 +400,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		store,
 		registry,
 		mc,
+		cp,
 		consumer.TopicKeyValidate,
 		"orchestrator-validate",
 	)
@@ -514,6 +520,36 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	return nil
 }
 
+// getEnv returns environment variable value or default if not set.
+func getEnv(key, defaultVal string) string {
+	if val := os.Getenv(key); val != "" {
+		return val
+	}
+	return defaultVal
+}
+
+// parseTimeout parses a duration from environment variable with fallback to default.
+// Returns defaultVal if envVal is empty or cannot be parsed.
+func parseTimeout(envVal string, defaultVal time.Duration) time.Duration {
+	if envVal == "" {
+		return defaultVal
+	}
+	if d, err := time.ParseDuration(envVal); err == nil {
+		return d
+	}
+	return defaultVal
+}
+
+// buildGitHubHTTPClient creates an http.Client configured for GitHub API calls.
+// Configures timeout and optional bearer token authentication.
+func buildGitHubHTTPClient(token string, timeout time.Duration) *http.Client {
+	httpClient := &http.Client{Timeout: timeout}
+	if token != "" {
+		httpClient.Transport = &bearerTransport{token: token}
+	}
+	return httpClient
+}
+
 // newMergeChecker creates a MergeChecker for GitHub (github.com).
 // Configured via GITHUB_TOKEN and GITHUB_GRAPHQL_URL environment variables.
 func newMergeChecker(logger *zap.Logger, scope tally.Scope) mergechecker.MergeChecker {
@@ -536,6 +572,26 @@ func newMergeChecker(logger *zap.Logger, scope tally.Scope) mergechecker.MergeCh
 
 	return mergechecker.NewMultiChecker(map[string]mergechecker.MergeChecker{
 		"github": github,
+	})
+}
+
+// newChangeProvider creates a ChangeProvider for GitHub (github.com).
+// Configured via GITHUB_BASE_URL, GITHUB_TOKEN, and GITHUB_TIMEOUT environment variables.
+// Uses pure dependency injection - creates http.Client with auth configured in Transport.
+func newChangeProvider(logger *zap.Logger, scope tally.Scope) changeprovider.ChangeProvider {
+	// 1. Read configuration from environment
+	baseURL := getEnv("GITHUB_BASE_URL", "https://api.github.com")
+	token := os.Getenv("GITHUB_TOKEN")
+	timeout := parseTimeout(os.Getenv("GITHUB_TIMEOUT"), 30*time.Second)
+
+	// 2. Build HTTP client with caller-controlled config (auth + timeout)
+	httpClient := buildGitHubHTTPClient(token, timeout)
+
+	// 3. Inject into provider
+	return githubprovider.NewProvider(githubprovider.Params{
+		Client:       githubprovider.NewClient(httpClient, baseURL),
+		Logger:       logger.Sugar(),
+		MetricsScope: scope.SubScope("changeprovider"),
 	})
 }
 

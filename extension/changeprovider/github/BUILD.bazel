@@ -1,0 +1,42 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "github",
+    srcs = [
+        "config.go",
+        "convert.go",
+        "graphql.go",
+        "provider.go",
+        "validate.go",
+    ],
+    importpath = "github.com/uber/submitqueue/extension/changeprovider/github",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//core/metrics",
+        "//entity",
+        "//entity/github",
+        "//extension/changeprovider",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "github_test",
+    srcs = [
+        "config_test.go",
+        "graphql_test.go",
+        "provider_test.go",
+        "validate_test.go",
+    ],
+    embed = [":github"],
+    deps = [
+        "//entity",
+        "//entity/github",
+        "//extension/changeprovider",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_zap//zaptest",
+    ],
+)

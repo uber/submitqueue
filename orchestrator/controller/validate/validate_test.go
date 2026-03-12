@@ -26,6 +26,7 @@ import (
 	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
+	"github.com/uber/submitqueue/extension/changeprovider"
 	"github.com/uber/submitqueue/extension/mergechecker"
 	mergecheckermock "github.com/uber/submitqueue/extension/mergechecker/mock"
 	queuemock "github.com/uber/submitqueue/extension/queue/mock"
@@ -39,6 +40,25 @@ func requestIDPayload(t *testing.T, id string) []byte {
 	payload, err := entity.RequestID{ID: id}.ToBytes()
 	require.NoError(t, err)
 	return payload
+}
+
+// mockChangeProvider is a simple mock that returns test data.
+type mockChangeProvider struct{}
+
+func (m *mockChangeProvider) Get(ctx context.Context, change entity.Change) ([]changeprovider.ChangeInfo, error) {
+	// Return simple test data
+	return []changeprovider.ChangeInfo{
+		{
+			URI: "github://org/repo/123/abc123",
+			User: changeprovider.User{
+				Name:  "Test User",
+				Email: "test@example.com",
+			},
+			ChangedFiles: []changeprovider.ChangedFile{
+				{Path: "main.go"},
+			},
+		},
+	}, nil
 }
 
 // newMergeableMock returns a mock MergeChecker that always returns mergeable.
@@ -78,7 +98,9 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, store, registry, mc, consumer.TopicKeyValidate, "orchestrator-validate")
+	cp := &mockChangeProvider{}
+
+	return NewController(logger, scope, store, registry, mc, cp, consumer.TopicKeyValidate, "orchestrator-validate")
 }
 
 func TestNewController(t *testing.T) {
