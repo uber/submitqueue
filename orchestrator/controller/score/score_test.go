@@ -27,6 +27,7 @@ import (
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
 	queuemock "github.com/uber/submitqueue/extension/queue/mock"
+	scorermock "github.com/uber/submitqueue/extension/scorer/mock"
 	storagemock "github.com/uber/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
@@ -42,25 +43,44 @@ func batchIDPayload(t *testing.T, id string) []byte {
 // testBatch returns a standard test batch for score tests.
 func testBatch() entity.Batch {
 	return entity.Batch{
-		ID:      "test-queue/batch/1",
-		Queue:   "test-queue",
-		State:   entity.BatchStateCreated,
+		ID:       "test-queue/batch/1",
+		Queue:    "test-queue",
+		Contains: []string{"test-queue/1"},
+		State:    entity.BatchStateCreated,
+		Version:  1,
+	}
+}
+
+// testRequest returns a standard test request for score tests.
+func testRequest() entity.Request {
+	return entity.Request{
+		ID:    "test-queue/1",
+		Queue: "test-queue",
+		Change: entity.Change{
+			URIs: []string{"github://uber/repo/pull/1/abc123"},
+		},
+		State:   entity.RequestStateStarted,
 		Version: 1,
 	}
 }
 
-// newMockStorage creates a MockStorage with a MockBatchStore that returns the given batch on Get.
-func newMockStorage(ctrl *gomock.Controller, batch entity.Batch) *storagemock.MockStorage {
+// newMockStorage creates a MockStorage with a MockBatchStore and MockRequestStore.
+func newMockStorage(ctrl *gomock.Controller, batch entity.Batch, request entity.Request) *storagemock.MockStorage {
 	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
 	mockBatchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil).AnyTimes()
+	mockBatchStore.EXPECT().UpdateScoreAndState(gomock.Any(), batch.ID, batch.Version, gomock.Any(), entity.BatchStateScored).Return(nil).AnyTimes()
+
+	mockRequestStore := storagemock.NewMockRequestStore(ctrl)
+	mockRequestStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil).AnyTimes()
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	store.EXPECT().GetRequestStore().Return(mockRequestStore).AnyTimes()
 	return store
 }
 
 // newTestController creates a controller with test dependencies.
-func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock.MockStorage, publishErr error) *Controller {
+func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock.MockStorage, scorer *scorermock.MockScorer, publishErr error) *Controller {
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
 
@@ -75,18 +95,23 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: mockQ}},
+		[]consumer.TopicConfig{
+			{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
+			{Key: consumer.TopicKeyLog, Name: "log", Queue: mockQ},
+		},
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, store, registry, consumer.TopicKeyScore, "orchestrator-score")
+	return NewController(logger, scope, store, scorer, registry, consumer.TopicKeyScore, "orchestrator-score")
 }
 
 func TestNewController(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	batch := testBatch()
-	store := newMockStorage(ctrl, batch)
-	controller := newTestController(t, ctrl, store, nil)
+	request := testRequest()
+	store := newMockStorage(ctrl, batch, request)
+	mockScorer := scorermock.NewMockScorer(ctrl)
+	controller := newTestController(t, ctrl, store, mockScorer, nil)
 
 	require.NotNil(t, controller)
 	assert.Equal(t, consumer.TopicKeyScore, controller.TopicKey())
@@ -98,8 +123,67 @@ func TestController_Process_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	batch := testBatch()
-	store := newMockStorage(ctrl, batch)
-	controller := newTestController(t, ctrl, store, nil)
+	request := testRequest()
+	store := newMockStorage(ctrl, batch, request)
+
+	mockScorer := scorermock.NewMockScorer(ctrl)
+	mockScorer.EXPECT().Score(gomock.Any(), request.Change).Return(0.85, nil)
+
+	controller := newTestController(t, ctrl, store, mockScorer, nil)
+
+	msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	err := controller.Process(context.Background(), delivery)
+	require.NoError(t, err)
+}
+
+func TestController_Process_MultipleRequests_MinScore(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	batch := entity.Batch{
+		ID:       "test-queue/batch/1",
+		Queue:    "test-queue",
+		Contains: []string{"test-queue/1", "test-queue/2"},
+		State:    entity.BatchStateCreated,
+		Version:  1,
+	}
+
+	request1 := entity.Request{
+		ID:      "test-queue/1",
+		Queue:   "test-queue",
+		Change:  entity.Change{URIs: []string{"github://uber/repo/pull/1/abc"}},
+		State:   entity.RequestStateStarted,
+		Version: 1,
+	}
+	request2 := entity.Request{
+		ID:      "test-queue/2",
+		Queue:   "test-queue",
+		Change:  entity.Change{URIs: []string{"github://uber/repo/pull/2/def"}},
+		State:   entity.RequestStateStarted,
+		Version: 1,
+	}
+
+	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+	mockBatchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+	// Expect the multiplicative score (0.9 * 0.6 = 0.54) to be persisted
+	mockBatchStore.EXPECT().UpdateScoreAndState(gomock.Any(), batch.ID, batch.Version, 0.54, entity.BatchStateScored).Return(nil)
+
+	mockRequestStore := storagemock.NewMockRequestStore(ctrl)
+	mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/1").Return(request1, nil)
+	mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/2").Return(request2, nil)
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	store.EXPECT().GetRequestStore().Return(mockRequestStore).AnyTimes()
+
+	mockScorer := scorermock.NewMockScorer(ctrl)
+	mockScorer.EXPECT().Score(gomock.Any(), request1.Change).Return(0.9, nil)
+	mockScorer.EXPECT().Score(gomock.Any(), request2.Change).Return(0.6, nil)
+
+	controller := newTestController(t, ctrl, store, mockScorer, nil)
 
 	msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -118,7 +202,8 @@ func TestController_Process_StorageFailure(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
 
-	controller := newTestController(t, ctrl, store, nil)
+	mockScorer := scorermock.NewMockScorer(ctrl)
+	controller := newTestController(t, ctrl, store, mockScorer, nil)
 
 	msg := queue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1"), "test-queue", nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -130,12 +215,78 @@ func TestController_Process_StorageFailure(t *testing.T) {
 	assert.False(t, errs.IsRetryable(err))
 }
 
+func TestController_Process_ScorerFailure(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	batch := testBatch()
+	request := testRequest()
+
+	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+	mockBatchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+
+	mockRequestStore := storagemock.NewMockRequestStore(ctrl)
+	mockRequestStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	store.EXPECT().GetRequestStore().Return(mockRequestStore).AnyTimes()
+
+	mockScorer := scorermock.NewMockScorer(ctrl)
+	mockScorer.EXPECT().Score(gomock.Any(), request.Change).Return(0.0, fmt.Errorf("no bucket matches value 99"))
+
+	controller := newTestController(t, ctrl, store, mockScorer, nil)
+
+	msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	err := controller.Process(context.Background(), delivery)
+	require.Error(t, err)
+}
+
+func TestController_Process_UpdateScoreFailure(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	batch := testBatch()
+	request := testRequest()
+
+	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+	mockBatchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+	mockBatchStore.EXPECT().UpdateScoreAndState(gomock.Any(), batch.ID, batch.Version, gomock.Any(), entity.BatchStateScored).Return(fmt.Errorf("version mismatch"))
+
+	mockRequestStore := storagemock.NewMockRequestStore(ctrl)
+	mockRequestStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	store.EXPECT().GetRequestStore().Return(mockRequestStore).AnyTimes()
+
+	mockScorer := scorermock.NewMockScorer(ctrl)
+	mockScorer.EXPECT().Score(gomock.Any(), request.Change).Return(0.85, nil)
+
+	controller := newTestController(t, ctrl, store, mockScorer, nil)
+
+	msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	err := controller.Process(context.Background(), delivery)
+	require.Error(t, err)
+}
+
 func TestController_Process_PublishFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	batch := testBatch()
-	store := newMockStorage(ctrl, batch)
-	controller := newTestController(t, ctrl, store, fmt.Errorf("publish failed"))
+	request := testRequest()
+	store := newMockStorage(ctrl, batch, request)
+
+	mockScorer := scorermock.NewMockScorer(ctrl)
+	mockScorer.EXPECT().Score(gomock.Any(), request.Change).Return(0.85, nil)
+
+	controller := newTestController(t, ctrl, store, mockScorer, fmt.Errorf("publish failed"))
 
 	msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -149,8 +300,10 @@ func TestController_Process_PublishFailure(t *testing.T) {
 func TestController_InterfaceImplementation(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	batch := testBatch()
-	store := newMockStorage(ctrl, batch)
-	controller := newTestController(t, ctrl, store, nil)
+	request := testRequest()
+	store := newMockStorage(ctrl, batch, request)
+	mockScorer := scorermock.NewMockScorer(ctrl)
+	controller := newTestController(t, ctrl, store, mockScorer, nil)
 
 	var _ consumer.Controller = controller
 }

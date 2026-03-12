@@ -32,6 +32,8 @@ const (
 	BatchStateSucceeded BatchState = "succeeded"
 	// BatchStateFailed is the terminal state of a batch that has failed.
 	BatchStateFailed BatchState = "failed"
+	// BatchStateScored is the state of a batch that has been scored for build success probability.
+	BatchStateScored BatchState = "scored"
 	// BatchStateCancelled is the terminal state of a batch that was cancelled before completion.
 	BatchStateCancelled BatchState = "cancelled"
 )
@@ -80,6 +82,10 @@ type Batch struct {
 	// - queueA/batch/2 will contain queueA/batch/1
 	// - queueA/batch/3 will contain queueA/batch/1
 	Dependencies []string
+
+	// Score is the predicted probability of build success for this batch, ranging from 0.0 to 1.0.
+	// Set during the scoring phase. Zero value means the batch has not been scored yet.
+	Score float64
 
 	// The state of the batch lifecycle this batch is in. Updateable field with Version for optimistic locking.
 	State BatchState

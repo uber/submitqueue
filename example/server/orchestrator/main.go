@@ -30,12 +30,14 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/extension/counter"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	"github.com/uber/submitqueue/extension/mergechecker"
 	githubchecker "github.com/uber/submitqueue/extension/mergechecker/github"
 	extqueue "github.com/uber/submitqueue/extension/queue"
 	queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
+	"github.com/uber/submitqueue/extension/scorer/heuristic"
 	"github.com/uber/submitqueue/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/orchestrator/controller"
@@ -417,6 +419,19 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		store,
+		// TODO: replace with a real scorer
+		heuristic.New(
+			[]heuristic.Bucket{
+				{Min: 0, Max: 1, Score: 0.95},
+				{Min: 2, Max: 5, Score: 0.80},
+				{Min: 6, Max: 20, Score: 0.60},
+				{Min: 21, Max: 1<<31 - 1, Score: 0.40},
+			},
+			func(_ context.Context, change entity.Change) (int, error) {
+				return len(change.URIs), nil
+			},
+			scope.SubScope("scorer"),
+		),
 		registry,
 		consumer.TopicKeyScore,
 		"orchestrator-score",
