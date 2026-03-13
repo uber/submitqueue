@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -193,7 +192,10 @@ func run() error {
 	c := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry)
 
 	// Create merge checker
-	mc := newMergeChecker(logger, scope)
+	mc, err := newMergeChecker(logger, scope)
+	if err != nil {
+		return fmt.Errorf("failed to create merge checker: %w", err)
+	}
 
 	// Create change provider
 	cp, err := newChangeProvider(logger, scope)
@@ -547,28 +549,29 @@ func parseTimeout(envVal string, defaultVal time.Duration) time.Duration {
 }
 
 // newMergeChecker creates a MergeChecker for GitHub (github.com).
-// Configured via GITHUB_TOKEN and GITHUB_GRAPHQL_URL environment variables.
-func newMergeChecker(logger *zap.Logger, scope tally.Scope) mergechecker.MergeChecker {
-	graphQLURL := os.Getenv("GITHUB_GRAPHQL_URL")
-	if graphQLURL == "" {
-		graphQLURL = "https://api.github.com/graphql"
+// Configured via GITHUB_BASE_URL, GITHUB_TOKEN, and GITHUB_TIMEOUT environment variables.
+func newMergeChecker(logger *zap.Logger, scope tally.Scope) (mergechecker.MergeChecker, error) {
+	client, err := httpclient.NewClient(getEnv("GITHUB_BASE_URL", "https://api.github.com"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to build GitHub HTTP client: %w", err)
 	}
 
-	httpClient := &http.Client{}
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
-		httpClient.Transport = &bearerTransport{token: token}
+		ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+		client.Transport = &oauth2.Transport{Source: ts, Base: client.Transport}
 	}
+
+	client.Timeout = parseTimeout(os.Getenv("GITHUB_TIMEOUT"), 30*time.Second)
 
 	github := githubchecker.NewMergeChecker(githubchecker.Params{
-		HTTPClient:   httpClient,
-		GraphQLURL:   graphQLURL,
+		HTTPClient:   client,
 		Logger:       logger.Sugar(),
 		MetricsScope: scope.SubScope("mergechecker"),
 	})
 
 	return mergechecker.NewMultiChecker(map[string]mergechecker.MergeChecker{
 		"github": github,
-	})
+	}), nil
 }
 
 // newChangeProvider creates a ChangeProvider for GitHub (github.com).
@@ -591,15 +594,4 @@ func newChangeProvider(logger *zap.Logger, scope tally.Scope) (changeprovider.Ch
 		Logger:       logger.Sugar(),
 		MetricsScope: scope.SubScope("changeprovider"),
 	}), nil
-}
-
-// bearerTransport is an http.RoundTripper that adds a Bearer token to requests.
-type bearerTransport struct {
-	token string
-}
-
-func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	req = req.Clone(req.Context())
-	req.Header.Set("Authorization", "Bearer "+t.token)
-	return http.DefaultTransport.RoundTrip(req)
 }

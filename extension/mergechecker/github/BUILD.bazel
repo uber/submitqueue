@@ -27,6 +27,7 @@ go_test(
     ],
     embed = [":github"],
     deps = [
+        "//core/httpclient",
         "//entity",
         "//entity/github",
         "//extension/mergechecker",

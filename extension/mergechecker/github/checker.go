@@ -31,12 +31,9 @@ import (
 
 // Params holds the dependencies for the GitHub MergeChecker.
 type Params struct {
-	// HTTPClient is a pre-configured HTTP client with auth (bearer token, GitHub App JWT, etc.).
-	// Auth is the caller's responsibility via HTTP transport/round-tripper.
+	// HTTPClient is a pre-configured HTTP client. The caller is responsible for
+	// configuring the base URL (via BaseURLTransport) and auth (via a transport layer).
 	HTTPClient *http.Client
-	// GraphQLURL is the GitHub GraphQL API endpoint
-	// (e.g., "https://api.github.com/graphql" or "https://ghe.example.com/api/graphql").
-	GraphQLURL string
 	// Logger is the structured logger.
 	Logger *zap.SugaredLogger
 	// MetricsScope is the metrics scope for instrumentation.
@@ -46,7 +43,6 @@ type Params struct {
 // mergeChecker implements the mergechecker.MergeChecker interface using the GitHub GraphQL API.
 type mergeChecker struct {
 	httpClient   *http.Client
-	graphQLURL   string
 	logger       *zap.SugaredLogger
 	metricsScope tally.Scope
 }
@@ -58,7 +54,6 @@ var _ mergechecker.MergeChecker = (*mergeChecker)(nil)
 func NewMergeChecker(params Params) mergechecker.MergeChecker {
 	return &mergeChecker{
 		httpClient:   params.HTTPClient,
-		graphQLURL:   params.GraphQLURL,
 		logger:       params.Logger.Named("github_mergechecker"),
 		metricsScope: params.MetricsScope.SubScope("github_mergechecker"),
 	}
@@ -120,7 +115,7 @@ func (c *mergeChecker) fetchPRInfo(ctx context.Context, changeIDs []entitygithub
 		return nil, fmt.Errorf("failed to marshal graphql request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.graphQLURL, bytes.NewReader(reqBody))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "/graphql", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create http request: %w", err)
 	}

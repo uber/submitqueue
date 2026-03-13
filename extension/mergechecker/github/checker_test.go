@@ -25,20 +25,20 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally/v4"
+	"github.com/uber/submitqueue/core/httpclient"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/extension/mergechecker"
 	"go.uber.org/zap/zaptest"
 )
 
 func newTestMergeChecker(t *testing.T, serverURL string) mergechecker.MergeChecker {
-	logger := zaptest.NewLogger(t).Sugar()
-	scope := tally.NoopScope
-
+	t.Helper()
+	client, err := httpclient.NewClient(serverURL)
+	require.NoError(t, err)
 	return NewMergeChecker(Params{
-		HTTPClient:   &http.Client{},
-		GraphQLURL:   serverURL,
-		Logger:       logger,
-		MetricsScope: scope,
+		HTTPClient:   client,
+		Logger:       zaptest.NewLogger(t).Sugar(),
+		MetricsScope: tally.NoopScope,
 	})
 }
 
