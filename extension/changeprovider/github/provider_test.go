@@ -6,20 +6,24 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally/v4"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/uber/submitqueue/core/httpclient"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/extension/changeprovider"
 )
 
 func newTestProvider(t *testing.T, serverURL string) changeprovider.ChangeProvider {
 	t.Helper()
+	client, err := httpclient.NewClient(serverURL, "", 30*time.Second)
+	require.NoError(t, err)
 	return NewProvider(Params{
-		Client:       NewClient(&http.Client{}, serverURL),
+		HTTPClient:   client,
 		Logger:       zaptest.NewLogger(t).Sugar(),
 		MetricsScope: tally.NoopScope,
 	})

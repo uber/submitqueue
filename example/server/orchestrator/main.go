@@ -30,6 +30,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/core/httpclient"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/extension/changeprovider"
 	githubprovider "github.com/uber/submitqueue/extension/changeprovider/github"
@@ -193,7 +194,10 @@ func run() error {
 	mc := newMergeChecker(logger, scope)
 
 	// Create change provider
-	cp := newChangeProvider(logger, scope)
+	cp, err := newChangeProvider(logger, scope)
+	if err != nil {
+		return fmt.Errorf("failed to create change provider: %w", err)
+	}
 
 	// Register controllers
 	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cp, cnt, store); err != nil {
@@ -540,16 +544,6 @@ func parseTimeout(envVal string, defaultVal time.Duration) time.Duration {
 	return defaultVal
 }
 
-// buildGitHubHTTPClient creates an http.Client configured for GitHub API calls.
-// Configures timeout and optional bearer token authentication.
-func buildGitHubHTTPClient(token string, timeout time.Duration) *http.Client {
-	httpClient := &http.Client{Timeout: timeout}
-	if token != "" {
-		httpClient.Transport = &bearerTransport{token: token}
-	}
-	return httpClient
-}
-
 // newMergeChecker creates a MergeChecker for GitHub (github.com).
 // Configured via GITHUB_TOKEN and GITHUB_GRAPHQL_URL environment variables.
 func newMergeChecker(logger *zap.Logger, scope tally.Scope) mergechecker.MergeChecker {
@@ -577,22 +571,21 @@ func newMergeChecker(logger *zap.Logger, scope tally.Scope) mergechecker.MergeCh
 
 // newChangeProvider creates a ChangeProvider for GitHub (github.com).
 // Configured via GITHUB_BASE_URL, GITHUB_TOKEN, and GITHUB_TIMEOUT environment variables.
-// Uses pure dependency injection - creates http.Client with auth configured in Transport.
-func newChangeProvider(logger *zap.Logger, scope tally.Scope) changeprovider.ChangeProvider {
-	// 1. Read configuration from environment
-	baseURL := getEnv("GITHUB_BASE_URL", "https://api.github.com")
-	token := os.Getenv("GITHUB_TOKEN")
-	timeout := parseTimeout(os.Getenv("GITHUB_TIMEOUT"), 30*time.Second)
+func newChangeProvider(logger *zap.Logger, scope tally.Scope) (changeprovider.ChangeProvider, error) {
+	client, err := httpclient.NewClient(
+		getEnv("GITHUB_BASE_URL", "https://api.github.com"),
+		os.Getenv("GITHUB_TOKEN"),
+		parseTimeout(os.Getenv("GITHUB_TIMEOUT"), 30*time.Second),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build GitHub HTTP client: %w", err)
+	}
 
-	// 2. Build HTTP client with caller-controlled config (auth + timeout)
-	httpClient := buildGitHubHTTPClient(token, timeout)
-
-	// 3. Inject into provider
 	return githubprovider.NewProvider(githubprovider.Params{
-		Client:       githubprovider.NewClient(httpClient, baseURL),
+		HTTPClient:   client,
 		Logger:       logger.Sugar(),
 		MetricsScope: scope.SubScope("changeprovider"),
-	})
+	}), nil
 }
 
 // bearerTransport is an http.RoundTripper that adds a Bearer token to requests.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 
 	"github.com/uber-go/tally/v4"
 	"go.uber.org/zap"
@@ -16,9 +17,9 @@ import (
 
 // Params holds the dependencies for the GitHub ChangeProvider.
 type Params struct {
-	// Client is a pre-configured GitHub API client (encapsulates HTTP client and GraphQL URL).
-	// Auth is the caller's responsibility via HTTP transport/round-tripper.
-	Client *Client
+	// HTTPClient is a pre-configured HTTP client. The caller is responsible for
+	// configuring the base URL (via BaseURLTransport) and auth (via a transport layer).
+	HTTPClient *http.Client
 	// Logger is the structured logger.
 	Logger *zap.SugaredLogger
 	// MetricsScope is the metrics scope for instrumentation.
@@ -27,7 +28,7 @@ type Params struct {
 
 // provider implements the ChangeProvider interface for GitHub.
 type provider struct {
-	client       *Client
+	httpClient   *http.Client
 	logger       *zap.SugaredLogger
 	metricsScope tally.Scope
 }
@@ -35,7 +36,7 @@ type provider struct {
 // NewProvider creates a new GitHub ChangeProvider.
 func NewProvider(params Params) changeprovider.ChangeProvider {
 	return &provider{
-		client:       params.Client,
+		httpClient:   params.HTTPClient,
 		logger:       params.Logger.Named("github_changeprovider"),
 		metricsScope: params.MetricsScope.SubScope("github_changeprovider"),
 	}
@@ -153,7 +154,7 @@ func (p *provider) fetchPullRequestPage(ctx context.Context, org, repo string, p
 		return nil, fmt.Errorf("failed to marshal GraphQL request: %w", err)
 	}
 
-	resp, err := doGraphQLRequest(ctx, bodyBytes, p.client)
+	resp, err := doGraphQLRequest(ctx, bodyBytes, p.httpClient)
 	if err != nil {
 		return nil, err
 	}

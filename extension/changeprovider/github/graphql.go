@@ -115,19 +115,20 @@ func buildGraphQLRequest(org, repo string, prNumber int, cursor string) graphqlR
 }
 
 // doGraphQLRequest executes a GraphQL HTTP request.
+// The path "/graphql" is relative — BaseURLTransport on the client resolves it to the full URL.
 func doGraphQLRequest(
 	ctx context.Context,
 	bodyBytes []byte,
-	client *Client,
+	client *http.Client,
 ) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, client.GraphQLURL(), bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/graphql", bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.HTTPClient().Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
