@@ -77,40 +77,6 @@ func TestBaseURLTransport_DoesNotMutateOriginalRequest(t *testing.T) {
 	assert.Equal(t, originalURL, req.URL.String())
 }
 
-func TestBearerTransport_AddsAuthHeader(t *testing.T) {
-	var capturedHeader string
-	transport := &BearerTransport{
-		Token: "test-token",
-		Next: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			capturedHeader = req.Header.Get("Authorization")
-			return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
-		}),
-	}
-
-	req, err := http.NewRequest(http.MethodGet, "/", nil)
-	require.NoError(t, err)
-
-	_, err = transport.RoundTrip(req)
-	require.NoError(t, err)
-	assert.Equal(t, "Bearer test-token", capturedHeader)
-}
-
-func TestBearerTransport_DoesNotMutateOriginalRequest(t *testing.T) {
-	transport := &BearerTransport{
-		Token: "test-token",
-		Next: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
-		}),
-	}
-
-	req, err := http.NewRequest(http.MethodGet, "/", nil)
-	require.NoError(t, err)
-
-	_, err = transport.RoundTrip(req)
-	require.NoError(t, err)
-	assert.Empty(t, req.Header.Get("Authorization"))
-}
-
 func TestNewClient_InvalidURL(t *testing.T) {
 	_, err := NewClient("://invalid", "", 30*time.Second)
 	require.Error(t, err)

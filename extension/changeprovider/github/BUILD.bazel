@@ -3,7 +3,6 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "github",
     srcs = [
-        "config.go",
         "convert.go",
         "graphql.go",
         "provider.go",
@@ -24,13 +23,13 @@ go_library(
 go_test(
     name = "github_test",
     srcs = [
-        "config_test.go",
         "graphql_test.go",
         "provider_test.go",
         "validate_test.go",
     ],
     embed = [":github"],
     deps = [
+        "//core/httpclient",
         "//entity",
         "//entity/github",
         "//extension/changeprovider",

@@ -38,8 +38,6 @@ type ChangedFile struct {
 	LinesAdded int
 	// LinesDeleted is the number of lines deleted in this file.
 	LinesDeleted int
-	// LinesModified is the number of lines modified in this file.
-	LinesModified int
 }
 
 // ChangeInfo contains metadata and file changes for a code change.

@@ -12,6 +12,7 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//core/consumer",
+        "//core/httpclient",
         "//entity",
         "//extension/changeprovider",
         "//extension/changeprovider/github",

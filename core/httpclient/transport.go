@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"golang.org/x/oauth2"
 )
 
 // BaseURLTransport is an http.RoundTripper that rewrites every request URL
@@ -37,31 +39,10 @@ func (t *BaseURLTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	return next.RoundTrip(newReq)
 }
 
-// BearerTransport is an http.RoundTripper that adds a Bearer token
-// Authorization header to every request.
-type BearerTransport struct {
-	// Token is the bearer token to include in requests.
-	Token string
-	// Next is the underlying RoundTripper. Defaults to http.DefaultTransport if nil.
-	Next http.RoundTripper
-}
-
-// RoundTrip adds the Authorization header, then delegates to Next.
-func (t *BearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	newReq := req.Clone(req.Context())
-	newReq.Header.Set("Authorization", "Bearer "+t.Token)
-
-	next := t.Next
-	if next == nil {
-		next = http.DefaultTransport
-	}
-	return next.RoundTrip(newReq)
-}
-
 // NewClient builds an *http.Client with BaseURLTransport and optionally
-// BearerTransport configured. The transport chain is:
+// oauth2 bearer auth configured. The transport chain is:
 //
-//	BearerTransport (if token provided) → BaseURLTransport → DefaultTransport
+//	oauth2.Transport (if token provided) → BaseURLTransport → DefaultTransport
 func NewClient(rawBaseURL, token string, timeout time.Duration) (*http.Client, error) {
 	u, err := url.Parse(rawBaseURL)
 	if err != nil {
@@ -73,7 +54,8 @@ func NewClient(rawBaseURL, token string, timeout time.Duration) (*http.Client, e
 		Next:    http.DefaultTransport,
 	}
 	if token != "" {
-		transport = &BearerTransport{Token: token, Next: transport}
+		ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+		transport = &oauth2.Transport{Source: ts, Base: transport}
 	}
 
 	return &http.Client{Transport: transport, Timeout: timeout}, nil

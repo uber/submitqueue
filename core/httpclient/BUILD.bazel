@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "httpclient",
+    srcs = ["transport.go"],
+    importpath = "github.com/uber/submitqueue/core/httpclient",
+    visibility = ["//visibility:public"],
+    deps = ["@org_golang_x_oauth2//:oauth2"],
+)
+
+go_test(
+    name = "httpclient_test",
+    srcs = ["transport_test.go"],
+    embed = [":httpclient"],
+    deps = [
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

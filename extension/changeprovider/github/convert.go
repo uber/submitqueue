@@ -24,17 +24,11 @@ func convertFiles(nodes []fileNode) []changeprovider.ChangedFile {
 	changedFiles := make([]changeprovider.ChangedFile, 0, len(nodes))
 
 	for _, file := range nodes {
-		linesModified := 0
-		if file.Additions > 0 && file.Deletions > 0 {
-			linesModified = min(file.Additions, file.Deletions)
-		}
-
 		changedFiles = append(changedFiles, changeprovider.ChangedFile{
-			Path:          file.Path,
-			Patch:         file.Patch,
-			LinesAdded:    file.Additions,
-			LinesDeleted:  file.Deletions,
-			LinesModified: linesModified,
+			Path:         file.Path,
+			Patch:        file.Patch,
+			LinesAdded:   file.Additions,
+			LinesDeleted: file.Deletions,
 		})
 	}
 
