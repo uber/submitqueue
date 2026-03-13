@@ -2,10 +2,8 @@ package httpclient
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -78,53 +76,8 @@ func TestBaseURLTransport_DoesNotMutateOriginalRequest(t *testing.T) {
 }
 
 func TestNewClient_InvalidURL(t *testing.T) {
-	_, err := NewClient("://invalid", "", 30*time.Second)
+	_, err := NewClient("://invalid")
 	require.Error(t, err)
-}
-
-func TestNewClient_SetsTimeout(t *testing.T) {
-	client, err := NewClient("https://api.github.com", "", 10*time.Second)
-	require.NoError(t, err)
-	assert.Equal(t, 10*time.Second, client.Timeout)
-}
-
-func TestNewClient_AuthHeader(t *testing.T) {
-	tests := []struct {
-		name           string
-		token          string
-		wantAuthHeader string
-	}{
-		{
-			name:           "no token, no auth header",
-			token:          "",
-			wantAuthHeader: "",
-		},
-		{
-			name:           "with token, adds bearer auth header",
-			token:          "my-token",
-			wantAuthHeader: "Bearer my-token",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("X-Captured-Auth", r.Header.Get("Authorization"))
-				w.WriteHeader(http.StatusOK)
-			}))
-			defer server.Close()
-
-			client, err := NewClient(server.URL, tt.token, 30*time.Second)
-			require.NoError(t, err)
-
-			req, err := http.NewRequest(http.MethodGet, "/", nil)
-			require.NoError(t, err)
-
-			resp, err := client.Do(req)
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantAuthHeader, resp.Header.Get("X-Captured-Auth"))
-		})
-	}
 }
 
 func mustParseURL(t *testing.T, raw string) *url.URL {

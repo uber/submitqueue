@@ -4,9 +4,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
-
-	"golang.org/x/oauth2"
 )
 
 // BaseURLTransport is an http.RoundTripper that rewrites every request URL
@@ -39,24 +36,17 @@ func (t *BaseURLTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	return next.RoundTrip(newReq)
 }
 
-// NewClient builds an *http.Client with BaseURLTransport and optionally
-// oauth2 bearer auth configured. The transport chain is:
-//
-//	oauth2.Transport (if token provided) → BaseURLTransport → DefaultTransport
-func NewClient(rawBaseURL, token string, timeout time.Duration) (*http.Client, error) {
+// NewClient builds an *http.Client with BaseURLTransport configured.
+// Callers are responsible for layering additional transports (e.g. auth) and
+// setting Timeout on the returned client.
+func NewClient(rawBaseURL string) (*http.Client, error) {
 	u, err := url.Parse(rawBaseURL)
 	if err != nil {
 		return nil, err
 	}
 
-	var transport http.RoundTripper = &BaseURLTransport{
+	return &http.Client{Transport: &BaseURLTransport{
 		BaseURL: u,
 		Next:    http.DefaultTransport,
-	}
-	if token != "" {
-		ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
-		transport = &oauth2.Transport{Source: ts, Base: transport}
-	}
-
-	return &http.Client{Transport: transport, Timeout: timeout}, nil
+	}}, nil
 }

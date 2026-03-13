@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,7 +19,7 @@ import (
 
 func newTestProvider(t *testing.T, serverURL string) changeprovider.ChangeProvider {
 	t.Helper()
-	client, err := httpclient.NewClient(serverURL, "", 30*time.Second)
+	client, err := httpclient.NewClient(serverURL)
 	require.NoError(t, err)
 	return NewProvider(Params{
 		HTTPClient:   client,

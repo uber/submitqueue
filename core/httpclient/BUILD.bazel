@@ -5,7 +5,6 @@ go_library(
     srcs = ["transport.go"],
     importpath = "github.com/uber/submitqueue/core/httpclient",
     visibility = ["//visibility:public"],
-    deps = ["@org_golang_x_oauth2//:oauth2"],
 )
 
 go_test(

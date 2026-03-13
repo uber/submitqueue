@@ -28,6 +28,8 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	"golang.org/x/oauth2"
+
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/httpclient"
@@ -572,14 +574,17 @@ func newMergeChecker(logger *zap.Logger, scope tally.Scope) mergechecker.MergeCh
 // newChangeProvider creates a ChangeProvider for GitHub (github.com).
 // Configured via GITHUB_BASE_URL, GITHUB_TOKEN, and GITHUB_TIMEOUT environment variables.
 func newChangeProvider(logger *zap.Logger, scope tally.Scope) (changeprovider.ChangeProvider, error) {
-	client, err := httpclient.NewClient(
-		getEnv("GITHUB_BASE_URL", "https://api.github.com"),
-		os.Getenv("GITHUB_TOKEN"),
-		parseTimeout(os.Getenv("GITHUB_TIMEOUT"), 30*time.Second),
-	)
+	client, err := httpclient.NewClient(getEnv("GITHUB_BASE_URL", "https://api.github.com"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to build GitHub HTTP client: %w", err)
 	}
+
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+		client.Transport = &oauth2.Transport{Source: ts, Base: client.Transport}
+	}
+
+	client.Timeout = parseTimeout(os.Getenv("GITHUB_TIMEOUT"), 30*time.Second)
 
 	return githubprovider.NewProvider(githubprovider.Params{
 		HTTPClient:   client,
