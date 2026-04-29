@@ -26,8 +26,8 @@ const (
 	BatchStateCreated BatchState = "created"
 	// BatchStateSpeculating is the state of a batch that is undergoing speculative execution.
 	BatchStateSpeculating BatchState = "speculating"
-	// BatchStateFinalizing is the state of a batch that is being finalized after speculative execution.
-	BatchStateFinalizing BatchState = "finalizing"
+	// BatchStateMerging is the state of a batch that is being merged after speculative execution.
+	BatchStateMerging BatchState = "merging"
 	// BatchStateSucceeded is the terminal state of a batch that has been successfully landed.
 	BatchStateSucceeded BatchState = "succeeded"
 	// BatchStateFailed is the terminal state of a batch that has failed.

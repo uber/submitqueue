@@ -97,7 +97,7 @@ func TestController_Process_SuccessfulMerge(t *testing.T) {
 		ID:       batchID,
 		Queue:    "test-queue",
 		Contains: []string{reqID},
-		State:    entity.BatchStateFinalizing,
+		State:    entity.BatchStateMerging,
 		Version:  4,
 	}
 	change := entity.Change{URIs: []string{"github://o/r/1/sha"}}
@@ -162,7 +162,7 @@ func TestController_Process_PassesAllChangesInBatchOrder(t *testing.T) {
 		ID:       batchID,
 		Queue:    "test-queue",
 		Contains: requestIDs,
-		State:    entity.BatchStateFinalizing,
+		State:    entity.BatchStateMerging,
 		Version:  1,
 	}
 
@@ -221,7 +221,7 @@ func TestController_Process_PushConflictMarksBatchFailed(t *testing.T) {
 		ID:       batchID,
 		Queue:    "test-queue",
 		Contains: []string{reqID},
-		State:    entity.BatchStateFinalizing,
+		State:    entity.BatchStateMerging,
 		Version:  3,
 	}
 
@@ -268,7 +268,7 @@ func TestController_Process_PushInfraFailureReturnsError(t *testing.T) {
 		ID:       batchID,
 		Queue:    "test-queue",
 		Contains: []string{reqID},
-		State:    entity.BatchStateFinalizing,
+		State:    entity.BatchStateMerging,
 		Version:  1,
 	}
 
@@ -375,7 +375,7 @@ func TestController_Process_RequestStoreFailurePropagates(t *testing.T) {
 		ID:       batchID,
 		Queue:    "test-queue",
 		Contains: []string{reqID},
-		State:    entity.BatchStateFinalizing,
+		State:    entity.BatchStateMerging,
 		Version:  1,
 	}
 
@@ -413,7 +413,7 @@ func TestController_Process_PublishFailureSurfaces(t *testing.T) {
 		ID:       batchID,
 		Queue:    "test-queue",
 		Contains: []string{reqID},
-		State:    entity.BatchStateFinalizing,
+		State:    entity.BatchStateMerging,
 		Version:  2,
 	}
 
