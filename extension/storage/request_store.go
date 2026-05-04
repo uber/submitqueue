@@ -31,7 +31,8 @@ type RequestStore interface {
 	// Returns ErrAlreadyExists if a request with the same ID already exists.
 	Create(ctx context.Context, request entity.Request) error
 
-	// UpdateState updates the state of a land request if the current version matches the expected version. If versions do not match, returns ErrVersionMismatch.
-	// The implementation should increment the version by 1 atomically with the state update.
-	UpdateState(ctx context.Context, id string, version int32, newState entity.RequestState) error
+	// UpdateState updates the state of a land request to newState and the version to newVersion
+	// if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
+	// Version arithmetic is owned by the caller; the store performs a pure conditional write.
+	UpdateState(ctx context.Context, id string, oldVersion, newVersion int32, newState entity.RequestState) error
 }

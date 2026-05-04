@@ -107,10 +107,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	// Atomically update score and state to "scored" in the database
-	if err := c.store.GetBatchStore().UpdateScoreAndState(ctx, batch.ID, batch.Version, batchScore, entity.BatchStateScored); err != nil {
+	newVersion := batch.Version + 1
+	if err := c.store.GetBatchStore().UpdateScoreAndState(ctx, batch.ID, batch.Version, newVersion, batchScore, entity.BatchStateScored); err != nil {
 		c.metricsScope.Counter("storage_errors").Inc(1)
 		return fmt.Errorf("failed to update score for batch %s: %w", batch.ID, err)
 	}
+	batch.Version = newVersion
 
 	c.logger.Infow("scored batch",
 		"batch_id", batch.ID,

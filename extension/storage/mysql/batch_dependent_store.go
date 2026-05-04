@@ -91,10 +91,10 @@ func (s *batchDependentStore) Create(ctx context.Context, batchDependent entity.
 	return nil
 }
 
-// UpdateDependents updates the dependents of a batch dependent if the current version matches the expected version.
-// If versions do not match, returns ErrVersionMismatch.
-// The implementation increments the version by 1 atomically with the dependents update.
-func (s *batchDependentStore) UpdateDependents(ctx context.Context, batchID string, version int32, dependents []string) (retErr error) {
+// UpdateDependents updates the dependents of a batch dependent and the version to newVersion
+// if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
+// Version arithmetic is owned by the caller; this is a pure conditional write.
+func (s *batchDependentStore) UpdateDependents(ctx context.Context, batchID string, oldVersion, newVersion int32, dependents []string) (retErr error) {
 	op := metrics.Begin(s.scope, "update_dependents")
 	defer func() { op.Complete(retErr) }()
 
@@ -104,28 +104,28 @@ func (s *batchDependentStore) UpdateDependents(ctx context.Context, batchID stri
 	}
 
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE batch_dependent SET dependents = ?, version = version + 1 WHERE batch_id = ? AND version = ?",
-		dependentsJSON, batchID, version,
+		"UPDATE batch_dependent SET dependents = ?, version = ? WHERE batch_id = ? AND version = ?",
+		dependentsJSON, newVersion, batchID, oldVersion,
 	)
 	if err != nil {
 		return fmt.Errorf(
-			"failed to update batch dependent dependents for batchID=%q version=%d: %w",
-			batchID, version, err,
+			"failed to update batch dependent dependents for batchID=%q oldVersion=%d newVersion=%d: %w",
+			batchID, oldVersion, newVersion, err,
 		)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf(
-			"failed to get rows affected from update for batchID=%q version=%d: %w",
-			batchID, version, err,
+			"failed to get rows affected from update for batchID=%q oldVersion=%d newVersion=%d: %w",
+			batchID, oldVersion, newVersion, err,
 		)
 	}
 
 	if rowsAffected != 1 {
 		return fmt.Errorf(
 			"version mismatch for batch dependent update: batchID=%q expected_version=%d: %w",
-			batchID, version, storage.ErrVersionMismatch,
+			batchID, oldVersion, storage.ErrVersionMismatch,
 		)
 	}
 

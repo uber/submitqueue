@@ -111,10 +111,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 			return fmt.Errorf("failed to get request %s: %w", requestID, err)
 		}
 
-		if err := c.store.GetRequestStore().UpdateState(ctx, requestID, request.Version, requestState); err != nil {
+		newVersion := request.Version + 1
+		if err := c.store.GetRequestStore().UpdateState(ctx, requestID, request.Version, newVersion, requestState); err != nil {
 			metrics.NamedCounter(c.metricsScope, "process", "request_update_errors", 1)
 			return fmt.Errorf("failed to update request %s state to %s: %w", requestID, requestState, err)
 		}
+		request.Version = newVersion
 
 		c.logger.Infow("updated request state",
 			"batch_id", batch.ID,

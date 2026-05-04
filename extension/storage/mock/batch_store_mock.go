@@ -86,29 +86,29 @@ func (mr *MockBatchStoreMockRecorder) GetByQueueAndStates(ctx, queue, states any
 }
 
 // UpdateScoreAndState mocks base method.
-func (m *MockBatchStore) UpdateScoreAndState(ctx context.Context, id string, version int32, score float64, newState entity.BatchState) error {
+func (m *MockBatchStore) UpdateScoreAndState(ctx context.Context, id string, oldVersion, newVersion int32, score float64, newState entity.BatchState) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateScoreAndState", ctx, id, version, score, newState)
+	ret := m.ctrl.Call(m, "UpdateScoreAndState", ctx, id, oldVersion, newVersion, score, newState)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateScoreAndState indicates an expected call of UpdateScoreAndState.
-func (mr *MockBatchStoreMockRecorder) UpdateScoreAndState(ctx, id, version, score, newState any) *gomock.Call {
+func (mr *MockBatchStoreMockRecorder) UpdateScoreAndState(ctx, id, oldVersion, newVersion, score, newState any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateScoreAndState", reflect.TypeOf((*MockBatchStore)(nil).UpdateScoreAndState), ctx, id, version, score, newState)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateScoreAndState", reflect.TypeOf((*MockBatchStore)(nil).UpdateScoreAndState), ctx, id, oldVersion, newVersion, score, newState)
 }
 
 // UpdateState mocks base method.
-func (m *MockBatchStore) UpdateState(ctx context.Context, id string, version int32, newState entity.BatchState) error {
+func (m *MockBatchStore) UpdateState(ctx context.Context, id string, oldVersion, newVersion int32, newState entity.BatchState) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateState", ctx, id, version, newState)
+	ret := m.ctrl.Call(m, "UpdateState", ctx, id, oldVersion, newVersion, newState)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateState indicates an expected call of UpdateState.
-func (mr *MockBatchStoreMockRecorder) UpdateState(ctx, id, version, newState any) *gomock.Call {
+func (mr *MockBatchStoreMockRecorder) UpdateState(ctx, id, oldVersion, newVersion, newState any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateState", reflect.TypeOf((*MockBatchStore)(nil).UpdateState), ctx, id, version, newState)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateState", reflect.TypeOf((*MockBatchStore)(nil).UpdateState), ctx, id, oldVersion, newVersion, newState)
 }

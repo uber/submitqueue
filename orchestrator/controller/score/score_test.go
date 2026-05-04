@@ -68,7 +68,7 @@ func testRequest() entity.Request {
 func newMockStorage(ctrl *gomock.Controller, batch entity.Batch, request entity.Request) *storagemock.MockStorage {
 	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
 	mockBatchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil).AnyTimes()
-	mockBatchStore.EXPECT().UpdateScoreAndState(gomock.Any(), batch.ID, batch.Version, gomock.Any(), entity.BatchStateScored).Return(nil).AnyTimes()
+	mockBatchStore.EXPECT().UpdateScoreAndState(gomock.Any(), batch.ID, batch.Version, batch.Version+1, gomock.Any(), entity.BatchStateScored).Return(nil).AnyTimes()
 
 	mockRequestStore := storagemock.NewMockRequestStore(ctrl)
 	mockRequestStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil).AnyTimes()
@@ -169,7 +169,7 @@ func TestController_Process_MultipleRequests_MinScore(t *testing.T) {
 	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
 	mockBatchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
 	// Expect the multiplicative score (0.9 * 0.6 = 0.54) to be persisted
-	mockBatchStore.EXPECT().UpdateScoreAndState(gomock.Any(), batch.ID, batch.Version, 0.54, entity.BatchStateScored).Return(nil)
+	mockBatchStore.EXPECT().UpdateScoreAndState(gomock.Any(), batch.ID, batch.Version, batch.Version+1, 0.54, entity.BatchStateScored).Return(nil)
 
 	mockRequestStore := storagemock.NewMockRequestStore(ctrl)
 	mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/1").Return(request1, nil)
@@ -253,7 +253,7 @@ func TestController_Process_UpdateScoreFailure(t *testing.T) {
 
 	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
 	mockBatchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	mockBatchStore.EXPECT().UpdateScoreAndState(gomock.Any(), batch.ID, batch.Version, gomock.Any(), entity.BatchStateScored).Return(fmt.Errorf("version mismatch"))
+	mockBatchStore.EXPECT().UpdateScoreAndState(gomock.Any(), batch.ID, batch.Version, batch.Version+1, gomock.Any(), entity.BatchStateScored).Return(fmt.Errorf("version mismatch"))
 
 	mockRequestStore := storagemock.NewMockRequestStore(ctrl)
 	mockRequestStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)

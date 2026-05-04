@@ -71,15 +71,15 @@ func (mr *MockRequestStoreMockRecorder) Get(ctx, id any) *gomock.Call {
 }
 
 // UpdateState mocks base method.
-func (m *MockRequestStore) UpdateState(ctx context.Context, id string, version int32, newState entity.RequestState) error {
+func (m *MockRequestStore) UpdateState(ctx context.Context, id string, oldVersion, newVersion int32, newState entity.RequestState) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateState", ctx, id, version, newState)
+	ret := m.ctrl.Call(m, "UpdateState", ctx, id, oldVersion, newVersion, newState)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateState indicates an expected call of UpdateState.
-func (mr *MockRequestStoreMockRecorder) UpdateState(ctx, id, version, newState any) *gomock.Call {
+func (mr *MockRequestStoreMockRecorder) UpdateState(ctx, id, oldVersion, newVersion, newState any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateState", reflect.TypeOf((*MockRequestStore)(nil).UpdateState), ctx, id, version, newState)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateState", reflect.TypeOf((*MockRequestStore)(nil).UpdateState), ctx, id, oldVersion, newVersion, newState)
 }

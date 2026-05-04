@@ -71,15 +71,15 @@ func (mr *MockBatchDependentStoreMockRecorder) Get(ctx, batchID any) *gomock.Cal
 }
 
 // UpdateDependents mocks base method.
-func (m *MockBatchDependentStore) UpdateDependents(ctx context.Context, batchID string, version int32, dependents []string) error {
+func (m *MockBatchDependentStore) UpdateDependents(ctx context.Context, batchID string, oldVersion, newVersion int32, dependents []string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateDependents", ctx, batchID, version, dependents)
+	ret := m.ctrl.Call(m, "UpdateDependents", ctx, batchID, oldVersion, newVersion, dependents)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateDependents indicates an expected call of UpdateDependents.
-func (mr *MockBatchDependentStoreMockRecorder) UpdateDependents(ctx, batchID, version, dependents any) *gomock.Call {
+func (mr *MockBatchDependentStoreMockRecorder) UpdateDependents(ctx, batchID, oldVersion, newVersion, dependents any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateDependents", reflect.TypeOf((*MockBatchDependentStore)(nil).UpdateDependents), ctx, batchID, version, dependents)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateDependents", reflect.TypeOf((*MockBatchDependentStore)(nil).UpdateDependents), ctx, batchID, oldVersion, newVersion, dependents)
 }

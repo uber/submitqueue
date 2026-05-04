@@ -143,7 +143,7 @@ func (s *StorageContractSuite) TestStorage_UpdateState() {
 	require.NoError(t, err)
 
 	// Update state
-	err = s.storage.GetRequestStore().UpdateState(ctx, request.ID, request.Version, entity.RequestStateProcessing)
+	err = s.storage.GetRequestStore().UpdateState(ctx, request.ID, request.Version, request.Version+1, entity.RequestStateProcessing)
 	require.NoError(t, err, "failed to update request state")
 
 	// Verify update
@@ -173,11 +173,11 @@ func (s *StorageContractSuite) TestStorage_OptimisticLocking() {
 	require.NoError(t, err)
 
 	// Update with correct version
-	err = s.storage.GetRequestStore().UpdateState(ctx, request.ID, 1, entity.RequestStateProcessing)
+	err = s.storage.GetRequestStore().UpdateState(ctx, request.ID, 1, 2, entity.RequestStateProcessing)
 	require.NoError(t, err, "update with correct version should succeed")
 
 	// Try to update with stale version (should fail)
-	err = s.storage.GetRequestStore().UpdateState(ctx, request.ID, 1, entity.RequestStateLanded)
+	err = s.storage.GetRequestStore().UpdateState(ctx, request.ID, 1, 2, entity.RequestStateLanded)
 	assert.Error(t, err, "update with stale version should fail")
 	assert.ErrorIs(t, err, storage.ErrVersionMismatch, "should return ErrVersionMismatch")
 

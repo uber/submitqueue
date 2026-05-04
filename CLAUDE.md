@@ -9,7 +9,7 @@ SubmitQueue is a distributed system for managing code submission workflows. It f
 1. **Immutable entities** — once created, don't modify in place. Create new versions with updated fields.
 2. **Eventual consistency** — handle stale reads, idempotent operations, and convergence over time.
 3. **Event sourcing** — store events (what happened) rather than just current state for critical changes.
-4. **Optimistic locking** — use version numbers instead of pessimistic locks. Avoid transactions; prefer optimistic concurrency and retries.
+4. **Optimistic locking** — use version numbers instead of pessimistic locks. Avoid transactions; prefer optimistic concurrency and retries. **Version arithmetic lives in the controller, not the storage layer.** Update methods take both `oldVersion` (the where-clause guard) and `newVersion` (the value to write); the store performs a pure conditional write. Controllers compute `newVersion = oldVersion + 1`, call the store, and only assign `entity.Version = newVersion` after the call succeeds. Pre-incrementing in memory before the call is a bug pattern — on error the in-memory version drifts ahead of the database. See [extension/storage/README.md](extension/storage/README.md).
 5. **Idempotency keys** — include unique request IDs, check for duplicates before executing.
 
 ```go
@@ -22,16 +22,12 @@ type Request struct {
     UpdatedAt int64
 }
 
-// Instead of mutating, create new version
-func (r Request) WithStatus(status Status) Request {
-    return Request{
-        ID:        r.ID,
-        Version:   r.Version + 1,
-        Status:    status,
-        CreatedAt: r.CreatedAt,
-        UpdatedAt: time.Now().UnixMilli(),
-    }
+// Controller pattern — version arithmetic outside storage, assigned only on success
+newVersion := request.Version + 1
+if err := store.UpdateStatus(ctx, request.ID, request.Version, newVersion, newStatus); err != nil {
+    return err
 }
+request.Version = newVersion
 ```
 
 ## Architecture

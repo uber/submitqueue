@@ -100,11 +100,11 @@ func TestController_Process(t *testing.T) {
 				mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/1").Return(entity.Request{
 					ID: "test-queue/1", Version: 2, State: entity.RequestStateProcessing,
 				}, nil)
-				mockRequestStore.EXPECT().UpdateState(gomock.Any(), "test-queue/1", int32(2), entity.RequestStateLanded).Return(nil)
+				mockRequestStore.EXPECT().UpdateState(gomock.Any(), "test-queue/1", int32(2), int32(3), entity.RequestStateLanded).Return(nil)
 				mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/2").Return(entity.Request{
 					ID: "test-queue/2", Version: 3, State: entity.RequestStateProcessing,
 				}, nil)
-				mockRequestStore.EXPECT().UpdateState(gomock.Any(), "test-queue/2", int32(3), entity.RequestStateLanded).Return(nil)
+				mockRequestStore.EXPECT().UpdateState(gomock.Any(), "test-queue/2", int32(3), int32(4), entity.RequestStateLanded).Return(nil)
 
 				mockStorage := storagemock.NewMockStorage(ctrl)
 				mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
@@ -135,7 +135,7 @@ func TestController_Process(t *testing.T) {
 				mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/5").Return(entity.Request{
 					ID: "test-queue/5", Version: 1, State: entity.RequestStateProcessing,
 				}, nil)
-				mockRequestStore.EXPECT().UpdateState(gomock.Any(), "test-queue/5", int32(1), entity.RequestStateError).Return(nil)
+				mockRequestStore.EXPECT().UpdateState(gomock.Any(), "test-queue/5", int32(1), int32(2), entity.RequestStateError).Return(nil)
 
 				mockStorage := storagemock.NewMockStorage(ctrl)
 				mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
@@ -248,7 +248,7 @@ func TestController_Process(t *testing.T) {
 				mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/1").Return(entity.Request{
 					ID: "test-queue/1", Version: 2, State: entity.RequestStateProcessing,
 				}, nil)
-				mockRequestStore.EXPECT().UpdateState(gomock.Any(), "test-queue/1", int32(2), entity.RequestStateLanded).Return(storage.ErrVersionMismatch)
+				mockRequestStore.EXPECT().UpdateState(gomock.Any(), "test-queue/1", int32(2), int32(3), entity.RequestStateLanded).Return(storage.ErrVersionMismatch)
 
 				mockStorage := storagemock.NewMockStorage(ctrl)
 				mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()

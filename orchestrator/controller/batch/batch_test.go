@@ -211,14 +211,14 @@ func TestController_Process_WithDependencies(t *testing.T) {
 		BatchID: "test-queue/batch/1",
 		Version: 1,
 	}, nil)
-	mockBatchDependentStore.EXPECT().UpdateDependents(gomock.Any(), "test-queue/batch/1", int32(1), gomock.Any()).Return(nil)
+	mockBatchDependentStore.EXPECT().UpdateDependents(gomock.Any(), "test-queue/batch/1", int32(1), int32(2), gomock.Any()).Return(nil)
 	// batch/2 already has an existing dependent.
 	mockBatchDependentStore.EXPECT().Get(gomock.Any(), "test-queue/batch/2").Return(entity.BatchDependent{
 		BatchID:    "test-queue/batch/2",
 		Dependents: []string{"test-queue/batch/99"},
 		Version:    2,
 	}, nil)
-	mockBatchDependentStore.EXPECT().UpdateDependents(gomock.Any(), "test-queue/batch/2", int32(2), gomock.Any()).Return(nil)
+	mockBatchDependentStore.EXPECT().UpdateDependents(gomock.Any(), "test-queue/batch/2", int32(2), int32(3), gomock.Any()).Return(nil)
 	// Create empty reverse index for the new batch.
 	mockBatchDependentStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 

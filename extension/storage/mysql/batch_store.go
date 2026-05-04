@@ -102,70 +102,72 @@ func (s *batchStore) Create(ctx context.Context, batch entity.Batch) (retErr err
 	return nil
 }
 
-// UpdateState updates the state of a batch if the current version matches the expected version. If versions do not match, returns ErrVersionMismatch.
-// The implementation increments the version by 1 atomically with the state update.
-func (s *batchStore) UpdateState(ctx context.Context, id string, version int32, newState entity.BatchState) (retErr error) {
+// UpdateState updates the state of a batch to newState and the version to newVersion
+// if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
+// Version arithmetic is owned by the caller; this is a pure conditional write.
+func (s *batchStore) UpdateState(ctx context.Context, id string, oldVersion, newVersion int32, newState entity.BatchState) (retErr error) {
 	op := metrics.Begin(s.scope, "update_state")
 	defer func() { op.Complete(retErr) }()
 
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE batch SET state = ?, version = version + 1 WHERE id = ? AND version = ?",
-		newState, id, version,
+		"UPDATE batch SET state = ?, version = ? WHERE id = ? AND version = ?",
+		newState, newVersion, id, oldVersion,
 	)
 	if err != nil {
 		return fmt.Errorf(
-			"failed to update batch state for id=%q version=%d newState=%v: %w",
-			id, version, newState, err,
+			"failed to update batch state for id=%q oldVersion=%d newVersion=%d newState=%v: %w",
+			id, oldVersion, newVersion, newState, err,
 		)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf(
-			"failed to get rows affected from update for id=%q version=%d newState=%v: %w",
-			id, version, newState, err,
+			"failed to get rows affected from update for id=%q oldVersion=%d newVersion=%d newState=%v: %w",
+			id, oldVersion, newVersion, newState, err,
 		)
 	}
 
 	if rowsAffected != 1 {
 		return fmt.Errorf(
 			"version mismatch for batch update: id=%q expected_version=%d newState=%v: %w",
-			id, version, newState, storage.ErrVersionMismatch,
+			id, oldVersion, newState, storage.ErrVersionMismatch,
 		)
 	}
 
 	return nil
 }
 
-// UpdateScoreAndState atomically updates the score and state of a batch if the current version matches the expected version.
-// If versions do not match, returns ErrVersionMismatch. The implementation increments the version by 1 atomically.
-func (s *batchStore) UpdateScoreAndState(ctx context.Context, id string, version int32, score float64, newState entity.BatchState) (retErr error) {
+// UpdateScoreAndState atomically updates the score and state of a batch and the version to newVersion
+// if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
+// Version arithmetic is owned by the caller; this is a pure conditional write.
+func (s *batchStore) UpdateScoreAndState(ctx context.Context, id string, oldVersion, newVersion int32, score float64, newState entity.BatchState) (retErr error) {
 	op := metrics.Begin(s.scope, "update_score_and_state")
 	defer func() { op.Complete(retErr) }()
 
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE batch SET score = ?, state = ?, version = version + 1 WHERE id = ? AND version = ?",
-		score, newState, id, version,
+		"UPDATE batch SET score = ?, state = ?, version = ? WHERE id = ? AND version = ?",
+		score, newState, newVersion, id, oldVersion,
 	)
 	if err != nil {
 		return fmt.Errorf(
-			"failed to update batch score and state for id=%q version=%d score=%f newState=%v: %w",
-			id, version, score, newState, err,
+			"failed to update batch score and state for id=%q oldVersion=%d newVersion=%d score=%f newState=%v: %w",
+			id, oldVersion, newVersion, score, newState, err,
 		)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf(
-			"failed to get rows affected from update score and state for id=%q version=%d score=%f newState=%v: %w",
-			id, version, score, newState, err,
+			"failed to get rows affected from update score and state for id=%q oldVersion=%d newVersion=%d score=%f newState=%v: %w",
+			id, oldVersion, newVersion, score, newState, err,
 		)
 	}
 
 	if rowsAffected != 1 {
 		return fmt.Errorf(
 			"version mismatch for batch update score and state: id=%q expected_version=%d score=%f newState=%v: %w",
-			id, version, score, newState, storage.ErrVersionMismatch,
+			id, oldVersion, score, newState, storage.ErrVersionMismatch,
 		)
 	}
 

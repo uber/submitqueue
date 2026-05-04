@@ -143,10 +143,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 		dependents := append(existing.Dependents, batch.ID)
 
-		if err := c.store.GetBatchDependentStore().UpdateDependents(ctx, dep.ID, existing.Version, dependents); err != nil {
+		newVersion := existing.Version + 1
+		if err := c.store.GetBatchDependentStore().UpdateDependents(ctx, dep.ID, existing.Version, newVersion, dependents); err != nil {
 			c.metricsScope.Counter("batch_dependent_store_errors").Inc(1)
 			return fmt.Errorf("failed to update batch dependent index for existing batchID=%s and new batchID=%s: %w", dep.ID, batch.ID, err)
 		}
+		existing.Version = newVersion
 	}
 
 	// Create new reverse index entry for the new batch. It would be empty for now, but will be updated as new batches are created that conflict with this batch.
