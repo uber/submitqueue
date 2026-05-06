@@ -1,0 +1,14 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mysql",
+    srcs = ["change_store.go"],
+    importpath = "github.com/uber/submitqueue/extension/changestore/mysql",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//core/metrics",
+        "//entity",
+        "//extension/changestore",
+        "@com_github_uber_go_tally_v4//:tally",
+    ],
+)

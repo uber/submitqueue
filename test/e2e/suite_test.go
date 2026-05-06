@@ -85,6 +85,7 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 	// Apply schemas programmatically to application database
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("extension/storage/mysql/schema"))
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("extension/counter/mysql/schema"))
+	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("extension/changestore/mysql/schema"))
 
 	// Apply schemas programmatically to queue database
 	testutil.ApplySchema(t, s.log, s.queueDB, testutil.SchemaDir("extension/queue/mysql/schema"))

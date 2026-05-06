@@ -1,0 +1,22 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "mysql_test",
+    srcs = ["changestore_test.go"],
+    data = [
+        "docker-compose.yml",
+        "//extension/changestore/mysql/schema",
+    ],
+    tags = ["integration"],
+    deps = [
+        "//entity",
+        "//extension/changestore",
+        "//extension/changestore/mysql",
+        "//test/testutil",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_stretchr_testify//suite",
+        "@com_github_uber_go_tally_v4//:tally",
+    ],
+)
