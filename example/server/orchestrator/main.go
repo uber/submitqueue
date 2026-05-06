@@ -35,6 +35,8 @@ import (
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/extension/changeprovider"
 	githubprovider "github.com/uber/submitqueue/extension/changeprovider/github"
+	"github.com/uber/submitqueue/extension/changestore"
+	mysqlchangestore "github.com/uber/submitqueue/extension/changestore/mysql"
 	"github.com/uber/submitqueue/extension/counter"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	"github.com/uber/submitqueue/extension/mergechecker"
@@ -154,6 +156,8 @@ func run() error {
 		return fmt.Errorf("failed to create storage: %w", err)
 	}
 
+	changeStore := mysqlchangestore.NewChangeStore(appDB, scope.SubScope("changestore"))
+
 	// Open queue database connection
 	// Docker Compose healthchecks ensure MySQL is ready before service starts
 	queueDSN := os.Getenv("QUEUE_MYSQL_DSN")
@@ -212,7 +216,7 @@ func run() error {
 	}
 
 	// Register controllers
-	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cp, psh, cnt, store); err != nil {
+	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cp, psh, cnt, store, changeStore); err != nil {
 		return err
 	}
 
@@ -397,11 +401,12 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 //                                        │        │                        │
 //                                        └────────┴────────────────────────┘
 
-func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cp changeprovider.ChangeProvider, psh pusher.Pusher, cnt counter.Counter, store storage.Storage) error {
+func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cp changeprovider.ChangeProvider, psh pusher.Pusher, cnt counter.Counter, store storage.Storage, changeStore changestore.ChangeStore) error {
 	requestController := start.NewController(
 		logger,
 		scope,
 		store,
+		changeStore,
 		registry,
 		consumer.TopicKeyStart,
 		"orchestrator-start",
@@ -414,6 +419,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		store,
+		changeStore,
 		registry,
 		mc,
 		cp,

@@ -16,6 +16,8 @@ go_library(
         "//entity",
         "//extension/changeprovider",
         "//extension/changeprovider/github",
+        "//extension/changestore",
+        "//extension/changestore/mysql",
         "//extension/counter",
         "//extension/counter/mysql",
         "//extension/mergechecker",

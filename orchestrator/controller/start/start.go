@@ -18,23 +18,28 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
 	corerequest "github.com/uber/submitqueue/core/request"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
+	"github.com/uber/submitqueue/extension/changestore"
 	"github.com/uber/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
 
 // Controller handles start queue messages.
-// It consumes requests, persists them to storage, and publishes to the validate stage.
-// Implements consumer.Controller interface for integration with the consumer.
+// It consumes requests, persists them to the request store, claims their URIs in the change
+// store, and publishes to the validate stage. Both writes are idempotent on retries; the
+// duplicate-detection check itself is performed downstream by the validate controller.
+// Implements consumer.Controller.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	store         storage.Storage
+	changeStore   changestore.ChangeStore
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -48,6 +53,7 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	store storage.Storage,
+	changeStore changestore.ChangeStore,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -56,6 +62,7 @@ func NewController(
 		logger:        logger.Named("start_controller"),
 		metricsScope:  scope.SubScope("start_controller"),
 		store:         store,
+		changeStore:   changeStore,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -63,7 +70,7 @@ func NewController(
 }
 
 // Process processes a request delivery from the queue.
-// Deserializes the request and publishes to the validate topic.
+// Deserializes the request, persists it, and publishes to the validate topic.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	c.metricsScope.Counter("received").Inc(1)
@@ -100,10 +107,20 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"partition_key", msg.PartitionKey,
 	)
 
-	// Persist request to storage (idempotent — ErrAlreadyExists means a retry)
+	// Persist request to storage. ErrAlreadyExists means a queue redelivery of the same
+	// request_id (an at-least-once retry of THIS message), not a cross-request collision.
+	// Cross-request URI overlap is detected downstream in the validate controller.
 	if err := c.store.GetRequestStore().Create(ctx, request); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
 		c.metricsScope.Counter("storage_errors").Inc(1)
 		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Claim this request's URIs in the change store. INSERT IGNORE makes this idempotent
+	// on retries with the same request_id. The validate controller reads from this store
+	// to detect cross-request URI overlap.
+	if err := c.claimURIs(ctx, request); err != nil {
+		c.metricsScope.Counter("change_store_errors").Inc(1)
+		return fmt.Errorf("failed to claim URIs for request %s: %w", request.ID, err)
 	}
 
 	// Record the "new" status in the request log
@@ -129,6 +146,28 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	c.metricsScope.Counter("processed").Inc(1)
 
 	return nil // Success - message will be acked
+}
+
+// claimURIs persists one ChangeRecord per URI in the request. The change store's
+// INSERT IGNORE semantics make this idempotent on queue redelivery (same (URI, RequestID)
+// is a no-op). Different requests with overlapping URIs do NOT collide on insert; the
+// validate controller queries the change store to detect that overlap.
+func (c *Controller) claimURIs(ctx context.Context, request entity.Request) error {
+	if len(request.Change.URIs) == 0 {
+		return nil
+	}
+	now := time.Now().UnixMilli()
+	records := make([]entity.ChangeRecord, 0, len(request.Change.URIs))
+	for _, uri := range request.Change.URIs {
+		records = append(records, entity.ChangeRecord{
+			URI:       uri,
+			RequestID: request.ID,
+			Queue:     request.Queue,
+			CreatedAt: now,
+			UpdatedAt: now,
+		})
+	}
+	return c.changeStore.Create(ctx, records)
 }
 
 // publish publishes a request ID to the specified topic key.
