@@ -21,11 +21,11 @@ import (
 	"time"
 
 	"github.com/uber-go/tally/v4"
+	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
 	"github.com/uber/submitqueue/extension/counter"
-	extqueue "github.com/uber/submitqueue/extension/queue"
 	"github.com/uber/submitqueue/extension/storage"
 	pb "github.com/uber/submitqueue/gateway/protopb"
 	"go.uber.org/zap"
@@ -45,21 +45,20 @@ type LandController struct {
 	logger          *zap.SugaredLogger
 	metricsScope    tally.Scope
 	counter         counter.Counter
-	publisher       extqueue.Publisher
 	requestLogStore storage.RequestLogStore
-	topic           string // Topic to publish requests to (e.g., "request", "land_request")
+	registry        consumer.TopicRegistry
 }
 
 // NewLandController creates a new instance of the gateway land controller.
-// topic: the queue topic to publish requests to (e.g., "request", "land_request")
-func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter counter.Counter, publisher extqueue.Publisher, requestLogStore storage.RequestLogStore, topic string) *LandController {
+// The controller publishes land requests to the topic registered under
+// consumer.TopicKeyStart in the registry.
+func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter counter.Counter, requestLogStore storage.RequestLogStore, registry consumer.TopicRegistry) *LandController {
 	return &LandController{
 		logger:          logger,
 		metricsScope:    scope,
 		counter:         counter,
-		publisher:       publisher,
 		requestLogStore: requestLogStore,
-		topic:           topic,
+		registry:        registry,
 	}
 }
 
@@ -130,7 +129,7 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 	c.logger.Infow("request published to queue",
 		"queue", req.Queue,
 		"sqid", landRequest.ID,
-		"topic", c.topic,
+		"topic_key", consumer.TopicKeyStart,
 	)
 	c.metricsScope.Counter("publish_success").Inc(1)
 
@@ -153,8 +152,17 @@ func (c *LandController) publishToQueue(ctx context.Context, landRequest entity.
 	// - Partition key: landRequest.Queue (ensures ordering per queue)
 	msg := queue.NewMessage(landRequest.ID, payload, landRequest.Queue, nil)
 
-	// Publish to request topic
-	if err := c.publisher.Publish(ctx, c.topic, msg); err != nil {
+	q, ok := c.registry.Queue(consumer.TopicKeyStart)
+	if !ok {
+		return fmt.Errorf("no queue registered for topic key %s", consumer.TopicKeyStart)
+	}
+
+	topicName, ok := c.registry.TopicName(consumer.TopicKeyStart)
+	if !ok {
+		return fmt.Errorf("no topic name registered for topic key %s", consumer.TopicKeyStart)
+	}
+
+	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
 		return fmt.Errorf("failed to publish land request message: %w", err)
 	}
 

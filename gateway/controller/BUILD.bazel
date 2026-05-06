@@ -9,11 +9,11 @@ go_library(
     importpath = "github.com/uber/submitqueue/gateway/controller",
     visibility = ["//visibility:public"],
     deps = [
+        "//core/consumer",
         "//core/errs",
         "//entity",
         "//entity/queue",
         "//extension/counter",
-        "//extension/queue",
         "//extension/storage",
         "//gateway/protopb",
         "@com_github_uber_go_tally_v4//:tally",
@@ -29,6 +29,7 @@ go_test(
     ],
     embed = [":controller"],
     deps = [
+        "//core/consumer",
         "//entity",
         "//entity/queue",
         "//extension/counter/mock",

@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally/v4"
+	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
 	countermock "github.com/uber/submitqueue/extension/counter/mock"
@@ -32,11 +33,29 @@ import (
 	"go.uber.org/zap"
 )
 
-// noopPublisher returns a mock publisher that succeeds silently.
-func noopPublisher(ctrl *gomock.Controller) *queuemock.MockPublisher {
+// newTestRegistry builds a single-entry TopicRegistry for TopicKeyStart wired
+// to a mock Queue/Publisher and returns both the registry and the publisher
+// mock so callers can set EXPECT() on the publisher.
+func newTestRegistry(t *testing.T, ctrl *gomock.Controller) (consumer.TopicRegistry, *queuemock.MockPublisher) {
+	t.Helper()
 	pub := queuemock.NewMockPublisher(ctrl)
+	q := queuemock.NewMockQueue(ctrl)
+	q.EXPECT().Publisher().Return(pub).AnyTimes()
+
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: consumer.TopicKeyStart, Name: "start", Queue: q},
+	})
+	require.NoError(t, err)
+	return registry, pub
+}
+
+// newTestRegistryWithNoopPublisher returns a registry whose publisher silently
+// accepts any Publish call. Use for tests that don't care about publish behavior.
+func newTestRegistryWithNoopPublisher(t *testing.T, ctrl *gomock.Controller) consumer.TopicRegistry {
+	t.Helper()
+	registry, pub := newTestRegistry(t, ctrl)
 	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	return pub
+	return registry
 }
 
 // noopRequestLogStore returns a mock RequestLogStore that succeeds silently.
@@ -50,7 +69,7 @@ func TestNewLandController(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	cnt := countermock.NewMockCounter(ctrl)
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopPublisher(ctrl), noopRequestLogStore(ctrl), "request")
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
 	require.NotNil(t, controller)
 }
 
@@ -59,7 +78,7 @@ func TestLand_ReturnsSqid(t *testing.T) {
 
 	cnt := countermock.NewMockCounter(ctrl)
 	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(1), nil)
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopPublisher(ctrl), noopRequestLogStore(ctrl), "request")
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -77,7 +96,7 @@ func TestLand_ReturnsErrorOnCounterFailure(t *testing.T) {
 
 	cnt := countermock.NewMockCounter(ctrl)
 	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(0), fmt.Errorf("counter unavailable"))
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopPublisher(ctrl), noopRequestLogStore(ctrl), "request")
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -101,7 +120,7 @@ func TestLand_CounterDomainIncludesQueue(t *testing.T) {
 			return 1, nil
 		},
 	)
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopPublisher(ctrl), noopRequestLogStore(ctrl), "request")
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -118,7 +137,7 @@ func TestLand_ReturnsErrorOnEmptyQueue(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	cnt := countermock.NewMockCounter(ctrl)
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopPublisher(ctrl), noopRequestLogStore(ctrl), "request")
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -135,7 +154,7 @@ func TestLand_ReturnsErrorOnEmptyChangeUri(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	cnt := countermock.NewMockCounter(ctrl)
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopPublisher(ctrl), noopRequestLogStore(ctrl), "request")
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -152,7 +171,7 @@ func TestLand_ReturnsErrorOnNilChange(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	cnt := countermock.NewMockCounter(ctrl)
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopPublisher(ctrl), noopRequestLogStore(ctrl), "request")
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -173,7 +192,8 @@ func TestLand_PublishesToQueue(t *testing.T) {
 
 	cnt := countermock.NewMockCounter(ctrl)
 	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(123), nil)
-	publisher := queuemock.NewMockPublisher(ctrl)
+
+	registry, publisher := newTestRegistry(t, ctrl)
 	publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, topic string, msg queue.Message) error {
 			publishedTopic = topic
@@ -182,7 +202,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 		},
 	)
 
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, publisher, noopRequestLogStore(ctrl), "request")
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), registry)
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -195,8 +215,8 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test-queue/123", resp.Sqid)
 
-	// Verify message was published
-	assert.Equal(t, "request", publishedTopic)
+	// Verify message was published to the topic registered under TopicKeyStart
+	assert.Equal(t, "start", publishedTopic)
 	assert.Equal(t, "test-queue/123", publishedMessage.ID)
 	assert.Equal(t, "test-queue", publishedMessage.PartitionKey)
 
@@ -214,10 +234,11 @@ func TestLand_ContinuesWhenPublishFails(t *testing.T) {
 
 	cnt := countermock.NewMockCounter(ctrl)
 	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(999), nil)
-	publisher := queuemock.NewMockPublisher(ctrl)
+
+	registry, publisher := newTestRegistry(t, ctrl)
 	publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("queue unavailable"))
 
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, publisher, noopRequestLogStore(ctrl), "request")
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), registry)
 	ctx := context.Background()
 
 	req := &pb.LandRequest{

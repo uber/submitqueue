@@ -11,6 +11,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/example/server/gateway",
     visibility = ["//visibility:private"],
     deps = [
+        "//core/consumer",
         "//extension/counter/mysql",
         "//extension/queue/mysql",
         "//extension/storage/mysql",

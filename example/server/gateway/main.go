@@ -28,6 +28,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally/v4"
+	"github.com/uber/submitqueue/core/consumer"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
 	mysqlstorage "github.com/uber/submitqueue/extension/storage/mysql"
@@ -158,6 +159,16 @@ func run() error {
 		zap.String("queue_dsn", queueDSN),
 	)
 
+	// Build a publish-only topic registry: gateway only feeds the start of the
+	// orchestrator pipeline (TopicKeyStart). No subscription is configured
+	// because the gateway never consumes from the queue.
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: consumer.TopicKeyStart, Name: "start", Queue: mysqlQueue},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create topic registry: %w", err)
+	}
+
 	// Create gRPC server
 	grpcServer := grpc.NewServer()
 
@@ -166,7 +177,7 @@ func run() error {
 
 	// Create controllers and wrap them for gRPC
 	pingController := controller.NewPingController(logger, scope)
-	landController := controller.NewLandController(logger.Sugar(), scope, cnt, mysqlQueue.Publisher(), requestLogStore, "request")
+	landController := controller.NewLandController(logger.Sugar(), scope, cnt, requestLogStore, registry)
 	gatewayServer := &GatewayServer{
 		pingController: pingController,
 		landController: landController,

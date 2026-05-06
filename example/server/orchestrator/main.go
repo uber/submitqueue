@@ -299,10 +299,10 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 	return consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{
 			Key:   consumer.TopicKeyStart,
-			Name:  "request",
+			Name:  "start",
 			Queue: q,
 			Subscription: extqueue.DefaultSubscriptionConfig(
-				subscriberName, "orchestrator-request",
+				subscriberName, "orchestrator-start",
 			),
 		},
 		{
@@ -396,7 +396,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		store,
 		registry,
 		consumer.TopicKeyStart,
-		"orchestrator-request",
+		"orchestrator-start",
 	)
 	if err := c.Register(requestController); err != nil {
 		return fmt.Errorf("failed to register request controller: %w", err)
