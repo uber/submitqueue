@@ -7,6 +7,7 @@ go_test(
         "//:MODULE.bazel",
         "//:go.mod",
         "//example/server:docker-compose.yml",
+        "//extension/changestore/mysql/schema",
         "//extension/counter/mysql/schema",
         "//extension/queue/mysql/schema",
         "//extension/storage/mysql/schema",
