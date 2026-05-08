@@ -82,12 +82,10 @@ func newMockStorage(ctrl *gomock.Controller, request entity.Request) (*storagemo
 
 // newMockChangeStore creates a MockChangeStore with default no-overlap behavior.
 // Tests that need to simulate overlap can override GetByURI with their own EXPECT.
-// Validate calls Create per URI on the success path; this default also accepts any
-// Create so tests that don't care can stay simple.
+// Validate is read-only against the change store — it never calls Create.
 func newMockChangeStore(ctrl *gomock.Controller) *changemock.MockChangeStore {
 	cs := changemock.NewMockChangeStore(ctrl)
 	cs.EXPECT().GetByURI(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
-	cs.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	return cs
 }
 
@@ -423,9 +421,6 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			for _, u := range uris {
 				cs.EXPECT().GetByURI(gomock.Any(), queueName, u).Return(tt.byURI[u], nil).MaxTimes(1)
 			}
-			// On the success path the controller claims each URI after all checks pass.
-			// .AnyTimes() covers both the success case (N calls) and the rejection case (0 calls).
-			cs.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 			controller := newTestController(t, ctrl, store, cs, mc, nil)
 
