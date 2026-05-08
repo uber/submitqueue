@@ -162,6 +162,7 @@ func (c *Controller) claimURIs(ctx context.Context, request entity.Request) erro
 			Queue:     request.Queue,
 			CreatedAt: now,
 			UpdatedAt: now,
+			Version:   1,
 		}
 		if err := c.changeStore.Create(ctx, record); err != nil {
 			return fmt.Errorf("failed to claim uri=%s for request %s: %w", uri, request.ID, err)
