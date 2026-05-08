@@ -81,11 +81,11 @@ func newMockStorage(ctrl *gomock.Controller, request entity.Request) (*storagemo
 }
 
 // newMockChangeStore creates a MockChangeStore with default no-overlap behavior.
-// Tests that need to simulate overlap can override FindOverlapping with their own EXPECT.
+// Tests that need to simulate overlap can override GetByURI with their own EXPECT.
 // Validate is read-only against the change store — it never calls Create.
 func newMockChangeStore(ctrl *gomock.Controller) *changemock.MockChangeStore {
 	cs := changemock.NewMockChangeStore(ctrl)
-	cs.EXPECT().FindOverlapping(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	cs.EXPECT().GetByURI(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	return cs
 }
 
@@ -278,7 +278,8 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 		queueName     = "test-queue"
 		newRequestID  = queueName + "/123"
 		dupRequestID  = queueName + "/100"
-		uri           = "github://uber/service/pull/1/abc"
+		uriA          = "github://uber/service/pull/1/abc"
+		uriB          = "github://uber/service/pull/2/def"
 		anotherReqID  = queueName + "/050"
 		orphanReqID   = queueName + "/999"
 		terminalReqID = queueName + "/200"
@@ -286,7 +287,8 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		overlap        []entity.ChangeRecord
+		requestURIs    []string                         // URIs on the new request; defaults to [uriA]
+		byURI          map[string][]entity.ChangeRecord // GetByURI mock returns
 		ownerLookup    map[string]entity.Request
 		ownerNotFound  map[string]bool
 		ownerErr       map[string]error
@@ -294,34 +296,41 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 		wantUnexpected bool
 	}{
 		{
-			name:    "no overlap proceeds to merge check",
-			overlap: nil,
+			name:  "no overlap proceeds to merge check",
+			byURI: map[string][]entity.ChangeRecord{uriA: nil},
 		},
 		{
-			name:    "overlap with live in-flight request returns user error",
-			overlap: []entity.ChangeRecord{{URI: uri, RequestID: dupRequestID, Queue: queueName}},
+			name: "overlap with live in-flight request returns user error",
+			byURI: map[string][]entity.ChangeRecord{
+				uriA: {{URI: uriA, RequestID: dupRequestID, Queue: queueName}},
+			},
 			ownerLookup: map[string]entity.Request{
 				dupRequestID: {ID: dupRequestID, Queue: queueName, State: entity.RequestStateStarted, Version: 1},
 			},
 			wantUserErr: true,
 		},
 		{
-			name:    "overlap with terminal owner is skipped",
-			overlap: []entity.ChangeRecord{{URI: uri, RequestID: terminalReqID, Queue: queueName}},
+			name: "overlap with terminal owner is skipped",
+			byURI: map[string][]entity.ChangeRecord{
+				uriA: {{URI: uriA, RequestID: terminalReqID, Queue: queueName}},
+			},
 			ownerLookup: map[string]entity.Request{
 				terminalReqID: {ID: terminalReqID, Queue: queueName, State: entity.RequestStateLanded, Version: 5},
 			},
 		},
 		{
-			name:          "overlap with orphan owner (ErrNotFound) is skipped",
-			overlap:       []entity.ChangeRecord{{URI: uri, RequestID: orphanReqID, Queue: queueName}},
+			name: "overlap with orphan owner (ErrNotFound) is skipped",
+			byURI: map[string][]entity.ChangeRecord{
+				uriA: {{URI: uriA, RequestID: orphanReqID, Queue: queueName}},
+			},
 			ownerNotFound: map[string]bool{orphanReqID: true},
 		},
 		{
-			name: "multiple URIs same owner deduped to single Get call",
-			overlap: []entity.ChangeRecord{
-				{URI: uri, RequestID: dupRequestID, Queue: queueName},
-				{URI: "github://uber/service/pull/2/def", RequestID: dupRequestID, Queue: queueName},
+			name:        "multi-URI same owner deduped to single Get call",
+			requestURIs: []string{uriA, uriB},
+			byURI: map[string][]entity.ChangeRecord{
+				uriA: {{URI: uriA, RequestID: dupRequestID, Queue: queueName}},
+				uriB: {{URI: uriB, RequestID: dupRequestID, Queue: queueName}},
 			},
 			ownerLookup: map[string]entity.Request{
 				dupRequestID: {ID: dupRequestID, Queue: queueName, State: entity.RequestStateValidated, Version: 2},
@@ -329,10 +338,11 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			wantUserErr: true,
 		},
 		{
-			name: "first owner terminal then second live picks the live one",
-			overlap: []entity.ChangeRecord{
-				{URI: uri, RequestID: terminalReqID, Queue: queueName},
-				{URI: "github://uber/service/pull/2/def", RequestID: anotherReqID, Queue: queueName},
+			name:        "first URI's owner is terminal, second URI's owner is live",
+			requestURIs: []string{uriA, uriB},
+			byURI: map[string][]entity.ChangeRecord{
+				uriA: {{URI: uriA, RequestID: terminalReqID, Queue: queueName}},
+				uriB: {{URI: uriB, RequestID: anotherReqID, Queue: queueName}},
 			},
 			ownerLookup: map[string]entity.Request{
 				terminalReqID: {ID: terminalReqID, State: entity.RequestStateError, Version: 3},
@@ -342,16 +352,18 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 		},
 		{
 			// Store doesn't exclude self; controller filters by RequestID and must not look up its own row.
-			name: "self row in overlap is filtered (no Get call)",
-			overlap: []entity.ChangeRecord{
-				{URI: uri, RequestID: newRequestID, Queue: queueName},
+			name: "self row in result is filtered (no Get call)",
+			byURI: map[string][]entity.ChangeRecord{
+				uriA: {{URI: uriA, RequestID: newRequestID, Queue: queueName}},
 			},
 		},
 		{
 			name: "self row mixed with live other returns the other",
-			overlap: []entity.ChangeRecord{
-				{URI: uri, RequestID: newRequestID, Queue: queueName},
-				{URI: uri, RequestID: dupRequestID, Queue: queueName},
+			byURI: map[string][]entity.ChangeRecord{
+				uriA: {
+					{URI: uriA, RequestID: newRequestID, Queue: queueName},
+					{URI: uriA, RequestID: dupRequestID, Queue: queueName},
+				},
 			},
 			ownerLookup: map[string]entity.Request{
 				dupRequestID: {ID: dupRequestID, Queue: queueName, State: entity.RequestStateStarted, Version: 1},
@@ -359,8 +371,10 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			wantUserErr: true,
 		},
 		{
-			name:    "owner lookup unexpected error propagates",
-			overlap: []entity.ChangeRecord{{URI: uri, RequestID: dupRequestID, Queue: queueName}},
+			name: "owner lookup unexpected error propagates",
+			byURI: map[string][]entity.ChangeRecord{
+				uriA: {{URI: uriA, RequestID: dupRequestID, Queue: queueName}},
+			},
 			ownerErr: map[string]error{
 				dupRequestID: fmt.Errorf("db down"),
 			},
@@ -373,10 +387,15 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			mc := newMergeableMock(ctrl)
 
+			uris := tt.requestURIs
+			if uris == nil {
+				uris = []string{uriA}
+			}
+
 			request := entity.Request{
 				ID:           newRequestID,
 				Queue:        queueName,
-				Change:       entity.Change{URIs: []string{uri}},
+				Change:       entity.Change{URIs: uris},
 				LandStrategy: entity.RequestLandStrategyRebase,
 				State:        entity.RequestStateStarted,
 				Version:      1,
@@ -397,7 +416,11 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
 			cs := changemock.NewMockChangeStore(ctrl)
-			cs.EXPECT().FindOverlapping(gomock.Any(), queueName, []string{uri}).Return(tt.overlap, nil)
+			// One GetByURI per URI on the request, in order. Controller short-circuits on first
+			// live duplicate, so .AnyTimes() lets unmatched URIs go un-queried.
+			for _, u := range uris {
+				cs.EXPECT().GetByURI(gomock.Any(), queueName, u).Return(tt.byURI[u], nil).MaxTimes(1)
+			}
 
 			controller := newTestController(t, ctrl, store, cs, mc, nil)
 
@@ -437,7 +460,7 @@ func TestController_Process_ChangeStoreQueryFailure(t *testing.T) {
 	store, _ := newMockStorage(ctrl, request)
 
 	cs := changemock.NewMockChangeStore(ctrl)
-	cs.EXPECT().FindOverlapping(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("change store down"))
+	cs.EXPECT().GetByURI(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("change store down"))
 
 	controller := newTestController(t, ctrl, store, cs, mc, nil)
 

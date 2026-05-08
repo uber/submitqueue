@@ -200,11 +200,11 @@ func TestController_Process_MultipleChanges(t *testing.T) {
 	cs := changemock.NewMockChangeStore(ctrl)
 	var captured []entity.ChangeRecord
 	cs.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, records []entity.ChangeRecord) error {
-			captured = records
+		func(ctx context.Context, record entity.ChangeRecord) error {
+			captured = append(captured, record)
 			return nil
 		},
-	)
+	).Times(3)
 
 	controller := newTestController(t, ctrl, newMockStorage(ctrl), cs, nil)
 

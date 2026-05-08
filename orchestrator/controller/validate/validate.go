@@ -165,47 +165,42 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	return nil // Success - message will be acked
 }
 
-// checkDuplicate queries the change store for any other in-flight request whose URIs
-// overlap with this request's. The change rows themselves are written upstream by the
-// start controller; validate is read-only here. For each unique candidate request_id
-// returned, this consults the request store to skip terminal owners and orphans
-// (ErrNotFound). Returns the first live-duplicate request_id found, or "" if none.
+// checkDuplicate looks for any other in-flight request whose URIs overlap with this
+// request's. The change rows themselves are written upstream by the start controller;
+// validate is read-only here. For each URI it queries the change store, walks the
+// returned candidates skipping self/duplicates/orphans/terminals, and short-circuits
+// on the first live duplicate. Returns that request_id, or "" if none.
 //
-// Two single-table queries by design — no cross-store SQL joins.
+// Per-URI / per-record reads keep the contract backend-agnostic; the typical request
+// has 1-5 URIs, so the loop is cheap.
 func (c *Controller) checkDuplicate(ctx context.Context, request entity.Request) (string, error) {
-	if len(request.Change.URIs) == 0 {
-		return "", nil
-	}
-
-	overlaps, err := c.changeStore.FindOverlapping(ctx, request.Queue, request.Change.URIs)
-	if err != nil {
-		coremetrics.NamedCounter(c.metricsScope, "process", "change_store_query_errors", 1)
-		return "", fmt.Errorf("failed to query overlapping changes for request %s: %w", request.ID, err)
-	}
-
-	// Liveness check: an overlap is only a duplicate if the owning request is non-terminal.
-	// The store does not exclude self, so skip our own request_id here. Walk unique candidate
-	// request_ids; orphans (ErrNotFound) and terminal owners are skipped.
-	seen := make(map[string]struct{}, len(overlaps))
-	for _, rec := range overlaps {
-		if rec.RequestID == request.ID {
-			continue // skip rows belonging to this request itself
-		}
-		if _, ok := seen[rec.RequestID]; ok {
-			continue
-		}
-		seen[rec.RequestID] = struct{}{}
-
-		owner, err := c.store.GetRequestStore().Get(ctx, rec.RequestID)
-		if errors.Is(err, storage.ErrNotFound) {
-			continue
-		}
+	seenOwners := make(map[string]struct{})
+	for _, uri := range request.Change.URIs {
+		records, err := c.changeStore.GetByURI(ctx, request.Queue, uri)
 		if err != nil {
-			coremetrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
-			return "", fmt.Errorf("failed to look up overlapping request %s: %w", rec.RequestID, err)
+			coremetrics.NamedCounter(c.metricsScope, "process", "change_store_query_errors", 1)
+			return "", fmt.Errorf("failed to query change store for request %s uri=%s: %w", request.ID, uri, err)
 		}
-		if !entity.IsRequestStateTerminal(owner.State) {
-			return rec.RequestID, nil
+		for _, rec := range records {
+			if rec.RequestID == request.ID {
+				continue // skip rows belonging to this request itself
+			}
+			if _, ok := seenOwners[rec.RequestID]; ok {
+				continue
+			}
+			seenOwners[rec.RequestID] = struct{}{}
+
+			owner, err := c.store.GetRequestStore().Get(ctx, rec.RequestID)
+			if errors.Is(err, storage.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				coremetrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
+				return "", fmt.Errorf("failed to look up overlapping request %s: %w", rec.RequestID, err)
+			}
+			if !entity.IsRequestStateTerminal(owner.State) {
+				return rec.RequestID, nil
+			}
 		}
 	}
 	return "", nil

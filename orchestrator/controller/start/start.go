@@ -148,26 +148,26 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	return nil // Success - message will be acked
 }
 
-// claimURIs persists one ChangeRecord per URI in the request. The change store's
-// INSERT IGNORE semantics make this idempotent on queue redelivery (same (URI, RequestID)
-// is a no-op). Different requests with overlapping URIs do NOT collide on insert; the
-// validate controller queries the change store to detect that overlap.
+// claimURIs persists one ChangeRecord per URI in the request. Each Create call is
+// independent; the change store's per-PK idempotency makes the loop safe under
+// queue redelivery (same (Queue, URI, RequestID) is a no-op on retry). Different
+// requests with overlapping URIs do NOT collide on insert; the validate controller
+// queries the change store to detect that overlap.
 func (c *Controller) claimURIs(ctx context.Context, request entity.Request) error {
-	if len(request.Change.URIs) == 0 {
-		return nil
-	}
 	now := time.Now().UnixMilli()
-	records := make([]entity.ChangeRecord, 0, len(request.Change.URIs))
 	for _, uri := range request.Change.URIs {
-		records = append(records, entity.ChangeRecord{
+		record := entity.ChangeRecord{
 			URI:       uri,
 			RequestID: request.ID,
 			Queue:     request.Queue,
 			CreatedAt: now,
 			UpdatedAt: now,
-		})
+		}
+		if err := c.changeStore.Create(ctx, record); err != nil {
+			return fmt.Errorf("failed to claim uri=%s for request %s: %w", uri, request.ID, err)
+		}
 	}
-	return c.changeStore.Create(ctx, records)
+	return nil
 }
 
 // publish publishes a request ID to the specified topic key.
