@@ -10,5 +10,6 @@ CREATE TABLE IF NOT EXISTS `change` (
     metadata    JSON NOT NULL,
     created_at  BIGINT NOT NULL,
     updated_at  BIGINT NOT NULL,
+    version     INT NOT NULL,
     PRIMARY KEY (queue, uri, request_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

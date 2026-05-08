@@ -91,7 +91,7 @@ func (s *MySQLChangeStoreIntegrationSuite) SetupTest() {
 func (s *MySQLChangeStoreIntegrationSuite) TestCreateAndGet_NoMatch() {
 	t := s.T()
 	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
-		URI: "github://uber/x/pull/1/aaa", RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1,
+		URI: "github://uber/x/pull/1/aaa", RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
 	got, err := s.store.GetByURI(s.ctx, "q", "github://uber/x/pull/2/bbb")
@@ -103,7 +103,7 @@ func (s *MySQLChangeStoreIntegrationSuite) TestCreateAndGet_Match() {
 	t := s.T()
 	uri := "github://uber/x/pull/1/aaa"
 	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
-		URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1,
+		URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
 	got, err := s.store.GetByURI(s.ctx, "q", uri)
@@ -112,6 +112,7 @@ func (s *MySQLChangeStoreIntegrationSuite) TestCreateAndGet_Match() {
 	assert.Equal(t, "q/1", got[0].RequestID)
 	assert.Equal(t, uri, got[0].URI)
 	assert.Equal(t, "q", got[0].Queue)
+	assert.Equal(t, int32(1), got[0].Version)
 }
 
 func (s *MySQLChangeStoreIntegrationSuite) TestGetByURI_DoesNotExcludeSelf() {
@@ -119,7 +120,7 @@ func (s *MySQLChangeStoreIntegrationSuite) TestGetByURI_DoesNotExcludeSelf() {
 	t := s.T()
 	uri := "github://uber/x/pull/1/aaa"
 	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
-		URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1,
+		URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
 	got, err := s.store.GetByURI(s.ctx, "q", uri)
@@ -132,7 +133,7 @@ func (s *MySQLChangeStoreIntegrationSuite) TestGetByURI_QueueScoped() {
 	t := s.T()
 	uri := "github://uber/x/pull/1/aaa"
 	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
-		URI: uri, RequestID: "qA/1", Queue: "qA", CreatedAt: 1, UpdatedAt: 1,
+		URI: uri, RequestID: "qA/1", Queue: "qA", CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
 	got, err := s.store.GetByURI(s.ctx, "qB", uri)
@@ -142,7 +143,7 @@ func (s *MySQLChangeStoreIntegrationSuite) TestGetByURI_QueueScoped() {
 
 func (s *MySQLChangeStoreIntegrationSuite) TestCreate_Idempotent() {
 	t := s.T()
-	rec := entity.ChangeRecord{URI: "github://uber/x/pull/1/aaa", RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1}
+	rec := entity.ChangeRecord{URI: "github://uber/x/pull/1/aaa", RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1, Version: 1}
 
 	require.NoError(t, s.store.Create(s.ctx, rec))
 	require.NoError(t, s.store.Create(s.ctx, rec), "second insert with same PK must succeed (INSERT IGNORE)")
@@ -156,10 +157,10 @@ func (s *MySQLChangeStoreIntegrationSuite) TestCreate_DifferentRequestSameURI() 
 	t := s.T()
 	uri := "github://uber/x/pull/1/aaa"
 	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
-		URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1,
+		URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
-		URI: uri, RequestID: "q/2", Queue: "q", CreatedAt: 2, UpdatedAt: 2,
+		URI: uri, RequestID: "q/2", Queue: "q", CreatedAt: 2, UpdatedAt: 2, Version: 1,
 	}))
 
 	got, err := s.store.GetByURI(s.ctx, "q", uri)
@@ -176,7 +177,7 @@ func (s *MySQLChangeStoreIntegrationSuite) TestCreate_PreservesMetadata() {
 	const meta = `{"title":"add new feature"}`
 	uri := "github://uber/x/pull/1/aaa"
 	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
-		URI: uri, RequestID: "q/1", Queue: "q", Metadata: meta, CreatedAt: 1, UpdatedAt: 1,
+		URI: uri, RequestID: "q/1", Queue: "q", Metadata: meta, CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
 	got, err := s.store.GetByURI(s.ctx, "q", uri)
@@ -191,7 +192,7 @@ func (s *MySQLChangeStoreIntegrationSuite) TestCreate_EmptyMetadataStoredAsObjec
 	t := s.T()
 	uri := "github://uber/x/pull/1/aaa"
 	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
-		URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1,
+		URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
 	got, err := s.store.GetByURI(s.ctx, "q", uri)

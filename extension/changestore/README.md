@@ -14,6 +14,7 @@ The interface is intentionally per-record / per-URI so any backend (SQL, DynamoD
 - **Metadata is required and mutable.** The `Metadata` field is JSON. The store treats `'{}'` as the canonical "no metadata yet" value — callers that pass an empty Go string get `'{}'` written. Downstream enrichment can update it; `UpdatedAt` reflects the last update.
 - **Per-record writes, idempotent.** `Create` writes a single record. A primary-key conflict is silently ignored, which makes queue-redelivery of the same request a safe no-op. There is no batch atomicity in the contract — callers with multiple URIs loop and rely on idempotency to converge under partial failure / retry.
 - **Per-URI reads, no filtering.** `GetByURI` returns every record for a given `(queue, uri)`. The store does not filter by `request_id` or by the owning request's state. Callers that want to skip self filter by `RequestID`; callers that want only live owners consult `RequestStore` for liveness.
+- **Versioned for safe metadata updates.** Each record carries a `Version` integer (starts at 1). Future `UpdateMetadata` operations follow the same caller-owned-arithmetic + conditional-write pattern as `RequestStore.UpdateState` — the caller passes `oldVersion` and `newVersion`, and the store performs a pure conditional write.
 - **Append-only by design.** Records are not deleted when the owning request reaches a terminal state; the historical claim is preserved for audit. Duplicate detection filters terminals out at query time via the controller-side liveness check.
 
 ## Implementing a Backend

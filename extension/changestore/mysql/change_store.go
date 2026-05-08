@@ -50,9 +50,9 @@ func (s *changeStore) Create(ctx context.Context, record entity.ChangeRecord) (r
 		metadata = "{}"
 	}
 
-	const query = "INSERT IGNORE INTO `change` (uri, request_id, queue, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+	const query = "INSERT IGNORE INTO `change` (uri, request_id, queue, metadata, created_at, updated_at, version) VALUES (?, ?, ?, ?, ?, ?, ?)"
 	if _, err := s.db.ExecContext(ctx, query,
-		record.URI, record.RequestID, record.Queue, metadata, record.CreatedAt, record.UpdatedAt,
+		record.URI, record.RequestID, record.Queue, metadata, record.CreatedAt, record.UpdatedAt, record.Version,
 	); err != nil {
 		return fmt.Errorf("failed to insert change record uri=%s request_id=%s: %w", record.URI, record.RequestID, err)
 	}
@@ -65,7 +65,7 @@ func (s *changeStore) GetByURI(ctx context.Context, queue string, uri string) (r
 	op := metrics.Begin(s.scope, "get_by_uri")
 	defer func() { op.Complete(retErr) }()
 
-	const query = "SELECT uri, request_id, queue, metadata, created_at, updated_at FROM `change` WHERE queue = ? AND uri = ?"
+	const query = "SELECT uri, request_id, queue, metadata, created_at, updated_at, version FROM `change` WHERE queue = ? AND uri = ?"
 	rows, err := s.db.QueryContext(ctx, query, queue, uri)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query change records for queue=%s uri=%s: %w", queue, uri, err)
@@ -75,7 +75,7 @@ func (s *changeStore) GetByURI(ctx context.Context, queue string, uri string) (r
 	var results []entity.ChangeRecord
 	for rows.Next() {
 		var rec entity.ChangeRecord
-		if err := rows.Scan(&rec.URI, &rec.RequestID, &rec.Queue, &rec.Metadata, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
+		if err := rows.Scan(&rec.URI, &rec.RequestID, &rec.Queue, &rec.Metadata, &rec.CreatedAt, &rec.UpdatedAt, &rec.Version); err != nil {
 			return nil, fmt.Errorf("failed to scan change record for queue=%s uri=%s: %w", queue, uri, err)
 		}
 		results = append(results, rec)

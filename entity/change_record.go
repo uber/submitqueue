@@ -48,4 +48,10 @@ type ChangeRecord struct {
 	// UpdatedAt is the Unix milliseconds timestamp when this record's Metadata was last updated.
 	// Equal to CreatedAt when the record has never been updated.
 	UpdatedAt int64 `json:"updated_at"`
+
+	// Version is the optimistic-locking counter for mutable fields (Metadata).
+	// Starts at 1 on Create and is incremented by callers on every update.
+	// Mirrors the request-store convention: callers compute newVersion = oldVersion + 1
+	// and pass both to the update method; the store performs a pure conditional write.
+	Version int32 `json:"version"`
 }
