@@ -42,30 +42,30 @@ func (m *MockChangeStore) EXPECT() *MockChangeStoreMockRecorder {
 }
 
 // Create mocks base method.
-func (m *MockChangeStore) Create(ctx context.Context, records []entity.ChangeRecord) error {
+func (m *MockChangeStore) Create(ctx context.Context, record entity.ChangeRecord) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Create", ctx, records)
+	ret := m.ctrl.Call(m, "Create", ctx, record)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Create indicates an expected call of Create.
-func (mr *MockChangeStoreMockRecorder) Create(ctx, records any) *gomock.Call {
+func (mr *MockChangeStoreMockRecorder) Create(ctx, record any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockChangeStore)(nil).Create), ctx, records)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockChangeStore)(nil).Create), ctx, record)
 }
 
-// FindOverlapping mocks base method.
-func (m *MockChangeStore) FindOverlapping(ctx context.Context, queue string, uris []string) ([]entity.ChangeRecord, error) {
+// GetByURI mocks base method.
+func (m *MockChangeStore) GetByURI(ctx context.Context, queue, uri string) ([]entity.ChangeRecord, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FindOverlapping", ctx, queue, uris)
+	ret := m.ctrl.Call(m, "GetByURI", ctx, queue, uri)
 	ret0, _ := ret[0].([]entity.ChangeRecord)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// FindOverlapping indicates an expected call of FindOverlapping.
-func (mr *MockChangeStoreMockRecorder) FindOverlapping(ctx, queue, uris any) *gomock.Call {
+// GetByURI indicates an expected call of GetByURI.
+func (mr *MockChangeStoreMockRecorder) GetByURI(ctx, queue, uri any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindOverlapping", reflect.TypeOf((*MockChangeStore)(nil).FindOverlapping), ctx, queue, uris)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByURI", reflect.TypeOf((*MockChangeStore)(nil).GetByURI), ctx, queue, uri)
 }

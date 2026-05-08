@@ -88,25 +88,25 @@ func (s *MySQLChangeStoreIntegrationSuite) SetupTest() {
 	require.NoError(s.T(), err)
 }
 
-func (s *MySQLChangeStoreIntegrationSuite) TestCreateAndFind_NoOverlap() {
+func (s *MySQLChangeStoreIntegrationSuite) TestCreateAndGet_NoMatch() {
 	t := s.T()
-	require.NoError(t, s.store.Create(s.ctx, []entity.ChangeRecord{
-		{URI: "github://uber/x/pull/1/aaa", RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1},
+	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
+		URI: "github://uber/x/pull/1/aaa", RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1,
 	}))
 
-	got, err := s.store.FindOverlapping(s.ctx, "q", []string{"github://uber/x/pull/2/bbb"})
+	got, err := s.store.GetByURI(s.ctx, "q", "github://uber/x/pull/2/bbb")
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
 
-func (s *MySQLChangeStoreIntegrationSuite) TestCreateAndFind_Overlap() {
+func (s *MySQLChangeStoreIntegrationSuite) TestCreateAndGet_Match() {
 	t := s.T()
 	uri := "github://uber/x/pull/1/aaa"
-	require.NoError(t, s.store.Create(s.ctx, []entity.ChangeRecord{
-		{URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1},
+	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
+		URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1,
 	}))
 
-	got, err := s.store.FindOverlapping(s.ctx, "q", []string{uri})
+	got, err := s.store.GetByURI(s.ctx, "q", uri)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "q/1", got[0].RequestID)
@@ -114,38 +114,38 @@ func (s *MySQLChangeStoreIntegrationSuite) TestCreateAndFind_Overlap() {
 	assert.Equal(t, "q", got[0].Queue)
 }
 
-func (s *MySQLChangeStoreIntegrationSuite) TestFindOverlapping_ReturnsAllOwners() {
-	// The store does not exclude any specific request_id; callers filter self if they wish.
+func (s *MySQLChangeStoreIntegrationSuite) TestGetByURI_DoesNotExcludeSelf() {
+	// The store does not filter by request_id; callers filter self if they wish.
 	t := s.T()
 	uri := "github://uber/x/pull/1/aaa"
-	require.NoError(t, s.store.Create(s.ctx, []entity.ChangeRecord{
-		{URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1},
+	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
+		URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1,
 	}))
 
-	got, err := s.store.FindOverlapping(s.ctx, "q", []string{uri})
+	got, err := s.store.GetByURI(s.ctx, "q", uri)
 	require.NoError(t, err)
 	require.Len(t, got, 1, "store returns the row even when caller might consider it self")
 	assert.Equal(t, "q/1", got[0].RequestID)
 }
 
-func (s *MySQLChangeStoreIntegrationSuite) TestFindOverlapping_QueueScoped() {
+func (s *MySQLChangeStoreIntegrationSuite) TestGetByURI_QueueScoped() {
 	t := s.T()
 	uri := "github://uber/x/pull/1/aaa"
-	require.NoError(t, s.store.Create(s.ctx, []entity.ChangeRecord{
-		{URI: uri, RequestID: "qA/1", Queue: "qA", CreatedAt: 1, UpdatedAt: 1},
+	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
+		URI: uri, RequestID: "qA/1", Queue: "qA", CreatedAt: 1, UpdatedAt: 1,
 	}))
 
-	got, err := s.store.FindOverlapping(s.ctx, "qB", []string{uri})
+	got, err := s.store.GetByURI(s.ctx, "qB", uri)
 	require.NoError(t, err)
-	assert.Empty(t, got, "FindOverlapping must not return rows from a different queue")
+	assert.Empty(t, got, "GetByURI must not return rows from a different queue")
 }
 
 func (s *MySQLChangeStoreIntegrationSuite) TestCreate_Idempotent() {
 	t := s.T()
 	rec := entity.ChangeRecord{URI: "github://uber/x/pull/1/aaa", RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1}
 
-	require.NoError(t, s.store.Create(s.ctx, []entity.ChangeRecord{rec}))
-	require.NoError(t, s.store.Create(s.ctx, []entity.ChangeRecord{rec}), "second insert with same PK must succeed (INSERT IGNORE)")
+	require.NoError(t, s.store.Create(s.ctx, rec))
+	require.NoError(t, s.store.Create(s.ctx, rec), "second insert with same PK must succeed (INSERT IGNORE)")
 
 	var count int
 	require.NoError(t, s.db.QueryRowContext(s.ctx, "SELECT COUNT(*) FROM `change`").Scan(&count))
@@ -155,12 +155,14 @@ func (s *MySQLChangeStoreIntegrationSuite) TestCreate_Idempotent() {
 func (s *MySQLChangeStoreIntegrationSuite) TestCreate_DifferentRequestSameURI() {
 	t := s.T()
 	uri := "github://uber/x/pull/1/aaa"
-	require.NoError(t, s.store.Create(s.ctx, []entity.ChangeRecord{
-		{URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1},
-		{URI: uri, RequestID: "q/2", Queue: "q", CreatedAt: 2, UpdatedAt: 2},
+	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
+		URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1,
+	}))
+	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
+		URI: uri, RequestID: "q/2", Queue: "q", CreatedAt: 2, UpdatedAt: 2,
 	}))
 
-	got, err := s.store.FindOverlapping(s.ctx, "q", []string{uri})
+	got, err := s.store.GetByURI(s.ctx, "q", uri)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 
@@ -173,11 +175,11 @@ func (s *MySQLChangeStoreIntegrationSuite) TestCreate_PreservesMetadata() {
 	t := s.T()
 	const meta = `{"title":"add new feature"}`
 	uri := "github://uber/x/pull/1/aaa"
-	require.NoError(t, s.store.Create(s.ctx, []entity.ChangeRecord{
-		{URI: uri, RequestID: "q/1", Queue: "q", Metadata: meta, CreatedAt: 1, UpdatedAt: 1},
+	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
+		URI: uri, RequestID: "q/1", Queue: "q", Metadata: meta, CreatedAt: 1, UpdatedAt: 1,
 	}))
 
-	got, err := s.store.FindOverlapping(s.ctx, "q", []string{uri})
+	got, err := s.store.GetByURI(s.ctx, "q", uri)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.JSONEq(t, meta, got[0].Metadata)
@@ -188,32 +190,12 @@ func (s *MySQLChangeStoreIntegrationSuite) TestCreate_EmptyMetadataStoredAsObjec
 	// Metadata field so callers don't need to know about the column constraint.
 	t := s.T()
 	uri := "github://uber/x/pull/1/aaa"
-	require.NoError(t, s.store.Create(s.ctx, []entity.ChangeRecord{
-		{URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1},
+	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
+		URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1,
 	}))
 
-	got, err := s.store.FindOverlapping(s.ctx, "q", []string{uri})
+	got, err := s.store.GetByURI(s.ctx, "q", uri)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.JSONEq(t, "{}", got[0].Metadata)
-}
-
-func (s *MySQLChangeStoreIntegrationSuite) TestCreate_EmptyIsNoOp() {
-	t := s.T()
-	require.NoError(t, s.store.Create(s.ctx, nil))
-
-	var count int
-	require.NoError(t, s.db.QueryRowContext(s.ctx, "SELECT COUNT(*) FROM `change`").Scan(&count))
-	assert.Zero(t, count)
-}
-
-func (s *MySQLChangeStoreIntegrationSuite) TestFindOverlapping_EmptyURIsIsNoOp() {
-	t := s.T()
-	require.NoError(t, s.store.Create(s.ctx, []entity.ChangeRecord{
-		{URI: "github://uber/x/pull/1/aaa", RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1},
-	}))
-
-	got, err := s.store.FindOverlapping(s.ctx, "q", nil)
-	require.NoError(t, err)
-	assert.Empty(t, got)
 }
