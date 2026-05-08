@@ -406,7 +406,6 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		store,
-		changeStore,
 		registry,
 		consumer.TopicKeyStart,
 		"orchestrator-start",

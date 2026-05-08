@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
@@ -108,8 +109,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"partition_key", msg.PartitionKey,
 	)
 
-	// Duplicate detection: claim this request's URIs in the change store, then look for any
-	// other in-flight request that claims an overlapping URI.
+	// Duplicate detection: look for any other in-flight request that has already
+	// claimed an overlapping URI in this queue. Per-queue partition leasing
+	// (see core/consumer + extension/queue) guarantees serial processing within
+	// a queue, so the read-then-claim sequence below is race-free.
 	if dupID, err := c.checkDuplicate(ctx, request); err != nil {
 		return err
 	} else if dupID != "" {
@@ -151,6 +154,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"total_files", totalFiles(changeInfos),
 	)
 
+	// Claim the request's URIs in the change store. Done after all checks pass so
+	// only validated requests stake claims (no orphan rows for failed validations).
+	if err := c.claimURIs(ctx, request); err != nil {
+		coremetrics.NamedCounter(c.metricsScope, "process", "change_store_errors", 1)
+		return fmt.Errorf("failed to claim URIs for request %s: %w", request.ID, err)
+	}
+
 	// Publish to batch topic
 	if err := c.publish(ctx, consumer.TopicKeyBatch, request.ID, request.Queue); err != nil {
 		coremetrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1)
@@ -166,10 +176,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 }
 
 // checkDuplicate looks for any other in-flight request whose URIs overlap with this
-// request's. The change rows themselves are written upstream by the start controller;
-// validate is read-only here. For each URI it queries the change store, walks the
-// returned candidates skipping self/duplicates/orphans/terminals, and short-circuits
-// on the first live duplicate. Returns that request_id, or "" if none.
+// request's. The change rows are written by validate itself further down in Process,
+// so a fresh request sees only rows from earlier requests in the same queue. For each
+// URI it queries the change store, walks the returned candidates skipping
+// self/duplicates/orphans/terminals, and short-circuits on the first live duplicate.
+// Returns that request_id, or "" if none.
 //
 // Per-URI / per-record reads keep the contract backend-agnostic; the typical request
 // has 1-5 URIs, so the loop is cheap.
@@ -204,6 +215,29 @@ func (c *Controller) checkDuplicate(ctx context.Context, request entity.Request)
 		}
 	}
 	return "", nil
+}
+
+// claimURIs persists one ChangeRecord per URI in the request. Called only after all
+// validation passes, so claims represent validated requests. INSERT IGNORE on PK
+// conflict makes the loop idempotent under queue redelivery (same (Queue, URI,
+// RequestID) is a no-op on retry). Different requests with overlapping URIs do not
+// collide on insert; the read above catches them.
+func (c *Controller) claimURIs(ctx context.Context, request entity.Request) error {
+	now := time.Now().UnixMilli()
+	for _, uri := range request.Change.URIs {
+		record := entity.ChangeRecord{
+			URI:       uri,
+			RequestID: request.ID,
+			Queue:     request.Queue,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Version:   1,
+		}
+		if err := c.changeStore.Create(ctx, record); err != nil {
+			return fmt.Errorf("failed to claim uri=%s for request %s: %w", uri, request.ID, err)
+		}
+	}
+	return nil
 }
 
 // publish publishes a request ID to the specified topic key.

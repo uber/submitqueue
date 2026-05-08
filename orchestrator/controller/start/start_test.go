@@ -26,7 +26,6 @@ import (
 	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
-	changemock "github.com/uber/submitqueue/extension/changestore/mock"
 	queuemock "github.com/uber/submitqueue/extension/queue/mock"
 	"github.com/uber/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/extension/storage/mock"
@@ -35,13 +34,7 @@ import (
 )
 
 // newTestController creates a controller with test dependencies.
-func newTestController(
-	t *testing.T,
-	ctrl *gomock.Controller,
-	store *storagemock.MockStorage,
-	cs *changemock.MockChangeStore,
-	publishErr error,
-) *Controller {
+func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock.MockStorage, publishErr error) *Controller {
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
 
@@ -63,7 +56,7 @@ func newTestController(
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, store, cs, registry, consumer.TopicKeyStart, "orchestrator-start")
+	return NewController(logger, scope, store, registry, consumer.TopicKeyStart, "orchestrator-start")
 }
 
 // newMockStorage creates a MockStorage with a MockRequestStore that succeeds on Create.
@@ -74,13 +67,6 @@ func newMockStorage(ctrl *gomock.Controller) *storagemock.MockStorage {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 	return store
-}
-
-// newMockChangeStore creates a MockChangeStore that accepts any Create call.
-func newMockChangeStore(ctrl *gomock.Controller) *changemock.MockChangeStore {
-	cs := changemock.NewMockChangeStore(ctrl)
-	cs.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	return cs
 }
 
 // makeDelivery builds a MockDelivery wrapping a serialized LandRequest.
@@ -97,7 +83,7 @@ func makeDelivery(t *testing.T, ctrl *gomock.Controller, lr entity.LandRequest) 
 
 func TestNewController(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	controller := newTestController(t, ctrl, newMockStorage(ctrl), newMockChangeStore(ctrl), nil)
+	controller := newTestController(t, ctrl, newMockStorage(ctrl), nil)
 
 	require.NotNil(t, controller)
 	assert.Equal(t, consumer.TopicKeyStart, controller.TopicKey())
@@ -107,7 +93,7 @@ func TestNewController(t *testing.T) {
 
 func TestController_Process_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	controller := newTestController(t, ctrl, newMockStorage(ctrl), newMockChangeStore(ctrl), nil)
+	controller := newTestController(t, ctrl, newMockStorage(ctrl), nil)
 
 	delivery := makeDelivery(t, ctrl, entity.LandRequest{
 		ID:           "test-queue/123",
@@ -121,7 +107,7 @@ func TestController_Process_Success(t *testing.T) {
 
 func TestController_Process_InvalidJSON(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	controller := newTestController(t, ctrl, newMockStorage(ctrl), newMockChangeStore(ctrl), nil)
+	controller := newTestController(t, ctrl, newMockStorage(ctrl), nil)
 
 	invalidPayload := []byte(`{"invalid": json"}`)
 	msg := queue.NewMessage("invalid-msg", invalidPayload, "partition1", nil)
@@ -148,7 +134,7 @@ func TestController_Process_ConstructsRequestWithStateAndVersion(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
-	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), nil)
+	controller := newTestController(t, ctrl, store, nil)
 
 	landRequest := entity.LandRequest{
 		ID:           "test-queue/42",
@@ -180,7 +166,7 @@ func TestController_Process_AllStrategies(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
-			controller := newTestController(t, ctrl, newMockStorage(ctrl), newMockChangeStore(ctrl), nil)
+			controller := newTestController(t, ctrl, newMockStorage(ctrl), nil)
 
 			delivery := makeDelivery(t, ctrl, entity.LandRequest{
 				ID:           fmt.Sprintf("queue/%s", tt.strategy),
@@ -196,45 +182,27 @@ func TestController_Process_AllStrategies(t *testing.T) {
 
 func TestController_Process_MultipleChanges(t *testing.T) {
 	ctrl := gomock.NewController(t)
+	controller := newTestController(t, ctrl, newMockStorage(ctrl), nil)
 
-	cs := changemock.NewMockChangeStore(ctrl)
-	var captured []entity.ChangeRecord
-	cs.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, record entity.ChangeRecord) error {
-			captured = append(captured, record)
-			return nil
-		},
-	).Times(3)
-
-	controller := newTestController(t, ctrl, newMockStorage(ctrl), cs, nil)
-
-	uris := []string{
-		"github://uber/monorepo/pull/1/aaa111",
-		"github://uber/monorepo/pull/2/bbb222",
-		"github://uber/monorepo/pull/3/ccc333",
-	}
 	delivery := makeDelivery(t, ctrl, entity.LandRequest{
-		ID:           "queue/999",
-		Queue:        "test-queue",
-		Change:       entity.Change{URIs: uris},
+		ID:    "queue/999",
+		Queue: "test-queue",
+		Change: entity.Change{
+			URIs: []string{
+				"github://uber/monorepo/pull/1/aaa111",
+				"github://uber/monorepo/pull/2/bbb222",
+				"github://uber/monorepo/pull/3/ccc333",
+			},
+		},
 		LandStrategy: entity.RequestLandStrategySquashRebase,
 	})
 
 	require.NoError(t, controller.Process(context.Background(), delivery))
-
-	require.Len(t, captured, len(uris))
-	for i, r := range captured {
-		assert.Equal(t, uris[i], r.URI)
-		assert.Equal(t, "queue/999", r.RequestID)
-		assert.Equal(t, "test-queue", r.Queue)
-		assert.Positive(t, r.CreatedAt)
-		assert.Equal(t, r.CreatedAt, r.UpdatedAt)
-	}
 }
 
 func TestController_Process_PublishFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	controller := newTestController(t, ctrl, newMockStorage(ctrl), newMockChangeStore(ctrl), fmt.Errorf("publish failed"))
+	controller := newTestController(t, ctrl, newMockStorage(ctrl), fmt.Errorf("publish failed"))
 
 	delivery := makeDelivery(t, ctrl, entity.LandRequest{
 		ID:           "test-queue/123",
@@ -254,7 +222,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
-	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), nil)
+	controller := newTestController(t, ctrl, store, nil)
 
 	delivery := makeDelivery(t, ctrl, entity.LandRequest{
 		ID:           "test-queue/123",
@@ -276,7 +244,7 @@ func TestController_Process_AlreadyExistsSucceeds(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
-	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), nil)
+	controller := newTestController(t, ctrl, store, nil)
 
 	delivery := makeDelivery(t, ctrl, entity.LandRequest{
 		ID:           "test-queue/123",
@@ -288,28 +256,9 @@ func TestController_Process_AlreadyExistsSucceeds(t *testing.T) {
 	require.NoError(t, controller.Process(context.Background(), delivery))
 }
 
-func TestController_Process_ChangeStoreFailure(t *testing.T) {
-	ctrl := gomock.NewController(t)
-
-	cs := changemock.NewMockChangeStore(ctrl)
-	cs.EXPECT().Create(gomock.Any(), gomock.Any()).Return(fmt.Errorf("change store down"))
-
-	controller := newTestController(t, ctrl, newMockStorage(ctrl), cs, nil)
-
-	delivery := makeDelivery(t, ctrl, entity.LandRequest{
-		ID:           "test-queue/123",
-		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/xyz789abc"}},
-		LandStrategy: entity.RequestLandStrategyRebase,
-	})
-
-	err := controller.Process(context.Background(), delivery)
-	require.Error(t, err)
-}
-
 func TestController_InterfaceImplementation(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	controller := newTestController(t, ctrl, newMockStorage(ctrl), newMockChangeStore(ctrl), nil)
+	controller := newTestController(t, ctrl, newMockStorage(ctrl), nil)
 
 	var _ consumer.Controller = controller
 }
