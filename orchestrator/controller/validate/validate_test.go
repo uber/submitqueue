@@ -85,7 +85,7 @@ func newMockStorage(ctrl *gomock.Controller, request entity.Request) (*storagemo
 // Validate is read-only against the change store — it never calls Create.
 func newMockChangeStore(ctrl *gomock.Controller) *changemock.MockChangeStore {
 	cs := changemock.NewMockChangeStore(ctrl)
-	cs.EXPECT().FindOverlapping(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	cs.EXPECT().FindOverlapping(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	return cs
 }
 
@@ -341,6 +341,24 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			wantUserErr: true,
 		},
 		{
+			// Store doesn't exclude self; controller filters by RequestID and must not look up its own row.
+			name: "self row in overlap is filtered (no Get call)",
+			overlap: []entity.ChangeRecord{
+				{URI: uri, RequestID: newRequestID, Queue: queueName},
+			},
+		},
+		{
+			name: "self row mixed with live other returns the other",
+			overlap: []entity.ChangeRecord{
+				{URI: uri, RequestID: newRequestID, Queue: queueName},
+				{URI: uri, RequestID: dupRequestID, Queue: queueName},
+			},
+			ownerLookup: map[string]entity.Request{
+				dupRequestID: {ID: dupRequestID, Queue: queueName, State: entity.RequestStateStarted, Version: 1},
+			},
+			wantUserErr: true,
+		},
+		{
 			name:    "owner lookup unexpected error propagates",
 			overlap: []entity.ChangeRecord{{URI: uri, RequestID: dupRequestID, Queue: queueName}},
 			ownerErr: map[string]error{
@@ -379,7 +397,7 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
 			cs := changemock.NewMockChangeStore(ctrl)
-			cs.EXPECT().FindOverlapping(gomock.Any(), queueName, []string{uri}, newRequestID).Return(tt.overlap, nil)
+			cs.EXPECT().FindOverlapping(gomock.Any(), queueName, []string{uri}).Return(tt.overlap, nil)
 
 			controller := newTestController(t, ctrl, store, cs, mc, nil)
 
@@ -419,7 +437,7 @@ func TestController_Process_ChangeStoreQueryFailure(t *testing.T) {
 	store, _ := newMockStorage(ctrl, request)
 
 	cs := changemock.NewMockChangeStore(ctrl)
-	cs.EXPECT().FindOverlapping(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("change store down"))
+	cs.EXPECT().FindOverlapping(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("change store down"))
 
 	controller := newTestController(t, ctrl, store, cs, mc, nil)
 

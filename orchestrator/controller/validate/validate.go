@@ -177,16 +177,20 @@ func (c *Controller) checkDuplicate(ctx context.Context, request entity.Request)
 		return "", nil
 	}
 
-	overlaps, err := c.changeStore.FindOverlapping(ctx, request.Queue, request.Change.URIs, request.ID)
+	overlaps, err := c.changeStore.FindOverlapping(ctx, request.Queue, request.Change.URIs)
 	if err != nil {
 		coremetrics.NamedCounter(c.metricsScope, "process", "change_store_query_errors", 1)
 		return "", fmt.Errorf("failed to query overlapping changes for request %s: %w", request.ID, err)
 	}
 
 	// Liveness check: an overlap is only a duplicate if the owning request is non-terminal.
-	// Walk unique candidate request_ids; orphans (ErrNotFound) and terminal owners are skipped.
+	// The store does not exclude self, so skip our own request_id here. Walk unique candidate
+	// request_ids; orphans (ErrNotFound) and terminal owners are skipped.
 	seen := make(map[string]struct{}, len(overlaps))
 	for _, rec := range overlaps {
+		if rec.RequestID == request.ID {
+			continue // skip rows belonging to this request itself
+		}
 		if _, ok := seen[rec.RequestID]; ok {
 			continue
 		}
