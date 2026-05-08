@@ -6,10 +6,12 @@ Each record asserts that a specific URI (e.g., a GitHub PR) was claimed by a spe
 
 ## Semantics
 
-- **Identity is immutable.** A record is keyed by `(URI, RequestID)`; once written, that pair is never mutated.
-- **Metadata is mutable.** The `Metadata` field is intended for provider-specific information about the change (PR title, author, mergeability, etc.) that may be enriched after the record is first written. `UpdatedAt` reflects the last metadata change; `CreatedAt` is fixed at write time.
-- **Idempotent writes.** `Create` ignores primary-key conflicts so queue-redelivery of the same request is a safe no-op.
-- **No liveness filter.** `FindOverlapping` returns records regardless of whether the owning request is still in flight. Callers must check liveness against `RequestStore` themselves — the store boundary is intentionally one query, one table, no joins.
+- **Identity is immutable.** A record is keyed by `(Queue, URI, RequestID)`; once written, that triple is never mutated.
+- **Queue leads the key.** Backends should make `Queue` the leading column of the primary key (or partition key, in shardable stores). All reads are queue-scoped, so this turns lookups into PK-prefix scans and keeps the table shardable.
+- **`RequestID` in the key is intentional.** Concurrent claims by different requests on the same URI coexist as distinct rows. Same-request retries collide on the PK and are absorbed idempotently; cross-request collisions show up as additional rows that callers detect via `FindOverlapping`.
+- **Metadata is required and mutable.** The `Metadata` field is JSON. The store treats `'{}'` as the canonical "no metadata yet" value — callers that pass an empty Go string get `'{}'` written. Downstream enrichment can update it; `UpdatedAt` reflects the last update.
+- **Idempotent writes, atomic batches.** `Create` ignores primary-key conflicts so queue-redelivery of the same request is a safe no-op. The whole batch is one underlying multi-row INSERT — partial success is not exposed.
+- **No filtering at the store layer.** `FindOverlapping` returns every matching row, including ones owned by the caller's own request. Callers that want to skip self filter the result by `RequestID` themselves. Liveness is also the caller's job — consult `RequestStore` to skip terminal owners. The store boundary is intentionally one query, one table, no joins.
 - **Append-only by design.** Records are not deleted when the owning request reaches a terminal state; the historical claim is preserved for audit. Duplicate detection filters terminals out at query time via the controller-side liveness check.
 
 ## Implementing a Backend

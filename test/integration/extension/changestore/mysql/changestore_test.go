@@ -94,7 +94,7 @@ func (s *MySQLChangeStoreIntegrationSuite) TestCreateAndFind_NoOverlap() {
 		{URI: "github://uber/x/pull/1/aaa", RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1},
 	}))
 
-	got, err := s.store.FindOverlapping(s.ctx, "q", []string{"github://uber/x/pull/2/bbb"}, "q/2")
+	got, err := s.store.FindOverlapping(s.ctx, "q", []string{"github://uber/x/pull/2/bbb"})
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
@@ -106,7 +106,7 @@ func (s *MySQLChangeStoreIntegrationSuite) TestCreateAndFind_Overlap() {
 		{URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1},
 	}))
 
-	got, err := s.store.FindOverlapping(s.ctx, "q", []string{uri}, "q/2")
+	got, err := s.store.FindOverlapping(s.ctx, "q", []string{uri})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "q/1", got[0].RequestID)
@@ -114,16 +114,18 @@ func (s *MySQLChangeStoreIntegrationSuite) TestCreateAndFind_Overlap() {
 	assert.Equal(t, "q", got[0].Queue)
 }
 
-func (s *MySQLChangeStoreIntegrationSuite) TestFindOverlapping_ExcludesSelf() {
+func (s *MySQLChangeStoreIntegrationSuite) TestFindOverlapping_ReturnsAllOwners() {
+	// The store does not exclude any specific request_id; callers filter self if they wish.
 	t := s.T()
 	uri := "github://uber/x/pull/1/aaa"
 	require.NoError(t, s.store.Create(s.ctx, []entity.ChangeRecord{
 		{URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1},
 	}))
 
-	got, err := s.store.FindOverlapping(s.ctx, "q", []string{uri}, "q/1")
+	got, err := s.store.FindOverlapping(s.ctx, "q", []string{uri})
 	require.NoError(t, err)
-	assert.Empty(t, got, "FindOverlapping must not return rows for excludeRequestID")
+	require.Len(t, got, 1, "store returns the row even when caller might consider it self")
+	assert.Equal(t, "q/1", got[0].RequestID)
 }
 
 func (s *MySQLChangeStoreIntegrationSuite) TestFindOverlapping_QueueScoped() {
@@ -133,7 +135,7 @@ func (s *MySQLChangeStoreIntegrationSuite) TestFindOverlapping_QueueScoped() {
 		{URI: uri, RequestID: "qA/1", Queue: "qA", CreatedAt: 1, UpdatedAt: 1},
 	}))
 
-	got, err := s.store.FindOverlapping(s.ctx, "qB", []string{uri}, "qB/1")
+	got, err := s.store.FindOverlapping(s.ctx, "qB", []string{uri})
 	require.NoError(t, err)
 	assert.Empty(t, got, "FindOverlapping must not return rows from a different queue")
 }
@@ -158,7 +160,7 @@ func (s *MySQLChangeStoreIntegrationSuite) TestCreate_DifferentRequestSameURI() 
 		{URI: uri, RequestID: "q/2", Queue: "q", CreatedAt: 2, UpdatedAt: 2},
 	}))
 
-	got, err := s.store.FindOverlapping(s.ctx, "q", []string{uri}, "q/3")
+	got, err := s.store.FindOverlapping(s.ctx, "q", []string{uri})
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 
@@ -175,10 +177,25 @@ func (s *MySQLChangeStoreIntegrationSuite) TestCreate_PreservesMetadata() {
 		{URI: uri, RequestID: "q/1", Queue: "q", Metadata: meta, CreatedAt: 1, UpdatedAt: 1},
 	}))
 
-	got, err := s.store.FindOverlapping(s.ctx, "q", []string{uri}, "q/other")
+	got, err := s.store.FindOverlapping(s.ctx, "q", []string{uri})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.JSONEq(t, meta, got[0].Metadata)
+}
+
+func (s *MySQLChangeStoreIntegrationSuite) TestCreate_EmptyMetadataStoredAsObject() {
+	// metadata is NOT NULL in the schema. The impl substitutes '{}' for an empty
+	// Metadata field so callers don't need to know about the column constraint.
+	t := s.T()
+	uri := "github://uber/x/pull/1/aaa"
+	require.NoError(t, s.store.Create(s.ctx, []entity.ChangeRecord{
+		{URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1},
+	}))
+
+	got, err := s.store.FindOverlapping(s.ctx, "q", []string{uri})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.JSONEq(t, "{}", got[0].Metadata)
 }
 
 func (s *MySQLChangeStoreIntegrationSuite) TestCreate_EmptyIsNoOp() {
@@ -196,7 +213,7 @@ func (s *MySQLChangeStoreIntegrationSuite) TestFindOverlapping_EmptyURIsIsNoOp()
 		{URI: "github://uber/x/pull/1/aaa", RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1},
 	}))
 
-	got, err := s.store.FindOverlapping(s.ctx, "q", nil, "q/2")
+	got, err := s.store.FindOverlapping(s.ctx, "q", nil)
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }

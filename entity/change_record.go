@@ -15,9 +15,9 @@
 package entity
 
 // ChangeRecord represents a single URI's claim by a request, persisted in the change store.
-// The (URI, RequestID) pair is the identity and is immutable; Metadata may be updated over
-// time as additional information about the change (e.g., PR title, author, mergeability)
-// becomes available.
+// The (Queue, URI, RequestID) triple is the identity and is immutable; Metadata may be
+// updated over time as additional information about the change (e.g., PR title, author,
+// mergeability) becomes available.
 type ChangeRecord struct {
 	// URI identifies the change (RFC 3986). Same scheme/format as entity.Change.URIs.
 	// Example: "github://uber/submitqueue/pull/123/abc123def".
@@ -25,15 +25,21 @@ type ChangeRecord struct {
 
 	// RequestID is the owning land request that claimed this URI.
 	// Format matches entity.Request.ID: "<queue>/<counter_value>".
+	//
+	// RequestID participates in the change-store primary key so that concurrent claims
+	// by different requests on the same URI coexist as distinct rows. Same-request
+	// retries collide on the PK and are absorbed idempotently; different-request
+	// collisions surface as additional rows that callers detect via FindOverlapping.
 	RequestID string `json:"request_id"`
 
-	// Queue is the queue scope for the owning request. Denormalized from the request
-	// to allow queue-scoped duplicate checks without a join.
+	// Queue is the queue the owning request belongs to. It is the leading column of
+	// the change-store primary key, so queue-scoped duplicate checks become PK-prefix
+	// scans and the table is shardable by queue.
 	Queue string `json:"queue"`
 
 	// Metadata is a JSON-encoded blob of provider-specific information about the change
-	// (e.g., PR title, author, mergeable state). Empty when the record is first written;
-	// populated and updated by downstream enrichment.
+	// (e.g., PR title, author, mergeable state). Stored as `'{}'` when no metadata has
+	// been populated yet; updated by downstream enrichment.
 	Metadata string `json:"metadata,omitempty"`
 
 	// CreatedAt is the Unix milliseconds timestamp when this record was first created.

@@ -56,16 +56,16 @@ func (mr *MockChangeStoreMockRecorder) Create(ctx, records any) *gomock.Call {
 }
 
 // FindOverlapping mocks base method.
-func (m *MockChangeStore) FindOverlapping(ctx context.Context, queue string, uris []string, excludeRequestID string) ([]entity.ChangeRecord, error) {
+func (m *MockChangeStore) FindOverlapping(ctx context.Context, queue string, uris []string) ([]entity.ChangeRecord, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FindOverlapping", ctx, queue, uris, excludeRequestID)
+	ret := m.ctrl.Call(m, "FindOverlapping", ctx, queue, uris)
 	ret0, _ := ret[0].([]entity.ChangeRecord)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // FindOverlapping indicates an expected call of FindOverlapping.
-func (mr *MockChangeStoreMockRecorder) FindOverlapping(ctx, queue, uris, excludeRequestID any) *gomock.Call {
+func (mr *MockChangeStoreMockRecorder) FindOverlapping(ctx, queue, uris any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindOverlapping", reflect.TypeOf((*MockChangeStore)(nil).FindOverlapping), ctx, queue, uris, excludeRequestID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindOverlapping", reflect.TypeOf((*MockChangeStore)(nil).FindOverlapping), ctx, queue, uris)
 }

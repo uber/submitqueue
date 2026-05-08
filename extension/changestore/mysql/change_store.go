@@ -37,8 +37,10 @@ func NewChangeStore(db *sql.DB, scope tally.Scope) changestore.ChangeStore {
 	return &changeStore{db: db, scope: scope}
 }
 
-// Create inserts a batch of ChangeRecords. Primary-key conflicts on (uri, request_id)
-// are silently ignored via INSERT IGNORE so queue-redelivery of the same request is a no-op.
+// Create inserts a batch of ChangeRecords as a single multi-row INSERT IGNORE.
+// Primary-key conflicts on (queue, uri, request_id) are silently ignored so
+// queue-redelivery of the same request is a no-op. The whole batch is one
+// statement, so partial success is not observable.
 func (s *changeStore) Create(ctx context.Context, records []entity.ChangeRecord) (retErr error) {
 	op := metrics.Begin(s.scope, "create")
 	defer func() { op.Complete(retErr) }()
@@ -53,10 +55,12 @@ func (s *changeStore) Create(ctx context.Context, records []entity.ChangeRecord)
 
 	args := make([]any, 0, len(records)*cols)
 	for _, r := range records {
-		// Pass empty Metadata as NULL — JSON column rejects empty string but accepts NULL.
-		var metadata any
-		if r.Metadata != "" {
-			metadata = r.Metadata
+		// Use the empty JSON object as the canonical "no metadata yet" value.
+		// metadata is NOT NULL in the schema, and an empty Go string would be
+		// rejected by the JSON column type.
+		metadata := r.Metadata
+		if metadata == "" {
+			metadata = "{}"
 		}
 		args = append(args, r.URI, r.RequestID, r.Queue, metadata, r.CreatedAt, r.UpdatedAt)
 	}
@@ -68,13 +72,13 @@ func (s *changeStore) Create(ctx context.Context, records []entity.ChangeRecord)
 	return nil
 }
 
-// FindOverlapping returns ChangeRecords whose uri is in the given set, scoped to queue,
-// excluding any belonging to excludeRequestID.
+// FindOverlapping returns ChangeRecords whose uri is in the given set, scoped to queue.
+// The store does not filter by request_id; callers that want to skip self should do so
+// after the call. Liveness checks against the request store are also the caller's job.
 func (s *changeStore) FindOverlapping(
 	ctx context.Context,
 	queue string,
 	uris []string,
-	excludeRequestID string,
 ) (ret []entity.ChangeRecord, retErr error) {
 	op := metrics.Begin(s.scope, "find_overlapping")
 	defer func() { op.Complete(retErr) }()
@@ -84,14 +88,16 @@ func (s *changeStore) FindOverlapping(
 	}
 
 	uriPlaceholders := "?" + strings.Repeat(", ?", len(uris)-1)
+	// queue leads the WHERE clause to align with the (queue, uri, request_id) PK,
+	// so this is a PK-prefix scan.
 	query := "SELECT uri, request_id, queue, metadata, created_at, updated_at FROM `change` " +
-		"WHERE uri IN (" + uriPlaceholders + ") AND queue = ? AND request_id != ?"
+		"WHERE queue = ? AND uri IN (" + uriPlaceholders + ")"
 
-	args := make([]any, 0, len(uris)+2)
+	args := make([]any, 0, 1+len(uris))
+	args = append(args, queue)
 	for _, u := range uris {
 		args = append(args, u)
 	}
-	args = append(args, queue, excludeRequestID)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -102,12 +108,8 @@ func (s *changeStore) FindOverlapping(
 	var results []entity.ChangeRecord
 	for rows.Next() {
 		var rec entity.ChangeRecord
-		var metadata sql.NullString
-		if err := rows.Scan(&rec.URI, &rec.RequestID, &rec.Queue, &metadata, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
+		if err := rows.Scan(&rec.URI, &rec.RequestID, &rec.Queue, &rec.Metadata, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan change record for queue=%s: %w", queue, err)
-		}
-		if metadata.Valid {
-			rec.Metadata = metadata.String
 		}
 		results = append(results, rec)
 	}
