@@ -606,13 +606,18 @@ func newChangeProvider(logger *zap.Logger, scope tally.Scope) (changeprovider.Ch
 }
 
 // newPusher creates a git-backed Pusher bound to the configured checkout
-// path, remote, and target branch. Configured via PUSHER_CHECKOUT_PATH
-// (required), PUSHER_REMOTE (default "origin"), and PUSHER_TARGET (default
-// "main").
+// path, remote, and target branch. Configured via PUSHER_CHECKOUT_PATH,
+// PUSHER_REMOTE (default "origin"), and PUSHER_TARGET (default "main").
+//
+// If PUSHER_CHECKOUT_PATH is not set the orchestrator falls back to a
+// no-op pusher that errors when invoked. This keeps the example server
+// runnable in environments that don't exercise the merge controller
+// (e.g. ping-only integration tests, local dev without a git checkout).
 func newPusher(logger *zap.Logger, scope tally.Scope) (pusher.Pusher, error) {
 	checkout := os.Getenv("PUSHER_CHECKOUT_PATH")
 	if checkout == "" {
-		return nil, fmt.Errorf("PUSHER_CHECKOUT_PATH environment variable is required")
+		logger.Warn("PUSHER_CHECKOUT_PATH not set; using no-op pusher (merge controller will fail if invoked)")
+		return noopPusher{}, nil
 	}
 	return gitpusher.NewPusher(gitpusher.Params{
 		CheckoutPath: checkout,
@@ -621,4 +626,16 @@ func newPusher(logger *zap.Logger, scope tally.Scope) (pusher.Pusher, error) {
 		Logger:       logger.Sugar(),
 		MetricsScope: scope.SubScope("pusher"),
 	}), nil
+}
+
+// noopPusher is a fallback Pusher used when PUSHER_CHECKOUT_PATH is not
+// configured. It returns an error on every Push so the merge controller
+// (which treats non-ErrConflict errors as transient and nacks the message)
+// will not silently report success. It exists so the orchestrator can
+// still start up — and serve Ping / accept enqueues — in environments
+// that don't run the merge step.
+type noopPusher struct{}
+
+func (noopPusher) Push(_ context.Context, _ []entity.Change) (pusher.Result, error) {
+	return pusher.Result{}, fmt.Errorf("pusher not configured: set PUSHER_CHECKOUT_PATH to enable pushing")
 }
