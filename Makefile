@@ -6,6 +6,7 @@ COMPOSE = docker-compose
 COMPOSE_FILE = example/server/docker-compose.yml
 GATEWAY_COMPOSE_FILE = example/server/gateway/docker-compose.yml
 ORCHESTRATOR_COMPOSE_FILE = example/server/orchestrator/docker-compose.yml
+STOVEPIPE_COMPOSE_FILE = example/server/stovepipe/docker-compose.yml
 
 # Fixed project name for local manual testing (tests use unique random names)
 LOCAL_PROJECT = submitqueue
@@ -30,7 +31,7 @@ define assert_clean
 	fi
 endef
 
-.PHONY: build build-all-linux build-gateway-linux build-orchestrator-linux check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-consumer integration-test-extensions integration-test-gateway integration-test-orchestrator license-fix lint lint-fmt lint-license local-clean local-gateway-start local-gateway-stop local-init-schemas local-logs local-orchestrator-start local-orchestrator-stop local-ps local-restart local-start local-stop mocks proto query-deps query-targets run-client-gateway run-client-orchestrator run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
+.PHONY: build build-all-linux build-gateway-linux build-orchestrator-linux build-stovepipe-linux check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-consumer integration-test-extensions integration-test-gateway integration-test-orchestrator integration-test-stovepipe license-fix lint lint-fmt lint-license local-clean local-gateway-start local-gateway-stop local-init-schemas local-logs local-orchestrator-start local-orchestrator-stop local-ps local-restart local-start local-stop local-stovepipe-start local-stovepipe-stop mocks proto query-deps query-targets run-client-gateway run-client-orchestrator run-client-stovepipe run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
 
 
 build: ## Build all services and examples
@@ -39,7 +40,7 @@ build: ## Build all services and examples
 	@echo "Build complete!"
 
 # Build Linux binaries required for Docker containers
-build-all-linux: build-gateway-linux build-orchestrator-linux ## Build all Linux binaries for Docker
+build-all-linux: build-gateway-linux build-orchestrator-linux build-stovepipe-linux ## Build all Linux binaries for Docker
 	@echo "All Linux binaries ready for Docker"
 
 build-gateway-linux: ## Build Gateway Linux binary for Docker
@@ -57,6 +58,14 @@ build-orchestrator-linux: ## Build Orchestrator Linux binary for Docker
 	@cp -f bazel-bin/example/server/orchestrator/orchestrator_/orchestrator .docker-bin/orchestrator 2>/dev/null || \
 	 cp -f bazel-bin/example/server/orchestrator/orchestrator .docker-bin/orchestrator
 	@echo "Orchestrator Linux binary ready at .docker-bin/orchestrator"
+
+build-stovepipe-linux: ## Build Stovepipe Linux binary for Docker
+	@echo "Building Stovepipe Linux binary for Docker..."
+	@$(BAZEL) build --platforms=@rules_go//go/toolchain:linux_amd64 //example/server/stovepipe:stovepipe
+	@mkdir -p .docker-bin
+	@cp -f bazel-bin/example/server/stovepipe/stovepipe_/stovepipe .docker-bin/stovepipe 2>/dev/null || \
+	 cp -f bazel-bin/example/server/stovepipe/stovepipe .docker-bin/stovepipe
+	@echo "Stovepipe Linux binary ready at .docker-bin/stovepipe"
 
 check-gazelle: ## Check BUILD.bazel files are up to date
 	@echo "Running Gazelle to check BUILD files..."
@@ -82,6 +91,7 @@ clean-proto: ## Clean generated proto files
 	@echo "Cleaning generated proto files..."
 	@rm -rf gateway/protopb/*.pb.go
 	@rm -rf orchestrator/protopb/*.pb.go
+	@rm -rf stovepipe/protopb/*.pb.go
 	@echo "Proto clean complete!"
 
 deps: tidy-go ## Download and tidy Go dependencies
@@ -121,6 +131,10 @@ integration-test-gateway: build-gateway-linux ## Run Gateway integration tests (
 integration-test-orchestrator: build-orchestrator-linux ## Run Orchestrator integration tests (auto-builds binary)
 	@echo "Running Orchestrator integration tests..."
 	@$(BAZEL) test //test/integration/orchestrator:orchestrator_test --test_output=streamed
+
+integration-test-stovepipe: build-stovepipe-linux ## Run Stovepipe integration tests (auto-builds binary)
+	@echo "Running Stovepipe integration tests..."
+	@$(BAZEL) test //test/integration/stovepipe:stovepipe_test --test_output=streamed
 
 license-fix: ## Add missing license headers to source files
 	@$(BAZEL) run //tool/linter/licenseheader -- --fix
@@ -243,6 +257,21 @@ local-stop: ## Stop all services (keep data)
 	@$(COMPOSE) -f $(COMPOSE_FILE) -p $(LOCAL_PROJECT) down
 	@echo "Services stopped. Data volumes preserved."
 
+local-stovepipe-start: build-stovepipe-linux ## Start Stovepipe service locally (stateless, no databases)
+	@echo "Starting Stovepipe with docker-compose..."
+	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -p $(LOCAL_PROJECT) up -d --build --wait
+	@echo ""
+	@echo "✅ Stovepipe is running!"
+	@echo ""
+	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -p $(LOCAL_PROJECT) ps
+	@echo ""
+	@echo "Stovepipe gRPC port: $$(docker port $(LOCAL_PROJECT)-stovepipe-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'unknown')"
+
+local-stovepipe-stop: ## Stop Stovepipe service
+	@echo "Stopping Stovepipe services..."
+	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -p $(LOCAL_PROJECT) down
+	@echo "Stovepipe services stopped."
+
 mocks: ## Generate mock files using mockgen
 	@echo "Generating mocks..."
 	@$(BAZEL) run @rules_go//go -- generate ./extension/storage/... ./extension/counter/... ./extension/queue/... ./extension/mergechecker/... ./extension/pusher/... ./extension/scorer/... ./core/consumer/...
@@ -258,6 +287,10 @@ proto: ## Generate protobuf files from .proto definitions
 	  --go-grpc_out=orchestrator/protopb --go-grpc_opt=paths=source_relative \
 	  --yarpc-go_out=orchestrator/protopb --yarpc-go_opt=paths=source_relative \
 	  --proto_path=orchestrator/proto orchestrator/proto/orchestrator.proto
+	@protoc --go_out=stovepipe/protopb --go_opt=paths=source_relative \
+	  --go-grpc_out=stovepipe/protopb --go-grpc_opt=paths=source_relative \
+	  --yarpc-go_out=stovepipe/protopb --yarpc-go_opt=paths=source_relative \
+	  --proto_path=stovepipe/proto stovepipe/proto/stovepipe.proto
 	@echo "Protobuf files generated successfully!"
 
 # Bazel query helpers
@@ -274,6 +307,10 @@ run-client-gateway:
 # Run orchestrator client (connects to any running orchestrator service)
 run-client-orchestrator:
 	@$(BAZEL) run //example/client/orchestrator:orchestrator -- -addr $(or $(SERVER_ADDR),localhost:8082) -message "$(or $(MESSAGE),ping)"
+
+# Run stovepipe client (connects to any running stovepipe service)
+run-client-stovepipe:
+	@$(BAZEL) run //example/client/stovepipe:stovepipe -- -addr $(or $(SERVER_ADDR),localhost:8083) -message "$(or $(MESSAGE),ping)"
 
 run-queue-admin: ## Run queue-admin CLI (use ARGS to pass arguments, e.g. make run-queue-admin ARGS="list-topics")
 	@$(BAZEL) run //extension/queue/mysql/ctl -- $(ARGS)
