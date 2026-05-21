@@ -1,0 +1,23 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "none",
+    srcs = ["none.go"],
+    importpath = "github.com/uber/submitqueue/extension/conflict/none",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//entity",
+        "//extension/conflict",
+    ],
+)
+
+go_test(
+    name = "none_test",
+    srcs = ["none_test.go"],
+    embed = [":none"],
+    deps = [
+        "//entity",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

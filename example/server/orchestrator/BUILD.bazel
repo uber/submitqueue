@@ -18,6 +18,7 @@ go_library(
         "//extension/changeprovider/github",
         "//extension/changestore",
         "//extension/changestore/mysql",
+        "//extension/conflict/all",
         "//extension/counter",
         "//extension/counter/mysql",
         "//extension/mergechecker",

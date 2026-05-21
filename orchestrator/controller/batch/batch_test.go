@@ -26,6 +26,9 @@ import (
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
+	"github.com/uber/submitqueue/extension/conflict"
+	"github.com/uber/submitqueue/extension/conflict/all"
+	conflictmock "github.com/uber/submitqueue/extension/conflict/mock"
 	countermock "github.com/uber/submitqueue/extension/counter/mock"
 	queuemock "github.com/uber/submitqueue/extension/queue/mock"
 	storagemock "github.com/uber/submitqueue/extension/storage/mock"
@@ -66,7 +69,8 @@ func testRequest() entity.Request {
 
 // newTestController creates a controller with test dependencies.
 // If mockStorage is nil, a default MockStorage with an empty batch store is created.
-func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.MockCounter, mockStorage *storagemock.MockStorage, publishErr error) *Controller {
+// If analyzer is nil, the "all" conflict analyzer is used (every active batch becomes a dependency).
+func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.MockCounter, mockStorage *storagemock.MockStorage, analyzer conflict.Analyzer, publishErr error) *Controller {
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
 
@@ -88,6 +92,10 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 		mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 	}
 
+	if analyzer == nil {
+		analyzer = all.New()
+	}
+
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, topic string, msg queue.Message) error {
@@ -103,12 +111,12 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, registry, cnt, mockStorage, consumer.TopicKeyBatch, "orchestrator-batch")
+	return NewController(logger, scope, registry, cnt, mockStorage, analyzer, consumer.TopicKeyBatch, "orchestrator-batch")
 }
 
 func TestNewController(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), nil, nil)
+	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), nil, nil, nil)
 
 	require.NotNil(t, controller)
 	assert.Equal(t, consumer.TopicKeyBatch, controller.TopicKey())
@@ -119,7 +127,7 @@ func TestNewController(t *testing.T) {
 func TestController_Process_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), nil, nil)
+	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), nil, nil, nil)
 
 	request := testRequest()
 	msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
@@ -140,7 +148,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 	mockStorage := storagemock.NewMockStorage(ctrl)
 	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
-	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), mockStorage, nil)
+	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), mockStorage, nil, nil)
 
 	msg := queue.NewMessage("test-queue/123", requestIDPayload(t, "test-queue/123"), "test-queue", nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -154,7 +162,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 func TestController_Process_PublishFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), nil, fmt.Errorf("publish failed"))
+	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), nil, nil, fmt.Errorf("publish failed"))
 
 	request := testRequest()
 	msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
@@ -171,7 +179,7 @@ func TestController_Process_CounterFailure(t *testing.T) {
 
 	cnt := countermock.NewMockCounter(ctrl)
 	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(0), fmt.Errorf("counter unavailable"))
-	controller := newTestController(t, ctrl, cnt, nil, nil)
+	controller := newTestController(t, ctrl, cnt, nil, nil, nil)
 
 	request := testRequest()
 	msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
@@ -230,7 +238,7 @@ func TestController_Process_WithDependencies(t *testing.T) {
 	mockStorage.EXPECT().GetBatchDependentStore().Return(mockBatchDependentStore).AnyTimes()
 	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
-	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), mockStorage, nil)
+	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), mockStorage, nil, nil)
 
 	msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -241,9 +249,89 @@ func TestController_Process_WithDependencies(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestController_Process_AnalyzerSelectsSubset(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	request := testRequest()
+
+	// Two active batches in flight; analyzer picks only one as a conflict.
+	activeBatches := []entity.Batch{
+		{ID: "test-queue/batch/1", Queue: "test-queue", State: entity.BatchStateCreated, Version: 1},
+		{ID: "test-queue/batch/2", Queue: "test-queue", State: entity.BatchStateSpeculating, Version: 2},
+	}
+
+	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+	mockBatchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "test-queue", gomock.Any()).Return(activeBatches, nil)
+	mockBatchStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+
+	mockBatchDependentStore := storagemock.NewMockBatchDependentStore(ctrl)
+	// Only batch/2 is selected by the analyzer, so only it gets a reverse-index update.
+	mockBatchDependentStore.EXPECT().Get(gomock.Any(), "test-queue/batch/2").Return(entity.BatchDependent{
+		BatchID: "test-queue/batch/2",
+		Version: 5,
+	}, nil)
+	mockBatchDependentStore.EXPECT().UpdateDependents(gomock.Any(), "test-queue/batch/2", int32(5), int32(6), gomock.Any()).Return(nil)
+	mockBatchDependentStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+
+	mockReqStore := storagemock.NewMockRequestStore(ctrl)
+	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+
+	mockStorage := storagemock.NewMockStorage(ctrl)
+	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	mockStorage.EXPECT().GetBatchDependentStore().Return(mockBatchDependentStore).AnyTimes()
+	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
+
+	// Analyzer returns duplicate Conflict entries for the same batch (different
+	// conflict types) to prove the controller dedupes by BatchID.
+	analyzer := conflictmock.NewMockAnalyzer(ctrl)
+	analyzer.EXPECT().Analyze(gomock.Any(), gomock.Any(), gomock.Any()).Return([]conflict.Conflict{
+		{BatchID: "test-queue/batch/2", Type: conflict.ConflictTypeConservative},
+		{BatchID: "test-queue/batch/2", Type: conflict.ConflictTypeTargetOverlap},
+	}, nil)
+
+	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), mockStorage, analyzer, nil)
+
+	msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	err := controller.Process(context.Background(), delivery)
+	require.NoError(t, err)
+}
+
+func TestController_Process_AnalyzerFailure(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	request := testRequest()
+
+	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+	mockBatchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "test-queue", gomock.Any()).Return(nil, nil)
+
+	mockReqStore := storagemock.NewMockRequestStore(ctrl)
+	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+
+	mockStorage := storagemock.NewMockStorage(ctrl)
+	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
+
+	analyzer := conflictmock.NewMockAnalyzer(ctrl)
+	analyzer.EXPECT().Analyze(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("analyzer down"))
+
+	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), mockStorage, analyzer, nil)
+
+	msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	err := controller.Process(context.Background(), delivery)
+	require.Error(t, err)
+}
+
 func TestController_InterfaceImplementation(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), nil, nil)
+	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), nil, nil, nil)
 
 	var _ consumer.Controller = controller
 }
