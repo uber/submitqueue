@@ -4,7 +4,7 @@ go 1.24.5
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/go-sql-driver/mysql v1.9.3
+	github.com/go-sql-driver/mysql v1.6.0
 	github.com/gogo/protobuf v1.3.2
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
@@ -19,7 +19,6 @@ require (
 )
 
 require (
-	filippo.io/edwards25519 v1.1.1 // indirect
 	github.com/BurntSushi/toml v1.2.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
