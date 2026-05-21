@@ -1,4 +1,9 @@
 name: CI
+run-name: >-
+  ${{ github.event_name == 'pull_request' && format('PR-CI #{0}', github.event.pull_request.number)
+  || github.event_name == 'merge_group' && 'MergeQueue-CI'
+  || github.event_name == 'push' && 'Main-CI'
+  || 'CI' }}
 
 on:
   push:
@@ -141,9 +146,16 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # REQUIRED CHECKS GATE
+  #
+  # Fan-in aggregator that must turn RED when any required job fails or is
+  # cancelled. `if: always()` is critical: without it, this job is skipped
+  # when any `needs` dependency fails, and GitHub treats a skipped required
+  # status check as "not failed" — which let PR #151 merge through the
+  # merge queue despite failing e2e + orchestrator integration tests.
   # ---------------------------------------------------------------------------
   required-checks:
     name: Required Checks
+    if: always()
     runs-on: ubuntu-latest
     needs:
       - lint
@@ -157,6 +169,12 @@ jobs:
       - storage-integration-test
       - consumer-integration-test
     steps:
-      - name: All required checks passed
+      - name: Fail if any required check did not succeed
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}
         run: |
-          echo "All required checks passed!" >&2
+          echo "One or more required checks did not succeed:" >&2
+          echo '${{ toJSON(needs) }}' >&2
+          exit 1
+
+      - name: All required checks passed
+        run: echo "All required checks passed!"

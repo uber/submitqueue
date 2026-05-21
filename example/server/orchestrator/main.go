@@ -39,6 +39,8 @@ import (
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	"github.com/uber/submitqueue/extension/mergechecker"
 	githubchecker "github.com/uber/submitqueue/extension/mergechecker/github"
+	"github.com/uber/submitqueue/extension/pusher"
+	gitpusher "github.com/uber/submitqueue/extension/pusher/git"
 	extqueue "github.com/uber/submitqueue/extension/queue"
 	queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
 	"github.com/uber/submitqueue/extension/scorer/heuristic"
@@ -203,8 +205,14 @@ func run() error {
 		return fmt.Errorf("failed to create change provider: %w", err)
 	}
 
+	// Create pusher
+	psh, err := newPusher(logger, scope)
+	if err != nil {
+		return fmt.Errorf("failed to create pusher: %w", err)
+	}
+
 	// Register controllers
-	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cp, cnt, store); err != nil {
+	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cp, psh, cnt, store); err != nil {
 		return err
 	}
 
@@ -389,7 +397,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 //                                        │        │                        │
 //                                        └────────┴────────────────────────┘
 
-func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cp changeprovider.ChangeProvider, cnt counter.Counter, store storage.Storage) error {
+func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cp changeprovider.ChangeProvider, psh pusher.Pusher, cnt counter.Counter, store storage.Storage) error {
 	requestController := start.NewController(
 		logger,
 		scope,
@@ -495,6 +503,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		scope,
 		store,
 		registry,
+		psh,
 		consumer.TopicKeyMerge,
 		"orchestrator-merge",
 	)
@@ -594,4 +603,39 @@ func newChangeProvider(logger *zap.Logger, scope tally.Scope) (changeprovider.Ch
 		Logger:       logger.Sugar(),
 		MetricsScope: scope.SubScope("changeprovider"),
 	}), nil
+}
+
+// newPusher creates a git-backed Pusher bound to the configured checkout
+// path, remote, and target branch. Configured via PUSHER_CHECKOUT_PATH,
+// PUSHER_REMOTE (default "origin"), and PUSHER_TARGET (default "main").
+//
+// If PUSHER_CHECKOUT_PATH is not set the orchestrator falls back to a
+// no-op pusher that errors when invoked. This keeps the example server
+// runnable in environments that don't exercise the merge controller
+// (e.g. ping-only integration tests, local dev without a git checkout).
+func newPusher(logger *zap.Logger, scope tally.Scope) (pusher.Pusher, error) {
+	checkout := os.Getenv("PUSHER_CHECKOUT_PATH")
+	if checkout == "" {
+		logger.Warn("PUSHER_CHECKOUT_PATH not set; using no-op pusher (merge controller will fail if invoked)")
+		return noopPusher{}, nil
+	}
+	return gitpusher.NewPusher(gitpusher.Params{
+		CheckoutPath: checkout,
+		Remote:       getEnv("PUSHER_REMOTE", "origin"),
+		Target:       getEnv("PUSHER_TARGET", "main"),
+		Logger:       logger.Sugar(),
+		MetricsScope: scope.SubScope("pusher"),
+	}), nil
+}
+
+// noopPusher is a fallback Pusher used when PUSHER_CHECKOUT_PATH is not
+// configured. It returns an error on every Push so the merge controller
+// (which treats non-ErrConflict errors as transient and nacks the message)
+// will not silently report success. It exists so the orchestrator can
+// still start up — and serve Ping / accept enqueues — in environments
+// that don't run the merge step.
+type noopPusher struct{}
+
+func (noopPusher) Push(_ context.Context, _ []entity.Change) (pusher.Result, error) {
+	return pusher.Result{}, fmt.Errorf("pusher not configured: set PUSHER_CHECKOUT_PATH to enable pushing")
 }

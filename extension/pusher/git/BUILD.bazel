@@ -1,39 +1,30 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "merge",
-    srcs = ["merge.go"],
-    importpath = "github.com/uber/submitqueue/orchestrator/controller/merge",
+    name = "git",
+    srcs = ["git_pusher.go"],
+    importpath = "github.com/uber/submitqueue/extension/pusher/git",
     visibility = ["//visibility:public"],
     deps = [
-        "//core/consumer",
         "//core/metrics",
         "//entity",
-        "//entity/queue",
+        "//entity/github",
         "//extension/pusher",
-        "//extension/storage",
         "@com_github_uber_go_tally_v4//:tally",
         "@org_uber_go_zap//:zap",
     ],
 )
 
 go_test(
-    name = "merge_test",
-    srcs = ["merge_test.go"],
-    embed = [":merge"],
+    name = "git_test",
+    srcs = ["git_pusher_test.go"],
+    embed = [":git"],
     deps = [
-        "//core/consumer",
-        "//core/errs",
         "//entity",
-        "//entity/queue",
         "//extension/pusher",
-        "//extension/pusher/mock",
-        "//extension/queue/mock",
-        "//extension/storage/mock",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_uber_go_tally_v4//:tally",
-        "@org_uber_go_mock//gomock",
         "@org_uber_go_zap//zaptest",
     ],
 )

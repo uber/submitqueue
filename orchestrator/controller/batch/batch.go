@@ -119,7 +119,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	activeBatches, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, []entity.BatchState{
 		entity.BatchStateCreated,
 		entity.BatchStateSpeculating,
-		entity.BatchStateFinalizing,
+		entity.BatchStateMerging,
 	})
 	if err != nil {
 		c.metricsScope.Counter("batch_store_errors").Inc(1)
