@@ -57,7 +57,7 @@ func testRequest() entity.Request {
 		ID:    "test-queue/1",
 		Queue: "test-queue",
 		Change: entity.Change{
-			URIs: []string{"github://uber/repo/pull/1/abc123"},
+			URIs: []string{"github://uber/repo/pull/1/abcdef0123456789abcdef0123456789abcdef01"},
 		},
 		State:   entity.RequestStateStarted,
 		Version: 1,
@@ -154,14 +154,14 @@ func TestController_Process_MultipleRequests_MinScore(t *testing.T) {
 	request1 := entity.Request{
 		ID:      "test-queue/1",
 		Queue:   "test-queue",
-		Change:  entity.Change{URIs: []string{"github://uber/repo/pull/1/abc"}},
+		Change:  entity.Change{URIs: []string{"github://uber/repo/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
 		State:   entity.RequestStateStarted,
 		Version: 1,
 	}
 	request2 := entity.Request{
 		ID:      "test-queue/2",
 		Queue:   "test-queue",
-		Change:  entity.Change{URIs: []string{"github://uber/repo/pull/2/def"}},
+		Change:  entity.Change{URIs: []string{"github://uber/repo/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},
 		State:   entity.RequestStateStarted,
 		Version: 1,
 	}

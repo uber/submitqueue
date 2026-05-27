@@ -43,7 +43,7 @@ type ChangedFile struct {
 // ChangeInfo contains metadata and file changes for a code change.
 type ChangeInfo struct {
 	// URI is the full change URI for correlation with the input request
-	// (e.g., "github://uber/repo/98/abc123sha" or "phab://D123/xyz789").
+	// (e.g., "github://uber/repo/pull/98/c3a4d5e6f7890123456789abcdef0123456789ab" or "phab://D123/xyz789").
 	URI string
 	// User is the author of the change.
 	User User

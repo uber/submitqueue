@@ -60,7 +60,7 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet() {
 		Queue: "test-queue",
 		State: entity.RequestStateStarted,
 		Change: entity.Change{
-			URIs: []string{"github://uber/storage-test/pull/123/abc123def"},
+			URIs: []string{"github://uber/storage-test/pull/123/abcdef0123456789abcdef0123456789abcdef01"},
 		},
 		LandStrategy: entity.RequestLandStrategyMerge,
 		Version:      1,
@@ -92,10 +92,10 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet_StackedPRs() {
 
 	// Stacked PRs as separate URIs
 	stackedURIs := []string{
-		"github://uber/monorepo/pull/101/aaa111bbb",
-		"github://uber/monorepo/pull/102/ccc222ddd",
-		"github://uber/monorepo/pull/103/eee333fff",
-		"github://uber/monorepo/pull/104/ggg444hhh",
+		"github://uber/monorepo/pull/101/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"github://uber/monorepo/pull/102/cccccccccccccccccccccccccccccccccccccccc",
+		"github://uber/monorepo/pull/103/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+		"github://uber/monorepo/pull/104/0000000000000000000000000000000000000004",
 	}
 
 	request := entity.Request{

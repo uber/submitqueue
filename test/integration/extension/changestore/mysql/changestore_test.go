@@ -91,17 +91,17 @@ func (s *MySQLChangeStoreIntegrationSuite) SetupTest() {
 func (s *MySQLChangeStoreIntegrationSuite) TestCreateAndGet_NoMatch() {
 	t := s.T()
 	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
-		URI: "github://uber/x/pull/1/aaa", RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1, Version: 1,
+		URI: "github://uber/x/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
-	got, err := s.store.GetByURI(s.ctx, "q", "github://uber/x/pull/2/bbb")
+	got, err := s.store.GetByURI(s.ctx, "q", "github://uber/x/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
 
 func (s *MySQLChangeStoreIntegrationSuite) TestCreateAndGet_Match() {
 	t := s.T()
-	uri := "github://uber/x/pull/1/aaa"
+	uri := "github://uber/x/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
 		URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
@@ -118,7 +118,7 @@ func (s *MySQLChangeStoreIntegrationSuite) TestCreateAndGet_Match() {
 func (s *MySQLChangeStoreIntegrationSuite) TestGetByURI_DoesNotExcludeSelf() {
 	// The store does not filter by request_id; callers filter self if they wish.
 	t := s.T()
-	uri := "github://uber/x/pull/1/aaa"
+	uri := "github://uber/x/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
 		URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
@@ -131,7 +131,7 @@ func (s *MySQLChangeStoreIntegrationSuite) TestGetByURI_DoesNotExcludeSelf() {
 
 func (s *MySQLChangeStoreIntegrationSuite) TestGetByURI_QueueScoped() {
 	t := s.T()
-	uri := "github://uber/x/pull/1/aaa"
+	uri := "github://uber/x/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
 		URI: uri, RequestID: "qA/1", Queue: "qA", CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
@@ -143,7 +143,7 @@ func (s *MySQLChangeStoreIntegrationSuite) TestGetByURI_QueueScoped() {
 
 func (s *MySQLChangeStoreIntegrationSuite) TestCreate_Idempotent() {
 	t := s.T()
-	rec := entity.ChangeRecord{URI: "github://uber/x/pull/1/aaa", RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1, Version: 1}
+	rec := entity.ChangeRecord{URI: "github://uber/x/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1, Version: 1}
 
 	require.NoError(t, s.store.Create(s.ctx, rec))
 	require.NoError(t, s.store.Create(s.ctx, rec), "second insert with same PK must succeed (INSERT IGNORE)")
@@ -155,7 +155,7 @@ func (s *MySQLChangeStoreIntegrationSuite) TestCreate_Idempotent() {
 
 func (s *MySQLChangeStoreIntegrationSuite) TestCreate_DifferentRequestSameURI() {
 	t := s.T()
-	uri := "github://uber/x/pull/1/aaa"
+	uri := "github://uber/x/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
 		URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
@@ -175,7 +175,7 @@ func (s *MySQLChangeStoreIntegrationSuite) TestCreate_DifferentRequestSameURI() 
 func (s *MySQLChangeStoreIntegrationSuite) TestCreate_PreservesMetadata() {
 	t := s.T()
 	const meta = `{"title":"add new feature"}`
-	uri := "github://uber/x/pull/1/aaa"
+	uri := "github://uber/x/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
 		URI: uri, RequestID: "q/1", Queue: "q", Metadata: meta, CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
@@ -190,7 +190,7 @@ func (s *MySQLChangeStoreIntegrationSuite) TestCreate_EmptyMetadataStoredAsObjec
 	// metadata is NOT NULL in the schema. The impl substitutes '{}' for an empty
 	// Metadata field so callers don't need to know about the column constraint.
 	t := s.T()
-	uri := "github://uber/x/pull/1/aaa"
+	uri := "github://uber/x/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	require.NoError(t, s.store.Create(s.ctx, entity.ChangeRecord{
 		URI: uri, RequestID: "q/1", Queue: "q", CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))

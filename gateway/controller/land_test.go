@@ -83,7 +83,7 @@ func TestLand_ReturnsSqid(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/abc123def"}},
+		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
 	}
 	resp, err := controller.Land(ctx, req)
 
@@ -101,7 +101,7 @@ func TestLand_ReturnsErrorOnCounterFailure(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/abc123def"}},
+		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -125,7 +125,7 @@ func TestLand_CounterDomainIncludesQueue(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "my-queue",
-		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/abc123def"}},
+		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -142,7 +142,7 @@ func TestLand_ReturnsErrorOnEmptyQueue(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "",
-		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/abc123def"}},
+		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -207,7 +207,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:    "test-queue",
-		Change:   &pb.Change{Uris: []string{"github://uber/backend/pull/456/fed987cba"}},
+		Change:   &pb.Change{Uris: []string{"github://uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"}},
 		Strategy: pb.Strategy_REBASE,
 	}
 	resp, err := controller.Land(ctx, req)
@@ -225,7 +225,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test-queue/123", deserializedReq.ID)
 	assert.Equal(t, "test-queue", deserializedReq.Queue)
-	assert.Equal(t, []string{"github://uber/backend/pull/456/fed987cba"}, deserializedReq.Change.URIs)
+	assert.Equal(t, []string{"github://uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"}, deserializedReq.Change.URIs)
 	assert.Equal(t, entity.RequestLandStrategyRebase, deserializedReq.LandStrategy)
 }
 
@@ -243,7 +243,7 @@ func TestLand_ContinuesWhenPublishFails(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &pb.Change{Uris: []string{"github://uber/service/pull/1/abc123def"}},
+		Change: &pb.Change{Uris: []string{"github://uber/service/pull/1/c3a4d5e6f7890123456789abcdef0123456789ab"}},
 	}
 	_, err := controller.Land(ctx, req)
 

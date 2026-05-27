@@ -44,12 +44,12 @@ func TestMultiChecker_RoutesToCorrectChecker(t *testing.T) {
 	})
 
 	// Route to github checker
-	result, err := mc.Check(context.Background(), "test-queue", entity.Change{URIs: []string{"github://uber/repo/1/abc123"}})
+	result, err := mc.Check(context.Background(), "test-queue", entity.Change{URIs: []string{"github://uber/repo/pull/1/abcdef0123456789abcdef0123456789abcdef01"}})
 	require.NoError(t, err)
 	assert.True(t, result.Mergeable)
 
 	// Route to ghe checker
-	result, err = mc.Check(context.Background(), "test-queue", entity.Change{URIs: []string{"ghe://uber/repo/1/abc123"}})
+	result, err = mc.Check(context.Background(), "test-queue", entity.Change{URIs: []string{"ghe://uber/repo/pull/1/abcdef0123456789abcdef0123456789abcdef01"}})
 	require.NoError(t, err)
 	assert.False(t, result.Mergeable)
 }
@@ -59,7 +59,7 @@ func TestMultiChecker_UnknownScheme(t *testing.T) {
 		"github": &stubChecker{result: Result{Mergeable: true}},
 	})
 
-	_, err := mc.Check(context.Background(), "test-queue", entity.Change{URIs: []string{"unknown://uber/repo/1/abc123"}})
+	_, err := mc.Check(context.Background(), "test-queue", entity.Change{URIs: []string{"unknown://uber/repo/1/abcdef0123456789abcdef0123456789abcdef01"}})
 	require.Error(t, err)
 }
 
@@ -68,7 +68,7 @@ func TestMultiChecker_PropagatesError(t *testing.T) {
 		"github": &stubChecker{err: fmt.Errorf("api failure")},
 	})
 
-	_, err := mc.Check(context.Background(), "test-queue", entity.Change{URIs: []string{"github://uber/repo/1/abc123"}})
+	_, err := mc.Check(context.Background(), "test-queue", entity.Change{URIs: []string{"github://uber/repo/pull/1/abcdef0123456789abcdef0123456789abcdef01"}})
 	require.Error(t, err)
 }
 

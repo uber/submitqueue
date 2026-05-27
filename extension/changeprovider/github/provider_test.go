@@ -17,6 +17,15 @@ import (
 	"github.com/uber/submitqueue/extension/changeprovider"
 )
 
+// Sample 40-char lowercase hex SHAs used across the test cases.
+const (
+	shaA   = "abcdef0123456789abcdef0123456789abcdef01"
+	shaB   = "0123456789abcdef0123456789abcdef01234567"
+	shaXYZ = "1234567890abcdef1234567890abcdef12345678"
+	shaOld = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+	shaNew = "feedfacefeedfacefeedfacefeedfacefeedface"
+)
+
 func newTestProvider(t *testing.T, serverURL string) changeprovider.ChangeProvider {
 	t.Helper()
 	client, err := httpclient.NewClient(serverURL)
@@ -48,7 +57,7 @@ func TestProvider_Get(t *testing.T) {
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				servePR(t, w, pullRequestData{
 					Number:     123,
-					HeadRefOid: "abc123",
+					HeadRefOid: shaA,
 					Author:     authorData{Name: "Test User", Email: "test@example.com"},
 					Files: filesData{
 						Nodes: []fileNode{
@@ -58,7 +67,7 @@ func TestProvider_Get(t *testing.T) {
 					},
 				})
 			},
-			uris: []string{"github://uber/submitqueue/123/abc123"},
+			uris: []string{"github://uber/submitqueue/pull/123/" + shaA},
 		},
 		{
 			name:    "invalid URI returns error",
@@ -68,8 +77,8 @@ func TestProvider_Get(t *testing.T) {
 		{
 			name: "inconsistent change set returns error",
 			uris: []string{
-				"github://uber/submitqueue/123/abc123",
-				"github://uber/different-repo/456/def456",
+				"github://uber/submitqueue/pull/123/" + shaA,
+				"github://uber/different-repo/pull/456/" + shaB,
 			},
 			wantErr: true,
 		},
@@ -78,11 +87,11 @@ func TestProvider_Get(t *testing.T) {
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				servePR(t, w, pullRequestData{
 					Number:     123,
-					HeadRefOid: "newsha",
+					HeadRefOid: shaNew,
 					Files:      filesData{Nodes: []fileNode{{Path: "main.go"}}},
 				})
 			},
-			uris:    []string{"github://uber/submitqueue/123/oldsha"},
+			uris:    []string{"github://uber/submitqueue/pull/123/" + shaOld},
 			wantErr: true,
 		},
 	}
@@ -115,7 +124,7 @@ func TestProvider_Get_Pagination(t *testing.T) {
 	pages := []pullRequestData{
 		{
 			Number:     456,
-			HeadRefOid: "xyz789",
+			HeadRefOid: shaXYZ,
 			Files: filesData{
 				PageInfo: pageInfo{EndCursor: "cursor1", HasNextPage: true},
 				Nodes:    []fileNode{{Path: "file1.go"}},
@@ -123,7 +132,7 @@ func TestProvider_Get_Pagination(t *testing.T) {
 		},
 		{
 			Number:     456,
-			HeadRefOid: "xyz789",
+			HeadRefOid: shaXYZ,
 			Files: filesData{
 				PageInfo: pageInfo{HasNextPage: false},
 				Nodes:    []fileNode{{Path: "file2.go"}},
@@ -139,7 +148,7 @@ func TestProvider_Get_Pagination(t *testing.T) {
 
 	p := newTestProvider(t, server.URL)
 	infos, err := p.Get(context.Background(), entity.Change{
-		URIs: []string{"github://uber/submitqueue/456/xyz789"},
+		URIs: []string{"github://uber/submitqueue/pull/456/" + shaXYZ},
 	})
 
 	require.NoError(t, err)
@@ -150,8 +159,8 @@ func TestProvider_Get_Pagination(t *testing.T) {
 
 func TestProvider_Get_MultiplePRs(t *testing.T) {
 	prData := []pullRequestData{
-		{Number: 123, HeadRefOid: "abc123", Files: filesData{Nodes: []fileNode{{Path: "file1.go"}}}},
-		{Number: 456, HeadRefOid: "def456", Files: filesData{Nodes: []fileNode{{Path: "file2.go"}}}},
+		{Number: 123, HeadRefOid: shaA, Files: filesData{Nodes: []fileNode{{Path: "file1.go"}}}},
+		{Number: 456, HeadRefOid: shaB, Files: filesData{Nodes: []fileNode{{Path: "file2.go"}}}},
 	}
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -163,16 +172,16 @@ func TestProvider_Get_MultiplePRs(t *testing.T) {
 	p := newTestProvider(t, server.URL)
 	infos, err := p.Get(context.Background(), entity.Change{
 		URIs: []string{
-			"github://uber/submitqueue/123/abc123",
-			"github://uber/submitqueue/456/def456",
+			"github://uber/submitqueue/pull/123/" + shaA,
+			"github://uber/submitqueue/pull/456/" + shaB,
 		},
 	})
 
 	require.NoError(t, err)
 	assert.Equal(t, 2, callCount)
 	require.Len(t, infos, 2)
-	assert.Equal(t, "github://uber/submitqueue/123/abc123", infos[0].URI)
-	assert.Equal(t, "github://uber/submitqueue/456/def456", infos[1].URI)
+	assert.Equal(t, "github://uber/submitqueue/pull/123/"+shaA, infos[0].URI)
+	assert.Equal(t, "github://uber/submitqueue/pull/456/"+shaB, infos[1].URI)
 }
 
 func TestProvider_Get_FetchError_StopsOnFirstFailure(t *testing.T) {
@@ -185,7 +194,7 @@ func TestProvider_Get_FetchError_StopsOnFirstFailure(t *testing.T) {
 		}
 		servePR(t, w, pullRequestData{
 			Number:     123,
-			HeadRefOid: "abc123",
+			HeadRefOid: shaA,
 			Files:      filesData{Nodes: []fileNode{{Path: "file1.go"}}},
 		})
 		callCount++
@@ -195,8 +204,8 @@ func TestProvider_Get_FetchError_StopsOnFirstFailure(t *testing.T) {
 	p := newTestProvider(t, server.URL)
 	_, err := p.Get(context.Background(), entity.Change{
 		URIs: []string{
-			"github://uber/submitqueue/123/abc123",
-			"github://uber/submitqueue/456/def456",
+			"github://uber/submitqueue/pull/123/" + shaA,
+			"github://uber/submitqueue/pull/456/" + shaB,
 		},
 	})
 

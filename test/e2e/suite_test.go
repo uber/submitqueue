@@ -156,7 +156,7 @@ func (s *E2EIntegrationSuite) TestPingOrchestrator() {
 func (s *E2EIntegrationSuite) TestLandRequest_SinglePR() {
 	req := &gatewaypb.LandRequest{
 		Queue:    "e2e-test-queue",
-		Change:   &gatewaypb.Change{Uris: []string{"github://uber/e2e-service/pull/123/abc123def"}},
+		Change:   &gatewaypb.Change{Uris: []string{"github://uber/e2e-service/pull/123/abcdef0123456789abcdef0123456789abcdef01"}},
 		Strategy: gatewaypb.Strategy_REBASE,
 	}
 
