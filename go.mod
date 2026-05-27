@@ -3,7 +3,7 @@ module github.com/uber/submitqueue
 go 1.24.5
 
 require (
-	github.com/DATA-DOG/go-sqlmock v1.5.2
+	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/gogo/protobuf v1.3.2
 	github.com/spf13/cobra v1.10.2
