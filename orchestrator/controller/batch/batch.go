@@ -22,6 +22,7 @@ import (
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
+	"github.com/uber/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/extension/counter"
 	"github.com/uber/submitqueue/extension/storage"
 	"go.uber.org/zap"
@@ -36,6 +37,7 @@ type Controller struct {
 	registry      consumer.TopicRegistry
 	counter       counter.Counter
 	store         storage.Storage
+	analyzer      conflict.Analyzer
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -50,6 +52,7 @@ func NewController(
 	registry consumer.TopicRegistry,
 	counter counter.Counter,
 	store storage.Storage,
+	analyzer conflict.Analyzer,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
@@ -59,6 +62,7 @@ func NewController(
 		registry:      registry,
 		counter:       counter,
 		store:         store,
+		analyzer:      analyzer,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
@@ -112,10 +116,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		Version:  1,
 	}
 
-	// TODO: run Target Analyzer to understand new batch's dependency graph, run it against other active batches to understand the conflicts.
-	// So far we'll just assume that the new batch conflicts with all active batches, which results in a serial non-parallelized queue.
-
-	// Get active batches for this queue to set as dependencies.
+	// Get active batches for this queue and ask the conflict analyzer which
+	// of them the new batch must serialize behind. The dependency set drives
+	// the speculation graph downstream.
 	activeBatches, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, []entity.BatchState{
 		entity.BatchStateCreated,
 		entity.BatchStateSpeculating,
@@ -126,29 +129,43 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to get active batches for queue=%s: %w", request.Queue, err)
 	}
 
-	for _, dep := range activeBatches {
-		batch.Dependencies = append(batch.Dependencies, dep.ID)
+	// Dedupe by batch ID since a single (analyzed, in-flight) pair may be
+	// reported with multiple Conflict entries when different conflict types
+	// apply; the dependency graph only tracks the relation.
+	conflicts, err := c.analyzer.Analyze(ctx, batch, activeBatches)
+	if err != nil {
+		c.metricsScope.Counter("conflict_analyzer_errors").Inc(1)
+		return fmt.Errorf("failed to analyze conflicts for batchID=%s: %w", batch.ID, err)
 	}
 
-	// Create batch dependent entities (reverse relationship of batch.Dependencies).
-	// For each dependency, record the new batch as a dependent.
-	// If existing dependents are found in the store, append them.
-	for _, dep := range activeBatches {
-		// Get existing reverse index entry for the dependency.
-		existing, err := c.store.GetBatchDependentStore().Get(ctx, dep.ID)
+	seen := make(map[string]struct{}, len(conflicts))
+	conflictingIDs := make([]string, 0, len(conflicts))
+	for _, cf := range conflicts {
+		if _, ok := seen[cf.BatchID]; ok {
+			continue
+		}
+		seen[cf.BatchID] = struct{}{}
+		conflictingIDs = append(conflictingIDs, cf.BatchID)
+	}
+
+	batch.Dependencies = conflictingIDs
+
+	// Update reverse index for each conflicting batch (BatchDependent =
+	// "batches that depend on me"). One UpdateDependents call per conflict.
+	for _, depID := range conflictingIDs {
+		existing, err := c.store.GetBatchDependentStore().Get(ctx, depID)
 		if err != nil {
 			c.metricsScope.Counter("batch_dependent_store_errors").Inc(1)
-			return fmt.Errorf("failed to get batch dependent for batchID=%s: %w", dep.ID, err)
+			return fmt.Errorf("failed to get batch dependent for batchID=%s: %w", depID, err)
 		}
 
 		dependents := append(existing.Dependents, batch.ID)
 
 		newVersion := existing.Version + 1
-		if err := c.store.GetBatchDependentStore().UpdateDependents(ctx, dep.ID, existing.Version, newVersion, dependents); err != nil {
+		if err := c.store.GetBatchDependentStore().UpdateDependents(ctx, depID, existing.Version, newVersion, dependents); err != nil {
 			c.metricsScope.Counter("batch_dependent_store_errors").Inc(1)
-			return fmt.Errorf("failed to update batch dependent index for existing batchID=%s and new batchID=%s: %w", dep.ID, batch.ID, err)
+			return fmt.Errorf("failed to update batch dependent index for existing batchID=%s and new batchID=%s: %w", depID, batch.ID, err)
 		}
-		existing.Version = newVersion
 	}
 
 	// Create new reverse index entry for the new batch. It would be empty for now, but will be updated as new batches are created that conflict with this batch.

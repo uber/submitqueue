@@ -37,6 +37,7 @@ import (
 	githubprovider "github.com/uber/submitqueue/extension/changeprovider/github"
 	"github.com/uber/submitqueue/extension/changestore"
 	mysqlchangestore "github.com/uber/submitqueue/extension/changestore/mysql"
+	"github.com/uber/submitqueue/extension/conflict/all"
 	"github.com/uber/submitqueue/extension/counter"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	"github.com/uber/submitqueue/extension/mergechecker"
@@ -436,6 +437,9 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		registry,
 		cnt,
 		store,
+		// TODO: replace with a real conflict analyzer (e.g. one backed by
+		// Tango target analysis). The "all" stub serializes the queue.
+		all.New(),
 		consumer.TopicKeyBatch,
 		"orchestrator-batch",
 	)

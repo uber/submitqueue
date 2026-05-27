@@ -1,0 +1,24 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "all",
+    srcs = ["all.go"],
+    importpath = "github.com/uber/submitqueue/extension/conflict/all",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//entity",
+        "//extension/conflict",
+    ],
+)
+
+go_test(
+    name = "all_test",
+    srcs = ["all_test.go"],
+    embed = [":all"],
+    deps = [
+        "//entity",
+        "//extension/conflict",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)
