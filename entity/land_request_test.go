@@ -23,9 +23,12 @@ import (
 
 func TestLandRequest_ToBytes(t *testing.T) {
 	req := LandRequest{
-		ID:           "test-queue/123",
-		Queue:        "test-queue",
-		Change:       Change{URIs: []string{"github://uber/submitqueue/pull/456/abc123def", "github://uber/submitqueue/pull/789/def456abc"}},
+		ID:    "test-queue/123",
+		Queue: "test-queue",
+		Change: Change{URIs: []string{
+			"github://uber/submitqueue/pull/456/abcdef0123456789abcdef0123456789abcdef01",
+			"github://uber/submitqueue/pull/789/0123456789abcdef0123456789abcdef01234567",
+		}},
 		LandStrategy: RequestLandStrategyRebase,
 	}
 
@@ -36,7 +39,7 @@ func TestLandRequest_ToBytes(t *testing.T) {
 	// Verify JSON contains expected fields
 	jsonStr := string(data)
 	assert.Contains(t, jsonStr, "test-queue/123")
-	assert.Contains(t, jsonStr, "github://uber/submitqueue/pull/456/abc123def")
+	assert.Contains(t, jsonStr, "github://uber/submitqueue/pull/456/abcdef0123456789abcdef0123456789abcdef01")
 	assert.Contains(t, jsonStr, "rebase")
 }
 
@@ -90,9 +93,13 @@ func TestLandRequest_SerializationRoundTrip(t *testing.T) {
 		{
 			name: "github stacked diff",
 			req: LandRequest{
-				ID:           "queue1/100",
-				Queue:        "queue1",
-				Change:       Change{URIs: []string{"github://uber/repo-a/pull/101/aaa111", "github://uber/repo-a/pull/102/bbb222", "github://uber/repo-a/pull/103/ccc333"}},
+				ID:    "queue1/100",
+				Queue: "queue1",
+				Change: Change{URIs: []string{
+					"github://uber/repo-a/pull/101/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					"github://uber/repo-a/pull/102/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+					"github://uber/repo-a/pull/103/cccccccccccccccccccccccccccccccccccccccc",
+				}},
 				LandStrategy: RequestLandStrategySquashRebase,
 			},
 		},

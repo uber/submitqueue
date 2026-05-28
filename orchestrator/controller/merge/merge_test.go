@@ -100,7 +100,7 @@ func TestController_Process_SuccessfulMerge(t *testing.T) {
 		State:    entity.BatchStateMerging,
 		Version:  4,
 	}
-	change := entity.Change{URIs: []string{"github://o/r/1/sha"}}
+	change := entity.Change{URIs: []string{"github://o/r/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
 	request := entity.Request{
 		ID:      reqID,
 		Queue:   "test-queue",
@@ -153,9 +153,9 @@ func TestController_Process_PassesAllChangesInBatchOrder(t *testing.T) {
 	const batchID = "test-queue/batch/multi"
 	requestIDs := []string{"test-queue/1", "test-queue/2", "test-queue/3"}
 	changes := []entity.Change{
-		{URIs: []string{"github://o/r/1/sha1"}},
-		{URIs: []string{"github://o/r/2/sha2"}},
-		{URIs: []string{"github://o/r/3/sha3"}},
+		{URIs: []string{"github://o/r/pull/1/1111111111111111111111111111111111111111"}},
+		{URIs: []string{"github://o/r/pull/2/2222222222222222222222222222222222222222"}},
+		{URIs: []string{"github://o/r/pull/3/3333333333333333333333333333333333333333"}},
 	}
 
 	batch := entity.Batch{
@@ -231,7 +231,7 @@ func TestController_Process_PushConflictMarksBatchFailed(t *testing.T) {
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), reqID).Return(entity.Request{
-		ID: reqID, Change: entity.Change{URIs: []string{"github://o/r/2/sha"}},
+		ID: reqID, Change: entity.Change{URIs: []string{"github://o/r/pull/2/2222222222222222222222222222222222222222"}},
 	}, nil)
 
 	store := storagemock.NewMockStorage(ctrl)
@@ -277,7 +277,7 @@ func TestController_Process_PushInfraFailureReturnsError(t *testing.T) {
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), reqID).Return(entity.Request{
-		ID: reqID, Change: entity.Change{URIs: []string{"github://o/r/3/sha"}},
+		ID: reqID, Change: entity.Change{URIs: []string{"github://o/r/pull/3/3333333333333333333333333333333333333333"}},
 	}, nil)
 
 	store := storagemock.NewMockStorage(ctrl)
@@ -423,7 +423,7 @@ func TestController_Process_PublishFailureSurfaces(t *testing.T) {
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), reqID).Return(entity.Request{
-		ID: reqID, Change: entity.Change{URIs: []string{"github://o/r/7/sha"}},
+		ID: reqID, Change: entity.Change{URIs: []string{"github://o/r/pull/7/7777777777777777777777777777777777777777"}},
 	}, nil)
 
 	store := storagemock.NewMockStorage(ctrl)

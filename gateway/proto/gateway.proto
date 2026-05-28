@@ -62,8 +62,13 @@ message Change {
     // The scheme identifies the change provider, and the path contains provider-specific resource identifiers.
     //
     // GitHub is supported by default (though other providers can be added):
-    //   Template: "github://<org>/<repo>/pull/<pr>/<hash>"
-    //   Example: "github://uber/submitqueue/pull/123/abc123def"
+    //   Template: "<scheme>://<org>/<repo>/pull/<pr>/<head_commit_sha>"
+    //   Example:  "github://uber/submitqueue/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"
+    //   Schemes:  "github" (github.com), "ghe" (GitHub Enterprise), "ghes" (GitHub Enterprise Server).
+    //   The path mirrors the canonical PR URL so URIs can be constructed by trivial substitution.
+    //   The head commit SHA must be the full 40-character lowercase hex SHA of the PR's head commit,
+    //   as returned by GitHub's API (graphql `headRefOid`). Abbreviated SHAs are rejected because
+    //   the staleness check downstream compares with strict string equality against the full SHA.
     //
     // SubmitQueue guarantees changes are landed in order with no other changes in between.
     // SubmitQueue does not guarantee each change is individually valid, but produces a validity marker on such changes.

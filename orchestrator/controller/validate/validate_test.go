@@ -50,7 +50,7 @@ type mockChangeProvider struct{}
 func (m *mockChangeProvider) Get(ctx context.Context, change entity.Change) ([]changeprovider.ChangeInfo, error) {
 	return []changeprovider.ChangeInfo{
 		{
-			URI: "github://org/repo/123/abc123",
+			URI: "github://org/repo/pull/123/abcdef0123456789abcdef0123456789abcdef01",
 			User: changeprovider.User{
 				Name:  "Test User",
 				Email: "test@example.com",
@@ -127,7 +127,7 @@ func TestNewController(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/456/abc123def"}},
+		Change:       entity.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
@@ -148,7 +148,7 @@ func TestController_Process_Success(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/456/abc123def"}},
+		Change:       entity.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
@@ -192,7 +192,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/xyz789abc"}},
+		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
@@ -228,7 +228,7 @@ func TestController_Process_NotMergeable(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/repo/1/abc123"}},
+		Change:       entity.Change{URIs: []string{"github://uber/repo/pull/1/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
@@ -255,7 +255,7 @@ func TestController_Process_MergeCheckError(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/repo/1/abc123"}},
+		Change:       entity.Change{URIs: []string{"github://uber/repo/pull/1/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
@@ -278,8 +278,8 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 		queueName     = "test-queue"
 		newRequestID  = queueName + "/123"
 		dupRequestID  = queueName + "/100"
-		uriA          = "github://uber/service/pull/1/abc"
-		uriB          = "github://uber/service/pull/2/def"
+		uriA          = "github://uber/service/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		uriB          = "github://uber/service/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 		anotherReqID  = queueName + "/050"
 		orphanReqID   = queueName + "/999"
 		terminalReqID = queueName + "/200"
@@ -452,7 +452,7 @@ func TestController_Process_ChangeStoreQueryFailure(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/abc"}},
+		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,

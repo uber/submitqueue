@@ -20,7 +20,7 @@ package entity
 // mergeability) becomes available.
 type ChangeRecord struct {
 	// URI identifies the change (RFC 3986). Same scheme/format as entity.Change.URIs.
-	// Example: "github://uber/submitqueue/pull/123/abc123def".
+	// Example: "github://uber/submitqueue/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab".
 	URI string `json:"uri"`
 
 	// RequestID is the owning land request that claimed this URI.

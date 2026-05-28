@@ -60,8 +60,9 @@ type Change struct {
 	// The scheme identifies the change provider, and the path contains provider-specific resource identifiers.
 	//
 	// GitHub is supported by default (though other providers can be added):
-	//   Template: "github://<org>/<repo>/pull/<pr>/<hash>"
-	//   Example: "github://uber/submitqueue/pull/123/abc123def"
+	//   Template: "<scheme>://<org>/<repo>/pull/<pr>/<head_commit_sha>"
+	//   Example:  "github://uber/submitqueue/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"
+	//   Schemes:  "github", "ghe", "ghes". Head commit SHA must be full 40-char lowercase hex.
 	//
 	URIs []string `json:"uris"`
 }
