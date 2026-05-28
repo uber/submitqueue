@@ -41,7 +41,8 @@ type Store struct {
 }
 
 // NewStore reads queue configurations from the YAML file at path and
-// returns a Store. The file must contain a top-level "queues" list.
+// returns a Store. If the file omits the top-level "queues" key, it is
+// treated as an empty queue list.
 // Returns an error if the file is unreadable, malformed, contains a queue
 // with an empty name, or contains duplicate queue names.
 func NewStore(path string) (Store, error) {
