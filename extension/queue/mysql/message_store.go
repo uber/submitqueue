@@ -44,7 +44,15 @@ func newMessageStore(db *sql.DB, logger *zap.SugaredLogger, scope tally.Scope) m
 	}
 }
 
-// Insert inserts messages into the messages table
+// Insert inserts messages into the messages table.
+//
+// Publishes are idempotent on the (topic, partition_key, id) unique key: a
+// repeated publish for the same key is silently treated as success and does
+// not overwrite the original payload. This matches the queue_messages schema's
+// documented intent ("Supports: INSERT ... ON DUPLICATE KEY to enforce
+// idempotent publishes") and lets callers safely retry publishes (e.g. a
+// second Cancel RPC for the same request) without surfacing 1062 duplicate-key
+// errors.
 func (s *sqlmessageStore) Insert(ctx context.Context, topic string, messages []queue.Message) (retErr error) {
 	op := metrics.Begin(s.scope, "insert", metrics.NewTag("topic", topic))
 	defer func() { op.Complete(retErr) }()
@@ -64,9 +72,12 @@ func (s *sqlmessageStore) Insert(ctx context.Context, topic string, messages []q
 	}
 	defer tx.Rollback()
 
+	// ON DUPLICATE KEY UPDATE topic=topic is a no-op write that makes MySQL
+	// swallow the unique-key violation without mutating the existing row.
 	stmt, err := tx.PrepareContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (topic, id, payload, metadata, partition_key, created_at, published_at, failed_at, failure_count, last_error, original_topic)
 		VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, '', '')
+		ON DUPLICATE KEY UPDATE topic = topic
 	`, MessagesTableName))
 	if err != nil {
 		return fmt.Errorf("prepare statement topic=%s: %w", topic, err)

@@ -76,6 +76,23 @@ func TestMessageStore_Insert(t *testing.T) {
 			setup:    func(mock sqlmock.Sqlmock, messages []queue.Message) {},
 			wantErr:  false,
 		},
+		{
+			// Regression: re-publishing the same (topic, partition_key, id) tuple
+			// must succeed silently. sqlmock returns 0 affected rows to simulate
+			// MySQL's ON DUPLICATE KEY UPDATE swallowing the unique-key collision.
+			name: "duplicate publish is idempotent",
+			messages: []queue.Message{
+				{ID: "msg-dup", Payload: []byte("payload"), PartitionKey: "part1", PublishedAt: time.Now().UnixMilli()},
+			},
+			setup: func(mock sqlmock.Sqlmock, messages []queue.Message) {
+				mock.ExpectBegin()
+				mock.ExpectPrepare("INSERT INTO queue_messages")
+				mock.ExpectExec("INSERT INTO queue_messages").
+					WillReturnResult(sqlmock.NewResult(0, 0))
+				mock.ExpectCommit()
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {

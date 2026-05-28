@@ -595,10 +595,13 @@ func (s *SQLQueueIntegrationSuite) TestIdempotentPublish() {
 	require.NoError(t, err1)
 
 	err2 := publisher.Publish(s.ctx, topic, msg)
-	// Second publish should fail with duplicate key error since message already exists
-	require.Error(t, err2, "duplicate publish should return error")
+	// Per the queue_messages schema (and the documented "INSERT ... ON DUPLICATE KEY
+	// to enforce idempotent publishes" contract), a repeated publish for the same
+	// (topic, partition_key, id) tuple must succeed silently — the queue, not the
+	// caller, owns deduplication so retried publishes don't surface as errors.
+	require.NoError(t, err2, "duplicate publish must succeed silently")
 
-	t.Logf("Published same message twice - second attempt correctly rejected")
+	t.Logf("Published same message twice - second attempt silently deduped by queue")
 
 	// Should only receive once
 	delivery := receiveWithTimeout(t, deliveryChan)
