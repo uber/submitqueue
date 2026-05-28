@@ -94,12 +94,18 @@ func ParseChangeID(raw string) (ChangeID, error) {
 	if revisionMatch == nil {
 		return ChangeID{}, fmt.Errorf("invalid change ID %q: revision %q must match D{positive_int} (expected format: %s)", raw, revisionSegment, changeIDFormat)
 	}
-	revisionID, _ := strconv.Atoi(revisionMatch[1])
+	revisionID, err := strconv.Atoi(revisionMatch[1])
+	if err != nil {
+		return ChangeID{}, fmt.Errorf("invalid change ID %q: revision %q overflows int: %w (expected format: %s)", raw, revisionSegment, err, changeIDFormat)
+	}
 
 	if !diffPattern.MatchString(diffSegment) {
 		return ChangeID{}, fmt.Errorf("invalid change ID %q: diff %q must be a positive integer (expected format: %s)", raw, diffSegment, changeIDFormat)
 	}
-	diffID, _ := strconv.Atoi(diffSegment)
+	diffID, err := strconv.Atoi(diffSegment)
+	if err != nil {
+		return ChangeID{}, fmt.Errorf("invalid change ID %q: diff %q overflows int: %w (expected format: %s)", raw, diffSegment, err, changeIDFormat)
+	}
 
 	return ChangeID{
 		Scheme:     gotScheme,
