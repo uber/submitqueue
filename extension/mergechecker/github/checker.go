@@ -23,6 +23,7 @@ import (
 	"net/http"
 
 	"github.com/uber-go/tally/v4"
+	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity"
 	entitygithub "github.com/uber/submitqueue/entity/github"
 	"github.com/uber/submitqueue/extension/mergechecker"
@@ -60,17 +61,17 @@ func NewMergeChecker(params Params) mergechecker.MergeChecker {
 }
 
 // Check assesses whether a change can merge cleanly using the GitHub GraphQL API.
-func (c *mergeChecker) Check(ctx context.Context, queue string, change entity.Change) (mergechecker.Result, error) {
-	c.metricsScope.Counter("check_started").Inc(1)
+func (c *mergeChecker) Check(ctx context.Context, queue string, change entity.Change) (result mergechecker.Result, retErr error) {
+	op := metrics.Begin(c.metricsScope, "check")
+	defer func() { op.Complete(retErr) }()
 
-	result := mergechecker.Result{}
 	// Parse all change IDs
 	// TODO: classify parse errors as user errors (non-retryable) vs system errors.
 	changeIDs := make([]entitygithub.ChangeID, 0, len(change.URIs))
 	for _, rawID := range change.URIs {
 		cid, err := entitygithub.ParseChangeID(rawID)
 		if err != nil {
-			c.metricsScope.Counter("parse_errors").Inc(1)
+			metrics.NamedCounter(c.metricsScope, "check", "parse_errors", 1)
 			return result, fmt.Errorf("failed to parse change ID %q: %w", rawID, err)
 		}
 		changeIDs = append(changeIDs, cid)
@@ -79,26 +80,26 @@ func (c *mergeChecker) Check(ctx context.Context, queue string, change entity.Ch
 	// Fetch PR info from GitHub GraphQL API
 	prInfoMap, err := c.fetchPRInfo(ctx, changeIDs)
 	if err != nil {
-		c.metricsScope.Counter("graphql_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "check", "graphql_errors", 1)
 		return result, fmt.Errorf("failed to fetch PR info: %w", err)
 	}
 
 	// Validate PR mergeability
 	mergeable, reason, err := validatePRs(changeIDs, prInfoMap)
 	if err != nil {
-		c.metricsScope.Counter("validation_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "check", "validation_errors", 1)
 		return result, err
 	}
 
 	if !mergeable {
-		c.metricsScope.Counter("not_mergeable").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "check", "not_mergeable", 1)
 		c.logger.Infow("change not mergeable",
 			"queue", queue,
 			"reason", reason,
 			"change_uris", change.URIs,
 		)
 	} else {
-		c.metricsScope.Counter("mergeable").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "check", "mergeable", 1)
 	}
 
 	result.Mergeable = mergeable

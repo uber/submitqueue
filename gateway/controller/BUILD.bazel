@@ -11,6 +11,7 @@ go_library(
     deps = [
         "//core/consumer",
         "//core/errs",
+        "//core/metrics",
         "//entity",
         "//entity/queue",
         "//extension/counter",

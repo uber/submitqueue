@@ -20,6 +20,7 @@ import (
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
 	"github.com/uber/submitqueue/extension/storage"
@@ -63,22 +64,23 @@ func NewController(
 // Process processes a build delivery from the queue.
 // Deserializes the batch, triggers a build, and publishes a build entity to the build signal topic.
 // Returns nil to ack (success), or error to nack (retry).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
-	c.metricsScope.Counter("received").Inc(1)
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+	op := metrics.Begin(c.metricsScope, "process")
+	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
 	// Deserialize batch ID from payload
 	bid, err := entity.BatchIDFromBytes(msg.Payload)
 	if err != nil {
-		c.metricsScope.Counter("deserialize_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "deserialize_errors", 1)
 		return fmt.Errorf("failed to deserialize batch ID: %w", err)
 	}
 
 	// Fetch batch from storage
 	batch, err := c.store.GetBatchStore().Get(ctx, bid.ID)
 	if err != nil {
-		c.metricsScope.Counter("storage_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
 		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
 	}
 
@@ -103,7 +105,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	// Publish build to build signal topic
 	if err := c.publish(ctx, consumer.TopicKeyBuildSignal, build); err != nil {
-		c.metricsScope.Counter("publish_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1)
 		return fmt.Errorf("failed to publish to buildsignal: %w", err)
 	}
 
@@ -112,8 +114,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"build_id", build.ID,
 		"topic_key", consumer.TopicKeyBuildSignal,
 	)
-
-	c.metricsScope.Counter("processed").Inc(1)
 
 	return nil // Success - message will be acked
 }

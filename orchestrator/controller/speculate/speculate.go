@@ -20,6 +20,7 @@ import (
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
 	"github.com/uber/submitqueue/extension/storage"
@@ -77,20 +78,21 @@ func NewController(
 
 // Process advances a batch one step along the naive happy-path.
 // Returns nil to ack (success), or error to nack (retry).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
-	c.metricsScope.Counter("received").Inc(1)
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+	op := metrics.Begin(c.metricsScope, "process")
+	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
 	bid, err := entity.BatchIDFromBytes(msg.Payload)
 	if err != nil {
-		c.metricsScope.Counter("deserialize_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "deserialize_errors", 1)
 		return fmt.Errorf("failed to deserialize batch ID: %w", err)
 	}
 
 	batch, err := c.store.GetBatchStore().Get(ctx, bid.ID)
 	if err != nil {
-		c.metricsScope.Counter("storage_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
 		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
 	}
 
@@ -99,13 +101,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// otherwise never reconcile. Re-publishing is safe because conclude is
 	// idempotent on the batch ID.
 	if batch.State.IsTerminal() {
-		c.metricsScope.Counter("self_heal_terminal").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "self_heal_terminal", 1)
 		return c.fanout(ctx, batch.ID, batch.Queue)
 	}
 
 	// Merging is owned by the merge controller, which has its own self-heal.
 	if batch.State == entity.BatchStateMerging {
-		c.metricsScope.Counter("noop_merging").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "noop_merging", 1)
 		return nil
 	}
 
@@ -115,7 +117,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	case entity.BatchStateSpeculating:
 		return c.tryFinalize(ctx, batch)
 	default:
-		c.metricsScope.Counter("unexpected_state").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "unexpected_state", 1)
 		return fmt.Errorf("unexpected batch state %q for batch %s", batch.State, batch.ID)
 	}
 }
@@ -129,7 +131,7 @@ func (c *Controller) startSpeculation(ctx context.Context, batch entity.Batch) e
 	)
 
 	if err := c.publish(ctx, consumer.TopicKeyBuild, batch.ID, batch.Queue); err != nil {
-		c.metricsScope.Counter("publish_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1)
 		return fmt.Errorf("failed to publish to build: %w", err)
 	}
 
@@ -137,11 +139,11 @@ func (c *Controller) startSpeculation(ctx context.Context, batch entity.Batch) e
 	// the next event will see the new state and behave correctly.
 	newVersion := batch.Version + 1
 	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateSpeculating); err != nil {
-		c.metricsScope.Counter("storage_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
 		return fmt.Errorf("failed to update batch %s state to speculating: %w", batch.ID, err)
 	}
 
-	c.metricsScope.Counter("started_speculation").Inc(1)
+	metrics.NamedCounter(c.metricsScope, "process", "started_speculation", 1)
 	return nil
 }
 
@@ -174,7 +176,7 @@ func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error 
 	}
 
 	if len(pending) > 0 {
-		c.metricsScope.Counter("waiting_on_deps").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "waiting_on_deps", 1)
 		c.logger.Debugw("dependencies still in flight; waiting",
 			"batch_id", batch.ID,
 			"pending_dependency_ids", pending,
@@ -183,17 +185,16 @@ func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error 
 	}
 
 	if err := c.publish(ctx, consumer.TopicKeyMerge, batch.ID, batch.Queue); err != nil {
-		c.metricsScope.Counter("publish_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1)
 		return fmt.Errorf("failed to publish to merge: %w", err)
 	}
 
 	newVersion := batch.Version + 1
 	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateMerging); err != nil {
-		c.metricsScope.Counter("storage_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
 		return fmt.Errorf("failed to update batch %s state to merging: %w", batch.ID, err)
 	}
 
-	c.metricsScope.Counter("processed").Inc(1)
 	return nil
 }
 
@@ -203,7 +204,7 @@ func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error 
 // Without this transition the batch would sit in Speculating forever — no
 // downstream event ever fires for it again.
 func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, dep entity.Batch) error {
-	c.metricsScope.Counter("dependency_failed").Inc(1)
+	metrics.NamedCounter(c.metricsScope, "process", "dependency_failed", 1)
 	c.logger.Warnw("dependency in non-succeeding terminal state; failing batch",
 		"batch_id", batch.ID,
 		"dependency_id", dep.ID,
@@ -212,12 +213,12 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 
 	newVersion := batch.Version + 1
 	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateFailed); err != nil {
-		c.metricsScope.Counter("storage_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
 		return fmt.Errorf("failed to update batch %s state to failed: %w", batch.ID, err)
 	}
 
 	if err := c.publish(ctx, consumer.TopicKeyConclude, batch.ID, batch.Queue); err != nil {
-		c.metricsScope.Counter("publish_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1)
 		return fmt.Errorf("failed to publish to conclude: %w", err)
 	}
 
@@ -233,7 +234,7 @@ func (c *Controller) fetchDependencies(ctx context.Context, batch entity.Batch) 
 	for _, depID := range batch.Dependencies {
 		d, err := c.store.GetBatchStore().Get(ctx, depID)
 		if err != nil {
-			c.metricsScope.Counter("dependency_fetch_errors").Inc(1)
+			metrics.NamedCounter(c.metricsScope, "process", "dependency_fetch_errors", 1)
 			return nil, fmt.Errorf("failed to get dependency batch %s of %s: %w", depID, batch.ID, err)
 		}
 		deps = append(deps, d)
@@ -246,7 +247,7 @@ func (c *Controller) fetchDependencies(ctx context.Context, batch entity.Batch) 
 // re-sending to conclude guarantees request-state reconciliation.
 func (c *Controller) fanout(ctx context.Context, batchID, partitionKey string) error {
 	if err := c.publish(ctx, consumer.TopicKeyConclude, batchID, partitionKey); err != nil {
-		c.metricsScope.Counter("publish_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1)
 		return fmt.Errorf("failed to publish to conclude: %w", err)
 	}
 	return nil

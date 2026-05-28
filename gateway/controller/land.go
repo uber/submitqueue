@@ -18,11 +18,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
+	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
 	"github.com/uber/submitqueue/extension/counter"
@@ -55,7 +55,7 @@ type LandController struct {
 func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter counter.Counter, requestLogStore storage.RequestLogStore, registry consumer.TopicRegistry) *LandController {
 	return &LandController{
 		logger:          logger,
-		metricsScope:    scope,
+		metricsScope:    scope.SubScope("land_controller"),
 		counter:         counter,
 		requestLogStore: requestLogStore,
 		registry:        registry,
@@ -63,13 +63,9 @@ func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter cou
 }
 
 // Land handles the land request and returns a response
-func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.LandResponse, error) {
-	start := time.Now()
-	defer func() {
-		c.metricsScope.Timer("land_request_latency").Record(time.Since(start))
-	}()
-
-	c.metricsScope.Counter("land_request_count").Inc(1)
+func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (resp *pb.LandResponse, retErr error) {
+	op := metrics.Begin(c.metricsScope, "land")
+	defer func() { op.Complete(retErr) }()
 
 	// Validate required fields.
 	if req.Queue == "" {
@@ -131,7 +127,7 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 		"sqid", landRequest.ID,
 		"topic_key", consumer.TopicKeyStart,
 	)
-	c.metricsScope.Counter("publish_success").Inc(1)
+	metrics.NamedCounter(c.metricsScope, "land", "publish_success", 1)
 
 	return &pb.LandResponse{
 		Sqid: landRequest.ID,

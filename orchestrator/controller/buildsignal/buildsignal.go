@@ -20,6 +20,7 @@ import (
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
 	"github.com/uber/submitqueue/extension/storage"
@@ -63,15 +64,16 @@ func NewController(
 // Process processes a build signal delivery from the queue.
 // Deserializes the build and publishes a batch result to the speculate topic.
 // Returns nil to ack (success), or error to nack (retry).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
-	c.metricsScope.Counter("received").Inc(1)
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+	op := metrics.Begin(c.metricsScope, "process")
+	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
 	// Deserialize build entity
 	build, err := entity.BuildFromBytes(msg.Payload)
 	if err != nil {
-		c.metricsScope.Counter("deserialize_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "deserialize_errors", 1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
 		return fmt.Errorf("failed to deserialize build: %w", err)
 	}
@@ -91,13 +93,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Fetch batch from storage to get the partition key (queue)
 	batch, err := c.store.GetBatchStore().Get(ctx, build.BatchID)
 	if err != nil {
-		c.metricsScope.Counter("storage_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
 		return fmt.Errorf("failed to get batch %s: %w", build.BatchID, err)
 	}
 
 	// Publish batch to speculate topic
 	if err := c.publish(ctx, consumer.TopicKeySpeculate, batch.ID, batch.Queue); err != nil {
-		c.metricsScope.Counter("publish_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1)
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}
 
@@ -106,8 +108,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"batch_id", batch.ID,
 		"topic_key", consumer.TopicKeySpeculate,
 	)
-
-	c.metricsScope.Counter("processed").Inc(1)
 
 	return nil // Success - message will be acked
 }

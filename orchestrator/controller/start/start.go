@@ -22,6 +22,7 @@ import (
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/core/metrics"
 	corerequest "github.com/uber/submitqueue/core/request"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
@@ -73,14 +74,15 @@ func NewController(
 // Process processes a request delivery from the queue.
 // Persists the request, claims its URIs in the change store, and publishes to validate.
 // Returns nil to ack (success), or error to nack (retry).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
-	c.metricsScope.Counter("received").Inc(1)
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+	op := metrics.Begin(c.metricsScope, "process")
+	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
 	landRequest, err := entity.LandRequestFromBytes(msg.Payload)
 	if err != nil {
-		c.metricsScope.Counter("deserialize_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "deserialize_errors", 1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
 		return fmt.Errorf("failed to deserialize land request: %w", err)
 	}
@@ -109,7 +111,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Persist request to storage. ErrAlreadyExists means a queue redelivery of the same
 	// request_id (an at-least-once retry of THIS message), not a cross-request collision.
 	if err := c.store.GetRequestStore().Create(ctx, request); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
-		c.metricsScope.Counter("storage_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
@@ -118,19 +120,19 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// collide on insert; the validate controller surfaces it via GetByURI + a
 	// liveness check against the request store.
 	if err := c.claimURIs(ctx, request); err != nil {
-		c.metricsScope.Counter("change_store_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "change_store_errors", 1)
 		return fmt.Errorf("failed to claim URIs for request %s: %w", request.ID, err)
 	}
 
 	// Record the "new" status in the request log.
 	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusStarted, request.Version, "", nil)
 	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID); err != nil {
-		c.metricsScope.Counter("request_log_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "request_log_errors", 1)
 		return fmt.Errorf("failed to publish request log: %w", err)
 	}
 
 	if err := c.publish(ctx, consumer.TopicKeyValidate, request.ID, request.Queue); err != nil {
-		c.metricsScope.Counter("publish_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1)
 		return fmt.Errorf("failed to publish to validate: %w", err)
 	}
 
@@ -139,7 +141,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"topic_key", consumer.TopicKeyValidate,
 	)
 
-	c.metricsScope.Counter("processed").Inc(1)
 	return nil
 }
 
