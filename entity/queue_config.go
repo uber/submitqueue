@@ -42,7 +42,7 @@ type QueueConfig struct {
 	Target string `json:"target" yaml:"target"`
 
 	// BuildRunner identifies the CI pipeline or job that runs builds for this queue.
-	// Opaque to the system; meaningful only to the build extension implementation.
+	// Opaque to the system; meaningful only to the build runner extension implementation.
 	// Examples:
 	//   - Buildkite: "buildkite.com/uber/submitqueue-ci"
 	//   - Jenkins: "jenkins.example.com/job/submitqueue-verify"
