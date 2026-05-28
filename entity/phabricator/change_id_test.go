@@ -47,6 +47,8 @@ func TestParseChangeID(t *testing.T) {
 		{name: "empty diff", raw: "phab://D123/", wantErr: true},
 		{name: "non-numeric diff", raw: "phab://D123/abc", wantErr: true},
 		{name: "non-positive diff", raw: "phab://D123/0", wantErr: true},
+		{name: "leading zero revision", raw: "phab://D01/2", wantErr: true},
+		{name: "leading zero diff", raw: "phab://D1/02", wantErr: true},
 	}
 
 	for _, tt := range tests {

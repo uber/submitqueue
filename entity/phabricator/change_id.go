@@ -16,6 +16,7 @@ package phabricator
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -33,6 +34,15 @@ const scheme = "phab"
 // Phabricator UI and CLI ("arc diff", "arc patch D12345"), so URIs can be
 // constructed by trivial substitution rather than reshaping.
 const revisionPrefix = "D"
+
+// revisionPattern matches a revision segment: the literal "D" followed by a
+// positive integer with no leading zero (matches the strict round-trip form
+// produced by String()).
+var revisionPattern = regexp.MustCompile(`^D([1-9]\d*)$`)
+
+// diffPattern matches a diff segment: a positive integer with no leading zero
+// (matches the strict round-trip form produced by String()).
+var diffPattern = regexp.MustCompile(`^[1-9]\d*$`)
 
 // ChangeID represents a parsed Phabricator change identifier.
 // Format: phab://D{revision_id}/{diff_id}
@@ -80,34 +90,16 @@ func ParseChangeID(raw string) (ChangeID, error) {
 	revisionSegment := segments[0]
 	diffSegment := segments[1]
 
-	if revisionSegment == "" {
-		return ChangeID{}, fmt.Errorf("invalid change ID %q: empty revision segment (expected format: %s)", raw, changeIDFormat)
+	revisionMatch := revisionPattern.FindStringSubmatch(revisionSegment)
+	if revisionMatch == nil {
+		return ChangeID{}, fmt.Errorf("invalid change ID %q: revision %q must match D{positive_int} (expected format: %s)", raw, revisionSegment, changeIDFormat)
 	}
-	if !strings.HasPrefix(revisionSegment, revisionPrefix) {
-		return ChangeID{}, fmt.Errorf("invalid change ID %q: revision %q must start with %q (expected format: %s)", raw, revisionSegment, revisionPrefix, changeIDFormat)
-	}
-	revisionDigits := revisionSegment[len(revisionPrefix):]
-	if revisionDigits == "" {
-		return ChangeID{}, fmt.Errorf("invalid change ID %q: revision %q has no digits after %q (expected format: %s)", raw, revisionSegment, revisionPrefix, changeIDFormat)
-	}
-	revisionID, err := strconv.Atoi(revisionDigits)
-	if err != nil {
-		return ChangeID{}, fmt.Errorf("invalid change ID %q: revision digits %q is not a valid integer (expected format: %s)", raw, revisionDigits, changeIDFormat)
-	}
-	if revisionID <= 0 {
-		return ChangeID{}, fmt.Errorf("invalid change ID %q: revision ID must be positive, got %d (expected format: %s)", raw, revisionID, changeIDFormat)
-	}
+	revisionID, _ := strconv.Atoi(revisionMatch[1])
 
-	if diffSegment == "" {
-		return ChangeID{}, fmt.Errorf("invalid change ID %q: empty diff ID (expected format: %s)", raw, changeIDFormat)
+	if !diffPattern.MatchString(diffSegment) {
+		return ChangeID{}, fmt.Errorf("invalid change ID %q: diff %q must be a positive integer (expected format: %s)", raw, diffSegment, changeIDFormat)
 	}
-	diffID, err := strconv.Atoi(diffSegment)
-	if err != nil {
-		return ChangeID{}, fmt.Errorf("invalid change ID %q: diff ID %q is not a valid integer (expected format: %s)", raw, diffSegment, changeIDFormat)
-	}
-	if diffID <= 0 {
-		return ChangeID{}, fmt.Errorf("invalid change ID %q: diff ID must be positive, got %d (expected format: %s)", raw, diffID, changeIDFormat)
-	}
+	diffID, _ := strconv.Atoi(diffSegment)
 
 	return ChangeID{
 		Scheme:     gotScheme,
