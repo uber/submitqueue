@@ -108,6 +108,19 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"partition_key", msg.PartitionKey,
 	)
 
+	// Short-circuit if the request has been halted — either it already reached a
+	// terminal state, or the cancel controller has recorded a cancellation intent
+	// (RequestStateCancelling). Without this guard we would still publish to batch
+	// and spawn a batch for a request that should never proceed.
+	if entity.IsRequestStateHalted(request.State) {
+		coremetrics.NamedCounter(c.metricsScope, "process", "skipped_halted", 1)
+		c.logger.Infow("skipping validate for halted request",
+			"request_id", request.ID,
+			"state", string(request.State),
+		)
+		return nil
+	}
+
 	// Duplicate detection: look for any other in-flight request that has already
 	// claimed an overlapping URI in this queue. Per-queue partition leasing
 	// (see core/consumer + extension/queue) guarantees serial processing within

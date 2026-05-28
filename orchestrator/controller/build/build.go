@@ -100,6 +100,20 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"partition_key", msg.PartitionKey,
 	)
 
+	// If the batch is halted (terminal OR cancelling), skip triggering CI and
+	// ack. This is a forward-progress controller: per the cancel design, the
+	// speculate controller owns cancelling any in-flight Build and driving the
+	// batch to its terminal state, so the build stage simply short-circuits
+	// while speculate does the work. No external CI is ever kicked off.
+	if entity.IsBatchStateHalted(batch.State) {
+		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1)
+		c.logger.Infow("skipping build for halted batch",
+			"batch_id", batch.ID,
+			"state", string(batch.State),
+		)
+		return nil
+	}
+
 	// Assemble base (dependency batches in order) and head (this batch).
 	base, err := c.collectChanges(ctx, batch.Dependencies)
 	if err != nil {

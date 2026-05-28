@@ -57,6 +57,7 @@ import (
 	"github.com/uber/submitqueue/orchestrator/controller/batch"
 	"github.com/uber/submitqueue/orchestrator/controller/build"
 	"github.com/uber/submitqueue/orchestrator/controller/buildsignal"
+	"github.com/uber/submitqueue/orchestrator/controller/cancel"
 	"github.com/uber/submitqueue/orchestrator/controller/conclude"
 	logctrl "github.com/uber/submitqueue/orchestrator/controller/log"
 	"github.com/uber/submitqueue/orchestrator/controller/merge"
@@ -235,7 +236,7 @@ func run() error {
 		return err
 	}
 
-	logger.Info("controllers registered", zap.Int("count", 9))
+	logger.Info("controllers registered", zap.Int("count", 11))
 
 	// Start consumers
 	if err := c.Start(ctx); err != nil {
@@ -330,6 +331,14 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Queue: q,
 			Subscription: extqueue.DefaultSubscriptionConfig(
 				subscriberName, "orchestrator-start",
+			),
+		},
+		{
+			Key:   consumer.TopicKeyCancel,
+			Name:  "cancel",
+			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "orchestrator-cancel",
 			),
 		},
 		{
@@ -428,6 +437,18 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	)
 	if err := c.Register(requestController); err != nil {
 		return fmt.Errorf("failed to register request controller: %w", err)
+	}
+
+	cancelController := cancel.NewController(
+		logger,
+		scope,
+		store,
+		registry,
+		consumer.TopicKeyCancel,
+		"orchestrator-cancel",
+	)
+	if err := c.Register(cancelController); err != nil {
+		return fmt.Errorf("failed to register cancel controller: %w", err)
 	}
 
 	validateController := validate.NewController(

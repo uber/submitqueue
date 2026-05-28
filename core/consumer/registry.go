@@ -30,6 +30,8 @@ type TopicKey string
 const (
 	// TopicKeyStart is the pipeline stage where new requests arrive from the gateway.
 	TopicKeyStart TopicKey = "start"
+	// TopicKeyCancel is the pipeline stage where cancellation requests arrive from the gateway.
+	TopicKeyCancel TopicKey = "cancel"
 	// TopicKeyValidate is the pipeline stage where requests are published for validation.
 	TopicKeyValidate TopicKey = "validate"
 	// TopicKeyBatch is the pipeline stage where validated requests are published for batching.

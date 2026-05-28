@@ -16,6 +16,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -31,6 +32,7 @@ import (
 	conflictmock "github.com/uber/submitqueue/extension/conflict/mock"
 	countermock "github.com/uber/submitqueue/extension/counter/mock"
 	queuemock "github.com/uber/submitqueue/extension/queue/mock"
+	"github.com/uber/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
@@ -82,6 +84,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 		mockReqStore := storagemock.NewMockRequestStore(ctrl)
 		req := testRequest()
 		mockReqStore.EXPECT().Get(gomock.Any(), req.ID).Return(req, nil).AnyTimes()
+		mockReqStore.EXPECT().UpdateState(gomock.Any(), req.ID, req.Version, req.Version+1, entity.RequestStateBatched).Return(nil).AnyTimes()
 
 		mockBatchDependentStore := storagemock.NewMockBatchDependentStore(ctrl)
 		mockBatchDependentStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -232,6 +235,7 @@ func TestController_Process_WithDependencies(t *testing.T) {
 
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
 	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+	mockReqStore.EXPECT().UpdateState(gomock.Any(), request.ID, request.Version, request.Version+1, entity.RequestStateBatched).Return(nil)
 
 	mockStorage := storagemock.NewMockStorage(ctrl)
 	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
@@ -275,6 +279,7 @@ func TestController_Process_AnalyzerSelectsSubset(t *testing.T) {
 
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
 	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+	mockReqStore.EXPECT().UpdateState(gomock.Any(), request.ID, request.Version, request.Version+1, entity.RequestStateBatched).Return(nil)
 
 	mockStorage := storagemock.NewMockStorage(ctrl)
 	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
@@ -334,4 +339,194 @@ func TestController_InterfaceImplementation(t *testing.T) {
 	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), nil, nil, nil)
 
 	var _ consumer.Controller = controller
+}
+
+// A request that is halted (terminal OR Cancelling) must be short-circuited
+// before the batch controller queries the batch store, allocates a batch ID,
+// CAS-claims the request, or publishes. We verify by configuring a batch
+// store and counter with NO EXPECTs (gomock fails on any call), a request
+// store that only expects the initial Get (no UpdateState), and a publisher
+// that returns a sentinel error if invoked.
+//
+// Cancelling is non-terminal but must halt forward progress: the cancel
+// controller has already recorded the cancellation intent on the request and
+// owns the terminal write. Any new batch spawned here would be an orphan
+// containing a request that is about to become Cancelled.
+func TestController_Process_HaltedShortCircuit(t *testing.T) {
+	for _, state := range []entity.RequestState{
+		entity.RequestStateCancelling,
+		entity.RequestStateCancelled,
+		entity.RequestStateLanded,
+		entity.RequestStateError,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+
+			request := testRequest()
+			request.State = state
+			request.Version = 7
+
+			// Batch store with no EXPECTs — must not be queried.
+			mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+			mockReqStore := storagemock.NewMockRequestStore(ctrl)
+			mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+			// No UpdateState expected — gomock fails if called.
+
+			mockStorage := storagemock.NewMockStorage(ctrl)
+			mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+			mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
+
+			// Counter with no EXPECTs — must not be called.
+			cnt := countermock.NewMockCounter(ctrl)
+
+			controller := newTestController(t, ctrl, cnt, mockStorage, nil, fmt.Errorf("should not publish"))
+
+			msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+			delivery := queuemock.NewMockDelivery(ctrl)
+			delivery.EXPECT().Message().Return(msg).AnyTimes()
+			delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+			require.NoError(t, controller.Process(context.Background(), delivery))
+		})
+	}
+}
+
+// Race-lost path: the cancel controller's markCancelling CAS landed first,
+// so the batch controller's request-claim CAS (Validated → Batched) fails
+// with storage.ErrVersionMismatch. The controller must ack the message (the
+// cancel pipeline now owns the request) and must NOT call BatchStore.Create
+// or publish to the score topic.
+//
+// This test exercises the race where the halted check at the top of Process
+// passed against a stale in-memory copy from the initial Get (the cancel
+// controller's CAS landed between our Get and our UpdateState). The CAS
+// failure is the safety net that prevents an orphan batch in that window.
+func TestController_Process_CASLostToCancel(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	request := testRequest()
+
+	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+	mockBatchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "test-queue", gomock.Any()).Return(nil, nil)
+	// Create must NOT be called — gomock fails if it is.
+
+	mockBatchDependentStore := storagemock.NewMockBatchDependentStore(ctrl)
+	// The reverse-index Create still runs because it precedes the CAS; this is
+	// tolerated per the "downstream handles stale entries" contract.
+	mockBatchDependentStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+
+	mockReqStore := storagemock.NewMockRequestStore(ctrl)
+	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+	mockReqStore.EXPECT().UpdateState(
+		gomock.Any(), request.ID, request.Version, request.Version+1, entity.RequestStateBatched,
+	).Return(fmt.Errorf("cas: %w", storage.ErrVersionMismatch))
+
+	mockStorage := storagemock.NewMockStorage(ctrl)
+	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	mockStorage.EXPECT().GetBatchDependentStore().Return(mockBatchDependentStore).AnyTimes()
+	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
+
+	// Publisher with no EXPECTs — must not be called.
+	mockPub := queuemock.NewMockPublisher(ctrl)
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{{Key: consumer.TopicKeyScore, Name: "score", Queue: mockQ}},
+	)
+	require.NoError(t, err)
+
+	controller := NewController(
+		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, newSequentialCounter(ctrl),
+		mockStorage, all.New(), consumer.TopicKeyBatch, "orchestrator-batch",
+	)
+
+	msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	require.NoError(t, controller.Process(context.Background(), delivery))
+}
+
+// Race-unexpected-error: any CAS failure other than ErrVersionMismatch (e.g.
+// transient storage error) must surface as an error so the message is nacked
+// for retry. We must NOT call BatchStore.Create on the way out.
+func TestController_Process_CASUnexpectedErrorPropagates(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	request := testRequest()
+
+	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+	mockBatchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "test-queue", gomock.Any()).Return(nil, nil)
+	// Create must NOT be called — gomock fails if it is.
+
+	mockBatchDependentStore := storagemock.NewMockBatchDependentStore(ctrl)
+	mockBatchDependentStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+
+	casErr := fmt.Errorf("db connection lost")
+	mockReqStore := storagemock.NewMockRequestStore(ctrl)
+	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+	mockReqStore.EXPECT().UpdateState(
+		gomock.Any(), request.ID, request.Version, request.Version+1, entity.RequestStateBatched,
+	).Return(casErr)
+
+	mockStorage := storagemock.NewMockStorage(ctrl)
+	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	mockStorage.EXPECT().GetBatchDependentStore().Return(mockBatchDependentStore).AnyTimes()
+	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
+
+	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), mockStorage, nil, nil)
+
+	msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	err := controller.Process(context.Background(), delivery)
+	require.Error(t, err)
+	// Cause must be preserved for upstream classification.
+	assert.True(t, errors.Is(err, casErr))
+}
+
+// Recovery path: a re-delivered batch message whose prior attempt CAS'd the
+// request to RequestStateBatched but failed before BatchStore.Create. The
+// halted check at the top of Process does NOT include Batched (Batched is
+// forward-progress, not halted), so we reach the CAS again and re-bump the
+// version on the request (Batched → Batched, version+1). The batch is then
+// re-created with a new batch ID, which is tolerated per the existing
+// duplicate-handling comment on BatchStore.Create.
+func TestController_Process_RecoveryAfterPriorCAS(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	request := testRequest()
+	request.State = entity.RequestStateBatched
+	request.Version = 2 // prior attempt bumped from 1 → 2
+
+	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+	mockBatchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "test-queue", gomock.Any()).Return(nil, nil)
+	mockBatchStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+
+	mockBatchDependentStore := storagemock.NewMockBatchDependentStore(ctrl)
+	mockBatchDependentStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+
+	mockReqStore := storagemock.NewMockRequestStore(ctrl)
+	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+	mockReqStore.EXPECT().UpdateState(
+		gomock.Any(), request.ID, request.Version, request.Version+1, entity.RequestStateBatched,
+	).Return(nil)
+
+	mockStorage := storagemock.NewMockStorage(ctrl)
+	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	mockStorage.EXPECT().GetBatchDependentStore().Return(mockBatchDependentStore).AnyTimes()
+	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
+
+	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), mockStorage, nil, nil)
+
+	msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	require.NoError(t, controller.Process(context.Background(), delivery))
 }

@@ -144,7 +144,7 @@ func TestController_Process(t *testing.T) {
 			},
 		},
 		{
-			name: "cancelled batch returns error",
+			name: "cancelled batch cancels requests",
 			batch: entity.Batch{
 				ID:       "test-queue/batch/3",
 				Queue:    "test-queue",
@@ -162,12 +162,17 @@ func TestController_Process(t *testing.T) {
 					Version:  2,
 				}, nil)
 
+				mockRequestStore := storagemock.NewMockRequestStore(ctrl)
+				mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/10").Return(entity.Request{
+					ID: "test-queue/10", Version: 4, State: entity.RequestStateProcessing,
+				}, nil)
+				mockRequestStore.EXPECT().UpdateState(gomock.Any(), "test-queue/10", int32(4), int32(5), entity.RequestStateCancelled).Return(nil)
+
 				mockStorage := storagemock.NewMockStorage(ctrl)
 				mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+				mockStorage.EXPECT().GetRequestStore().Return(mockRequestStore).AnyTimes()
 				return mockStorage
 			},
-			wantErr:   true,
-			retryable: false,
 		},
 		{
 			name: "non-terminal batch state returns error",

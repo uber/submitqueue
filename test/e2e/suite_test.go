@@ -35,6 +35,8 @@ import (
 	orchestratorpb "github.com/uber/submitqueue/orchestrator/protopb"
 	"github.com/uber/submitqueue/test/testutil"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type E2EIntegrationSuite struct {
@@ -165,4 +167,44 @@ func (s *E2EIntegrationSuite) TestLandRequest_SinglePR() {
 	require.NoError(s.T(), err, "Land request failed")
 	require.NotEmpty(s.T(), resp.Sqid, "SQID should not be empty")
 	s.log.Logf("Land request (single PR) succeeded: sqid=%s", resp.Sqid)
+}
+
+// TestCancelRequest_InvalidSqid verifies the gateway rejects an empty sqid
+// synchronously before publishing anything to the cancel queue.
+func (s *E2EIntegrationSuite) TestCancelRequest_InvalidSqid() {
+	_, err := s.gatewayClient.Cancel(s.ctx, &gatewaypb.CancelRequest{Sqid: ""})
+	require.Error(s.T(), err, "Cancel with empty sqid should fail")
+
+	st, ok := status.FromError(err)
+	require.True(s.T(), ok, "expected a gRPC status error")
+	assert.Equal(s.T(), codes.InvalidArgument, st.Code(),
+		"empty sqid should map to InvalidArgument; got %s", st.Code())
+}
+
+// TestCancelRequest_BeforeBatch is intentionally a thin smoke test of the
+// Land + Cancel RPC envelope: Land to mint a sqid, then Cancel that sqid, and
+// assert both calls return OK. It does not poll for terminal state, log
+// entries, or any orchestrator-side progression.
+//
+// TODO(e2e): harden this test once the e2e fixture story is in better shape.
+// Add async assertions that the request reaches RequestStateCancelled, that
+// request_log contains both `cancelling` and `cancelled` entries, and that a
+// second Cancel is idempotent.
+func (s *E2EIntegrationSuite) TestCancelRequest_BeforeBatch() {
+	t := s.T()
+
+	landReq := &gatewaypb.LandRequest{
+		Queue:    "e2e-cancel-queue",
+		Change:   &gatewaypb.Change{Uris: []string{"github://uber/e2e-nonexistent/pull/9999/deadbeef"}},
+		Strategy: gatewaypb.Strategy_REBASE,
+	}
+	landResp, err := s.gatewayClient.Land(s.ctx, landReq)
+	require.NoError(t, err, "Land failed")
+	require.NotEmpty(t, landResp.Sqid)
+
+	_, err = s.gatewayClient.Cancel(s.ctx, &gatewaypb.CancelRequest{
+		Sqid:   landResp.Sqid,
+		Reason: "e2e cancel smoke test",
+	})
+	require.NoError(t, err, "Cancel failed")
 }

@@ -473,3 +473,43 @@ func TestController_Process_ChangeStoreQueryFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.False(t, errs.IsUserError(err), "infra error should not be classified as user error")
 }
+
+// A request already in a terminal state (e.g. cancelled while the validate
+// message was in flight) must be short-circuited before any extension is
+// touched and before any publish happens. We verify this by registering a
+// merge checker and change store with NO expectations — gomock fails the test
+// if either is called — and a publisher that returns an error if invoked.
+func TestController_Process_TerminalShortCircuit(t *testing.T) {
+	for _, state := range []entity.RequestState{
+		entity.RequestStateCancelled,
+		entity.RequestStateLanded,
+		entity.RequestStateError,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+
+			request := entity.Request{
+				ID:      "test-queue/123",
+				Queue:   "test-queue",
+				State:   state,
+				Version: 5,
+			}
+			store, _ := newMockStorage(ctrl, request)
+
+			// No EXPECTs on merge checker or change store: gomock will fail if either is called.
+			mc := mergecheckermock.NewMockMergeChecker(ctrl)
+			cs := changemock.NewMockChangeStore(ctrl)
+
+			// Sentinel publish error: if Process publishes, it returns a non-nil err,
+			// which the require.NoError below will catch.
+			controller := newTestController(t, ctrl, store, cs, mc, fmt.Errorf("should not publish"))
+
+			msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+			delivery := queuemock.NewMockDelivery(ctrl)
+			delivery.EXPECT().Message().Return(msg).AnyTimes()
+			delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+			require.NoError(t, controller.Process(context.Background(), delivery))
+		})
+	}
+}

@@ -16,6 +16,7 @@ package speculate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/uber-go/tally/v4"
@@ -38,9 +39,15 @@ import (
 //   - Speculating       → if all deps are Succeeded, publish to merge and
 //     transition to Merging; otherwise no-op (or fail-fast if a dep is
 //     in a non-succeeding terminal state).
+//   - Cancelling        → cancel any in-flight Build entity, respeculate
+//     dependents, CAS to terminal Cancelled, publish to conclude. The
+//     cancel controller hands the batch off in this state and speculate
+//     drives it to terminal.
 //   - Merging           → no-op (owned by the merge controller).
 //   - Terminal          → re-fan-out to conclude for self-healing in case a
-//     prior publish was lost.
+//     prior publish was lost. For terminal Cancelled, also re-fan-out
+//     dependents so a crash between the terminal CAS and the dependent
+//     publish does not strand them.
 //
 // The controller is re-triggered on every relevant downstream event
 // (buildsignal, merge), so each call simply re-evaluates the current
@@ -99,12 +106,25 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
 	}
 
-	// Terminal state: re-fan-out to conclude for self-healing. The batch is
-	// already done; if a previous publish was lost, downstream stages will
-	// otherwise never reconcile. Re-publishing is safe because conclude is
-	// idempotent on the batch ID.
+	// Cancelling intent: the cancel controller has handed this batch off to
+	// speculate to drive to terminal. Cancel in-flight builds, fan out to
+	// dependents, CAS to terminal Cancelled, and publish to conclude.
+	if batch.State == entity.BatchStateCancelling {
+		return c.cancelBatch(ctx, batch)
+	}
+
+	// Terminal state: re-fan-out for self-healing in case a previous publish
+	// was lost. Always re-publish to conclude (idempotent on the batch ID).
+	// For Cancelled specifically also re-publish to dependents — a crash
+	// between the terminal CAS and the dependent publish would otherwise
+	// leave them stuck waiting on a Cancelled dep.
 	if batch.State.IsTerminal() {
 		metrics.NamedCounter(c.metricsScope, opName, "self_heal_terminal", 1)
+		if batch.State == entity.BatchStateCancelled {
+			if err := c.respeculateDependents(ctx, batch); err != nil {
+				return err
+			}
+		}
 		return c.fanout(ctx, batch.ID, batch.Queue)
 	}
 
@@ -151,10 +171,11 @@ func (c *Controller) startSpeculation(ctx context.Context, batch entity.Batch) e
 }
 
 // tryFinalize publishes to merge and transitions to Merging iff every
-// dependency batch has reached Succeeded. If any dep is Failed/Cancelled,
-// the batch cannot land on top of it; we mark it Failed and hand off to
-// conclude so the request state and log are reconciled. Otherwise (some
-// deps still in flight) it no-ops and waits for the next event.
+// dependency batch has reached Succeeded. Cancelled deps are treated as
+// out-of-the-way: the cancelled batch will never land, so it can no longer
+// conflict — drop it from the chain and proceed. Failed deps still cascade
+// via failOnDependency. If some deps are still in flight, the call is a
+// no-op and waits for the next event.
 //
 // TODO: when a dependency fails we currently fail this batch outright.
 // We will need to respeculate the failed paths — drop the failed dep
@@ -171,7 +192,15 @@ func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error 
 		switch d.State {
 		case entity.BatchStateSucceeded:
 			// ok
-		case entity.BatchStateFailed, entity.BatchStateCancelled:
+		case entity.BatchStateCancelled:
+			// Out-of-the-way: the cancelled batch will never land, so it can
+			// no longer conflict. Drop it from the chain and continue.
+			c.metricsScope.Counter("dependency_cancelled_skipped").Inc(1)
+			c.logger.Infow("dependency cancelled; dropping from speculation chain",
+				"batch_id", batch.ID,
+				"dependency_id", d.ID,
+			)
+		case entity.BatchStateFailed:
 			return c.failOnDependency(ctx, batch, d)
 		default:
 			pending = append(pending, d.ID)
@@ -225,6 +254,141 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 		return fmt.Errorf("failed to publish to conclude: %w", err)
 	}
 
+	return nil
+}
+
+// cancelBatch drives a batch from BatchStateCancelling to BatchStateCancelled.
+// The cancel controller records the user's intent (Cancelling) and hands the
+// batch off; speculate owns the rest because all the work that must precede
+// the terminal write — flipping in-flight builds, respeculating dependents —
+// already lives in the speculate domain. The terminal transition is the
+// single writer of every non-Cancelling batch state across the system.
+//
+// Order matters for correctness:
+//
+//  1. Cancel the in-flight Build entity (build.ID == batch.ID; one Get + one
+//     UpdateStatus covers all builds for this batch). A future external CI
+//     integration hooks in here. Idempotent: tolerate ErrNotFound (no build
+//     was scheduled), skip if already terminal.
+//
+//  2. CAS the batch to terminal Cancelled. This must happen BEFORE the
+//     dependent fan-out: tryFinalize only drops a Cancelled dep from the
+//     chain, so dependents woken with the dep still in Cancelling would
+//     wait pending and never get pinged again.
+//
+//  3. Re-publish each downstream dependent to speculate so they can drop
+//     this cancelled batch from their chain and advance (or finalize, if
+//     this was their last outstanding dep).
+//
+//  4. Publish to conclude so contained requests reach RequestStateCancelled.
+//
+// A crash between steps 2 and 3/4 is recovered on redelivery via the
+// terminal self-heal branch, which re-runs the dependent fan-out and the
+// conclude publish for already-Cancelled batches.
+//
+// storage.ErrVersionMismatch on the terminal CAS is returned as-is for the
+// base controller to classify as retryable; the redelivery will land in the
+// self-heal branch and complete the fan-out.
+func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error {
+	metrics.NamedCounter(c.metricsScope, opName, "cancel_batch", 1)
+	c.logger.Infow("cancelling batch",
+		"batch_id", batch.ID,
+		"queue", batch.Queue,
+	)
+
+	// TODO(respeculate-collateral): re-enqueue Land for every request in batch.Contains
+	// except the user-cancelled request. Today the whole batch dies (per spec) and the
+	// collateral requests need a fresh request ID and a re-publish to TopicKeyStart so
+	// they can be re-batched without the cancelled change.
+
+	if err := c.cancelBuild(ctx, batch); err != nil {
+		return err
+	}
+
+	newVersion := batch.Version + 1
+	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateCancelled); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return fmt.Errorf("failed to update batch %s state to cancelled: %w", batch.ID, err)
+	}
+	batch.Version = newVersion
+	batch.State = entity.BatchStateCancelled
+
+	if err := c.respeculateDependents(ctx, batch); err != nil {
+		return err
+	}
+
+	if err := c.publish(ctx, consumer.TopicKeyConclude, batch.ID, batch.Queue); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+		return fmt.Errorf("failed to publish to conclude: %w", err)
+	}
+
+	return nil
+}
+
+// cancelBuild flips any in-flight Build entity for the batch to
+// BuildStatusCancelled. Builds use build.ID == batch.ID, so a single Get
+// covers every build scheduled for the batch. Tolerates ErrNotFound (no
+// build was ever scheduled — the batch was cancelled before speculation
+// started building) and skips already-terminal builds.
+//
+// This is the hook point for a future external CI integration: today the
+// system has no external runner, so the local state flip is the complete
+// cancellation. Once a runner exists, it must be invoked here before the
+// local UpdateStatus.
+func (c *Controller) cancelBuild(ctx context.Context, batch entity.Batch) error {
+	build, err := c.store.GetBuildStore().Get(ctx, batch.ID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			metrics.NamedCounter(c.metricsScope, opName, "cancel_build_not_found", 1)
+			return nil
+		}
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return fmt.Errorf("failed to get build for batch %s: %w", batch.ID, err)
+	}
+
+	if build.Status.IsTerminal() {
+		metrics.NamedCounter(c.metricsScope, opName, "cancel_build_already_terminal", 1)
+		return nil
+	}
+
+	if err := c.store.GetBuildStore().UpdateStatus(ctx, batch.ID, entity.BuildStatusCancelled); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return fmt.Errorf("failed to cancel build for batch %s: %w", batch.ID, err)
+	}
+	metrics.NamedCounter(c.metricsScope, opName, "cancel_build_done", 1)
+	return nil
+}
+
+// respeculateDependents publishes a speculate event for every batch that
+// depends on the given batch. The batch controller creates a BatchDependent
+// row (with Dependents possibly empty) for every batch it persists, so a
+// missing row at this point is a storage invariant violation, not a normal
+// "no dependents" case — surface ErrNotFound as a regular storage error so
+// the message nacks and either an operator or the batch controller's own
+// crash-recovery can resolve the inconsistency.
+//
+// Called both from the cancelBatch terminal flow and from the terminal
+// self-heal branch on redelivery of an already-Cancelled batch.
+func (c *Controller) respeculateDependents(ctx context.Context, batch entity.Batch) error {
+	bd, err := c.store.GetBatchDependentStore().Get(ctx, batch.ID)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return fmt.Errorf("failed to get batch dependents for batch %s: %w", batch.ID, err)
+	}
+
+	for _, depID := range bd.Dependents {
+		// Alternative: process each dependent inline (load batch, run the
+		// equivalent of tryFinalize) instead of publishing back to ourselves.
+		// Rejected for now: per-message retry isolation, fresh per-dependent
+		// reads, consumer-pool parallelism / backpressure, and the existing
+		// state-machine dispatch in Process all argue for the publish. Revisit
+		// if the extra message hop ever shows up as latency or cost.
+		if err := c.publish(ctx, consumer.TopicKeySpeculate, depID, batch.Queue); err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+			return fmt.Errorf("failed to publish dependent batch %s to speculate: %w", depID, err)
+		}
+		metrics.NamedCounter(c.metricsScope, opName, "dependent_respeculated", 1)
+	}
 	return nil
 }
 

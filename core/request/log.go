@@ -25,13 +25,20 @@ import (
 
 // PublishLog publishes a single request log entry to the log topic for async persistence.
 // The partitionKey ensures ordering of log entries for the same request; typically set to the request ID.
+//
+// The message ID is scoped to (requestID, status) so that the queue's
+// (topic, partition_key, id) unique index dedupes retries of the same logical
+// log event (same delivery re-processed) without rejecting distinct statuses
+// for the same request (e.g. "started" emitted by the start controller and
+// "cancelled" emitted later by the cancel controller).
 func PublishLog(ctx context.Context, registry consumer.TopicRegistry, logEntry entity.RequestLog, partitionKey string) error {
 	payload, err := logEntry.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize request log: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(logEntry.RequestID, payload, partitionKey, nil)
+	msgID := fmt.Sprintf("%s/%s", logEntry.RequestID, logEntry.Status)
+	msg := entityqueue.NewMessage(msgID, payload, partitionKey, nil)
 
 	q, ok := registry.Queue(consumer.TopicKeyLog)
 	if !ok {

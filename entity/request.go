@@ -40,17 +40,42 @@ const (
 	RequestStateStarted RequestState = "started"
 	// RequestStateValidated indicates that the request has been validated (duplicate check, merge check etc.) successfully.
 	RequestStateValidated RequestState = "validated"
+	// RequestStateBatched indicates that the request has been claimed by the batch controller and enrolled in a
+	// batch. The CAS-write of this state by the batch controller is the serialization point between batch and
+	// cancel: the batch controller transitions Validated → Batched immediately before persisting the new batch,
+	// so any concurrent cancel that has already transitioned the request to Cancelling will lose the CAS and
+	// abandon the batch. From this state forward, the request's terminal outcome is owned by the batch it is
+	// enrolled in (via conclude), not by the cancel controller's request-only fast path.
+	RequestStateBatched RequestState = "batched"
 	// RequestStateProcessing is the state of a land request that is being processed.
 	RequestStateProcessing RequestState = "processing"
 	// RequestStateLanded is the state of a land request that has been successfully processed and landed. This is the final state.
 	RequestStateLanded RequestState = "landed"
 	// RequestStateError is the state of a land request that has encountered an error. This is the final state.
 	RequestStateError RequestState = "error"
+	// RequestStateCancelling is the non-terminal intent state set when the user has requested cancellation but the
+	// request has not yet been transitioned to RequestStateCancelled. A request in this state may still reach
+	// RequestStateLanded or RequestStateError if a concurrent merge or failure wins the race; those terminal
+	// states prevail. Forward-progress controllers must treat this state the same as terminal (i.e. do not start
+	// any new work on the request).
+	RequestStateCancelling RequestState = "cancelling"
+	// RequestStateCancelled is the state of a land request that was cancelled by the user before it could land. This is the final state.
+	RequestStateCancelled RequestState = "cancelled"
 )
 
-// IsRequestStateTerminal returns true if the state represents a final, irreversible state (landed or error).
+// IsRequestStateTerminal returns true if the state represents a final, irreversible state (landed, error, or cancelled).
+// RequestStateCancelling is intentionally excluded: cancellation is best-effort and a Cancelling request may still
+// transition to Landed or Error before it reaches Cancelled. Callers that want to gate forward progress (and treat
+// Cancelling as halted) should use IsRequestStateHalted instead.
 func IsRequestStateTerminal(s RequestState) bool {
-	return s == RequestStateLanded || s == RequestStateError
+	return s == RequestStateLanded || s == RequestStateError || s == RequestStateCancelled
+}
+
+// IsRequestStateHalted returns true if the request is either terminal or in the process of being cancelled.
+// Forward-progress controllers (validate, batch, ...) use this to short-circuit work for requests that the
+// user has asked to cancel — even though Cancelling is non-terminal, no further pipeline work should start.
+func IsRequestStateHalted(s RequestState) bool {
+	return IsRequestStateTerminal(s) || s == RequestStateCancelling
 }
 
 // Change represents a code change identified by URIs from a code change provider (e.g., GitHub Pull Request, Phabricator Diff).

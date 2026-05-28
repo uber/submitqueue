@@ -94,6 +94,48 @@ func TestRequestFromBytes_EmptyData(t *testing.T) {
 	assert.Equal(t, int32(0), req.Version)
 }
 
+func TestIsRequestStateTerminal(t *testing.T) {
+	tests := []struct {
+		state    RequestState
+		terminal bool
+	}{
+		{RequestStateUnknown, false},
+		{RequestStateStarted, false},
+		{RequestStateValidated, false},
+		{RequestStateProcessing, false},
+		{RequestStateCancelling, false}, // intent only — not terminal
+		{RequestStateLanded, true},
+		{RequestStateError, true},
+		{RequestStateCancelled, true},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.state), func(t *testing.T) {
+			assert.Equal(t, tt.terminal, IsRequestStateTerminal(tt.state))
+		})
+	}
+}
+
+func TestIsRequestStateHalted(t *testing.T) {
+	tests := []struct {
+		state  RequestState
+		halted bool
+	}{
+		{RequestStateUnknown, false},
+		{RequestStateStarted, false},
+		{RequestStateValidated, false},
+		{RequestStateProcessing, false},
+		{RequestStateCancelling, true}, // intent halts forward progress
+		{RequestStateLanded, true},
+		{RequestStateError, true},
+		{RequestStateCancelled, true},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.state), func(t *testing.T) {
+			assert.Equal(t, tt.halted, IsRequestStateHalted(tt.state))
+		})
+	}
+}
+
 func TestRequest_SerializationRoundTrip(t *testing.T) {
 	tests := []struct {
 		name string

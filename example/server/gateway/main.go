@@ -37,7 +37,9 @@ import (
 	pb "github.com/uber/submitqueue/gateway/protopb"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/reflection"
+	"google.golang.org/grpc/status"
 )
 
 // GatewayServer wraps the controller and implements the gRPC service interface
@@ -45,6 +47,7 @@ type GatewayServer struct {
 	pb.UnimplementedSubmitQueueGatewayServer
 	pingController   *controller.PingController
 	landController   *controller.LandController
+	cancelController *controller.CancelController
 	statusController *controller.StatusController
 }
 
@@ -56,6 +59,11 @@ func (s *GatewayServer) Ping(ctx context.Context, req *pb.PingRequest) (*pb.Ping
 // Land delegates to the controller
 func (s *GatewayServer) Land(ctx context.Context, req *pb.LandRequest) (*pb.LandResponse, error) {
 	return s.landController.Land(ctx, req)
+}
+
+// Cancel delegates to the controller
+func (s *GatewayServer) Cancel(ctx context.Context, req *pb.CancelRequest) (*pb.CancelResponse, error) {
+	return s.cancelController.Cancel(ctx, req)
 }
 
 // Status delegates to the controller
@@ -167,17 +175,29 @@ func run() error {
 	)
 
 	// Build a publish-only topic registry: gateway only feeds the start of the
-	// orchestrator pipeline (TopicKeyStart). No subscription is configured
-	// because the gateway never consumes from the queue.
+	// orchestrator pipeline (TopicKeyStart) and the cancel topic (TopicKeyCancel).
+	// No subscription is configured because the gateway never consumes from the queue.
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{Key: consumer.TopicKeyStart, Name: "start", Queue: mysqlQueue},
+		{Key: consumer.TopicKeyCancel, Name: "cancel", Queue: mysqlQueue},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create topic registry: %w", err)
 	}
 
-	// Create gRPC server
-	grpcServer := grpc.NewServer()
+	// Create gRPC server with a unary interceptor that translates user-input
+	// validation errors (anything in the chain that matches controller.ErrInvalidRequest)
+	// into codes.InvalidArgument so gRPC clients can distinguish bad input from
+	// infrastructure failures. Other errors pass through unchanged.
+	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(
+		func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+			resp, err := handler(ctx, req)
+			if err != nil && controller.IsInvalidRequest(err) {
+				return nil, status.Error(codes.InvalidArgument, err.Error())
+			}
+			return resp, err
+		},
+	))
 
 	// Initialize request log store from shared app database connection
 	requestLogStore := mysqlstorage.NewRequestLogStore(appDB, scope.SubScope("request_log_store"))
@@ -196,10 +216,12 @@ func run() error {
 	// Create controllers and wrap them for gRPC
 	pingController := controller.NewPingController(logger, scope)
 	landController := controller.NewLandController(logger.Sugar(), scope, cnt, requestLogStore, queueConfigs, registry)
+	cancelController := controller.NewCancelController(logger.Sugar(), scope, requestLogStore, registry)
 	statusController := controller.NewStatusController(logger.Sugar(), scope, requestLogStore)
 	gatewayServer := &GatewayServer{
 		pingController:   pingController,
 		landController:   landController,
+		cancelController: cancelController,
 		statusController: statusController,
 	}
 

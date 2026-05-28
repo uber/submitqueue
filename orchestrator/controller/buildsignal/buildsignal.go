@@ -138,6 +138,25 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("failed to get status for build %s: %w", buildID.ID, err)
 	}
 
+	// Short-circuit if the batch is already halted (terminal OR cancelling).
+	// Speculate is already idempotent on terminal, but skipping the publish
+	// avoids noise. For Cancelling batches the cancel controller owns the
+	// terminal write and the downstream fan-out, so further pipeline work
+	// would race against it; silent ack is the only safe action.
+	batch, err := c.store.GetBatchStore().Get(ctx, build.BatchID)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return fmt.Errorf("failed to get batch %s: %w", build.BatchID, err)
+	}
+	if entity.IsBatchStateHalted(batch.State) {
+		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1)
+		c.logger.Infow("skipping buildsignal publish for halted batch",
+			"batch_id", batch.ID,
+			"state", string(batch.State),
+		)
+		return nil
+	}
+
 	build.Status = status
 
 	if err := c.store.GetBuildStore().UpdateStatus(ctx, build.ID, status); err != nil {

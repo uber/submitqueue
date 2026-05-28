@@ -27,6 +27,7 @@ import (
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
 	queuemock "github.com/uber/submitqueue/extension/queue/mock"
+	"github.com/uber/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
@@ -182,35 +183,46 @@ func TestController_Process_WaitingOnDep(t *testing.T) {
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
 }
 
-// tryFinalize: a dep in a non-succeeding terminal state must fail the batch
-// (Speculating → Failed) and publish to conclude. Otherwise the batch livelocks.
+// tryFinalize: a failed dep must fail the batch (Speculating → Failed) and
+// publish to conclude. Otherwise the batch livelocks.
 func TestController_Process_FailedDepFailsBatch(t *testing.T) {
-	tests := []struct {
-		name     string
-		depState entity.BatchState
-	}{
-		{name: "dep_failed", depState: entity.BatchStateFailed},
-		{name: "dep_cancelled", depState: entity.BatchStateCancelled},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			dep := entity.Batch{ID: "test-queue/batch/0", Queue: "test-queue", State: tt.depState, Version: 1}
-			batch := testBatch(entity.BatchStateSpeculating, dep.ID)
-			batch.Contains = []string{"test-queue/req/1", "test-queue/req/2"}
+	ctrl := gomock.NewController(t)
+	dep := entity.Batch{ID: "test-queue/batch/0", Queue: "test-queue", State: entity.BatchStateFailed, Version: 1}
+	batch := testBatch(entity.BatchStateSpeculating, dep.ID)
+	batch.Contains = []string{"test-queue/req/1", "test-queue/req/2"}
 
-			batchStore := storagemock.NewMockBatchStore(ctrl)
-			batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-			batchStore.EXPECT().Get(gomock.Any(), dep.ID).Return(dep, nil)
-			batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateFailed).Return(nil)
+	batchStore := storagemock.NewMockBatchStore(ctrl)
+	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+	batchStore.EXPECT().Get(gomock.Any(), dep.ID).Return(dep, nil)
+	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateFailed).Return(nil)
 
-			store := storagemock.NewMockStorage(ctrl)
-			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
-			controller := newTestController(t, ctrl, store, nil)
-			require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
-		})
-	}
+	controller := newTestController(t, ctrl, store, nil)
+	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
+}
+
+// tryFinalize: a cancelled dep is treated as out-of-the-way — it will never
+// land and can no longer conflict. The dep is dropped from the chain and the
+// batch advances to Merging as if the cancelled dep had succeeded.
+func TestController_Process_CancelledDepSkipped(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	depCancelled := entity.Batch{ID: "test-queue/batch/0a", Queue: "test-queue", State: entity.BatchStateCancelled, Version: 2}
+	depSucceeded := entity.Batch{ID: "test-queue/batch/0b", Queue: "test-queue", State: entity.BatchStateSucceeded, Version: 5}
+	batch := testBatch(entity.BatchStateSpeculating, depCancelled.ID, depSucceeded.ID)
+
+	batchStore := storagemock.NewMockBatchStore(ctrl)
+	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+	batchStore.EXPECT().Get(gomock.Any(), depCancelled.ID).Return(depCancelled, nil)
+	batchStore.EXPECT().Get(gomock.Any(), depSucceeded.ID).Return(depSucceeded, nil)
+	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateMerging).Return(nil)
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+
+	controller := newTestController(t, ctrl, store, nil)
+	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
 }
 
 // Merging is owned by the merge controller — speculate is a no-op for it.
@@ -230,12 +242,13 @@ func TestController_Process_MergingNoOp(t *testing.T) {
 }
 
 // Terminal states re-fan-out to conclude for self-healing in case a previous
-// publish was lost. State must not change (no UpdateState).
+// publish was lost. State must not change (no UpdateState). The Cancelled
+// terminal also re-fans-out dependents and is covered separately in
+// TestController_Process_CancelledTerminalSelfHealsDependents.
 func TestController_Process_TerminalSelfHeals(t *testing.T) {
 	for _, state := range []entity.BatchState{
 		entity.BatchStateSucceeded,
 		entity.BatchStateFailed,
-		entity.BatchStateCancelled,
 	} {
 		t.Run(string(state), func(t *testing.T) {
 			ctrl := gomock.NewController(t)
@@ -268,6 +281,279 @@ func TestController_Process_TerminalSelfHeals(t *testing.T) {
 			require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
 		})
 	}
+}
+
+// Cancelled is terminal: redelivery must re-fan-out dependents (so a crash
+// between the terminal CAS and the dependent publish does not strand them)
+// AND re-publish to conclude. State must not change (no UpdateState; no
+// build cancel). The BuildStore must not be touched on this self-heal path.
+func TestController_Process_CancelledTerminalSelfHealsDependents(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	batch := testBatch(entity.BatchStateCancelled)
+
+	batchStore := storagemock.NewMockBatchStore(ctrl)
+	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+	// No UpdateState expected.
+
+	depStore := storagemock.NewMockBatchDependentStore(ctrl)
+	depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{
+		BatchID:    batch.ID,
+		Dependents: []string{"test-queue/batch/2", "test-queue/batch/3"},
+		Version:    1,
+	}, nil)
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetBatchDependentStore().Return(depStore).AnyTimes()
+	// BuildStore must NOT be touched on the terminal self-heal path.
+
+	type pubRec struct {
+		topic string
+		msgID string
+	}
+	var records []pubRec
+	mockPub := queuemock.NewMockPublisher(ctrl)
+	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, topic string, msg queue.Message) error {
+			records = append(records, pubRec{topic: topic, msgID: msg.ID})
+			return nil
+		}).AnyTimes()
+
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{
+			{Key: consumer.TopicKeyConclude, Name: "conclude", Queue: mockQ},
+			{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
+		},
+	)
+	require.NoError(t, err)
+
+	logger := zaptest.NewLogger(t).Sugar()
+	controller := NewController(logger, tally.NoopScope, store, registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
+
+	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
+
+	assert.Equal(t, []pubRec{
+		{topic: "speculate", msgID: "test-queue/batch/2"},
+		{topic: "speculate", msgID: "test-queue/batch/3"},
+		{topic: "conclude", msgID: batch.ID},
+	}, records)
+}
+
+// Cancelling drives the terminal-cancellation flow: cancel any in-flight
+// build, CAS the batch to Cancelled, fan out dependents, publish to
+// conclude. Validates the full happy-path order with a running build and
+// a couple of dependents. Order matters: dependents must publish AFTER the
+// terminal CAS so the woken dependents observe the dep as Cancelled (and
+// drop it from their chain) rather than as still-Cancelling (which would
+// leave them waiting on a state nobody is going to nudge).
+func TestController_Process_CancellingTerminalFlow(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	batch := testBatch(entity.BatchStateCancelling)
+
+	batchStore := storagemock.NewMockBatchStore(ctrl)
+	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
+
+	buildStore := storagemock.NewMockBuildStore(ctrl)
+	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{
+		ID: batch.ID, BatchID: batch.ID, Status: entity.BuildStatusRunning,
+	}, nil)
+	buildStore.EXPECT().UpdateStatus(gomock.Any(), batch.ID, entity.BuildStatusCancelled).Return(nil)
+
+	depStore := storagemock.NewMockBatchDependentStore(ctrl)
+	depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{
+		BatchID:    batch.ID,
+		Dependents: []string{"test-queue/batch/2", "test-queue/batch/3"},
+		Version:    1,
+	}, nil)
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
+	store.EXPECT().GetBatchDependentStore().Return(depStore).AnyTimes()
+
+	type pubRec struct {
+		topic string
+		msgID string
+	}
+	var records []pubRec
+	mockPub := queuemock.NewMockPublisher(ctrl)
+	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, topic string, msg queue.Message) error {
+			records = append(records, pubRec{topic: topic, msgID: msg.ID})
+			return nil
+		}).AnyTimes()
+
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{
+			{Key: consumer.TopicKeyConclude, Name: "conclude", Queue: mockQ},
+			{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
+		},
+	)
+	require.NoError(t, err)
+
+	logger := zaptest.NewLogger(t).Sugar()
+	controller := NewController(logger, tally.NoopScope, store, registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
+
+	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
+
+	assert.Equal(t, []pubRec{
+		{topic: "speculate", msgID: "test-queue/batch/2"},
+		{topic: "speculate", msgID: "test-queue/batch/3"},
+		{topic: "conclude", msgID: batch.ID},
+	}, records)
+}
+
+// If the build for the batch has already reached a terminal status (e.g. CI
+// finished naturally between the cancel intent and the speculate pickup), the
+// cancellation must not re-flip it — UpdateStatus must never fire. The rest
+// of the flow (terminal batch CAS, dependent fan-out, conclude) still runs.
+func TestController_Process_CancellingBuildAlreadyTerminal(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	batch := testBatch(entity.BatchStateCancelling)
+
+	batchStore := storagemock.NewMockBatchStore(ctrl)
+	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
+
+	buildStore := storagemock.NewMockBuildStore(ctrl)
+	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{
+		ID: batch.ID, BatchID: batch.ID, Status: entity.BuildStatusSucceeded,
+	}, nil)
+	// No UpdateStatus expected — the build is already terminal.
+
+	depStore := storagemock.NewMockBatchDependentStore(ctrl)
+	depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{
+		BatchID: batch.ID, Version: 1,
+	}, nil)
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
+	store.EXPECT().GetBatchDependentStore().Return(depStore).AnyTimes()
+
+	controller := newTestController(t, ctrl, store, nil)
+	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
+}
+
+// If no Build entity exists for the batch (e.g. cancel arrived before
+// speculation started building), the BuildStore.Get NotFound must be
+// tolerated and the rest of the cancellation flow must continue.
+func TestController_Process_CancellingNoBuildYet(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	batch := testBatch(entity.BatchStateCancelling)
+
+	batchStore := storagemock.NewMockBatchStore(ctrl)
+	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
+
+	buildStore := storagemock.NewMockBuildStore(ctrl)
+	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
+	// No UpdateStatus expected.
+
+	depStore := storagemock.NewMockBatchDependentStore(ctrl)
+	depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{
+		BatchID: batch.ID, Version: 1,
+	}, nil)
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
+	store.EXPECT().GetBatchDependentStore().Return(depStore).AnyTimes()
+
+	controller := newTestController(t, ctrl, store, nil)
+	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
+}
+
+// A batch whose BatchDependent row exists with an empty Dependents list must
+// still drive itself to terminal and publish to conclude. This is the normal
+// "no dependents" path: the batch controller creates the row with an empty
+// list at batch creation time and it stays empty if no later batch conflicts.
+func TestController_Process_CancellingNoDependents(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	batch := testBatch(entity.BatchStateCancelling)
+
+	batchStore := storagemock.NewMockBatchStore(ctrl)
+	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
+
+	buildStore := storagemock.NewMockBuildStore(ctrl)
+	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
+
+	depStore := storagemock.NewMockBatchDependentStore(ctrl)
+	depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{BatchID: batch.ID, Dependents: []string{}, Version: 1}, nil)
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
+	store.EXPECT().GetBatchDependentStore().Return(depStore).AnyTimes()
+
+	mockPub := queuemock.NewMockPublisher(ctrl)
+	mockPub.EXPECT().Publish(gomock.Any(), "conclude", gomock.Any()).Return(nil).Times(1)
+
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{
+			{Key: consumer.TopicKeyConclude, Name: "conclude", Queue: mockQ},
+		},
+	)
+	require.NoError(t, err)
+
+	logger := zaptest.NewLogger(t).Sugar()
+	controller := NewController(logger, tally.NoopScope, store, registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
+
+	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
+}
+
+// storage.ErrVersionMismatch on the terminal CAS must surface as an error
+// with the underlying sentinel in the chain so the base controller can
+// classify it as retryable. The dependent fan-out and conclude publish must
+// NOT run if the terminal CAS failed — on redelivery the self-heal branch
+// will pick up the (now-terminal) state and complete the fan-out.
+func TestController_Process_CancellingTerminalCASVersionMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	batch := testBatch(entity.BatchStateCancelling)
+
+	batchStore := storagemock.NewMockBatchStore(ctrl)
+	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).
+		Return(storage.ErrVersionMismatch)
+
+	buildStore := storagemock.NewMockBuildStore(ctrl)
+	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
+	// BatchDependentStore must NOT be touched — terminal CAS failed before fan-out.
+
+	// No publish expected (terminal CAS failed before fan-out).
+	mockPub := queuemock.NewMockPublisher(ctrl)
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{
+			{Key: consumer.TopicKeyConclude, Name: "conclude", Queue: mockQ},
+			{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
+		},
+	)
+	require.NoError(t, err)
+
+	logger := zaptest.NewLogger(t).Sugar()
+	controller := NewController(logger, tally.NoopScope, store, registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
+
+	err = runProcess(t, ctrl, controller, batch.ID)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, storage.ErrVersionMismatch)
 }
 
 // An unrecognized state must surface as an error so the message is nacked
