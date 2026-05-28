@@ -26,6 +26,7 @@ import (
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
 	"github.com/uber/submitqueue/extension/counter"
+	"github.com/uber/submitqueue/extension/queueconfig"
 	"github.com/uber/submitqueue/extension/storage"
 	pb "github.com/uber/submitqueue/gateway/protopb"
 	"go.uber.org/zap"
@@ -40,24 +41,47 @@ func IsInvalidRequest(err error) bool {
 	return errors.Is(err, ErrInvalidRequest)
 }
 
+// UnrecognizedQueueError indicates the request named a queue that is not
+// present in the queue configuration store. It carries the queue name so
+// the gRPC layer can populate pb.UnrecognizedQueueError. Returned wrapped
+// with errs.NewUserError; should be mapped to codes.InvalidArgument with
+// a pb.UnrecognizedQueueError detail at the gRPC layer.
+type UnrecognizedQueueError struct {
+	Queue string
+}
+
+// Error implements the error interface.
+func (e *UnrecognizedQueueError) Error() string {
+	return fmt.Sprintf("unrecognized queue %q", e.Queue)
+}
+
+// IsUnrecognizedQueue returns true if any error in the chain is an
+// *UnrecognizedQueueError.
+func IsUnrecognizedQueue(err error) bool {
+	var target *UnrecognizedQueueError
+	return errors.As(err, &target)
+}
+
 // LandController handles land business logic for the gateway
 type LandController struct {
 	logger          *zap.SugaredLogger
 	metricsScope    tally.Scope
 	counter         counter.Counter
 	requestLogStore storage.RequestLogStore
+	queueConfigs    queueconfig.Store
 	registry        consumer.TopicRegistry
 }
 
 // NewLandController creates a new instance of the gateway land controller.
 // The controller publishes land requests to the topic registered under
 // consumer.TopicKeyStart in the registry.
-func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter counter.Counter, requestLogStore storage.RequestLogStore, registry consumer.TopicRegistry) *LandController {
+func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter counter.Counter, requestLogStore storage.RequestLogStore, queueConfigs queueconfig.Store, registry consumer.TopicRegistry) *LandController {
 	return &LandController{
 		logger:          logger,
 		metricsScope:    scope,
 		counter:         counter,
 		requestLogStore: requestLogStore,
+		queueConfigs:    queueConfigs,
 		registry:        registry,
 	}
 }
@@ -83,8 +107,13 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.Lan
 		URIs: req.Change.GetUris(),
 	}
 
-	// TODO: validate that queue is configured. Return error if not.
 	queue := req.Queue
+	if _, err := c.queueConfigs.Get(ctx, queue); err != nil {
+		if errors.Is(err, queueconfig.ErrNotFound) {
+			return nil, errs.NewUserError(&UnrecognizedQueueError{Queue: queue})
+		}
+		return nil, fmt.Errorf("LandController failed to look up queue %q: %w", queue, err)
+	}
 
 	// TODO: pass default queue land strategy to resolver function to process a default.
 	strategy, err := resolveRequestLandStrategy(req.Strategy)

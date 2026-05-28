@@ -31,6 +31,7 @@ import (
 	"github.com/uber/submitqueue/core/consumer"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
+	yamlqueueconfig "github.com/uber/submitqueue/extension/queueconfig/yaml"
 	mysqlstorage "github.com/uber/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/gateway/controller"
 	pb "github.com/uber/submitqueue/gateway/protopb"
@@ -175,9 +176,20 @@ func run() error {
 	// Initialize request log store from shared app database connection
 	requestLogStore := mysqlstorage.NewRequestLogStore(appDB, scope.SubScope("request_log_store"))
 
+	// Load queue configurations from YAML. Path is required so the gateway
+	// can reject requests for unknown queues at the edge.
+	queueConfigPath := os.Getenv("QUEUE_CONFIG_PATH")
+	if queueConfigPath == "" {
+		return fmt.Errorf("QUEUE_CONFIG_PATH environment variable is required")
+	}
+	queueConfigs, err := yamlqueueconfig.NewStore(queueConfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to load queue configs: %w", err)
+	}
+
 	// Create controllers and wrap them for gRPC
 	pingController := controller.NewPingController(logger, scope)
-	landController := controller.NewLandController(logger.Sugar(), scope, cnt, requestLogStore, registry)
+	landController := controller.NewLandController(logger.Sugar(), scope, cnt, requestLogStore, queueConfigs, registry)
 	gatewayServer := &GatewayServer{
 		pingController: pingController,
 		landController: landController,

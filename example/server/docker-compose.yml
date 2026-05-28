@@ -53,6 +53,8 @@ services:
       - MYSQL_DSN=root:root@tcp(mysql-app:3306)/submitqueue?parseTime=true
       # Queue infrastructure connection (separate database)
       - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
+      # Path to YAML queue configuration baked into the image
+      - QUEUE_CONFIG_PATH=/root/queues.yaml
     depends_on:
       mysql-app:
         condition: service_healthy

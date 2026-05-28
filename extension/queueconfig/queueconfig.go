@@ -14,6 +14,8 @@
 
 package queueconfig
 
+//go:generate mockgen -source=queueconfig.go -destination=mock/queueconfig_mock.go -package=mock
+
 import (
 	"context"
 	"errors"

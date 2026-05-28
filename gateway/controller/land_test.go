@@ -23,10 +23,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
 	countermock "github.com/uber/submitqueue/extension/counter/mock"
 	queuemock "github.com/uber/submitqueue/extension/queue/mock"
+	"github.com/uber/submitqueue/extension/queueconfig"
+	qcmock "github.com/uber/submitqueue/extension/queueconfig/mock"
 	storagemock "github.com/uber/submitqueue/extension/storage/mock"
 	pb "github.com/uber/submitqueue/gateway/protopb"
 	"go.uber.org/mock/gomock"
@@ -65,11 +68,19 @@ func noopRequestLogStore(ctrl *gomock.Controller) *storagemock.MockRequestLogSto
 	return s
 }
 
+// noopQueueConfigStore returns a mock queueconfig.Store that always reports
+// the queue as configured.
+func noopQueueConfigStore(ctrl *gomock.Controller) *qcmock.MockStore {
+	s := qcmock.NewMockStore(ctrl)
+	s.EXPECT().Get(gomock.Any(), gomock.Any()).Return(entity.QueueConfig{}, nil).AnyTimes()
+	return s
+}
+
 func TestNewLandController(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	cnt := countermock.NewMockCounter(ctrl)
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), noopQueueConfigStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
 	require.NotNil(t, controller)
 }
 
@@ -78,7 +89,7 @@ func TestLand_ReturnsSqid(t *testing.T) {
 
 	cnt := countermock.NewMockCounter(ctrl)
 	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(1), nil)
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), noopQueueConfigStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -96,7 +107,7 @@ func TestLand_ReturnsErrorOnCounterFailure(t *testing.T) {
 
 	cnt := countermock.NewMockCounter(ctrl)
 	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(0), fmt.Errorf("counter unavailable"))
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), noopQueueConfigStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -120,7 +131,7 @@ func TestLand_CounterDomainIncludesQueue(t *testing.T) {
 			return 1, nil
 		},
 	)
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), noopQueueConfigStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -137,7 +148,7 @@ func TestLand_ReturnsErrorOnEmptyQueue(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	cnt := countermock.NewMockCounter(ctrl)
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), noopQueueConfigStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -154,7 +165,7 @@ func TestLand_ReturnsErrorOnEmptyChangeUri(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	cnt := countermock.NewMockCounter(ctrl)
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), noopQueueConfigStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -171,7 +182,7 @@ func TestLand_ReturnsErrorOnNilChange(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	cnt := countermock.NewMockCounter(ctrl)
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), noopQueueConfigStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -182,6 +193,53 @@ func TestLand_ReturnsErrorOnNilChange(t *testing.T) {
 
 	require.Error(t, err)
 	assert.True(t, IsInvalidRequest(err))
+}
+
+func TestLand_ReturnsUnrecognizedQueueWhenStoreReportsNotFound(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	cnt := countermock.NewMockCounter(ctrl)
+	qcs := qcmock.NewMockStore(ctrl)
+	qcs.EXPECT().Get(gomock.Any(), "missing-queue").Return(entity.QueueConfig{}, queueconfig.ErrNotFound)
+
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), qcs, newTestRegistryWithNoopPublisher(t, ctrl))
+	ctx := context.Background()
+
+	req := &pb.LandRequest{
+		Queue:  "missing-queue",
+		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
+	}
+	_, err := controller.Land(ctx, req)
+
+	require.Error(t, err)
+	assert.True(t, IsUnrecognizedQueue(err))
+	assert.True(t, errs.IsUserError(err))
+	assert.False(t, errs.IsRetryable(err))
+
+	var typed *UnrecognizedQueueError
+	require.ErrorAs(t, err, &typed)
+	assert.Equal(t, "missing-queue", typed.Queue)
+}
+
+func TestLand_PropagatesQueueConfigStoreError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	cnt := countermock.NewMockCounter(ctrl)
+	qcs := qcmock.NewMockStore(ctrl)
+	qcs.EXPECT().Get(gomock.Any(), "test-queue").Return(entity.QueueConfig{}, fmt.Errorf("config backend down"))
+
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), qcs, newTestRegistryWithNoopPublisher(t, ctrl))
+	ctx := context.Background()
+
+	req := &pb.LandRequest{
+		Queue:  "test-queue",
+		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
+	}
+	_, err := controller.Land(ctx, req)
+
+	require.Error(t, err)
+	assert.False(t, IsUnrecognizedQueue(err))
+	assert.False(t, IsInvalidRequest(err))
 }
 
 func TestLand_PublishesToQueue(t *testing.T) {
@@ -202,7 +260,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 		},
 	)
 
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), registry)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), noopQueueConfigStore(ctrl), registry)
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -238,7 +296,7 @@ func TestLand_ContinuesWhenPublishFails(t *testing.T) {
 	registry, publisher := newTestRegistry(t, ctrl)
 	publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("queue unavailable"))
 
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), registry)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopRequestLogStore(ctrl), noopQueueConfigStore(ctrl), registry)
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
