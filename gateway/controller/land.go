@@ -42,10 +42,7 @@ func IsInvalidRequest(err error) bool {
 }
 
 // UnrecognizedQueueError indicates the request named a queue that is not
-// present in the queue configuration store. It carries the queue name so
-// the gRPC layer can populate pb.UnrecognizedQueueError. Returned wrapped
-// with errs.NewUserError; should be mapped to codes.InvalidArgument with
-// a pb.UnrecognizedQueueError detail at the gRPC layer.
+// present in the queue configuration store.
 type UnrecognizedQueueError struct {
 	Queue string
 }
