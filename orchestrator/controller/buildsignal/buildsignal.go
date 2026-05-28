@@ -65,7 +65,9 @@ func NewController(
 // Deserializes the build and publishes a batch result to the speculate topic.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := metrics.Begin(c.metricsScope, "process")
+	const opName = "process"
+
+	op := metrics.Begin(c.metricsScope, opName)
 	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
@@ -73,7 +75,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// Deserialize build entity
 	build, err := entity.BuildFromBytes(msg.Payload)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
 		return fmt.Errorf("failed to deserialize build: %w", err)
 	}
@@ -93,13 +95,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// Fetch batch from storage to get the partition key (queue)
 	batch, err := c.store.GetBatchStore().Get(ctx, build.BatchID)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to get batch %s: %w", build.BatchID, err)
 	}
 
 	// Publish batch to speculate topic
 	if err := c.publish(ctx, consumer.TopicKeySpeculate, batch.ID, batch.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}
 

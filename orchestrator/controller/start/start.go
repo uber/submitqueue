@@ -75,14 +75,16 @@ func NewController(
 // Persists the request, claims its URIs in the change store, and publishes to validate.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := metrics.Begin(c.metricsScope, "process")
+	const opName = "process"
+
+	op := metrics.Begin(c.metricsScope, opName)
 	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
 	landRequest, err := entity.LandRequestFromBytes(msg.Payload)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
 		return fmt.Errorf("failed to deserialize land request: %w", err)
 	}
@@ -111,7 +113,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// Persist request to storage. ErrAlreadyExists means a queue redelivery of the same
 	// request_id (an at-least-once retry of THIS message), not a cross-request collision.
 	if err := c.store.GetRequestStore().Create(ctx, request); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
-		metrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
@@ -120,19 +122,19 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// collide on insert; the validate controller surfaces it via GetByURI + a
 	// liveness check against the request store.
 	if err := c.claimURIs(ctx, request); err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "change_store_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "change_store_errors", 1)
 		return fmt.Errorf("failed to claim URIs for request %s: %w", request.ID, err)
 	}
 
 	// Record the "new" status in the request log.
 	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusStarted, request.Version, "", nil)
 	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID); err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "request_log_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
 		return fmt.Errorf("failed to publish request log: %w", err)
 	}
 
 	if err := c.publish(ctx, consumer.TopicKeyValidate, request.ID, request.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to validate: %w", err)
 	}
 

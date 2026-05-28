@@ -73,7 +73,9 @@ func NewController(
 // Deserializes the request, groups into batch, and publishes to the score topic.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := metrics.Begin(c.metricsScope, "process")
+	const opName = "process"
+
+	op := metrics.Begin(c.metricsScope, opName)
 	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
@@ -81,14 +83,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// Deserialize request ID from payload
 	rid, err := entity.RequestIDFromBytes(msg.Payload)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		return fmt.Errorf("failed to deserialize request ID: %w", err)
 	}
 
 	// Fetch request from storage
 	request, err := c.store.GetRequestStore().Get(ctx, rid.ID)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to get request %s: %w", rid.ID, err)
 	}
 
@@ -106,7 +108,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// Generate a globally unique batch ID.
 	seq, err := c.counter.Next(ctx, "batch/"+request.Queue)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "counter_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "counter_errors", 1)
 		return fmt.Errorf("failed to generate batch ID for queue=%s: %w", request.Queue, err)
 	}
 
@@ -127,7 +129,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		entity.BatchStateMerging,
 	})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "batch_store_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
 		return fmt.Errorf("failed to get active batches for queue=%s: %w", request.Queue, err)
 	}
 
@@ -136,7 +138,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// apply; the dependency graph only tracks the relation.
 	conflicts, err := c.analyzer.Analyze(ctx, batch, activeBatches)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "conflict_analyzer_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "conflict_analyzer_errors", 1)
 		return fmt.Errorf("failed to analyze conflicts for batchID=%s: %w", batch.ID, err)
 	}
 
@@ -157,7 +159,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	for _, depID := range conflictingIDs {
 		existing, err := c.store.GetBatchDependentStore().Get(ctx, depID)
 		if err != nil {
-			metrics.NamedCounter(c.metricsScope, "process", "batch_dependent_store_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1)
 			return fmt.Errorf("failed to get batch dependent for batchID=%s: %w", depID, err)
 		}
 
@@ -165,7 +167,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 		newVersion := existing.Version + 1
 		if err := c.store.GetBatchDependentStore().UpdateDependents(ctx, depID, existing.Version, newVersion, dependents); err != nil {
-			metrics.NamedCounter(c.metricsScope, "process", "batch_dependent_store_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1)
 			return fmt.Errorf("failed to update batch dependent index for existing batchID=%s and new batchID=%s: %w", depID, batch.ID, err)
 		}
 	}
@@ -178,7 +180,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	if err := c.store.GetBatchDependentStore().Create(ctx, bd); err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "batch_dependent_store_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1)
 		return fmt.Errorf("failed to create batch dependent index for new batchID=%s: %w", batch.ID, err)
 	}
 
@@ -186,7 +188,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// This is the final operation that concludes the batch creation process. If it fails, BatchDependents will be pointing to a batch id that does not exist.
 	// We do not reuse batch ids, a retry of this operation will create a new batch with a new ID. The downstream logic that operates on BatchDependent should be able to handle stale entries.
 	if err := c.store.GetBatchStore().Create(ctx, batch); err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "batch_store_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
 		return fmt.Errorf("failed to create batch in batch store: %w", err)
 	}
 
@@ -201,7 +203,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// If it fails and the controller retries, a new batch will be created with the new batch ID but the same request ID.
 	// The downstream logic should be able to handle stale entries by looking at the state of the batch.
 	if err := c.publish(ctx, consumer.TopicKeyScore, batch.ID, batch.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish batch ID to score topic: %w", err)
 	}
 

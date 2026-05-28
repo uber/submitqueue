@@ -62,7 +62,9 @@ func NewMergeChecker(params Params) mergechecker.MergeChecker {
 
 // Check assesses whether a change can merge cleanly using the GitHub GraphQL API.
 func (c *mergeChecker) Check(ctx context.Context, queue string, change entity.Change) (result mergechecker.Result, retErr error) {
-	op := metrics.Begin(c.metricsScope, "check")
+	const opName = "check"
+
+	op := metrics.Begin(c.metricsScope, opName)
 	defer func() { op.Complete(retErr) }()
 
 	// Parse all change IDs
@@ -71,7 +73,7 @@ func (c *mergeChecker) Check(ctx context.Context, queue string, change entity.Ch
 	for _, rawID := range change.URIs {
 		cid, err := entitygithub.ParseChangeID(rawID)
 		if err != nil {
-			metrics.NamedCounter(c.metricsScope, "check", "parse_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "parse_errors", 1)
 			return result, fmt.Errorf("failed to parse change ID %q: %w", rawID, err)
 		}
 		changeIDs = append(changeIDs, cid)
@@ -80,26 +82,26 @@ func (c *mergeChecker) Check(ctx context.Context, queue string, change entity.Ch
 	// Fetch PR info from GitHub GraphQL API
 	prInfoMap, err := c.fetchPRInfo(ctx, changeIDs)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "check", "graphql_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "graphql_errors", 1)
 		return result, fmt.Errorf("failed to fetch PR info: %w", err)
 	}
 
 	// Validate PR mergeability
 	mergeable, reason, err := validatePRs(changeIDs, prInfoMap)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "check", "validation_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "validation_errors", 1)
 		return result, err
 	}
 
 	if !mergeable {
-		metrics.NamedCounter(c.metricsScope, "check", "not_mergeable", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "not_mergeable", 1)
 		c.logger.Infow("change not mergeable",
 			"queue", queue,
 			"reason", reason,
 			"change_uris", change.URIs,
 		)
 	} else {
-		metrics.NamedCounter(c.metricsScope, "check", "mergeable", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "mergeable", 1)
 	}
 
 	result.Mergeable = mergeable

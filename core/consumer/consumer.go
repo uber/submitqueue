@@ -330,8 +330,10 @@ func (m *consumer) processPartition(ctx context.Context, controller Controller, 
 
 // processDelivery calls the controller and performs ack/nack based on the result.
 func (m *consumer) processDelivery(ctx context.Context, controller Controller, delivery queue.Delivery, controllerScope tally.Scope) {
+	const opName = "process"
+
 	start := time.Now()
-	metrics.NamedCounter(controllerScope, "process", "messages_received", 1)
+	metrics.NamedCounter(controllerScope, opName, "messages_received", 1)
 
 	msg := delivery.Message()
 	topicKey := controller.TopicKey()
@@ -365,7 +367,7 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 		}
 	}
 
-	metrics.NamedTimer(controllerScope, "process", "controller_latency", elapsed, metrics.NewTag("success", successTag))
+	metrics.NamedTimer(controllerScope, opName, "controller_latency", elapsed, metrics.NewTag("success", successTag))
 
 	if err != nil {
 		// Check if the error is non-retryable (poison pill message)
@@ -380,7 +382,7 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 				"elapsed_ms", elapsed.Milliseconds(),
 			)
 
-			metrics.NamedCounter(controllerScope, "process", "non_retryable_errors", 1)
+			metrics.NamedCounter(controllerScope, opName, "non_retryable_errors", 1)
 
 			// Reject moves to DLQ (or acks if DLQ disabled)
 			if rejectErr := delivery.Reject(ctx, err.Error()); rejectErr != nil {
@@ -390,7 +392,7 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 					"message_id", msg.ID,
 					"error", rejectErr,
 				)
-				metrics.NamedCounter(controllerScope, "process", "reject_errors", 1)
+				metrics.NamedCounter(controllerScope, opName, "reject_errors", 1)
 			}
 			return
 		}
@@ -412,7 +414,7 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 			"elapsed_ms", elapsed.Milliseconds(),
 		)
 
-		metrics.NamedCounter(controllerScope, "process", "controller_errors", 1)
+		metrics.NamedCounter(controllerScope, opName, "controller_errors", 1)
 
 		// Nack with no delay - let visibility timeout handle retry delay
 		nackStart := time.Now()
@@ -423,10 +425,10 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 				"message_id", msg.ID,
 				"error", nackErr,
 			)
-			metrics.NamedCounter(controllerScope, "process", "nack_errors", 1)
+			metrics.NamedCounter(controllerScope, opName, "nack_errors", 1)
 		} else {
-			metrics.NamedCounter(controllerScope, "process", "nack_count", 1)
-			metrics.NamedTimer(controllerScope, "process", "ack_nack_latency", time.Since(nackStart),
+			metrics.NamedCounter(controllerScope, opName, "nack_count", 1)
+			metrics.NamedTimer(controllerScope, opName, "ack_nack_latency", time.Since(nackStart),
 				metrics.NewTag("operation", "nack"),
 				metrics.NewTag("success", "true"),
 			)
@@ -443,17 +445,17 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 			"message_id", msg.ID,
 			"error", ackErr,
 		)
-		metrics.NamedCounter(controllerScope, "process", "ack_errors", 1)
-		metrics.NamedTimer(controllerScope, "process", "ack_nack_latency", time.Since(ackStart),
+		metrics.NamedCounter(controllerScope, opName, "ack_errors", 1)
+		metrics.NamedTimer(controllerScope, opName, "ack_nack_latency", time.Since(ackStart),
 			metrics.NewTag("operation", "ack"),
 			metrics.NewTag("success", "false"),
 		)
 		return
 	}
 
-	metrics.NamedCounter(controllerScope, "process", "messages_processed", 1)
-	metrics.NamedCounter(controllerScope, "process", "ack_count", 1)
-	metrics.NamedTimer(controllerScope, "process", "ack_nack_latency", time.Since(ackStart),
+	metrics.NamedCounter(controllerScope, opName, "messages_processed", 1)
+	metrics.NamedCounter(controllerScope, opName, "ack_count", 1)
+	metrics.NamedTimer(controllerScope, opName, "ack_nack_latency", time.Since(ackStart),
 		metrics.NewTag("operation", "ack"),
 		metrics.NewTag("success", "true"),
 	)

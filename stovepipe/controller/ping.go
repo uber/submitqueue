@@ -41,7 +41,9 @@ func NewPingController(logger *zap.Logger, scope tally.Scope) *PingController {
 
 // Ping handles the ping request and returns a response
 func (c *PingController) Ping(ctx context.Context, req *pb.PingRequest) (resp *pb.PingResponse, retErr error) {
-	op := metrics.Begin(c.metricsScope, "ping")
+	const opName = "ping"
+
+	op := metrics.Begin(c.metricsScope, opName)
 	defer func() { op.Complete(retErr) }()
 
 	message := "pong!"
@@ -49,7 +51,7 @@ func (c *PingController) Ping(ctx context.Context, req *pb.PingRequest) (resp *p
 	if req.Message != "" {
 		message = "echo: " + req.Message
 		isEcho = true
-		metrics.NamedCounter(c.metricsScope, "ping", "echo_requests", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "echo_requests", 1)
 	}
 
 	hostname, _ := os.Hostname()

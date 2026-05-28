@@ -65,7 +65,9 @@ func NewController(
 // Deserializes the batch, triggers a build, and publishes a build entity to the build signal topic.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := metrics.Begin(c.metricsScope, "process")
+	const opName = "process"
+
+	op := metrics.Begin(c.metricsScope, opName)
 	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
@@ -73,14 +75,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// Deserialize batch ID from payload
 	bid, err := entity.BatchIDFromBytes(msg.Payload)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		return fmt.Errorf("failed to deserialize batch ID: %w", err)
 	}
 
 	// Fetch batch from storage
 	batch, err := c.store.GetBatchStore().Get(ctx, bid.ID)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
 	}
 
@@ -105,7 +107,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	// Publish build to build signal topic
 	if err := c.publish(ctx, consumer.TopicKeyBuildSignal, build); err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to buildsignal: %w", err)
 	}
 

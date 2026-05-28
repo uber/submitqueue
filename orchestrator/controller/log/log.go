@@ -61,7 +61,9 @@ func NewController(
 // Deserializes the request log entry and persists it to storage.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := metrics.Begin(c.metricsScope, "process")
+	const opName = "process"
+
+	op := metrics.Begin(c.metricsScope, opName)
 	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
@@ -69,7 +71,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// Deserialize request log entry
 	logEntry, err := entity.RequestLogFromBytes(msg.Payload)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
 		return fmt.Errorf("failed to deserialize request log: %w", err)
 	}
@@ -83,7 +85,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	// Persist request log to storage
 	if err := c.store.GetRequestLogStore().Insert(ctx, logEntry); err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to insert request log: %w", err)
 	}
 

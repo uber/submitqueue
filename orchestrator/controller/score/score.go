@@ -73,7 +73,9 @@ func NewController(
 // and publishes to the speculate topic.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := metrics.Begin(c.metricsScope, "process")
+	const opName = "process"
+
+	op := metrics.Begin(c.metricsScope, opName)
 	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
@@ -81,14 +83,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// Deserialize batch ID from payload
 	bid, err := entity.BatchIDFromBytes(msg.Payload)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		return fmt.Errorf("failed to deserialize batch ID: %w", err)
 	}
 
 	// Fetch batch from storage
 	batch, err := c.store.GetBatchStore().Get(ctx, bid.ID)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
 	}
 
@@ -104,14 +106,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// Score each request's change and take the minimum (worst-case) as the batch score
 	batchScore, err := c.scoreBatch(ctx, batch)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "scorer_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "scorer_errors", 1)
 		return fmt.Errorf("failed to score batch %s: %w", batch.ID, err)
 	}
 
 	// Atomically update score and state to "scored" in the database
 	newVersion := batch.Version + 1
 	if err := c.store.GetBatchStore().UpdateScoreAndState(ctx, batch.ID, batch.Version, newVersion, batchScore, entity.BatchStateScored); err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to update score for batch %s: %w", batch.ID, err)
 	}
 	batch.Version = newVersion
@@ -126,13 +128,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"batch_id": batch.ID,
 		"score":    fmt.Sprintf("%.4f", batchScore),
 	}); err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "request_log_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
 		return fmt.Errorf("failed to publish request logs for batch %s: %w", batch.ID, err)
 	}
 
 	// Publish to speculate topic
 	if err := c.publish(ctx, consumer.TopicKeySpeculate, batch.ID, batch.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}
 

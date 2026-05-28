@@ -64,7 +64,9 @@ func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter cou
 
 // Land handles the land request and returns a response
 func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (resp *pb.LandResponse, retErr error) {
-	op := metrics.Begin(c.metricsScope, "land")
+	const opName = "land"
+
+	op := metrics.Begin(c.metricsScope, opName)
 	defer func() { op.Complete(retErr) }()
 
 	// Validate required fields.
@@ -127,7 +129,7 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (resp *p
 		"sqid", landRequest.ID,
 		"topic_key", consumer.TopicKeyStart,
 	)
-	metrics.NamedCounter(c.metricsScope, "land", "publish_success", 1)
+	metrics.NamedCounter(c.metricsScope, opName, "publish_success", 1)
 
 	return &pb.LandResponse{
 		Sqid: landRequest.ID,
