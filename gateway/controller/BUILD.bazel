@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "land.go",
         "ping.go",
+        "status.go",
     ],
     importpath = "github.com/uber/submitqueue/gateway/controller",
     visibility = ["//visibility:public"],
@@ -12,6 +13,7 @@ go_library(
         "//core/consumer",
         "//core/errs",
         "//core/metrics",
+        "//core/request",
         "//entity",
         "//entity/queue",
         "//extension/counter",
@@ -28,6 +30,7 @@ go_test(
     srcs = [
         "land_test.go",
         "ping_test.go",
+        "status_test.go",
     ],
     embed = [":controller"],
     deps = [
@@ -39,6 +42,7 @@ go_test(
         "//extension/queue/mock",
         "//extension/queueconfig",
         "//extension/queueconfig/mock",
+        "//extension/storage",
         "//extension/storage/mock",
         "//gateway/protopb",
         "@com_github_stretchr_testify//assert",
