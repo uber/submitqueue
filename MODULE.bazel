@@ -1,6 +1,17 @@
+# Listed first so its protoc toolchain wins resolution over the protobuf module's,
+# which is pulled in transitively by rules_go/rules_proto.
+bazel_dep(name = "toolchains_protoc", version = "0.6.1")
 bazel_dep(name = "rules_go", version = "0.57.0")
 bazel_dep(name = "gazelle", version = "0.45.0")
 bazel_dep(name = "rules_proto", version = "7.1.0")
+
+# Use a prebuilt protoc binary instead of compiling protoc (and its abseil/upb
+# dependencies) from source on every cold build. Requires
+# --incompatible_enable_proto_toolchain_resolution (set in .bazelrc).
+protoc = use_extension("@toolchains_protoc//protoc:extensions.bzl", "protoc")
+use_repo(protoc, "toolchains_protoc_hub")
+
+register_toolchains("@toolchains_protoc_hub//:all")
 
 GO_VERSION = "1.24.5"
 

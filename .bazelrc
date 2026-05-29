@@ -1,2 +1,6 @@
 common --disk_cache=~/.cache/bazel-disk-cache
 common --repository_cache=~/.cache/bazel-repo-cache
+
+# Resolve protoc from a registered toolchain (toolchains_protoc provides a
+# prebuilt binary) instead of compiling protoc from source. Introduced in Bazel 7.
+common --incompatible_enable_proto_toolchain_resolution
