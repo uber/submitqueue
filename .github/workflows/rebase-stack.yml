@@ -57,10 +57,16 @@ jobs:
         with:
           # Fetch full history so rebase --onto works correctly.
           fetch-depth: 0
+          # Use a personal access token (stored as STACK_REBASE_TOKEN) so the
+          # force-push below is attributed to a user and triggers downstream
+          # workflows (CI). Pushes authenticated with the default GITHUB_TOKEN
+          # are intentionally ignored by GitHub's workflow trigger to prevent
+          # recursive runs, which would leave rebased PRs without a CI signal.
+          token: ${{ secrets.STACK_REBASE_TOKEN }}
 
       - name: Rebase stacked PRs
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.STACK_REBASE_TOKEN }}
           MERGED_HEAD: ${{ github.event.pull_request.head.ref }}
           MERGED_BASE: ${{ github.event.pull_request.base.ref }}
           MERGED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -197,13 +203,6 @@ jobs:
 
                 return 1
               fi
-
-              # Pushes made with GITHUB_TOKEN don't trigger other workflows
-              # (GitHub's anti-recursion protection). Explicitly request a
-              # check suite so CI runs on the rebased branch.
-              echo "    requesting check suite for CI"
-              gh api "repos/${GITHUB_REPOSITORY}/check-suites" \
-                -X POST -f "head_sha=${new_child_tip}" --silent || true
 
               # Point the PR at the correct base branch in GitHub.
               gh pr edit "$pr_number" --base "$new_pr_base"
