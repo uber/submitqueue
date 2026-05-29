@@ -23,6 +23,7 @@ import (
 	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
+	"github.com/uber/submitqueue/extension/build"
 	"github.com/uber/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
@@ -34,6 +35,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	store         storage.Storage
+	buildManager  build.BuildManager
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -47,6 +49,7 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	store storage.Storage,
+	buildManager build.BuildManager,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -55,6 +58,7 @@ func NewController(
 		logger:        logger.Named("build_controller"),
 		metricsScope:  scope.SubScope("build_controller"),
 		store:         store,
+		buildManager:  buildManager,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -95,14 +99,31 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"partition_key", msg.PartitionKey,
 	)
 
-	// TODO: Add build logic
-	// - Trigger CI build
-	// - Track build status
+	// Assemble the changes to build from the batch's requests.
+	changes := make([]entity.BuildChange, 0, len(batch.Contains))
+	for _, reqID := range batch.Contains {
+		req, err := c.store.GetRequestStore().Get(ctx, reqID)
+		if err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return fmt.Errorf("failed to get request %s for batch %s: %w", reqID, batch.ID, err)
+		}
+		changes = append(changes, entity.BuildChange{
+			Change: req.Change,
+			Action: entity.ChangeActionValidate,
+		})
+	}
+
+	// Trigger the build with the configured build manager.
+	buildID, status, err := c.buildManager.Trigger(ctx, batch.Queue, changes)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "trigger_errors", 1)
+		return fmt.Errorf("failed to trigger build for batch %s: %w", batch.ID, err)
+	}
 
 	build := entity.Build{
-		ID:      batch.ID,
+		ID:      buildID,
 		BatchID: batch.ID,
-		Status:  entity.BuildStatusAccepted,
+		Status:  status,
 	}
 
 	// Publish build to build signal topic
@@ -114,6 +135,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	c.logger.Infow("published build to buildsignal",
 		"batch_id", batch.ID,
 		"build_id", build.ID,
+		"status", string(build.Status),
 		"topic_key", consumer.TopicKeyBuildSignal,
 	)
 

@@ -26,6 +26,9 @@ import (
 	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/entity/queue"
+	"github.com/uber/submitqueue/extension/build"
+	buildmock "github.com/uber/submitqueue/extension/build/mock"
+	buildnoop "github.com/uber/submitqueue/extension/build/noop"
 	queuemock "github.com/uber/submitqueue/extension/queue/mock"
 	storagemock "github.com/uber/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -59,8 +62,9 @@ func newMockStorage(ctrl *gomock.Controller, batch entity.Batch) *storagemock.Mo
 	return store
 }
 
-// newTestController creates a controller with test dependencies.
-func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock.MockStorage, publishErr error) *Controller {
+// newTestController creates a controller with test dependencies. bm is the
+// build manager to inject; pass buildnoop.New() for the pass-through default.
+func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock.MockStorage, bm build.BuildManager, publishErr error) *Controller {
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
 
@@ -79,14 +83,14 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, store, registry, consumer.TopicKeyBuild, "orchestrator-build")
+	return NewController(logger, scope, store, bm, registry, consumer.TopicKeyBuild, "orchestrator-build")
 }
 
 func TestNewController(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	batch := testBatch()
 	store := newMockStorage(ctrl, batch)
-	controller := newTestController(t, ctrl, store, nil)
+	controller := newTestController(t, ctrl, store, buildnoop.New(), nil)
 
 	require.NotNil(t, controller)
 	assert.Equal(t, consumer.TopicKeyBuild, controller.TopicKey())
@@ -99,7 +103,7 @@ func TestController_Process_Success(t *testing.T) {
 
 	batch := testBatch()
 	store := newMockStorage(ctrl, batch)
-	controller := newTestController(t, ctrl, store, nil)
+	controller := newTestController(t, ctrl, store, buildnoop.New(), nil)
 
 	msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -110,6 +114,97 @@ func TestController_Process_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestController_Process_TriggersBuildWithChanges verifies the controller
+// assembles one BuildChange per request in the batch, triggers the build, and
+// publishes a Build carrying the manager's returned ID and status.
+func TestController_Process_TriggersBuildWithChanges(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	batch := entity.Batch{
+		ID:       "test-queue/batch/1",
+		Queue:    "test-queue",
+		State:    entity.BatchStateCreated,
+		Version:  1,
+		Contains: []string{"test-queue/1", "test-queue/2"},
+	}
+	req1 := entity.Request{ID: "test-queue/1", Change: entity.Change{URIs: []string{"github://o/r/pull/1/aaa"}}}
+	req2 := entity.Request{ID: "test-queue/2", Change: entity.Change{URIs: []string{"github://o/r/pull/2/bbb"}}}
+
+	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+	mockBatchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+	mockRequestStore := storagemock.NewMockRequestStore(ctrl)
+	mockRequestStore.EXPECT().Get(gomock.Any(), req1.ID).Return(req1, nil)
+	mockRequestStore.EXPECT().Get(gomock.Any(), req2.ID).Return(req2, nil)
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	store.EXPECT().GetRequestStore().Return(mockRequestStore).AnyTimes()
+
+	bm := buildmock.NewMockBuildManager(ctrl)
+	wantChanges := []entity.BuildChange{
+		{Change: req1.Change, Action: entity.ChangeActionValidate},
+		{Change: req2.Change, Action: entity.ChangeActionValidate},
+	}
+	bm.EXPECT().Trigger(gomock.Any(), batch.Queue, wantChanges).Return("build-xyz", entity.BuildStatusRunning, nil)
+
+	var published entity.Build
+	mockPub := queuemock.NewMockPublisher(ctrl)
+	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, msg queue.Message) error {
+			b, err := entity.BuildFromBytes(msg.Payload)
+			require.NoError(t, err)
+			published = b
+			return nil
+		},
+	)
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{{Key: consumer.TopicKeyBuildSignal, Name: "buildsignal", Queue: mockQ}},
+	)
+	require.NoError(t, err)
+
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, bm, registry, consumer.TopicKeyBuild, "orchestrator-build")
+
+	msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	require.NoError(t, controller.Process(context.Background(), delivery))
+	assert.Equal(t, "build-xyz", published.ID)
+	assert.Equal(t, batch.ID, published.BatchID)
+	assert.Equal(t, entity.BuildStatusRunning, published.Status)
+}
+
+// TestController_Process_TriggerFailure verifies a build-manager failure is
+// surfaced as an error (nack) and nothing is published.
+func TestController_Process_TriggerFailure(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	batch := testBatch()
+	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+	mockBatchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+
+	bm := buildmock.NewMockBuildManager(ctrl)
+	bm.EXPECT().Trigger(gomock.Any(), batch.Queue, gomock.Any()).
+		Return("", entity.BuildStatusUnknown, fmt.Errorf("provider down"))
+
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{{Key: consumer.TopicKeyBuildSignal, Name: "buildsignal", Queue: queuemock.NewMockQueue(ctrl)}},
+	)
+	require.NoError(t, err)
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, bm, registry, consumer.TopicKeyBuild, "orchestrator-build")
+
+	msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	require.Error(t, controller.Process(context.Background(), delivery))
+}
+
 func TestController_Process_StorageFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
@@ -118,7 +213,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
 
-	controller := newTestController(t, ctrl, store, nil)
+	controller := newTestController(t, ctrl, store, buildnoop.New(), nil)
 
 	msg := queue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1"), "test-queue", nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -135,7 +230,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 
 	batch := testBatch()
 	store := newMockStorage(ctrl, batch)
-	controller := newTestController(t, ctrl, store, fmt.Errorf("publish failed"))
+	controller := newTestController(t, ctrl, store, buildnoop.New(), fmt.Errorf("publish failed"))
 
 	msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -150,7 +245,7 @@ func TestController_InterfaceImplementation(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	batch := testBatch()
 	store := newMockStorage(ctrl, batch)
-	controller := newTestController(t, ctrl, store, nil)
+	controller := newTestController(t, ctrl, store, buildnoop.New(), nil)
 
 	var _ consumer.Controller = controller
 }

@@ -33,6 +33,8 @@ import (
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/httpclient"
 	"github.com/uber/submitqueue/entity"
+	buildext "github.com/uber/submitqueue/extension/build"
+	buildnoop "github.com/uber/submitqueue/extension/build/noop"
 	"github.com/uber/submitqueue/extension/changeprovider"
 	githubprovider "github.com/uber/submitqueue/extension/changeprovider/github"
 	"github.com/uber/submitqueue/extension/changestore"
@@ -216,8 +218,12 @@ func run() error {
 		return fmt.Errorf("failed to create pusher: %w", err)
 	}
 
+	// Create build manager. The noop manager is the pass-through default
+	// (every build immediately succeeds) until a real provider is wired in.
+	bm := buildnoop.New()
+
 	// Register controllers
-	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cp, psh, cnt, store, changeStore); err != nil {
+	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cp, psh, bm, cnt, store, changeStore); err != nil {
 		return err
 	}
 
@@ -402,7 +408,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 //                                        │        │                        │
 //                                        └────────┴────────────────────────┘
 
-func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cp changeprovider.ChangeProvider, psh pusher.Pusher, cnt counter.Counter, store storage.Storage, changeStore changestore.ChangeStore) error {
+func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cp changeprovider.ChangeProvider, psh pusher.Pusher, bm buildext.BuildManager, cnt counter.Counter, store storage.Storage, changeStore changestore.ChangeStore) error {
 	requestController := start.NewController(
 		logger,
 		scope,
@@ -488,6 +494,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		store,
+		bm,
 		registry,
 		consumer.TopicKeyBuild,
 		"orchestrator-build",
