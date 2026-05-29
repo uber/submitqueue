@@ -102,7 +102,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	build := entity.Build{
 		ID:      batch.ID,
 		BatchID: batch.ID,
-		Status:  entity.BuildStatusQueued,
+		Status:  entity.BuildStatusAccepted,
 	}
 
 	// Publish build to build signal topic

@@ -28,8 +28,8 @@ func TestBuildStatus_IsTerminal(t *testing.T) {
 		expected bool
 	}{
 		{
-			name:     "passed is terminal",
-			status:   BuildStatusPassed,
+			name:     "succeeded is terminal",
+			status:   BuildStatusSucceeded,
 			expected: true,
 		},
 		{
@@ -43,18 +43,13 @@ func TestBuildStatus_IsTerminal(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "queued is not terminal",
-			status:   BuildStatusQueued,
+			name:     "accepted is not terminal",
+			status:   BuildStatusAccepted,
 			expected: false,
 		},
 		{
 			name:     "running is not terminal",
 			status:   BuildStatusRunning,
-			expected: false,
-		},
-		{
-			name:     "blocked is not terminal",
-			status:   BuildStatusBlocked,
 			expected: false,
 		},
 		{
@@ -79,7 +74,7 @@ func TestBuild_ToBytes(t *testing.T) {
 			Base: []string{"batch-0", "batch-prev"},
 		},
 		Score:  0.85,
-		Status: BuildStatusQueued,
+		Status: BuildStatusAccepted,
 	}
 
 	data, err := build.ToBytes()
@@ -90,7 +85,7 @@ func TestBuild_ToBytes(t *testing.T) {
 	jsonStr := string(data)
 	assert.Contains(t, jsonStr, "build-1")
 	assert.Contains(t, jsonStr, "batch-1")
-	assert.Contains(t, jsonStr, "queued")
+	assert.Contains(t, jsonStr, "accepted")
 }
 
 func TestBuildFromBytes(t *testing.T) {
@@ -101,7 +96,7 @@ func TestBuildFromBytes(t *testing.T) {
 			Base: []string{"batch-5", "batch-6"},
 		},
 		Score:  0.92,
-		Status: BuildStatusRunning,
+		Status: BuildStatusAccepted,
 	}
 
 	// Serialize
@@ -146,7 +141,7 @@ func TestBuild_SerializationRoundTrip(t *testing.T) {
 		build Build
 	}{
 		{
-			name: "queued build with speculation path",
+			name: "accepted build with speculation path",
 			build: Build{
 				ID:      "build-100",
 				BatchID: "batch-50",
@@ -154,16 +149,16 @@ func TestBuild_SerializationRoundTrip(t *testing.T) {
 					Base: []string{"batch-48", "batch-49"},
 				},
 				Score:  0.75,
-				Status: BuildStatusQueued,
+				Status: BuildStatusAccepted,
 			},
 		},
 		{
-			name: "passed build with no speculation base",
+			name: "succeeded build with no speculation base",
 			build: Build{
 				ID:      "build-200",
 				BatchID: "batch-60",
 				Score:   1.0,
-				Status:  BuildStatusPassed,
+				Status:  BuildStatusSucceeded,
 			},
 		},
 		{

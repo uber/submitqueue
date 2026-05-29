@@ -16,41 +16,43 @@ package entity
 
 import "encoding/json"
 
-// BuildStatus defines the possible states of a build.
+// BuildStatus defines the possible states of a build. The set is
+// intentionally narrow: every supported build provider must be able to map
+// its native lifecycle into one of these values without leaking
+// provider-specific stages.
 type BuildStatus string
 
 const (
-	// BuildStatusUnknown is the unreachable state. It is set by default when the structure is initialized. It should never be seen in the system.
+	// BuildStatusUnknown is the unreachable zero value, set by default when
+	// the structure is initialized. It should never be seen in the system.
 	BuildStatusUnknown BuildStatus = ""
 
-	// BuildStatusQueued indicates the build has been scheduled but not yet started.
-	BuildStatusQueued BuildStatus = "queued"
+	// BuildStatusAccepted indicates the build has been accepted (or queued)
+	// by the provider but has not started executing yet.
+	BuildStatusAccepted BuildStatus = "accepted"
 
 	// BuildStatusRunning indicates the build is currently executing.
 	BuildStatusRunning BuildStatus = "running"
 
-	// BuildStatusPassed indicates the build completed successfully.
+	// BuildStatusSucceeded indicates the build completed successfully.
 	// This is a terminal state.
-	BuildStatusPassed BuildStatus = "passed"
+	BuildStatusSucceeded BuildStatus = "succeeded"
 
-	// BuildStatusFailed indicates the build completed with failures.
-	// This is a terminal state.
+	// BuildStatusFailed indicates the build did not complete successfully.
+	// This is a terminal state. Provider-initiated cancellations (timeout,
+	// resource limits, etc.) are reported as Failed, not Cancelled;
+	// Cancelled is reserved for cancellations the caller initiated itself.
 	BuildStatusFailed BuildStatus = "failed"
 
-	// BuildStatusCancelled indicates the build was cancelled before completion.
+	// BuildStatusCancelled indicates the build was cancelled by the caller.
 	// This is a terminal state.
 	BuildStatusCancelled BuildStatus = "cancelled"
-
-	// BuildStatusBlocked indicates the build is waiting for manual approval or unblocking.
-	// Some CI systems (like BuildKite) support manual approval steps.
-	BuildStatusBlocked BuildStatus = "blocked"
 )
 
-// IsTerminal returns true if the build state represents a final state (passed, failed, or cancelled).
-// Terminal states indicate the build has finished and will not change state again.
-// Note: BuildStatusBlocked is NOT terminal as blocked builds can be unblocked and continue execution.
+// IsTerminal returns true if the status represents a final state
+// (Succeeded, Failed, or Cancelled).
 func (s BuildStatus) IsTerminal() bool {
-	return s == BuildStatusPassed || s == BuildStatusFailed || s == BuildStatusCancelled
+	return s == BuildStatusSucceeded || s == BuildStatusFailed || s == BuildStatusCancelled
 }
 
 // SpeculationPathInfo represents the base and head commits of a speculation path used in a build.
@@ -88,3 +90,31 @@ func BuildFromBytes(data []byte) (Build, error) {
 	err := json.Unmarshal(data, &build)
 	return build, err
 }
+
+// ChangeAction defines the action to perform on a change submitted to the build provider.
+type ChangeAction string
+
+const (
+	// ChangeActionUnknown is the unreachable zero value, set by default when
+	// the structure is initialized. It should never be seen in the system.
+	ChangeActionUnknown ChangeAction = ""
+	// ChangeActionApply applies the change to the target branch.
+	ChangeActionApply ChangeAction = "apply"
+	// ChangeActionValidate applies the change and then validates it by
+	// running the associated test / validation suites.
+	ChangeActionValidate ChangeAction = "validate"
+)
+
+// BuildChange pairs a Change with the action the build provider should
+// perform on it. Used as input to BuildManager.Trigger.
+type BuildChange struct {
+	// Change identifies the code change to process.
+	Change Change
+	// Action specifies what the build provider should do with the change.
+	Action ChangeAction
+}
+
+// BuildMetadata carries provider-defined free-form metadata about a build
+// (e.g. build URL, duration, commit SHA). Keys and values are
+// implementation-defined; callers should not assume any particular schema.
+type BuildMetadata map[string]string
