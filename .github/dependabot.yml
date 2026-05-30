@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    # Disable scheduled version-update PRs; we only want security updates,
+    # which run independently of this limit.
+    open-pull-requests-limit: 0
+    ignore:
+      # grpc-go is pinned to v1.67.x intentionally. Do not auto-bump it,
+      # including for security advisories. Re-evaluate manually.
+      - dependency-name: "google.golang.org/grpc"

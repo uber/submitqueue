@@ -14,7 +14,7 @@ require (
 	go.uber.org/yarpc v1.81.0
 	go.uber.org/zap v1.27.1
 	golang.org/x/oauth2 v0.34.0
-	google.golang.org/grpc v1.79.3
+	google.golang.org/grpc v1.67.3
 	google.golang.org/protobuf v1.36.10
 	gopkg.in/yaml.v3 v3.0.1
 )
