@@ -8,7 +8,7 @@ Example gRPC servers and clients for running the submitqueue services locally.
 - **SubmitQueue Orchestrator** (port 8082) — coordinates the pipeline. Exposes `Ping` RPC and consumes queue messages across 9 pipeline topics.
 - **Stovepipe Gateway** (port 8083) - entry point for commit deployment verification requests. Exposes `Ping` RPC.
 
-Services use MySQL (app + queue) when run via the Docker Compose examples below. **Use Docker Compose v2** (`docker compose`, e.g. the `docker-compose-plugin` package) so `make local-*` targets can use `up --wait`. The Makefile sets `COMPOSE ?= docker compose` by default.
+Services require MySQL (app database + queue database). Docker Compose handles this automatically.
 
 ## Directory Structure
 
@@ -40,7 +40,6 @@ example/
 
 ### Docker Compose (recommended)
 
-Requires **Docker Compose v2** (`docker compose`) for `up --wait` used by `make local-*`. On Debian/Ubuntu: `sudo apt-get install -y docker-compose-plugin`, then `docker compose version`.
 
 ```bash
 # Start full SubmitQueue stack (Gateway + Orchestrator + MySQL)
@@ -55,12 +54,11 @@ make local-stovepipe-gateway-start
 make local-logs
 make local-ps
 
-# Stop
+# Stop (SubmitQueue + Stovepipe default projects)
 make local-stop
-make local-stovepipe-gateway-stop
 ```
 
-For Docker, `make build-stovepipe-gateway-linux` copies a Linux binary to `.docker-bin/stovepipe-gateway` so it does not overwrite SubmitQueue’s `.docker-bin/gateway`. Stovepipe `make local-stovepipe-gateway-start` applies **only the queue schema** on `mysql-queue` (`make local-init-stovepipe-queue-schema`); SubmitQueue storage/counter schemas on `mysql-app` are skipped until Stovepipe has its own app schema. Compose uses project name **`stovepipe`** for Stovepipe (`make STOVEPIPE_LOCAL_PROJECT=myname ...`). SubmitQueue examples use project **`submitqueue`** by default (`make SUBMITQUEUE_LOCAL_PROJECT=myname ...`). Stovepipe containers are named like `stovepipe-mysql-app-1`, not `submitqueue-*`.
+For Docker, `make build-stovepipe-gateway-linux` copies a Linux binary to `.docker-bin/stovepipe-gateway` so it does not overwrite SubmitQueue’s `.docker-bin/gateway`. Stovepipe `make local-stovepipe-gateway-start` applies **only the queue schema** on `mysql-queue` (`make local-init-stovepipe-queue-schema`); SubmitQueue storage/counter schemas on `mysql-app` are skipped until Stovepipe has its own app schema. `make local-stop` stops the SubmitQueue stack and runs `docker compose down` on the Stovepipe gateway compose file for **`STOVEPIPE_LOCAL_PROJECT`** (default `stovepipe`). SubmitQueue examples use project **`submitqueue`** by default (`make SUBMITQUEUE_LOCAL_PROJECT=myname ...`). Stovepipe containers are named like `stovepipe-mysql-app-1`, not `submitqueue-*`.
 
 ### Bazel
 

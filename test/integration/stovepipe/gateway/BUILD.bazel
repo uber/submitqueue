@@ -1,12 +1,13 @@
 load("@rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "stovepipe_test",
+    name = "gateway_test",
     srcs = ["suite_test.go"],
     data = [
         "//:MODULE.bazel",
         "//:go.mod",
         "//example/stovepipe/gateway/server:docker-compose.yml",
+        "//extension/queue/mysql/schema",
     ],
     tags = ["integration"],
     deps = [

@@ -9,14 +9,14 @@ COMPOSE_FILE = example/server/docker-compose.yml
 GATEWAY_COMPOSE_FILE = example/server/gateway/docker-compose.yml
 ORCHESTRATOR_COMPOSE_FILE = example/server/orchestrator/docker-compose.yml
 
+# Fixed project name for local manual testing (tests use unique random names)
+SUBMITQUEUE_LOCAL_PROJECT = submitqueue
+
 # Stovepipe compose files
 STOVEPIPE_GATEWAY_COMPOSE_FILE = example/stovepipe/gateway/server/docker-compose.yml
 
-# Compose project for SubmitQueue example stacks (`docker compose -p`); container prefix e.g. submitqueue-mysql-app-1.
-SUBMITQUEUE_LOCAL_PROJECT ?= submitqueue
-
-# Compose project for Stovepipe example stacks (`docker compose -p`); container prefix e.g. stovepipe-mysql-app-1.
-STOVEPIPE_LOCAL_PROJECT ?= stovepipe
+# Fixed project name for local manual testing (tests use unique random names)
+STOVEPIPE_LOCAL_PROJECT = stovepipe
 
 # yamlfmt version for YAML formatting (override with: make fmt YAMLFMT_VERSION=v0.16.0)
 YAMLFMT_VERSION ?= v0.16.0
@@ -38,7 +38,7 @@ define assert_clean
 	fi
 endef
 
-.PHONY: build build-all-linux build-gateway-linux build-orchestrator-linux build-stovepipe-gateway-linux check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-consumer integration-test-extensions integration-test-gateway integration-test-orchestrator license-fix lint lint-fmt lint-license local-clean local-gateway-start local-gateway-stop local-init-schemas local-init-stovepipe-queue-schema local-logs local-orchestrator-start local-orchestrator-stop local-ps local-restart local-start local-stop local-stovepipe-gateway-start local-stovepipe-gateway-stop mocks proto query-deps query-targets run-client-gateway run-client-orchestrator run-client-stovepipe-gateway run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
+.PHONY: build build-all-linux build-gateway-linux build-orchestrator-linux build-stovepipe-gateway-linux check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-consumer integration-test-extensions integration-test-gateway integration-test-orchestrator license-fix lint lint-fmt lint-license local-clean local-gateway-start local-gateway-stop local-init-schemas local-init-stovepipe-queue-schema local-logs local-orchestrator-start local-orchestrator-stop local-ps local-restart local-start local-stop local-stovepipe-gateway-start mocks proto query-deps query-targets run-client-gateway run-client-orchestrator run-client-stovepipe-gateway run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
 
 
 build: ## Build all services and examples
@@ -266,6 +266,7 @@ local-start: build-all-linux ## Start full stack (Gateway + Orchestrator + MySQL
 local-stop: ## Stop all services (keep data)
 	@echo "Stopping all services..."
 	@$(COMPOSE) -f $(COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
+	@$(COMPOSE) -f $(STOVEPIPE_GATEWAY_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) down
 	@echo "Services stopped. Data volumes preserved."
 
 local-stovepipe-gateway-start: build-stovepipe-gateway-linux ## Start Stovepipe gateway locally (gateway + 2 MySQL databases)
@@ -281,11 +282,6 @@ local-stovepipe-gateway-start: build-stovepipe-gateway-linux ## Start Stovepipe 
 	@echo "Stovepipe gateway gRPC port: $$(docker port $(STOVEPIPE_LOCAL_PROJECT)-stovepipe-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'unknown')"
 	@echo "MySQL App port:    $$(docker port $(STOVEPIPE_LOCAL_PROJECT)-mysql-app-1 3306 2>/dev/null | cut -d: -f2 || echo 'unknown')"
 	@echo "MySQL Queue port:  $$(docker port $(STOVEPIPE_LOCAL_PROJECT)-mysql-queue-1 3306 2>/dev/null | cut -d: -f2 || echo 'unknown')"
-
-local-stovepipe-gateway-stop: ## Stop Stovepipe gateway service
-	@echo "Stopping Stovepipe gateway services..."
-	@$(COMPOSE) -f $(STOVEPIPE_GATEWAY_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) down
-	@echo "Stovepipe gateway services stopped."
 
 mocks: ## Generate mock files using mockgen
 	@echo "Generating mocks..."

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package stovepipe
+package gateway
 
 // Stovepipe gateway integration tests
 //
@@ -25,7 +25,7 @@ package stovepipe
 // Run with:
 //   make integration-test
 // or only this package:
-//   bazel test //test/integration/stovepipe:stovepipe_test
+//   bazel test //test/integration/stovepipe/gateway:gateway_test
 
 import (
 	"context"
@@ -57,13 +57,13 @@ func (s *StovepipeGatewayIntegrationSuite) SetupSuite() {
 	s.ctx = context.Background()
 	s.log = testutil.NewTestLogger(t)
 
-	s.log.Logf("Starting Stovepipe integration test suite using compose")
+	s.log.Logf("Starting Stovepipe gateway integration test suite using compose")
 
 	repoRoot := testutil.FindRepoRoot(t)
 	t.Setenv("REPO_ROOT", repoRoot)
 
 	composeFile := filepath.Join(repoRoot, "example/stovepipe/gateway/server/docker-compose.yml")
-	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "svc-stovepipe")
+	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "svc-stovepipe-gateway")
 
 	err := s.stack.Up()
 	require.NoError(t, err, "failed to start compose stack")
@@ -80,7 +80,7 @@ func (s *StovepipeGatewayIntegrationSuite) SetupSuite() {
 }
 
 func (s *StovepipeGatewayIntegrationSuite) TearDownSuite() {
-	s.log.Logf("Tearing down Stovepipe integration test suite")
+	s.log.Logf("Tearing down Stovepipe gateway integration test suite")
 }
 
 func (s *StovepipeGatewayIntegrationSuite) TestPingAPI() {
