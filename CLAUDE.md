@@ -157,7 +157,10 @@ Generated proto files are committed. When modifying `.proto` files:
 
 ### Makefile
 
-Targets are **alphabetically sorted**. Each target has `## Description` for auto-generated help and shell completion:
+Targets are **alphabetically sorted**. Each target has `## Description` for auto-generated help and shell completion.
+
+**Docker Compose:** `COMPOSE` defaults to `docker compose` (Compose v2) so `up --wait` works in `local-*` targets. Install the [Compose plugin](https://docs.docker.com/compose/install/linux/) (e.g. `docker-compose-plugin` on Debian/Ubuntu). Override with `make COMPOSE=docker-compose ...` only if you use a legacy binary (it does not support `--wait` the same way). SubmitQueue stacks use compose project **`SUBMITQUEUE_LOCAL_PROJECT`** (default `submitqueue`); Stovepipe stacks use **`STOVEPIPE_LOCAL_PROJECT`** (default `stovepipe`). Override either with `make SUBMITQUEUE_LOCAL_PROJECT=myname ...` or `STOVEPIPE_LOCAL_PROJECT=...`.
+
 ```makefile
 integration-test: build-all-linux ## Run all integration tests (auto-builds binaries)
 	@$(BAZEL) test //test/integration/... --test_output=streamed
@@ -176,7 +179,7 @@ make check-gazelle      # Check BUILD.bazel files are up to date
 make tidy               # Run go mod tidy + bazel mod tidy
 make gazelle            # Update BUILD.bazel files
 make mocks              # Generate mock files using mockgen
-make integration-test   # Run all integration tests (Docker-based)
+make integration-test   # Run all integration tests (Docker-based; includes Stovepipe gateway)
 make e2e-test           # Run end-to-end tests
 make proto              # Regenerate proto files
 make local-start        # Start full stack with Docker Compose

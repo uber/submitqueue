@@ -3,33 +3,33 @@ load("@rules_go//proto:def.bzl", "go_proto_library")
 load("@rules_proto//proto:defs.bzl", "proto_library")
 
 proto_library(
-    name = "stovepipepb_proto",
-    srcs = ["stovepipe.proto"],
+    name = "gatewaypb_proto",
+    srcs = ["gateway.proto"],
     visibility = ["//visibility:public"],
 )
 
 # keep
 go_proto_library(
-    name = "stovepipepb_go_proto",
+    name = "gatewaypb_go_proto",
     compilers = [
         "@rules_go//proto:go_proto",
         "@rules_go//proto:go_grpc_v2",
     ],
-    importpath = "github.com/uber/submitqueue/stovepipe/proto",
-    proto = ":stovepipepb_proto",
+    importpath = "github.com/uber/submitqueue/stovepipe/gateway/proto",
+    proto = ":gatewaypb_proto",
     visibility = ["//visibility:public"],
 )
 
 go_library(
     name = "proto",
-    embed = [":stovepipepb_go_proto"],
-    importpath = "github.com/uber/submitqueue/stovepipe/proto",
+    embed = [":gatewaypb_go_proto"],
+    importpath = "github.com/uber/submitqueue/stovepipe/gateway/proto",
     visibility = ["//visibility:public"],
 )
 
 go_library(
     name = "protopb",
-    embed = [":stovepipepb_go_proto"],
-    importpath = "github.com/uber/submitqueue/stovepipe/protopb",
+    embed = [":gatewaypb_go_proto"],
+    importpath = "github.com/uber/submitqueue/stovepipe/gateway/protopb",
     visibility = ["//visibility:public"],
 )

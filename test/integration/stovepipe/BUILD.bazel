@@ -6,11 +6,11 @@ go_test(
     data = [
         "//:MODULE.bazel",
         "//:go.mod",
-        "//example/server/stovepipe:docker-compose.yml",
+        "//example/stovepipe/gateway/server:docker-compose.yml",
     ],
     tags = ["integration"],
     deps = [
-        "//stovepipe/protopb",
+        "//stovepipe/gateway/protopb",
         "//test/testutil",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

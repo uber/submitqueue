@@ -21,7 +21,7 @@ import (
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/metrics"
-	pb "github.com/uber/submitqueue/stovepipe/protopb"
+	pb "github.com/uber/submitqueue/stovepipe/gateway/protopb"
 	"go.uber.org/zap"
 )
 
@@ -64,7 +64,7 @@ func (c *PingController) Ping(ctx context.Context, req *pb.PingRequest) (resp *p
 
 	return &pb.PingResponse{
 		Message:     message,
-		ServiceName: "stovepipe",
+		ServiceName: "stovepipe-gateway",
 		Timestamp:   time.Now().Unix(),
 		Hostname:    hostname,
 	}, nil

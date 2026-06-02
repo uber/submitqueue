@@ -14,13 +14,18 @@
 
 package stovepipe
 
-// Stovepipe Integration Tests
+// Stovepipe gateway integration tests
 //
-// These tests use docker-compose from example/server/stovepipe/docker-compose.yml
-// which requires a pre-built Linux binary.
+// These tests use compose from example/stovepipe/gateway/server/docker-compose.yml
+// and require a pre-built Linux gateway binary (make integration-test runs
+// //test/integration/... and builds all Linux binaries via build-all-linux).
+// Only the queue database schema is applied (no SubmitQueue app schema until
+// Stovepipe has its own storage schema).
 //
-// Run with make target (builds binary + runs test):
-//   make integration-test-stovepipe
+// Run with:
+//   make integration-test
+// or only this package:
+//   bazel test //test/integration/stovepipe:stovepipe_test
 
 import (
 	"context"
@@ -30,68 +35,60 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	pb "github.com/uber/submitqueue/stovepipe/protopb"
+	pb "github.com/uber/submitqueue/stovepipe/gateway/protopb"
 	"github.com/uber/submitqueue/test/testutil"
 	"google.golang.org/grpc"
 )
 
-type StovepipeIntegrationSuite struct {
+type StovepipeGatewayIntegrationSuite struct {
 	suite.Suite
 	ctx    context.Context
 	log    *testutil.TestLogger
 	stack  *testutil.ComposeStack
-	client pb.SubmitQueueStovepipeClient
+	client pb.StovepipeGatewayClient
 }
 
-func TestStovepipeIntegration(t *testing.T) {
-	suite.Run(t, new(StovepipeIntegrationSuite))
+func TestStovepipeGatewayIntegration(t *testing.T) {
+	suite.Run(t, new(StovepipeGatewayIntegrationSuite))
 }
 
-func (s *StovepipeIntegrationSuite) SetupSuite() {
+func (s *StovepipeGatewayIntegrationSuite) SetupSuite() {
 	t := s.T()
 	s.ctx = context.Background()
 	s.log = testutil.NewTestLogger(t)
 
-	s.log.Logf("Starting Stovepipe integration test suite using docker-compose")
+	s.log.Logf("Starting Stovepipe integration test suite using compose")
 
-	// Set REPO_ROOT for docker-compose volume mounts and build context
 	repoRoot := testutil.FindRepoRoot(t)
 	t.Setenv("REPO_ROOT", repoRoot)
 
-	// Use docker-compose from example/server/stovepipe
-	// NOTE: Assumes Linux binary is pre-built via make target
-	composeFile := filepath.Join(repoRoot, "example/server/stovepipe/docker-compose.yml")
+	composeFile := filepath.Join(repoRoot, "example/stovepipe/gateway/server/docker-compose.yml")
 	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "svc-stovepipe")
 
-	// Start the compose stack (Stovepipe only — stateless service, no DBs)
 	err := s.stack.Up()
 	require.NoError(t, err, "failed to start compose stack")
 
-	s.log.Logf("Compose stack started successfully")
+	queueDB, err := s.stack.ConnectMySQLService("mysql-queue")
+	require.NoError(t, err, "failed to connect to queue MySQL")
 
-	// Connect to Stovepipe gRPC service
+	testutil.ApplySchema(t, s.log, queueDB, testutil.SchemaDir("extension/queue/mysql/schema"))
+
 	var conn *grpc.ClientConn
 	conn, err = s.stack.ConnectGRPC("stovepipe-service", 8080)
-	require.NoError(t, err, "failed to connect to stovepipe")
-	s.client = pb.NewSubmitQueueStovepipeClient(conn)
-
-	s.log.Logf("Stovepipe integration test suite ready")
+	require.NoError(t, err, "failed to connect to stovepipe gateway")
+	s.client = pb.NewStovepipeGatewayClient(conn)
 }
 
-func (s *StovepipeIntegrationSuite) TearDownSuite() {
+func (s *StovepipeGatewayIntegrationSuite) TearDownSuite() {
 	s.log.Logf("Tearing down Stovepipe integration test suite")
-	// Cleanup handled automatically by testutil.ComposeStack
 }
 
-// TestPingAPI tests the Stovepipe Ping API
-func (s *StovepipeIntegrationSuite) TestPingAPI() {
+func (s *StovepipeGatewayIntegrationSuite) TestPingAPI() {
 	t := s.T()
 
 	resp, err := s.client.Ping(s.ctx, &pb.PingRequest{Message: "integration test"})
 	require.NoError(t, err, "Stovepipe Ping failed")
-	assert.Equal(t, "stovepipe", resp.ServiceName)
+	assert.Equal(t, "stovepipe-gateway", resp.ServiceName)
 	assert.NotEmpty(t, resp.Message)
 	assert.NotZero(t, resp.Timestamp)
-
-	s.log.Logf("Stovepipe Ping test passed: %s", resp.Message)
 }
