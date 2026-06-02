@@ -30,7 +30,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	pb "github.com/uber/submitqueue/stovepipe/protopb"
+	pb "github.com/uber/submitqueue/stovepipe/gateway/protopb"
 	"github.com/uber/submitqueue/test/testutil"
 	"google.golang.org/grpc"
 )

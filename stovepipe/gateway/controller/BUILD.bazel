@@ -3,11 +3,11 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "controller",
     srcs = ["ping.go"],
-    importpath = "github.com/uber/submitqueue/stovepipe/controller",
+    importpath = "github.com/uber/submitqueue/stovepipe/gateway/controller",
     visibility = ["//visibility:public"],
     deps = [
         "//core/metrics",
-        "//stovepipe/protopb",
+        "//stovepipe/gateway/protopb",
         "@com_github_uber_go_tally_v4//:tally",
         "@org_uber_go_zap//:zap",
     ],
@@ -18,7 +18,7 @@ go_test(
     srcs = ["ping_test.go"],
     embed = [":controller"],
     deps = [
-        "//stovepipe/protopb",
+        "//stovepipe/gateway/protopb",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_uber_go_tally_v4//:tally",

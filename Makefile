@@ -91,7 +91,7 @@ clean-proto: ## Clean generated proto files
 	@echo "Cleaning generated proto files..."
 	@rm -rf gateway/protopb/*.pb.go
 	@rm -rf orchestrator/protopb/*.pb.go
-	@rm -rf stovepipe/protopb/*.pb.go
+	@rm -rf stovepipe/gateway/protopb/*.pb.go
 	@echo "Proto clean complete!"
 
 deps: tidy-go ## Download and tidy Go dependencies
@@ -287,10 +287,10 @@ proto: ## Generate protobuf files from .proto definitions
 	  --go-grpc_out=orchestrator/protopb --go-grpc_opt=paths=source_relative \
 	  --yarpc-go_out=orchestrator/protopb --yarpc-go_opt=paths=source_relative \
 	  --proto_path=orchestrator/proto orchestrator/proto/orchestrator.proto
-	@protoc --go_out=stovepipe/protopb --go_opt=paths=source_relative \
-	  --go-grpc_out=stovepipe/protopb --go-grpc_opt=paths=source_relative \
-	  --yarpc-go_out=stovepipe/protopb --yarpc-go_opt=paths=source_relative \
-	  --proto_path=stovepipe/proto stovepipe/proto/stovepipe.proto
+	@protoc --go_out=stovepipe/gateway/protopb --go_opt=paths=source_relative \
+	  --go-grpc_out=stovepipe/gateway/protopb --go-grpc_opt=paths=source_relative \
+	  --yarpc-go_out=stovepipe/gateway/protopb --yarpc-go_opt=paths=source_relative \
+	  --proto_path=stovepipe/gateway/proto stovepipe/gateway/proto/stovepipe.proto
 	@echo "Protobuf files generated successfully!"
 
 # Bazel query helpers

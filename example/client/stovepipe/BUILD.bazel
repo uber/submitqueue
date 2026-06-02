@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/example/client/stovepipe",
     visibility = ["//visibility:private"],
     deps = [
-        "//stovepipe/protopb",
+        "//stovepipe/gateway/protopb",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//credentials/insecure",
     ],

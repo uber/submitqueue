@@ -21,7 +21,7 @@ import (
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/metrics"
-	pb "github.com/uber/submitqueue/stovepipe/protopb"
+	pb "github.com/uber/submitqueue/stovepipe/gateway/protopb"
 	"go.uber.org/zap"
 )
 
