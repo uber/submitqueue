@@ -1,0 +1,24 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "noop",
+    srcs = ["noop.go"],
+    importpath = "github.com/uber/submitqueue/extension/buildrunner/noop",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//entity",
+        "//extension/buildrunner",
+    ],
+)
+
+go_test(
+    name = "noop_test",
+    srcs = ["noop_test.go"],
+    embed = [":noop"],
+    deps = [
+        "//entity",
+        "//extension/buildrunner",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)
