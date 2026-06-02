@@ -57,16 +57,21 @@ type messageRow struct {
 
 // messageStore handles message table operations (internal use only)
 type messageStore interface {
-	// Insert inserts messages into the topic table
+	// Insert inserts messages into the topic table.
 	Insert(ctx context.Context, topic string, messages []queue.Message) error
+
+	// InsertDelayed inserts messages whose delivery is deferred until
+	// visibleAfterMs (epoch milliseconds). 0 means immediately visible
+	// and is equivalent to Insert.
+	InsertDelayed(ctx context.Context, topic string, messages []queue.Message, visibleAfterMs int64) error
 
 	// Delete deletes a message by topic, partition key, and ID
 	Delete(ctx context.Context, topic string, partitionKey string, messageID string) error
 
 	// FetchByOffset fetches messages with offset > currentOffset for a specific partition.
-	// Messages are returned from the immutable log; per-consumer-group visibility
-	// is handled by the deliveryStateStore.
-	FetchByOffset(ctx context.Context, topic string, partitionKey string, currentOffset int64, limit int) ([]messageRow, error)
+	// Rows whose visible_after > nowMs are skipped (deferred deliveries).
+	// Per-consumer-group visibility is handled by the deliveryStateStore.
+	FetchByOffset(ctx context.Context, topic string, partitionKey string, currentOffset int64, nowMs int64, limit int) ([]messageRow, error)
 
 	// MoveToDLQ moves a message to the dead letter queue
 	// dlqTopicSuffix is appended to the original topic to form the DLQ topic name

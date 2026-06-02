@@ -68,3 +68,17 @@ func (mr *MockPublisherMockRecorder) Publish(ctx, topic, message any) *gomock.Ca
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Publish", reflect.TypeOf((*MockPublisher)(nil).Publish), ctx, topic, message)
 }
+
+// PublishAfter mocks base method.
+func (m *MockPublisher) PublishAfter(ctx context.Context, topic string, message queue.Message, delayMs int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PublishAfter", ctx, topic, message, delayMs)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// PublishAfter indicates an expected call of PublishAfter.
+func (mr *MockPublisherMockRecorder) PublishAfter(ctx, topic, message, delayMs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PublishAfter", reflect.TypeOf((*MockPublisher)(nil).PublishAfter), ctx, topic, message, delayMs)
+}

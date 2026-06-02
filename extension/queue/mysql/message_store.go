@@ -44,7 +44,15 @@ func newMessageStore(db *sql.DB, logger *zap.SugaredLogger, scope tally.Scope) m
 	}
 }
 
-// Insert inserts messages into the messages table.
+// Insert inserts messages into the messages table with no visibility delay.
+// Equivalent to InsertDelayed with visibleAfterMs == 0.
+func (s *sqlmessageStore) Insert(ctx context.Context, topic string, messages []queue.Message) error {
+	return s.InsertDelayed(ctx, topic, messages, 0)
+}
+
+// InsertDelayed inserts messages into the messages table, optionally deferring
+// delivery until visibleAfterMs (epoch milliseconds). 0 means immediately
+// visible; FetchByOffset skips rows where visible_after > now.
 //
 // Publishes are idempotent on the (topic, partition_key, id) unique key: a
 // repeated publish for the same key is silently treated as success and does
@@ -53,7 +61,7 @@ func newMessageStore(db *sql.DB, logger *zap.SugaredLogger, scope tally.Scope) m
 // idempotent publishes") and lets callers safely retry publishes (e.g. a
 // second Cancel RPC for the same request) without surfacing 1062 duplicate-key
 // errors.
-func (s *sqlmessageStore) Insert(ctx context.Context, topic string, messages []queue.Message) (retErr error) {
+func (s *sqlmessageStore) InsertDelayed(ctx context.Context, topic string, messages []queue.Message, visibleAfterMs int64) (retErr error) {
 	op := metrics.Begin(s.scope, "insert", metrics.NewTag("topic", topic))
 	defer func() { op.Complete(retErr) }()
 
@@ -64,6 +72,7 @@ func (s *sqlmessageStore) Insert(ctx context.Context, topic string, messages []q
 	s.logger.Debugw("inserting messages",
 		logTopic, topic,
 		"count", len(messages),
+		"visible_after", visibleAfterMs,
 	)
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -75,8 +84,8 @@ func (s *sqlmessageStore) Insert(ctx context.Context, topic string, messages []q
 	// ON DUPLICATE KEY UPDATE topic=topic is a no-op write that makes MySQL
 	// swallow the unique-key violation without mutating the existing row.
 	stmt, err := tx.PrepareContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (topic, id, payload, metadata, partition_key, created_at, published_at, failed_at, failure_count, last_error, original_topic)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, '', '')
+		INSERT INTO %s (topic, id, payload, metadata, partition_key, created_at, published_at, visible_after, failed_at, failure_count, last_error, original_topic)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, '', '')
 		ON DUPLICATE KEY UPDATE topic = topic
 	`, MessagesTableName))
 	if err != nil {
@@ -102,6 +111,7 @@ func (s *sqlmessageStore) Insert(ctx context.Context, topic string, messages []q
 			msg.PartitionKey,
 			now,
 			msg.PublishedAt,
+			visibleAfterMs,
 		)
 		if err != nil {
 			return fmt.Errorf("insert message topic=%s message=%s partition=%s: %w", topic, msg.ID, msg.PartitionKey, err)
@@ -137,18 +147,20 @@ func (s *sqlmessageStore) Delete(ctx context.Context, topic string, partitionKey
 }
 
 // FetchByOffset fetches messages with offset > currentOffset for a specific partition.
+// Rows whose visible_after > nowMs are skipped — those are deferred deliveries
+// (published via InsertDelayed) that should not yet be surfaced to subscribers.
 // Messages are fetched from the immutable log; no per-message mutation occurs.
-func (s *sqlmessageStore) FetchByOffset(ctx context.Context, topic string, partitionKey string, currentOffset int64, limit int) (_ []messageRow, retErr error) {
+func (s *sqlmessageStore) FetchByOffset(ctx context.Context, topic string, partitionKey string, currentOffset int64, nowMs int64, limit int) (_ []messageRow, retErr error) {
 	op := metrics.Begin(s.scope, "fetch", metrics.NewTag("topic", topic))
 	defer func() { op.Complete(retErr) }()
 
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT offset, id, payload, metadata, partition_key, published_at, failed_at, failure_count, last_error, original_topic
 		FROM %s
-		WHERE topic = ? AND partition_key = ? AND offset > ?
+		WHERE topic = ? AND partition_key = ? AND offset > ? AND visible_after <= ?
 		ORDER BY offset
 		LIMIT ?
-	`, MessagesTableName), topic, partitionKey, currentOffset, limit)
+	`, MessagesTableName), topic, partitionKey, currentOffset, nowMs, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query messages topic=%s partition=%s: %w", topic, partitionKey, err)
 	}
@@ -254,11 +266,13 @@ func (s *sqlmessageStore) MoveToDLQ(ctx context.Context, topic string, partition
 		return fmt.Errorf("fetch message for DLQ topic=%s partition=%s message=%s: %w", topic, partitionKey, messageID, err)
 	}
 
-	// Insert into queue_messages table with DLQ topic name and DLQ-specific fields
+	// Insert into queue_messages table with DLQ topic name and DLQ-specific fields.
+	// DLQ messages are always immediately visible (visible_after=0); any delay on
+	// the original message has already been consumed by the time it failed.
 	now := time.Now().UnixMilli()
 	_, err = tx.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (topic, id, payload, metadata, partition_key, created_at, published_at, failed_at, failure_count, last_error, original_topic)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO %s (topic, id, payload, metadata, partition_key, created_at, published_at, visible_after, failed_at, failure_count, last_error, original_topic)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
 	`, MessagesTableName), dlqTopic, messageID, payload, metadataJSON, fetchPartKey, createdAtMilli, publishedAtMilli, now, failureCount, lastError, topic)
 
 	if err != nil {

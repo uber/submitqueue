@@ -25,6 +25,13 @@ CREATE TABLE IF NOT EXISTS queue_messages (
     created_at BIGINT UNSIGNED NOT NULL,
     published_at BIGINT UNSIGNED NOT NULL,
 
+    -- visible_after defers delivery: subscribers skip rows where visible_after > now.
+    -- 0 (the default) means immediately visible. Set by Publisher.PublishAfter
+    -- to schedule a fresh message for delivery at a future time without
+    -- consuming a delivery_state retry slot (used e.g. by the orchestrator's
+    -- buildstatus polling consumer to space out Status calls).
+    visible_after BIGINT UNSIGNED NOT NULL DEFAULT 0,
+
     -- DLQ-specific fields (0/"" for normal messages, populated for DLQ messages)
     failed_at BIGINT UNSIGNED NOT NULL,
     -- failure_count stores how many times the message failed on the ORIGINAL topic before moving to DLQ

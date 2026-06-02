@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/uber-go/tally/v4"
 	"go.uber.org/zap"
@@ -62,6 +63,36 @@ func (p *publisher) Publish(ctx context.Context, topic string, message queue.Mes
 	}
 
 	p.logger.Debugw("published message", logTopic, topic, logMessageID, message.ID)
+
+	return nil
+}
+
+// PublishAfter sends a message that becomes visible to subscribers only
+// after delayMs from now. The message is inserted with visible_after =
+// now + delayMs; FetchByOffset skips it until that timestamp.
+// delayMs <= 0 is equivalent to Publish.
+func (p *publisher) PublishAfter(ctx context.Context, topic string, message queue.Message, delayMs int64) (retErr error) {
+	op := metrics.Begin(p.scope, "publish_after", metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
+
+	p.mu.RLock()
+	closed := p.closed
+	p.mu.RUnlock()
+
+	if closed {
+		return ErrPublisherClosed
+	}
+
+	var visibleAfter int64
+	if delayMs > 0 {
+		visibleAfter = time.Now().UnixMilli() + delayMs
+	}
+
+	if err := p.messageStore.InsertDelayed(ctx, topic, []queue.Message{message}, visibleAfter); err != nil {
+		return fmt.Errorf("publish_after message store insert error: %w", err)
+	}
+
+	p.logger.Debugw("published delayed message", logTopic, topic, logMessageID, message.ID, "delay_ms", delayMs)
 
 	return nil
 }
