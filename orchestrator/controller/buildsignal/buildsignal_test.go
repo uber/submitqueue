@@ -88,7 +88,7 @@ func TestController_Process_Success(t *testing.T) {
 	build := entity.Build{
 		ID:      "build-123",
 		BatchID: "test-queue/batch/1",
-		Status:  entity.BuildStatusQueued,
+		Status:  entity.BuildStatusAccepted,
 	}
 
 	payload, err := build.ToBytes()
