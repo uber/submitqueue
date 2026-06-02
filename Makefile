@@ -14,6 +14,8 @@ SUBMITQUEUE_LOCAL_PROJECT = submitqueue
 
 # Stovepipe compose files
 STOVEPIPE_GATEWAY_COMPOSE_FILE = example/stovepipe/gateway/server/docker-compose.yml
+STOVEPIPE_ORCHESTRATOR_COMPOSE_FILE = example/stovepipe/orchestrator/server/docker-compose.yml
+STOVEPIPE_STACK_COMPOSE_FILE = example/stovepipe/docker-compose.yml
 
 # Fixed project name for local manual testing (tests use unique random names)
 STOVEPIPE_LOCAL_PROJECT = stovepipe
@@ -38,7 +40,7 @@ define assert_clean
 	fi
 endef
 
-.PHONY: build build-all-linux build-gateway-linux build-orchestrator-linux build-stovepipe-gateway-linux check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-consumer integration-test-extensions integration-test-gateway integration-test-orchestrator license-fix lint lint-fmt lint-license local-clean local-gateway-start local-gateway-stop local-init-schemas local-init-stovepipe-queue-schema local-logs local-orchestrator-start local-orchestrator-stop local-ps local-restart local-start local-stop local-stovepipe-gateway-start mocks proto query-deps query-targets run-client-gateway run-client-orchestrator run-client-stovepipe-gateway run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
+.PHONY: build build-all-linux build-gateway-linux build-orchestrator-linux build-stovepipe-gateway-linux build-stovepipe-orchestrator-linux check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-consumer integration-test-extensions integration-test-gateway integration-test-orchestrator license-fix lint lint-fmt lint-license local-clean local-gateway-start local-gateway-stop local-init-schemas local-init-stovepipe-queue-schema local-logs local-orchestrator-start local-orchestrator-stop local-ps local-restart local-start local-stop local-stovepipe-gateway-start local-stovepipe-orchestrator-start local-stovepipe-start mocks proto query-deps query-targets run-client-gateway run-client-orchestrator run-client-stovepipe-gateway run-client-stovepipe-orchestrator run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
 
 
 build: ## Build all services and examples
@@ -47,7 +49,7 @@ build: ## Build all services and examples
 	@echo "Build complete!"
 
 # Build Linux binaries required for Docker containers
-build-all-linux: build-gateway-linux build-orchestrator-linux build-stovepipe-gateway-linux ## Build all Linux binaries for Docker
+build-all-linux: build-gateway-linux build-orchestrator-linux build-stovepipe-gateway-linux build-stovepipe-orchestrator-linux ## Build all Linux binaries for Docker
 	@echo "All Linux binaries ready for Docker"
 
 build-gateway-linux: ## Build Gateway Linux binary for Docker
@@ -74,6 +76,14 @@ build-stovepipe-gateway-linux: ## Build Stovepipe gateway Linux binary for Docke
 	 cp -f bazel-bin/example/stovepipe/gateway/server/gateway .docker-bin/stovepipe-gateway
 	@echo "Stovepipe gateway Linux binary ready at .docker-bin/stovepipe-gateway"
 
+build-stovepipe-orchestrator-linux: ## Build Stovepipe orchestrator Linux binary for Docker
+	@echo "Building Stovepipe orchestrator Linux binary for Docker..."
+	@$(BAZEL) build --platforms=@rules_go//go/toolchain:linux_amd64 //example/stovepipe/orchestrator/server:orchestrator
+	@mkdir -p .docker-bin
+	@cp -f bazel-bin/example/stovepipe/orchestrator/server/orchestrator_/orchestrator .docker-bin/stovepipe-orchestrator 2>/dev/null || \
+	 cp -f bazel-bin/example/stovepipe/orchestrator/server/orchestrator .docker-bin/stovepipe-orchestrator
+	@echo "Stovepipe orchestrator Linux binary ready at .docker-bin/stovepipe-orchestrator"
+
 check-gazelle: ## Check BUILD.bazel files are up to date
 	@echo "Running Gazelle to check BUILD files..."
 	@$(BAZEL) run //:gazelle
@@ -99,6 +109,7 @@ clean-proto: ## Clean generated proto files
 	@rm -rf gateway/protopb/*.pb.go
 	@rm -rf orchestrator/protopb/*.pb.go
 	@rm -rf stovepipe/gateway/protopb/*.pb.go
+	@rm -rf stovepipe/orchestrator/protopb/*.pb.go
 	@echo "Proto clean complete!"
 
 deps: tidy-go ## Download and tidy Go dependencies
@@ -266,8 +277,46 @@ local-start: build-all-linux ## Start full stack (Gateway + Orchestrator + MySQL
 local-stop: ## Stop all services (keep data)
 	@echo "Stopping all services..."
 	@$(COMPOSE) -f $(COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
-	@$(COMPOSE) -f $(STOVEPIPE_GATEWAY_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) down
+	@$(COMPOSE) -f $(STOVEPIPE_STACK_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) down
 	@echo "Services stopped. Data volumes preserved."
+
+local-stovepipe-logs: ## View logs from all running Stovepipe services
+	@$(COMPOSE) -f $(STOVEPIPE_STACK_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) logs -f
+
+local-stovepipe-start: build-stovepipe-gateway-linux build-stovepipe-orchestrator-linux ## Start full Stovepipe stack (gateway + orchestrator + MySQL)
+	@echo "Starting full Stovepipe stack with compose..."
+	@$(COMPOSE) -f $(STOVEPIPE_STACK_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) up -d --build --wait
+	@echo "Applying queue schema to mysql-queue (no Stovepipe app schema yet)..."
+	@$(MAKE) -s local-init-stovepipe-queue-schema
+	@echo ""
+	@echo "✅ Full Stovepipe stack is running!"
+	@echo ""
+	@echo "Expected container NAMEs (project=$(STOVEPIPE_LOCAL_PROJECT), one replica each):"
+	@echo "  $(STOVEPIPE_LOCAL_PROJECT)-mysql-app-1"
+	@echo "  $(STOVEPIPE_LOCAL_PROJECT)-mysql-queue-1"
+	@echo "  $(STOVEPIPE_LOCAL_PROJECT)-gateway-service-1"
+	@echo "  $(STOVEPIPE_LOCAL_PROJECT)-orchestrator-service-1"
+	@echo ""
+	@$(COMPOSE) -f $(STOVEPIPE_STACK_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) ps
+	@echo ""
+	@echo "Stovepipe gateway gRPC port:       $$(docker port $(STOVEPIPE_LOCAL_PROJECT)-gateway-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'unknown')"
+	@echo "Stovepipe orchestrator gRPC port: $$(docker port $(STOVEPIPE_LOCAL_PROJECT)-orchestrator-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'unknown')"
+	@echo "MySQL App port:                    $$(docker port $(STOVEPIPE_LOCAL_PROJECT)-mysql-app-1 3306 2>/dev/null | cut -d: -f2 || echo 'unknown')"
+	@echo "MySQL Queue port:                  $$(docker port $(STOVEPIPE_LOCAL_PROJECT)-mysql-queue-1 3306 2>/dev/null | cut -d: -f2 || echo 'unknown')"
+
+local-stovepipe-orchestrator-start: build-stovepipe-orchestrator-linux ## Start Stovepipe orchestrator locally (orchestrator + 2 MySQL databases)
+	@echo "Starting Stovepipe orchestrator with compose..."
+	@$(COMPOSE) -f $(STOVEPIPE_ORCHESTRATOR_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) up -d --build --wait
+	@echo "Applying queue schema to mysql-queue (no Stovepipe app schema yet)..."
+	@$(MAKE) -s local-init-stovepipe-queue-schema
+	@echo ""
+	@echo "✅ Stovepipe orchestrator is running!"
+	@echo ""
+	@$(COMPOSE) -f $(STOVEPIPE_ORCHESTRATOR_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) ps
+	@echo ""
+	@echo "Stovepipe orchestrator gRPC port: $$(docker port $(STOVEPIPE_LOCAL_PROJECT)-orchestrator-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'unknown')"
+	@echo "MySQL App port:         $$(docker port $(STOVEPIPE_LOCAL_PROJECT)-mysql-app-1 3306 2>/dev/null | cut -d: -f2 || echo 'unknown')"
+	@echo "MySQL Queue port:       $$(docker port $(STOVEPIPE_LOCAL_PROJECT)-mysql-queue-1 3306 2>/dev/null | cut -d: -f2 || echo 'unknown')"
 
 local-stovepipe-gateway-start: build-stovepipe-gateway-linux ## Start Stovepipe gateway locally (gateway + 2 MySQL databases)
 	@echo "Starting Stovepipe gateway with compose..."
@@ -279,7 +328,7 @@ local-stovepipe-gateway-start: build-stovepipe-gateway-linux ## Start Stovepipe 
 	@echo ""
 	@$(COMPOSE) -f $(STOVEPIPE_GATEWAY_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) ps
 	@echo ""
-	@echo "Stovepipe gateway gRPC port: $$(docker port $(STOVEPIPE_LOCAL_PROJECT)-stovepipe-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'unknown')"
+	@echo "Stovepipe gateway gRPC port: $$(docker port $(STOVEPIPE_LOCAL_PROJECT)-gateway-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'unknown')"
 	@echo "MySQL App port:    $$(docker port $(STOVEPIPE_LOCAL_PROJECT)-mysql-app-1 3306 2>/dev/null | cut -d: -f2 || echo 'unknown')"
 	@echo "MySQL Queue port:  $$(docker port $(STOVEPIPE_LOCAL_PROJECT)-mysql-queue-1 3306 2>/dev/null | cut -d: -f2 || echo 'unknown')"
 
@@ -302,6 +351,10 @@ proto: ## Generate protobuf files from .proto definitions
 	  --go-grpc_out=stovepipe/gateway/protopb --go-grpc_opt=paths=source_relative \
 	  --yarpc-go_out=stovepipe/gateway/protopb --yarpc-go_opt=paths=source_relative \
 	  --proto_path=stovepipe/gateway/proto stovepipe/gateway/proto/gateway.proto
+	@protoc --go_out=stovepipe/orchestrator/protopb --go_opt=paths=source_relative \
+	  --go-grpc_out=stovepipe/orchestrator/protopb --go-grpc_opt=paths=source_relative \
+	  --yarpc-go_out=stovepipe/orchestrator/protopb --yarpc-go_opt=paths=source_relative \
+	  --proto_path=stovepipe/orchestrator/proto stovepipe/orchestrator/proto/orchestrator.proto
 	@echo "Protobuf files generated successfully!"
 
 # Bazel query helpers
@@ -322,6 +375,10 @@ run-client-orchestrator:
 # Run stovepipe gateway client (connects to any running stovepipe gateway service)
 run-client-stovepipe-gateway:
 	@$(BAZEL) run //example/stovepipe/gateway/client:gateway -- -addr $(or $(SERVER_ADDR),localhost:8083) -message "$(or $(MESSAGE),ping)"
+
+# Run stovepipe orchestrator client (connects to any running stovepipe orchestrator service)
+run-client-stovepipe-orchestrator:
+	@$(BAZEL) run //example/stovepipe/orchestrator/client:orchestrator -- -addr $(or $(SERVER_ADDR),localhost:8084) -message "$(or $(MESSAGE),ping)"
 
 run-queue-admin: ## Run queue-admin CLI (use ARGS to pass arguments, e.g. make run-queue-admin ARGS="list-topics")
 	@$(BAZEL) run //extension/queue/mysql/ctl -- $(ARGS)
