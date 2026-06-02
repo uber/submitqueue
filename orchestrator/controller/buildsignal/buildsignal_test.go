@@ -16,7 +16,7 @@ package buildsignal
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,130 +25,251 @@ import (
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
-	"github.com/uber/submitqueue/entity/queue"
+	entityqueue "github.com/uber/submitqueue/entity/queue"
+	buildrunnermock "github.com/uber/submitqueue/extension/buildrunner/mock"
 	queuemock "github.com/uber/submitqueue/extension/queue/mock"
 	storagemock "github.com/uber/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
 
-// newMockStorage creates a MockStorage with a MockBatchStore that returns a batch for the given batchID.
-func newMockStorage(ctrl *gomock.Controller, batchID string) *storagemock.MockStorage {
-	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
-	mockBatchStore.EXPECT().Get(gomock.Any(), batchID).Return(entity.Batch{
-		ID:    batchID,
-		Queue: "test-queue",
-	}, nil).AnyTimes()
-
-	store := storagemock.NewMockStorage(ctrl)
-	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
-	return store
+// testHarness wires a Controller against mock queues for two topic keys
+// (buildsignal and speculate) so individual tests can assert which
+// Publish / PublishAfter happens.
+type testHarness struct {
+	controller   *Controller
+	br           *buildrunnermock.MockBuildRunner
+	buildStore   *storagemock.MockBuildStore
+	signalPub    *queuemock.MockPublisher
+	speculatePub *queuemock.MockPublisher
 }
 
-// newTestController creates a controller with test dependencies.
-func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock.MockStorage, publishErr error) *Controller {
-	logger := zaptest.NewLogger(t).Sugar()
-	scope := tally.NoopScope
+func newTestHarness(t *testing.T, ctrl *gomock.Controller) *testHarness {
+	br := buildrunnermock.NewMockBuildRunner(ctrl)
 
-	mockPub := queuemock.NewMockPublisher(ctrl)
-	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, topic string, msg queue.Message) error {
-			return publishErr
-		},
-	).AnyTimes()
+	signalPub := queuemock.NewMockPublisher(ctrl)
+	signalQ := queuemock.NewMockQueue(ctrl)
+	signalQ.EXPECT().Publisher().Return(signalPub).AnyTimes()
 
-	mockQ := queuemock.NewMockQueue(ctrl)
-	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+	speculatePub := queuemock.NewMockPublisher(ctrl)
+	speculateQ := queuemock.NewMockQueue(ctrl)
+	speculateQ.EXPECT().Publisher().Return(speculatePub).AnyTimes()
 
-	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: mockQ}},
-	)
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: consumer.TopicKeyBuildSignal, Name: "buildsignal", Queue: signalQ},
+		{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: speculateQ},
+	})
 	require.NoError(t, err)
 
-	return NewController(logger, scope, store, registry, consumer.TopicKeyBuildSignal, "orchestrator-buildsignal")
+	buildStore := storagemock.NewMockBuildStore(ctrl)
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
+
+	c := NewController(
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+		store,
+		br,
+		registry,
+		consumer.TopicKeyBuildSignal,
+		"orchestrator-buildsignal",
+	)
+	return &testHarness{
+		controller:   c,
+		br:           br,
+		buildStore:   buildStore,
+		signalPub:    signalPub,
+		speculatePub: speculatePub,
+	}
 }
 
-func TestNewController(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	store := newMockStorage(ctrl, "test-queue/batch/1")
-	controller := newTestController(t, ctrl, store, nil)
-
-	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicKeyBuildSignal, controller.TopicKey())
-	assert.Equal(t, "orchestrator-buildsignal", controller.ConsumerGroup())
-	assert.Equal(t, "buildsignal", controller.Name())
+// buildDelivery builds a delivery whose payload is the build's ID, matching
+// the on-queue contract: only the identifier travels, the consumer loads the
+// full Build from storage.
+func buildDelivery(t *testing.T, ctrl *gomock.Controller, b entity.Build) consumer.Delivery {
+	t.Helper()
+	payload, err := entity.BuildID{ID: b.ID}.ToBytes()
+	require.NoError(t, err)
+	msg := entityqueue.NewMessage(b.ID, payload, b.BatchID, nil)
+	d := queuemock.NewMockDelivery(ctrl)
+	d.EXPECT().Message().Return(msg).AnyTimes()
+	d.EXPECT().Attempt().Return(1).AnyTimes()
+	return d
 }
 
-func TestController_Process_Success(t *testing.T) {
+func TestController_Identity(t *testing.T) {
 	ctrl := gomock.NewController(t)
+	h := newTestHarness(t, ctrl)
 
-	store := newMockStorage(ctrl, "test-queue/batch/1")
-	controller := newTestController(t, ctrl, store, nil)
+	assert.Equal(t, "buildsignal", h.controller.Name())
+	assert.Equal(t, consumer.TopicKeyBuildSignal, h.controller.TopicKey())
+	assert.Equal(t, "orchestrator-buildsignal", h.controller.ConsumerGroup())
 
-	build := entity.Build{
-		ID:      "build-123",
-		BatchID: "test-queue/batch/1",
-		Status:  entity.BuildStatusAccepted,
+	var _ consumer.Controller = h.controller
+}
+
+// TestController_Process_Terminal verifies a terminal poll persists the
+// status, publishes the batch ID to speculate, and does NOT re-publish to
+// buildsignal.
+func TestController_Process_Terminal(t *testing.T) {
+	tests := []struct {
+		name   string
+		status entity.BuildStatus
+	}{
+		{"succeeded", entity.BuildStatusSucceeded},
+		{"failed", entity.BuildStatusFailed},
+		{"cancelled", entity.BuildStatusCancelled},
 	}
 
-	payload, err := build.ToBytes()
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			h := newTestHarness(t, ctrl)
 
-	msg := queue.NewMessage("build-123", payload, "test-queue/batch/1", nil)
-	delivery := queuemock.NewMockDelivery(ctrl)
-	delivery.EXPECT().Message().Return(msg).AnyTimes()
-	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+			build := entity.Build{ID: "b-1", BatchID: "batch-1", Status: entity.BuildStatusAccepted}
 
-	err = controller.Process(context.Background(), delivery)
-	require.NoError(t, err)
+			h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(build, nil)
+			h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: build.ID}).Return(tt.status, entity.BuildMetadata{}, nil)
+			h.buildStore.EXPECT().UpdateStatus(gomock.Any(), build.ID, tt.status).Return(nil)
+			h.speculatePub.EXPECT().
+				Publish(gomock.Any(), "speculate", gomock.AssignableToTypeOf(entityqueue.Message{})).
+				DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+					bid, err := entity.BatchIDFromBytes(msg.Payload)
+					require.NoError(t, err)
+					assert.Equal(t, build.BatchID, bid.ID)
+					return nil
+				}).Times(1)
+			// No PublishAfter expected on terminal.
+
+			err := h.controller.Process(context.Background(), buildDelivery(t, ctrl, build))
+			require.NoError(t, err)
+		})
+	}
 }
 
-func TestController_Process_InvalidJSON(t *testing.T) {
+// TestController_Process_NonTerminal verifies a non-terminal poll persists
+// the status, publishes to speculate, AND re-publishes to buildsignal via
+// PublishAfter with the per-status delay.
+func TestController_Process_NonTerminal(t *testing.T) {
+	tests := []struct {
+		name        string
+		status      entity.BuildStatus
+		wantDelayMs int64
+	}{
+		{"accepted uses accepted delay", entity.BuildStatusAccepted, PollDelayAcceptedMs},
+		{"running uses running delay", entity.BuildStatusRunning, PollDelayRunningMs},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			h := newTestHarness(t, ctrl)
+
+			build := entity.Build{ID: "b-2", BatchID: "batch-2", Status: entity.BuildStatusAccepted}
+
+			h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(build, nil)
+			h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: build.ID}).Return(tt.status, entity.BuildMetadata{}, nil)
+			h.buildStore.EXPECT().UpdateStatus(gomock.Any(), build.ID, tt.status).Return(nil)
+			h.speculatePub.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).Return(nil).Times(1)
+			h.signalPub.EXPECT().
+				PublishAfter(gomock.Any(), "buildsignal", gomock.AssignableToTypeOf(entityqueue.Message{}), tt.wantDelayMs).
+				DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message, _ int64) error {
+					bid, err := entity.BuildIDFromBytes(msg.Payload)
+					require.NoError(t, err)
+					// Re-published payload carries only the build ID.
+					assert.Equal(t, build.ID, bid.ID)
+					return nil
+				}).Times(1)
+
+			err := h.controller.Process(context.Background(), buildDelivery(t, ctrl, build))
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestController_Process_StatusError(t *testing.T) {
 	ctrl := gomock.NewController(t)
+	h := newTestHarness(t, ctrl)
 
-	store := newMockStorage(ctrl, "test-queue/batch/1")
-	controller := newTestController(t, ctrl, store, nil)
+	build := entity.Build{ID: "b-3", BatchID: "batch-3", Status: entity.BuildStatusAccepted}
 
-	invalidPayload := []byte(`{"invalid": json"}`)
-	msg := queue.NewMessage("invalid-msg", invalidPayload, "partition1", nil)
-	delivery := queuemock.NewMockDelivery(ctrl)
-	delivery.EXPECT().Message().Return(msg).AnyTimes()
-	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+	h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(build, nil)
+	h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: build.ID}).Return(entity.BuildStatusUnknown, nil, errors.New("provider down"))
+	// No UpdateStatus, no Publish, no PublishAfter expected.
 
-	err := controller.Process(context.Background(), delivery)
+	err := h.controller.Process(context.Background(), buildDelivery(t, ctrl, build))
+	require.Error(t, err)
+	// Non-retryable: rejects to DLQ on first failure; republish is the recovery path.
+	assert.False(t, errs.IsRetryable(err))
+}
 
+func TestController_Process_UpdateStatusError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	h := newTestHarness(t, ctrl)
+
+	build := entity.Build{ID: "b-4", BatchID: "batch-4", Status: entity.BuildStatusAccepted}
+
+	h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(build, nil)
+	h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: build.ID}).Return(entity.BuildStatusRunning, nil, nil)
+	h.buildStore.EXPECT().UpdateStatus(gomock.Any(), build.ID, entity.BuildStatusRunning).
+		Return(errors.New("db unreachable"))
+	// No Publish / PublishAfter expected after the store failure.
+
+	err := h.controller.Process(context.Background(), buildDelivery(t, ctrl, build))
+	require.Error(t, err)
+	// Non-retryable: rejects to DLQ on first failure; republish is the recovery path.
+	assert.False(t, errs.IsRetryable(err))
+}
+
+// TestController_Process_RepublishError verifies that a failure to re-publish
+// the delayed poll message is retryable: the re-schedule is the loop's
+// heartbeat, so it should nack and replay rather than reject straight to DLQ.
+// The preceding status/persist/speculate steps all succeed.
+func TestController_Process_RepublishError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	h := newTestHarness(t, ctrl)
+
+	build := entity.Build{ID: "b-5", BatchID: "batch-5", Status: entity.BuildStatusAccepted}
+
+	h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(build, nil)
+	h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: build.ID}).Return(entity.BuildStatusRunning, entity.BuildMetadata{}, nil)
+	h.buildStore.EXPECT().UpdateStatus(gomock.Any(), build.ID, entity.BuildStatusRunning).Return(nil)
+	h.speculatePub.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).Return(nil).Times(1)
+	h.signalPub.EXPECT().
+		PublishAfter(gomock.Any(), "buildsignal", gomock.Any(), PollDelayRunningMs).
+		Return(errors.New("queue unavailable")).Times(1)
+
+	err := h.controller.Process(context.Background(), buildDelivery(t, ctrl, build))
+	require.Error(t, err)
+	assert.True(t, errs.IsRetryable(err))
+}
+
+// TestController_Process_GetError verifies that a failure to load the Build
+// from storage (only the ID is on the queue) surfaces an error. Non-retryable:
+// it rejects to DLQ on first failure, consistent with other storage reads.
+func TestController_Process_GetError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	h := newTestHarness(t, ctrl)
+
+	build := entity.Build{ID: "b-6", BatchID: "batch-6", Status: entity.BuildStatusAccepted}
+
+	h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(entity.Build{}, errors.New("db unreachable"))
+	// No Status / UpdateStatus / Publish expected once the load fails.
+
+	err := h.controller.Process(context.Background(), buildDelivery(t, ctrl, build))
 	require.Error(t, err)
 	assert.False(t, errs.IsRetryable(err))
 }
 
-func TestController_Process_PublishFailure(t *testing.T) {
+func TestController_Process_MalformedPayload(t *testing.T) {
 	ctrl := gomock.NewController(t)
+	h := newTestHarness(t, ctrl)
 
-	store := newMockStorage(ctrl, "test-queue/batch/2")
-	controller := newTestController(t, ctrl, store, fmt.Errorf("publish failed"))
+	msg := entityqueue.NewMessage("bad", []byte(`{"invalid"`), "batch-bad", nil)
+	d := queuemock.NewMockDelivery(ctrl)
+	d.EXPECT().Message().Return(msg).AnyTimes()
+	d.EXPECT().Attempt().Return(1).AnyTimes()
 
-	build := entity.Build{
-		ID:      "build-456",
-		BatchID: "test-queue/batch/2",
-		Status:  entity.BuildStatusRunning,
-	}
-
-	payload, err := build.ToBytes()
-	require.NoError(t, err)
-
-	msg := queue.NewMessage(build.ID, payload, build.BatchID, nil)
-	delivery := queuemock.NewMockDelivery(ctrl)
-	delivery.EXPECT().Message().Return(msg).AnyTimes()
-	delivery.EXPECT().Attempt().Return(1).AnyTimes()
-
-	err = controller.Process(context.Background(), delivery)
-	assert.Error(t, err)
-}
-
-func TestController_InterfaceImplementation(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	store := newMockStorage(ctrl, "test-queue/batch/1")
-	controller := newTestController(t, ctrl, store, nil)
-
-	var _ consumer.Controller = controller
+	err := h.controller.Process(context.Background(), d)
+	require.Error(t, err)
 }

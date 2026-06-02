@@ -40,7 +40,11 @@ const (
 	TopicKeySpeculate TopicKey = "speculate"
 	// TopicKeyBuild is the pipeline stage where speculated batches are published for builds.
 	TopicKeyBuild TopicKey = "build"
-	// TopicKeyBuildSignal is the pipeline stage where builds are published for build signal processing.
+	// TopicKeyBuildSignal is the polling stage for triggered builds. Each
+	// message carries a Build; the consumer calls BuildRunner.Status,
+	// persists the latest status, publishes the batch ID to TopicKeySpeculate
+	// so the state machine re-evaluates, and re-publishes itself via
+	// PublishAfter when the build has not yet reached a terminal state.
 	TopicKeyBuildSignal TopicKey = "buildsignal"
 	// TopicKeyMerge is the pipeline stage where speculated batches are published for merging.
 	TopicKeyMerge TopicKey = "merge"
