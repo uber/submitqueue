@@ -7,7 +7,7 @@ go_library(
         "stovepipe.pb.yarpc.go",
         "stovepipe_grpc.pb.go",
     ],
-    importpath = "github.com/uber/submitqueue/stovepipe/protopb",
+    importpath = "github.com/uber/submitqueue/stovepipe/gateway/protopb",
     visibility = ["//visibility:public"],
     deps = [
         "@com_github_gogo_protobuf//jsonpb",

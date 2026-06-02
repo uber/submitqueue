@@ -26,8 +26,8 @@ import (
 	"time"
 
 	"github.com/uber-go/tally/v4"
-	"github.com/uber/submitqueue/stovepipe/controller"
-	pb "github.com/uber/submitqueue/stovepipe/protopb"
+	"github.com/uber/submitqueue/stovepipe/gateway/controller"
+	pb "github.com/uber/submitqueue/stovepipe/gateway/protopb"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
