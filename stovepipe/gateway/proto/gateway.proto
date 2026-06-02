@@ -16,9 +16,9 @@ syntax = "proto3";
 
 package uber.submitqueue.stovepipe;
 
-option go_package = "github.com/uber/submitqueue/stovepipe/protopb";
+option go_package = "github.com/uber/submitqueue/stovepipe/gateway/protopb";
 option java_multiple_files = true;
-option java_outer_classname = "StovepipeProto";
+option java_outer_classname = "GatewayProto";
 option java_package = "com.uber.submitqueue.stovepipe";
 
 // PingRequest is the request for the Ping method
@@ -39,8 +39,8 @@ message PingResponse {
     string hostname = 4;
 }
 
-// SubmitQueueStovepipe provides the stovepipe API
-service SubmitQueueStovepipe {
+// StovepipeGateway provides the Stovepipe gateway API.
+service StovepipeGateway {
     // Ping returns a response indicating the service is alive
     rpc Ping(PingRequest) returns (PingResponse) {}
 }

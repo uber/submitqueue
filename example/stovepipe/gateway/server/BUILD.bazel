@@ -6,13 +6,13 @@ exports_files(
 )
 
 go_library(
-    name = "stovepipe_lib",
+    name = "gateway_server_lib",
     srcs = ["main.go"],
-    importpath = "github.com/uber/submitqueue/example/server/stovepipe",
+    importpath = "github.com/uber/submitqueue/example/stovepipe/gateway/server",
     visibility = ["//visibility:private"],
     deps = [
-        "//stovepipe/controller",
-        "//stovepipe/protopb",
+        "//stovepipe/gateway/controller",
+        "//stovepipe/gateway/protopb",
         "@com_github_uber_go_tally_v4//:tally",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//reflection",
@@ -21,7 +21,7 @@ go_library(
 )
 
 go_binary(
-    name = "stovepipe",
-    embed = [":stovepipe_lib"],
+    name = "gateway",
+    embed = [":gateway_server_lib"],
     visibility = ["//visibility:public"],
 )
