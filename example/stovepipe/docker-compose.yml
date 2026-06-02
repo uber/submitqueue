@@ -1,17 +1,5 @@
 # Docker Compose for full Stovepipe stack (Gateway + Orchestrator + MySQL)
 #
-# Service keys match example/server: `gateway-service` and `orchestrator-service`.
-#
-# With project name `stovepipe` (Makefile STOVEPIPE_LOCAL_PROJECT), `docker ps` NAME
-# column should show exactly four app containers — no doubled prefix:
-#   stovepipe-mysql-app-1
-#   stovepipe-mysql-queue-1
-#   stovepipe-gateway-service-1
-#   stovepipe-orchestrator-service-1
-#
-# Avoid compose service keys like `stovepipe-service`: project + service would become
-# `stovepipe-stovepipe-service-1`. SubmitQueue uses the same pattern (`submitqueue-gateway-service-1`).
-#
 # Use with `make local-stovepipe-start`; use per-service compose files
 # under example/stovepipe/gateway/server/ or example/stovepipe/orchestrator/server/
 # for single-service stacks.

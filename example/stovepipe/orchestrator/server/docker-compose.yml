@@ -1,8 +1,5 @@
 # Docker Compose for Stovepipe orchestrator manual testing
 #
-# Mirrors example/server/orchestrator/docker-compose.yml: same MySQL pair,
-# healthchecks, env wiring, and startup ordering. The Stovepipe orchestrator
-# binary is Ping-only today and does not open MySQL yet; variables match SubmitQueue.
 #
 # IMPORTANT: Before running compose, build the Linux binary:
 #   make build-stovepipe-orchestrator-linux
