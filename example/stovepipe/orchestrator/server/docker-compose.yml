@@ -1,21 +1,18 @@
-# Docker Compose for Stovepipe gateway manual testing
+# Docker Compose for Stovepipe orchestrator manual testing
 #
-# Mirrors example/server/gateway/docker-compose.yml: same MySQL pair, healthchecks,
-# env wiring, and startup ordering. The Stovepipe gateway binary is Ping-only today
-# and does not open MySQL yet; variables are set so future work matches SubmitQueue.
 #
 # IMPORTANT: Before running compose, build the Linux binary:
-#   make build-stovepipe-gateway-linux
+#   make build-stovepipe-orchestrator-linux
 #   OR
-#   bazel build --platforms=@rules_go//go/toolchain:linux_amd64 //example/stovepipe/gateway/server:gateway
+#   bazel build --platforms=@rules_go//go/toolchain:linux_amd64 //example/stovepipe/orchestrator/server:orchestrator
 #
 # Quick start:
-#   make local-stovepipe-gateway-start
+#   make local-stovepipe-orchestrator-start
 #
 # After `up`, only the queue schema is applied (`local-init-stovepipe-queue-schema`).
 
 services:
-  # Application Database - Stores business data (requests, counters, etc.)
+  # Application Database - Stores business data (requests, batches, etc.)
   mysql-app:
     image: mysql:8.0
     environment:
@@ -47,20 +44,19 @@ services:
       timeout: 5s
       retries: 10
 
-  gateway-service:
+  orchestrator-service:
     build:
       context: ${REPO_ROOT}
-      dockerfile: example/stovepipe/gateway/server/Dockerfile
+      dockerfile: example/stovepipe/orchestrator/server/Dockerfile
     ports:
       - "8080" # Random ephemeral port to avoid conflicts
     environment:
       - PORT=:8080
-      # Application database connection
+      # Application database connection (for request state, batches, etc.)
       - MYSQL_DSN=root:root@tcp(mysql-app:3306)/submitqueue?parseTime=true
       # Queue infrastructure connection (separate database)
       - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
-      # Path to YAML queue configuration baked into the image
-      - QUEUE_CONFIG_PATH=/root/queues.yaml
+      - HOSTNAME=orchestrator-dev
     depends_on:
       mysql-app:
         condition: service_healthy
