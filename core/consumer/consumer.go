@@ -61,6 +61,7 @@ type consumer struct {
 	logger       *zap.SugaredLogger
 	metricsScope tally.Scope
 	registry     TopicRegistry
+	classifiers  []errs.Classifier
 
 	mu            sync.Mutex
 	stopped       bool
@@ -76,12 +77,22 @@ type activeSubscription struct {
 }
 
 // New creates a new consumer.
-// registry provides queue and subscription config for topics.
-func New(logger *zap.SugaredLogger, scope tally.Scope, registry TopicRegistry) Consumer {
+//
+// registry provides queue and subscription config for topics. classifiers are
+// the per-backend error classifiers used to decide whether an error returned
+// by a controller is retryable (nack for redelivery) or non-retryable (reject
+// to DLQ). The consumer runs errs.Classify(err, classifiers...) exactly once
+// per failing delivery and then drives ack/nack/reject from the resulting
+// chain via plain errs.IsRetryable type checks. Pass any backend-specific
+// classifiers the controllers rely on (e.g. core/errs/mysql.Classifier);
+// passing none is fine for tests where controllers always return explicit
+// framework-wrapped errors.
+func New(logger *zap.SugaredLogger, scope tally.Scope, registry TopicRegistry, classifiers ...errs.Classifier) Consumer {
 	return &consumer{
 		logger:        logger,
 		metricsScope:  scope.SubScope("consumer"),
 		registry:      registry,
+		classifiers:   classifiers,
 		subscriptions: make(map[TopicKey]*activeSubscription),
 	}
 }
@@ -370,6 +381,12 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 	metrics.NamedTimer(controllerScope, opName, "controller_latency", elapsed, metrics.NewTag("success", successTag))
 
 	if err != nil {
+		// Single explicit classification pass: if err's chain does not already
+		// carry a framework wrap, ask the configured classifiers and prepend
+		// the matching framework type. Downstream errs.IsRetryable / IsUserError
+		// calls then only do a plain type check on the result.
+		err = errs.Classify(err, m.classifiers...)
+
 		// Check if the error is non-retryable (poison pill message)
 		if !errs.IsRetryable(err) {
 			m.logger.Errorw("non-retryable controller error, rejecting message",

@@ -31,6 +31,8 @@ import (
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/consumer"
+	genericerrs "github.com/uber/submitqueue/core/errs/generic"
+	mysqlerrs "github.com/uber/submitqueue/core/errs/mysql"
 	"github.com/uber/submitqueue/core/httpclient"
 	"github.com/uber/submitqueue/entity"
 	"github.com/uber/submitqueue/extension/changeprovider"
@@ -195,8 +197,14 @@ func run() error {
 		return fmt.Errorf("failed to create topic registry: %w", err)
 	}
 
-	// Create consumer
-	c := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry)
+	// Create consumer.
+	c := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
+		genericerrs.Classifier,
+		// Storage (extension/storage/mysql) and queue (extension/queue/mysql)
+		// both run on the same MySQL driver, so a single classifier covers
+		// errors surfaced from either backend.
+		mysqlerrs.Classifier,
+	)
 
 	// Create merge checker
 	mc, err := newMergeChecker(logger, scope)
