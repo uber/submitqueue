@@ -22,10 +22,34 @@ import (
 	"github.com/uber/submitqueue/entity"
 )
 
-// BuildRunner triggers builds against an external Build Runner, queries
-// their status, and cancels them.
+// Config carries the configuration a Factory binds into a BuildRunner: the
+// queue whose job definition the runner builds against, plus any
+// backend-specific settings (endpoints, credentials, defaults) a concrete
+// implementation adds.
+type Config struct {
+	// QueueID identifies the queue whose job configuration this runner
+	// builds against.
+	QueueID string
+}
+
+// Factory constructs BuildRunner instances from a Config. A BuildRunner is
+// bound to its Config at construction; the per-build verbs take no queue
+// selector. A controller that serves multiple queues holds a Factory and
+// calls New with each batch's queue (see Config.QueueID).
 //
-// Implementations are long-lived singletons and must:
+// Implementations must be safe for concurrent use by multiple goroutines.
+type Factory interface {
+	// New returns a BuildRunner for cfg, ready to trigger builds. Returns an
+	// error if a runner cannot be constructed from cfg (e.g. invalid
+	// configuration or an unreachable backend).
+	New(cfg Config) (BuildRunner, error)
+}
+
+// BuildRunner triggers builds against an external Build Runner, queries
+// their status, and cancels them. A BuildRunner is bound to its Config at
+// construction (see Factory); the verbs below take no queue selector.
+//
+// Implementations may be shared and called concurrently, and must:
 //   - make every method safe for concurrent use by multiple goroutines;
 //   - recover from transient connectivity failures internally, returning
 //     plain errors during the recovery window rather than blocking the
@@ -55,11 +79,9 @@ type BuildRunner interface {
 	// asynchronously. Callers learn the build's progress via Status, not
 	// via Trigger.
 	//
-	// queueName selects the runner-specific job configuration.
 	// Returns an error if the request is invalid.
 	Trigger(
 		ctx context.Context,
-		queueName string,
 		base []entity.Change,
 		head []entity.Change,
 		metadata entity.BuildMetadata,

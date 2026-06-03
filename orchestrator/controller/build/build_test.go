@@ -36,6 +36,15 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
+// staticFactory returns the same BuildRunner for every Config. Tests inject
+// it so a single mock (or noop) runner satisfies the controller's Factory
+// dependency.
+type staticFactory struct{ runner buildrunner.BuildRunner }
+
+func (s staticFactory) New(buildrunner.Config) (buildrunner.BuildRunner, error) {
+	return s.runner, nil
+}
+
 // batchIDPayload serializes a BatchID to JSON bytes for test message payloads.
 func batchIDPayload(t *testing.T, id string) []byte {
 	payload, err := entity.BatchID{ID: id}.ToBytes()
@@ -96,7 +105,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, store, br, registry, consumer.TopicKeyBuild, "orchestrator-build")
+	return NewController(logger, scope, store, staticFactory{br}, registry, consumer.TopicKeyBuild, "orchestrator-build")
 }
 
 func TestNewController(t *testing.T) {
@@ -176,7 +185,7 @@ func TestController_Process_TriggersWithBaseAndHead(t *testing.T) {
 	br := buildrunnermock.NewMockBuildRunner(ctrl)
 	wantBase := []entity.Change{depReq.Change}
 	wantHead := []entity.Change{head1.Change, head2.Change}
-	br.EXPECT().Trigger(gomock.Any(), headBatch.Queue, wantBase, wantHead, gomock.Nil()).Return(entity.BuildID{ID: "build-xyz"}, nil)
+	br.EXPECT().Trigger(gomock.Any(), wantBase, wantHead, gomock.Nil()).Return(entity.BuildID{ID: "build-xyz"}, nil)
 
 	var publishedTopic string
 	var published entity.BuildID
@@ -197,7 +206,7 @@ func TestController_Process_TriggersWithBaseAndHead(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, br, registry, consumer.TopicKeyBuild, "orchestrator-build")
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, staticFactory{br}, registry, consumer.TopicKeyBuild, "orchestrator-build")
 
 	msg := queue.NewMessage(headBatch.ID, batchIDPayload(t, headBatch.ID), headBatch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -239,7 +248,7 @@ func TestController_Process_BuildStoreAlreadyExistsIsSwallowed(t *testing.T) {
 	store.EXPECT().GetBuildStore().Return(mockBuildStore).AnyTimes()
 
 	br := buildrunnermock.NewMockBuildRunner(ctrl)
-	br.EXPECT().Trigger(gomock.Any(), batch.Queue, gomock.Any(), gomock.Any(), gomock.Any()).Return(entity.BuildID{ID: "build-dup"}, nil)
+	br.EXPECT().Trigger(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(entity.BuildID{ID: "build-dup"}, nil)
 
 	publishCalled := false
 	mockPub := queuemock.NewMockPublisher(ctrl)
@@ -255,7 +264,7 @@ func TestController_Process_BuildStoreAlreadyExistsIsSwallowed(t *testing.T) {
 		[]consumer.TopicConfig{{Key: consumer.TopicKeyBuildSignal, Name: "buildsignal", Queue: mockQ}},
 	)
 	require.NoError(t, err)
-	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, br, registry, consumer.TopicKeyBuild, "orchestrator-build")
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, staticFactory{br}, registry, consumer.TopicKeyBuild, "orchestrator-build")
 
 	msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -280,14 +289,14 @@ func TestController_Process_TriggerFailure(t *testing.T) {
 	// No build store expectation: Trigger failure must short-circuit before Create.
 
 	br := buildrunnermock.NewMockBuildRunner(ctrl)
-	br.EXPECT().Trigger(gomock.Any(), batch.Queue, gomock.Any(), gomock.Any(), gomock.Any()).
+	br.EXPECT().Trigger(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(entity.BuildID{}, fmt.Errorf("provider down"))
 
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{{Key: consumer.TopicKeyBuildSignal, Name: "buildsignal", Queue: queuemock.NewMockQueue(ctrl)}},
 	)
 	require.NoError(t, err)
-	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, br, registry, consumer.TopicKeyBuild, "orchestrator-build")
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, staticFactory{br}, registry, consumer.TopicKeyBuild, "orchestrator-build")
 
 	msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)

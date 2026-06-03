@@ -34,6 +34,19 @@ type runner struct {
 	counter atomic.Uint64
 }
 
+// factory builds no-op runners. It ignores the supplied Config.
+type factory struct{}
+
+// NewFactory returns a buildrunner.Factory that produces no-op runners.
+func NewFactory() buildrunner.Factory {
+	return factory{}
+}
+
+// New returns a no-op buildrunner.BuildRunner. The Config is ignored.
+func (factory) New(_ buildrunner.Config) (buildrunner.BuildRunner, error) {
+	return New(), nil
+}
+
 // New returns a buildrunner.BuildRunner that performs no real work.
 func New() buildrunner.BuildRunner {
 	return &runner{}
@@ -41,7 +54,7 @@ func New() buildrunner.BuildRunner {
 
 // Trigger returns a unique build ID without contacting any runner.
 // Inputs are ignored.
-func (r *runner) Trigger(_ context.Context, _ string, _ []entity.Change, _ []entity.Change, _ entity.BuildMetadata) (entity.BuildID, error) {
+func (r *runner) Trigger(_ context.Context, _ []entity.Change, _ []entity.Change, _ entity.BuildMetadata) (entity.BuildID, error) {
 	return entity.BuildID{ID: fmt.Sprintf("noop-%d", r.counter.Add(1))}, nil
 }
 

@@ -218,12 +218,13 @@ func run() error {
 		return fmt.Errorf("failed to create pusher: %w", err)
 	}
 
-	// Create build runner. The noop runner is the pass-through default
-	// (every build immediately succeeds) until a real backend is wired in.
-	br := buildnoop.New()
+	// Create the build runner factory. The noop factory is the pass-through
+	// default (every build immediately succeeds) until a real backend is
+	// wired in; controllers build a runner per queue from it.
+	runnerFactory := buildnoop.NewFactory()
 
 	// Register controllers
-	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cp, psh, br, cnt, store, changeStore); err != nil {
+	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cp, psh, runnerFactory, cnt, store, changeStore); err != nil {
 		return err
 	}
 
@@ -408,7 +409,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 //                                        │        │                       │
 //                                        └────────┴───────────────────────┘
 
-func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cp changeprovider.ChangeProvider, psh pusher.Pusher, br buildrunner.BuildRunner, cnt counter.Counter, store storage.Storage, changeStore changestore.ChangeStore) error {
+func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cp changeprovider.ChangeProvider, psh pusher.Pusher, runnerFactory buildrunner.Factory, cnt counter.Counter, store storage.Storage, changeStore changestore.ChangeStore) error {
 	requestController := start.NewController(
 		logger,
 		scope,
@@ -494,7 +495,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		store,
-		br,
+		runnerFactory,
 		registry,
 		consumer.TopicKeyBuild,
 		"orchestrator-build",
@@ -507,7 +508,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		store,
-		br,
+		runnerFactory,
 		registry,
 		consumer.TopicKeyBuildSignal,
 		"orchestrator-buildsignal",

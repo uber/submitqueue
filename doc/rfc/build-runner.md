@@ -38,11 +38,26 @@ The build stage needs a vendor-agnostic abstraction for talking to a Build Runne
 
 `BuildRunner` exposes three verbs, all keyed by a build identifier (`entity.BuildID`):
 
-- **`Trigger`** — submit a build for a queue, given the ordered `base` and `head` change sets plus a free-form metadata map; returns the new build's ID. Runner-side work is asynchronous.
+- **`Trigger`** — submit a build given the ordered `base` and `head` change sets plus a free-form metadata map; returns the new build's ID. Runner-side work is asynchronous.
 - **`Status`** — fetch the current `BuildStatus` and runner-defined metadata for a build; MAY round-trip to the runner.
 - **`Cancel`** — request cancellation; returns once the request reaches the runner, not once the build stops.
 
 See `extension/buildrunner/build_runner.go` for the exact Go signatures. The sections below record why the contract is shaped this way.
+
+### Construction: a Factory, queue bound at build time
+
+A `BuildRunner` does not take a queue selector on any verb. The queue whose job configuration a runner uses is fixed when the runner is constructed, and runners are constructed by a `Factory`.
+
+- **`Factory`** — produces `BuildRunner` instances from a `Config`. A controller that drives builds for several queues holds one `Factory` and obtains one `BuildRunner` per queue.
+- **`Config`** — the configuration the factory binds in: a `QueueID` selecting the queue whose job definition the runner builds against, plus any backend-specific settings (endpoints, credentials, defaults) a concrete implementation adds.
+
+Why bind the queue at construction rather than pass it per call:
+
+- A runner's connection pool, caches, and job defaults are all keyed to one queue's configuration. Passing the queue per call would force every implementation to re-resolve that configuration on the hot path, or to maintain an internal queue→config map the factory already expresses cleanly.
+- It keeps the per-call verbs (`Trigger`, `Status`, `Cancel`) free of routing concerns — they speak only in builds and changes.
+- It matches the rest of the extension family, whose implementations are bound to their configuration at construction.
+
+Rejected: a `queueName` argument on `Trigger`. It put routing on the hot path and on a single verb, leaving `Status` and `Cancel` to rediscover the queue from the build ID. Carrying the selection in `Config` keeps each runner bound to a single queue.
 
 ### Trigger: base + head
 
@@ -125,7 +140,7 @@ Rejected: long-polling on `Status`. Not every backend supports efficient server-
 
 ### Lifecycle
 
-Implementations are long-lived singletons bound to provider config at construction. Every method is concurrent-safe; connection pools and caches live inside the manager; anything that must survive a restart belongs in persistent storage, not the manager.
+Implementations are constructed by a `Factory` and bound to one queue's provider config at construction (see *Construction* above). They may be shared and called concurrently, so every method must be concurrent-safe; connection pools and caches live inside the manager; anything that must survive a restart belongs in persistent storage, not the manager.
 
 ### Transient failures
 

@@ -26,6 +26,7 @@ import (
 	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
+	"github.com/uber/submitqueue/extension/buildrunner"
 	buildrunnermock "github.com/uber/submitqueue/extension/buildrunner/mock"
 	queuemock "github.com/uber/submitqueue/extension/queue/mock"
 	storagemock "github.com/uber/submitqueue/extension/storage/mock"
@@ -40,8 +41,17 @@ type testHarness struct {
 	controller   *Controller
 	br           *buildrunnermock.MockBuildRunner
 	buildStore   *storagemock.MockBuildStore
+	batchStore   *storagemock.MockBatchStore
 	signalPub    *queuemock.MockPublisher
 	speculatePub *queuemock.MockPublisher
+}
+
+// staticFactory returns the same BuildRunner for every Config, so a single
+// mock runner satisfies the controller's Factory dependency.
+type staticFactory struct{ runner buildrunner.BuildRunner }
+
+func (s staticFactory) New(buildrunner.Config) (buildrunner.BuildRunner, error) {
+	return s.runner, nil
 }
 
 func newTestHarness(t *testing.T, ctrl *gomock.Controller) *testHarness {
@@ -62,14 +72,20 @@ func newTestHarness(t *testing.T, ctrl *gomock.Controller) *testHarness {
 	require.NoError(t, err)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
+	// The poll loop loads the Batch to resolve the build's queue. Default to a
+	// batch with a queue; tests that exercise this read override it.
+	batchStore := storagemock.NewMockBatchStore(ctrl)
+	batchStore.EXPECT().Get(gomock.Any(), gomock.Any()).
+		Return(entity.Batch{ID: "batch-1", Queue: "test-queue"}, nil).AnyTimes()
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
+	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
 		store,
-		br,
+		staticFactory{br},
 		registry,
 		consumer.TopicKeyBuildSignal,
 		"orchestrator-buildsignal",
@@ -78,6 +94,7 @@ func newTestHarness(t *testing.T, ctrl *gomock.Controller) *testHarness {
 		controller:   c,
 		br:           br,
 		buildStore:   buildStore,
+		batchStore:   batchStore,
 		signalPub:    signalPub,
 		speculatePub: speculatePub,
 	}

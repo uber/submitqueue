@@ -58,7 +58,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	store         storage.Storage
-	buildRunner   buildrunner.BuildRunner
+	runnerFactory buildrunner.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -72,7 +72,7 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	store storage.Storage,
-	buildRunner buildrunner.BuildRunner,
+	runnerFactory buildrunner.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -81,7 +81,7 @@ func NewController(
 		logger:        logger.Named("buildsignal_controller"),
 		metricsScope:  scope.SubScope("buildsignal_controller"),
 		store:         store,
-		buildRunner:   buildRunner,
+		runnerFactory: runnerFactory,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -132,7 +132,24 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"partition_key", msg.PartitionKey,
 	)
 
-	status, _, err := c.buildRunner.Status(ctx, buildID)
+	// Resolve the BuildRunner for this build's queue. The queue lives on the
+	// Batch, not the Build, so load the Batch to look it up.
+	//
+	// TODO: denormalize the queue onto the Build (or carry it on the message)
+	// so the poll loop does not read the Batch on every poll.
+	batch, err := c.store.GetBatchStore().Get(ctx, build.BatchID)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return fmt.Errorf("failed to get batch %s for build %s: %w", build.BatchID, build.ID, err)
+	}
+
+	runner, err := c.runnerFactory.New(buildrunner.Config{QueueID: batch.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "runner_errors", 1)
+		return fmt.Errorf("failed to create build runner for queue %s: %w", batch.Queue, err)
+	}
+
+	status, _, err := runner.Status(ctx, buildID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "status_errors", 1)
 		return fmt.Errorf("failed to get status for build %s: %w", buildID.ID, err)

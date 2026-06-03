@@ -27,6 +27,7 @@ go_test(
         "//core/errs",
         "//entity",
         "//entity/queue",
+        "//extension/buildrunner",
         "//extension/buildrunner/mock",
         "//extension/queue/mock",
         "//extension/storage/mock",

@@ -28,11 +28,18 @@ func TestNew_ImplementsInterface(t *testing.T) {
 	var _ buildrunner.BuildRunner = New()
 }
 
+func TestNewFactory_ImplementsInterface(t *testing.T) {
+	var f buildrunner.Factory = NewFactory()
+	r, err := f.New(buildrunner.Config{QueueID: "queueA"})
+	require.NoError(t, err)
+	assert.NotNil(t, r)
+}
+
 func TestRunner_Trigger(t *testing.T) {
 	r := New()
 	ctx := context.Background()
 
-	id1, err := r.Trigger(ctx, "queueA",
+	id1, err := r.Trigger(ctx,
 		[]entity.Change{{URIs: []string{"github://owner/repo/pull/1"}}},
 		[]entity.Change{{URIs: []string{"github://owner/repo/pull/2"}}},
 		entity.BuildMetadata{"requester": "alice"},
@@ -41,7 +48,7 @@ func TestRunner_Trigger(t *testing.T) {
 	assert.NotEmpty(t, id1.ID)
 
 	// IDs are unique across calls, even with empty inputs.
-	id2, err := r.Trigger(ctx, "queueA", nil, nil, nil)
+	id2, err := r.Trigger(ctx, nil, nil, nil)
 	require.NoError(t, err)
 	assert.NotEqual(t, id1, id2)
 }

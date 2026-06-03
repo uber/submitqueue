@@ -36,7 +36,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	store         storage.Storage
-	buildRunner   buildrunner.BuildRunner
+	runnerFactory buildrunner.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -50,7 +50,7 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	store storage.Storage,
-	buildRunner buildrunner.BuildRunner,
+	runnerFactory buildrunner.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -59,7 +59,7 @@ func NewController(
 		logger:        logger.Named("build_controller"),
 		metricsScope:  scope.SubScope("build_controller"),
 		store:         store,
-		buildRunner:   buildRunner,
+		runnerFactory: runnerFactory,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -112,10 +112,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("failed to assemble head changes for batch %s: %w", batch.ID, err)
 	}
 
-	// Trigger the build with the configured build manager. metadata is nil
-	// until a caller-supplied source materializes (e.g. requester / ticket
-	// pulled off the originating LandRequest).
-	buildID, err := c.buildRunner.Trigger(ctx, batch.Queue, base, head, nil)
+	// Resolve the BuildRunner for this batch's queue and trigger the build.
+	// metadata is nil until a caller-supplied source materializes (e.g.
+	// requester / ticket pulled off the originating LandRequest).
+	runner, err := c.runnerFactory.New(buildrunner.Config{QueueID: batch.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "runner_errors", 1)
+		return fmt.Errorf("failed to create build runner for queue %s: %w", batch.Queue, err)
+	}
+
+	buildID, err := runner.Trigger(ctx, base, head, nil)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "trigger_errors", 1)
 		return fmt.Errorf("failed to trigger build for batch %s: %w", batch.ID, err)

@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//entity",
+        "//extension/buildrunner",
         "@org_uber_go_mock//gomock",
     ],
 )
