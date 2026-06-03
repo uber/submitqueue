@@ -7,8 +7,8 @@ Admin CLI for inspecting, managing, and troubleshooting the MySQL-backed message
 Start the local stack and find the MySQL queue port:
 
 ```bash
-make local-start
-make local-ps   # note the MySQL Queue port
+make local-submitqueue-start
+make local-submitqueue-ps   # note the MySQL Queue port
 ```
 
 Set the DSN once for the session:

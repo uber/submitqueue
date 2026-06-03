@@ -1,0 +1,37 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "speculate",
+    srcs = ["speculate.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/orchestrator/controller/speculate",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//core/metrics",
+        "//entity/queue",
+        "//submitqueue/core/consumer",
+        "//submitqueue/entity",
+        "//submitqueue/extension/storage",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "speculate_test",
+    srcs = ["speculate_test.go"],
+    embed = [":speculate"],
+    deps = [
+        "//core/errs",
+        "//entity/queue",
+        "//extension/queue/mock",
+        "//submitqueue/core/consumer",
+        "//submitqueue/entity",
+        "//submitqueue/extension/storage",
+        "//submitqueue/extension/storage/mock",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_mock//gomock",
+        "@org_uber_go_zap//zaptest",
+    ],
+)

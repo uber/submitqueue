@@ -1,0 +1,24 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "yaml",
+    srcs = ["yaml.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/extension/queueconfig/yaml",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//submitqueue/entity",
+        "//submitqueue/extension/queueconfig",
+        "@in_gopkg_yaml_v3//:yaml_v3",
+    ],
+)
+
+go_test(
+    name = "yaml_test",
+    srcs = ["yaml_test.go"],
+    embed = [":yaml"],
+    deps = [
+        "//submitqueue/extension/queueconfig",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

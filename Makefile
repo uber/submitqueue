@@ -5,9 +5,9 @@ BAZEL = ./tool/bazel
 COMPOSE = docker-compose
 
 # SubmitQueue compose files
-COMPOSE_FILE = example/server/docker-compose.yml
-GATEWAY_COMPOSE_FILE = example/server/gateway/docker-compose.yml
-ORCHESTRATOR_COMPOSE_FILE = example/server/orchestrator/docker-compose.yml
+COMPOSE_FILE = example/submitqueue/docker-compose.yml
+GATEWAY_COMPOSE_FILE = example/submitqueue/gateway/server/docker-compose.yml
+ORCHESTRATOR_COMPOSE_FILE = example/submitqueue/orchestrator/server/docker-compose.yml
 
 # Fixed project name for local manual testing (tests use unique random names)
 SUBMITQUEUE_LOCAL_PROJECT = submitqueue
@@ -40,7 +40,7 @@ define assert_clean
 	fi
 endef
 
-.PHONY: build build-all-linux build-gateway-linux build-orchestrator-linux build-stovepipe-gateway-linux build-stovepipe-orchestrator-linux check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-consumer integration-test-extensions integration-test-gateway integration-test-orchestrator license-fix lint lint-fmt lint-license local-clean local-gateway-start local-gateway-stop local-init-schemas local-init-stovepipe-queue-schema local-logs local-orchestrator-start local-orchestrator-stop local-ps local-restart local-start local-stop local-stovepipe-gateway-start local-stovepipe-orchestrator-start local-stovepipe-start mocks proto query-deps query-targets run-client-gateway run-client-orchestrator run-client-stovepipe-gateway run-client-stovepipe-orchestrator run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
+.PHONY: build build-all-linux build-submitqueue-gateway-linux build-submitqueue-orchestrator-linux build-stovepipe-gateway-linux build-stovepipe-orchestrator-linux check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator license-fix lint lint-fmt lint-license local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-init-stovepipe-queue-schema local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-gateway-start local-stovepipe-orchestrator-start local-stovepipe-start mocks proto query-deps query-targets run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe-gateway run-client-stovepipe-orchestrator run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
 
 
 build: ## Build all services and examples
@@ -49,23 +49,23 @@ build: ## Build all services and examples
 	@echo "Build complete!"
 
 # Build Linux binaries required for Docker containers
-build-all-linux: build-gateway-linux build-orchestrator-linux build-stovepipe-gateway-linux build-stovepipe-orchestrator-linux ## Build all Linux binaries for Docker
+build-all-linux: build-submitqueue-gateway-linux build-submitqueue-orchestrator-linux build-stovepipe-gateway-linux build-stovepipe-orchestrator-linux ## Build all Linux binaries for Docker
 	@echo "All Linux binaries ready for Docker"
 
-build-gateway-linux: ## Build Gateway Linux binary for Docker
+build-submitqueue-gateway-linux: ## Build Gateway Linux binary for Docker
 	@echo "Building Gateway Linux binary for Docker..."
-	@$(BAZEL) build --platforms=@rules_go//go/toolchain:linux_amd64 //example/server/gateway:gateway
+	@$(BAZEL) build --platforms=@rules_go//go/toolchain:linux_amd64 //example/submitqueue/gateway/server:gateway
 	@mkdir -p .docker-bin
-	@cp -f bazel-bin/example/server/gateway/gateway_/gateway .docker-bin/gateway 2>/dev/null || \
-	 cp -f bazel-bin/example/server/gateway/gateway .docker-bin/gateway
+	@cp -f bazel-bin/example/submitqueue/gateway/server/gateway_/gateway .docker-bin/gateway 2>/dev/null || \
+	 cp -f bazel-bin/example/submitqueue/gateway/server/gateway .docker-bin/gateway
 	@echo "Gateway Linux binary ready at .docker-bin/gateway"
 
-build-orchestrator-linux: ## Build Orchestrator Linux binary for Docker
+build-submitqueue-orchestrator-linux: ## Build Orchestrator Linux binary for Docker
 	@echo "Building Orchestrator Linux binary for Docker..."
-	@$(BAZEL) build --platforms=@rules_go//go/toolchain:linux_amd64 //example/server/orchestrator:orchestrator
+	@$(BAZEL) build --platforms=@rules_go//go/toolchain:linux_amd64 //example/submitqueue/orchestrator/server:orchestrator
 	@mkdir -p .docker-bin
-	@cp -f bazel-bin/example/server/orchestrator/orchestrator_/orchestrator .docker-bin/orchestrator 2>/dev/null || \
-	 cp -f bazel-bin/example/server/orchestrator/orchestrator .docker-bin/orchestrator
+	@cp -f bazel-bin/example/submitqueue/orchestrator/server/orchestrator_/orchestrator .docker-bin/orchestrator 2>/dev/null || \
+	 cp -f bazel-bin/example/submitqueue/orchestrator/server/orchestrator .docker-bin/orchestrator
 	@echo "Orchestrator Linux binary ready at .docker-bin/orchestrator"
 
 build-stovepipe-gateway-linux: ## Build Stovepipe gateway Linux binary for Docker
@@ -106,8 +106,8 @@ clean: ## Clean generated files and binaries
 
 clean-proto: ## Clean generated proto files
 	@echo "Cleaning generated proto files..."
-	@rm -rf gateway/protopb/*.pb.go
-	@rm -rf orchestrator/protopb/*.pb.go
+	@rm -rf submitqueue/gateway/protopb/*.pb.go
+	@rm -rf submitqueue/orchestrator/protopb/*.pb.go
 	@rm -rf stovepipe/gateway/protopb/*.pb.go
 	@rm -rf stovepipe/orchestrator/protopb/*.pb.go
 	@echo "Proto clean complete!"
@@ -115,9 +115,9 @@ clean-proto: ## Clean generated proto files
 deps: tidy-go ## Download and tidy Go dependencies
 	@echo "Dependencies installed!"
 
-e2e-test: build-all-linux ## Run end-to-end tests (hermetic, auto-builds binaries)
-	@echo "Running end-to-end tests..."
-	@$(BAZEL) test //test/e2e:e2e_test --test_output=streamed
+e2e-test: build-all-linux ## Run end-to-end tests (hermetic, auto-builds binaries; runs in parallel)
+	@echo "Running end-to-end tests (parallel)..."
+	@$(BAZEL) test //test/e2e/... --test_output=errors
 
 fmt: ## Format Go and YAML code
 	@echo "Formatting Go code..."
@@ -130,25 +130,25 @@ gazelle: ## Update BUILD.bazel files
 	@echo "Running Gazelle to update BUILD files..."
 	@$(BAZEL) run //:gazelle
 
-integration-test: build-all-linux ## Run all integration tests (auto-builds binaries)
-	@echo "Running all integration tests..."
-	@$(BAZEL) test //test/integration/... --test_output=streamed
+integration-test: build-all-linux ## Run all integration tests (auto-builds binaries; runs in parallel)
+	@echo "Running all integration tests (parallel)..."
+	@$(BAZEL) test //test/integration/... --test_output=errors
 
-integration-test-consumer: ## Run Consumer integration tests
+integration-test-submitqueue-consumer: ## Run Consumer integration tests
 	@echo "Running Consumer integration tests..."
-	@$(BAZEL) test //test/integration/core/consumer:consumer_test --test_output=streamed
+	@$(BAZEL) test //test/integration/submitqueue/core/consumer:consumer_test --test_output=streamed
 
-integration-test-extensions: ## Run extension integration tests
-	@echo "Running extension integration tests..."
-	@$(BAZEL) test //test/integration/extension/... --test_output=streamed
+integration-test-extensions: ## Run extension integration tests (runs in parallel)
+	@echo "Running extension integration tests (parallel)..."
+	@$(BAZEL) test //test/integration/submitqueue/extension/... //test/integration/extension/... --test_output=errors
 
-integration-test-gateway: build-gateway-linux ## Run Gateway integration tests (auto-builds binary)
+integration-test-submitqueue-gateway: build-submitqueue-gateway-linux ## Run Gateway integration tests (auto-builds binary)
 	@echo "Running Gateway integration tests..."
-	@$(BAZEL) test //test/integration/gateway:gateway_test --test_output=streamed
+	@$(BAZEL) test //test/integration/submitqueue/gateway:gateway_test --test_output=streamed
 
-integration-test-orchestrator: build-orchestrator-linux ## Run Orchestrator integration tests (auto-builds binary)
+integration-test-submitqueue-orchestrator: build-submitqueue-orchestrator-linux ## Run Orchestrator integration tests (auto-builds binary)
 	@echo "Running Orchestrator integration tests..."
-	@$(BAZEL) test //test/integration/orchestrator:orchestrator_test --test_output=streamed
+	@$(BAZEL) test //test/integration/submitqueue/orchestrator:orchestrator_test --test_output=streamed
 
 license-fix: ## Add missing license headers to source files
 	@$(BAZEL) run //tool/linter/licenseheader -- --fix
@@ -163,16 +163,16 @@ lint-fmt: fmt ## Check code formatting (fails if unformatted)
 lint-license: ## Check license headers on all source files
 	@$(BAZEL) run //tool/linter/licenseheader -- --check
 
-local-clean: ## Stop and remove all local services, volumes, and images
+local-submitqueue-clean: ## Stop and remove all local services, volumes, and images
 	@echo "Cleaning all services and data..."
 	@$(COMPOSE) -f $(COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down -v --rmi local
 	@echo "All services, volumes, and images removed."
 
-local-gateway-start: build-gateway-linux ## Start Gateway service locally (Gateway + 2 MySQL databases)
+local-submitqueue-gateway-start: build-submitqueue-gateway-linux ## Start Gateway service locally (Gateway + 2 MySQL databases)
 	@echo "Starting Gateway with docker-compose..."
 	@$(COMPOSE) -f $(GATEWAY_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) up -d --build --wait
 	@echo "Applying database schemas..."
-	@$(MAKE) -s local-init-schemas
+	@$(MAKE) -s local-init-submitqueue-schemas
 	@echo ""
 	@echo "✅ Gateway is running!"
 	@echo ""
@@ -182,19 +182,19 @@ local-gateway-start: build-gateway-linux ## Start Gateway service locally (Gatew
 	@echo "MySQL App port:    $$(docker port $(SUBMITQUEUE_LOCAL_PROJECT)-mysql-app-1 3306 2>/dev/null | cut -d: -f2 || echo 'unknown')"
 	@echo "MySQL Queue port:  $$(docker port $(SUBMITQUEUE_LOCAL_PROJECT)-mysql-queue-1 3306 2>/dev/null | cut -d: -f2 || echo 'unknown')"
 
-local-gateway-stop: ## Stop Gateway service
+local-submitqueue-gateway-stop: ## Stop Gateway service
 	@echo "Stopping Gateway services..."
 	@$(COMPOSE) -f $(GATEWAY_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
 	@echo "Gateway services stopped."
 
-local-init-schemas: ## Manually apply all database schemas
+local-init-submitqueue-schemas: ## Manually apply all database schemas
 	@echo "Applying storage schema to mysql-app..."
-	@for file in extension/storage/mysql/schema/*.sql; do \
+	@for file in submitqueue/extension/storage/mysql/schema/*.sql; do \
 		echo "  - Applying $$(basename $$file)..."; \
 		docker exec -i $(SUBMITQUEUE_LOCAL_PROJECT)-mysql-app-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
 	done
 	@echo "Applying counter schema to mysql-app..."
-	@for file in extension/counter/mysql/schema/*.sql; do \
+	@for file in submitqueue/extension/counter/mysql/schema/*.sql; do \
 		echo "  - Applying $$(basename $$file)..."; \
 		docker exec -i $(SUBMITQUEUE_LOCAL_PROJECT)-mysql-app-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
 	done
@@ -213,14 +213,14 @@ local-init-stovepipe-queue-schema: ## Apply queue schema only (mysql-queue) for 
 	done
 	@echo "✅ Stovepipe queue schema applied successfully"
 
-local-logs: ## View logs from all running services
+local-submitqueue-logs: ## View logs from all running services
 	@$(COMPOSE) -f $(COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) logs -f
 
-local-orchestrator-start: build-orchestrator-linux ## Start Orchestrator service locally (Orchestrator + 2 MySQL databases)
+local-submitqueue-orchestrator-start: build-submitqueue-orchestrator-linux ## Start Orchestrator service locally (Orchestrator + 2 MySQL databases)
 	@echo "Starting Orchestrator with docker-compose..."
 	@$(COMPOSE) -f $(ORCHESTRATOR_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) up -d --build --wait
 	@echo "Applying database schemas..."
-	@$(MAKE) -s local-init-schemas
+	@$(MAKE) -s local-init-submitqueue-schemas
 	@echo ""
 	@echo "✅ Orchestrator is running!"
 	@echo ""
@@ -230,12 +230,12 @@ local-orchestrator-start: build-orchestrator-linux ## Start Orchestrator service
 	@echo "MySQL App port:         $$(docker port $(SUBMITQUEUE_LOCAL_PROJECT)-mysql-app-1 3306 2>/dev/null | cut -d: -f2 || echo 'unknown')"
 	@echo "MySQL Queue port:       $$(docker port $(SUBMITQUEUE_LOCAL_PROJECT)-mysql-queue-1 3306 2>/dev/null | cut -d: -f2 || echo 'unknown')"
 
-local-orchestrator-stop: ## Stop Orchestrator service
+local-submitqueue-orchestrator-stop: ## Stop Orchestrator service
 	@echo "Stopping Orchestrator services..."
 	@$(COMPOSE) -f $(ORCHESTRATOR_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
 	@echo "Orchestrator services stopped."
 
-local-ps: ## Show running containers and their ports
+local-submitqueue-ps: ## Show running containers and their ports
 	@echo "Running containers and ports:"
 	@echo ""
 	@$(COMPOSE) -f $(COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) ps
@@ -256,23 +256,23 @@ local-ps: ## Show running containers and their ports
 	@echo "  grpcurl -plaintext -d '{\"message\":\"test\"}' localhost:$$(docker port $(SUBMITQUEUE_LOCAL_PROJECT)-gateway-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'PORT') submitqueue.SubmitQueueGateway/Ping"
 	@echo ""
 	@echo "  # View logs"
-	@echo "  make local-logs"
+	@echo "  make local-submitqueue-logs"
 
-local-restart: build-all-linux ## Restart all services (rebuild and restart)
+local-submitqueue-restart: build-all-linux ## Restart all services (rebuild and restart)
 	@echo "Restarting all services..."
 	@$(COMPOSE) -f $(COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) restart
 	@echo "Services restarted!"
-	@make local-ps
+	@make local-submitqueue-ps
 
-local-start: build-all-linux ## Start full stack (Gateway + Orchestrator + MySQL)
+local-submitqueue-start: build-all-linux ## Start full stack (Gateway + Orchestrator + MySQL)
 	@echo "Starting full stack with docker-compose..."
 	@$(COMPOSE) -f $(COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) up -d --build --wait
 	@echo "Applying database schemas..."
-	@$(MAKE) -s local-init-schemas
+	@$(MAKE) -s local-init-submitqueue-schemas
 	@echo ""
 	@echo "✅ Full stack is running!"
 	@echo ""
-	@make local-ps
+	@make local-submitqueue-ps
 
 local-stop: ## Stop all services (keep data)
 	@echo "Stopping all services..."
@@ -334,19 +334,19 @@ local-stovepipe-gateway-start: build-stovepipe-gateway-linux ## Start Stovepipe 
 
 mocks: ## Generate mock files using mockgen
 	@echo "Generating mocks..."
-	@$(BAZEL) run @rules_go//go -- generate ./extension/storage/... ./extension/buildrunner/... ./extension/changestore/... ./extension/counter/... ./extension/queue/... ./extension/queueconfig/... ./extension/mergechecker/... ./extension/pusher/... ./extension/scorer/... ./extension/conflict/... ./core/consumer/...
+	@$(BAZEL) run @rules_go//go -- generate ./submitqueue/extension/storage/... ./submitqueue/extension/buildrunner/... ./submitqueue/extension/changestore/... ./submitqueue/extension/counter/... ./extension/queue/... ./submitqueue/extension/queueconfig/... ./submitqueue/extension/mergechecker/... ./submitqueue/extension/pusher/... ./submitqueue/extension/scorer/... ./submitqueue/extension/conflict/... ./submitqueue/core/consumer/...
 	@echo "Mocks generated successfully!"
 
 proto: ## Generate protobuf files from .proto definitions
 	@echo "Generating protobuf files with protoc..."
-	@protoc --go_out=gateway/protopb --go_opt=paths=source_relative \
-	  --go-grpc_out=gateway/protopb --go-grpc_opt=paths=source_relative \
-	  --yarpc-go_out=gateway/protopb --yarpc-go_opt=paths=source_relative \
-	  --proto_path=gateway/proto gateway/proto/gateway.proto
-	@protoc --go_out=orchestrator/protopb --go_opt=paths=source_relative \
-	  --go-grpc_out=orchestrator/protopb --go-grpc_opt=paths=source_relative \
-	  --yarpc-go_out=orchestrator/protopb --yarpc-go_opt=paths=source_relative \
-	  --proto_path=orchestrator/proto orchestrator/proto/orchestrator.proto
+	@protoc --go_out=submitqueue/gateway/protopb --go_opt=paths=source_relative \
+	  --go-grpc_out=submitqueue/gateway/protopb --go-grpc_opt=paths=source_relative \
+	  --yarpc-go_out=submitqueue/gateway/protopb --yarpc-go_opt=paths=source_relative \
+	  --proto_path=submitqueue/gateway/proto submitqueue/gateway/proto/gateway.proto
+	@protoc --go_out=submitqueue/orchestrator/protopb --go_opt=paths=source_relative \
+	  --go-grpc_out=submitqueue/orchestrator/protopb --go-grpc_opt=paths=source_relative \
+	  --yarpc-go_out=submitqueue/orchestrator/protopb --yarpc-go_opt=paths=source_relative \
+	  --proto_path=submitqueue/orchestrator/proto submitqueue/orchestrator/proto/orchestrator.proto
 	@protoc --go_out=stovepipe/gateway/protopb --go_opt=paths=source_relative \
 	  --go-grpc_out=stovepipe/gateway/protopb --go-grpc_opt=paths=source_relative \
 	  --yarpc-go_out=stovepipe/gateway/protopb --yarpc-go_opt=paths=source_relative \
@@ -359,18 +359,18 @@ proto: ## Generate protobuf files from .proto definitions
 
 # Bazel query helpers
 query-deps:
-	@$(BAZEL) query 'deps(//example/server/gateway:gateway)'
+	@$(BAZEL) query 'deps(//example/submitqueue/gateway/server:gateway)'
 
 query-targets:
 	@$(BAZEL) query //...
 
 # Run gateway client (connects to any running gateway service)
-run-client-gateway:
-	@$(BAZEL) run //example/client/gateway:gateway -- -addr $(or $(SERVER_ADDR),localhost:8081) -message "$(or $(MESSAGE),ping)"
+run-client-submitqueue-gateway:
+	@$(BAZEL) run //example/submitqueue/gateway/client:gateway -- -addr $(or $(SERVER_ADDR),localhost:8081) -message "$(or $(MESSAGE),ping)"
 
 # Run orchestrator client (connects to any running orchestrator service)
-run-client-orchestrator:
-	@$(BAZEL) run //example/client/orchestrator:orchestrator -- -addr $(or $(SERVER_ADDR),localhost:8082) -message "$(or $(MESSAGE),ping)"
+run-client-submitqueue-orchestrator:
+	@$(BAZEL) run //example/submitqueue/orchestrator/client:orchestrator -- -addr $(or $(SERVER_ADDR),localhost:8082) -message "$(or $(MESSAGE),ping)"
 
 # Run stovepipe gateway client (connects to any running stovepipe gateway service)
 run-client-stovepipe-gateway:

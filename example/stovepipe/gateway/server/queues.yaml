@@ -1,0 +1,8 @@
+# Stovepipe queue configuration placeholder.
+#
+# The queue-config schema (build_runner / change_provider / merge_checker /
+# land_provider) is SubmitQueue-specific — those fields select SubmitQueue
+# extension implementations that Stovepipe does not yet define. The Stovepipe
+# gateway image ships this file only so QUEUE_CONFIG_PATH resolves; populate it
+# once Stovepipe defines its own queue-config extensions.
+queues: []

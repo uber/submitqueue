@@ -1,0 +1,33 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "log",
+    srcs = ["log.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/orchestrator/controller/log",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//core/metrics",
+        "//submitqueue/core/consumer",
+        "//submitqueue/entity",
+        "//submitqueue/extension/storage",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "log_test",
+    srcs = ["log_test.go"],
+    embed = [":log"],
+    deps = [
+        "//entity/queue",
+        "//extension/queue/mock",
+        "//submitqueue/core/consumer",
+        "//submitqueue/entity",
+        "//submitqueue/extension/storage/mock",
+        "@com_github_stretchr_testify//require",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_mock//gomock",
+        "@org_uber_go_zap//zaptest",
+    ],
+)

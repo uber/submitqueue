@@ -9,7 +9,10 @@ go_test(
         "//example/stovepipe/gateway/server:docker-compose.yml",
         "//extension/queue/mysql/schema",
     ],
-    tags = ["integration"],
+    tags = [
+        "external",
+        "integration",
+    ],
     deps = [
         "//stovepipe/gateway/protopb",
         "//test/testutil",

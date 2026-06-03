@@ -92,7 +92,7 @@ jobs:
       - uses: ./.github/actions/setup
 
       - name: Run Gateway integration tests
-        run: make integration-test-gateway
+        run: make integration-test-submitqueue-gateway
 
   orchestrator-integration-test:
     name: Orchestrator Integration Test
@@ -103,7 +103,7 @@ jobs:
       - uses: ./.github/actions/setup
 
       - name: Run Orchestrator integration tests
-        run: make integration-test-orchestrator
+        run: make integration-test-submitqueue-orchestrator
 
   # ---------------------------------------------------------------------------
   # EXTENSION TESTS
@@ -117,7 +117,7 @@ jobs:
       - uses: ./.github/actions/setup
       - uses: ./.github/actions/run-bazel-test
         with:
-          target: //test/integration/extension/counter/...
+          target: //test/integration/submitqueue/extension/counter/...
 
   queue-integration-test:
     name: Queue Extension Test
@@ -139,7 +139,7 @@ jobs:
       - uses: ./.github/actions/setup
       - uses: ./.github/actions/run-bazel-test
         with:
-          target: //test/integration/extension/storage/...
+          target: //test/integration/submitqueue/extension/storage/...
 
   # ---------------------------------------------------------------------------
   # CORE TESTS
@@ -153,7 +153,7 @@ jobs:
       - uses: ./.github/actions/setup
       - uses: ./.github/actions/run-bazel-test
         with:
-          target: //test/integration/core/consumer/...
+          target: //test/integration/submitqueue/core/consumer/...
 
   # ---------------------------------------------------------------------------
   # REQUIRED CHECKS GATE

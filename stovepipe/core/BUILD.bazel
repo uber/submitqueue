@@ -1,0 +1,8 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "core",
+    srcs = ["core.go"],
+    importpath = "github.com/uber/submitqueue/stovepipe/core",
+    visibility = ["//visibility:public"],
+)

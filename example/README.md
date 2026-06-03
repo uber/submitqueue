@@ -15,19 +15,20 @@ Services require MySQL (app database + queue database). Docker Compose handles t
 
 ```
 example/
-├── server/
+├── submitqueue/
 │   ├── docker-compose.yml          # Full stack (Gateway + Orchestrator + 2x MySQL)
 │   ├── gateway/
-│   │   ├── main.go                 # Gateway server entry point
-│   │   ├── Dockerfile
-│   │   └── docker-compose.yml      # Gateway-only stack
+│   │   ├── server/
+│   │   │   ├── main.go             # Gateway server entry point
+│   │   │   ├── Dockerfile
+│   │   │   └── docker-compose.yml  # Gateway-only stack
+│   │   └── client/main.go          # Gateway ping client
 │   └── orchestrator/
-│       ├── main.go                 # Orchestrator server entry point
-│       ├── Dockerfile
-│       └── docker-compose.yml      # Orchestrator-only stack
-├── client/
-│   ├── gateway/main.go             # Gateway ping client
-│   └── orchestrator/main.go        # Orchestrator ping client
+│       ├── server/
+│       │   ├── main.go             # Orchestrator server entry point
+│       │   ├── Dockerfile
+│       │   └── docker-compose.yml  # Orchestrator-only stack
+│       └── client/main.go          # Orchestrator ping client
 └── stovepipe/
     ├── docker-compose.yml          # Full stack (Stovepipe Gateway + Orchestrator + 2x MySQL)
     ├── gateway/
@@ -51,9 +52,9 @@ example/
 
 ```bash
 # Start full SubmitQueue stack (Gateway + Orchestrator + MySQL)
-make local-start
-make local-gateway-start
-make local-orchestrator-start
+make local-submitqueue-start
+make local-submitqueue-gateway-start
+make local-submitqueue-orchestrator-start
 
 # Start full Stovepipe stack (Gateway + Orchestrator + MySQL)
 make local-stovepipe-start
@@ -61,27 +62,27 @@ make local-stovepipe-gateway-start
 make local-stovepipe-orchestrator-start
 
 # View logs and status
-make local-logs
-make local-ps
+make local-submitqueue-logs
+make local-submitqueue-ps
 
 # Stop (SubmitQueue + Stovepipe default projects)
 make local-stop
 ```
 
-For Docker, `make build-stovepipe-gateway-linux` copies a Linux binary to `.docker-bin/stovepipe-gateway` so it does not overwrite SubmitQueue’s `.docker-bin/gateway`. Stovepipe `make local-stovepipe-gateway-start` applies **only the queue schema** on `mysql-queue` (`make local-init-stovepipe-queue-schema`); SubmitQueue storage/counter schemas on `mysql-app` are skipped until Stovepipe has its own app schema. Compose service keys are **`gateway-service`** and **`orchestrator-service`** (same as `example/server`), so with default project **`stovepipe`** you should see **`stovepipe-gateway-service-1`** and **`stovepipe-orchestrator-service-1`** — not `stovepipe-stovepipe-*` (that pattern was from older service names; run **`make local-stop`** to run `docker compose down --remove-orphans` and drop orphans). `make local-stop` also stops the SubmitQueue stack. SubmitQueue examples use project **`submitqueue`** by default (`make SUBMITQUEUE_LOCAL_PROJECT=myname ...`). Stovepipe containers are named like `stovepipe-mysql-app-1`, not `submitqueue-*`.
+For Docker, `make build-stovepipe-gateway-linux` copies a Linux binary to `.docker-bin/stovepipe-gateway` so it does not overwrite SubmitQueue’s `.docker-bin/gateway`. Stovepipe `make local-stovepipe-gateway-start` applies **only the queue schema** on `mysql-queue` (`make local-init-stovepipe-queue-schema`); SubmitQueue storage/counter schemas on `mysql-app` are skipped until Stovepipe has its own app schema. Compose service keys are **`gateway-service`** and **`orchestrator-service`** (same as `example/submitqueue`), so with default project **`stovepipe`** you should see **`stovepipe-gateway-service-1`** and **`stovepipe-orchestrator-service-1`** — not `stovepipe-stovepipe-*` (that pattern was from older service names; run **`make local-stop`** to run `docker compose down --remove-orphans` and drop orphans). `make local-stop` also stops the SubmitQueue stack. SubmitQueue examples use project **`submitqueue`** by default (`make SUBMITQUEUE_LOCAL_PROJECT=myname ...`). Stovepipe containers are named like `stovepipe-mysql-app-1`, not `submitqueue-*`.
 
 ### Bazel
 
 ```bash
 # Build servers
-bazel build //example/server/gateway:gateway
-bazel build //example/server/orchestrator:orchestrator
+bazel build //example/submitqueue/gateway/server:gateway
+bazel build //example/submitqueue/orchestrator/server:orchestrator
 bazel build //example/stovepipe/gateway/server:gateway
 bazel build //example/stovepipe/orchestrator/server:orchestrator
 
 # Build clients
-bazel build //example/client/gateway:gateway
-bazel build //example/client/orchestrator:orchestrator
+bazel build //example/submitqueue/gateway/client:gateway
+bazel build //example/submitqueue/orchestrator/client:orchestrator
 bazel build //example/stovepipe/gateway/client:gateway
 bazel build //example/stovepipe/orchestrator/client:orchestrator
 ```
@@ -89,8 +90,8 @@ bazel build //example/stovepipe/orchestrator/client:orchestrator
 ### Go
 
 ```bash
-go run example/server/gateway/main.go
-go run example/server/orchestrator/main.go
+go run example/submitqueue/gateway/server/main.go
+go run example/submitqueue/orchestrator/server/main.go
 go run example/stovepipe/gateway/server/main.go
 go run example/stovepipe/orchestrator/server/main.go
 ```
@@ -99,8 +100,8 @@ go run example/stovepipe/orchestrator/server/main.go
 
 ```bash
 # Go clients
-go run example/client/gateway/main.go -addr localhost:8081 -message "hello"
-go run example/client/orchestrator/main.go -addr localhost:8082 -message "hello"
+go run example/submitqueue/gateway/client/main.go -addr localhost:8081 -message "hello"
+go run example/submitqueue/orchestrator/client/main.go -addr localhost:8082 -message "hello"
 go run example/stovepipe/gateway/client/main.go -addr localhost:8083 -message "hello"
 go run example/stovepipe/orchestrator/client/main.go -addr localhost:8084 -message "hello"
 ```
@@ -144,7 +145,7 @@ grpcurl -plaintext localhost:8084 describe uber.submitqueue.stovepipe.orchestrat
 ### Gateway Service
 
 **Service**: `uber.submitqueue.gateway.SubmitQueueGateway`
-**Proto**: `gateway/proto/gateway.proto`
+**Proto**: `submitqueue/gateway/proto/gateway.proto`
 
 | Method | Description |
 |--------|-------------|
@@ -154,7 +155,7 @@ grpcurl -plaintext localhost:8084 describe uber.submitqueue.stovepipe.orchestrat
 ### Orchestrator Service
 
 **Service**: `uber.submitqueue.orchestrator.SubmitQueueOrchestrator`
-**Proto**: `orchestrator/proto/orchestrator.proto`
+**Proto**: `submitqueue/orchestrator/proto/orchestrator.proto`
 
 | Method | Description |
 |--------|-------------|

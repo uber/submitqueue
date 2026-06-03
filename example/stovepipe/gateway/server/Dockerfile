@@ -7,8 +7,8 @@ WORKDIR /root/
 # Built via: make build-stovepipe-gateway-linux
 COPY .docker-bin/stovepipe-gateway ./gateway
 
-# Reuse SubmitQueue sample queue YAML; compose sets QUEUE_CONFIG_PATH for parity with main gateway image.
-COPY example/server/gateway/queues.yaml ./queues.yaml
+# Stovepipe's own sample queue YAML; compose sets QUEUE_CONFIG_PATH to point at it.
+COPY example/stovepipe/gateway/server/queues.yaml ./queues.yaml
 
 EXPOSE 8080
 

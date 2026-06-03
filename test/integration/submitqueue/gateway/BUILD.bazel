@@ -1,0 +1,26 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "gateway_test",
+    srcs = ["suite_test.go"],
+    data = [
+        "//:MODULE.bazel",
+        "//:go.mod",
+        "//example/submitqueue/gateway/server:docker-compose.yml",
+        "//extension/queue/mysql/schema",
+        "//submitqueue/extension/counter/mysql/schema",
+        "//submitqueue/extension/storage/mysql/schema",
+    ],
+    tags = [
+        "external",
+        "integration",
+    ],
+    deps = [
+        "//submitqueue/gateway/protopb",
+        "//test/testutil",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_stretchr_testify//suite",
+        "@org_golang_google_grpc//:grpc",
+    ],
+)

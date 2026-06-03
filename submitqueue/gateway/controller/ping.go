@@ -1,0 +1,72 @@
+// Copyright (c) 2025 Uber Technologies, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package controller
+
+import (
+	"context"
+	"os"
+	"time"
+
+	"github.com/uber-go/tally/v4"
+	pb "github.com/uber/submitqueue/submitqueue/gateway/protopb"
+	"go.uber.org/zap"
+)
+
+// PingController handles ping business logic for the gateway
+type PingController struct {
+	logger       *zap.Logger
+	metricsScope tally.Scope
+}
+
+// NewPingController creates a new instance of the gateway ping controller
+func NewPingController(logger *zap.Logger, scope tally.Scope) *PingController {
+	return &PingController{
+		logger:       logger,
+		metricsScope: scope,
+	}
+}
+
+// Ping handles the ping request and returns a response
+func (c *PingController) Ping(ctx context.Context, req *pb.PingRequest) (*pb.PingResponse, error) {
+	start := time.Now()
+	defer func() {
+		c.metricsScope.Timer("ping_latency").Record(time.Since(start))
+	}()
+
+	c.metricsScope.Counter("ping_requests_total").Inc(1)
+
+	message := "pong!"
+	isEcho := false
+	if req.Message != "" {
+		message = "echo: " + req.Message
+		isEcho = true
+		c.metricsScope.Counter("echo_requests_total").Inc(1)
+	}
+
+	hostname, _ := os.Hostname()
+
+	c.logger.Info("ping request received",
+		zap.String("message", req.Message),
+		zap.Bool("is_echo", isEcho),
+		zap.String("hostname", hostname),
+	)
+
+	return &pb.PingResponse{
+		Message:     message,
+		ServiceName: "gateway",
+		Timestamp:   time.Now().Unix(),
+		Hostname:    hostname,
+	}, nil
+}

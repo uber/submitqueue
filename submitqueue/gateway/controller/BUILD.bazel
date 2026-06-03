@@ -1,0 +1,56 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "controller",
+    srcs = [
+        "cancel.go",
+        "land.go",
+        "ping.go",
+        "status.go",
+    ],
+    importpath = "github.com/uber/submitqueue/submitqueue/gateway/controller",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//core/errs",
+        "//core/metrics",
+        "//entity/queue",
+        "//submitqueue/core/consumer",
+        "//submitqueue/core/request",
+        "//submitqueue/entity",
+        "//submitqueue/extension/counter",
+        "//submitqueue/extension/queueconfig",
+        "//submitqueue/extension/storage",
+        "//submitqueue/gateway/protopb",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "controller_test",
+    srcs = [
+        "cancel_test.go",
+        "land_test.go",
+        "ping_test.go",
+        "status_test.go",
+    ],
+    embed = [":controller"],
+    deps = [
+        "//core/errs",
+        "//entity/queue",
+        "//extension/queue/mock",
+        "//submitqueue/core/consumer",
+        "//submitqueue/entity",
+        "//submitqueue/extension/counter/mock",
+        "//submitqueue/extension/queueconfig",
+        "//submitqueue/extension/queueconfig/mock",
+        "//submitqueue/extension/storage",
+        "//submitqueue/extension/storage/mock",
+        "//submitqueue/gateway/protopb",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_mock//gomock",
+        "@org_uber_go_zap//:zap",
+    ],
+)

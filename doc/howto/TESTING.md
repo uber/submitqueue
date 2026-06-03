@@ -23,7 +23,7 @@ SubmitQueue uses **two separate databases** to demonstrate proper architectural 
 
 ### 1. Application Database
 - **Purpose**: Business data (requests, counters, batches)
-- **Schema**: `extension/storage/mysql/schema`, `extension/counter/mysql/schema`
+- **Schema**: `submitqueue/extension/storage/mysql/schema`, `submitqueue/extension/counter/mysql/schema`
 - **Used by**: Gateway (stores requests), Orchestrator (reads/updates request state)
 - **Connection**: `MYSQL_DSN`
 
@@ -52,8 +52,8 @@ SubmitQueue uses **two separate databases** to demonstrate proper architectural 
 make test
 
 # Integration tests (Docker required)
-make integration-test-gateway       # Gateway in isolation
-make integration-test-orchestrator  # Orchestrator in isolation
+make integration-test-submitqueue-gateway       # Gateway in isolation
+make integration-test-submitqueue-orchestrator  # Orchestrator in isolation
 make integration-test-extensions    # All extension tests
 make integration-test               # All integration tests
 
@@ -73,13 +73,13 @@ make build-all-linux                # Build Linux binaries for Docker
 - Speed: Fast (< 1s typically)
 
 **2. Integration Tests** - Service in isolation with real dependencies
-- Location: `test/integration/{service}/`
+- Location: `test/integration/submitqueue/{service}/`
 - Run: `make integration-test-{service}`
 - Containers: MySQL + one service
 - Tests one service isolated from others
 
 **3. E2E Tests** - Complete workflows across all services
-- Location: `test/e2e/`
+- Location: `test/e2e/submitqueue/`
 - Run: `make e2e-test`
 - Containers: MySQL + all services
 - Tests cross-service communication
@@ -97,7 +97,7 @@ Tests use **docker-compose** via `ComposeStack` to spin up containers automatica
 
 ## Container Naming
 
-Test containers use **meaningful, context-rich names** for easy debugging and correlation.
+Test containers use **meaningful, context-rich, domain-qualified names** for easy debugging and correlation — and so suites from different domains never collide when run in parallel.
 
 ### Naming Format
 
@@ -112,59 +112,41 @@ Project name format:
 sq-test-{context}-{shortid}
 │       │         │
 │       │         └─ 6-char hex timestamp (unique per test run)
-│       └─────────── Test context (ext-counter, gateway, e2e, etc.)
+│       └─────────── Test context (domain-qualified — see convention)
 └─────────────────── Namespace prefix
 ```
 
-### Real Examples
+### Context naming convention
 
-**Extension Test - Counter:**
-```bash
-Container: sq-test-ext-counter-2ce1d0-mysql-1
-           │       │           │      │     │
-           │       │           │      │     └─ Instance number
-           │       │           │      └─ Service from docker-compose.yml
-           │       │           └─ Short unique ID
-           │       └─ Test context
-           └─ Namespace prefix
+The `{context}` passed to `NewComposeStack` is **domain-qualified** so that the same kind of suite in different domains (SubmitQueue and Stovepipe both have a gateway and an orchestrator) yields distinct, self-describing names:
 
-# From:
-NewComposeStack(t, log, ctx, "docker-compose.yml", "ext-counter")
+```
+{category}-{domain}-{name}
 ```
 
-**Service Test - Gateway (Multiple Containers):**
-```bash
-# All share same project prefix, different services:
-sq-test-gateway-abc123-mysql-app-1
-sq-test-gateway-abc123-mysql-queue-1
-sq-test-gateway-abc123-gateway-service-1
-└──────────┬───────────┘
-      Same project (same test run)
+- `{category}` — `svc` (service), `ext` (extension), `core` (domain-internal infra), or `e2e`
+- `{domain}` — `submitqueue`, `stovepipe`, … — **omit for shared/cross-domain code**
+- `{name}` — the specific service/extension (e.g. `gateway`, `storage-mysql`)
 
-# From:
-NewComposeStack(t, log, ctx, composeFile, "gateway")
-```
+Shared (cross-domain) suites carry no domain segment — e.g. the shared queue extension uses `ext-queue-sql`.
 
-**E2E Test - Full Stack (4 Containers):**
-```bash
-sq-test-e2e-def456-mysql-app-1
-sq-test-e2e-def456-mysql-queue-1
-sq-test-e2e-def456-gateway-service-1
-sq-test-e2e-def456-orchestrator-service-1
-└────┬─────┘
-  All same project
-```
+### Context reference
 
-### Container Name Reference
+| Suite | Context | Example container |
+|-------|---------|-------------------|
+| SubmitQueue gateway | `svc-submitqueue-gateway` | `sq-test-svc-submitqueue-gateway-abc123-gateway-service-1` |
+| SubmitQueue orchestrator | `svc-submitqueue-orchestrator` | `sq-test-svc-submitqueue-orchestrator-xyz789-orchestrator-service-1` |
+| Stovepipe gateway | `svc-stovepipe-gateway` | `sq-test-svc-stovepipe-gateway-abc123-gateway-service-1` |
+| SubmitQueue storage extension | `ext-submitqueue-storage-mysql` | `sq-test-ext-submitqueue-storage-mysql-2ce1d0-mysql-1` |
+| SubmitQueue counter extension | `ext-submitqueue-counter-mysql` | `sq-test-ext-submitqueue-counter-mysql-…-mysql-1` |
+| SubmitQueue changestore extension | `ext-submitqueue-changestore-mysql` | `sq-test-ext-submitqueue-changestore-mysql-…-mysql-1` |
+| Shared queue extension | `ext-queue-sql` | `sq-test-ext-queue-sql-a1b2c3-mysql-1` |
+| SubmitQueue consumer (core) | `core-submitqueue-consumer` | `sq-test-core-submitqueue-consumer-…-mysql-1` |
+| SubmitQueue e2e (full stack) | `e2e-submitqueue` | `sq-test-e2e-submitqueue-def456-gateway-service-1` |
 
-| Test Type | Context | Service Names | Example Container |
-|-----------|---------|---------------|-------------------|
-| Counter extension | `ext-counter` | `mysql` | `sq-test-ext-counter-2ce1d0-mysql-1` |
-| Storage extension | `ext-storage` | `mysql` | `sq-test-ext-storage-ecff68-mysql-1` |
-| Queue extension | `ext-queue` | `mysql` | `sq-test-ext-queue-a1b2c3-mysql-1` |
-| Gateway service | `gateway` | `mysql-app`, `mysql-queue`, `gateway-service` | `sq-test-gateway-abc123-gateway-service-1` |
-| Orchestrator service | `orchestrator` | `mysql-app`, `mysql-queue`, `orchestrator-service` | `sq-test-orchestrator-xyz789-orchestrator-service-1` |
-| E2E full stack | `e2e` | `mysql-app`, `mysql-queue`, `gateway-service`, `orchestrator-service` | `sq-test-e2e-def456-gateway-service-1` |
+### Parallel execution
+
+Every suite gets a unique project name (`{context}-{shortid}`) and every compose service publishes **ephemeral host ports** (`- "3306"`, `- "8080"`), so suites are fully isolated and run **in parallel**. `make integration-test` runs all suites concurrently via `--test_output=errors` (`--test_output=streamed` would force bazel to serialize them). The domain-qualified context is what keeps container names unambiguous when many run at once.
 
 ### Debugging with Container Names
 
@@ -192,13 +174,13 @@ docker exec -it sq-test-ext-counter-2ce1d0-mysql-1 \
 
 ```bash
 # Start all services (Gateway + Orchestrator + 2 MySQL DBs)
-make local-start
+make local-submitqueue-start
 
 # See running containers and endpoints
-make local-ps
+make local-submitqueue-ps
 
 # View logs
-make local-logs
+make local-submitqueue-logs
 
 # Stop all services
 make local-stop
@@ -209,9 +191,9 @@ make local-stop
 **Gateway Only:**
 ```bash
 # Start Gateway in isolation (Gateway + 2 MySQL DBs)
-make local-gateway-start
+make local-submitqueue-gateway-start
 
-# Test Ping API (port shown by make local-ps)
+# Test Ping API (port shown by make local-submitqueue-ps)
 grpcurl -plaintext -d '{"message": "hello"}' localhost:<PORT> submitqueue.SubmitQueueGateway/Ping
 
 # Test Land API
@@ -222,39 +204,39 @@ grpcurl -plaintext -d '{
 }' localhost:<PORT> submitqueue.SubmitQueueGateway/Land
 
 # Stop
-make local-gateway-stop
+make local-submitqueue-gateway-stop
 ```
 
 **Orchestrator Only:**
 ```bash
 # Start Orchestrator in isolation (Orchestrator + 2 MySQL DBs)
-make local-orchestrator-start
+make local-submitqueue-orchestrator-start
 
-# Test Ping API (port shown by make local-ps)
+# Test Ping API (port shown by make local-submitqueue-ps)
 grpcurl -plaintext -d '{"message": "hello"}' localhost:<PORT> submitqueue.SubmitQueueOrchestrator/Ping
 
 # Stop
-make local-orchestrator-stop
+make local-submitqueue-orchestrator-stop
 ```
 
-**Note:** All ports are ephemeral (randomly assigned). Use `make local-ps` to see the actual port mappings.
+**Note:** All ports are ephemeral (randomly assigned). Use `make local-submitqueue-ps` to see the actual port mappings.
 
 ### After Code Changes
 
 ```bash
 # Rebuild and restart all services
-make local-restart
+make local-submitqueue-restart
 
 # Or stop and start fresh
 make local-stop
-make local-start
+make local-submitqueue-start
 ```
 
 ### Inspecting the Databases
 
 ```bash
-# Find the port (shown by make local-ps)
-make local-ps
+# Find the port (shown by make local-submitqueue-ps)
+make local-submitqueue-ps
 
 # Connect to application DB
 mysql -h127.0.0.1 -P<APP_PORT> -uroot -proot submitqueue
@@ -270,7 +252,7 @@ mysql -h127.0.0.1 -P<QUEUE_PORT> -uroot -proot submitqueue
 brew install grpcurl  # macOS
 # OR: go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
 
-# List services (use port from make local-ps)
+# List services (use port from make local-submitqueue-ps)
 grpcurl -plaintext localhost:<PORT> list
 
 # Describe a service
@@ -292,16 +274,16 @@ grpcurl -plaintext -d '{
 
 | Command | Description |
 |---------|-------------|
-| `make local-start` | Start all services (full stack) |
-| `make local-gateway-start` | Start Gateway in isolation |
-| `make local-orchestrator-start` | Start Orchestrator in isolation |
-| `make local-ps` | Show running containers and ports |
-| `make local-logs` | Follow logs from all services |
-| `make local-restart` | Rebuild and restart all services |
+| `make local-submitqueue-start` | Start all services (full stack) |
+| `make local-submitqueue-gateway-start` | Start Gateway in isolation |
+| `make local-submitqueue-orchestrator-start` | Start Orchestrator in isolation |
+| `make local-submitqueue-ps` | Show running containers and ports |
+| `make local-submitqueue-logs` | Follow logs from all services |
+| `make local-submitqueue-restart` | Rebuild and restart all services |
 | `make local-stop` | Stop all services (keep data) |
-| `make local-gateway-stop` | Stop Gateway service |
-| `make local-orchestrator-stop` | Stop Orchestrator service |
-| `make local-clean` | Stop and remove all services, volumes, and images |
+| `make local-submitqueue-gateway-stop` | Stop Gateway service |
+| `make local-submitqueue-orchestrator-stop` | Stop Orchestrator service |
+| `make local-submitqueue-clean` | Stop and remove all services, volumes, and images |
 
 ---
 
@@ -317,11 +299,11 @@ docker ps  # Should not error
 ### Services Not Starting
 ```bash
 # Check logs
-make local-logs
+make local-submitqueue-logs
 
 # Rebuild from scratch
-make local-clean
-make local-start
+make local-submitqueue-clean
+make local-submitqueue-start
 ```
 
 ### Port Already in Use
@@ -335,11 +317,11 @@ docker rm -f <container-id>
 ### Database Schema Not Applied
 ```bash
 # Re-apply schemas manually
-make local-init-schemas
+make local-init-submitqueue-schemas
 
 # Or recreate everything
-make local-clean
-make local-start
+make local-submitqueue-clean
+make local-submitqueue-start
 ```
 
 ### Tests Timing Out
@@ -381,7 +363,7 @@ docker network ls | grep sq-test | awk '{print $1}' | xargs docker network rm
 
 ### Adding Integration Tests
 
-1. Add test to `test/integration/{service}/suite_test.go`
+1. Add test to `test/integration/submitqueue/{service}/suite_test.go`
 2. Use suite's resources (`s.client`, `s.db`)
 3. Run: `make integration-test-{service}`
 
@@ -396,7 +378,7 @@ assert.Equal(s.T(), "expected", resp.Value)
 
 ### Adding E2E Tests
 
-1. Add test to `test/e2e/suite_test.go`
+1. Add test to `test/e2e/submitqueue/suite_test.go`
 2. Use all service clients
 3. Use `require.Eventually()` for async operations
 4. Run: `make e2e-test`
@@ -406,6 +388,6 @@ assert.Equal(s.T(), "expected", resp.Value)
 ## See Also
 
 - [CLAUDE.md](../../CLAUDE.md) - Development guidelines and project structure
-- [example/server/docker-compose.yml](../../example/server/docker-compose.yml) - Full stack service definitions
-- [example/server/gateway/docker-compose.yml](../../example/server/gateway/docker-compose.yml) - Gateway isolation
-- [example/server/orchestrator/docker-compose.yml](../../example/server/orchestrator/docker-compose.yml) - Orchestrator isolation
+- [example/submitqueue/docker-compose.yml](../../example/submitqueue/docker-compose.yml) - Full stack service definitions
+- [example/submitqueue/gateway/server/docker-compose.yml](../../example/submitqueue/gateway/server/docker-compose.yml) - Gateway isolation
+- [example/submitqueue/orchestrator/server/docker-compose.yml](../../example/submitqueue/orchestrator/server/docker-compose.yml) - Orchestrator isolation

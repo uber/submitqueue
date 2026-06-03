@@ -1,0 +1,41 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "build",
+    srcs = ["build.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/orchestrator/controller/build",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//core/metrics",
+        "//entity/queue",
+        "//submitqueue/core/consumer",
+        "//submitqueue/entity",
+        "//submitqueue/extension/buildrunner",
+        "//submitqueue/extension/storage",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "build_test",
+    srcs = ["build_test.go"],
+    embed = [":build"],
+    deps = [
+        "//core/errs",
+        "//entity/queue",
+        "//extension/queue/mock",
+        "//submitqueue/core/consumer",
+        "//submitqueue/entity",
+        "//submitqueue/extension/buildrunner",
+        "//submitqueue/extension/buildrunner/mock",
+        "//submitqueue/extension/buildrunner/noop",
+        "//submitqueue/extension/storage",
+        "//submitqueue/extension/storage/mock",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_mock//gomock",
+        "@org_uber_go_zap//zaptest",
+    ],
+)

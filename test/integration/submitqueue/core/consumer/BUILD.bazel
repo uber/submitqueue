@@ -1,0 +1,26 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "consumer_test",
+    srcs = ["consumer_test.go"],
+    data = [
+        "docker-compose.yml",
+        "//extension/queue/mysql/schema",
+    ],
+    tags = [
+        "external",
+        "integration",
+    ],
+    deps = [
+        "//entity/queue",
+        "//extension/queue",
+        "//extension/queue/mysql",
+        "//submitqueue/core/consumer",
+        "//test/testutil",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_stretchr_testify//require",
+        "@com_github_stretchr_testify//suite",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_zap//zaptest",
+    ],
+)

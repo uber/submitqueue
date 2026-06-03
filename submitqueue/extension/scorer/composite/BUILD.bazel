@@ -1,0 +1,27 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "composite",
+    srcs = ["scorer.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/extension/scorer/composite",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//core/metrics",
+        "//submitqueue/entity",
+        "//submitqueue/extension/scorer",
+        "@com_github_uber_go_tally_v4//:tally",
+    ],
+)
+
+go_test(
+    name = "composite_test",
+    srcs = ["scorer_test.go"],
+    embed = [":composite"],
+    deps = [
+        "//submitqueue/entity",
+        "//submitqueue/extension/scorer",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_uber_go_tally_v4//:tally",
+    ],
+)

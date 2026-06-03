@@ -2,7 +2,7 @@
 
 MySQL-based distributed queue with partition leasing, delivery state tracking, and at-least-once delivery.
 
-For design rationale, guarantees, and trade-offs, see the [RFC](../../doc/rfc/sql-queue-rfc.md).
+For design rationale, guarantees, and trade-offs, see the [RFC](../../../doc/rfc/sql-queue-rfc.md).
 
 ## Quick Start
 
@@ -114,7 +114,7 @@ extension/queue/mysql/
 
 `queue_messages` has a `visible_after BIGINT UNSIGNED NOT NULL DEFAULT 0` column that supports `Publisher.PublishAfter`: subscribers' `FetchByOffset` skips rows where `visible_after > now`. Default 0 means immediately visible, so existing rows continue to behave as before — the column is back-compatible.
 
-See `schema/` for full SQL definitions. See the [RFC](../../doc/rfc/sql-queue-rfc.md#database-schema) for field-level documentation.
+See `schema/` for full SQL definitions. See the [RFC](../../../doc/rfc/sql-queue-rfc.md#database-schema) for field-level documentation.
 
 ### Store Architecture
 

@@ -58,10 +58,10 @@ After building, start the full stack to confirm everything works end to end:
 docker ps
 
 # 2. Start the full stack
-make local-start
+make local-submitqueue-start
 
 # 3. Check services are up (Gateway on :8081, Orchestrator on :8082)
-make local-ps
+make local-submitqueue-ps
 
 # 4. Test Gateway with grpcurl
 grpcurl -plaintext -d '{"message": "hello"}' localhost:8081 uber.submitqueue.gateway.SubmitQueueGateway/Ping
@@ -104,9 +104,9 @@ go install go.uber.org/yarpc/encoding/protobuf/protoc-gen-yarpc-go@latest
 | `make e2e-test` | Run end-to-end tests |
 | `make proto` | Regenerate protobuf files |
 | `make gazelle` | Update BUILD.bazel files |
-| `make local-start` | Start full stack (Gateway + Orchestrator + MySQL) |
-| `make local-ps` | Show running containers and ports |
-| `make local-logs` | View logs from all services |
+| `make local-submitqueue-start` | Start full stack (Gateway + Orchestrator + MySQL) |
+| `make local-submitqueue-ps` | Show running containers and ports |
+| `make local-submitqueue-logs` | View logs from all services |
 | `make local-stop` | Stop all services |
 | `make clean` | Clean generated files and binaries |
 | `make help` | Show all available targets with descriptions |
@@ -121,10 +121,10 @@ bazel test //gateway/controller:controller_test
 bazel test //gateway/controller:controller_test --test_filter=TestLand
 
 # Run Gateway integration tests only
-make integration-test-gateway
+make integration-test-submitqueue-gateway
 
 # Run Orchestrator integration tests only
-make integration-test-orchestrator
+make integration-test-submitqueue-orchestrator
 
 # Run extension integration tests only
 make integration-test-extensions

@@ -1,37 +1,8 @@
-load("@rules_go//go:def.bzl", "go_library", "go_test")
+load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "entity",
-    srcs = [
-        "batch.go",
-        "batch_dependent.go",
-        "build.go",
-        "cancel_request.go",
-        "change_provider.go",
-        "change_record.go",
-        "land_request.go",
-        "queue_config.go",
-        "request.go",
-        "request_log.go",
-        "speculation_tree.go",
-    ],
+    srcs = ["entity.go"],
     importpath = "github.com/uber/submitqueue/entity",
     visibility = ["//visibility:public"],
-)
-
-go_test(
-    name = "entity_test",
-    srcs = [
-        "batch_test.go",
-        "build_test.go",
-        "cancel_request_test.go",
-        "land_request_test.go",
-        "request_log_test.go",
-        "request_test.go",
-    ],
-    embed = [":entity"],
-    deps = [
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-    ],
 )

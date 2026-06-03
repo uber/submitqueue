@@ -1,6 +1,6 @@
 # Docker Compose for Stovepipe gateway manual testing
 #
-# Mirrors example/server/gateway/docker-compose.yml: same MySQL pair, healthchecks,
+# Mirrors example/submitqueue/gateway/server/docker-compose.yml: same MySQL pair, healthchecks,
 # env wiring, and startup ordering. The Stovepipe gateway binary is Ping-only today
 # and does not open MySQL yet; variables are set so future work matches SubmitQueue.
 #

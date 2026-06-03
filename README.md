@@ -20,7 +20,7 @@ make build
 make test
 
 # Start full stack locally (Gateway + Orchestrator + MySQL via Docker Compose)
-make local-start
+make local-submitqueue-start
 
 # Test with grpcurl
 grpcurl -plaintext -d '{"message": "hello"}' localhost:8081 uber.submitqueue.gateway.SubmitQueueGateway/Ping

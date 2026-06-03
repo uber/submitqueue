@@ -56,7 +56,7 @@ func getDockerComposeCommand() []string {
 
 // NewComposeStack creates a new compose stack from the given docker-compose file.
 // Automatically registers cleanup to tear down the stack.
-// testContext should describe what's being tested (e.g., "gateway", "storage", "e2e").
+// testContext should describe what's being tested (e.g., "gateway", "storage", "e2e-submitqueue").
 func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, composeFile, testContext string) *ComposeStack {
 	t.Helper()
 
