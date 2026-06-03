@@ -33,6 +33,8 @@ import (
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/httpclient"
 	"github.com/uber/submitqueue/entity"
+	"github.com/uber/submitqueue/extension/buildrunner"
+	buildnoop "github.com/uber/submitqueue/extension/buildrunner/noop"
 	"github.com/uber/submitqueue/extension/changeprovider"
 	githubprovider "github.com/uber/submitqueue/extension/changeprovider/github"
 	"github.com/uber/submitqueue/extension/changestore"
@@ -216,8 +218,12 @@ func run() error {
 		return fmt.Errorf("failed to create pusher: %w", err)
 	}
 
+	// Create build runner. The noop runner is the pass-through default
+	// (every build immediately succeeds) until a real backend is wired in.
+	br := buildnoop.New()
+
 	// Register controllers
-	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cp, psh, cnt, store, changeStore); err != nil {
+	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cp, psh, br, cnt, store, changeStore); err != nil {
 		return err
 	}
 
@@ -397,12 +403,12 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 // Pipeline:
 //
 //   request → validate → batch → score → speculate → build → buildsignal ─┐
-//                                        ↑     ↘                           │
-//                                        │      merge → conclude           │
-//                                        │        │                        │
-//                                        └────────┴────────────────────────┘
+//                                        ↑     ↘             ↻ poll       │
+//                                        │      merge → conclude          │
+//                                        │        │                       │
+//                                        └────────┴───────────────────────┘
 
-func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cp changeprovider.ChangeProvider, psh pusher.Pusher, cnt counter.Counter, store storage.Storage, changeStore changestore.ChangeStore) error {
+func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cp changeprovider.ChangeProvider, psh pusher.Pusher, br buildrunner.BuildRunner, cnt counter.Counter, store storage.Storage, changeStore changestore.ChangeStore) error {
 	requestController := start.NewController(
 		logger,
 		scope,
@@ -488,6 +494,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		store,
+		br,
 		registry,
 		consumer.TopicKeyBuild,
 		"orchestrator-build",
@@ -500,6 +507,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		store,
+		br,
 		registry,
 		consumer.TopicKeyBuildSignal,
 		"orchestrator-buildsignal",
