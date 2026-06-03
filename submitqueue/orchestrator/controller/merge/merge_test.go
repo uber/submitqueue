@@ -26,8 +26,8 @@ import (
 	"go.uber.org/zap/zaptest"
 
 	"github.com/uber/submitqueue/core/errs"
-	"github.com/uber/submitqueue/entity/queue"
-	queuemock "github.com/uber/submitqueue/extension/queue/mock"
+	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
+	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/pusher"
@@ -43,7 +43,7 @@ func batchIDPayload(t *testing.T, id string) []byte {
 }
 
 func newDelivery(t *testing.T, ctrl *gomock.Controller, batchID, partitionKey string) *queuemock.MockDelivery {
-	msg := queue.NewMessage(batchID, batchIDPayload(t, batchID), partitionKey, nil)
+	msg := entityqueue.NewMessage(batchID, batchIDPayload(t, batchID), partitionKey, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -54,7 +54,7 @@ func newDelivery(t *testing.T, ctrl *gomock.Controller, batchID, partitionKey st
 func newRegistry(t *testing.T, ctrl *gomock.Controller, publishErr error) consumer.TopicRegistry {
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ string, _ queue.Message) error { return publishErr },
+		func(_ context.Context, _ string, _ entityqueue.Message) error { return publishErr },
 	).AnyTimes()
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()

@@ -1,0 +1,27 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "mysql_test",
+    srcs = ["queue_test.go"],
+    data = [
+        "docker-compose.yml",
+        "//extension/messagequeue/mysql/schema",
+    ],
+    tags = [
+        "external",
+        "integration",
+    ],
+    deps = [
+        "//entity/messagequeue",
+        "//extension/messagequeue",
+        "//extension/messagequeue/mysql",
+        "//extension/messagequeue/mysql/ctl/lib",
+        "//test/testutil",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_stretchr_testify//suite",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_zap//zaptest",
+    ],
+)

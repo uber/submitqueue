@@ -23,13 +23,13 @@ SubmitQueue uses **two separate databases** to demonstrate proper architectural 
 
 ### 1. Application Database
 - **Purpose**: Business data (requests, counters, batches)
-- **Schema**: `submitqueue/extension/storage/mysql/schema`, `submitqueue/extension/counter/mysql/schema`
+- **Schema**: `submitqueue/extension/storage/mysql/schema`, `extension/counter/mysql/schema`
 - **Used by**: Gateway (stores requests), Orchestrator (reads/updates request state)
 - **Connection**: `MYSQL_DSN`
 
 ### 2. Queue Database
 - **Purpose**: Messaging infrastructure (queue messages, offsets, partition leases)
-- **Schema**: `extension/queue/mysql/schema`
+- **Schema**: `extension/messagequeue/mysql/schema`
 - **Used by**: Gateway (publishes), Orchestrator (consumes)
 - **Connection**: `QUEUE_MYSQL_DSN`
 
@@ -128,7 +128,7 @@ The `{context}` passed to `NewComposeStack` is **domain-qualified** so that the 
 - `{domain}` — `submitqueue`, `stovepipe`, … — **omit for shared/cross-domain code**
 - `{name}` — the specific service/extension (e.g. `gateway`, `storage-mysql`)
 
-Shared (cross-domain) suites carry no domain segment — e.g. the shared queue extension uses `ext-queue-sql`.
+Shared (cross-domain) suites carry no domain segment — e.g. the shared queue extension uses `ext-messagequeue-sql`.
 
 ### Context reference
 
@@ -138,9 +138,9 @@ Shared (cross-domain) suites carry no domain segment — e.g. the shared queue e
 | SubmitQueue orchestrator | `svc-submitqueue-orchestrator` | `sq-test-svc-submitqueue-orchestrator-xyz789-orchestrator-service-1` |
 | Stovepipe gateway | `svc-stovepipe-gateway` | `sq-test-svc-stovepipe-gateway-abc123-gateway-service-1` |
 | SubmitQueue storage extension | `ext-submitqueue-storage-mysql` | `sq-test-ext-submitqueue-storage-mysql-2ce1d0-mysql-1` |
-| SubmitQueue counter extension | `ext-submitqueue-counter-mysql` | `sq-test-ext-submitqueue-counter-mysql-…-mysql-1` |
+| Counter extension (shared) | `ext-counter-mysql` | `sq-test-ext-counter-mysql-…-mysql-1` |
 | SubmitQueue changestore extension | `ext-submitqueue-changestore-mysql` | `sq-test-ext-submitqueue-changestore-mysql-…-mysql-1` |
-| Shared queue extension | `ext-queue-sql` | `sq-test-ext-queue-sql-a1b2c3-mysql-1` |
+| Shared queue extension | `ext-messagequeue-sql` | `sq-test-ext-messagequeue-sql-a1b2c3-mysql-1` |
 | SubmitQueue consumer (core) | `core-submitqueue-consumer` | `sq-test-core-submitqueue-consumer-…-mysql-1` |
 | SubmitQueue e2e (full stack) | `e2e-submitqueue` | `sq-test-e2e-submitqueue-def456-gateway-service-1` |
 

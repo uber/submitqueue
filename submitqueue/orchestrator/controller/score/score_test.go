@@ -23,8 +23,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/errs"
-	"github.com/uber/submitqueue/entity/queue"
-	queuemock "github.com/uber/submitqueue/extension/queue/mock"
+	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
+	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	scorermock "github.com/uber/submitqueue/submitqueue/extension/scorer/mock"
@@ -86,7 +86,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, topic string, msg queue.Message) error {
+		func(ctx context.Context, topic string, msg entityqueue.Message) error {
 			return publishErr
 		},
 	).AnyTimes()
@@ -132,7 +132,7 @@ func TestController_Process_Success(t *testing.T) {
 
 	controller := newTestController(t, ctrl, store, mockScorer, nil)
 
-	msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
+	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -186,7 +186,7 @@ func TestController_Process_MultipleRequests_MinScore(t *testing.T) {
 
 	controller := newTestController(t, ctrl, store, mockScorer, nil)
 
-	msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
+	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -206,7 +206,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 	mockScorer := scorermock.NewMockScorer(ctrl)
 	controller := newTestController(t, ctrl, store, mockScorer, nil)
 
-	msg := queue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1"), "test-queue", nil)
+	msg := entityqueue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1"), "test-queue", nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -237,7 +237,7 @@ func TestController_Process_ScorerFailure(t *testing.T) {
 
 	controller := newTestController(t, ctrl, store, mockScorer, nil)
 
-	msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
+	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -268,7 +268,7 @@ func TestController_Process_UpdateScoreFailure(t *testing.T) {
 
 	controller := newTestController(t, ctrl, store, mockScorer, nil)
 
-	msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
+	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -289,7 +289,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 
 	controller := newTestController(t, ctrl, store, mockScorer, fmt.Errorf("publish failed"))
 
-	msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
+	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -356,7 +356,7 @@ func TestController_Process_TerminalShortCircuit(t *testing.T) {
 
 			controller := NewController(logger, scope, mockStorage, mockScorer, registry, consumer.TopicKeyScore, "orchestrator-score")
 
-			msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
+			msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 			delivery := queuemock.NewMockDelivery(ctrl)
 			delivery.EXPECT().Message().Return(msg).AnyTimes()
 			delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -404,7 +404,7 @@ func TestController_Process_CancellingShortCircuit(t *testing.T) {
 
 	controller := NewController(logger, scope, mockStorage, mockScorer, registry, consumer.TopicKeyScore, "orchestrator-score")
 
-	msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
+	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()

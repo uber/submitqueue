@@ -8,7 +8,7 @@ go_library(
     deps = [
         "//core/errs",
         "//core/metrics",
-        "//entity/queue",
+        "//entity/messagequeue",
         "//submitqueue/core/consumer",
         "//submitqueue/entity",
         "//submitqueue/extension/buildrunner",
@@ -24,8 +24,8 @@ go_test(
     embed = [":buildsignal"],
     deps = [
         "//core/errs",
-        "//entity/queue",
-        "//extension/queue/mock",
+        "//entity/messagequeue",
+        "//extension/messagequeue/mock",
         "//submitqueue/core/consumer",
         "//submitqueue/entity",
         "//submitqueue/extension/buildrunner/mock",

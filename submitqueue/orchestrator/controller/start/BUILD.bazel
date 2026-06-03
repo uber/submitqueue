@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//core/metrics",
-        "//entity/queue",
+        "//entity/messagequeue",
         "//submitqueue/core/consumer",
         "//submitqueue/core/request",
         "//submitqueue/entity",
@@ -24,8 +24,8 @@ go_test(
     embed = [":start"],
     deps = [
         "//core/errs",
-        "//entity/queue",
-        "//extension/queue/mock",
+        "//entity/messagequeue",
+        "//extension/messagequeue/mock",
         "//submitqueue/core/consumer",
         "//submitqueue/entity",
         "//submitqueue/extension/changestore/mock",

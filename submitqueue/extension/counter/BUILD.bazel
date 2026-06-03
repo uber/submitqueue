@@ -1,8 +1,0 @@
-load("@rules_go//go:def.bzl", "go_library")
-
-go_library(
-    name = "counter",
-    srcs = ["counter.go"],
-    importpath = "github.com/uber/submitqueue/submitqueue/extension/counter",
-    visibility = ["//visibility:public"],
-)

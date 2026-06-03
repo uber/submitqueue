@@ -172,7 +172,7 @@ Messages are append-only. No per-message mutation during delivery.
 - `(topic, partition_key, offset)`: Core fetch query — poll messages in partition ordered by offset
 - `(topic, partition_key, id)`: Unique constraint and idempotent publish
 
-See `extension/queue/mysql/schema/queue_messages.sql` for full schema.
+See `extension/messagequeue/mysql/schema/queue_messages.sql` for full schema.
 
 ### Delivery State Table
 
@@ -184,7 +184,7 @@ Per-consumer-group delivery tracking with explicit ack state.
 - `invisible_until`: Visibility timeout in epoch milliseconds (only meaningful when `acked = FALSE`)
 - `retry_count`: Number of times message has been redelivered to this consumer group
 
-See `extension/queue/mysql/schema/queue_delivery_state.sql` for full schema.
+See `extension/messagequeue/mysql/schema/queue_delivery_state.sql` for full schema.
 
 ### Partition Leases Table
 
@@ -197,7 +197,7 @@ See `extension/queue/mysql/schema/queue_delivery_state.sql` for full schema.
 - `(leased_by)`: Find all partitions owned by a worker
 - `(lease_renewed_at)`: Detect stale leases across workers
 
-See `extension/queue/mysql/schema/queue_partition_leases.sql` for full schema.
+See `extension/messagequeue/mysql/schema/queue_partition_leases.sql` for full schema.
 
 ### Consumer Offsets Table
 
@@ -210,7 +210,7 @@ See `extension/queue/mysql/schema/queue_partition_leases.sql` for full schema.
 - `(consumer_group)`: Monitor all offsets for a consumer group
 - `(topic)`: Find all consumers for a topic
 
-See `extension/queue/mysql/schema/queue_offsets.sql` for full schema.
+See `extension/messagequeue/mysql/schema/queue_offsets.sql` for full schema.
 
 ### Subscriber Heartbeats Table
 
@@ -219,7 +219,7 @@ See `extension/queue/mysql/schema/queue_offsets.sql` for full schema.
 - `heartbeat_at`: Unix timestamp in milliseconds of last heartbeat
 - `deregistered_at`: Soft-delete timestamp (0 = active, >0 = deregistered during graceful shutdown)
 
-See `extension/queue/mysql/schema/queue_subscriber_heartbeats.sql` for full schema.
+See `extension/messagequeue/mysql/schema/queue_subscriber_heartbeats.sql` for full schema.
 
 ### Dead Letter Queue
 

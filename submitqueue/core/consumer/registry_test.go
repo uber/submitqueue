@@ -19,8 +19,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	extqueue "github.com/uber/submitqueue/extension/queue"
-	queuemock "github.com/uber/submitqueue/extension/queue/mock"
+	extqueue "github.com/uber/submitqueue/extension/messagequeue"
+	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"go.uber.org/mock/gomock"
 )

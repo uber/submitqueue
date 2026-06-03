@@ -117,7 +117,7 @@ jobs:
       - uses: ./.github/actions/setup
       - uses: ./.github/actions/run-bazel-test
         with:
-          target: //test/integration/submitqueue/extension/counter/...
+          target: //test/integration/extension/counter/...
 
   queue-integration-test:
     name: Queue Extension Test
@@ -128,7 +128,7 @@ jobs:
       - uses: ./.github/actions/setup
       - uses: ./.github/actions/run-bazel-test
         with:
-          target: //test/integration/extension/queue/...
+          target: //test/integration/extension/messagequeue/...
 
   storage-integration-test:
     name: Storage Extension Test

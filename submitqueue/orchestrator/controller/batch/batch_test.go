@@ -24,14 +24,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally/v4"
-	"github.com/uber/submitqueue/entity/queue"
-	queuemock "github.com/uber/submitqueue/extension/queue/mock"
+	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
+	countermock "github.com/uber/submitqueue/extension/counter/mock"
+	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/all"
 	conflictmock "github.com/uber/submitqueue/submitqueue/extension/conflict/mock"
-	countermock "github.com/uber/submitqueue/submitqueue/extension/counter/mock"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -101,7 +101,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, topic string, msg queue.Message) error {
+		func(ctx context.Context, topic string, msg entityqueue.Message) error {
 			return publishErr
 		},
 	).AnyTimes()
@@ -133,7 +133,7 @@ func TestController_Process_Success(t *testing.T) {
 	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), nil, nil, nil)
 
 	request := testRequest()
-	msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -153,7 +153,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 
 	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), mockStorage, nil, nil)
 
-	msg := queue.NewMessage("test-queue/123", requestIDPayload(t, "test-queue/123"), "test-queue", nil)
+	msg := entityqueue.NewMessage("test-queue/123", requestIDPayload(t, "test-queue/123"), "test-queue", nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -168,7 +168,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), nil, nil, fmt.Errorf("publish failed"))
 
 	request := testRequest()
-	msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -185,7 +185,7 @@ func TestController_Process_CounterFailure(t *testing.T) {
 	controller := newTestController(t, ctrl, cnt, nil, nil, nil)
 
 	request := testRequest()
-	msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -244,7 +244,7 @@ func TestController_Process_WithDependencies(t *testing.T) {
 
 	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), mockStorage, nil, nil)
 
-	msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -296,7 +296,7 @@ func TestController_Process_AnalyzerSelectsSubset(t *testing.T) {
 
 	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), mockStorage, analyzer, nil)
 
-	msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -325,7 +325,7 @@ func TestController_Process_AnalyzerFailure(t *testing.T) {
 
 	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), mockStorage, analyzer, nil)
 
-	msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -381,7 +381,7 @@ func TestController_Process_HaltedShortCircuit(t *testing.T) {
 
 			controller := newTestController(t, ctrl, cnt, mockStorage, nil, fmt.Errorf("should not publish"))
 
-			msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+			msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 			delivery := queuemock.NewMockDelivery(ctrl)
 			delivery.EXPECT().Message().Return(msg).AnyTimes()
 			delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -441,7 +441,7 @@ func TestController_Process_CASLostToCancel(t *testing.T) {
 		mockStorage, all.New(), consumer.TopicKeyBatch, "orchestrator-batch",
 	)
 
-	msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -478,7 +478,7 @@ func TestController_Process_CASUnexpectedErrorPropagates(t *testing.T) {
 
 	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), mockStorage, nil, nil)
 
-	msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -523,7 +523,7 @@ func TestController_Process_RecoveryAfterPriorCAS(t *testing.T) {
 
 	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), mockStorage, nil, nil)
 
-	msg := queue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()

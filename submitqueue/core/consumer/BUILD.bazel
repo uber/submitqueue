@@ -12,8 +12,8 @@ go_library(
     deps = [
         "//core/errs",
         "//core/metrics",
-        "//entity/queue",
-        "//extension/queue",
+        "//entity/messagequeue",
+        "//extension/messagequeue",
         "@com_github_uber_go_tally_v4//:tally",
         "@org_uber_go_zap//:zap",
     ],
@@ -28,9 +28,9 @@ go_test(
     deps = [
         ":consumer",
         "//core/errs",
-        "//entity/queue",
-        "//extension/queue",
-        "//extension/queue/mock",
+        "//entity/messagequeue",
+        "//extension/messagequeue",
+        "//extension/messagequeue/mock",
         "//submitqueue/core/consumer/mock",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

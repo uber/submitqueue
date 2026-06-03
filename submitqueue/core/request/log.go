@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 
-	entityqueue "github.com/uber/submitqueue/entity/queue"
+	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 )

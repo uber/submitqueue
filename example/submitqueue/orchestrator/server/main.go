@@ -33,8 +33,10 @@ import (
 	genericerrs "github.com/uber/submitqueue/core/errs/generic"
 	mysqlerrs "github.com/uber/submitqueue/core/errs/mysql"
 	"github.com/uber/submitqueue/core/httpclient"
-	extqueue "github.com/uber/submitqueue/extension/queue"
-	queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
+	"github.com/uber/submitqueue/extension/counter"
+	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
+	extqueue "github.com/uber/submitqueue/extension/messagequeue"
+	queueMySQL "github.com/uber/submitqueue/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
@@ -44,8 +46,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/changestore"
 	mysqlchangestore "github.com/uber/submitqueue/submitqueue/extension/changestore/mysql"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/all"
-	"github.com/uber/submitqueue/submitqueue/extension/counter"
-	mysqlcounter "github.com/uber/submitqueue/submitqueue/extension/counter/mysql"
 	"github.com/uber/submitqueue/submitqueue/extension/mergechecker"
 	githubchecker "github.com/uber/submitqueue/submitqueue/extension/mergechecker/github"
 	"github.com/uber/submitqueue/submitqueue/extension/pusher"
@@ -203,7 +203,7 @@ func run() error {
 	// Create consumer.
 	c := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
 		genericerrs.Classifier,
-		// Storage (extension/storage/mysql) and queue (extension/queue/mysql)
+		// Storage (extension/storage/mysql) and queue (extension/messagequeue/mysql)
 		// both run on the same MySQL driver, so a single classifier covers
 		// errors surfaced from either backend.
 		mysqlerrs.Classifier,

@@ -13,7 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
-	queue "github.com/uber/submitqueue/entity/queue"
+	messagequeue "github.com/uber/submitqueue/entity/messagequeue"
 	consumer "github.com/uber/submitqueue/submitqueue/core/consumer"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -85,10 +85,10 @@ func (mr *MockDeliveryMockRecorder) ExtendVisibilityTimeout(ctx, durationMillis 
 }
 
 // Message mocks base method.
-func (m *MockDelivery) Message() queue.Message {
+func (m *MockDelivery) Message() messagequeue.Message {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Message")
-	ret0, _ := ret[0].(queue.Message)
+	ret0, _ := ret[0].(messagequeue.Message)
 	return ret0
 }
 

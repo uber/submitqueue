@@ -17,7 +17,7 @@ package consumer
 import (
 	"fmt"
 
-	"github.com/uber/submitqueue/extension/queue"
+	extqueue "github.com/uber/submitqueue/extension/messagequeue"
 )
 
 // TopicKey identifies a pipeline stage. It is a fixed key used to
@@ -70,18 +70,18 @@ type TopicConfig struct {
 	// Name is the actual queue topic name (e.g. "request", "my-custom-request").
 	Name string
 	// Queue is the queue backend for this topic.
-	Queue queue.Queue
+	Queue extqueue.Queue
 	// Subscription is the subscription configuration for this topic.
 	// Leave at zero value for publish-only topics.
-	Subscription queue.SubscriptionConfig
+	Subscription extqueue.SubscriptionConfig
 }
 
 // TopicRegistry provides queue, topic name, and subscription config for topics.
 // Each topic can have a different queue backend and topic name.
 type TopicRegistry struct {
-	queues              map[TopicKey]queue.Queue
+	queues              map[TopicKey]extqueue.Queue
 	topicNames          map[TopicKey]string
-	subscriptionConfigs map[topicGroup]queue.SubscriptionConfig
+	subscriptionConfigs map[topicGroup]extqueue.SubscriptionConfig
 }
 
 // topicGroup identifies a topic key and consumer group pair.
@@ -93,9 +93,9 @@ type topicGroup struct {
 // NewTopicRegistry creates a new TopicRegistry from a list of TopicConfigs.
 // Returns an error if any topic name is invalid.
 func NewTopicRegistry(configs []TopicConfig) (TopicRegistry, error) {
-	queues := make(map[TopicKey]queue.Queue, len(configs))
+	queues := make(map[TopicKey]extqueue.Queue, len(configs))
 	topicNames := make(map[TopicKey]string, len(configs))
-	subConfigs := make(map[topicGroup]queue.SubscriptionConfig)
+	subConfigs := make(map[topicGroup]extqueue.SubscriptionConfig)
 
 	for _, cfg := range configs {
 		if err := ValidateTopicName(cfg.Name); err != nil {
@@ -143,7 +143,7 @@ func ValidateTopicName(name string) error {
 
 // Queue returns the queue backend for the given topic key.
 // Returns ok=false if no queue is registered for this key.
-func (r TopicRegistry) Queue(key TopicKey) (queue.Queue, bool) {
+func (r TopicRegistry) Queue(key TopicKey) (extqueue.Queue, bool) {
 	q, ok := r.queues[key]
 	return q, ok
 }
@@ -158,7 +158,7 @@ func (r TopicRegistry) TopicName(key TopicKey) (string, bool) {
 // SubscriptionConfig returns the subscription configuration for the given
 // topic key and consumer group.
 // Returns ok=false if no configuration is registered.
-func (r TopicRegistry) SubscriptionConfig(key TopicKey, consumerGroup string) (queue.SubscriptionConfig, bool) {
+func (r TopicRegistry) SubscriptionConfig(key TopicKey, consumerGroup string) (extqueue.SubscriptionConfig, bool) {
 	cfg, ok := r.subscriptionConfigs[topicGroup{topicKey: key, consumerGroup: consumerGroup}]
 	return cfg, ok
 }

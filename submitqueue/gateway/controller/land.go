@@ -22,10 +22,10 @@ import (
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/core/metrics"
-	"github.com/uber/submitqueue/entity/queue"
+	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
+	"github.com/uber/submitqueue/extension/counter"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/counter"
 	"github.com/uber/submitqueue/submitqueue/extension/queueconfig"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	pb "github.com/uber/submitqueue/submitqueue/gateway/protopb"
@@ -130,7 +130,7 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (resp *p
 	}
 
 	// Record the accepted status in the request log for reconciliation. Once the request materializes as a Request entity, the status might be updated to "new".
-	// It is important to record the status before publishing to the queue for processing. It is important to publish straight to the database and not via a queue.
+	// It is important to record the status before publishing to the queue for processing. It is important to publish straight to the database and not via a entityqueue.
 	// Gateway has to stay consistent with the request log.
 	logEntry := entity.NewRequestLog(landRequest.ID, entity.RequestStatusAccepted, 0, "", nil)
 	if err := c.requestLogStore.Insert(ctx, logEntry); err != nil {
@@ -174,7 +174,7 @@ func (c *LandController) publishToQueue(ctx context.Context, landRequest entity.
 	// - Message ID: landRequest.ID for idempotency
 	// - Payload: serialized LandRequest entity
 	// - Partition key: landRequest.Queue (ensures ordering per queue)
-	msg := queue.NewMessage(landRequest.ID, payload, landRequest.Queue, nil)
+	msg := entityqueue.NewMessage(landRequest.ID, payload, landRequest.Queue, nil)
 
 	q, ok := c.registry.Queue(consumer.TopicKeyStart)
 	if !ok {

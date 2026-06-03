@@ -71,7 +71,7 @@ func (s *StovepipeGatewayIntegrationSuite) SetupSuite() {
 	queueDB, err := s.stack.ConnectMySQLService("mysql-queue")
 	require.NoError(t, err, "failed to connect to queue MySQL")
 
-	testutil.ApplySchema(t, s.log, queueDB, testutil.SchemaDir("extension/queue/mysql/schema"))
+	testutil.ApplySchema(t, s.log, queueDB, testutil.SchemaDir("extension/messagequeue/mysql/schema"))
 
 	var conn *grpc.ClientConn
 	conn, err = s.stack.ConnectGRPC("gateway-service", 8080)

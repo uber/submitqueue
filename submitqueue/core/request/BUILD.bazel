@@ -9,7 +9,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/core/request",
     visibility = ["//visibility:public"],
     deps = [
-        "//entity/queue",
+        "//entity/messagequeue",
         "//submitqueue/core/consumer",
         "//submitqueue/entity",
         "//submitqueue/extension/storage",
@@ -24,8 +24,8 @@ go_test(
     ],
     embed = [":request"],
     deps = [
-        "//entity/queue",
-        "//extension/queue/mock",
+        "//entity/messagequeue",
+        "//extension/messagequeue/mock",
         "//submitqueue/core/consumer",
         "//submitqueue/entity",
         "//submitqueue/extension/storage",

@@ -140,8 +140,8 @@ Paths follow the directory layout: shared code is top-level, domain code nests u
 - Domain entities: `github.com/uber/submitqueue/{domain}/entity` (e.g. `.../submitqueue/entity`)
 - Domain extensions: `github.com/uber/submitqueue/{domain}/extension/{ext}[/{impl}]` (e.g. `.../submitqueue/extension/storage/mysql`)
 - Domain-internal infra: `github.com/uber/submitqueue/{domain}/core/{pkg}` (e.g. `.../submitqueue/core/consumer`, `.../submitqueue/core/request`)
-- Shared entities: `github.com/uber/submitqueue/entity/{name}` (e.g. `.../entity/queue`)
-- Shared extensions: `github.com/uber/submitqueue/extension/{name}` (e.g. `.../extension/queue`)
+- Shared entities: `github.com/uber/submitqueue/entity/{name}` (e.g. `.../entity/messagequeue`)
+- Shared extensions: `github.com/uber/submitqueue/extension/{name}` (e.g. `.../extension/messagequeue`)
 - Cross-domain infra: `github.com/uber/submitqueue/core/{pkg}` (e.g. `.../core/errs`, `.../core/metrics`)
 
 ## Development
@@ -167,7 +167,7 @@ Generated proto files are committed. When modifying `.proto` files:
 - **Directories**: singular (`mock/`, `entity/`, not `mocks/`, `entities/`)
 - **Files**: `{method}.go`, `{entity}.go`, `{file}_test.go`, `BUILD.bazel`
 - **Proto files**: `{service}.proto`
-- **Test compose contexts**: the `testContext` passed to `NewComposeStack` (and thus the `sq-test-{context}-…` Docker project/container names) must be **domain-qualified** — `{category}-{domain}-{name}` where `{category}` is `svc`/`ext`/`core`/`e2e` and `{domain}` is `submitqueue`/`stovepipe`/… (omit the domain only for shared/cross-domain suites, e.g. `ext-queue-sql`). This keeps containers unambiguous and lets suites run in parallel. See [doc/howto/TESTING.md](doc/howto/TESTING.md#container-naming).
+- **Test compose contexts**: the `testContext` passed to `NewComposeStack` (and thus the `sq-test-{context}-…` Docker project/container names) must be **domain-qualified** — `{category}-{domain}-{name}` where `{category}` is `svc`/`ext`/`core`/`e2e` and `{domain}` is `submitqueue`/`stovepipe`/… (omit the domain only for shared/cross-domain suites, e.g. `ext-messagequeue-sql`). This keeps containers unambiguous and lets suites run in parallel. See [doc/howto/TESTING.md](doc/howto/TESTING.md#container-naming).
 - **README files**: Do not duplicate interface or type definitions as code blocks in READMEs. Describe behavior in prose and let readers navigate to the source. Only include code samples when explicitly instructed.
 - **Markdown prose width**: Do not hard-wrap prose in Markdown docs (RFCs under `doc/`, READMEs). Write one line per paragraph and one line per list item, and let the editor soft-wrap — hard wrapping at a fixed column renders as a narrow fixed-width column regardless of window size. Code blocks, tables, and ASCII diagrams keep their own line breaks.
 
@@ -241,7 +241,7 @@ To create a mock package for a new extension (e.g., `submitqueue/extension/newex
 3. Run `make mocks` to generate mock files into the new directory.
 4. Run `make gazelle` to create the `BUILD.bazel` file automatically.
 
-For inline mocks (mock in the same package, e.g., `extension/queue/mysql/mock_stores.go`):
+For inline mocks (mock in the same package, e.g., `extension/messagequeue/mysql/mock_stores.go`):
 
 1. Add a `//go:generate` directive with `-package=mypkg` and `-destination=mock_file.go`.
 2. Run `make mocks` and `make gazelle`.

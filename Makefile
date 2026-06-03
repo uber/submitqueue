@@ -194,12 +194,12 @@ local-init-submitqueue-schemas: ## Manually apply all database schemas
 		docker exec -i $(SUBMITQUEUE_LOCAL_PROJECT)-mysql-app-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
 	done
 	@echo "Applying counter schema to mysql-app..."
-	@for file in submitqueue/extension/counter/mysql/schema/*.sql; do \
+	@for file in extension/counter/mysql/schema/*.sql; do \
 		echo "  - Applying $$(basename $$file)..."; \
 		docker exec -i $(SUBMITQUEUE_LOCAL_PROJECT)-mysql-app-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
 	done
 	@echo "Applying queue schema to mysql-queue..."
-	@for file in extension/queue/mysql/schema/*.sql; do \
+	@for file in extension/messagequeue/mysql/schema/*.sql; do \
 		echo "  - Applying $$(basename $$file)..."; \
 		docker exec -i $(SUBMITQUEUE_LOCAL_PROJECT)-mysql-queue-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
 	done
@@ -207,7 +207,7 @@ local-init-submitqueue-schemas: ## Manually apply all database schemas
 
 local-init-stovepipe-queue-schema: ## Apply queue schema only (mysql-queue) for Stovepipe compose stacks
 	@echo "Applying queue schema to mysql-queue (Stovepipe; no app storage/counter schema yet)..."
-	@for file in extension/queue/mysql/schema/*.sql; do \
+	@for file in extension/messagequeue/mysql/schema/*.sql; do \
 		echo "  - Applying $$(basename $$file)..."; \
 		docker exec -i $(STOVEPIPE_LOCAL_PROJECT)-mysql-queue-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
 	done
@@ -334,7 +334,7 @@ local-stovepipe-gateway-start: build-stovepipe-gateway-linux ## Start Stovepipe 
 
 mocks: ## Generate mock files using mockgen
 	@echo "Generating mocks..."
-	@$(BAZEL) run @rules_go//go -- generate ./submitqueue/extension/storage/... ./submitqueue/extension/buildrunner/... ./submitqueue/extension/changestore/... ./submitqueue/extension/counter/... ./extension/queue/... ./submitqueue/extension/queueconfig/... ./submitqueue/extension/mergechecker/... ./submitqueue/extension/pusher/... ./submitqueue/extension/scorer/... ./submitqueue/extension/conflict/... ./submitqueue/core/consumer/...
+	@$(BAZEL) run @rules_go//go -- generate ./submitqueue/extension/storage/... ./submitqueue/extension/buildrunner/... ./submitqueue/extension/changestore/... ./extension/counter/... ./extension/messagequeue/... ./submitqueue/extension/queueconfig/... ./submitqueue/extension/mergechecker/... ./submitqueue/extension/pusher/... ./submitqueue/extension/scorer/... ./submitqueue/extension/conflict/... ./submitqueue/core/consumer/...
 	@echo "Mocks generated successfully!"
 
 proto: ## Generate protobuf files from .proto definitions
@@ -381,7 +381,7 @@ run-client-stovepipe-orchestrator:
 	@$(BAZEL) run //example/stovepipe/orchestrator/client:orchestrator -- -addr $(or $(SERVER_ADDR),localhost:8084) -message "$(or $(MESSAGE),ping)"
 
 run-queue-admin: ## Run queue-admin CLI (use ARGS to pass arguments, e.g. make run-queue-admin ARGS="list-topics")
-	@$(BAZEL) run //extension/queue/mysql/ctl -- $(ARGS)
+	@$(BAZEL) run //extension/messagequeue/mysql/ctl -- $(ARGS)
 
 test: ## Run unit tests
 	@echo "Running unit tests..."
