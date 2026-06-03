@@ -1,0 +1,48 @@
+# Tags each new commit on the default branch with a Go pseudo-version so downstream
+# monorepos can pin any merged commit in go.mod:
+#
+#   require github.com/uber/submitqueue v0.0.0-20250602143045-abcdef123456
+#
+# Format matches https://go.dev/ref/mod#pseudo-versions (v0.0.0-yyyymmddhhmmss-rev, UTC).
+
+name: Tag Go pseudo-version
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tag-go-pseudoversion-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Create and push pseudo-version tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute pseudo-version tag and push
+        run: |
+          set -euo pipefail
+          SHA="${GITHUB_SHA}"
+          TS="$(git show -s --format=%ct "${SHA}")"
+          WHEN="$(date -u -d "@${TS}" +%Y%m%d%H%M%S)"
+          REV="$(git rev-parse --short=12 "${SHA}")"
+          TAG="v0.0.0-${WHEN}-${REV}"
+
+          echo "Computed tag: ${TAG} for ${SHA}"
+
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q .; then
+            echo "Tag ${TAG} already exists on origin; skipping."
+            exit 0
+          fi
+
+          git tag "${TAG}" "${SHA}"
+          git push origin "refs/tags/${TAG}"
