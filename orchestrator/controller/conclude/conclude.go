@@ -92,11 +92,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"partition_key", msg.PartitionKey,
 	)
 
-	// TODO: Handle cancellation
-
 	// Map batch terminal state to request state.
-	// We expect the batch to be in a terminal state
-	// as updated by the merge controller.
+	// We expect the batch to be in a terminal state as written by the merge
+	// controller (Succeeded) or the speculate controller (Failed via
+	// failOnDependency, Cancelled via cancelBatch).
 	requestState, err := batchStateToRequestState(batch.State)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, "process", "unexpected_state_errors", 1)
@@ -150,6 +149,8 @@ func batchStateToRequestState(state entity.BatchState) (entity.RequestState, err
 		return entity.RequestStateLanded, nil
 	case entity.BatchStateFailed:
 		return entity.RequestStateError, nil
+	case entity.BatchStateCancelled:
+		return entity.RequestStateCancelled, nil
 	default:
 		return entity.RequestStateUnknown, fmt.Errorf("non-terminal batch state: %s", state)
 	}

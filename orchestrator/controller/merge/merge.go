@@ -102,6 +102,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"partition_key", msg.PartitionKey,
 	)
 
+	// Cancelling intent: the cancel controller marked this batch as not landing
+	// and handed it off to speculate. Silently ack — do not push (the inherent
+	// push-already-committed race is acknowledged elsewhere) and do not fan out
+	// (speculate owns the terminal write to Cancelled and the downstream
+	// dependent / conclude publishes).
+	if batch.State == entity.BatchStateCancelling {
+		coremetrics.NamedCounter(c.metricsScope, "process", "skipped_cancelling", 1)
+		return nil
+	}
+
 	// Idempotency: if the batch is already in a terminal state, a previous
 	// attempt has already merged (or failed) — just re-fan-out the events
 	// in case downstream stages missed them.

@@ -343,3 +343,42 @@ func TestController_InterfaceImplementation(t *testing.T) {
 
 	var _ consumer.Controller = controller
 }
+
+// A batch in any halted state (terminal OR cancelling) must short-circuit:
+// the build controller acks without triggering an external CI run and without
+// publishing anything. Per the cancel design the speculate controller owns
+// cancelling in-flight builds and driving the batch terminal, so the build
+// stage simply does no work. Cancelling is included because the cancel
+// controller is mid-flight; both halted branches reach the same observable
+// behaviour (no build performed).
+func TestController_Process_HaltedShortCircuit(t *testing.T) {
+	for _, state := range []entity.BatchState{
+		entity.BatchStateCancelled,
+		entity.BatchStateCancelling,
+		entity.BatchStateSucceeded,
+		entity.BatchStateFailed,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+
+			batch := testBatch()
+			batch.State = state
+			store := newMockStorage(ctrl, batch)
+
+			// No Trigger expectation: a stray CI trigger on a halted batch
+			// fails the test.
+			br := buildrunnermock.NewMockBuildRunner(ctrl)
+
+			// Sentinel publish error: the halted path must not publish. If it
+			// does, Process surfaces this error and require.NoError catches it.
+			controller := newTestController(t, ctrl, store, br, fmt.Errorf("should not publish"))
+
+			msg := queue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
+			delivery := queuemock.NewMockDelivery(ctrl)
+			delivery.EXPECT().Message().Return(msg).AnyTimes()
+			delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+			require.NoError(t, controller.Process(context.Background(), delivery))
+		})
+	}
+}

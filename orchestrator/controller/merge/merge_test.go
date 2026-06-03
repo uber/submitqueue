@@ -305,14 +305,61 @@ func TestController_Process_PushInfraFailureReturnsError(t *testing.T) {
 }
 
 func TestController_Process_TerminalBatchSkipsPushButFansOut(t *testing.T) {
+	for _, state := range []entity.BatchState{
+		entity.BatchStateSucceeded,
+		entity.BatchStateFailed,
+		entity.BatchStateCancelled,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+
+			const batchID = "test-queue/batch/4"
+
+			batch := entity.Batch{
+				ID:      batchID,
+				Queue:   "test-queue",
+				State:   state,
+				Version: 7,
+			}
+
+			batchStore := storagemock.NewMockBatchStore(ctrl)
+			batchStore.EXPECT().Get(gomock.Any(), batchID).Return(batch, nil)
+
+			store := storagemock.NewMockStorage(ctrl)
+			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+
+			// Push must NOT be called for an already-terminal batch.
+			mockPusher := pushermock.NewMockPusher(ctrl)
+
+			c := NewController(
+				zaptest.NewLogger(t).Sugar(),
+				tally.NoopScope,
+				store,
+				newRegistry(t, ctrl, nil),
+				mockPusher,
+				consumer.TopicKeyMerge,
+				"orchestrator-merge",
+			)
+
+			err := c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue))
+			require.NoError(t, err)
+		})
+	}
+}
+
+// BatchStateCancelling must be silently acked: no push, and crucially no
+// fan-out (no publish to conclude or speculate). The cancel controller owns
+// the terminal write and the downstream publishes; conclude would error on
+// a non-terminal Cancelling batch.
+func TestController_Process_CancellingShortCircuit(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	const batchID = "test-queue/batch/4"
+	const batchID = "test-queue/batch/4c"
 
 	batch := entity.Batch{
 		ID:      batchID,
 		Queue:   "test-queue",
-		State:   entity.BatchStateSucceeded,
+		State:   entity.BatchStateCancelling,
 		Version: 7,
 	}
 
@@ -322,20 +369,29 @@ func TestController_Process_TerminalBatchSkipsPushButFansOut(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
-	// Push must NOT be called for an already-terminal batch.
+	// Pusher and publisher with no EXPECTs — neither must be called.
 	mockPusher := pushermock.NewMockPusher(ctrl)
+	mockPub := queuemock.NewMockPublisher(ctrl)
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: consumer.TopicKeyConclude, Name: "conclude", Queue: mockQ},
+		{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
+	})
+	require.NoError(t, err)
 
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
 		store,
-		newRegistry(t, ctrl, nil),
+		registry,
 		mockPusher,
 		consumer.TopicKeyMerge,
 		"orchestrator-merge",
 	)
 
-	err := c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue))
+	err = c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue))
 	require.NoError(t, err)
 }
 

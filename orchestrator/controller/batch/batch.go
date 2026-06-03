@@ -16,6 +16,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/uber-go/tally/v4"
@@ -103,6 +104,18 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"partition_key", msg.PartitionKey,
 	)
 
+	// Short-circuit if the request has been halted — either it already reached a
+	// terminal state, or the cancel controller has recorded a cancellation intent
+	// (RequestStateCancelling). A halted request must never spawn a new batch.
+	if entity.IsRequestStateHalted(request.State) {
+		c.metricsScope.Counter("skipped_halted").Inc(1)
+		c.logger.Infow("skipping batch for halted request",
+			"request_id", request.ID,
+			"state", string(request.State),
+		)
+		return nil
+	}
+
 	// TODO: if capacity is full, wait here for other requests to accumulate to batch them together, or include a request into an existing batch if it's not too late.
 
 	// Generate a globally unique batch ID.
@@ -183,6 +196,79 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1)
 		return fmt.Errorf("failed to create batch dependent index for new batchID=%s: %w", batch.ID, err)
 	}
+
+	// Claim the request for this batch with a CAS-write that transitions the
+	// request to RequestStateBatched. This CAS is the serialization point
+	// between the batch controller and the cancel controller — without it, the
+	// two would race over an empty interleaving and produce an orphan batch
+	// containing a cancelled request.
+	//
+	// Concrete race that this CAS closes (T1..T7 are wall-clock orderings of
+	// independent batch- and cancel-controller goroutines):
+	//
+	//   T1 batch.Get(R)                       → R{State: Validated, Version: 1}
+	//   T2 cancel.Get(R)                      → R{State: Validated, Version: 1}
+	//   T3 cancel.markCancelling CAS 1→2      → R{State: Cancelling, Version: 2}
+	//   T4 cancel.findActiveBatch(R)          → none (batch has not been Created yet)
+	//   T5 cancel.cancelRequest CAS 2→3       → R{State: Cancelled,  Version: 3}
+	//   T6 batch.IsRequestStateHalted(R)      → false (stale in-memory copy from T1)
+	//   T7 batch.BatchStore.Create(B{[R]})    → orphan batch containing a cancelled R
+	//
+	// After T7 the orphan batch flows through score → speculate → merge → conclude;
+	// conclude does NOT gate on the source request state when writing the terminal
+	// state, so it would CAS the request from Cancelled back to Landed, silently
+	// undoing the user's cancel.
+	//
+	// The CAS below collapses that window. Whichever of batch.UpdateState(...,
+	// RequestStateBatched) and cancel.markCancelling(... RequestStateCancelling)
+	// reaches storage first wins; the loser sees storage.ErrVersionMismatch:
+	//   - If cancel won: this CAS fails. We ack the message (cancel will drive R
+	//     to its terminal state on its own; no batch is needed). The reverse-index
+	//     entry above becomes a dangling BatchDependent — tolerated per the
+	//     "downstream should handle stale entries" contract on this store.
+	//   - If batch won: cancel.markCancelling will fail with ErrVersionMismatch
+	//     on its next attempt, re-fetch R, observe RequestStateBatched, and take
+	//     the batch-cancellation branch (which terminates the whole batch).
+	//
+	// Note on re-delivery: a retry of a batch message that already CAS'd R to
+	// Batched but failed before/after BatchStore.Create lands in this code with
+	// R already in RequestStateBatched. The top-level IsRequestStateHalted check
+	// does NOT include Batched (Batched is forward-progress, not halted), so we
+	// reach here and re-CAS Batched → Batched (a version-only bump). The bump
+	// keeps the same serialization invariant on every attempt — if cancel sneaks
+	// in between our Get and this CAS, our version is stale and we abandon, just
+	// like the first-delivery case. The cost is an extra batch (the previous
+	// attempt may have already created one) which is tolerated per the comment
+	// on BatchStore.Create below.
+	//
+	// Residual window: a thin race remains between this CAS and BatchStore.Create.
+	// During that window cancel.findActiveBatch can still observe R in Batched
+	// with no batch yet persisted, and take the request-only cancel path — which
+	// then leaves R in Cancelled and the batch we are about to create orphaned.
+	// Fully closing this requires cancel-side wait/retry when its pre-CAS
+	// observation was RequestStateBatched; deferred to a follow-up since the
+	// window is narrow (one storage round-trip) and the user-visible outcome
+	// (request cancelled) is still correct — the orphan batch just gets
+	// reconciled by conclude as if it had no requests to act on.
+	newRequestVersion := request.Version + 1
+	if err := c.store.GetRequestStore().UpdateState(ctx, request.ID, request.Version, newRequestVersion, entity.RequestStateBatched); err != nil {
+		// ErrVersionMismatch == cancel (or another writer) advanced R first. Ack
+		// the message: there is nothing for us to do, and retrying would not help
+		// since the new state of R is now visible to the cancel pipeline.
+		if errors.Is(err, storage.ErrVersionMismatch) {
+			c.metricsScope.Counter("request_claim_lost_race").Inc(1)
+			c.logger.Infow("abandoning batch creation; request advanced concurrently (likely cancel)",
+				"request_id", request.ID,
+				"request_version", request.Version,
+				"unused_batch_id", batch.ID,
+			)
+			return nil
+		}
+		c.metricsScope.Counter("request_claim_errors").Inc(1)
+		return fmt.Errorf("failed to claim request %s for batch %s: %w", request.ID, batch.ID, err)
+	}
+	request.Version = newRequestVersion
+	request.State = entity.RequestStateBatched
 
 	// Persist batch to storage.
 	// This is the final operation that concludes the batch creation process. If it fails, BatchDependents will be pointing to a batch id that does not exist.

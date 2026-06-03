@@ -113,3 +113,51 @@ func TestPublishBatchLogs_Empty(t *testing.T) {
 	err := PublishBatchLogs(context.Background(), registry, nil, entity.RequestStatusScored, nil)
 	require.NoError(t, err)
 }
+
+// TestPublishLog_MessageIDScopedByStatus locks in the queue-id scheme:
+// distinct statuses for the same request must produce distinct message IDs so
+// the queue's (topic, partition_key, id) uniqueness check does not reject the
+// second publish, while the same status emitted twice (retry of the same
+// delivery) must produce the same message ID so the queue dedupes it.
+//
+// Regression test for the duplicate-key crash where the orchestrator cancel
+// controller could not emit a `cancelled` log entry because the start
+// controller had already published `started` for the same request.
+func TestPublishLog_MessageIDScopedByStatus(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	var ids []string
+	mockPub := queuemock.NewMockPublisher(ctrl)
+	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, msg queue.Message) error {
+			ids = append(ids, msg.ID)
+			return nil
+		},
+	).AnyTimes()
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{{Key: consumer.TopicKeyLog, Name: "log", Queue: mockQ}},
+	)
+	require.NoError(t, err)
+
+	// Three distinct statuses for the same request.
+	for _, st := range []entity.RequestStatus{
+		entity.RequestStatusStarted,
+		entity.RequestStatusCancelling,
+		entity.RequestStatusCancelled,
+	} {
+		require.NoError(t, PublishLog(context.Background(), registry,
+			entity.NewRequestLog("req/1", st, 0, "", nil), "req/1"))
+	}
+	// Re-emit "started" to simulate a retry of the same delivery — must reuse the same ID.
+	require.NoError(t, PublishLog(context.Background(), registry,
+		entity.NewRequestLog("req/1", entity.RequestStatusStarted, 0, "", nil), "req/1"))
+
+	require.Equal(t, []string{
+		"req/1/started",
+		"req/1/cancelling",
+		"req/1/cancelled",
+		"req/1/started",
+	}, ids)
+}

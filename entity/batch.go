@@ -34,12 +34,24 @@ const (
 	BatchStateFailed BatchState = "failed"
 	// BatchStateScored is the state of a batch that has been scored for build success probability.
 	BatchStateScored BatchState = "scored"
+	// BatchStateCancelling is the non-terminal intent state set when a cancel has been requested but the
+	// batch has not yet been transitioned to BatchStateCancelled. A batch in this state may still reach
+	// BatchStateSucceeded or BatchStateFailed if a concurrent merge wins the race (e.g. the push had
+	// already completed before the cancel CAS observed the batch); those terminal states prevail.
+	// Forward-progress controllers must treat this state as halted (no new work). The speculate
+	// controller owns the transition to the terminal BatchStateCancelled and the downstream fan-out
+	// (cancelling in-flight builds, respeculating dependents, publishing to conclude).
+	BatchStateCancelling BatchState = "cancelling"
 	// BatchStateCancelled is the terminal state of a batch that was cancelled before completion.
 	BatchStateCancelled BatchState = "cancelled"
 )
 
 // IsTerminal returns true if the batch state is a terminal state.
 // Terminal states are states from which no further transitions are possible.
+// BatchStateCancelling is intentionally excluded: cancellation is best-effort and a Cancelling batch
+// may still transition to BatchStateSucceeded or BatchStateFailed before it reaches BatchStateCancelled.
+// Callers that want to gate forward progress (and treat Cancelling as halted) should use
+// IsBatchStateHalted instead.
 func (s BatchState) IsTerminal() bool {
 	switch s {
 	case BatchStateSucceeded, BatchStateFailed, BatchStateCancelled:
@@ -47,6 +59,14 @@ func (s BatchState) IsTerminal() bool {
 	default:
 		return false
 	}
+}
+
+// IsBatchStateHalted returns true if the batch is either terminal or in the process of being cancelled.
+// Forward-progress controllers (score, build, buildsignal, speculate, merge) use this to short-circuit
+// work for batches that the user has asked to cancel — even though Cancelling is non-terminal, no
+// further pipeline work should start (cancel will write the terminal state and fan out).
+func IsBatchStateHalted(s BatchState) bool {
+	return s.IsTerminal() || s == BatchStateCancelling
 }
 
 // Batch represents a group of requests to land (merge into target branch of the source control repository).

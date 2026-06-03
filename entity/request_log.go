@@ -78,6 +78,16 @@ const (
 
 	// RequestStatusError indicates that the request has encountered an error. It corresponds to the RequestStateError state.
 	RequestStatusError RequestStatus = "error"
+
+	// RequestStatusCancelling indicates that the user has requested cancellation but the request has not yet transitioned
+	// to the RequestStateCancelled state. Cancellation is best-effort: a request that has already been merged or that
+	// races to completion before the cancel propagates through the pipeline may still land. Observers should treat this
+	// as intent only and rely on RequestStatusCancelled (or RequestStatusLanded) for the terminal outcome. Emitted by
+	// the gateway when the Cancel RPC is received.
+	RequestStatusCancelling RequestStatus = "cancelling"
+
+	// RequestStatusCancelled indicates that the request was cancelled by the user before it could land. It corresponds to the RequestStateCancelled state.
+	RequestStatusCancelled RequestStatus = "cancelled"
 )
 
 // RequestLog is an append-only record that captures a point-in-time snapshot of a request's status

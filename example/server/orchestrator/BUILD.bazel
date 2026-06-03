@@ -38,6 +38,7 @@ go_library(
         "//orchestrator/controller/batch",
         "//orchestrator/controller/build",
         "//orchestrator/controller/buildsignal",
+        "//orchestrator/controller/cancel",
         "//orchestrator/controller/conclude",
         "//orchestrator/controller/log",
         "//orchestrator/controller/merge",

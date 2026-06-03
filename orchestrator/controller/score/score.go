@@ -103,6 +103,33 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"partition_key", msg.PartitionKey,
 	)
 
+	// Short-circuit when the batch is in BatchStateCancelling — the cancel
+	// controller has handed the batch off to speculate, which owns the terminal
+	// write to Cancelled and the downstream dependent / conclude publishes. We
+	// must not race it to conclude (conclude requires terminal). Silently ack.
+	if batch.State == entity.BatchStateCancelling {
+		c.metricsScope.Counter("skipped_cancelling").Inc(1)
+		c.logger.Infow("skipping score for cancelling batch",
+			"batch_id", batch.ID,
+		)
+		return nil
+	}
+
+	// Short-circuit if the batch is already terminal. Score never writes a
+	// terminal state, so it owns no recovery here: whichever controller wrote
+	// the terminal state (speculate.cancelBatch / failOnDependency, or merge)
+	// already published to conclude, and speculate's terminal self-heal
+	// republishes conclude on every redelivery of a terminal batch. Silently
+	// ack — same pattern as build / buildsignal on halted.
+	if batch.State.IsTerminal() {
+		c.metricsScope.Counter("skipped_terminal").Inc(1)
+		c.logger.Infow("skipping score for terminal batch",
+			"batch_id", batch.ID,
+			"state", string(batch.State),
+		)
+		return nil
+	}
+
 	// Score each request's change and take the minimum (worst-case) as the batch score
 	batchScore, err := c.scoreBatch(ctx, batch)
 	if err != nil {
