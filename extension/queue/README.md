@@ -13,9 +13,17 @@ Publishes messages to topics.
 ```go
 type Publisher interface {
     Publish(ctx context.Context, topic string, message queue.Message) error
+    PublishAfter(ctx context.Context, topic string, message queue.Message, delayMs int64) error
     Close() error
 }
 ```
+
+**`PublishAfter`** inserts a fresh message that becomes visible to subscribers only after `delayMs`. It is distinct from `Nack(requeueAfterMillis)` even though both can produce "next delivery happens at T+delay":
+
+- `Nack` is "this delivery failed, try again" — it bumps `retry_count` and eventually trips DLQ.
+- `PublishAfter` is "postpone this work" — `retry_count` resets to 0, DLQ stays available for true failures.
+
+Use `PublishAfter` for self-driven poll loops (e.g. the orchestrator's `buildsignal` consumer re-publishing itself between `Status` calls). Use `Nack` for processing failures.
 
 ### Subscriber
 Consumes messages from topics with per-subscription configuration.

@@ -56,18 +56,18 @@ func (mr *MockmessageStoreMockRecorder) Delete(ctx, topic, partitionKey, message
 }
 
 // FetchByOffset mocks base method.
-func (m *MockmessageStore) FetchByOffset(ctx context.Context, topic, partitionKey string, currentOffset int64, limit int) ([]messageRow, error) {
+func (m *MockmessageStore) FetchByOffset(ctx context.Context, topic, partitionKey string, currentOffset, nowMs int64, limit int) ([]messageRow, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FetchByOffset", ctx, topic, partitionKey, currentOffset, limit)
+	ret := m.ctrl.Call(m, "FetchByOffset", ctx, topic, partitionKey, currentOffset, nowMs, limit)
 	ret0, _ := ret[0].([]messageRow)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // FetchByOffset indicates an expected call of FetchByOffset.
-func (mr *MockmessageStoreMockRecorder) FetchByOffset(ctx, topic, partitionKey, currentOffset, limit any) *gomock.Call {
+func (mr *MockmessageStoreMockRecorder) FetchByOffset(ctx, topic, partitionKey, currentOffset, nowMs, limit any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchByOffset", reflect.TypeOf((*MockmessageStore)(nil).FetchByOffset), ctx, topic, partitionKey, currentOffset, limit)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchByOffset", reflect.TypeOf((*MockmessageStore)(nil).FetchByOffset), ctx, topic, partitionKey, currentOffset, nowMs, limit)
 }
 
 // GarbageCollect mocks base method.
@@ -112,6 +112,20 @@ func (m *MockmessageStore) Insert(ctx context.Context, topic string, messages []
 func (mr *MockmessageStoreMockRecorder) Insert(ctx, topic, messages any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Insert", reflect.TypeOf((*MockmessageStore)(nil).Insert), ctx, topic, messages)
+}
+
+// InsertDelayed mocks base method.
+func (m *MockmessageStore) InsertDelayed(ctx context.Context, topic string, messages []queue.Message, visibleAfterMs int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "InsertDelayed", ctx, topic, messages, visibleAfterMs)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// InsertDelayed indicates an expected call of InsertDelayed.
+func (mr *MockmessageStoreMockRecorder) InsertDelayed(ctx, topic, messages, visibleAfterMs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InsertDelayed", reflect.TypeOf((*MockmessageStore)(nil).InsertDelayed), ctx, topic, messages, visibleAfterMs)
 }
 
 // MoveToDLQ mocks base method.

@@ -2,10 +2,15 @@ load("@gazelle//:def.bzl", "gazelle")
 
 # gazelle:prefix github.com/uber/submitqueue
 
+# Exclude nested worktrees (created under .claude/worktrees) so gazelle does not
+# index them as duplicate rule definitions and corrupt the canonical BUILD files.
+# gazelle:exclude .claude
+
 # Resolve protobuf import ambiguities - use the actual protopb packages, not the proto aliases
 # gazelle:resolve go github.com/uber/submitqueue/gateway/protopb //gateway/protopb
 # gazelle:resolve go github.com/uber/submitqueue/orchestrator/protopb //orchestrator/protopb
 # gazelle:resolve go github.com/uber/submitqueue/stovepipe/gateway/protopb //stovepipe/gateway/protopb
+# gazelle:resolve go github.com/uber/submitqueue/stovepipe/orchestrator/protopb //stovepipe/orchestrator/protopb
 
 # Export marker files for test data dependencies (used by FindRepoRoot in tests)
 exports_files(

@@ -154,6 +154,7 @@ Generated proto files are committed. When modifying `.proto` files:
 - **Files**: `{method}.go`, `{entity}.go`, `{file}_test.go`, `BUILD.bazel`
 - **Proto files**: `{service}.proto`
 - **README files**: Do not duplicate interface or type definitions as code blocks in READMEs. Describe behavior in prose and let readers navigate to the source. Only include code samples when explicitly instructed.
+- **Markdown prose width**: Do not hard-wrap prose in Markdown docs (RFCs under `doc/`, READMEs). Write one line per paragraph and one line per list item, and let the editor soft-wrap — hard wrapping at a fixed column renders as a narrow fixed-width column regardless of window size. Code blocks, tables, and ASCII diagrams keep their own line breaks.
 
 ### Makefile
 

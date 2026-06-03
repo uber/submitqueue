@@ -771,8 +771,9 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) error {
 		return fmt.Errorf("get acked offset: %w", err)
 	}
 
-	// Fetch messages from immutable log
-	rows, err := s.messageStore.FetchByOffset(ctx, sub.topic, partitionKey, currentOffset, cfg.BatchSize)
+	// Fetch messages from immutable log; defer-visible rows (visible_after > now)
+	// are skipped at the SQL layer.
+	rows, err := s.messageStore.FetchByOffset(ctx, sub.topic, partitionKey, currentOffset, time.Now().UnixMilli(), cfg.BatchSize)
 	if err != nil {
 		return fmt.Errorf("fetch messages: %w", err)
 	}

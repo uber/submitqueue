@@ -160,6 +160,68 @@ func TestPublisher_PublishAfterClose(t *testing.T) {
 	require.True(t, errors.Is(err, ErrPublisherClosed))
 }
 
+func TestPublisher_PublishAfter(t *testing.T) {
+	tests := []struct {
+		name           string
+		delayMs        int64
+		wantVisibleArg gomock.Matcher
+	}{
+		{
+			name:    "positive delay binds future visible_after",
+			delayMs: 5000,
+			// Exact timestamp depends on wall clock; assert it's > 0.
+			wantVisibleArg: gomock.Cond(func(v any) bool {
+				ts, ok := v.(int64)
+				return ok && ts > 0
+			}),
+		},
+		{
+			name:           "zero delay binds visible_after=0",
+			delayMs:        0,
+			wantVisibleArg: gomock.Eq(int64(0)),
+		},
+		{
+			name:           "negative delay clamps to 0",
+			delayMs:        -100,
+			wantVisibleArg: gomock.Eq(int64(0)),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockStore := NewMockmessageStore(ctrl)
+			mockStore.EXPECT().
+				InsertDelayed(gomock.Any(), "test_topic", gomock.Any(), tt.wantVisibleArg).
+				Return(nil).
+				Times(1)
+
+			pub := setupPublisherTest(t, mockStore)
+
+			msg := queue.NewMessage("msg-delayed", []byte("p"), "part1", nil)
+			err := pub.PublishAfter(context.Background(), "test_topic", msg, tt.delayMs)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestPublisher_PublishAfterClosed(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockStore := NewMockmessageStore(ctrl)
+	pub := setupPublisherTest(t, mockStore)
+
+	require.NoError(t, pub.Close())
+
+	msg := queue.NewMessage("msg1", []byte("p"), "part1", nil)
+	err := pub.PublishAfter(context.Background(), "test_topic", msg, 1000)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrPublisherClosed))
+}
+
 func TestPublisher_Close(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()

@@ -16,6 +16,7 @@ package build
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/uber-go/tally/v4"
@@ -23,6 +24,7 @@ import (
 	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity"
 	entityqueue "github.com/uber/submitqueue/entity/queue"
+	"github.com/uber/submitqueue/extension/buildrunner"
 	"github.com/uber/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
@@ -34,6 +36,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	store         storage.Storage
+	buildRunner   buildrunner.BuildRunner
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -47,6 +50,7 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	store storage.Storage,
+	buildRunner buildrunner.BuildRunner,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -55,6 +59,7 @@ func NewController(
 		logger:        logger.Named("build_controller"),
 		metricsScope:  scope.SubScope("build_controller"),
 		store:         store,
+		buildRunner:   buildRunner,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -95,17 +100,45 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"partition_key", msg.PartitionKey,
 	)
 
-	// TODO: Add build logic
-	// - Trigger CI build
-	// - Track build status
-
-	build := entity.Build{
-		ID:      batch.ID,
-		BatchID: batch.ID,
-		Status:  entity.BuildStatusQueued,
+	// Assemble base (dependency batches in order) and head (this batch).
+	base, err := c.collectChanges(ctx, batch.Dependencies)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return fmt.Errorf("failed to assemble base changes for batch %s: %w", batch.ID, err)
+	}
+	head, err := c.collectChanges(ctx, []string{batch.ID})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return fmt.Errorf("failed to assemble head changes for batch %s: %w", batch.ID, err)
 	}
 
-	// Publish build to build signal topic
+	// Trigger the build with the configured build manager. metadata is nil
+	// until a caller-supplied source materializes (e.g. requester / ticket
+	// pulled off the originating LandRequest).
+	buildID, err := c.buildRunner.Trigger(ctx, batch.Queue, base, head, nil)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "trigger_errors", 1)
+		return fmt.Errorf("failed to trigger build for batch %s: %w", batch.ID, err)
+	}
+
+	build := entity.Build{
+		ID:              buildID.ID,
+		BatchID:         batch.ID,
+		SpeculationPath: entity.SpeculationPathInfo{Base: append([]string{}, batch.Dependencies...)},
+		Status:          entity.BuildStatusAccepted,
+	}
+
+	// Persist the initial Build snapshot so the buildsignal poll loop has a
+	// row to UpdateStatus against. ErrAlreadyExists is benign — a redelivery
+	// of this message after a previous successful Create.
+	if err := c.store.GetBuildStore().Create(ctx, build); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return fmt.Errorf("failed to persist build %s: %w", build.ID, err)
+	}
+
+	// Hand off to the buildsignal poll loop; it calls Status, updates the
+	// persisted Build, publishes to speculate, and re-publishes itself via
+	// PublishAfter until terminal.
 	if err := c.publish(ctx, consumer.TopicKeyBuildSignal, build); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to buildsignal: %w", err)
@@ -114,17 +147,44 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	c.logger.Infow("published build to buildsignal",
 		"batch_id", batch.ID,
 		"build_id", build.ID,
+		"status", string(build.Status),
 		"topic_key", consumer.TopicKeyBuildSignal,
 	)
 
 	return nil // Success - message will be acked
 }
 
-// publish publishes a build to the specified topic key.
+// collectChanges loads each batch by ID and concatenates the Change values
+// from its contained requests in batch order. Used to build the base
+// (dependency batches) and head (this batch) inputs to BuildRunner.Trigger.
+func (c *Controller) collectChanges(ctx context.Context, batchIDs []string) ([]entity.Change, error) {
+	if len(batchIDs) == 0 {
+		return nil, nil
+	}
+	var changes []entity.Change
+	for _, bID := range batchIDs {
+		b, err := c.store.GetBatchStore().Get(ctx, bID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get batch %s: %w", bID, err)
+		}
+		for _, reqID := range b.Contains {
+			req, err := c.store.GetRequestStore().Get(ctx, reqID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get request %s for batch %s: %w", reqID, bID, err)
+			}
+			changes = append(changes, req.Change)
+		}
+	}
+	return changes, nil
+}
+
+// publish publishes a build's ID to the specified topic key. Only the
+// identifier travels on the queue; the consumer loads the full Build from
+// storage, keeping the message small and the store the single source of truth.
 func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, build entity.Build) error {
-	payload, err := build.ToBytes()
+	payload, err := entity.BuildID{ID: build.ID}.ToBytes()
 	if err != nil {
-		return fmt.Errorf("failed to serialize build: %w", err)
+		return fmt.Errorf("failed to serialize build ID: %w", err)
 	}
 
 	msg := entityqueue.NewMessage(build.ID, payload, build.BatchID, nil)

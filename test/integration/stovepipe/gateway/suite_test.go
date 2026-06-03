@@ -74,7 +74,7 @@ func (s *StovepipeGatewayIntegrationSuite) SetupSuite() {
 	testutil.ApplySchema(t, s.log, queueDB, testutil.SchemaDir("extension/queue/mysql/schema"))
 
 	var conn *grpc.ClientConn
-	conn, err = s.stack.ConnectGRPC("stovepipe-service", 8080)
+	conn, err = s.stack.ConnectGRPC("gateway-service", 8080)
 	require.NoError(t, err, "failed to connect to stovepipe gateway")
 	s.client = pb.NewStovepipeGatewayClient(conn)
 }

@@ -16,6 +16,8 @@ go_library(
         "//core/errs/mysql",
         "//core/httpclient",
         "//entity",
+        "//extension/buildrunner",
+        "//extension/buildrunner/noop",
         "//extension/changeprovider",
         "//extension/changeprovider/github",
         "//extension/changestore",

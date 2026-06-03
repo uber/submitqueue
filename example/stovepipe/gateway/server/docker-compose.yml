@@ -47,7 +47,7 @@ services:
       timeout: 5s
       retries: 10
 
-  stovepipe-service:
+  gateway-service:
     build:
       context: ${REPO_ROOT}
       dockerfile: example/stovepipe/gateway/server/Dockerfile

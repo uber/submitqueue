@@ -141,6 +141,7 @@ func TestMessageStore_FetchByOffset(t *testing.T) {
 	topic := "test_topic"
 	partitionKey := "part1"
 	currentOffset := int64(0)
+	nowMs := time.Now().UnixMilli()
 	limit := 10
 
 	// Mock query results (no transaction, simple SELECT)
@@ -148,13 +149,57 @@ func TestMessageStore_FetchByOffset(t *testing.T) {
 		AddRow(int64(1), "msg1", []byte("payload1"), []byte("{}"), "part1", time.Now().UnixMilli(), int64(0), 0, "", "")
 
 	mock.ExpectQuery("SELECT (.+) FROM queue_messages").
-		WithArgs(topic, partitionKey, currentOffset, limit).
+		WithArgs(topic, partitionKey, currentOffset, nowMs, limit).
 		WillReturnRows(rows)
 
-	results, err := store.FetchByOffset(ctx, topic, partitionKey, currentOffset, limit)
+	results, err := store.FetchByOffset(ctx, topic, partitionKey, currentOffset, nowMs, limit)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	require.Equal(t, "msg1", results[0].ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMessageStore_FetchByOffset_SkipsDelayed(t *testing.T) {
+	db, mock, store := setupmessageStoreTest(t)
+	defer db.Close()
+
+	ctx := context.Background()
+	topic := "test_topic"
+	partitionKey := "part1"
+	currentOffset := int64(0)
+	nowMs := int64(1000)
+	limit := 10
+
+	// The SQL filter (visible_after <= nowMs) is applied by the DB; sqlmock just
+	// verifies the parameter binding. An empty result row simulates the case
+	// where the only message is still deferred.
+	mock.ExpectQuery("SELECT (.+) FROM queue_messages").
+		WithArgs(topic, partitionKey, currentOffset, nowMs, limit).
+		WillReturnRows(sqlmock.NewRows([]string{"offset", "id", "payload", "metadata", "partition_key", "published_at", "failed_at", "failure_count", "last_error", "original_topic"}))
+
+	results, err := store.FetchByOffset(ctx, topic, partitionKey, currentOffset, nowMs, limit)
+	require.NoError(t, err)
+	require.Empty(t, results)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMessageStore_InsertDelayed(t *testing.T) {
+	db, mock, store := setupmessageStoreTest(t)
+	defer db.Close()
+
+	ctx := context.Background()
+	visibleAfter := time.Now().UnixMilli() + 5000
+	msg := queue.Message{ID: "msg-delayed", Payload: []byte("p"), PartitionKey: "part1", PublishedAt: time.Now().UnixMilli()}
+
+	mock.ExpectBegin()
+	mock.ExpectPrepare("INSERT INTO queue_messages")
+	mock.ExpectExec("INSERT INTO queue_messages").
+		WithArgs("test_topic", msg.ID, msg.Payload, []byte(nil), msg.PartitionKey, sqlmock.AnyArg(), msg.PublishedAt, visibleAfter).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	err := store.InsertDelayed(ctx, "test_topic", []queue.Message{msg}, visibleAfter)
+	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
