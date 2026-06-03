@@ -23,8 +23,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/errs"
-	"github.com/uber/submitqueue/entity/queue"
-	queuemock "github.com/uber/submitqueue/extension/queue/mock"
+	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
+	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -298,7 +298,7 @@ func TestController_Process(t *testing.T) {
 
 			controller := newTestController(t, ctrl, mockStorage)
 
-			msg := queue.NewMessage(tt.batch.ID, batchIDPayload(t, tt.batch.ID), tt.batch.Queue, nil)
+			msg := entityqueue.NewMessage(tt.batch.ID, batchIDPayload(t, tt.batch.ID), tt.batch.Queue, nil)
 			delivery := queuemock.NewMockDelivery(ctrl)
 			delivery.EXPECT().Message().Return(msg).AnyTimes()
 			delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -326,7 +326,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 
 	controller := newTestController(t, ctrl, mockStorage)
 
-	msg := queue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1"), "test-queue", nil)
+	msg := entityqueue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1"), "test-queue", nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()

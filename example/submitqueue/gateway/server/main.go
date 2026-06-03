@@ -28,9 +28,9 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally/v4"
-	queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
+	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
+	queueMySQL "github.com/uber/submitqueue/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
-	mysqlcounter "github.com/uber/submitqueue/submitqueue/extension/counter/mysql"
 	yamlqueueconfig "github.com/uber/submitqueue/submitqueue/extension/queueconfig/yaml"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/submitqueue/gateway/controller"

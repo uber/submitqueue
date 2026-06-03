@@ -20,8 +20,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/uber/submitqueue/entity/queue"
-	queuemock "github.com/uber/submitqueue/extension/queue/mock"
+	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
+	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"go.uber.org/mock/gomock"
@@ -30,7 +30,7 @@ import (
 func newTestRegistry(t *testing.T, ctrl *gomock.Controller, publishErr error) consumer.TopicRegistry {
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, topic string, msg queue.Message) error {
+		func(ctx context.Context, topic string, msg entityqueue.Message) error {
 			return publishErr
 		},
 	).AnyTimes()
@@ -81,7 +81,7 @@ func TestPublishBatchLogs_PartialFailure(t *testing.T) {
 	callCount := 0
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, topic string, msg queue.Message) error {
+		func(ctx context.Context, topic string, msg entityqueue.Message) error {
 			callCount++
 			if callCount == 2 {
 				return fmt.Errorf("publish failed")
@@ -129,7 +129,7 @@ func TestPublishLog_MessageIDScopedByStatus(t *testing.T) {
 	var ids []string
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ string, msg queue.Message) error {
+		func(_ context.Context, _ string, msg entityqueue.Message) error {
 			ids = append(ids, msg.ID)
 			return nil
 		},

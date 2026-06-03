@@ -23,11 +23,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/errs"
-	"github.com/uber/submitqueue/entity/queue"
-	queuemock "github.com/uber/submitqueue/extension/queue/mock"
+	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
+	countermock "github.com/uber/submitqueue/extension/counter/mock"
+	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	countermock "github.com/uber/submitqueue/submitqueue/extension/counter/mock"
 	"github.com/uber/submitqueue/submitqueue/extension/queueconfig"
 	qcmock "github.com/uber/submitqueue/submitqueue/extension/queueconfig/mock"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
@@ -244,7 +244,7 @@ func TestLand_PropagatesQueueConfigStoreError(t *testing.T) {
 
 func TestLand_PublishesToQueue(t *testing.T) {
 	var publishedTopic string
-	var publishedMessage queue.Message
+	var publishedMessage entityqueue.Message
 
 	ctrl := gomock.NewController(t)
 
@@ -253,7 +253,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 
 	registry, publisher := newTestRegistry(t, ctrl)
 	publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, topic string, msg queue.Message) error {
+		func(ctx context.Context, topic string, msg entityqueue.Message) error {
 			publishedTopic = topic
 			publishedMessage = msg
 			return nil

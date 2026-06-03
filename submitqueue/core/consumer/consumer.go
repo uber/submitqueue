@@ -24,7 +24,7 @@ import (
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/core/metrics"
-	"github.com/uber/submitqueue/extension/queue"
+	extqueue "github.com/uber/submitqueue/extension/messagequeue"
 	"go.uber.org/zap"
 )
 
@@ -238,7 +238,7 @@ func (m *consumer) subscribe(ctx context.Context, controller Controller) error {
 // Any messages buffered in partition channels but not processed before ctx
 // cancellation are safe to drop — the queue's visibility timeout will make
 // them visible again for redelivery (at-least-once semantics).
-func (m *consumer) consumeLoop(ctx context.Context, controller Controller, deliveryChan <-chan queue.Delivery, done chan struct{}, batchSize int) {
+func (m *consumer) consumeLoop(ctx context.Context, controller Controller, deliveryChan <-chan extqueue.Delivery, done chan struct{}, batchSize int) {
 	defer close(done)
 
 	topicKey := controller.TopicKey()
@@ -256,7 +256,7 @@ func (m *consumer) consumeLoop(ctx context.Context, controller Controller, deliv
 	// partitionChs maps partition keys to per-partition delivery channels.
 	// Each channel is created lazily on the first message for that partition
 	// and is never removed — partitions are stable for the lifetime of a subscription.
-	partitionChs := make(map[string]chan queue.Delivery)
+	partitionChs := make(map[string]chan extqueue.Delivery)
 	var wg sync.WaitGroup
 
 	for {
@@ -285,10 +285,10 @@ func (m *consumer) consumeLoop(ctx context.Context, controller Controller, deliv
 			partitionKey := delivery.Message().PartitionKey
 			ch, exists := partitionChs[partitionKey]
 			if !exists {
-				ch = make(chan queue.Delivery, batchSize)
+				ch = make(chan extqueue.Delivery, batchSize)
 				partitionChs[partitionKey] = ch
 				wg.Add(1)
-				go func(pCh <-chan queue.Delivery) {
+				go func(pCh <-chan extqueue.Delivery) {
 					defer wg.Done()
 					m.processPartition(ctx, controller, pCh, controllerScope)
 				}(ch)
@@ -309,7 +309,7 @@ func (m *consumer) consumeLoop(ctx context.Context, controller Controller, deliv
 
 // shutdownPartitions closes all partition channels to signal processPartition
 // goroutines to exit, then waits for them to finish draining.
-func (m *consumer) shutdownPartitions(partitionChs map[string]chan queue.Delivery, wg *sync.WaitGroup) {
+func (m *consumer) shutdownPartitions(partitionChs map[string]chan extqueue.Delivery, wg *sync.WaitGroup) {
 	for _, ch := range partitionChs {
 		close(ch)
 	}
@@ -328,7 +328,7 @@ func (m *consumer) shutdownPartitions(partitionChs map[string]chan queue.Deliver
 // On context cancellation, the current delivery being read from the channel is
 // dropped without processing. This is safe because the queue's visibility timeout
 // ensures unprocessed messages are redelivered.
-func (m *consumer) processPartition(ctx context.Context, controller Controller, deliveryCh <-chan queue.Delivery, scope tally.Scope) {
+func (m *consumer) processPartition(ctx context.Context, controller Controller, deliveryCh <-chan extqueue.Delivery, scope tally.Scope) {
 	for delivery := range deliveryCh {
 		select {
 		case <-ctx.Done():
@@ -340,7 +340,7 @@ func (m *consumer) processPartition(ctx context.Context, controller Controller, 
 }
 
 // processDelivery calls the controller and performs ack/nack based on the result.
-func (m *consumer) processDelivery(ctx context.Context, controller Controller, delivery queue.Delivery, controllerScope tally.Scope) {
+func (m *consumer) processDelivery(ctx context.Context, controller Controller, delivery extqueue.Delivery, controllerScope tally.Scope) {
 	const opName = "process"
 
 	start := time.Now()

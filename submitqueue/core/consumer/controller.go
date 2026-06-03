@@ -19,8 +19,8 @@ package consumer
 import (
 	"context"
 
-	"github.com/uber/submitqueue/entity/queue"
-	extqueue "github.com/uber/submitqueue/extension/queue"
+	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
+	extqueue "github.com/uber/submitqueue/extension/messagequeue"
 )
 
 // Delivery is the consumer package's view of a queue delivery.
@@ -35,7 +35,7 @@ import (
 //   - Return a non-retryable error to reject a poison pill message (removes it from the queue).
 type Delivery interface {
 	// Message returns the delivered message.
-	Message() queue.Message
+	Message() entityqueue.Message
 
 	// ExtendVisibilityTimeout extends the time before this message becomes
 	// visible to other consumers. Use when processing takes longer than expected.
@@ -55,13 +55,13 @@ type Delivery interface {
 	Metadata() map[string]string
 }
 
-// deliveryWrapper wraps extension/queue.Delivery and exposes only the safe subset of methods.
+// deliveryWrapper wraps extension/entityqueue.Delivery and exposes only the safe subset of methods.
 // Hides Ack/Nack from controllers - Consumer handles those automatically.
 type deliveryWrapper struct {
 	delivery extqueue.Delivery
 }
 
-func (d *deliveryWrapper) Message() queue.Message {
+func (d *deliveryWrapper) Message() entityqueue.Message {
 	return d.delivery.Message()
 }
 
@@ -92,7 +92,7 @@ func (d *deliveryWrapper) Metadata() map[string]string {
 // The implementation of the controller should be idempotent and stateless. The controller is expected to be retried for the same message multiple times and should process side effects gracefully.
 // The implementation must be thread-safe.
 type Controller interface {
-	// Process processes a delivery. Controller receives consumer.Delivery (not extension/queue.Delivery)
+	// Process processes a delivery. Controller receives consumer.Delivery (not extension/entityqueue.Delivery)
 	// which prevents direct Ack/Nack calls - Consumer handles those automatically.
 	// Return nil to ack the message (success), error to nack and retry, or NonRetryableError to ack a poison pill message.
 	// Context controls the lifecycle of the service. It is cancelled when the consumer is stopped. The implementation should process it gracefully:

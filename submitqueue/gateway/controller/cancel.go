@@ -21,7 +21,7 @@ import (
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/errs"
-	"github.com/uber/submitqueue/entity/queue"
+	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -131,7 +131,7 @@ func (c *CancelController) publishToQueue(ctx context.Context, cancelRequest ent
 
 	// Partition by the sqid so retries and reorderings on the same request are serialised.
 	// TODO: figure best way to ID and partition the message according to new guidelines on queue usage
-	msg := queue.NewMessage(cancelRequest.ID, payload, cancelRequest.ID, nil)
+	msg := entityqueue.NewMessage(cancelRequest.ID, payload, cancelRequest.ID, nil)
 
 	q, ok := c.registry.Queue(consumer.TopicKeyCancel)
 	if !ok {

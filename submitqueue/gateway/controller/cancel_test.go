@@ -23,8 +23,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/errs"
-	"github.com/uber/submitqueue/entity/queue"
-	queuemock "github.com/uber/submitqueue/extension/queue/mock"
+	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
+	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -102,13 +102,13 @@ func TestCancel_ReturnsErrorOnEmptySqid(t *testing.T) {
 
 func TestCancel_PublishesToQueue(t *testing.T) {
 	var publishedTopic string
-	var publishedMessage queue.Message
+	var publishedMessage entityqueue.Message
 
 	ctrl := gomock.NewController(t)
 
 	registry, publisher := newCancelTestRegistry(t, ctrl)
 	publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, topic string, msg queue.Message) error {
+		func(ctx context.Context, topic string, msg entityqueue.Message) error {
 			publishedTopic = topic
 			publishedMessage = msg
 			return nil
@@ -151,7 +151,7 @@ func TestCancel_InsertsCancellingLog(t *testing.T) {
 	registry, publisher := newCancelTestRegistry(t, ctrl)
 	insertedBeforePublish := false
 	publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ string, _ queue.Message) error {
+		func(_ context.Context, _ string, _ entityqueue.Message) error {
 			insertedBeforePublish = insertedLog.RequestID != ""
 			return nil
 		},

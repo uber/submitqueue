@@ -29,7 +29,7 @@ import (
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/core/metrics"
-	entityqueue "github.com/uber/submitqueue/entity/queue"
+	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"

@@ -14,9 +14,9 @@ import (
 	"github.com/uber-go/tally/v4"
 	"go.uber.org/zap/zaptest"
 
-	"github.com/uber/submitqueue/entity/queue"
-	extqueue "github.com/uber/submitqueue/extension/queue"
-	queueMySQL "github.com/uber/submitqueue/extension/queue/mysql"
+	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
+	extqueue "github.com/uber/submitqueue/extension/messagequeue"
+	queueMySQL "github.com/uber/submitqueue/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/test/testutil"
 )
@@ -85,7 +85,7 @@ func (s *ConsumerIntegrationSuite) SetupSuite() {
 	s.db, err = s.stack.ConnectMySQLService("mysql")
 	require.NoError(t, err, "failed to connect to MySQL")
 
-	schemaDir := testutil.SchemaDir("extension/queue/mysql/schema")
+	schemaDir := testutil.SchemaDir("extension/messagequeue/mysql/schema")
 	testutil.ApplySchema(t, s.log, s.db, schemaDir)
 
 	t.Cleanup(func() {
@@ -194,7 +194,7 @@ func (s *ConsumerIntegrationSuite) TestConsumerPerPartitionIsolation() {
 	require.NoError(t, c.Start(s.ctx))
 
 	// Publish to partition-a, wait for it to start blocking
-	msgA := queue.NewMessage("iso-a", []byte("data-a"), "partition-a", nil)
+	msgA := entityqueue.NewMessage("iso-a", []byte("data-a"), "partition-a", nil)
 	require.NoError(t, publisher.Publish(s.ctx, topicName, msgA))
 
 	select {
@@ -205,7 +205,7 @@ func (s *ConsumerIntegrationSuite) TestConsumerPerPartitionIsolation() {
 	}
 
 	// Now publish to partition-b — should be processed even though partition-a is blocked
-	msgB := queue.NewMessage("iso-b", []byte("data-b"), "partition-b", nil)
+	msgB := entityqueue.NewMessage("iso-b", []byte("data-b"), "partition-b", nil)
 	require.NoError(t, publisher.Publish(s.ctx, topicName, msgB))
 
 	select {
@@ -240,7 +240,7 @@ func (s *ConsumerIntegrationSuite) TestConsumerPartitionOrdering() {
 	for i := range numMessages {
 		msgID := fmt.Sprintf("order-%03d", i)
 		publishedIDs[i] = msgID
-		msg := queue.NewMessage(msgID, []byte(fmt.Sprintf("payload-%d", i)), "single-partition", nil)
+		msg := entityqueue.NewMessage(msgID, []byte(fmt.Sprintf("payload-%d", i)), "single-partition", nil)
 		require.NoError(t, publisher.Publish(s.ctx, topicName, msg))
 	}
 	s.log.Logf("Published %d messages to single-partition", numMessages)
@@ -313,7 +313,7 @@ func (s *ConsumerIntegrationSuite) TestConsumerMultiPartitionThroughput() {
 	numPartitions := 3
 	for i := range numPartitions {
 		partition := fmt.Sprintf("tp-partition-%d", i)
-		msg := queue.NewMessage(fmt.Sprintf("tp-msg-%d", i), []byte("data"), partition, nil)
+		msg := entityqueue.NewMessage(fmt.Sprintf("tp-msg-%d", i), []byte("data"), partition, nil)
 		require.NoError(t, publisher.Publish(s.ctx, topicName, msg))
 	}
 	s.log.Logf("Published 1 message to each of %d partitions", numPartitions)

@@ -22,8 +22,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally/v4"
-	"github.com/uber/submitqueue/entity/queue"
-	queuemock "github.com/uber/submitqueue/extension/queue/mock"
+	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
+	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -63,7 +63,7 @@ func newController(t *testing.T, store storage.Storage, registry consumer.TopicR
 }
 
 func newDelivery(t *testing.T, ctrl *gomock.Controller, payload []byte, partitionKey string) consumer.Delivery {
-	msg := queue.NewMessage("cancel-msg", payload, partitionKey, nil)
+	msg := entityqueue.NewMessage("cancel-msg", payload, partitionKey, nil)
 	d := queuemock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
@@ -127,7 +127,7 @@ func TestProcess_CancelsUnbatchedRequest(t *testing.T) {
 
 	var publishedTopics []string
 	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, topic string, _ queue.Message) error {
+		func(_ context.Context, topic string, _ entityqueue.Message) error {
 			publishedTopics = append(publishedTopics, topic)
 			return nil
 		}).AnyTimes()
@@ -256,7 +256,7 @@ func TestProcess_BatchPath_HandsOffToSpeculate(t *testing.T) {
 	}
 	var records []pubRec
 	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, topic string, msg queue.Message) error {
+		func(_ context.Context, topic string, msg entityqueue.Message) error {
 			records = append(records, pubRec{topic: topic, msgID: msg.ID})
 			return nil
 		}).AnyTimes()
@@ -303,7 +303,7 @@ func TestProcess_BatchAlreadyCancelling_RepublishesToSpeculate(t *testing.T) {
 
 	var publishedTopics []string
 	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, topic string, _ queue.Message) error {
+		func(_ context.Context, topic string, _ entityqueue.Message) error {
 			publishedTopics = append(publishedTopics, topic)
 			return nil
 		}).AnyTimes()

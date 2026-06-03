@@ -27,9 +27,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/errs"
-	"github.com/uber/submitqueue/entity/queue"
-	extqueue "github.com/uber/submitqueue/extension/queue"
-	queuemock "github.com/uber/submitqueue/extension/queue/mock"
+	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
+	extqueue "github.com/uber/submitqueue/extension/messagequeue"
+	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	consumermock "github.com/uber/submitqueue/submitqueue/core/consumer/mock"
 	"go.uber.org/mock/gomock"
@@ -67,7 +67,7 @@ func newRegistry(t *testing.T, q extqueue.Queue, topicKey consumer.TopicKey, con
 
 // setupDelivery creates a MockDelivery with standard expectations and a done channel
 // that closes when Ack or Nack is called.
-func setupDelivery(del *queuemock.MockDelivery, msg queue.Message, ackErr, nackErr error) chan struct{} {
+func setupDelivery(del *queuemock.MockDelivery, msg entityqueue.Message, ackErr, nackErr error) chan struct{} {
 	done := make(chan struct{})
 	del.EXPECT().Message().Return(msg).AnyTimes()
 	del.EXPECT().Attempt().Return(1).AnyTimes()
@@ -265,7 +265,7 @@ func TestConsumer_ProcessDelivery_Success(t *testing.T) {
 	err = c.Start(ctx)
 	require.NoError(t, err)
 
-	msg := queue.NewMessage("test-msg-1", []byte("payload"), "partition1", nil)
+	msg := entityqueue.NewMessage("test-msg-1", []byte("payload"), "partition1", nil)
 	mockDel := queuemock.NewMockDelivery(ctrl)
 	done := setupDelivery(mockDel, msg, nil, nil)
 
@@ -309,7 +309,7 @@ func TestConsumer_ProcessDelivery_Error(t *testing.T) {
 	err = c.Start(ctx)
 	require.NoError(t, err)
 
-	msg := queue.NewMessage("test-msg-2", []byte("payload"), "partition1", nil)
+	msg := entityqueue.NewMessage("test-msg-2", []byte("payload"), "partition1", nil)
 	mockDel := queuemock.NewMockDelivery(ctrl)
 	done := setupDelivery(mockDel, msg, nil, nil)
 
@@ -351,7 +351,7 @@ func TestConsumer_ProcessDelivery_NonRetryableError(t *testing.T) {
 	err = c.Start(ctx)
 	require.NoError(t, err)
 
-	msg := queue.NewMessage("poison-msg", []byte("bad"), "partition1", nil)
+	msg := entityqueue.NewMessage("poison-msg", []byte("bad"), "partition1", nil)
 	done := make(chan struct{})
 	mockDel := queuemock.NewMockDelivery(ctrl)
 	mockDel.EXPECT().Message().Return(msg).AnyTimes()
@@ -460,7 +460,7 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 			err = testC.Start(ctx)
 			require.NoError(t, err)
 
-			msg := queue.NewMessage("msg-1", []byte("payload"), "partition1", nil)
+			msg := entityqueue.NewMessage("msg-1", []byte("payload"), "partition1", nil)
 			mockDel := queuemock.NewMockDelivery(ctrl)
 			done := setupDelivery(mockDel, msg, nil, tt.nackError)
 
@@ -533,7 +533,7 @@ func TestConsumer_AckNackLatencyTracking(t *testing.T) {
 	err = c.Start(ctx)
 	require.NoError(t, err)
 
-	msg := queue.NewMessage("msg-1", []byte("payload"), "partition1", nil)
+	msg := entityqueue.NewMessage("msg-1", []byte("payload"), "partition1", nil)
 	mockDel := queuemock.NewMockDelivery(ctrl)
 	done := setupDelivery(mockDel, msg, nil, nil)
 
@@ -580,7 +580,7 @@ func TestConsumer_ErrorMetrics(t *testing.T) {
 	err = c.Start(ctx)
 	require.NoError(t, err)
 
-	msg := queue.NewMessage("msg-1", []byte("payload"), "partition1", nil)
+	msg := entityqueue.NewMessage("msg-1", []byte("payload"), "partition1", nil)
 	mockDel := queuemock.NewMockDelivery(ctrl)
 	done := setupDelivery(mockDel, msg, nil, fmt.Errorf("nack failed"))
 
@@ -653,7 +653,7 @@ func TestConsumer_PerPartitionProcessing(t *testing.T) {
 	require.NoError(t, err)
 
 	// Send message to partition A (will block in controller)
-	msgA := queue.NewMessage("msg-a", []byte("payload-a"), "partition-a", nil)
+	msgA := entityqueue.NewMessage("msg-a", []byte("payload-a"), "partition-a", nil)
 	mockDelA := queuemock.NewMockDelivery(ctrl)
 	mockDelA.EXPECT().Message().Return(msgA).AnyTimes()
 	mockDelA.EXPECT().Attempt().Return(1).AnyTimes()
@@ -669,7 +669,7 @@ func TestConsumer_PerPartitionProcessing(t *testing.T) {
 	<-partABlocking
 
 	// Send message to partition B (should process despite A being blocked)
-	msgB := queue.NewMessage("msg-b", []byte("payload-b"), "partition-b", nil)
+	msgB := entityqueue.NewMessage("msg-b", []byte("payload-b"), "partition-b", nil)
 	mockDelB := queuemock.NewMockDelivery(ctrl)
 	mockDelB.EXPECT().Message().Return(msgB).AnyTimes()
 	mockDelB.EXPECT().Attempt().Return(1).AnyTimes()
@@ -735,7 +735,7 @@ func TestConsumer_PartitionOrdering(t *testing.T) {
 
 	// Send 3 messages to the same partition
 	for i, id := range []string{"msg-1", "msg-2", "msg-3"} {
-		msg := queue.NewMessage(id, []byte("payload"), "same-partition", nil)
+		msg := entityqueue.NewMessage(id, []byte("payload"), "same-partition", nil)
 		mockDel := queuemock.NewMockDelivery(ctrl)
 		mockDel.EXPECT().Message().Return(msg).AnyTimes()
 		mockDel.EXPECT().Attempt().Return(1).AnyTimes()
@@ -796,7 +796,7 @@ func TestConsumer_PartitionWorkerCleanup(t *testing.T) {
 	// Send messages to multiple partitions to spawn multiple goroutines
 	for i := 0; i < 5; i++ {
 		pk := fmt.Sprintf("partition-%d", i)
-		msg := queue.NewMessage(fmt.Sprintf("msg-%d", i), []byte("payload"), pk, nil)
+		msg := entityqueue.NewMessage(fmt.Sprintf("msg-%d", i), []byte("payload"), pk, nil)
 		mockDel := queuemock.NewMockDelivery(ctrl)
 		done := setupDelivery(mockDel, msg, nil, nil)
 		deliveryChan <- mockDel

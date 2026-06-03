@@ -23,8 +23,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/errs"
-	"github.com/uber/submitqueue/entity/queue"
-	queuemock "github.com/uber/submitqueue/extension/queue/mock"
+	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
+	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -59,7 +59,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, topic string, msg queue.Message) error {
+		func(ctx context.Context, topic string, msg entityqueue.Message) error {
 			return publishErr
 		},
 	).AnyTimes()
@@ -82,7 +82,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 
 // runProcess builds a delivery for batchID and invokes Process once.
 func runProcess(t *testing.T, ctrl *gomock.Controller, controller *Controller, batchID string) error {
-	msg := queue.NewMessage(batchID, batchIDPayload(t, batchID), "test-queue", nil)
+	msg := entityqueue.NewMessage(batchID, batchIDPayload(t, batchID), "test-queue", nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -314,7 +314,7 @@ func TestController_Process_CancelledTerminalSelfHealsDependents(t *testing.T) {
 	var records []pubRec
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, topic string, msg queue.Message) error {
+		func(_ context.Context, topic string, msg entityqueue.Message) error {
 			records = append(records, pubRec{topic: topic, msgID: msg.ID})
 			return nil
 		}).AnyTimes()
@@ -382,7 +382,7 @@ func TestController_Process_CancellingTerminalFlow(t *testing.T) {
 	var records []pubRec
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, topic string, msg queue.Message) error {
+		func(_ context.Context, topic string, msg entityqueue.Message) error {
 			records = append(records, pubRec{topic: topic, msgID: msg.ID})
 			return nil
 		}).AnyTimes()
@@ -611,7 +611,7 @@ func TestController_Process_BadPayload(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	controller := newTestController(t, ctrl, store, nil)
 
-	msg := queue.NewMessage("anything", []byte("not-json"), "test-queue", nil)
+	msg := entityqueue.NewMessage("anything", []byte("not-json"), "test-queue", nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()

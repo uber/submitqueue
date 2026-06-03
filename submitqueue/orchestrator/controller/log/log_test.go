@@ -21,8 +21,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally/v4"
-	"github.com/uber/submitqueue/entity/queue"
-	queuemock "github.com/uber/submitqueue/extension/queue/mock"
+	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
+	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
@@ -100,7 +100,7 @@ func TestController_Process(t *testing.T) {
 			store := tt.setupStore(ctrl)
 			controller := newTestController(t, ctrl, store)
 
-			msg := queue.NewMessage("test-queue/1", payload, "test-queue", nil)
+			msg := entityqueue.NewMessage("test-queue/1", payload, "test-queue", nil)
 			delivery := queuemock.NewMockDelivery(ctrl)
 			delivery.EXPECT().Message().Return(msg).AnyTimes()
 			delivery.EXPECT().Attempt().Return(1).AnyTimes()

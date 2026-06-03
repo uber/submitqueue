@@ -5,16 +5,16 @@ go_test(
     srcs = ["consumer_test.go"],
     data = [
         "docker-compose.yml",
-        "//extension/queue/mysql/schema",
+        "//extension/messagequeue/mysql/schema",
     ],
     tags = [
         "external",
         "integration",
     ],
     deps = [
-        "//entity/queue",
-        "//extension/queue",
-        "//extension/queue/mysql",
+        "//entity/messagequeue",
+        "//extension/messagequeue",
+        "//extension/messagequeue/mysql",
         "//submitqueue/core/consumer",
         "//test/testutil",
         "@com_github_go_sql_driver_mysql//:mysql",
