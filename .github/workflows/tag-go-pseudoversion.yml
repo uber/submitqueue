@@ -4,7 +4,7 @@
 #   require github.com/uber/submitqueue v0.0.0-20250602143045-abcdef123456
 #
 # Format matches https://go.dev/ref/mod#pseudo-versions (v0.0.0-yyyymmddhhmmss-rev, UTC).
-# For branch / preview deploys, use workflow "Tag WIP deploy" (wip/* tags) instead.
+
 name: Tag Go pseudo-version
 
 on:
