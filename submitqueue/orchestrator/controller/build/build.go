@@ -36,7 +36,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	store         storage.Storage
-	buildRunner   buildrunner.BuildRunner
+	buildRunners  buildrunner.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -49,17 +49,22 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
-	buildRunner buildrunner.BuildRunner,
+	stores storage.Factory,
+	buildRunners buildrunner.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
+	// TODO(queue-aware): make this controller queue-aware during Process — derive the
+	// queue from the loaded entity and use it for structured logging, metrics scoping,
+	// and per-queue storage resolution. Today it uses the default store because the
+	// queue is only known after the by-ID load.
+	store, _ := stores.For("")
 	return &Controller{
 		logger:        logger.Named("build_controller"),
 		metricsScope:  scope.SubScope("build_controller"),
 		store:         store,
-		buildRunner:   buildRunner,
+		buildRunners:  buildRunners,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -126,10 +131,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("failed to assemble head changes for batch %s: %w", batch.ID, err)
 	}
 
-	// Trigger the build with the configured build manager. metadata is nil
+	// Trigger the build with the queue's build runner. metadata is nil
 	// until a caller-supplied source materializes (e.g. requester / ticket
 	// pulled off the originating LandRequest).
-	buildID, err := c.buildRunner.Trigger(ctx, batch.Queue, base, head, nil)
+	buildRunner, err := c.buildRunners.For(buildrunner.Config{QueueName: batch.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "trigger_errors", 1)
+		return fmt.Errorf("failed to build runner for batch %s: %w", batch.ID, err)
+	}
+	buildID, err := buildRunner.Trigger(ctx, base, head, nil)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "trigger_errors", 1)
 		return fmt.Errorf("failed to trigger build for batch %s: %w", batch.ID, err)

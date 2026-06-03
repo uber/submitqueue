@@ -39,7 +39,7 @@ type Controller struct {
 	registry      consumer.TopicRegistry
 	counter       counter.Counter
 	store         storage.Storage
-	analyzer      conflict.Analyzer
+	analyzers     conflict.Factory
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -53,18 +53,23 @@ func NewController(
 	scope tally.Scope,
 	registry consumer.TopicRegistry,
 	counter counter.Counter,
-	store storage.Storage,
-	analyzer conflict.Analyzer,
+	stores storage.Factory,
+	analyzers conflict.Factory,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
+	// TODO(queue-aware): make this controller queue-aware during Process — derive the
+	// queue from the loaded entity and use it for structured logging, metrics scoping,
+	// and per-queue storage resolution. Today it uses the default store because the
+	// queue is only known after the by-ID load.
+	store, _ := stores.For("")
 	return &Controller{
 		logger:        logger.Named("batch_controller"),
 		metricsScope:  scope.SubScope("batch_controller"),
 		registry:      registry,
 		counter:       counter,
 		store:         store,
-		analyzer:      analyzer,
+		analyzers:     analyzers,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
@@ -149,7 +154,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// Dedupe by batch ID since a single (analyzed, in-flight) pair may be
 	// reported with multiple Conflict entries when different conflict types
 	// apply; the dependency graph only tracks the relation.
-	conflicts, err := c.analyzer.Analyze(ctx, batch, activeBatches)
+	analyzer, err := c.analyzers.For(conflict.Config{QueueName: batch.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "conflict_analyzer_errors", 1)
+		return fmt.Errorf("failed to build conflict analyzer for queue=%s: %w", batch.Queue, err)
+	}
+	conflicts, err := analyzer.Analyze(ctx, batch, activeBatches)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "conflict_analyzer_errors", 1)
 		return fmt.Errorf("failed to analyze conflicts for batchID=%s: %w", batch.ID, err)

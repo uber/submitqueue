@@ -44,7 +44,7 @@ type Controller struct {
 	metricsScope  tally.Scope
 	store         storage.Storage
 	registry      consumer.TopicRegistry
-	pusher        pusher.Pusher
+	pushers       pusher.Factory
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -56,18 +56,23 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	stores storage.Factory,
 	registry consumer.TopicRegistry,
-	pusherImpl pusher.Pusher,
+	pushers pusher.Factory,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
+	// TODO(queue-aware): make this controller queue-aware during Process — derive the
+	// queue from the loaded entity and use it for structured logging, metrics scoping,
+	// and per-queue storage resolution. Today it uses the default store because the
+	// queue is only known after the by-ID load.
+	store, _ := stores.For("")
 	return &Controller{
 		logger:        logger.Named("merge_controller"),
 		metricsScope:  scope.SubScope("merge_controller"),
 		store:         store,
 		registry:      registry,
-		pusher:        pusherImpl,
+		pushers:       pushers,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
@@ -126,7 +131,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("failed to collect changes for batch %s: %w", batch.ID, err)
 	}
 
-	pushRes, pushErr := c.pusher.Push(ctx, changes)
+	push, err := c.pushers.For(pusher.Config{QueueName: batch.Queue})
+	if err != nil {
+		coremetrics.NamedCounter(c.metricsScope, "process", "push_errors", 1)
+		return fmt.Errorf("failed to build pusher for batch %s: %w", batch.ID, err)
+	}
+
+	pushRes, pushErr := push.Push(ctx, changes)
 
 	var newState entity.BatchState
 	switch {

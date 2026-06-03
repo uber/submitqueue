@@ -31,6 +31,7 @@ go_test(
         "//submitqueue/core/consumer",
         "//submitqueue/entity",
         "//submitqueue/extension/changeprovider",
+        "//submitqueue/extension/changeprovider/mock",
         "//submitqueue/extension/changestore/mock",
         "//submitqueue/extension/mergechecker",
         "//submitqueue/extension/mergechecker/mock",

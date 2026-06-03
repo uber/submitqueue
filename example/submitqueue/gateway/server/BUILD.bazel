@@ -15,6 +15,7 @@ go_library(
         "//extension/messagequeue/mysql",
         "//submitqueue/core/consumer",
         "//submitqueue/extension/queueconfig/yaml",
+        "//submitqueue/extension/storage",
         "//submitqueue/extension/storage/mysql",
         "//submitqueue/gateway/controller",
         "//submitqueue/gateway/protopb",

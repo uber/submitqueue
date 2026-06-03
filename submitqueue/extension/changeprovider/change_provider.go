@@ -14,6 +14,8 @@
 
 package changeprovider
 
+//go:generate mockgen -source=change_provider.go -destination=mock/change_provider_mock.go -package=mock
+
 import (
 	"context"
 
@@ -58,4 +60,19 @@ type ChangeProvider interface {
 	// For a Change with multiple URIs (e.g., stacked PRs), returns one ChangeInfo per URI.
 	// Returns a slice of ChangeInfo, one for each change in the stack.
 	Get(ctx context.Context, change entity.Change) ([]ChangeInfo, error)
+}
+
+// Config carries the per-queue identity handed to a Factory. The system knows
+// only the queue name; everything an implementation needs is injected at
+// construction by the integrator.
+type Config struct {
+	// QueueName identifies the queue this ChangeProvider serves.
+	QueueName string
+}
+
+// Factory builds the ChangeProvider for a queue. Implementations are provided
+// by integrators (and tests) and inject whatever they need at construction.
+type Factory interface {
+	// For returns the ChangeProvider for the given queue.
+	For(cfg Config) (ChangeProvider, error)
 }

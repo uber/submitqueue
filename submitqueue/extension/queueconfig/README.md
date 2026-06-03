@@ -19,4 +19,4 @@ type Store interface {
 
 Queue configuration entity lives in `entity/queue_config.go`:
 
-- **QueueConfig** — configuration for a single submit queue (name, VCS type, VCS repo, target)
+- **QueueConfig** — identifies a single submit queue (just its name); the registry of valid queue names. Behavioral/VCS config lives in the extension factory implementations, not here.

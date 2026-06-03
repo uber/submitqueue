@@ -1,31 +1,9 @@
 # Example queue configurations consumed by the gateway YAML store.
-# The gateway loads this file at startup; QUEUE_CONFIG_PATH must point
-# at it. Each entry maps a queue name to the VCS repository + target
-# branch and selects the extension implementations used downstream.
+# The gateway loads this file at startup; QUEUE_CONFIG_PATH must point at it.
+# QueueConfig is just the registry of valid queue names — all behavioral and
+# VCS configuration lives in the extension factory implementations wired in the
+# server, not here.
 queues:
   - name: test-queue
-    vcs_type: git
-    vcs_address: git@github.com:uber/submitqueue.git
-    target: main
-    build_runner: buildkite.com/uber/submitqueue-ci
-    change_provider: github
-    merge_checker: github
-    land_provider: github
-
   - name: e2e-test-queue
-    vcs_type: git
-    vcs_address: git@github.com:uber/submitqueue.git
-    target: main
-    build_runner: buildkite.com/uber/submitqueue-ci
-    change_provider: github
-    merge_checker: github
-    land_provider: github
-
   - name: e2e-cancel-queue
-    vcs_type: git
-    vcs_address: git@github.com:uber/submitqueue.git
-    target: main
-    build_runner: buildkite.com/uber/submitqueue-ci
-    change_provider: github
-    merge_checker: github
-    land_provider: github

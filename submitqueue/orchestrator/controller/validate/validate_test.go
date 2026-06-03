@@ -28,6 +28,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
+	changeprovidermock "github.com/uber/submitqueue/submitqueue/extension/changeprovider/mock"
 	changemock "github.com/uber/submitqueue/submitqueue/extension/changestore/mock"
 	"github.com/uber/submitqueue/submitqueue/extension/mergechecker"
 	mergecheckermock "github.com/uber/submitqueue/submitqueue/extension/mergechecker/mock"
@@ -65,7 +66,7 @@ func (m *mockChangeProvider) Get(ctx context.Context, change entity.Change) ([]c
 // newMergeableMock returns a mock MergeChecker that always returns mergeable.
 func newMergeableMock(ctrl *gomock.Controller) *mergecheckermock.MockMergeChecker {
 	mc := mergecheckermock.NewMockMergeChecker(ctrl)
-	mc.EXPECT().Check(gomock.Any(), gomock.Any(), gomock.Any()).Return(mergechecker.Result{Mergeable: true}, nil).AnyTimes()
+	mc.EXPECT().Check(gomock.Any(), gomock.Any()).Return(mergechecker.Result{Mergeable: true}, nil).AnyTimes()
 	return mc
 }
 
@@ -118,7 +119,12 @@ func newTestController(
 
 	cp := &mockChangeProvider{}
 
-	return NewController(logger, scope, store, cs, registry, mc, cp, consumer.TopicKeyValidate, "orchestrator-validate")
+	mcFactory := mergecheckermock.NewMockFactory(ctrl)
+	mcFactory.EXPECT().For(gomock.Any()).Return(mc, nil).AnyTimes()
+	cpFactory := changeprovidermock.NewMockFactory(ctrl)
+	cpFactory.EXPECT().For(gomock.Any()).Return(cp, nil).AnyTimes()
+
+	return NewController(logger, scope, storage.NewStaticFactory(store), cs, registry, mcFactory, cpFactory, consumer.TopicKeyValidate, "orchestrator-validate")
 }
 
 func TestNewController(t *testing.T) {
@@ -223,7 +229,7 @@ func TestController_Process_NotMergeable(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	mc := mergecheckermock.NewMockMergeChecker(ctrl)
-	mc.EXPECT().Check(gomock.Any(), gomock.Any(), gomock.Any()).Return(mergechecker.Result{Mergeable: false}, nil)
+	mc.EXPECT().Check(gomock.Any(), gomock.Any()).Return(mergechecker.Result{Mergeable: false}, nil)
 
 	request := entity.Request{
 		ID:           "test-queue/123",
@@ -250,7 +256,7 @@ func TestController_Process_MergeCheckError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	mc := mergecheckermock.NewMockMergeChecker(ctrl)
-	mc.EXPECT().Check(gomock.Any(), gomock.Any(), gomock.Any()).Return(mergechecker.Result{}, fmt.Errorf("merge check failed"))
+	mc.EXPECT().Check(gomock.Any(), gomock.Any()).Return(mergechecker.Result{}, fmt.Errorf("merge check failed"))
 
 	request := entity.Request{
 		ID:           "test-queue/123",

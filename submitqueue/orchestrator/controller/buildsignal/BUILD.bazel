@@ -29,6 +29,7 @@ go_test(
         "//submitqueue/core/consumer",
         "//submitqueue/entity",
         "//submitqueue/extension/buildrunner/mock",
+        "//submitqueue/extension/storage",
         "//submitqueue/extension/storage/mock",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

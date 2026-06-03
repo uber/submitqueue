@@ -61,7 +61,7 @@ func NewMergeChecker(params Params) mergechecker.MergeChecker {
 }
 
 // Check assesses whether a change can merge cleanly using the GitHub GraphQL API.
-func (c *mergeChecker) Check(ctx context.Context, queue string, change entity.Change) (result mergechecker.Result, retErr error) {
+func (c *mergeChecker) Check(ctx context.Context, change entity.Change) (result mergechecker.Result, retErr error) {
 	const opName = "check"
 
 	op := metrics.Begin(c.metricsScope, opName)
@@ -96,7 +96,6 @@ func (c *mergeChecker) Check(ctx context.Context, queue string, change entity.Ch
 	if !mergeable {
 		metrics.NamedCounter(c.metricsScope, opName, "not_mergeable", 1)
 		c.logger.Infow("change not mergeable",
-			"queue", queue,
 			"reason", reason,
 			"change_uris", change.URIs,
 		)

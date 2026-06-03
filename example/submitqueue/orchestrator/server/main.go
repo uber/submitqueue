@@ -45,11 +45,13 @@ import (
 	githubprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/github"
 	"github.com/uber/submitqueue/submitqueue/extension/changestore"
 	mysqlchangestore "github.com/uber/submitqueue/submitqueue/extension/changestore/mysql"
+	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/all"
 	"github.com/uber/submitqueue/submitqueue/extension/mergechecker"
 	githubchecker "github.com/uber/submitqueue/submitqueue/extension/mergechecker/github"
 	"github.com/uber/submitqueue/submitqueue/extension/pusher"
 	gitpusher "github.com/uber/submitqueue/submitqueue/extension/pusher/git"
+	"github.com/uber/submitqueue/submitqueue/extension/scorer"
 	"github.com/uber/submitqueue/submitqueue/extension/scorer/heuristic"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
@@ -425,11 +427,48 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 //                                        │        │                       │
 //                                        └────────┴───────────────────────┘
 
+// Static per-extension factories for the example server: every queue resolves
+// to the single configured implementation. A real deployment would vary the
+// returned implementation by cfg.QueueName (and inject per-queue config).
+type changeProviderFactory struct{ impl changeprovider.ChangeProvider }
+
+func (f changeProviderFactory) For(changeprovider.Config) (changeprovider.ChangeProvider, error) {
+	return f.impl, nil
+}
+
+type mergeCheckerFactory struct{ impl mergechecker.MergeChecker }
+
+func (f mergeCheckerFactory) For(mergechecker.Config) (mergechecker.MergeChecker, error) {
+	return f.impl, nil
+}
+
+type pusherFactory struct{ impl pusher.Pusher }
+
+func (f pusherFactory) For(pusher.Config) (pusher.Pusher, error) { return f.impl, nil }
+
+type buildRunnerFactory struct{ impl buildrunner.BuildRunner }
+
+func (f buildRunnerFactory) For(buildrunner.Config) (buildrunner.BuildRunner, error) {
+	return f.impl, nil
+}
+
+type scorerFactory struct{ impl scorer.Scorer }
+
+func (f scorerFactory) For(scorer.Config) (scorer.Scorer, error) { return f.impl, nil }
+
+type conflictFactory struct{ impl conflict.Analyzer }
+
+func (f conflictFactory) For(conflict.Config) (conflict.Analyzer, error) { return f.impl, nil }
+
 func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cp changeprovider.ChangeProvider, psh pusher.Pusher, br buildrunner.BuildRunner, cnt counter.Counter, store storage.Storage, changeStore changestore.ChangeStore) error {
+	// Static storage factory: every queue resolves to the one configured store.
+	// The factory is the injection point for future per-queue backends.
+	stores := storage.NewStaticFactory(store)
+
 	requestController := start.NewController(
 		logger,
 		scope,
-		store,
+		stores,
 		changeStore,
 		registry,
 		consumer.TopicKeyStart,
@@ -442,7 +481,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	cancelController := cancel.NewController(
 		logger,
 		scope,
-		store,
+		stores,
 		registry,
 		consumer.TopicKeyCancel,
 		"orchestrator-cancel",
@@ -454,11 +493,11 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	validateController := validate.NewController(
 		logger,
 		scope,
-		store,
+		stores,
 		changeStore,
 		registry,
-		mc,
-		cp,
+		mergeCheckerFactory{impl: mc},
+		changeProviderFactory{impl: cp},
 		consumer.TopicKeyValidate,
 		"orchestrator-validate",
 	)
@@ -471,10 +510,10 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		scope,
 		registry,
 		cnt,
-		store,
+		stores,
 		// TODO: replace with a real conflict analyzer (e.g. one backed by
 		// Tango target analysis). The "all" stub serializes the queue.
-		all.New(),
+		conflictFactory{impl: all.New()},
 		consumer.TopicKeyBatch,
 		"orchestrator-batch",
 	)
@@ -485,9 +524,9 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	scoreController := score.NewController(
 		logger,
 		scope,
-		store,
+		stores,
 		// TODO: replace with a real scorer
-		heuristic.New(
+		scorerFactory{impl: heuristic.New(
 			[]heuristic.Bucket{
 				{Min: 0, Max: 1, Score: 0.95},
 				{Min: 2, Max: 5, Score: 0.80},
@@ -498,7 +537,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 				return len(change.URIs), nil
 			},
 			scope.SubScope("scorer"),
-		),
+		)},
 		registry,
 		consumer.TopicKeyScore,
 		"orchestrator-score",
@@ -510,7 +549,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	speculateController := speculate.NewController(
 		logger,
 		scope,
-		store,
+		stores,
 		registry,
 		consumer.TopicKeySpeculate,
 		"orchestrator-speculate",
@@ -522,8 +561,8 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	buildController := build.NewController(
 		logger,
 		scope,
-		store,
-		br,
+		stores,
+		buildRunnerFactory{impl: br},
 		registry,
 		consumer.TopicKeyBuild,
 		"orchestrator-build",
@@ -535,8 +574,8 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	buildsignalController := buildsignal.NewController(
 		logger,
 		scope,
-		store,
-		br,
+		stores,
+		buildRunnerFactory{impl: br},
 		registry,
 		consumer.TopicKeyBuildSignal,
 		"orchestrator-buildsignal",
@@ -548,9 +587,9 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	mergeController := merge.NewController(
 		logger,
 		scope,
-		store,
+		stores,
 		registry,
-		psh,
+		pusherFactory{impl: psh},
 		consumer.TopicKeyMerge,
 		"orchestrator-merge",
 	)
@@ -561,7 +600,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	concludeController := conclude.NewController(
 		logger,
 		scope,
-		store,
+		stores,
 		registry,
 		consumer.TopicKeyConclude,
 		"orchestrator-conclude",
@@ -573,7 +612,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	logController := logctrl.NewController(
 		logger,
 		scope,
-		store,
+		stores,
 		consumer.TopicKeyLog,
 		"orchestrator-log",
 	)
@@ -619,14 +658,10 @@ func newMergeChecker(logger *zap.Logger, scope tally.Scope) (mergechecker.MergeC
 
 	client.Timeout = parseTimeout(os.Getenv("GITHUB_TIMEOUT"), 30*time.Second)
 
-	github := githubchecker.NewMergeChecker(githubchecker.Params{
+	return githubchecker.NewMergeChecker(githubchecker.Params{
 		HTTPClient:   client,
 		Logger:       logger.Sugar(),
 		MetricsScope: scope.SubScope("mergechecker"),
-	})
-
-	return mergechecker.NewMultiChecker(map[string]mergechecker.MergeChecker{
-		"github": github,
 	}), nil
 }
 

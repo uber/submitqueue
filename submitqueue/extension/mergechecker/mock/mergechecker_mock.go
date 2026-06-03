@@ -43,16 +43,55 @@ func (m *MockMergeChecker) EXPECT() *MockMergeCheckerMockRecorder {
 }
 
 // Check mocks base method.
-func (m *MockMergeChecker) Check(ctx context.Context, queue string, change entity.Change) (mergechecker.Result, error) {
+func (m *MockMergeChecker) Check(ctx context.Context, change entity.Change) (mergechecker.Result, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Check", ctx, queue, change)
+	ret := m.ctrl.Call(m, "Check", ctx, change)
 	ret0, _ := ret[0].(mergechecker.Result)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Check indicates an expected call of Check.
-func (mr *MockMergeCheckerMockRecorder) Check(ctx, queue, change any) *gomock.Call {
+func (mr *MockMergeCheckerMockRecorder) Check(ctx, change any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Check", reflect.TypeOf((*MockMergeChecker)(nil).Check), ctx, queue, change)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Check", reflect.TypeOf((*MockMergeChecker)(nil).Check), ctx, change)
+}
+
+// MockFactory is a mock of Factory interface.
+type MockFactory struct {
+	ctrl     *gomock.Controller
+	recorder *MockFactoryMockRecorder
+	isgomock struct{}
+}
+
+// MockFactoryMockRecorder is the mock recorder for MockFactory.
+type MockFactoryMockRecorder struct {
+	mock *MockFactory
+}
+
+// NewMockFactory creates a new mock instance.
+func NewMockFactory(ctrl *gomock.Controller) *MockFactory {
+	mock := &MockFactory{ctrl: ctrl}
+	mock.recorder = &MockFactoryMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockFactory) EXPECT() *MockFactoryMockRecorder {
+	return m.recorder
+}
+
+// For mocks base method.
+func (m *MockFactory) For(cfg mergechecker.Config) (mergechecker.MergeChecker, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "For", cfg)
+	ret0, _ := ret[0].(mergechecker.MergeChecker)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// For indicates an expected call of For.
+func (mr *MockFactoryMockRecorder) For(cfg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "For", reflect.TypeOf((*MockFactory)(nil).For), cfg)
 }
