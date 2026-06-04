@@ -56,7 +56,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, mockStorage *stora
 	registry, err := consumer.NewTopicRegistry(nil)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, storage.NewStaticFactory(mockStorage), registry, consumer.TopicKeyConclude, "orchestrator-conclude")
+	return NewController(logger, scope, mockStorage, registry, consumer.TopicKeyConclude, "orchestrator-conclude")
 }
 
 func TestNewController(t *testing.T) {

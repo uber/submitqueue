@@ -117,7 +117,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 	analyzerFactory := conflictmock.NewMockFactory(ctrl)
 	analyzerFactory.EXPECT().For(gomock.Any()).Return(analyzer, nil).AnyTimes()
 
-	return NewController(logger, scope, registry, cnt, storage.NewStaticFactory(mockStorage), analyzerFactory, consumer.TopicKeyBatch, "orchestrator-batch")
+	return NewController(logger, scope, registry, cnt, mockStorage, analyzerFactory, consumer.TopicKeyBatch, "orchestrator-batch")
 }
 
 func TestNewController(t *testing.T) {
@@ -443,7 +443,7 @@ func TestController_Process_CASLostToCancel(t *testing.T) {
 	analyzerFactory.EXPECT().For(gomock.Any()).Return(all.New(), nil).AnyTimes()
 	controller := NewController(
 		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, newSequentialCounter(ctrl),
-		storage.NewStaticFactory(mockStorage), analyzerFactory, consumer.TopicKeyBatch, "orchestrator-batch",
+		mockStorage, analyzerFactory, consumer.TopicKeyBatch, "orchestrator-batch",
 	)
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)

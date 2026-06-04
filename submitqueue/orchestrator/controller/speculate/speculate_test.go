@@ -77,7 +77,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, storage.NewStaticFactory(store), registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
+	return NewController(logger, scope, store, registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
 }
 
 // runProcess builds a delivery for batchID and invokes Process once.
@@ -276,7 +276,7 @@ func TestController_Process_TerminalSelfHeals(t *testing.T) {
 			require.NoError(t, err)
 
 			logger := zaptest.NewLogger(t).Sugar()
-			controller := NewController(logger, tally.NoopScope, storage.NewStaticFactory(store), registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
+			controller := NewController(logger, tally.NoopScope, store, registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
 
 			require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
 		})
@@ -331,7 +331,7 @@ func TestController_Process_CancelledTerminalSelfHealsDependents(t *testing.T) {
 	require.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
-	controller := NewController(logger, tally.NoopScope, storage.NewStaticFactory(store), registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
+	controller := NewController(logger, tally.NoopScope, store, registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
 
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
 
@@ -399,7 +399,7 @@ func TestController_Process_CancellingTerminalFlow(t *testing.T) {
 	require.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
-	controller := NewController(logger, tally.NoopScope, storage.NewStaticFactory(store), registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
+	controller := NewController(logger, tally.NoopScope, store, registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
 
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
 
@@ -508,7 +508,7 @@ func TestController_Process_CancellingNoDependents(t *testing.T) {
 	require.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
-	controller := NewController(logger, tally.NoopScope, storage.NewStaticFactory(store), registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
+	controller := NewController(logger, tally.NoopScope, store, registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
 
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
 }
@@ -549,7 +549,7 @@ func TestController_Process_CancellingTerminalCASVersionMismatch(t *testing.T) {
 	require.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
-	controller := NewController(logger, tally.NoopScope, storage.NewStaticFactory(store), registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
+	controller := NewController(logger, tally.NoopScope, store, registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
 
 	err = runProcess(t, ctrl, controller, batch.ID)
 	require.Error(t, err)
