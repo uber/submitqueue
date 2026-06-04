@@ -515,16 +515,17 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		store,
-		// TODO: replace with a real scorer
+		// Heuristic scorer: bucket the batch by total lines changed across all of
+		// its changes — larger batches are likelier to fail to land.
 		scorerFactory{impl: heuristic.New(
 			[]heuristic.Bucket{
-				{Min: 0, Max: 1, Score: 0.95},
-				{Min: 2, Max: 5, Score: 0.80},
-				{Min: 6, Max: 20, Score: 0.60},
-				{Min: 21, Max: 1<<31 - 1, Score: 0.40},
+				{Min: 0, Max: 50, Score: 0.95},
+				{Min: 51, Max: 250, Score: 0.80},
+				{Min: 251, Max: 1000, Score: 0.60},
+				{Min: 1001, Max: 1<<31 - 1, Score: 0.40},
 			},
-			func(_ context.Context, change entity.Change) (int, error) {
-				return len(change.URIs), nil
+			func(_ context.Context, changes entity.BatchChanges) (int, error) {
+				return changes.TotalLinesChanged(), nil
 			},
 			scope.SubScope("scorer"),
 		)},

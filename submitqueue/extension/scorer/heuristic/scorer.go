@@ -24,8 +24,8 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/scorer"
 )
 
-// ValueFunc extracts a single numeric value from a Change for bucketing.
-type ValueFunc func(context.Context, entity.Change) (int, error)
+// ValueFunc extracts a single numeric value from a batch of changes for bucketing.
+type ValueFunc func(context.Context, entity.BatchChanges) (int, error)
 
 // Bucket defines a range [Min, Max] mapped to a probability Score.
 type Bucket struct {
@@ -37,12 +37,12 @@ type Bucket struct {
 	Score float64
 }
 
-// heuristicScorer computes a success probability by bucketing a metric extracted from a Change.
+// heuristicScorer computes a success probability by bucketing a metric extracted from a batch of changes.
 // It follows the Java HeuristicsBasedSuccessPredictor pattern.
 type heuristicScorer struct {
 	// buckets is the list of ranges to match against.
 	buckets []Bucket
-	// valueFunc extracts the numeric value from a Change.
+	// valueFunc extracts the numeric value from a batch of changes.
 	valueFunc ValueFunc
 	// scope is the tally scope for emitting metrics.
 	scope tally.Scope
@@ -61,12 +61,12 @@ func New(buckets []Bucket, valueFunc ValueFunc, scope tally.Scope) scorer.Scorer
 	}
 }
 
-// Score extracts the value from the change, then returns the probability score for the first
-// bucket whose range [Min, Max] contains the value. Returns an error if no bucket matches.
-func (s *heuristicScorer) Score(ctx context.Context, change entity.Change) (ret float64, retErr error) {
+// Score extracts the value from the batch of changes, then returns the probability score for the
+// first bucket whose range [Min, Max] contains the value. Returns an error if no bucket matches.
+func (s *heuristicScorer) Score(ctx context.Context, changes entity.BatchChanges) (ret float64, retErr error) {
 	op := metrics.Begin(s.scope, "score")
 	defer func() { op.Complete(retErr) }()
-	value, err := s.valueFunc(ctx, change)
+	value, err := s.valueFunc(ctx, changes)
 	if err != nil {
 		return 0, err
 	}

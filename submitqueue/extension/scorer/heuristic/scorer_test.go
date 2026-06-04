@@ -26,7 +26,7 @@ import (
 
 // staticValue returns a ValueFunc that always returns the given value.
 func staticValue(value int) ValueFunc {
-	return func(_ context.Context, _ entity.Change) (int, error) {
+	return func(_ context.Context, _ entity.BatchChanges) (int, error) {
 		return value, nil
 	}
 }
@@ -107,7 +107,7 @@ func TestScorer_Score(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := New(tt.buckets, tt.valueFunc, tally.NoopScope)
-			got, err := s.Score(context.Background(), entity.Change{})
+			got, err := s.Score(context.Background(), entity.BatchChanges{})
 			if tt.wantErr {
 				require.Error(t, err)
 				return
@@ -119,11 +119,11 @@ func TestScorer_Score(t *testing.T) {
 }
 
 func TestScorer_Score_ValueFuncError(t *testing.T) {
-	failing := func(_ context.Context, _ entity.Change) (int, error) {
+	failing := func(_ context.Context, _ entity.BatchChanges) (int, error) {
 		return 0, assert.AnError
 	}
 	s := New([]Bucket{{Min: 0, Max: 10, Score: 0.9}}, failing, tally.NoopScope)
-	_, err := s.Score(context.Background(), entity.Change{})
+	_, err := s.Score(context.Background(), entity.BatchChanges{})
 	require.Error(t, err)
 }
 

@@ -173,27 +173,54 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	return nil // Success - message will be acked
 }
 
-// scoreBatch scores each request's change in the batch and returns the combined probability.
-// Uses multiplicative probability: if any single request fails, the entire batch fails,
-// so the batch score is the product of individual request scores.
+// scoreBatch normalizes the batch's changes and scores them as a whole. It resolves
+// each request in the batch, reads that request's change records (one per URI), and
+// flattens their provider-supplied details into a single entity.BatchChanges, which
+// the scorer turns into one probability for the batch.
 func (c *Controller) scoreBatch(ctx context.Context, batch entity.Batch) (float64, error) {
 	sc, err := c.scorers.For(scorer.Config{QueueName: batch.Queue})
 	if err != nil {
 		return 0, fmt.Errorf("failed to build scorer for batch %s: %w", batch.ID, err)
 	}
-	score := 1.0
+
+	changes, err := c.collectBatchChanges(ctx, batch)
+	if err != nil {
+		return 0, err
+	}
+
+	score, err := sc.Score(ctx, changes)
+	if err != nil {
+		return 0, fmt.Errorf("failed to score batch %s: %w", batch.ID, err)
+	}
+	return score, nil
+}
+
+// collectBatchChanges assembles the normalized entity.BatchChanges for a batch by
+// resolving each request and reading its change records per URI. For each URI it
+// selects the record owned by the request (GetByURI returns rows for all requests
+// that ever claimed the URI) and appends its URI + details.
+func (c *Controller) collectBatchChanges(ctx context.Context, batch entity.Batch) (entity.BatchChanges, error) {
+	changes := entity.BatchChanges{BatchID: batch.ID, Queue: batch.Queue}
 	for _, requestID := range batch.Contains {
 		request, err := c.store.GetRequestStore().Get(ctx, requestID)
 		if err != nil {
-			return 0, fmt.Errorf("failed to get request %s: %w", requestID, err)
+			return entity.BatchChanges{}, fmt.Errorf("failed to get request %s: %w", requestID, err)
 		}
-		s, err := sc.Score(ctx, request.Change)
-		if err != nil {
-			return 0, fmt.Errorf("failed to score request %s: %w", requestID, err)
+		for _, uri := range request.Change.URIs {
+			records, err := c.store.GetChangeStore().GetByURI(ctx, batch.Queue, uri)
+			if err != nil {
+				return entity.BatchChanges{}, fmt.Errorf("failed to read change record for request %s uri=%s: %w", requestID, uri, err)
+			}
+			for _, rec := range records {
+				if rec.RequestID != requestID {
+					continue
+				}
+				changes.Changes = append(changes.Changes, entity.ChangeInfo{URI: rec.URI, Details: rec.Details})
+				break
+			}
 		}
-		score *= s
 	}
-	return score, nil
+	return changes, nil
 }
 
 // publish publishes a batch ID to the specified topic key.

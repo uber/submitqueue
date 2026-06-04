@@ -4,6 +4,7 @@ go_library(
     name = "entity",
     srcs = [
         "batch.go",
+        "batch_changes.go",
         "batch_dependent.go",
         "build.go",
         "cancel_request.go",
