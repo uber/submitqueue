@@ -21,7 +21,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,10 +29,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 )
 
-// newTestRunner creates a runner backed by a test HTTP server without starting
-// the background goroutine. Tests drive job processing synchronously via
-// drainTrigger and drainCancel to avoid goroutine timing races. The retry
-// backoff is set to a millisecond so retry paths run fast.
+// newTestRunner creates a runner backed by a test HTTP server.
 func newTestRunner(t *testing.T, handler http.Handler) *runner {
 	t.Helper()
 	srv := httptest.NewServer(handler)
@@ -41,39 +37,9 @@ func newTestRunner(t *testing.T, handler http.Handler) *runner {
 	c, err := httpclient.NewClient(srv.URL)
 	require.NoError(t, err)
 	return newRunner(
-		Config{
-			QueueName:         "my-queue",
-			SubmitTimeout:     5 * time.Second,
-			MaxSubmitAttempts: 3,
-			SubmitBackoff:     time.Millisecond,
-		},
+		Config{QueueName: "my-queue"},
 		&client{httpClient: c},
-		16, // triggerSize
-		16, // cancelSize
 	)
-}
-
-// drainTrigger synchronously processes the next pending trigger job.
-// Use after Trigger() to simulate the background worker in tests.
-func drainTrigger(t *testing.T, r *runner) {
-	t.Helper()
-	select {
-	case job := <-r.triggerCh:
-		r.processTrigger(job)
-	default:
-		t.Fatal("drainTrigger: no pending trigger job in channel")
-	}
-}
-
-// drainCancel synchronously processes the next pending cancel job.
-func drainCancel(t *testing.T, r *runner) {
-	t.Helper()
-	select {
-	case job := <-r.cancelCh:
-		r.processCancel(job)
-	default:
-		t.Fatal("drainCancel: no pending cancel job in channel")
-	}
 }
 
 // buildJSON encodes fields into a minimal Buildkite build JSON response.
@@ -104,32 +70,6 @@ func TestNew_ImplementsInterface(t *testing.T) {
 
 // --- Trigger ---
 
-func TestTrigger_EnqueuesJobAndReturnsID(t *testing.T) {
-	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK) // should not be reached before drain
-	}))
-
-	id, err := r.Trigger(context.Background(), nil, nil, nil)
-	require.NoError(t, err)
-	assert.NotEmpty(t, id.ID)
-
-	// Exactly one job should be in the channel.
-	assert.Len(t, r.triggerCh, 1)
-}
-
-func TestTrigger_StatusIsAcceptedBeforeWorkerRuns(t *testing.T) {
-	// Before the worker submits, no build carries this ID in Buildkite, so the
-	// metadata lookup returns empty and Status reports Accepted.
-	r := newTestRunner(t, emptyListHandler(t))
-
-	id, err := r.Trigger(context.Background(), nil, nil, nil)
-	require.NoError(t, err)
-
-	status, _, err := r.Status(context.Background(), id)
-	require.NoError(t, err)
-	assert.Equal(t, entity.BuildStatusAccepted, status)
-}
-
 func TestTrigger_SubmitsCorrectPayloadToBuildkite(t *testing.T) {
 	var capturedMethod string
 	var capturedBody []byte
@@ -146,8 +86,7 @@ func TestTrigger_SubmitsCorrectPayloadToBuildkite(t *testing.T) {
 
 	id, err := r.Trigger(context.Background(), base, head, nil)
 	require.NoError(t, err)
-
-	drainTrigger(t, r)
+	assert.NotEmpty(t, id.ID)
 
 	assert.Equal(t, http.MethodPost, capturedMethod)
 
@@ -176,7 +115,6 @@ func TestTrigger_EmptyBase_ProducesJSONArray(t *testing.T) {
 
 	_, err := r.Trigger(context.Background(), nil, []entity.Change{{URIs: []string{"u"}}}, nil)
 	require.NoError(t, err)
-	drainTrigger(t, r)
 
 	var req createBuildRequest
 	require.NoError(t, json.Unmarshal(capturedBody, &req))
@@ -198,7 +136,6 @@ func TestTrigger_MultipleChangesFlattened(t *testing.T) {
 	}
 	_, err := r.Trigger(context.Background(), nil, head, nil)
 	require.NoError(t, err)
-	drainTrigger(t, r)
 
 	var req createBuildRequest
 	require.NoError(t, json.Unmarshal(capturedBody, &req))
@@ -208,66 +145,13 @@ func TestTrigger_MultipleChangesFlattened(t *testing.T) {
 	)
 }
 
-func TestTrigger_QueueFull_ReturnsError(t *testing.T) {
-	r := newRunner(
-		Config{},
-		&client{httpClient: http.DefaultClient},
-		1, 1,
-	)
-	// Fill the channel.
+func TestTrigger_BuildkiteError_ReturnsError(t *testing.T) {
+	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+
 	_, err := r.Trigger(context.Background(), nil, nil, nil)
-	require.NoError(t, err)
-	// Second call must fail.
-	_, err = r.Trigger(context.Background(), nil, nil, nil)
 	require.Error(t, err)
-}
-
-func TestProcessTrigger_RetriesTransientFailureThenSucceeds(t *testing.T) {
-	var posts int
-	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		require.Equal(t, http.MethodPost, req.Method)
-		posts++
-		if posts < 2 {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(buildJSON(7, "scheduled", ""))
-	}))
-
-	id, err := r.Trigger(context.Background(), nil, nil, nil)
-	require.NoError(t, err)
-	drainTrigger(t, r)
-
-	assert.Equal(t, 2, posts, "submit should retry after a transient failure")
-	ref, ok := r.lookupRef(id.ID)
-	require.True(t, ok)
-	assert.Equal(t, encodeBuildRef(7), ref)
-}
-
-func TestTrigger_SubmitExhaustsRetries_BuildFails(t *testing.T) {
-	// create (POST) always fails; the worker exhausts its retries and records a
-	// submission failure.
-	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.Method == http.MethodPost {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		// Nothing was created, so any metadata lookup finds nothing.
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("[]"))
-	}))
-
-	id, err := r.Trigger(context.Background(), nil, nil, nil)
-	require.NoError(t, err)
-	drainTrigger(t, r)
-
-	// With submission permanently failed, Status reports terminal Failed (with a
-	// reason) rather than polling Accepted forever.
-	status, meta, err := r.Status(context.Background(), id)
-	require.NoError(t, err)
-	assert.Equal(t, entity.BuildStatusFailed, status)
-	assert.NotEmpty(t, meta["error"])
 }
 
 // --- Status ---
@@ -305,7 +189,7 @@ func TestStatus_ReturnsLiveBuildkiteState(t *testing.T) {
 		_, _ = w.Write(buildJSON(7, "running", "https://buildkite.com/test-org/my-pipeline/builds/7"))
 	}))
 
-	// Inject ref directly (simulates successful processTrigger).
+	// Inject ref directly (simulates successful Trigger).
 	r.storeRef("some-id", encodeBuildRef(7))
 
 	status, meta, err := r.Status(context.Background(), entity.BuildID{ID: "some-id"})
@@ -350,15 +234,6 @@ func TestStatus_BuildkiteNotFound(t *testing.T) {
 
 // --- Cancel ---
 
-func TestCancel_EnqueuesJobAndReturnsImmediately(t *testing.T) {
-	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		t.Fatal("Buildkite API called before cancel drain")
-	}))
-
-	require.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: "some-id"}))
-	assert.Len(t, r.cancelCh, 1)
-}
-
 func TestCancel_CallsBuildkiteWhenRefKnown(t *testing.T) {
 	var cancelCalled bool
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -369,7 +244,6 @@ func TestCancel_CallsBuildkiteWhenRefKnown(t *testing.T) {
 	r.storeRef("some-id", encodeBuildRef(5))
 
 	require.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: "some-id"}))
-	drainCancel(t, r)
 	assert.True(t, cancelCalled)
 }
 
@@ -389,20 +263,17 @@ func TestCancel_RecoversRefAfterCacheMiss(t *testing.T) {
 		}
 	}))
 
-	// refs is empty; processCancel must recover the ref from metadata first.
+	// refs is empty; Cancel must recover the ref from metadata first.
 	require.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: "bk-lost"}))
-	drainCancel(t, r)
 	assert.True(t, listed, "cancel should look up the build by metadata on cache miss")
 	assert.True(t, cancelled, "cancel should reach Buildkite after recovering the ref")
 }
 
-func TestCancel_NoopWhenBuildNotYetSubmitted(t *testing.T) {
-	// The metadata lookup finds nothing, so there is nothing to cancel; the
-	// handler fails the test if a cancel (PUT) is attempted.
+func TestCancel_NoopWhenBuildNotFound(t *testing.T) {
+	// The metadata lookup finds nothing, so there is nothing to cancel.
 	r := newTestRunner(t, emptyListHandler(t))
 
 	require.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: "some-id"}))
-	drainCancel(t, r)
 }
 
 func TestCancel_AlreadyTerminal_Noop(t *testing.T) {
@@ -413,17 +284,6 @@ func TestCancel_AlreadyTerminal_Noop(t *testing.T) {
 	r.storeRef("some-id", encodeBuildRef(5))
 
 	require.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: "some-id"}))
-	drainCancel(t, r) // must not panic or error
-}
-
-func TestCancel_QueueFull_ReturnsError(t *testing.T) {
-	r := newRunner(
-		Config{},
-		&client{httpClient: http.DefaultClient},
-		1, 1,
-	)
-	require.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: "a"}))
-	require.Error(t, r.Cancel(context.Background(), entity.BuildID{ID: "b"}))
 }
 
 // --- Internal helpers ---

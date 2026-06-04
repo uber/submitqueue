@@ -15,15 +15,10 @@
 // Package buildkite implements buildrunner.BuildRunner backed by the Buildkite
 // CI platform.
 //
-// Trigger is non-blocking: it generates a build ID, enqueues the job on a
-// buffered channel, and returns immediately. This keeps the orchestrator's
-// queue loop decoupled from Buildkite availability — provider-side work
-// happens asynchronously, per the BuildRunner contract. A background worker
-// drains the channel, submits the build to Buildkite (retrying transient
-// failures with backoff), and stamps the SQ build ID into the build's
-// metadata. If submission fails after all retries, the build is recorded as a
-// submission failure and Status reports it as terminal Failed. Cancel is
-// similarly async.
+// Trigger calls the Buildkite API directly: it generates a build ID, stamps it
+// into the build's metadata, and returns the ID on success. Cancel calls the
+// Buildkite API directly as well. Both propagate errors to the caller, which can
+// nack and retry via the normal queue consumer path.
 //
 // The in-memory map from SQ build ID to Buildkite reference is a pure latency
 // cache, not the source of truth. Because every build carries its SQ build ID
@@ -47,7 +42,6 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
-	"time"
 
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
@@ -76,55 +70,19 @@ const (
 // a restart), which keeps that cache from being a durable source of truth.
 const metaKeyBuildID = "sq_build_id"
 
-const (
-	defaultTriggerQueueSize  = 256
-	defaultCancelQueueSize   = 256
-	defaultSubmitTimeout     = 30 * time.Second
-	defaultMaxSubmitAttempts = 5
-	defaultSubmitBackoff     = 1 * time.Second
-)
-
-// triggerJob carries everything the background worker needs to submit one build
-// to Buildkite. It is enqueued by Trigger and consumed by processTrigger.
-type triggerJob struct {
-	buildID  string
-	baseURIs []string
-	headURIs []string
-}
-
-// cancelJob carries the build ID the background worker should cancel in
-// Buildkite. It is enqueued by Cancel and consumed by processCancel.
-type cancelJob struct {
-	buildID string
-}
-
-// runner implements buildrunner.BuildRunner. A background goroutine drains
-// triggerCh and cancelCh for the lifetime of the runner, dispatching each job
-// to its own goroutine so that a slow submit (retry/backoff) never head-of-line
-// blocks other builds.
+// runner implements buildrunner.BuildRunner.
 type runner struct {
 	cfg    Config
 	client *client
 
-	// mu protects refs and submitFailures.
+	// mu protects refs.
 	mu sync.RWMutex
 	// refs maps our internal build ID to the encoded Buildkite reference
-	// ("{org}/{pipeline}/{number}"). It is a pure latency cache: the durable
-	// record is the SQ build ID stamped into the Buildkite build's metadata,
-	// so a missing entry is recovered via the client's metadata lookup rather
-	// than treated as authoritative.
+	// ("{number}"). It is a pure latency cache: the durable record is the SQ
+	// build ID stamped into the Buildkite build's metadata, so a missing entry
+	// is recovered via the client's metadata lookup rather than treated as
+	// authoritative.
 	refs map[string]string
-	// submitFailures records build IDs whose Buildkite submission permanently
-	// failed (all retries exhausted), mapped to a short reason. Status reports
-	// these as terminal Failed so the build does not poll Accepted forever.
-	// This is in-memory only: a restart that loses it leaves the build Accepted,
-	// which the orchestrator's (out-of-scope) Accepted deadline must catch.
-	submitFailures map[string]string
-
-	// triggerCh queues pending build-creation jobs from Trigger.
-	triggerCh chan triggerJob
-	// cancelCh queues pending build-cancellation jobs from Cancel.
-	cancelCh chan cancelJob
 }
 
 var _ buildrunner.BuildRunner = (*runner)(nil)
@@ -142,80 +100,64 @@ type Params struct {
 }
 
 // NewBuildRunner constructs a Buildkite-backed BuildRunner bound to a single
-// pipeline and starts its background worker goroutine. The goroutine runs for
-// the lifetime of the process.
+// pipeline.
 //
 // The HTTPClient must have BaseURLTransport configured to the pipeline's API
 // root (e.g. "https://api.buildkite.com/v2/organizations/{org}/pipelines/{slug}"),
 // and an auth transport that injects the Authorization header.
 func NewBuildRunner(params Params) (buildrunner.BuildRunner, error) {
-	cfg := params.Config
 	httpClient := params.HTTPClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	triggerSize := cfg.TriggerQueueSize
-	if triggerSize == 0 {
-		triggerSize = defaultTriggerQueueSize
-	}
-	cancelSize := cfg.CancelQueueSize
-	if cancelSize == 0 {
-		cancelSize = defaultCancelQueueSize
-	}
-
-	r := newRunner(cfg, &client{
-		httpClient: httpClient,
-	}, triggerSize, cancelSize)
-	go r.work()
-	return r, nil
+	return newRunner(params.Config, &client{httpClient: httpClient}), nil
 }
 
-// newRunner constructs a runner without starting the background goroutine.
-// Used by New and by tests (which drive the goroutine via drainTrigger /
-// drainCancel to avoid timing races).
-func newRunner(cfg Config, c *client, triggerSize, cancelSize int) *runner {
+// newRunner constructs a runner. Used by NewBuildRunner and by tests.
+func newRunner(cfg Config, c *client) *runner {
 	return &runner{
-		cfg:            cfg,
-		client:         c,
-		refs:           make(map[string]string),
-		submitFailures: make(map[string]string),
-		triggerCh:      make(chan triggerJob, triggerSize),
-		cancelCh:       make(chan cancelJob, cancelSize),
+		cfg:    cfg,
+		client: c,
+		refs:   make(map[string]string),
 	}
 }
 
-// Trigger generates a unique build ID, enqueues an async job to submit the
-// build to Buildkite, and returns immediately. The build is visible to Status
-// as Accepted until the background worker contacts Buildkite and the build
-// becomes discoverable by its stamped metadata.
-//
-// Returns an error (retryable by the controller) if the trigger queue is full.
-func (r *runner) Trigger(_ context.Context, base, head []entity.Change, _ entity.BuildMetadata) (entity.BuildID, error) {
+// Trigger generates a unique build ID, calls the Buildkite API to create the
+// build, caches the Buildkite reference, and returns the build ID. Errors are
+// propagated to the caller so the queue consumer can nack and retry.
+func (r *runner) Trigger(ctx context.Context, base, head []entity.Change, _ entity.BuildMetadata) (entity.BuildID, error) {
 	id := newBuildID()
-	job := triggerJob{
-		buildID:  id,
-		baseURIs: flattenURIs(base),
-		headURIs: flattenURIs(head),
+	baseJSON, _ := json.Marshal(flattenURIs(base))
+	headJSON, _ := json.Marshal(flattenURIs(head))
+
+	req := createBuildRequest{
+		Message: "submitqueue speculative build",
+		Env: map[string]string{
+			EnvKeyBaseURIs: string(baseJSON),
+			EnvKeyHeadURIs: string(headJSON),
+			EnvKeyQueue:    r.cfg.QueueName,
+		},
+		MetaData: map[string]string{
+			metaKeyBuildID: id,
+		},
 	}
-	select {
-	case r.triggerCh <- job:
-		return entity.BuildID{ID: id}, nil
-	default:
-		return entity.BuildID{}, fmt.Errorf("buildkite: trigger queue full; backpressure from Buildkite API")
+
+	resp, err := r.client.createBuild(ctx, req)
+	if err != nil {
+		return entity.BuildID{}, fmt.Errorf("buildkite: create build: %w", err)
 	}
+
+	r.storeRef(id, encodeBuildRef(resp.Number))
+	return entity.BuildID{ID: id}, nil
 }
 
-// Status returns the current build status. While the async submission is still
-// in flight (no Buildkite build carries this build ID yet) it returns Accepted.
-// Once the build exists, Status fetches the live state from Buildkite and
-// returns it with the build URL in BuildMetadata["url"].
+// Status returns the current build status. On a cache miss it recovers the
+// Buildkite reference by filtering builds on the stamped SQ build ID, so it
+// works after a restart that emptied the in-memory cache. Returns Accepted when
+// the build is not yet visible in Buildkite.
 //
-// If the submission permanently failed (all retries exhausted), Status reports
-// terminal Failed with the reason in BuildMetadata["error"].
-//
-// On a cache miss Status re-derives the Buildkite reference by filtering builds
-// on the stamped SQ build ID, so it works after a restart that emptied the
-// in-memory cache.
+// On a cache hit, Status fetches the live state and returns it with the build
+// URL in BuildMetadata["url"].
 func (r *runner) Status(ctx context.Context, buildID entity.BuildID) (entity.BuildStatus, entity.BuildMetadata, error) {
 	ref, cached := r.lookupRef(buildID.ID)
 
@@ -231,20 +173,14 @@ func (r *runner) Status(ctx context.Context, buildID entity.BuildID) (entity.Bui
 			return entity.BuildStatusUnknown, nil, fmt.Errorf("buildkite: get build: %w", err)
 		}
 	default:
-		if reason, failed := r.lookupSubmitFailure(buildID.ID); failed {
-			// The async submission exhausted its retries; nothing exists in
-			// Buildkite to poll. Report terminal Failed so the build does not
-			// loop in Accepted forever.
-			return entity.BuildStatusFailed, entity.BuildMetadata{"error": reason}, nil
-		}
 		found, exists, err := r.client.findBuildByMeta(ctx, metaKeyBuildID, buildID.ID)
 		if err != nil {
 			return entity.BuildStatusUnknown, nil, fmt.Errorf("buildkite: find build: %w", err)
 		}
 		if !exists {
-			// Not yet visible in Buildkite — the submission is still in flight
-			// (or queued for retry). Report Accepted so the buildsignal poll
-			// loop keeps waiting without treating this as terminal.
+			// Not yet visible in Buildkite — e.g. after a restart where the cache
+			// was lost but the build was created before. Report Accepted so the
+			// buildsignal poll loop keeps waiting.
 			return entity.BuildStatusAccepted, nil, nil
 		}
 		ref = encodeBuildRef(found.Number)
@@ -255,137 +191,32 @@ func (r *runner) Status(ctx context.Context, buildID entity.BuildID) (entity.Bui
 	return mapState(resp.State), entity.BuildMetadata{"url": resp.WebURL}, nil
 }
 
-// Cancel enqueues an async cancellation and returns immediately, keeping the
-// caller's queue loop decoupled from Buildkite availability. The background
-// worker delivers the cancel to Buildkite, recovering the build reference from
-// the stamped metadata if it is not cached (e.g. after a restart). If the build
-// was never submitted, the cancel is a no-op.
-//
-// Returns an error if the cancel queue is full; the caller should retry.
-func (r *runner) Cancel(_ context.Context, buildID entity.BuildID) error {
-	select {
-	case r.cancelCh <- cancelJob{buildID: buildID.ID}:
-		return nil
-	default:
-		return fmt.Errorf("buildkite: cancel queue full; try again later")
-	}
-}
-
-// work is the background consumer goroutine. It dispatches each trigger and
-// cancel job to its own goroutine so that a job's retry/backoff does not block
-// the others. processTrigger and processCancel guard shared state with r.mu and
-// are safe to run concurrently.
-func (r *runner) work() {
-	for {
-		select {
-		case job := <-r.triggerCh:
-			go r.processTrigger(job)
-		case job := <-r.cancelCh:
-			go r.processCancel(job)
-		}
-	}
-}
-
-// processTrigger submits one build to Buildkite, retrying transient failures
-// with backoff. On success it caches the Buildkite reference so subsequent
-// Status calls skip the metadata lookup. If every attempt fails the build was
-// never created, so it is recorded as a submission failure and Status reports
-// it as terminal Failed rather than polling Accepted forever.
-func (r *runner) processTrigger(job triggerJob) {
-	baseJSON, _ := json.Marshal(job.baseURIs)
-	headJSON, _ := json.Marshal(job.headURIs)
-
-	req := createBuildRequest{
-		Message: "submitqueue speculative build",
-		Env: map[string]string{
-			EnvKeyBaseURIs: string(baseJSON),
-			EnvKeyHeadURIs: string(headJSON),
-			EnvKeyQueue:    r.cfg.QueueName,
-		},
-		MetaData: map[string]string{
-			metaKeyBuildID: job.buildID,
-		},
-	}
-
-	var resp buildResponse
-	err := r.withRetry(func() error {
-		ctx, cancel := r.opCtx()
-		defer cancel()
-		var e error
-		resp, e = r.client.createBuild(ctx, req)
-		return e
-	})
-	if err != nil {
-		r.markSubmitFailed(job.buildID, fmt.Sprintf("buildkite submission failed after retries: %v", err))
-		return
-	}
-
-	r.storeRef(job.buildID, encodeBuildRef(resp.Number))
-}
-
-// processCancel cancels the Buildkite build, recovering its reference from the
-// stamped metadata when the cache misses. No-ops when no build carries this
-// build ID yet (trigger not yet processed, or submission failed).
-func (r *runner) processCancel(job cancelJob) {
-	ref, cached := r.lookupRef(job.buildID)
+// Cancel calls the Buildkite API to cancel the build. On a cache miss it
+// recovers the reference from the stamped metadata. If no build carries this
+// build ID (not yet submitted), Cancel is a no-op.
+func (r *runner) Cancel(ctx context.Context, buildID entity.BuildID) error {
+	ref, cached := r.lookupRef(buildID.ID)
 	if !cached {
-		ctx, cancel := r.opCtx()
-		found, exists, err := r.client.findBuildByMeta(ctx, metaKeyBuildID, job.buildID)
-		cancel()
-		if err != nil || !exists {
-			// Nothing to cancel (not yet submitted) or a transient lookup
-			// failure; the caller may re-issue Cancel.
-			return
+		found, exists, err := r.client.findBuildByMeta(ctx, metaKeyBuildID, buildID.ID)
+		if err != nil {
+			return fmt.Errorf("buildkite: find build for cancel: %w", err)
+		}
+		if !exists {
+			return nil
 		}
 		ref = encodeBuildRef(found.Number)
-		r.storeRef(job.buildID, ref)
+		r.storeRef(buildID.ID, ref)
 	}
 
 	number, err := parseBuildRef(ref)
 	if err != nil {
-		return
+		return fmt.Errorf("buildkite: malformed build ref: %w", err)
 	}
 
-	_ = r.withRetry(func() error {
-		ctx, cancel := r.opCtx()
-		defer cancel()
-		return r.client.cancelBuild(ctx, number)
-	})
-}
-
-// withRetry runs fn up to MaxSubmitAttempts times with linear backoff, returning
-// the last error. Used for the background submit and cancel API calls so a
-// transient Buildkite failure does not abandon the work.
-func (r *runner) withRetry(fn func() error) error {
-	attempts := r.cfg.MaxSubmitAttempts
-	if attempts <= 0 {
-		attempts = defaultMaxSubmitAttempts
+	if err := r.client.cancelBuild(ctx, number); err != nil {
+		return fmt.Errorf("buildkite: cancel build: %w", err)
 	}
-	backoff := r.cfg.SubmitBackoff
-	if backoff <= 0 {
-		backoff = defaultSubmitBackoff
-	}
-
-	var err error
-	for attempt := 1; attempt <= attempts; attempt++ {
-		if err = fn(); err == nil {
-			return nil
-		}
-		if attempt < attempts {
-			time.Sleep(backoff * time.Duration(attempt))
-		}
-	}
-	return err
-}
-
-// opCtx returns a context bounded by SubmitTimeout for a single background API
-// call. The caller must invoke the returned CancelFunc.
-func (r *runner) opCtx() (context.Context, context.CancelFunc) {
-	timeout := r.cfg.SubmitTimeout
-	if timeout == 0 {
-		timeout = defaultSubmitTimeout
-	}
-	return context.WithTimeout(context.Background(), timeout)
+	return nil
 }
 
 // lookupRef returns the cached Buildkite reference for a build ID.
@@ -401,23 +232,6 @@ func (r *runner) storeRef(buildID, ref string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.refs[buildID] = ref
-}
-
-// markSubmitFailed records that a build's Buildkite submission permanently
-// failed, so Status reports it as terminal Failed.
-func (r *runner) markSubmitFailed(buildID, reason string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.submitFailures[buildID] = reason
-}
-
-// lookupSubmitFailure reports whether a build's submission permanently failed,
-// returning the recorded reason.
-func (r *runner) lookupSubmitFailure(buildID string) (string, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	reason, ok := r.submitFailures[buildID]
-	return reason, ok
 }
 
 // newBuildID returns a cryptographically random hex string prefixed with "bk-"
