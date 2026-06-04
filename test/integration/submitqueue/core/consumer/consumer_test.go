@@ -14,6 +14,7 @@ import (
 	"github.com/uber-go/tally/v4"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/uber/submitqueue/core/errs"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	extqueue "github.com/uber/submitqueue/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/extension/messagequeue/mysql"
@@ -146,7 +147,7 @@ func (s *ConsumerIntegrationSuite) newConsumer(t *testing.T, q extqueue.Queue, t
 	})
 	require.NoError(t, err)
 
-	return consumer.New(logger, tally.NoopScope, registry)
+	return consumer.New(logger, tally.NoopScope, registry, errs.NewClassifierProcessor())
 }
 
 func (s *ConsumerIntegrationSuite) TestConsumerPerPartitionIsolation() {

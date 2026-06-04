@@ -2,14 +2,20 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "errs",
-    srcs = ["errs.go"],
+    srcs = [
+        "errs.go",
+        "processor.go",
+    ],
     importpath = "github.com/uber/submitqueue/core/errs",
     visibility = ["//visibility:public"],
 )
 
 go_test(
     name = "errs_test",
-    srcs = ["errs_test.go"],
+    srcs = [
+        "errs_test.go",
+        "processor_test.go",
+    ],
     embed = [":errs"],
     deps = [
         "@com_github_stretchr_testify//assert",

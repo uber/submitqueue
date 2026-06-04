@@ -29,7 +29,12 @@ registry, _ := consumer.NewTopicRegistry([]consumer.TopicConfig{
     {Key: consumer.TopicKeyStart, Name: "request", Queue: q, Subscription: subConfig},
 })
 
-c := consumer.New(logger, scope, registry)
+c := consumer.New(logger, scope, registry,
+    errs.NewClassifierProcessor(
+        genericerrs.Classifier,
+        mysqlerrs.Classifier,
+    ),
+)
 
 c.Register(myController)
 c.Start(ctx)
@@ -39,6 +44,8 @@ if err := c.Stop(30000); err != nil {
     logger.Errorw("consumer stop error", "error", err)
 }
 ```
+
+The fourth argument is the `errs.ErrorProcessor` the consumer runs over every non-nil controller error before deciding ack/nack/reject. See `core/errs/README.md` for the contract; in short, a primary pipeline consumer takes `errs.NewClassifierProcessor(...)` with the project's standard classifiers, and a DLQ-reconciliation consumer takes `errs.AlwaysRetryableProcessor`.
 
 ### Controller
 
@@ -82,11 +89,16 @@ registry, _ := consumer.NewTopicRegistry([]consumer.TopicConfig{
 
 ## Error Handling
 
-Controllers signal processing outcome via the return value of `Process()`:
+The consumer passes every non-nil controller error through the configured `errs.ErrorProcessor` once and then uses `errs.IsRetryable` to decide the transport action:
 
 - **`return nil`** — success, message is acked.
-- **`return errs.NewRetryableError(err)`** — retryable failure, message is nacked for retry.
-- **`return err`** — non-retryable error (e.g. poison pill), message is rejected and removed from the queue to prevent infinite retry loops.
+- **non-nil, retryable after processing** — message is nacked for redelivery (visibility timeout drives the retry delay).
+- **non-nil, non-retryable after processing** — message is rejected, which moves it to the DLQ if one is configured for the subscription, or simply acks-and-drops if not.
+
+Controllers therefore have two equally valid ways to surface a transient failure:
+
+1. Return an unclassified error and let a classifier wired into the processor recognise it (e.g. a `*gomysql.MySQLError` with a deadlock code → `mysqlerrs.Classifier` → retryable).
+2. Return `errs.NewRetryableError(...)` (or `NewUserError`, `NewDependencyError`, ...) explicitly when the controller already knows the right verdict — these framework wraps short-circuit any classifier walk.
 
 ```go
 func (c *MyController) Process(ctx context.Context, delivery consumer.Delivery) error {
@@ -94,15 +106,17 @@ func (c *MyController) Process(ctx context.Context, delivery consumer.Delivery) 
 
     result, err := c.service.Process(ctx, msg.Payload)
     if err != nil {
-        if isTransient(err) {
-            return errs.NewRetryableError(err)  // nack → retry
+        if isUserCaused(err) {
+            return errs.NewUserError(err)   // reject → DLQ, never retried
         }
-        return err  // reject → DLQ
+        return err                          // let the processor classify; nack if retryable
     }
 
     return nil  // ack → done
 }
 ```
+
+When the consumer is wired with `errs.AlwaysRetryableProcessor` (DLQ reconciliation), the framework overrides this: every non-nil error is forced retryable so the DLQ message comes back for another attempt. See `submitqueue/orchestrator/controller/dlq/README.md`.
 
 ## Lifecycle
 

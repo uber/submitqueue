@@ -91,7 +91,7 @@ func TestNew(t *testing.T) {
 	reg, err := consumer.NewTopicRegistry(nil)
 	require.NoError(t, err)
 
-	c := consumer.New(logger, tally.NoopScope, reg)
+	c := consumer.New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor())
 	require.NotNil(t, c)
 }
 
@@ -100,7 +100,7 @@ func TestConsumer_Register(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 
 	reg, _ := consumer.NewTopicRegistry(nil)
-	c := consumer.New(logger, tally.NoopScope, reg)
+	c := consumer.New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor())
 
 	handler1 := consumermock.NewMockController(ctrl)
 	setupController(handler1, "handler1", consumer.TopicKeyStart, "group1", nil)
@@ -120,7 +120,7 @@ func TestConsumer_Register_DuplicateTopic(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 
 	reg, _ := consumer.NewTopicRegistry(nil)
-	c := consumer.New(logger, tally.NoopScope, reg)
+	c := consumer.New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor())
 
 	handler1 := consumermock.NewMockController(ctrl)
 	setupController(handler1, "handler1", consumer.TopicKeyStart, "group1", nil)
@@ -140,7 +140,7 @@ func TestConsumer_Register_AfterStop(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 
 	reg, _ := consumer.NewTopicRegistry(nil)
-	c := consumer.New(logger, tally.NoopScope, reg)
+	c := consumer.New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor())
 
 	err := c.Stop(1000)
 	require.NoError(t, err)
@@ -156,7 +156,7 @@ func TestConsumer_Start_NoHandlers(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 
 	reg, _ := consumer.NewTopicRegistry(nil)
-	c := consumer.New(logger, tally.NoopScope, reg)
+	c := consumer.New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor())
 
 	err := c.Start(context.Background())
 	assert.Error(t, err)
@@ -167,7 +167,7 @@ func TestConsumer_Start_AfterStop(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 
 	reg, _ := consumer.NewTopicRegistry(nil)
-	c := consumer.New(logger, tally.NoopScope, reg)
+	c := consumer.New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor())
 
 	handler := consumermock.NewMockController(ctrl)
 	setupController(handler, "handler1", consumer.TopicKeyStart, "group1", nil)
@@ -193,7 +193,7 @@ func TestConsumer_Start_MissingSubscriptionConfig(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	c := consumer.New(logger, tally.NoopScope, reg)
+	c := consumer.New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor())
 
 	handler := consumermock.NewMockController(ctrl)
 	setupController(handler, "handler", consumer.TopicKeyStart, "group", nil)
@@ -219,7 +219,7 @@ func TestConsumer_Start_SubscribeFailure(t *testing.T) {
 
 	reg := newRegistry(t, mockQ, consumer.TopicKeyStart, "group")
 
-	c := consumer.New(logger, tally.NoopScope, reg)
+	c := consumer.New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor())
 
 	handler := consumermock.NewMockController(ctrl)
 	setupController(handler, "handler", consumer.TopicKeyStart, "group", nil)
@@ -245,7 +245,7 @@ func TestConsumer_ProcessDelivery_Success(t *testing.T) {
 
 	reg := newRegistry(t, mockQ, consumer.TopicKeyStart, "test-group")
 
-	c := consumer.New(logger, tally.NoopScope, reg)
+	c := consumer.New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor())
 
 	handledMsg := ""
 	handler := consumermock.NewMockController(ctrl)
@@ -291,7 +291,7 @@ func TestConsumer_ProcessDelivery_Error(t *testing.T) {
 
 	reg := newRegistry(t, mockQ, consumer.TopicKeyStart, "test-group")
 
-	c := consumer.New(logger, tally.NoopScope, reg)
+	c := consumer.New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor())
 
 	handler := consumermock.NewMockController(ctrl)
 	setupController(handler, "test-handler", consumer.TopicKeyStart, "test-group",
@@ -333,7 +333,7 @@ func TestConsumer_ProcessDelivery_NonRetryableError(t *testing.T) {
 
 	reg := newRegistry(t, mockQ, consumer.TopicKeyStart, "test-group")
 
-	c := consumer.New(logger, tally.NoopScope, reg)
+	c := consumer.New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor())
 
 	handler := consumermock.NewMockController(ctrl)
 	setupController(handler, "test-handler", consumer.TopicKeyStart, "test-group",
@@ -384,7 +384,7 @@ func TestConsumer_Stop(t *testing.T) {
 
 	reg := newRegistry(t, mockQ, consumer.TopicKeyStart, "test-group")
 
-	c := consumer.New(logger, tally.NoopScope, reg)
+	c := consumer.New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor())
 
 	handler := consumermock.NewMockController(ctrl)
 	setupController(handler, "test-handler", consumer.TopicKeyStart, "test-group", nil)
@@ -442,7 +442,7 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 
 			reg := newRegistry(t, mockQ, consumer.TopicKeyStart, "test-group")
 
-			testC := consumer.New(logger, testScope, reg)
+			testC := consumer.New(logger, testScope, reg, errs.NewClassifierProcessor())
 
 			handler := consumermock.NewMockController(ctrl)
 			setupController(handler, "test-handler", consumer.TopicKeyStart, "test-group",
@@ -517,7 +517,7 @@ func TestConsumer_AckNackLatencyTracking(t *testing.T) {
 
 	reg := newRegistry(t, mockQ, consumer.TopicKeyStart, "test-group")
 
-	c := consumer.New(logger, scope, reg)
+	c := consumer.New(logger, scope, reg, errs.NewClassifierProcessor())
 
 	handler := consumermock.NewMockController(ctrl)
 	setupController(handler, "test-handler", consumer.TopicKeyStart, "test-group",
@@ -562,7 +562,7 @@ func TestConsumer_ErrorMetrics(t *testing.T) {
 
 	reg := newRegistry(t, mockQ, consumer.TopicKeyStart, "test-group")
 
-	c := consumer.New(logger, scope, reg)
+	c := consumer.New(logger, scope, reg, errs.NewClassifierProcessor())
 
 	handler := consumermock.NewMockController(ctrl)
 	setupController(handler, "test-handler", consumer.TopicKeyStart, "test-group",
@@ -618,7 +618,7 @@ func TestConsumer_PerPartitionProcessing(t *testing.T) {
 
 	reg := newRegistry(t, mockQ, consumer.TopicKeyStart, "test-group")
 
-	c := consumer.New(logger, tally.NoopScope, reg)
+	c := consumer.New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor())
 
 	// Track processing by partition
 	partBDone := make(chan struct{})
@@ -703,7 +703,7 @@ func TestConsumer_PartitionOrdering(t *testing.T) {
 
 	reg := newRegistry(t, mockQ, consumer.TopicKeyStart, "test-group")
 
-	c := consumer.New(logger, tally.NoopScope, reg)
+	c := consumer.New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor())
 
 	// Mutex + shared slice captures processing order for assertion;
 	// a channel would only signal completion, not record the sequence.
@@ -772,7 +772,7 @@ func TestConsumer_PartitionWorkerCleanup(t *testing.T) {
 
 	reg := newRegistry(t, mockQ, consumer.TopicKeyStart, "test-group")
 
-	c := consumer.New(logger, tally.NoopScope, reg)
+	c := consumer.New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor())
 
 	processedCount := int64(0)
 

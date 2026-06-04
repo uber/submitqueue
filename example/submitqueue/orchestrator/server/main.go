@@ -30,6 +30,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/uber-go/tally/v4"
+	"github.com/uber/submitqueue/core/errs"
 	genericerrs "github.com/uber/submitqueue/core/errs/generic"
 	mysqlerrs "github.com/uber/submitqueue/core/errs/mysql"
 	"github.com/uber/submitqueue/core/httpclient"
@@ -59,6 +60,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/buildsignal"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/cancel"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/conclude"
+	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/dlq"
 	logctrl "github.com/uber/submitqueue/submitqueue/orchestrator/controller/log"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/merge"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/score"
@@ -198,13 +200,23 @@ func run() error {
 		return fmt.Errorf("failed to create topic registry: %w", err)
 	}
 
-	// Create consumer.
-	c := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
-		genericerrs.Classifier,
-		// Storage (extension/storage/mysql) and queue (extension/messagequeue/mysql)
-		// both run on the same MySQL driver, so a single classifier covers
-		// errors surfaced from either backend.
-		mysqlerrs.Classifier,
+	// Two consumers share the topic registry but apply different error
+	// classification policies. The primary consumer runs the standard
+	// per-node classifier walk. The DLQ consumer uses the AlwaysRetryableProcessor
+	// so every non-nil error from a DLQ controller is forced retryable —
+	// reconciliation must redeliver on any failure because the DLQ
+	// subscriptions are final destinations (there is no further DLQ).
+	primaryConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
+		errs.NewClassifierProcessor(
+			genericerrs.Classifier,
+			// Storage (extension/storage/mysql) and queue (extension/messagequeue/mysql)
+			// both run on the same MySQL driver, so a single classifier covers
+			// errors surfaced from either backend.
+			mysqlerrs.Classifier,
+		),
+	)
+	dlqConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer-dlq"), registry,
+		errs.AlwaysRetryableProcessor,
 	)
 
 	// Create merge checker
@@ -230,19 +242,38 @@ func run() error {
 	br := buildnoop.New()
 
 	// Register controllers
-	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cp, psh, br, cnt, store); err != nil {
+	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, registry, mc, cp, psh, br, cnt, store)
+	if err != nil {
+		return err
+	}
+	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, store)
+	if err != nil {
 		return err
 	}
 
-	logger.Info("controllers registered", zap.Int("count", 11))
+	logger.Info("controllers registered", zap.Int("primary", primaryCount), zap.Int("dlq", dlqCount))
 
-	// Start consumers
-	if err := c.Start(ctx); err != nil {
+	// Start consumers. DLQ first because Start begins processing
+	// messages immediately; if the second (primary) consumer fails to
+	// start, the half we already started is the DLQ side, whose work
+	// is idempotent reconciliation and is safe to interrupt mid-flight
+	// for rollback.
+	if err := dlqConsumer.Start(ctx); err != nil {
 		// The error can also be a result of a context cancellation due to SIGINT or SIGTERM.
 		// This is expected, just propagate it.
-		return fmt.Errorf("failed to start consumers: %w", err)
+		return fmt.Errorf("failed to start dlq consumer: %w", err)
 	}
-	logger.Info("consumer started")
+	if err := primaryConsumer.Start(ctx); err != nil {
+		// Best-effort: stop the dlq consumer we just started so the
+		// caller does not need to know which half failed. Aggregate both
+		// errors with errors.Join so the operator sees the original cause.
+		stopErr := dlqConsumer.Stop(30000)
+		return errors.Join(
+			fmt.Errorf("failed to start primary consumer: %w", err),
+			stopErr,
+		)
+	}
+	logger.Info("consumers started")
 
 	// Create gRPC server
 	grpcServer := grpc.NewServer()
@@ -305,8 +336,14 @@ func run() error {
 		serverErr = fmt.Errorf("GRPC server exited with error: %w", serverErr)
 	}
 
-	// Stop consumers with 30s timeout, by this time the context should be cancelled and the processing threads may already be exiting; recollect them
-	errStop := c.Stop(30000)
+	// Stop consumers with 30s timeout in reverse start order: primary
+	// first, then DLQ. The primary pipeline writes the state that DLQ
+	// reconciliation reads, so draining primary first means in-flight
+	// DLQ reconciliation finishes against a settled primary rather than
+	// racing its shutdown.
+	primaryStopErr := primaryConsumer.Stop(30000)
+	dlqStopErr := dlqConsumer.Stop(30000)
+	errStop := errors.Join(primaryStopErr, dlqStopErr)
 	if errStop != nil {
 		errStop = fmt.Errorf("failed to stop consumers: %w", errStop)
 	}
@@ -322,106 +359,74 @@ func run() error {
 
 // newTopicRegistry builds the TopicRegistry with all topic and subscription configs.
 func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRegistry, error) {
-	return consumer.NewTopicRegistry([]consumer.TopicConfig{
-		{
-			Key:   consumer.TopicKeyStart,
-			Name:  "start",
+	// primaryTopics enumerates the {key, name, group-suffix} for every primary
+	// pipeline topic. The DLQ topic for each is derived by appending "_dlq" to
+	// both the topic name and the consumer group; the topic-key suffix is
+	// owned by the dlq package (dlq.TopicKey).
+	type topicSpec struct {
+		key         consumer.TopicKey
+		name        string
+		groupSuffix string
+	}
+	primaryTopics := []topicSpec{
+		{consumer.TopicKeyStart, "start", "orchestrator-start"},
+		{consumer.TopicKeyCancel, "cancel", "orchestrator-cancel"},
+		{consumer.TopicKeyValidate, "validate", "orchestrator-validate"},
+		{consumer.TopicKeyBatch, "batch", "orchestrator-batch"},
+		{consumer.TopicKeyScore, "score", "orchestrator-score"},
+		{consumer.TopicKeySpeculate, "speculate", "orchestrator-speculate"},
+		{consumer.TopicKeyBuild, "build", "orchestrator-build"},
+		{consumer.TopicKeyBuildSignal, "buildsignal", "orchestrator-buildsignal"},
+		{consumer.TopicKeyMerge, "merge", "orchestrator-merge"},
+		{consumer.TopicKeyConclude, "conclude", "orchestrator-conclude"},
+		{consumer.TopicKeyLog, "log", "orchestrator-log"},
+	}
+
+	configs := make([]consumer.TopicConfig, 0, 2*len(primaryTopics))
+	for _, t := range primaryTopics {
+		configs = append(configs, consumer.TopicConfig{
+			Key:   t.key,
+			Name:  t.name,
 			Queue: q,
 			Subscription: extqueue.DefaultSubscriptionConfig(
-				subscriberName, "orchestrator-start",
+				subscriberName, t.groupSuffix,
 			),
-		},
-		{
-			Key:   consumer.TopicKeyCancel,
-			Name:  "cancel",
-			Queue: q,
-			Subscription: extqueue.DefaultSubscriptionConfig(
-				subscriberName, "orchestrator-cancel",
-			),
-		},
-		{
-			Key:   consumer.TopicKeyValidate,
-			Name:  "validate",
-			Queue: q,
-			Subscription: extqueue.DefaultSubscriptionConfig(
-				subscriberName, "orchestrator-validate",
-			),
-		},
-		{
-			Key:   consumer.TopicKeyBatch,
-			Name:  "batch",
-			Queue: q,
-			Subscription: extqueue.DefaultSubscriptionConfig(
-				subscriberName, "orchestrator-batch",
-			),
-		},
-		{
-			Key:   consumer.TopicKeyScore,
-			Name:  "score",
-			Queue: q,
-			Subscription: extqueue.DefaultSubscriptionConfig(
-				subscriberName, "orchestrator-score",
-			),
-		},
-		{
-			Key:   consumer.TopicKeySpeculate,
-			Name:  "speculate",
-			Queue: q,
-			Subscription: extqueue.DefaultSubscriptionConfig(
-				subscriberName, "orchestrator-speculate",
-			),
-		},
-		{
-			Key:   consumer.TopicKeyBuild,
-			Name:  "build",
-			Queue: q,
-			Subscription: extqueue.DefaultSubscriptionConfig(
-				subscriberName, "orchestrator-build",
-			),
-		},
-		{
-			Key:   consumer.TopicKeyBuildSignal,
-			Name:  "buildsignal",
-			Queue: q,
-			Subscription: extqueue.DefaultSubscriptionConfig(
-				subscriberName, "orchestrator-buildsignal",
-			),
-		},
-		{
-			Key:   consumer.TopicKeyMerge,
-			Name:  "merge",
-			Queue: q,
-			Subscription: extqueue.DefaultSubscriptionConfig(
-				subscriberName, "orchestrator-merge",
-			),
-		},
-		{
-			Key:   consumer.TopicKeyConclude,
-			Name:  "conclude",
-			Queue: q,
-			Subscription: extqueue.DefaultSubscriptionConfig(
-				subscriberName, "orchestrator-conclude",
-			),
-		},
-		{
-			Key:   consumer.TopicKeyLog,
-			Name:  "log",
-			Queue: q,
-			Subscription: extqueue.DefaultSubscriptionConfig(
-				subscriberName, "orchestrator-log",
-			),
-		},
-	})
+		})
+		// DLQ subscription for the same primary stage. DLQ is disabled here
+		// to avoid a "_dlq_dlq" cascade: if DLQ reconciliation itself fails,
+		// the consumer retries forever and the failure is surfaced via logs
+		// and metrics rather than being moved to a second-level dead-letter
+		// topic that nobody consumes.
+		//
+		// MaxAttempts is bumped to a very high value so the per-message
+		// retry budget effectively never runs out — this pairs with the
+		// AlwaysRetryableProcessor wired into the DLQ consumer to guarantee
+		// reconciliation eventually converges instead of being silently
+		// dropped after the default retry count.
+		dlqSub := extqueue.DefaultSubscriptionConfig(
+			subscriberName, t.groupSuffix+"-dlq",
+		)
+		dlqSub.DLQ.Enabled = false
+		dlqSub.Retry.MaxAttempts = 1000
+		configs = append(configs, consumer.TopicConfig{
+			Key:          dlq.TopicKey(t.key),
+			Name:         t.name + "_dlq",
+			Queue:        q,
+			Subscription: dlqSub,
+		})
+	}
+
+	return consumer.NewTopicRegistry(configs)
 }
 
-// registerControllers creates all pipeline controllers and registers them with the consumer.
-// Pipeline:
+// registerPrimaryControllers creates all pipeline controllers and registers
+// them with the primary consumer. Pipeline:
 //
-//   request → validate → batch → score → speculate → build → buildsignal ─┐
-//                                        ↑     ↘             ↻ poll       │
-//                                        │      merge → conclude          │
-//                                        │        │                       │
-//                                        └────────┴───────────────────────┘
+//	request → validate → batch → score → speculate → build → buildsignal ─┐
+//	                                     ↑     ↘             ↻ poll       │
+//	                                     │      merge → conclude          │
+//	                                     │        │                       │
+//	                                     └────────┴───────────────────────┘
 
 // Static per-extension factories for the example server: every queue resolves
 // to the single configured implementation. A real deployment would vary the
@@ -456,7 +461,8 @@ type conflictFactory struct{ impl conflict.Analyzer }
 
 func (f conflictFactory) For(conflict.Config) (conflict.Analyzer, error) { return f.impl, nil }
 
-func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cp changeprovider.ChangeProvider, psh pusher.Pusher, br buildrunner.BuildRunner, cnt counter.Counter, store storage.Storage) error {
+func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cp changeprovider.ChangeProvider, psh pusher.Pusher, br buildrunner.BuildRunner, cnt counter.Counter, store storage.Storage) (int, error) {
+	var count int
 	requestController := start.NewController(
 		logger,
 		scope,
@@ -466,8 +472,9 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		"orchestrator-start",
 	)
 	if err := c.Register(requestController); err != nil {
-		return fmt.Errorf("failed to register request controller: %w", err)
+		return count, fmt.Errorf("failed to register request controller: %w", err)
 	}
+	count++
 
 	cancelController := cancel.NewController(
 		logger,
@@ -478,8 +485,9 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		"orchestrator-cancel",
 	)
 	if err := c.Register(cancelController); err != nil {
-		return fmt.Errorf("failed to register cancel controller: %w", err)
+		return count, fmt.Errorf("failed to register cancel controller: %w", err)
 	}
+	count++
 
 	validateController := validate.NewController(
 		logger,
@@ -492,8 +500,9 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		"orchestrator-validate",
 	)
 	if err := c.Register(validateController); err != nil {
-		return fmt.Errorf("failed to register validate controller: %w", err)
+		return count, fmt.Errorf("failed to register validate controller: %w", err)
 	}
+	count++
 
 	batchController := batch.NewController(
 		logger,
@@ -508,8 +517,9 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		"orchestrator-batch",
 	)
 	if err := c.Register(batchController); err != nil {
-		return fmt.Errorf("failed to register batch controller: %w", err)
+		return count, fmt.Errorf("failed to register batch controller: %w", err)
 	}
+	count++
 
 	scoreController := score.NewController(
 		logger,
@@ -534,8 +544,9 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		"orchestrator-score",
 	)
 	if err := c.Register(scoreController); err != nil {
-		return fmt.Errorf("failed to register score controller: %w", err)
+		return count, fmt.Errorf("failed to register score controller: %w", err)
 	}
+	count++
 
 	speculateController := speculate.NewController(
 		logger,
@@ -546,8 +557,9 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		"orchestrator-speculate",
 	)
 	if err := c.Register(speculateController); err != nil {
-		return fmt.Errorf("failed to register speculate controller: %w", err)
+		return count, fmt.Errorf("failed to register speculate controller: %w", err)
 	}
+	count++
 
 	buildController := build.NewController(
 		logger,
@@ -559,8 +571,9 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		"orchestrator-build",
 	)
 	if err := c.Register(buildController); err != nil {
-		return fmt.Errorf("failed to register build controller: %w", err)
+		return count, fmt.Errorf("failed to register build controller: %w", err)
 	}
+	count++
 
 	buildsignalController := buildsignal.NewController(
 		logger,
@@ -572,8 +585,9 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		"orchestrator-buildsignal",
 	)
 	if err := c.Register(buildsignalController); err != nil {
-		return fmt.Errorf("failed to register buildsignal controller: %w", err)
+		return count, fmt.Errorf("failed to register buildsignal controller: %w", err)
 	}
+	count++
 
 	mergeController := merge.NewController(
 		logger,
@@ -585,8 +599,9 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		"orchestrator-merge",
 	)
 	if err := c.Register(mergeController); err != nil {
-		return fmt.Errorf("failed to register merge controller: %w", err)
+		return count, fmt.Errorf("failed to register merge controller: %w", err)
 	}
+	count++
 
 	concludeController := conclude.NewController(
 		logger,
@@ -597,8 +612,9 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		"orchestrator-conclude",
 	)
 	if err := c.Register(concludeController); err != nil {
-		return fmt.Errorf("failed to register conclude controller: %w", err)
+		return count, fmt.Errorf("failed to register conclude controller: %w", err)
 	}
+	count++
 
 	logController := logctrl.NewController(
 		logger,
@@ -608,10 +624,45 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		"orchestrator-log",
 	)
 	if err := c.Register(logController); err != nil {
-		return fmt.Errorf("failed to register log controller: %w", err)
+		return count, fmt.Errorf("failed to register log controller: %w", err)
+	}
+	count++
+
+	return count, nil
+}
+
+// registerDLQControllers creates one DLQ reconciler per primary stage and
+// registers them with the DLQ consumer. Each reconciler drives the affected
+// request or batch into a terminal Error/Failed state so the gateway stops
+// reporting it as stuck-in-progress. The log DLQ is a metric-only no-op (log
+// entries are observability, not pipeline state).
+func registerDLQControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, store storage.Storage) (int, error) {
+	dlqScope := scope.SubScope("dlq")
+	dlqRegs := []struct {
+		name string
+		ctl  consumer.Controller
+	}{
+		{"start_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeLandRequestID, dlq.TopicKey(consumer.TopicKeyStart), "orchestrator-start-dlq")},
+		{"cancel_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeCancelRequestID, dlq.TopicKey(consumer.TopicKeyCancel), "orchestrator-cancel-dlq")},
+		{"validate_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeRequestID, dlq.TopicKey(consumer.TopicKeyValidate), "orchestrator-validate-dlq")},
+		{"batch_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeRequestID, dlq.TopicKey(consumer.TopicKeyBatch), "orchestrator-batch-dlq")},
+		{"score_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(consumer.TopicKeyScore), "orchestrator-score-dlq")},
+		{"speculate_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(consumer.TopicKeySpeculate), "orchestrator-speculate-dlq")},
+		{"build_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(consumer.TopicKeyBuild), "orchestrator-build-dlq")},
+		{"buildsignal_dlq", dlq.NewDLQBuildSignalController(logger, dlqScope, store, dlq.TopicKey(consumer.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")},
+		{"merge_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(consumer.TopicKeyMerge), "orchestrator-merge-dlq")},
+		{"conclude_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(consumer.TopicKeyConclude), "orchestrator-conclude-dlq")},
+		{"log_dlq", dlq.NewDLQLogController(logger, dlqScope, dlq.TopicKey(consumer.TopicKeyLog), "orchestrator-log-dlq")},
+	}
+	var count int
+	for _, reg := range dlqRegs {
+		if err := c.Register(reg.ctl); err != nil {
+			return count, fmt.Errorf("failed to register %s controller: %w", reg.name, err)
+		}
+		count++
 	}
 
-	return nil
+	return count, nil
 }
 
 // getEnv returns environment variable value or default if not set.
