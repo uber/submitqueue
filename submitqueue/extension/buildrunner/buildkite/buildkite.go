@@ -46,7 +46,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -146,19 +145,11 @@ type Params struct {
 // pipeline and starts its background worker goroutine. The goroutine runs for
 // the lifetime of the process.
 //
-// Returns an error if OrgSlug, PipelineSlug, or Branch are empty.
+// The HTTPClient must have BaseURLTransport configured to the pipeline's API
+// root (e.g. "https://api.buildkite.com/v2/organizations/{org}/pipelines/{slug}"),
+// and an auth transport that injects the Authorization header.
 func NewBuildRunner(params Params) (buildrunner.BuildRunner, error) {
 	cfg := params.Config
-	if cfg.OrgSlug == "" {
-		return nil, fmt.Errorf("buildkite: OrgSlug is required")
-	}
-	if cfg.PipelineSlug == "" {
-		return nil, fmt.Errorf("buildkite: PipelineSlug is required")
-	}
-	if cfg.Branch == "" {
-		return nil, fmt.Errorf("buildkite: Branch is required")
-	}
-
 	httpClient := params.HTTPClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient
@@ -231,11 +222,11 @@ func (r *runner) Status(ctx context.Context, buildID entity.BuildID) (entity.Bui
 	var resp buildResponse
 	switch {
 	case cached:
-		org, pipeline, number, err := parseBuildRef(ref)
+		number, err := parseBuildRef(ref)
 		if err != nil {
 			return entity.BuildStatusUnknown, nil, fmt.Errorf("buildkite: malformed build ref: %w", err)
 		}
-		resp, err = r.client.getBuild(ctx, org, pipeline, number)
+		resp, err = r.client.getBuild(ctx, number)
 		if err != nil {
 			return entity.BuildStatusUnknown, nil, fmt.Errorf("buildkite: get build: %w", err)
 		}
@@ -246,7 +237,7 @@ func (r *runner) Status(ctx context.Context, buildID entity.BuildID) (entity.Bui
 			// loop in Accepted forever.
 			return entity.BuildStatusFailed, entity.BuildMetadata{"error": reason}, nil
 		}
-		found, exists, err := r.client.findBuildByMeta(ctx, r.cfg.OrgSlug, r.cfg.PipelineSlug, metaKeyBuildID, buildID.ID)
+		found, exists, err := r.client.findBuildByMeta(ctx, metaKeyBuildID, buildID.ID)
 		if err != nil {
 			return entity.BuildStatusUnknown, nil, fmt.Errorf("buildkite: find build: %w", err)
 		}
@@ -256,7 +247,7 @@ func (r *runner) Status(ctx context.Context, buildID entity.BuildID) (entity.Bui
 			// loop keeps waiting without treating this as terminal.
 			return entity.BuildStatusAccepted, nil, nil
 		}
-		ref = encodeBuildRef(r.cfg.OrgSlug, r.cfg.PipelineSlug, found.Number)
+		ref = encodeBuildRef(found.Number)
 		r.storeRef(buildID.ID, ref)
 		resp = found
 	}
@@ -305,7 +296,6 @@ func (r *runner) processTrigger(job triggerJob) {
 	headJSON, _ := json.Marshal(job.headURIs)
 
 	req := createBuildRequest{
-		Branch:  r.cfg.Branch,
 		Message: "submitqueue speculative build",
 		Env: map[string]string{
 			EnvKeyBaseURIs: string(baseJSON),
@@ -322,7 +312,7 @@ func (r *runner) processTrigger(job triggerJob) {
 		ctx, cancel := r.opCtx()
 		defer cancel()
 		var e error
-		resp, e = r.client.createBuild(ctx, r.cfg.OrgSlug, r.cfg.PipelineSlug, req)
+		resp, e = r.client.createBuild(ctx, req)
 		return e
 	})
 	if err != nil {
@@ -330,7 +320,7 @@ func (r *runner) processTrigger(job triggerJob) {
 		return
 	}
 
-	r.storeRef(job.buildID, encodeBuildRef(r.cfg.OrgSlug, r.cfg.PipelineSlug, resp.Number))
+	r.storeRef(job.buildID, encodeBuildRef(resp.Number))
 }
 
 // processCancel cancels the Buildkite build, recovering its reference from the
@@ -340,18 +330,18 @@ func (r *runner) processCancel(job cancelJob) {
 	ref, cached := r.lookupRef(job.buildID)
 	if !cached {
 		ctx, cancel := r.opCtx()
-		found, exists, err := r.client.findBuildByMeta(ctx, r.cfg.OrgSlug, r.cfg.PipelineSlug, metaKeyBuildID, job.buildID)
+		found, exists, err := r.client.findBuildByMeta(ctx, metaKeyBuildID, job.buildID)
 		cancel()
 		if err != nil || !exists {
 			// Nothing to cancel (not yet submitted) or a transient lookup
 			// failure; the caller may re-issue Cancel.
 			return
 		}
-		ref = encodeBuildRef(r.cfg.OrgSlug, r.cfg.PipelineSlug, found.Number)
+		ref = encodeBuildRef(found.Number)
 		r.storeRef(job.buildID, ref)
 	}
 
-	org, pipeline, number, err := parseBuildRef(ref)
+	number, err := parseBuildRef(ref)
 	if err != nil {
 		return
 	}
@@ -359,7 +349,7 @@ func (r *runner) processCancel(job cancelJob) {
 	_ = r.withRetry(func() error {
 		ctx, cancel := r.opCtx()
 		defer cancel()
-		return r.client.cancelBuild(ctx, org, pipeline, number)
+		return r.client.cancelBuild(ctx, number)
 	})
 }
 
@@ -450,30 +440,19 @@ func flattenURIs(changes []entity.Change) []string {
 	return uris
 }
 
-// encodeBuildRef encodes org, pipeline, and build number into the internal
-// reference string stored in r.refs.
-// Format: "{org}/{pipeline}/{number}". Buildkite slugs are [a-z0-9-] so "/"
-// is unambiguous as a separator.
-func encodeBuildRef(org, pipeline string, number int) string {
-	return fmt.Sprintf("%s/%s/%d", org, pipeline, number)
+// encodeBuildRef encodes a Buildkite build number as the internal reference
+// string stored in r.refs.
+func encodeBuildRef(number int) string {
+	return strconv.Itoa(number)
 }
 
 // parseBuildRef is the inverse of encodeBuildRef.
-func parseBuildRef(ref string) (org, pipeline string, number int, err error) {
-	last := strings.LastIndex(ref, "/")
-	if last < 1 {
-		return "", "", 0, fmt.Errorf("invalid build ref %q", ref)
-	}
-	number, err = strconv.Atoi(ref[last+1:])
+func parseBuildRef(ref string) (int, error) {
+	n, err := strconv.Atoi(ref)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("invalid build ref %q: non-numeric number segment", ref)
+		return 0, fmt.Errorf("invalid build ref %q", ref)
 	}
-	prefix := ref[:last]
-	first := strings.Index(prefix, "/")
-	if first < 1 {
-		return "", "", 0, fmt.Errorf("invalid build ref %q", ref)
-	}
-	return prefix[:first], prefix[first+1:], number, nil
+	return n, nil
 }
 
 // mapState maps a Buildkite build state string to a BuildStatus.

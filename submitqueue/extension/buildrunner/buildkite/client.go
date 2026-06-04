@@ -31,7 +31,6 @@ type client struct {
 }
 
 type createBuildRequest struct {
-	Branch   string            `json:"branch"`
 	Message  string            `json:"message"`
 	Env      map[string]string `json:"env"`
 	MetaData map[string]string `json:"meta_data,omitempty"`
@@ -45,21 +44,20 @@ type buildResponse struct {
 	WebURL string `json:"web_url"`
 }
 
-func (c *client) createBuild(ctx context.Context, org, pipeline string, req createBuildRequest) (buildResponse, error) {
+func (c *client) createBuild(ctx context.Context, req createBuildRequest) (buildResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return buildResponse{}, fmt.Errorf("marshal request: %w", err)
 	}
-	u := fmt.Sprintf("/organizations/%s/pipelines/%s/builds", org, pipeline)
 	var build buildResponse
-	if err := c.do(ctx, http.MethodPost, u, body, &build); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/builds", body, &build); err != nil {
 		return buildResponse{}, err
 	}
 	return build, nil
 }
 
-func (c *client) getBuild(ctx context.Context, org, pipeline string, number int) (buildResponse, error) {
-	u := fmt.Sprintf("/organizations/%s/pipelines/%s/builds/%d", org, pipeline, number)
+func (c *client) getBuild(ctx context.Context, number int) (buildResponse, error) {
+	u := fmt.Sprintf("/builds/%d", number)
 	var build buildResponse
 	if err := c.do(ctx, http.MethodGet, u, nil, &build); err != nil {
 		return buildResponse{}, err
@@ -71,9 +69,8 @@ func (c *client) getBuild(ctx context.Context, org, pipeline string, number int)
 // value. ok is false when no such build exists yet. This lets Status and Cancel
 // recover the Buildkite reference from Buildkite itself (the source of truth)
 // when the in-memory cache misses, e.g. after a process restart.
-func (c *client) findBuildByMeta(ctx context.Context, org, pipeline, key, value string) (build buildResponse, ok bool, err error) {
-	u := fmt.Sprintf("/organizations/%s/pipelines/%s/builds?meta_data[%s]=%s",
-		org, pipeline, url.QueryEscape(key), url.QueryEscape(value))
+func (c *client) findBuildByMeta(ctx context.Context, key, value string) (build buildResponse, ok bool, err error) {
+	u := fmt.Sprintf("/builds?meta_data[%s]=%s", url.QueryEscape(key), url.QueryEscape(value))
 	var builds []buildResponse
 	if err := c.do(ctx, http.MethodGet, u, nil, &builds); err != nil {
 		return buildResponse{}, false, err
@@ -87,8 +84,8 @@ func (c *client) findBuildByMeta(ctx context.Context, org, pipeline, key, value 
 // cancelBuild requests cancellation. Returns nil when the build is already
 // terminal (HTTP 422) — the Buildkite API uses that status to indicate a
 // non-cancellable build, which the BuildRunner contract treats as a no-op.
-func (c *client) cancelBuild(ctx context.Context, org, pipeline string, number int) error {
-	u := fmt.Sprintf("/organizations/%s/pipelines/%s/builds/%d/cancel", org, pipeline, number)
+func (c *client) cancelBuild(ctx context.Context, number int) error {
+	u := fmt.Sprintf("/builds/%d/cancel", number)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, nil)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)

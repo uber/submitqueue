@@ -6,7 +6,6 @@ go_library(
         "buildkite.go",
         "client.go",
         "config.go",
-        "factory.go",
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/extension/buildrunner/buildkite",
     visibility = ["//visibility:public"],
@@ -21,6 +20,7 @@ go_test(
     srcs = ["buildkite_test.go"],
     embed = [":buildkite"],
     deps = [
+        "//core/httpclient",
         "//submitqueue/entity",
         "//submitqueue/extension/buildrunner",
         "@com_github_stretchr_testify//assert",

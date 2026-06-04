@@ -42,10 +42,7 @@ func newTestRunner(t *testing.T, handler http.Handler) *runner {
 	require.NoError(t, err)
 	return newRunner(
 		Config{
-			OrgSlug:           "test-org",
-			PipelineSlug:      "my-pipeline",
 			QueueName:         "my-queue",
-			Branch:            "main",
 			SubmitTimeout:     5 * time.Second,
 			MaxSubmitAttempts: 3,
 			SubmitBackoff:     time.Millisecond,
@@ -100,30 +97,9 @@ func emptyListHandler(t *testing.T) http.HandlerFunc {
 // --- Interface / constructor ---
 
 func TestNew_ImplementsInterface(t *testing.T) {
-	r, err := NewBuildRunner(Params{Config: Config{
-		OrgSlug:      "org",
-		PipelineSlug: "pipeline",
-		Branch:       "main",
-	}})
+	r, err := NewBuildRunner(Params{})
 	require.NoError(t, err)
 	var _ buildrunner.BuildRunner = r
-}
-
-func TestNew_Validation(t *testing.T) {
-	tests := []struct {
-		name   string
-		params Params
-	}{
-		{"missing org", Params{Config: Config{PipelineSlug: "p", Branch: "main"}}},
-		{"missing pipeline", Params{Config: Config{OrgSlug: "org", Branch: "main"}}},
-		{"missing branch", Params{Config: Config{OrgSlug: "org", PipelineSlug: "p"}}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewBuildRunner(tt.params)
-			require.Error(t, err)
-		})
-	}
 }
 
 // --- Trigger ---
@@ -177,7 +153,6 @@ func TestTrigger_SubmitsCorrectPayloadToBuildkite(t *testing.T) {
 
 	var req createBuildRequest
 	require.NoError(t, json.Unmarshal(capturedBody, &req))
-	assert.Equal(t, "main", req.Branch)
 	assert.Equal(t, `["github://org/repo/pull/1/aaa111"]`, req.Env[EnvKeyBaseURIs])
 	assert.Equal(t, `["github://org/repo/pull/2/bbb222"]`, req.Env[EnvKeyHeadURIs])
 	assert.Equal(t, "my-queue", req.Env[EnvKeyQueue])
@@ -188,7 +163,7 @@ func TestTrigger_SubmitsCorrectPayloadToBuildkite(t *testing.T) {
 	// After a successful submit the ref is cached, so Status uses getBuild.
 	ref, ok := r.lookupRef(id.ID)
 	require.True(t, ok)
-	assert.Equal(t, encodeBuildRef("test-org", "my-pipeline", 42), ref)
+	assert.Equal(t, encodeBuildRef(42), ref)
 }
 
 func TestTrigger_EmptyBase_ProducesJSONArray(t *testing.T) {
@@ -235,7 +210,7 @@ func TestTrigger_MultipleChangesFlattened(t *testing.T) {
 
 func TestTrigger_QueueFull_ReturnsError(t *testing.T) {
 	r := newRunner(
-		Config{OrgSlug: "org", PipelineSlug: "p", Branch: "main"},
+		Config{},
 		&client{httpClient: http.DefaultClient},
 		1, 1,
 	)
@@ -267,7 +242,7 @@ func TestProcessTrigger_RetriesTransientFailureThenSucceeds(t *testing.T) {
 	assert.Equal(t, 2, posts, "submit should retry after a transient failure")
 	ref, ok := r.lookupRef(id.ID)
 	require.True(t, ok)
-	assert.Equal(t, encodeBuildRef("test-org", "my-pipeline", 7), ref)
+	assert.Equal(t, encodeBuildRef(7), ref)
 }
 
 func TestTrigger_SubmitExhaustsRetries_BuildFails(t *testing.T) {
@@ -331,7 +306,7 @@ func TestStatus_ReturnsLiveBuildkiteState(t *testing.T) {
 	}))
 
 	// Inject ref directly (simulates successful processTrigger).
-	r.storeRef("some-id", encodeBuildRef("test-org", "my-pipeline", 7))
+	r.storeRef("some-id", encodeBuildRef(7))
 
 	status, meta, err := r.Status(context.Background(), entity.BuildID{ID: "some-id"})
 	require.NoError(t, err)
@@ -360,14 +335,14 @@ func TestStatus_RecoversRefAfterCacheMiss(t *testing.T) {
 	// The recovered ref is now cached for subsequent calls.
 	ref, ok := r.lookupRef("bk-lost")
 	require.True(t, ok)
-	assert.Equal(t, encodeBuildRef("test-org", "my-pipeline", 7), ref)
+	assert.Equal(t, encodeBuildRef(7), ref)
 }
 
 func TestStatus_BuildkiteNotFound(t *testing.T) {
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
-	r.storeRef("some-id", encodeBuildRef("test-org", "my-pipeline", 99))
+	r.storeRef("some-id", encodeBuildRef(99))
 
 	_, _, err := r.Status(context.Background(), entity.BuildID{ID: "some-id"})
 	require.Error(t, err)
@@ -391,7 +366,7 @@ func TestCancel_CallsBuildkiteWhenRefKnown(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(buildJSON(5, "canceled", ""))
 	}))
-	r.storeRef("some-id", encodeBuildRef("test-org", "my-pipeline", 5))
+	r.storeRef("some-id", encodeBuildRef(5))
 
 	require.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: "some-id"}))
 	drainCancel(t, r)
@@ -435,7 +410,7 @@ func TestCancel_AlreadyTerminal_Noop(t *testing.T) {
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 	}))
-	r.storeRef("some-id", encodeBuildRef("test-org", "my-pipeline", 5))
+	r.storeRef("some-id", encodeBuildRef(5))
 
 	require.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: "some-id"}))
 	drainCancel(t, r) // must not panic or error
@@ -443,7 +418,7 @@ func TestCancel_AlreadyTerminal_Noop(t *testing.T) {
 
 func TestCancel_QueueFull_ReturnsError(t *testing.T) {
 	r := newRunner(
-		Config{OrgSlug: "org", PipelineSlug: "p", Branch: "main"},
+		Config{},
 		&client{httpClient: http.DefaultClient},
 		1, 1,
 	)
@@ -454,29 +429,18 @@ func TestCancel_QueueFull_ReturnsError(t *testing.T) {
 // --- Internal helpers ---
 
 func TestEncodeParseBuildRef_RoundTrip(t *testing.T) {
-	tests := []struct {
-		org      string
-		pipeline string
-		number   int
-	}{
-		{"myorg", "my-pipeline", 1},
-		{"uber", "submit-queue-ci", 9999},
-		{"a", "b", 0},
-	}
-	for _, tt := range tests {
-		ref := encodeBuildRef(tt.org, tt.pipeline, tt.number)
-		org, pipeline, number, err := parseBuildRef(ref)
+	for _, n := range []int{1, 9999, 0} {
+		ref := encodeBuildRef(n)
+		got, err := parseBuildRef(ref)
 		require.NoError(t, err)
-		assert.Equal(t, tt.org, org)
-		assert.Equal(t, tt.pipeline, pipeline)
-		assert.Equal(t, tt.number, number)
+		assert.Equal(t, n, got)
 	}
 }
 
 func TestParseBuildRef_Invalid(t *testing.T) {
-	for _, ref := range []string{"", "noslash", "only/one", "org/pipeline/notanumber"} {
+	for _, ref := range []string{"", "notanumber", "org/pipeline/1"} {
 		t.Run(ref, func(t *testing.T) {
-			_, _, _, err := parseBuildRef(ref)
+			_, err := parseBuildRef(ref)
 			require.Error(t, err)
 		})
 	}

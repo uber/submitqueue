@@ -18,21 +18,10 @@ import "time"
 
 // Config holds the per-queue settings for a Buildkite BuildRunner.
 type Config struct {
-	// OrgSlug is the Buildkite organisation slug (URL segment after
-	// buildkite.com/). Required.
-	OrgSlug string
-
-	// PipelineSlug is the Buildkite pipeline that runs builds for this queue.
-	// Required.
-	PipelineSlug string
-
 	// QueueName is the SQ queue this runner serves. Passed as SQ_QUEUE in
 	// the build environment so the pipeline script can select queue-specific
 	// test targets.
 	QueueName string
-
-	// Branch is the target branch builds run against (e.g. "main"). Required.
-	Branch string
 
 	// TriggerQueueSize is the buffer capacity of the async trigger channel.
 	// Trigger returns an error when the channel is full (the build controller
