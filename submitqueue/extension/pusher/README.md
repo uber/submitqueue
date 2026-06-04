@@ -33,6 +33,10 @@ order. Each outcome reports either:
   cherry-pick`, then `git push`. Construction takes the path to the
   checkout, the remote name, and the target branch; the implementation
   owns that working tree and serializes concurrent invocations.
+- [`fake/`](fake/) — test/example stub. Reports every change as committed
+  unless a change URI carries a failure marker (`sq-fake=conflict` →
+  `ErrConflict`, `sq-fake=push-error` → error), letting a single running
+  stack exercise negative paths from request payloads. Not for production.
 
 ## Adding a new backend
 
