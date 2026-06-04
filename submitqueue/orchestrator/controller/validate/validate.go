@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/errs"
@@ -172,6 +173,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"total_files", totalFiles(changeInfos),
 	)
 
+	// Claim each URI in the change store with its provider details. The claim is
+	// created here — after duplicate detection and the merge/provider checks — so a
+	// rejected request never leaves a claim, and the record is written once with its
+	// details (immutable thereafter; no separate enrichment update). Create is
+	// idempotent per (queue, uri, request_id), so redelivery is a no-op.
+	if err := c.claimChanges(ctx, request, changeInfos); err != nil {
+		coremetrics.NamedCounter(c.metricsScope, "process", "change_store_errors", 1)
+		return fmt.Errorf("failed to claim change records for request %s: %w", request.ID, err)
+	}
+
 	// Publish to batch topic
 	if err := c.publish(ctx, consumer.TopicKeyBatch, request.ID, request.Queue); err != nil {
 		coremetrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1)
@@ -187,10 +198,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 }
 
 // checkDuplicate looks for any other in-flight request whose URIs overlap with this
-// request's. The change rows are written upstream by the start controller; validate
-// is read-only here. For each URI it queries the change store, walks the returned
-// candidates skipping self/duplicates/orphans/terminals, and short-circuits on the
-// first live duplicate. Returns that request_id, or "" if none.
+// request's. It reads the change store before this request claims its own URIs
+// (claimChanges runs later in Process), so it only sees rows written by other
+// requests. For each URI it queries the change store, walks the returned candidates
+// skipping self/duplicates/orphans/terminals, and short-circuits on the first live
+// duplicate. Returns that request_id, or "" if none. Per-queue partition leasing
+// serializes validate within a queue, so this read-then-claim sequence is race-free.
 //
 // Per-URI / per-record reads keep the contract backend-agnostic; the typical request
 // has 1-5 URIs, so the loop is cheap.
@@ -254,11 +267,35 @@ func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, request
 	return nil
 }
 
+// claimChanges persists one ChangeRecord per fetched ChangeInfo, capturing the
+// provider details at claim time. The record's identity (queue, uri, request_id)
+// and its Details are written together in a single immutable Create — there is no
+// later mutation. Create is idempotent on its primary key, so a redelivery (or a
+// prior partial attempt) is a no-op and the first write wins.
+func (c *Controller) claimChanges(ctx context.Context, request entity.Request, infos []entity.ChangeInfo) error {
+	now := time.Now().UnixMilli()
+	for _, info := range infos {
+		record := entity.ChangeRecord{
+			URI:       info.URI,
+			RequestID: request.ID,
+			Queue:     request.Queue,
+			Details:   info.Details,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Version:   1,
+		}
+		if err := c.store.GetChangeStore().Create(ctx, record); err != nil {
+			return fmt.Errorf("failed to claim uri=%s for request %s: %w", info.URI, request.ID, err)
+		}
+	}
+	return nil
+}
+
 // totalFiles returns the total number of files across all changeInfos.
-func totalFiles(infos []changeprovider.ChangeInfo) int {
+func totalFiles(infos []entity.ChangeInfo) int {
 	total := 0
 	for _, info := range infos {
-		total += len(info.ChangedFiles)
+		total += info.Details.FileCount()
 	}
 	return total
 }

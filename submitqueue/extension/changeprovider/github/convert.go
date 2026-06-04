@@ -1,32 +1,33 @@
 package github
 
 import (
+	"github.com/uber/submitqueue/submitqueue/entity"
 	entitygithub "github.com/uber/submitqueue/submitqueue/entity/github"
-	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 )
 
-// convertToChangeInfo converts GitHub PR data to ChangeInfo.
-func convertToChangeInfo(parsed entitygithub.ChangeID, prData *pullRequestData) changeprovider.ChangeInfo {
-	changedFiles := convertFiles(prData.Files.Nodes)
-
-	return changeprovider.ChangeInfo{
+// convertToChangeInfo converts GitHub PR data to an entity.ChangeInfo.
+func convertToChangeInfo(parsed entitygithub.ChangeID, prData *pullRequestData) entity.ChangeInfo {
+	return entity.ChangeInfo{
 		URI: parsed.String(),
-		User: changeprovider.User{
-			Name:  prData.Author.Name,
-			Email: prData.Author.Email,
+		Details: entity.ChangeDetails{
+			Author: entity.Author{
+				Name:  prData.Author.Name,
+				Email: prData.Author.Email,
+			},
+			ChangedFiles: convertFiles(prData.Files.Nodes),
 		},
-		ChangedFiles: changedFiles,
 	}
 }
 
-// convertFiles converts GitHub file nodes to ChangedFile structs.
-func convertFiles(nodes []fileNode) []changeprovider.ChangedFile {
-	changedFiles := make([]changeprovider.ChangedFile, 0, len(nodes))
+// convertFiles converts GitHub file nodes to entity.ChangedFile structs.
+// GitHub's API reports only additions and deletions per file, so LinesModified
+// is left zero here.
+func convertFiles(nodes []fileNode) []entity.ChangedFile {
+	changedFiles := make([]entity.ChangedFile, 0, len(nodes))
 
 	for _, file := range nodes {
-		changedFiles = append(changedFiles, changeprovider.ChangedFile{
+		changedFiles = append(changedFiles, entity.ChangedFile{
 			Path:         file.Path,
-			Patch:        file.Patch,
 			LinesAdded:   file.Additions,
 			LinesDeleted: file.Deletions,
 		})

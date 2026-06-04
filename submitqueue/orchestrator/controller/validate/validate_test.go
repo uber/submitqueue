@@ -27,7 +27,6 @@ import (
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	changeprovidermock "github.com/uber/submitqueue/submitqueue/extension/changeprovider/mock"
 	"github.com/uber/submitqueue/submitqueue/extension/mergechecker"
 	mergecheckermock "github.com/uber/submitqueue/submitqueue/extension/mergechecker/mock"
@@ -47,16 +46,18 @@ func requestIDPayload(t *testing.T, id string) []byte {
 // mockChangeProvider is a simple mock that returns test data.
 type mockChangeProvider struct{}
 
-func (m *mockChangeProvider) Get(ctx context.Context, change entity.Change) ([]changeprovider.ChangeInfo, error) {
-	return []changeprovider.ChangeInfo{
+func (m *mockChangeProvider) Get(ctx context.Context, change entity.Change) ([]entity.ChangeInfo, error) {
+	return []entity.ChangeInfo{
 		{
 			URI: "github://org/repo/pull/123/abcdef0123456789abcdef0123456789abcdef01",
-			User: changeprovider.User{
-				Name:  "Test User",
-				Email: "test@example.com",
-			},
-			ChangedFiles: []changeprovider.ChangedFile{
-				{Path: "main.go"},
+			Details: entity.ChangeDetails{
+				Author: entity.Author{
+					Name:  "Test User",
+					Email: "test@example.com",
+				},
+				ChangedFiles: []entity.ChangedFile{
+					{Path: "main.go"},
+				},
 			},
 		},
 	}, nil
@@ -80,12 +81,13 @@ func newMockStorage(ctrl *gomock.Controller, request entity.Request) (*storagemo
 	return store, mockReqStore
 }
 
-// newMockChangeStore creates a MockChangeStore with default no-overlap behavior.
-// Tests that need to simulate overlap can override GetByURI with their own EXPECT.
-// Validate is read-only against the change store — it never calls Create.
+// newMockChangeStore creates a MockChangeStore with default no-overlap behavior
+// (GetByURI returns nothing) and accepts the claim Create. Tests that need to
+// simulate overlap or assert the claim override these with their own EXPECTs.
 func newMockChangeStore(ctrl *gomock.Controller) *storagemock.MockChangeStore {
 	cs := storagemock.NewMockChangeStore(ctrl)
 	cs.EXPECT().GetByURI(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	cs.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	return cs
 }
 
@@ -164,6 +166,54 @@ func TestController_Process_Success(t *testing.T) {
 	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), mc, nil)
 
 	msg := entityqueue.NewMessage("test-queue/123", requestIDPayload(t, request.ID), "test-queue", nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	require.NoError(t, controller.Process(context.Background(), delivery))
+}
+
+// TestController_Process_ClaimsChangeRecordsWithDetails verifies that, on the happy
+// path, validate creates a change record per fetched change, capturing the provider
+// details in a single immutable Create.
+func TestController_Process_ClaimsChangeRecordsWithDetails(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mc := newMergeableMock(ctrl)
+
+	// The request's URI matches the URI the mock change provider returns, so the
+	// claim carries that change's details.
+	const uri = "github://org/repo/pull/123/abcdef0123456789abcdef0123456789abcdef01"
+	request := entity.Request{
+		ID:           "test-queue/123",
+		Queue:        "test-queue",
+		Change:       entity.Change{URIs: []string{uri}},
+		LandStrategy: entity.RequestLandStrategyRebase,
+		State:        entity.RequestStateStarted,
+		Version:      1,
+	}
+	store, _ := newMockStorage(ctrl, request)
+
+	wantDetails := entity.ChangeDetails{
+		Author:       entity.Author{Name: "Test User", Email: "test@example.com"},
+		ChangedFiles: []entity.ChangedFile{{Path: "main.go"}},
+	}
+	cs := storagemock.NewMockChangeStore(ctrl)
+	// Duplicate-detection read finds no overlap.
+	cs.EXPECT().GetByURI(gomock.Any(), request.Queue, uri).Return(nil, nil).AnyTimes()
+	// Capture the record passed to Create; assert identity + details.
+	cs.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, rec entity.ChangeRecord) error {
+			assert.Equal(t, uri, rec.URI)
+			assert.Equal(t, request.ID, rec.RequestID)
+			assert.Equal(t, request.Queue, rec.Queue)
+			assert.Equal(t, wantDetails, rec.Details)
+			return nil
+		},
+	)
+
+	controller := newTestController(t, ctrl, store, cs, mc, nil)
+
+	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
@@ -428,6 +478,9 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			for _, u := range uris {
 				cs.EXPECT().GetByURI(gomock.Any(), queueName, u).Return(tt.byURI[u], nil).MaxTimes(1)
 			}
+			// When no duplicate is found, the controller continues to fetch change info
+			// and claims each fetched change via Create. Accept any Create.
+			cs.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 			controller := newTestController(t, ctrl, store, cs, mc, nil)
 

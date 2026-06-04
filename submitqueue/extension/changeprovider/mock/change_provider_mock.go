@@ -43,10 +43,10 @@ func (m *MockChangeProvider) EXPECT() *MockChangeProviderMockRecorder {
 }
 
 // Get mocks base method.
-func (m *MockChangeProvider) Get(ctx context.Context, change entity.Change) ([]changeprovider.ChangeInfo, error) {
+func (m *MockChangeProvider) Get(ctx context.Context, change entity.Change) ([]entity.ChangeInfo, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Get", ctx, change)
-	ret0, _ := ret[0].([]changeprovider.ChangeInfo)
+	ret0, _ := ret[0].([]entity.ChangeInfo)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

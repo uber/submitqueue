@@ -17,6 +17,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 
 	"github.com/uber-go/tally/v4"
@@ -43,16 +44,14 @@ func (s *changeStore) Create(ctx context.Context, record entity.ChangeRecord) (r
 	op := metrics.Begin(s.scope, "create")
 	defer func() { op.Complete(retErr) }()
 
-	// Use the empty JSON object as the canonical "no metadata yet" value.
-	// metadata is NOT NULL in the schema and the JSON column type rejects an empty string.
-	metadata := record.Metadata
-	if metadata == "" {
-		metadata = "{}"
+	detailsJSON, err := marshalDetails(record.Details)
+	if err != nil {
+		return fmt.Errorf("failed to marshal details for change record uri=%s request_id=%s: %w", record.URI, record.RequestID, err)
 	}
 
-	const query = "INSERT IGNORE INTO `change` (uri, request_id, queue, metadata, created_at, updated_at, version) VALUES (?, ?, ?, ?, ?, ?, ?)"
+	const query = "INSERT IGNORE INTO `change` (uri, request_id, queue, details, created_at, updated_at, version) VALUES (?, ?, ?, ?, ?, ?, ?)"
 	if _, err := s.db.ExecContext(ctx, query,
-		record.URI, record.RequestID, record.Queue, metadata, record.CreatedAt, record.UpdatedAt, record.Version,
+		record.URI, record.RequestID, record.Queue, detailsJSON, record.CreatedAt, record.UpdatedAt, record.Version,
 	); err != nil {
 		return fmt.Errorf("failed to insert change record uri=%s request_id=%s: %w", record.URI, record.RequestID, err)
 	}
@@ -65,7 +64,7 @@ func (s *changeStore) GetByURI(ctx context.Context, queue string, uri string) (r
 	op := metrics.Begin(s.scope, "get_by_uri")
 	defer func() { op.Complete(retErr) }()
 
-	const query = "SELECT uri, request_id, queue, metadata, created_at, updated_at, version FROM `change` WHERE queue = ? AND uri = ?"
+	const query = "SELECT uri, request_id, queue, details, created_at, updated_at, version FROM `change` WHERE queue = ? AND uri = ?"
 	rows, err := s.db.QueryContext(ctx, query, queue, uri)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query change records for queue=%s uri=%s: %w", queue, uri, err)
@@ -75,8 +74,12 @@ func (s *changeStore) GetByURI(ctx context.Context, queue string, uri string) (r
 	var results []entity.ChangeRecord
 	for rows.Next() {
 		var rec entity.ChangeRecord
-		if err := rows.Scan(&rec.URI, &rec.RequestID, &rec.Queue, &rec.Metadata, &rec.CreatedAt, &rec.UpdatedAt, &rec.Version); err != nil {
+		var detailsJSON []byte
+		if err := rows.Scan(&rec.URI, &rec.RequestID, &rec.Queue, &detailsJSON, &rec.CreatedAt, &rec.UpdatedAt, &rec.Version); err != nil {
 			return nil, fmt.Errorf("failed to scan change record for queue=%s uri=%s: %w", queue, uri, err)
+		}
+		if err := json.Unmarshal(detailsJSON, &rec.Details); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal details for change record queue=%s uri=%s request_id=%s: %w", queue, uri, rec.RequestID, err)
 		}
 		results = append(results, rec)
 	}
@@ -84,4 +87,11 @@ func (s *changeStore) GetByURI(ctx context.Context, queue string, uri string) (r
 		return nil, fmt.Errorf("failed to iterate change records for queue=%s uri=%s: %w", queue, uri, err)
 	}
 	return results, nil
+}
+
+// marshalDetails serializes ChangeDetails to JSON for the NOT NULL `details` JSON
+// column. A zero-value ChangeDetails marshals to a non-empty JSON object, so no
+// empty-string special-casing is needed.
+func marshalDetails(details entity.ChangeDetails) ([]byte, error) {
+	return json.Marshal(details)
 }

@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS `change` (
     uri         VARCHAR(255) NOT NULL,
     request_id  VARCHAR(255) NOT NULL,
     queue       VARCHAR(255) NOT NULL,
-    metadata    JSON NOT NULL,
+    details     JSON NOT NULL,
     created_at  BIGINT NOT NULL,
     updated_at  BIGINT NOT NULL,
     version     INT NOT NULL,

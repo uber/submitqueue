@@ -24,19 +24,19 @@ import (
 
 // ChangeStore manages per-URI claim records for in-flight land requests.
 // Each row records that a specific URI was claimed by a specific request, scoped to a queue.
-// The (Queue, URI, RequestID) triple is the immutable identity of a record. Metadata may
-// evolve over time.
+// The (Queue, URI, RequestID) triple is the immutable identity of a record, and a record's
+// Details are captured at claim time and never updated — records are immutable.
 //
 // The interface is intentionally per-record / per-URI so that any backend (SQL, DynamoDB,
 // Bigtable, …) can implement it without needing batch-atomicity or multi-key query support.
 // Callers loop when they have multiple URIs to claim or check; the typical request has a
 // small number of URIs (a single PR or a short stack), so the loop overhead is negligible.
 type ChangeStore interface {
-	// Create persists a single ChangeRecord. A primary-key conflict on
-	// (Queue, URI, RequestID) is silently ignored, which makes the call
-	// idempotent under queue redeliveries of the same request. Records belonging
-	// to different requests do not conflict on the PK — cross-request overlap
-	// is detected by GetByURI, not by Create.
+	// Create persists a single ChangeRecord (identity + Details) in one write. A
+	// primary-key conflict on (Queue, URI, RequestID) is silently ignored, which makes
+	// the call idempotent under queue redeliveries of the same request (first write
+	// wins). Records belonging to different requests do not conflict on the PK —
+	// cross-request overlap is detected by GetByURI, not by Create.
 	Create(ctx context.Context, record entity.ChangeRecord) error
 
 	// GetByURI returns every ChangeRecord for the given (queue, uri). Multiple

@@ -77,7 +77,7 @@ func TestParseGraphQLResponse(t *testing.T) {
 							"files": {
 								"totalCount": 1,
 								"pageInfo": {"endCursor": "cur1", "hasNextPage": false},
-								"nodes": [{"path": "main.go", "additions": 10, "deletions": 2, "changeType": "MODIFIED", "patch": "diff content"}]
+								"nodes": [{"path": "main.go", "additions": 10, "deletions": 2, "changeType": "MODIFIED"}]
 							}
 						}
 					}
@@ -90,7 +90,7 @@ func TestParseGraphQLResponse(t *testing.T) {
 				Files: filesData{
 					TotalCount: 1,
 					PageInfo:   pageInfo{EndCursor: "cur1", HasNextPage: false},
-					Nodes:      []fileNode{{Path: "main.go", Additions: 10, Deletions: 2, ChangeType: "MODIFIED", Patch: "diff content"}},
+					Nodes:      []fileNode{{Path: "main.go", Additions: 10, Deletions: 2, ChangeType: "MODIFIED"}},
 				},
 			},
 		},
