@@ -1,9 +1,0 @@
-load("@rules_go//go:def.bzl", "go_library")
-
-go_library(
-    name = "changestore",
-    srcs = ["change_store.go"],
-    importpath = "github.com/uber/submitqueue/submitqueue/extension/changestore",
-    visibility = ["//visibility:public"],
-    deps = ["//submitqueue/entity"],
-)

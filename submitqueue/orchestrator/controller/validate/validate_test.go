@@ -29,7 +29,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	changeprovidermock "github.com/uber/submitqueue/submitqueue/extension/changeprovider/mock"
-	changemock "github.com/uber/submitqueue/submitqueue/extension/changestore/mock"
 	"github.com/uber/submitqueue/submitqueue/extension/mergechecker"
 	mergecheckermock "github.com/uber/submitqueue/submitqueue/extension/mergechecker/mock"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -84,8 +83,8 @@ func newMockStorage(ctrl *gomock.Controller, request entity.Request) (*storagemo
 // newMockChangeStore creates a MockChangeStore with default no-overlap behavior.
 // Tests that need to simulate overlap can override GetByURI with their own EXPECT.
 // Validate is read-only against the change store — it never calls Create.
-func newMockChangeStore(ctrl *gomock.Controller) *changemock.MockChangeStore {
-	cs := changemock.NewMockChangeStore(ctrl)
+func newMockChangeStore(ctrl *gomock.Controller) *storagemock.MockChangeStore {
+	cs := storagemock.NewMockChangeStore(ctrl)
 	cs.EXPECT().GetByURI(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	return cs
 }
@@ -95,12 +94,14 @@ func newTestController(
 	t *testing.T,
 	ctrl *gomock.Controller,
 	store *storagemock.MockStorage,
-	cs *changemock.MockChangeStore,
+	cs *storagemock.MockChangeStore,
 	mc mergechecker.MergeChecker,
 	publishErr error,
 ) *Controller {
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
+
+	store.EXPECT().GetChangeStore().Return(cs).AnyTimes()
 
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
@@ -124,7 +125,7 @@ func newTestController(
 	cpFactory := changeprovidermock.NewMockFactory(ctrl)
 	cpFactory.EXPECT().For(gomock.Any()).Return(cp, nil).AnyTimes()
 
-	return NewController(logger, scope, store, cs, registry, mcFactory, cpFactory, consumer.TopicKeyValidate, "orchestrator-validate")
+	return NewController(logger, scope, store, registry, mcFactory, cpFactory, consumer.TopicKeyValidate, "orchestrator-validate")
 }
 
 func TestNewController(t *testing.T) {
@@ -421,7 +422,7 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			store := storagemock.NewMockStorage(ctrl)
 			store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
-			cs := changemock.NewMockChangeStore(ctrl)
+			cs := storagemock.NewMockChangeStore(ctrl)
 			// One GetByURI per URI on the request, in order. Controller short-circuits on first
 			// live duplicate, so .AnyTimes() lets unmatched URIs go un-queried.
 			for _, u := range uris {
@@ -465,7 +466,7 @@ func TestController_Process_ChangeStoreQueryFailure(t *testing.T) {
 	}
 	store, _ := newMockStorage(ctrl, request)
 
-	cs := changemock.NewMockChangeStore(ctrl)
+	cs := storagemock.NewMockChangeStore(ctrl)
 	cs.EXPECT().GetByURI(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("change store down"))
 
 	controller := newTestController(t, ctrl, store, cs, mc, nil)
@@ -504,7 +505,7 @@ func TestController_Process_TerminalShortCircuit(t *testing.T) {
 
 			// No EXPECTs on merge checker or change store: gomock will fail if either is called.
 			mc := mergecheckermock.NewMockMergeChecker(ctrl)
-			cs := changemock.NewMockChangeStore(ctrl)
+			cs := storagemock.NewMockChangeStore(ctrl)
 
 			// Sentinel publish error: if Process publishes, it returns a non-nil err,
 			// which the require.NoError below will catch.
