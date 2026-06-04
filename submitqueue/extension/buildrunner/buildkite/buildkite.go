@@ -130,16 +130,25 @@ type runner struct {
 
 var _ buildrunner.BuildRunner = (*runner)(nil)
 
-// New constructs a Buildkite-backed BuildRunner bound to a single pipeline and
-// starts its background worker goroutine. The goroutine runs for the lifetime
-// of the process.
+// Params holds the dependencies for a Buildkite BuildRunner. The caller is
+// responsible for configuring HTTPClient with the base URL (via
+// httpclient.BaseURLTransport) and auth (via an Authorization-header transport).
+type Params struct {
+	// Config holds Buildkite-specific configuration for a single queue.
+	Config Config
+	// HTTPClient is a pre-configured HTTP client. The caller is responsible
+	// for the base URL (via httpclient.BaseURLTransport) and auth (via a
+	// transport layer). If nil, http.DefaultClient is used.
+	HTTPClient *http.Client
+}
+
+// NewBuildRunner constructs a Buildkite-backed BuildRunner bound to a single
+// pipeline and starts its background worker goroutine. The goroutine runs for
+// the lifetime of the process.
 //
-// Returns an error if APIToken, OrgSlug, PipelineSlug, or Branch are empty.
-// Prefer Factory.For over calling New directly; New is exported for testing.
-func New(cfg Config) (buildrunner.BuildRunner, error) {
-	if cfg.APIToken == "" {
-		return nil, fmt.Errorf("buildkite: APIToken is required")
-	}
+// Returns an error if OrgSlug, PipelineSlug, or Branch are empty.
+func NewBuildRunner(params Params) (buildrunner.BuildRunner, error) {
+	cfg := params.Config
 	if cfg.OrgSlug == "" {
 		return nil, fmt.Errorf("buildkite: OrgSlug is required")
 	}
@@ -150,11 +159,7 @@ func New(cfg Config) (buildrunner.BuildRunner, error) {
 		return nil, fmt.Errorf("buildkite: Branch is required")
 	}
 
-	baseURL := cfg.BaseURL
-	if baseURL == "" {
-		baseURL = "https://api.buildkite.com/v2"
-	}
-	httpClient := cfg.HTTPClient
+	httpClient := params.HTTPClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
@@ -168,9 +173,7 @@ func New(cfg Config) (buildrunner.BuildRunner, error) {
 	}
 
 	r := newRunner(cfg, &client{
-		token:      cfg.APIToken,
 		httpClient: httpClient,
-		baseURL:    baseURL,
 	}, triggerSize, cancelSize)
 	go r.work()
 	return r, nil

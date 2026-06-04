@@ -14,23 +14,16 @@
 
 package buildkite
 
-import (
-	"net/http"
-	"time"
-)
+import "time"
 
-// Config holds the per-queue settings for a Buildkite BuildRunner. It is
-// constructed by Factory.For for each queue and bound to a single pipeline.
+// Config holds the per-queue settings for a Buildkite BuildRunner.
 type Config struct {
-	// APIToken is the Buildkite personal or agent API token. Required.
-	APIToken string
-
 	// OrgSlug is the Buildkite organisation slug (URL segment after
 	// buildkite.com/). Required.
 	OrgSlug string
 
 	// PipelineSlug is the Buildkite pipeline that runs builds for this queue.
-	// Resolved by Factory from its Pipelines map. Required.
+	// Required.
 	PipelineSlug string
 
 	// QueueName is the SQ queue this runner serves. Passed as SQ_QUEUE in
@@ -62,12 +55,4 @@ type Config struct {
 	// SubmitBackoff is the base delay between background-worker retries; the
 	// delay grows linearly with the attempt number. Defaults to 1s.
 	SubmitBackoff time.Duration
-
-	// HTTPClient overrides the HTTP client used for Buildkite API calls.
-	// If nil, http.DefaultClient is used. Intended for testing.
-	HTTPClient *http.Client
-
-	// BaseURL overrides the Buildkite API base URL
-	// (default: "https://api.buildkite.com/v2"). Intended for testing.
-	BaseURL string
 }

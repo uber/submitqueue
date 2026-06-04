@@ -25,6 +25,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber/submitqueue/core/httpclient"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 )
@@ -37,9 +38,10 @@ func newTestRunner(t *testing.T, handler http.Handler) *runner {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
+	c, err := httpclient.NewClient(srv.URL)
+	require.NoError(t, err)
 	return newRunner(
 		Config{
-			APIToken:          "test-token",
 			OrgSlug:           "test-org",
 			PipelineSlug:      "my-pipeline",
 			QueueName:         "my-queue",
@@ -48,11 +50,7 @@ func newTestRunner(t *testing.T, handler http.Handler) *runner {
 			MaxSubmitAttempts: 3,
 			SubmitBackoff:     time.Millisecond,
 		},
-		&client{
-			token:      "test-token",
-			httpClient: http.DefaultClient,
-			baseURL:    srv.URL,
-		},
+		&client{httpClient: c},
 		16, // triggerSize
 		16, // cancelSize
 	)
@@ -102,61 +100,30 @@ func emptyListHandler(t *testing.T) http.HandlerFunc {
 // --- Interface / constructor ---
 
 func TestNew_ImplementsInterface(t *testing.T) {
-	r, err := New(Config{
-		APIToken:     "tok",
+	r, err := NewBuildRunner(Params{Config: Config{
 		OrgSlug:      "org",
 		PipelineSlug: "pipeline",
 		Branch:       "main",
-	})
+	}})
 	require.NoError(t, err)
 	var _ buildrunner.BuildRunner = r
 }
 
 func TestNew_Validation(t *testing.T) {
 	tests := []struct {
-		name string
-		cfg  Config
+		name   string
+		params Params
 	}{
-		{"missing token", Config{OrgSlug: "org", PipelineSlug: "p", Branch: "main"}},
-		{"missing org", Config{APIToken: "tok", PipelineSlug: "p", Branch: "main"}},
-		{"missing pipeline", Config{APIToken: "tok", OrgSlug: "org", Branch: "main"}},
-		{"missing branch", Config{APIToken: "tok", OrgSlug: "org", PipelineSlug: "p"}},
+		{"missing org", Params{Config: Config{PipelineSlug: "p", Branch: "main"}}},
+		{"missing pipeline", Params{Config: Config{OrgSlug: "org", Branch: "main"}}},
+		{"missing branch", Params{Config: Config{OrgSlug: "org", PipelineSlug: "p"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := New(tt.cfg)
+			_, err := NewBuildRunner(tt.params)
 			require.Error(t, err)
 		})
 	}
-}
-
-// --- Factory ---
-
-func TestFactory_ImplementsInterface(t *testing.T) {
-	var _ buildrunner.Factory = Factory{}
-}
-
-func TestFactory_For_Success(t *testing.T) {
-	f := Factory{
-		APIToken:  "tok",
-		OrgSlug:   "org",
-		Branch:    "main",
-		Pipelines: map[string]string{"my-queue": "my-pipeline"},
-	}
-	r, err := f.For(buildrunner.Config{QueueName: "my-queue"})
-	require.NoError(t, err)
-	require.NotNil(t, r)
-}
-
-func TestFactory_For_UnknownQueue(t *testing.T) {
-	f := Factory{
-		APIToken:  "tok",
-		OrgSlug:   "org",
-		Branch:    "main",
-		Pipelines: map[string]string{"my-queue": "my-pipeline"},
-	}
-	_, err := f.For(buildrunner.Config{QueueName: "unknown"})
-	require.Error(t, err)
 }
 
 // --- Trigger ---
@@ -188,12 +155,11 @@ func TestTrigger_StatusIsAcceptedBeforeWorkerRuns(t *testing.T) {
 }
 
 func TestTrigger_SubmitsCorrectPayloadToBuildkite(t *testing.T) {
-	var capturedMethod, capturedAuth string
+	var capturedMethod string
 	var capturedBody []byte
 
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		capturedMethod = req.Method
-		capturedAuth = req.Header.Get("Authorization")
 		capturedBody, _ = io.ReadAll(req.Body)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(buildJSON(42, "scheduled", "https://buildkite.com/test-org/my-pipeline/builds/42"))
@@ -208,7 +174,6 @@ func TestTrigger_SubmitsCorrectPayloadToBuildkite(t *testing.T) {
 	drainTrigger(t, r)
 
 	assert.Equal(t, http.MethodPost, capturedMethod)
-	assert.Equal(t, "Bearer test-token", capturedAuth)
 
 	var req createBuildRequest
 	require.NoError(t, json.Unmarshal(capturedBody, &req))
@@ -270,8 +235,8 @@ func TestTrigger_MultipleChangesFlattened(t *testing.T) {
 
 func TestTrigger_QueueFull_ReturnsError(t *testing.T) {
 	r := newRunner(
-		Config{APIToken: "tok", OrgSlug: "org", PipelineSlug: "p", Branch: "main"},
-		&client{token: "tok", httpClient: http.DefaultClient, baseURL: "http://unused"},
+		Config{OrgSlug: "org", PipelineSlug: "p", Branch: "main"},
+		&client{httpClient: http.DefaultClient},
 		1, 1,
 	)
 	// Fill the channel.
@@ -478,8 +443,8 @@ func TestCancel_AlreadyTerminal_Noop(t *testing.T) {
 
 func TestCancel_QueueFull_ReturnsError(t *testing.T) {
 	r := newRunner(
-		Config{APIToken: "tok", OrgSlug: "org", PipelineSlug: "p", Branch: "main"},
-		&client{token: "tok", httpClient: http.DefaultClient, baseURL: "http://unused"},
+		Config{OrgSlug: "org", PipelineSlug: "p", Branch: "main"},
+		&client{httpClient: http.DefaultClient},
 		1, 1,
 	)
 	require.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: "a"}))

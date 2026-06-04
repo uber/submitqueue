@@ -27,9 +27,7 @@ import (
 // client is a thin wrapper around the Buildkite REST endpoints that BuildRunner
 // needs: create, get, list-by-metadata, and cancel a build.
 type client struct {
-	token      string
 	httpClient *http.Client
-	baseURL    string
 }
 
 type createBuildRequest struct {
@@ -52,7 +50,7 @@ func (c *client) createBuild(ctx context.Context, org, pipeline string, req crea
 	if err != nil {
 		return buildResponse{}, fmt.Errorf("marshal request: %w", err)
 	}
-	u := fmt.Sprintf("%s/organizations/%s/pipelines/%s/builds", c.baseURL, org, pipeline)
+	u := fmt.Sprintf("/organizations/%s/pipelines/%s/builds", org, pipeline)
 	var build buildResponse
 	if err := c.do(ctx, http.MethodPost, u, body, &build); err != nil {
 		return buildResponse{}, err
@@ -61,7 +59,7 @@ func (c *client) createBuild(ctx context.Context, org, pipeline string, req crea
 }
 
 func (c *client) getBuild(ctx context.Context, org, pipeline string, number int) (buildResponse, error) {
-	u := fmt.Sprintf("%s/organizations/%s/pipelines/%s/builds/%d", c.baseURL, org, pipeline, number)
+	u := fmt.Sprintf("/organizations/%s/pipelines/%s/builds/%d", org, pipeline, number)
 	var build buildResponse
 	if err := c.do(ctx, http.MethodGet, u, nil, &build); err != nil {
 		return buildResponse{}, err
@@ -74,8 +72,8 @@ func (c *client) getBuild(ctx context.Context, org, pipeline string, number int)
 // recover the Buildkite reference from Buildkite itself (the source of truth)
 // when the in-memory cache misses, e.g. after a process restart.
 func (c *client) findBuildByMeta(ctx context.Context, org, pipeline, key, value string) (build buildResponse, ok bool, err error) {
-	u := fmt.Sprintf("%s/organizations/%s/pipelines/%s/builds?meta_data[%s]=%s",
-		c.baseURL, org, pipeline, url.QueryEscape(key), url.QueryEscape(value))
+	u := fmt.Sprintf("/organizations/%s/pipelines/%s/builds?meta_data[%s]=%s",
+		org, pipeline, url.QueryEscape(key), url.QueryEscape(value))
 	var builds []buildResponse
 	if err := c.do(ctx, http.MethodGet, u, nil, &builds); err != nil {
 		return buildResponse{}, false, err
@@ -90,7 +88,7 @@ func (c *client) findBuildByMeta(ctx context.Context, org, pipeline, key, value 
 // terminal (HTTP 422) — the Buildkite API uses that status to indicate a
 // non-cancellable build, which the BuildRunner contract treats as a no-op.
 func (c *client) cancelBuild(ctx context.Context, org, pipeline string, number int) error {
-	u := fmt.Sprintf("%s/organizations/%s/pipelines/%s/builds/%d/cancel", c.baseURL, org, pipeline, number)
+	u := fmt.Sprintf("/organizations/%s/pipelines/%s/builds/%d/cancel", org, pipeline, number)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, nil)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
@@ -157,6 +155,5 @@ func (c *client) do(ctx context.Context, method, rawURL string, body []byte, out
 }
 
 func (c *client) setHeaders(req *http.Request) {
-	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 }
