@@ -36,7 +36,7 @@ jobs:
         run: make lint
 
   # ---------------------------------------------------------------------------
-  # TIDY (module files + BUILD files in sync)
+  # TIDY (module files + BUILD files + generated proto in sync)
   # ---------------------------------------------------------------------------
   tidy:
     name: Tidy
@@ -51,6 +51,9 @@ jobs:
 
       - name: Check BUILD files are up to date
         run: make check-gazelle
+
+      - name: Check generated proto files are up to date
+        run: make check-proto
 
   # ---------------------------------------------------------------------------
   # BUILD AND UNIT TESTS

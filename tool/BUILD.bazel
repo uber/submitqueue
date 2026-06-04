@@ -3,4 +3,8 @@
 
 exports_files([
     "bazel",
+    "protoc",
+    "protoc-gen-go",
+    "protoc-gen-go-grpc",
+    "protoc-gen-yarpc-go-v2",
 ])

@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Go 1.24+** — needed for `gopls`, `go mod`, and installing protoc plugins. Download from [go.dev/dl](https://go.dev/dl/). Note: Bazel manages its own Go toolchain for builds, but a local Go installation is required for editor tooling and dependency management.
+- **Go 1.24+** — needed for `gopls`, `go mod`, and running the hermetic protoc plugins (via `go tool`). Download from [go.dev/dl](https://go.dev/dl/). Note: Bazel manages its own Go toolchain for builds, but a local Go installation is required for editor tooling and dependency management.
 - **Docker** and **Docker Compose** — for integration and e2e tests, and for running services locally.
 - **direnv** (recommended) — automatically loads `.envrc` so you can use `bazel` directly instead of `./tool/bazel`.
 
@@ -85,14 +85,16 @@ GoLand works with Go modules automatically. Open the project root and GoLand wil
 ## Optional Tools
 
 ```bash
-# macOS
-brew install protobuf grpcurl
-
-# Go protoc plugins (only if modifying .proto files)
-go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-go install go.uber.org/yarpc/encoding/protobuf/protoc-gen-yarpc-go-v2@latest
+# macOS — grpcurl for poking at running services (optional)
+brew install grpcurl
 ```
+
+Proto generation is fully hermetic and needs no manual installs: `make proto`
+downloads a pinned `protoc` via `./tool/protoc` (see `.protocversion`) and runs
+the `protoc-gen-go`, `protoc-gen-go-grpc`, and `protoc-gen-yarpc-go-v2` plugins
+at the versions pinned by the `tool` directives in `go.mod` (via `go tool`). A
+Go toolchain (and network access on the first run, to fetch protoc and the
+plugin modules) is the only requirement.
 
 ## Common Make Targets
 
@@ -138,8 +140,9 @@ See [TESTING.md](TESTING.md) for the full testing guide, including integration a
 ## Troubleshooting
 
 **Proto generation fails:**
-- Ensure all three protoc plugins are installed (see Optional Tools above)
-- Check that `protoc` is in your PATH: `which protoc`
+- `make proto` is hermetic — it needs no host `protoc` or plugins, only a Go toolchain and (on the first run) network access to download pinned `protoc` and the plugin modules.
+- To bump versions: edit `.protocversion` (and add the new platform checksums in `./tool/protoc`) for protoc, or `go get -tool <plugin>@<version>` followed by `make tidy` for a plugin.
+- Run `make check-proto` to confirm the committed generated files match a fresh `make proto`.
 
 **Build fails after proto changes:**
 - Run `make proto` to regenerate proto files

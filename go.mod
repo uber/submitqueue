@@ -5,7 +5,6 @@ go 1.24.5
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/go-sql-driver/mysql v1.6.0
-	github.com/gogo/protobuf v1.3.2
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	github.com/uber-go/tally/v4 v4.1.17
@@ -24,8 +23,6 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/gogo/googleapis v1.4.1 // indirect
-	github.com/gogo/status v1.1.0 // indirect
 	github.com/golang/mock v1.7.0-rc.1 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
@@ -56,6 +53,13 @@ require (
 	golang.org/x/tools v0.41.0 // indirect
 	golang.org/x/tools/go/expect v0.1.1-deprecated // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20241230172942-26aa7a208def // indirect
+	google.golang.org/grpc/cmd/protoc-gen-go-grpc v1.5.1 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	honnef.co/go/tools v0.4.3 // indirect
+)
+
+tool (
+	go.uber.org/yarpc/encoding/protobuf/protoc-gen-yarpc-go-v2
+	google.golang.org/grpc/cmd/protoc-gen-go-grpc
+	google.golang.org/protobuf/cmd/protoc-gen-go
 )

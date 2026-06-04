@@ -13,7 +13,7 @@ import (
 	"go.uber.org/yarpc/api/transport"
 	"go.uber.org/yarpc/api/x/restriction"
 	"go.uber.org/yarpc/encoding/protobuf/reflection"
-	"go.uber.org/yarpc/encoding/protobuf/v2"
+	v2 "go.uber.org/yarpc/encoding/protobuf/v2"
 	"google.golang.org/protobuf/proto"
 )
 
