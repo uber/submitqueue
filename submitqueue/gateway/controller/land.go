@@ -64,7 +64,7 @@ type LandController struct {
 	logger       *zap.SugaredLogger
 	metricsScope tally.Scope
 	counter      counter.Counter
-	stores       storage.Factory
+	store        storage.Storage
 	queueConfigs queueconfig.Store
 	registry     consumer.TopicRegistry
 }
@@ -72,12 +72,12 @@ type LandController struct {
 // NewLandController creates a new instance of the gateway land controller.
 // The controller publishes land requests to the topic registered under
 // consumer.TopicKeyStart in the registry.
-func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter counter.Counter, stores storage.Factory, queueConfigs queueconfig.Store, registry consumer.TopicRegistry) *LandController {
+func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter counter.Counter, store storage.Storage, queueConfigs queueconfig.Store, registry consumer.TopicRegistry) *LandController {
 	return &LandController{
 		logger:       logger,
 		metricsScope: scope.SubScope("land_controller"),
 		counter:      counter,
-		stores:       stores,
+		store:        store,
 		queueConfigs: queueConfigs,
 		registry:     registry,
 	}
@@ -110,14 +110,6 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (resp *p
 		return nil, fmt.Errorf("LandController failed to look up queue %q: %w", queue, err)
 	}
 
-	// Resolve the storage backend for this entityqueue. The queue is known up front
-	// here (from the request), so this is the one place per-queue storage
-	// routing is actionable.
-	store, err := c.stores.For(queue)
-	if err != nil {
-		return nil, fmt.Errorf("LandController failed to resolve storage for queue=%s: %w", queue, err)
-	}
-
 	// TODO: pass default queue land strategy to resolver function to process a default.
 	strategy, err := resolveRequestLandStrategy(req.Strategy)
 	if err != nil {
@@ -141,7 +133,7 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (resp *p
 	// It is important to record the status before publishing to the queue for processing. It is important to publish straight to the database and not via a entityqueue.
 	// Gateway has to stay consistent with the request log.
 	logEntry := entity.NewRequestLog(landRequest.ID, entity.RequestStatusAccepted, 0, "", nil)
-	if err := store.GetRequestLogStore().Insert(ctx, logEntry); err != nil {
+	if err := c.store.GetRequestLogStore().Insert(ctx, logEntry); err != nil {
 		return nil, fmt.Errorf("LandController failed to insert request log for sqid=%s: %w", landRequest.ID, err)
 	}
 

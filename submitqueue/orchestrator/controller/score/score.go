@@ -50,17 +50,12 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	stores storage.Factory,
+	store storage.Storage,
 	scorers scorer.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
-	// TODO(queue-aware): make this controller queue-aware during Process — derive the
-	// queue from the loaded entity and use it for structured logging, metrics scoping,
-	// and per-queue storage resolution. Today it uses the default store because the
-	// queue is only known after the by-ID load.
-	store, _ := stores.For("")
 	return &Controller{
 		logger:        logger.Named("score_controller"),
 		metricsScope:  scope.SubScope("score_controller"),

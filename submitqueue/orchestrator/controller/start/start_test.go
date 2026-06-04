@@ -63,7 +63,7 @@ func newTestController(
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, storage.NewStaticFactory(store), cs, registry, consumer.TopicKeyStart, "orchestrator-start")
+	return NewController(logger, scope, store, cs, registry, consumer.TopicKeyStart, "orchestrator-start")
 }
 
 // newMockStorage creates a MockStorage with a MockRequestStore that succeeds on Create.

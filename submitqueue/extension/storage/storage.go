@@ -68,15 +68,3 @@ type Storage interface {
 	// Close closes the storage and all underlying connections. Should only be called once at the end of the program.
 	Close() error
 }
-
-// Factory returns the Storage backing a named queue. It exists so a single
-// queue can be migrated to a different backend without affecting others; the
-// default implementation (NewStaticFactory) returns the same Storage for
-// every queue. Callers resolve the Storage per message from the queue name
-// carried in the message envelope, before any entity lookup.
-type Factory interface {
-	// For returns the Storage for the named queue. An empty name selects the
-	// default backend. It returns an error if no backend is configured for the
-	// queue.
-	For(name string) (Storage, error)
-}

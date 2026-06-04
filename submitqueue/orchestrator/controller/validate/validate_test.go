@@ -124,7 +124,7 @@ func newTestController(
 	cpFactory := changeprovidermock.NewMockFactory(ctrl)
 	cpFactory.EXPECT().For(gomock.Any()).Return(cp, nil).AnyTimes()
 
-	return NewController(logger, scope, storage.NewStaticFactory(store), cs, registry, mcFactory, cpFactory, consumer.TopicKeyValidate, "orchestrator-validate")
+	return NewController(logger, scope, store, cs, registry, mcFactory, cpFactory, consumer.TopicKeyValidate, "orchestrator-validate")
 }
 
 func TestNewController(t *testing.T) {

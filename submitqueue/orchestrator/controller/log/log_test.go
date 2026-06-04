@@ -25,7 +25,6 @@ import (
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
@@ -36,7 +35,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
 
-	return NewController(logger, scope, storage.NewStaticFactory(store), consumer.TopicKeyLog, "orchestrator-log")
+	return NewController(logger, scope, store, consumer.TopicKeyLog, "orchestrator-log")
 }
 
 func TestController_Process(t *testing.T) {

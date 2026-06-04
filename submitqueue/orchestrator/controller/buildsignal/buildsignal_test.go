@@ -28,7 +28,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	buildrunnermock "github.com/uber/submitqueue/submitqueue/extension/buildrunner/mock"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
@@ -74,7 +73,7 @@ func newTestHarness(t *testing.T, ctrl *gomock.Controller) *testHarness {
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		storage.NewStaticFactory(store),
+		store,
 		brFactory,
 		registry,
 		consumer.TopicKeyBuildSignal,

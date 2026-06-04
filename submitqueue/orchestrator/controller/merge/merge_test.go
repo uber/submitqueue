@@ -32,7 +32,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/pusher"
 	pushermock "github.com/uber/submitqueue/submitqueue/extension/pusher/mock"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 )
 
@@ -81,7 +80,7 @@ func TestNewController(t *testing.T) {
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		storage.NewStaticFactory(store),
+		store,
 		newRegistry(t, ctrl, nil),
 		newPusherFactory(ctrl, pushermock.NewMockPusher(ctrl)),
 		consumer.TopicKeyMerge,
@@ -144,7 +143,7 @@ func TestController_Process_SuccessfulMerge(t *testing.T) {
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		storage.NewStaticFactory(store),
+		store,
 		newRegistry(t, ctrl, nil),
 		newPusherFactory(ctrl, mockPusher),
 		consumer.TopicKeyMerge,
@@ -208,7 +207,7 @@ func TestController_Process_PassesAllChangesInBatchOrder(t *testing.T) {
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		storage.NewStaticFactory(store),
+		store,
 		newRegistry(t, ctrl, nil),
 		newPusherFactory(ctrl, mockPusher),
 		consumer.TopicKeyMerge,
@@ -255,7 +254,7 @@ func TestController_Process_PushConflictMarksBatchFailed(t *testing.T) {
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		storage.NewStaticFactory(store),
+		store,
 		newRegistry(t, ctrl, nil),
 		newPusherFactory(ctrl, mockPusher),
 		consumer.TopicKeyMerge,
@@ -301,7 +300,7 @@ func TestController_Process_PushInfraFailureReturnsError(t *testing.T) {
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		storage.NewStaticFactory(store),
+		store,
 		newRegistry(t, ctrl, nil),
 		newPusherFactory(ctrl, mockPusher),
 		consumer.TopicKeyMerge,
@@ -342,7 +341,7 @@ func TestController_Process_TerminalBatchSkipsPushButFansOut(t *testing.T) {
 			c := NewController(
 				zaptest.NewLogger(t).Sugar(),
 				tally.NoopScope,
-				storage.NewStaticFactory(store),
+				store,
 				newRegistry(t, ctrl, nil),
 				newPusherFactory(ctrl, mockPusher),
 				consumer.TopicKeyMerge,
@@ -392,7 +391,7 @@ func TestController_Process_CancellingShortCircuit(t *testing.T) {
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		storage.NewStaticFactory(store),
+		store,
 		registry,
 		newPusherFactory(ctrl, mockPusher),
 		consumer.TopicKeyMerge,
@@ -417,7 +416,7 @@ func TestController_Process_BatchStoreGetFailureNotRetryable(t *testing.T) {
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		storage.NewStaticFactory(store),
+		store,
 		newRegistry(t, ctrl, nil),
 		newPusherFactory(ctrl, pushermock.NewMockPusher(ctrl)),
 		consumer.TopicKeyMerge,
@@ -456,7 +455,7 @@ func TestController_Process_RequestStoreFailurePropagates(t *testing.T) {
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		storage.NewStaticFactory(store),
+		store,
 		newRegistry(t, ctrl, nil),
 		newPusherFactory(ctrl, pushermock.NewMockPusher(ctrl)),
 		consumer.TopicKeyMerge,
@@ -504,7 +503,7 @@ func TestController_Process_PublishFailureSurfaces(t *testing.T) {
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		storage.NewStaticFactory(store),
+		store,
 		newRegistry(t, ctrl, fmt.Errorf("queue down")),
 		newPusherFactory(ctrl, mockPusher),
 		consumer.TopicKeyMerge,
