@@ -1,23 +1,9 @@
-load("@rules_go//go:def.bzl", "go_library", "go_test")
+load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "mergechecker",
-    srcs = [
-        "mergechecker.go",
-        "multi.go",
-    ],
+    srcs = ["mergechecker.go"],
     importpath = "github.com/uber/submitqueue/submitqueue/extension/mergechecker",
     visibility = ["//visibility:public"],
     deps = ["//submitqueue/entity"],
-)
-
-go_test(
-    name = "mergechecker_test",
-    srcs = ["multi_test.go"],
-    embed = [":mergechecker"],
-    deps = [
-        "//submitqueue/entity",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-    ],
 )

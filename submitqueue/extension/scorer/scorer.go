@@ -28,3 +28,18 @@ type Scorer interface {
 	// of a successful land for the given change.
 	Score(ctx context.Context, change entity.Change) (float64, error)
 }
+
+// Config carries the per-queue identity handed to a Factory. The system knows
+// only the queue name; everything an implementation needs is injected at
+// construction by the integrator.
+type Config struct {
+	// QueueName identifies the queue this Scorer serves.
+	QueueName string
+}
+
+// Factory builds the Scorer for a queue. Implementations are provided by
+// integrators (and tests) and inject whatever they need at construction.
+type Factory interface {
+	// For returns the Scorer for the given queue.
+	For(cfg Config) (Scorer, error)
+}

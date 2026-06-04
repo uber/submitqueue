@@ -58,7 +58,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	store         storage.Storage
-	buildRunner   buildrunner.BuildRunner
+	buildRunners  buildrunner.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -71,17 +71,22 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
-	buildRunner buildrunner.BuildRunner,
+	stores storage.Factory,
+	buildRunners buildrunner.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
+	// TODO(queue-aware): make this controller queue-aware during Process — derive the
+	// queue from the loaded entity and use it for structured logging, metrics scoping,
+	// and per-queue storage resolution. Today it uses the default store because the
+	// queue is only known after the by-ID load.
+	store, _ := stores.For("")
 	return &Controller{
 		logger:        logger.Named("buildsignal_controller"),
 		metricsScope:  scope.SubScope("buildsignal_controller"),
 		store:         store,
-		buildRunner:   buildRunner,
+		buildRunners:  buildRunners,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -132,7 +137,21 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"partition_key", msg.PartitionKey,
 	)
 
-	status, _, err := c.buildRunner.Status(ctx, buildID)
+	// Load the batch first: it gives us the queue (needed to build the right
+	// BuildRunner) and lets us short-circuit halted batches before polling.
+	batch, err := c.store.GetBatchStore().Get(ctx, build.BatchID)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return fmt.Errorf("failed to get batch %s: %w", build.BatchID, err)
+	}
+
+	buildRunner, err := c.buildRunners.For(buildrunner.Config{QueueName: batch.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "status_errors", 1)
+		return fmt.Errorf("failed to build runner for batch %s: %w", batch.ID, err)
+	}
+
+	status, _, err := buildRunner.Status(ctx, buildID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "status_errors", 1)
 		return fmt.Errorf("failed to get status for build %s: %w", buildID.ID, err)
@@ -143,11 +162,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// avoids noise. For Cancelling batches the cancel controller owns the
 	// terminal write and the downstream fan-out, so further pipeline work
 	// would race against it; silent ack is the only safe action.
-	batch, err := c.store.GetBatchStore().Get(ctx, build.BatchID)
-	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to get batch %s: %w", build.BatchID, err)
-	}
 	if entity.IsBatchStateHalted(batch.State) {
 		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1)
 		c.logger.Infow("skipping buildsignal publish for halted batch",

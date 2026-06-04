@@ -66,3 +66,18 @@ type Analyzer interface {
 	// retryable by the caller.
 	Analyze(ctx context.Context, batch entity.Batch, inFlight []entity.Batch) ([]Conflict, error)
 }
+
+// Config carries the per-queue identity handed to a Factory. The system knows
+// only the queue name; everything an implementation needs is injected at
+// construction by the integrator.
+type Config struct {
+	// QueueName identifies the queue this Analyzer serves.
+	QueueName string
+}
+
+// Factory builds the Analyzer for a queue. Implementations are provided by
+// integrators (and tests) and inject whatever they need at construction.
+type Factory interface {
+	// For returns the Analyzer for the given queue.
+	For(cfg Config) (Analyzer, error)
+}

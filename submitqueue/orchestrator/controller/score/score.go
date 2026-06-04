@@ -37,7 +37,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	store         storage.Storage
-	scorer        scorer.Scorer
+	scorers       scorer.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -50,17 +50,22 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
-	scorer scorer.Scorer,
+	stores storage.Factory,
+	scorers scorer.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
+	// TODO(queue-aware): make this controller queue-aware during Process — derive the
+	// queue from the loaded entity and use it for structured logging, metrics scoping,
+	// and per-queue storage resolution. Today it uses the default store because the
+	// queue is only known after the by-ID load.
+	store, _ := stores.For("")
 	return &Controller{
 		logger:        logger.Named("score_controller"),
 		metricsScope:  scope.SubScope("score_controller"),
 		store:         store,
-		scorer:        scorer,
+		scorers:       scorers,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -177,13 +182,17 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 // Uses multiplicative probability: if any single request fails, the entire batch fails,
 // so the batch score is the product of individual request scores.
 func (c *Controller) scoreBatch(ctx context.Context, batch entity.Batch) (float64, error) {
+	sc, err := c.scorers.For(scorer.Config{QueueName: batch.Queue})
+	if err != nil {
+		return 0, fmt.Errorf("failed to build scorer for batch %s: %w", batch.ID, err)
+	}
 	score := 1.0
 	for _, requestID := range batch.Contains {
 		request, err := c.store.GetRequestStore().Get(ctx, requestID)
 		if err != nil {
 			return 0, fmt.Errorf("failed to get request %s: %w", requestID, err)
 		}
-		s, err := c.scorer.Score(ctx, request.Change)
+		s, err := sc.Score(ctx, request.Change)
 		if err != nil {
 			return 0, fmt.Errorf("failed to score request %s: %w", requestID, err)
 		}

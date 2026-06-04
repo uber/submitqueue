@@ -123,10 +123,6 @@ func TestNewStore_MissingFile(t *testing.T) {
 func TestStore_Get(t *testing.T) {
 	path := writeTempYAML(t, `queues:
   - name: main
-    vcs_type: git
-    vcs_address: git@github.com:uber/submitqueue.git
-    target: main
-    change_provider: github
 `)
 	store, err := NewStore(path)
 	require.NoError(t, err)
@@ -135,8 +131,6 @@ func TestStore_Get(t *testing.T) {
 		cfg, err := store.Get(context.Background(), "main")
 		require.NoError(t, err)
 		assert.Equal(t, "main", cfg.Name)
-		assert.Equal(t, "git", cfg.VCSType)
-		assert.Equal(t, "github", cfg.ChangeProvider)
 	})
 
 	t.Run("unknown queue returns ErrNotFound", func(t *testing.T) {

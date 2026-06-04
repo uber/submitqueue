@@ -37,15 +37,15 @@ import (
 // merge conflicts, change metadata fetch), and publishes to the batch stage. Validation logic
 // is extensible to support additional checks. Implements consumer.Controller.
 type Controller struct {
-	logger         *zap.SugaredLogger
-	metricsScope   tally.Scope
-	store          storage.Storage
-	changeStore    changestore.ChangeStore
-	registry       consumer.TopicRegistry
-	mergeChecker   mergechecker.MergeChecker
-	changeProvider changeprovider.ChangeProvider
-	topicKey       consumer.TopicKey
-	consumerGroup  string
+	logger          *zap.SugaredLogger
+	metricsScope    tally.Scope
+	store           storage.Storage
+	changeStore     changestore.ChangeStore
+	registry        consumer.TopicRegistry
+	mergeCheckers   mergechecker.Factory
+	changeProviders changeprovider.Factory
+	topicKey        consumer.TopicKey
+	consumerGroup   string
 }
 
 // Verify Controller implements consumer.Controller interface at compile time.
@@ -55,24 +55,29 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	stores storage.Factory,
 	changeStore changestore.ChangeStore,
 	registry consumer.TopicRegistry,
-	mergeChecker mergechecker.MergeChecker,
-	changeProvider changeprovider.ChangeProvider,
+	mergeCheckers mergechecker.Factory,
+	changeProviders changeprovider.Factory,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
+	// TODO(queue-aware): make this controller queue-aware during Process — derive the
+	// queue from the loaded entity and use it for structured logging, metrics scoping,
+	// and per-queue storage resolution. Today it uses the default store because the
+	// queue is only known after the by-ID load.
+	store, _ := stores.For("")
 	return &Controller{
-		logger:         logger.Named("validate_controller"),
-		metricsScope:   scope.SubScope("validate_controller"),
-		store:          store,
-		changeStore:    changeStore,
-		registry:       registry,
-		mergeChecker:   mergeChecker,
-		changeProvider: changeProvider,
-		topicKey:       topicKey,
-		consumerGroup:  consumerGroup,
+		logger:          logger.Named("validate_controller"),
+		metricsScope:    scope.SubScope("validate_controller"),
+		store:           store,
+		changeStore:     changeStore,
+		registry:        registry,
+		mergeCheckers:   mergeCheckers,
+		changeProviders: changeProviders,
+		topicKey:        topicKey,
+		consumerGroup:   consumerGroup,
 	}
 }
 
@@ -138,7 +143,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	// Merge conflict check
-	mergeResult, err := c.mergeChecker.Check(ctx, request.Queue, request.Change)
+	mergeChecker, err := c.mergeCheckers.For(mergechecker.Config{QueueName: request.Queue})
+	if err != nil {
+		coremetrics.NamedCounter(c.metricsScope, "process", "merge_check_errors", 1)
+		return fmt.Errorf("failed to build merge checker for queue %s: %w", request.Queue, err)
+	}
+	mergeResult, err := mergeChecker.Check(ctx, request.Change)
 	if err != nil {
 		coremetrics.NamedCounter(c.metricsScope, "process", "merge_check_errors", 1)
 		return fmt.Errorf("merge check failed: %w", err)
@@ -154,7 +164,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	// Fetch change metadata
-	changeInfos, err := c.changeProvider.Get(ctx, request.Change)
+	changeProvider, err := c.changeProviders.For(changeprovider.Config{QueueName: request.Queue})
+	if err != nil {
+		coremetrics.NamedCounter(c.metricsScope, "process", "change_provider_errors", 1)
+		return fmt.Errorf("failed to build change provider for queue %s: %w", request.Queue, err)
+	}
+	changeInfos, err := changeProvider.Get(ctx, request.Change)
 	if err != nil {
 		coremetrics.NamedCounter(c.metricsScope, "process", "change_provider_errors", 1)
 		return fmt.Errorf("failed to fetch change information for request %s: %w", request.ID, err)

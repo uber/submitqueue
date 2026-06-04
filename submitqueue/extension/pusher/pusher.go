@@ -86,3 +86,18 @@ type Pusher interface {
 	// commits. See the type-level docs for the atomicity contract.
 	Push(ctx context.Context, changes []entity.Change) (Result, error)
 }
+
+// Config carries the per-queue identity handed to a Factory. The system knows
+// only the queue name; everything an implementation needs (checkout, remote,
+// target) is injected at construction by the integrator.
+type Config struct {
+	// QueueName identifies the queue this Pusher serves.
+	QueueName string
+}
+
+// Factory builds the Pusher for a queue. Implementations are provided by
+// integrators (and tests) and inject whatever they need at construction.
+type Factory interface {
+	// For returns the Pusher for the given queue.
+	For(cfg Config) (Pusher, error)
+}

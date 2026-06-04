@@ -32,6 +32,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/pusher"
 	pushermock "github.com/uber/submitqueue/submitqueue/extension/pusher/mock"
+	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 )
 
@@ -67,15 +68,22 @@ func newRegistry(t *testing.T, ctrl *gomock.Controller, publishErr error) consum
 	return registry
 }
 
+// newPusherFactory wraps a Pusher in a factory that returns it for any entityqueue.
+func newPusherFactory(ctrl *gomock.Controller, p pusher.Pusher) pusher.Factory {
+	f := pushermock.NewMockFactory(ctrl)
+	f.EXPECT().For(gomock.Any()).Return(p, nil).AnyTimes()
+	return f
+}
+
 func TestNewController(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		store,
+		storage.NewStaticFactory(store),
 		newRegistry(t, ctrl, nil),
-		pushermock.NewMockPusher(ctrl),
+		newPusherFactory(ctrl, pushermock.NewMockPusher(ctrl)),
 		consumer.TopicKeyMerge,
 		"orchestrator-merge",
 	)
@@ -136,9 +144,9 @@ func TestController_Process_SuccessfulMerge(t *testing.T) {
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		store,
+		storage.NewStaticFactory(store),
 		newRegistry(t, ctrl, nil),
-		mockPusher,
+		newPusherFactory(ctrl, mockPusher),
 		consumer.TopicKeyMerge,
 		"orchestrator-merge",
 	)
@@ -200,9 +208,9 @@ func TestController_Process_PassesAllChangesInBatchOrder(t *testing.T) {
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		store,
+		storage.NewStaticFactory(store),
 		newRegistry(t, ctrl, nil),
-		mockPusher,
+		newPusherFactory(ctrl, mockPusher),
 		consumer.TopicKeyMerge,
 		"orchestrator-merge",
 	)
@@ -247,9 +255,9 @@ func TestController_Process_PushConflictMarksBatchFailed(t *testing.T) {
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		store,
+		storage.NewStaticFactory(store),
 		newRegistry(t, ctrl, nil),
-		mockPusher,
+		newPusherFactory(ctrl, mockPusher),
 		consumer.TopicKeyMerge,
 		"orchestrator-merge",
 	)
@@ -293,9 +301,9 @@ func TestController_Process_PushInfraFailureReturnsError(t *testing.T) {
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		store,
+		storage.NewStaticFactory(store),
 		newRegistry(t, ctrl, nil),
-		mockPusher,
+		newPusherFactory(ctrl, mockPusher),
 		consumer.TopicKeyMerge,
 		"orchestrator-merge",
 	)
@@ -334,9 +342,9 @@ func TestController_Process_TerminalBatchSkipsPushButFansOut(t *testing.T) {
 			c := NewController(
 				zaptest.NewLogger(t).Sugar(),
 				tally.NoopScope,
-				store,
+				storage.NewStaticFactory(store),
 				newRegistry(t, ctrl, nil),
-				mockPusher,
+				newPusherFactory(ctrl, mockPusher),
 				consumer.TopicKeyMerge,
 				"orchestrator-merge",
 			)
@@ -384,9 +392,9 @@ func TestController_Process_CancellingShortCircuit(t *testing.T) {
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		store,
+		storage.NewStaticFactory(store),
 		registry,
-		mockPusher,
+		newPusherFactory(ctrl, mockPusher),
 		consumer.TopicKeyMerge,
 		"orchestrator-merge",
 	)
@@ -409,9 +417,9 @@ func TestController_Process_BatchStoreGetFailureNotRetryable(t *testing.T) {
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		store,
+		storage.NewStaticFactory(store),
 		newRegistry(t, ctrl, nil),
-		pushermock.NewMockPusher(ctrl),
+		newPusherFactory(ctrl, pushermock.NewMockPusher(ctrl)),
 		consumer.TopicKeyMerge,
 		"orchestrator-merge",
 	)
@@ -448,9 +456,9 @@ func TestController_Process_RequestStoreFailurePropagates(t *testing.T) {
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		store,
+		storage.NewStaticFactory(store),
 		newRegistry(t, ctrl, nil),
-		pushermock.NewMockPusher(ctrl),
+		newPusherFactory(ctrl, pushermock.NewMockPusher(ctrl)),
 		consumer.TopicKeyMerge,
 		"orchestrator-merge",
 	)
@@ -496,9 +504,9 @@ func TestController_Process_PublishFailureSurfaces(t *testing.T) {
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		store,
+		storage.NewStaticFactory(store),
 		newRegistry(t, ctrl, fmt.Errorf("queue down")),
-		mockPusher,
+		newPusherFactory(ctrl, mockPusher),
 		consumer.TopicKeyMerge,
 		"orchestrator-merge",
 	)

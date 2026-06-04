@@ -14,6 +14,7 @@ import (
 	reflect "reflect"
 
 	entity "github.com/uber/submitqueue/submitqueue/entity"
+	buildrunner "github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -72,16 +73,55 @@ func (mr *MockBuildRunnerMockRecorder) Status(ctx, buildID any) *gomock.Call {
 }
 
 // Trigger mocks base method.
-func (m *MockBuildRunner) Trigger(ctx context.Context, queueName string, base, head []entity.Change, metadata entity.BuildMetadata) (entity.BuildID, error) {
+func (m *MockBuildRunner) Trigger(ctx context.Context, base, head []entity.Change, metadata entity.BuildMetadata) (entity.BuildID, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Trigger", ctx, queueName, base, head, metadata)
+	ret := m.ctrl.Call(m, "Trigger", ctx, base, head, metadata)
 	ret0, _ := ret[0].(entity.BuildID)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Trigger indicates an expected call of Trigger.
-func (mr *MockBuildRunnerMockRecorder) Trigger(ctx, queueName, base, head, metadata any) *gomock.Call {
+func (mr *MockBuildRunnerMockRecorder) Trigger(ctx, base, head, metadata any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Trigger", reflect.TypeOf((*MockBuildRunner)(nil).Trigger), ctx, queueName, base, head, metadata)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Trigger", reflect.TypeOf((*MockBuildRunner)(nil).Trigger), ctx, base, head, metadata)
+}
+
+// MockFactory is a mock of Factory interface.
+type MockFactory struct {
+	ctrl     *gomock.Controller
+	recorder *MockFactoryMockRecorder
+	isgomock struct{}
+}
+
+// MockFactoryMockRecorder is the mock recorder for MockFactory.
+type MockFactoryMockRecorder struct {
+	mock *MockFactory
+}
+
+// NewMockFactory creates a new mock instance.
+func NewMockFactory(ctrl *gomock.Controller) *MockFactory {
+	mock := &MockFactory{ctrl: ctrl}
+	mock.recorder = &MockFactoryMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockFactory) EXPECT() *MockFactoryMockRecorder {
+	return m.recorder
+}
+
+// For mocks base method.
+func (m *MockFactory) For(cfg buildrunner.Config) (buildrunner.BuildRunner, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "For", cfg)
+	ret0, _ := ret[0].(buildrunner.BuildRunner)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// For indicates an expected call of For.
+func (mr *MockFactoryMockRecorder) For(cfg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "For", reflect.TypeOf((*MockFactory)(nil).For), cfg)
 }

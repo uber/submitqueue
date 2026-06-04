@@ -83,7 +83,6 @@ func TestMergeChecker_Check(t *testing.T) {
 	tests := []struct {
 		name          string
 		handler       http.HandlerFunc
-		queue         string
 		change        entity.Change
 		wantMergeable bool
 		wantReason    string
@@ -94,7 +93,6 @@ func TestMergeChecker_Check(t *testing.T) {
 			handler: graphQLHandler(t, []PRInfo{
 				{Number: 1, Mergeable: PRMergeableStateMergeable, BaseRefName: "main", HeadRefName: "feature-1", HeadRefOid: shaAFull, State: PRStateOpen},
 			}),
-			queue:         "test-queue",
 			change:        entity.Change{URIs: []string{"github://uber/repo/pull/1/" + shaAFull}},
 			wantMergeable: true,
 		},
@@ -103,7 +101,6 @@ func TestMergeChecker_Check(t *testing.T) {
 			handler: graphQLHandler(t, []PRInfo{
 				{Number: 1, Mergeable: PRMergeableStateConflicting, BaseRefName: "main", HeadRefName: "feature-1", HeadRefOid: shaAFull, State: PRStateOpen},
 			}),
-			queue:         "test-queue",
 			change:        entity.Change{URIs: []string{"github://uber/repo/pull/1/" + shaAFull}},
 			wantMergeable: false,
 			wantReason:    "PR #1 has merge conflicts",
@@ -114,7 +111,6 @@ func TestMergeChecker_Check(t *testing.T) {
 				{Number: 1, Mergeable: PRMergeableStateMergeable, BaseRefName: "main", HeadRefName: "feature-1", HeadRefOid: sha1Full, State: PRStateOpen},
 				{Number: 2, Mergeable: PRMergeableStateMergeable, BaseRefName: "feature-1", HeadRefName: "feature-2", HeadRefOid: sha2Full, State: PRStateOpen},
 			}),
-			queue:         "test-queue",
 			change:        entity.Change{URIs: []string{"github://uber/repo/pull/1/" + sha1Full, "github://uber/repo/pull/2/" + sha2Full}},
 			wantMergeable: true,
 		},
@@ -123,7 +119,6 @@ func TestMergeChecker_Check(t *testing.T) {
 			handler: graphQLHandler(t, []PRInfo{
 				{Number: 1, Mergeable: PRMergeableStateUnknown, BaseRefName: "main", HeadRefName: "feature-1", HeadRefOid: shaAFull, State: PRStateOpen},
 			}),
-			queue:   "test-queue",
 			change:  entity.Change{URIs: []string{"github://uber/repo/pull/1/" + shaAFull}},
 			wantErr: true,
 		},
@@ -132,7 +127,6 @@ func TestMergeChecker_Check(t *testing.T) {
 			handler: graphQLHandler(t, []PRInfo{
 				{Number: 1, Mergeable: PRMergeableStateMergeable, BaseRefName: "main", HeadRefName: "feature-1", HeadRefOid: shaNewFull, State: PRStateOpen},
 			}),
-			queue:         "test-queue",
 			change:        entity.Change{URIs: []string{"github://uber/repo/pull/1/" + shaOldFull}},
 			wantMergeable: false,
 			wantReason:    fmt.Sprintf("PR #1 head SHA changed: expected %s, got %s", shaOldFull, shaNewFull),
@@ -142,7 +136,6 @@ func TestMergeChecker_Check(t *testing.T) {
 			handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				t.Fatal("should not reach server")
 			}),
-			queue:   "test-queue",
 			change:  entity.Change{URIs: []string{"invalid-change-id"}},
 			wantErr: true,
 		},
@@ -152,7 +145,6 @@ func TestMergeChecker_Check(t *testing.T) {
 				w.WriteHeader(http.StatusInternalServerError)
 				_, _ = w.Write([]byte("internal server error"))
 			}),
-			queue:   "test-queue",
 			change:  entity.Change{URIs: []string{"github://uber/repo/pull/1/" + shaAFull}},
 			wantErr: true,
 		},
@@ -164,7 +156,7 @@ func TestMergeChecker_Check(t *testing.T) {
 			defer server.Close()
 
 			mc := newTestMergeChecker(t, server.URL)
-			result, err := mc.Check(context.Background(), tt.queue, tt.change)
+			result, err := mc.Check(context.Background(), tt.change)
 			if tt.wantErr {
 				require.Error(t, err)
 				return

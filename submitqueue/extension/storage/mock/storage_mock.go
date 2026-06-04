@@ -151,3 +151,42 @@ func (mr *MockStorageMockRecorder) GetSpeculationTreeStore() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSpeculationTreeStore", reflect.TypeOf((*MockStorage)(nil).GetSpeculationTreeStore))
 }
+
+// MockFactory is a mock of Factory interface.
+type MockFactory struct {
+	ctrl     *gomock.Controller
+	recorder *MockFactoryMockRecorder
+	isgomock struct{}
+}
+
+// MockFactoryMockRecorder is the mock recorder for MockFactory.
+type MockFactoryMockRecorder struct {
+	mock *MockFactory
+}
+
+// NewMockFactory creates a new mock instance.
+func NewMockFactory(ctrl *gomock.Controller) *MockFactory {
+	mock := &MockFactory{ctrl: ctrl}
+	mock.recorder = &MockFactoryMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockFactory) EXPECT() *MockFactoryMockRecorder {
+	return m.recorder
+}
+
+// For mocks base method.
+func (m *MockFactory) For(name string) (storage.Storage, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "For", name)
+	ret0, _ := ret[0].(storage.Storage)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// For indicates an expected call of For.
+func (mr *MockFactoryMockRecorder) For(name any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "For", reflect.TypeOf((*MockFactory)(nil).For), name)
+}

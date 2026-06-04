@@ -41,7 +41,7 @@ func New() buildrunner.BuildRunner {
 
 // Trigger returns a unique build ID without contacting any runner.
 // Inputs are ignored.
-func (r *runner) Trigger(_ context.Context, _ string, _ []entity.Change, _ []entity.Change, _ entity.BuildMetadata) (entity.BuildID, error) {
+func (r *runner) Trigger(_ context.Context, _ []entity.Change, _ []entity.Change, _ entity.BuildMetadata) (entity.BuildID, error) {
 	return entity.BuildID{ID: fmt.Sprintf("noop-%d", r.counter.Add(1))}, nil
 }
 

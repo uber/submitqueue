@@ -14,6 +14,7 @@ import (
 	reflect "reflect"
 
 	entity "github.com/uber/submitqueue/submitqueue/entity"
+	scorer "github.com/uber/submitqueue/submitqueue/extension/scorer"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -54,4 +55,43 @@ func (m *MockScorer) Score(ctx context.Context, change entity.Change) (float64, 
 func (mr *MockScorerMockRecorder) Score(ctx, change any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Score", reflect.TypeOf((*MockScorer)(nil).Score), ctx, change)
+}
+
+// MockFactory is a mock of Factory interface.
+type MockFactory struct {
+	ctrl     *gomock.Controller
+	recorder *MockFactoryMockRecorder
+	isgomock struct{}
+}
+
+// MockFactoryMockRecorder is the mock recorder for MockFactory.
+type MockFactoryMockRecorder struct {
+	mock *MockFactory
+}
+
+// NewMockFactory creates a new mock instance.
+func NewMockFactory(ctrl *gomock.Controller) *MockFactory {
+	mock := &MockFactory{ctrl: ctrl}
+	mock.recorder = &MockFactoryMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockFactory) EXPECT() *MockFactoryMockRecorder {
+	return m.recorder
+}
+
+// For mocks base method.
+func (m *MockFactory) For(cfg scorer.Config) (scorer.Scorer, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "For", cfg)
+	ret0, _ := ret[0].(scorer.Scorer)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// For indicates an expected call of For.
+func (mr *MockFactoryMockRecorder) For(cfg any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "For", reflect.TypeOf((*MockFactory)(nil).For), cfg)
 }

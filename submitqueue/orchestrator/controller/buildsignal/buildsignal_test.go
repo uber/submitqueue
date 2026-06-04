@@ -28,6 +28,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	buildrunnermock "github.com/uber/submitqueue/submitqueue/extension/buildrunner/mock"
+	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
@@ -47,6 +48,8 @@ type testHarness struct {
 
 func newTestHarness(t *testing.T, ctrl *gomock.Controller) *testHarness {
 	br := buildrunnermock.NewMockBuildRunner(ctrl)
+	brFactory := buildrunnermock.NewMockFactory(ctrl)
+	brFactory.EXPECT().For(gomock.Any()).Return(br, nil).AnyTimes()
 
 	signalPub := queuemock.NewMockPublisher(ctrl)
 	signalQ := queuemock.NewMockQueue(ctrl)
@@ -71,8 +74,8 @@ func newTestHarness(t *testing.T, ctrl *gomock.Controller) *testHarness {
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		store,
-		br,
+		storage.NewStaticFactory(store),
+		brFactory,
 		registry,
 		consumer.TopicKeyBuildSignal,
 		"orchestrator-buildsignal",
@@ -200,6 +203,7 @@ func TestController_Process_StatusError(t *testing.T) {
 	build := entity.Build{ID: "b-3", BatchID: "batch-3", Status: entity.BuildStatusAccepted}
 
 	h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(build, nil)
+	h.batchStore.EXPECT().Get(gomock.Any(), build.BatchID).Return(entity.Batch{ID: build.BatchID, State: entity.BatchStateSpeculating}, nil)
 	h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: build.ID}).Return(entity.BuildStatusUnknown, nil, errors.New("provider down"))
 	// No UpdateStatus, no Publish, no PublishAfter expected.
 

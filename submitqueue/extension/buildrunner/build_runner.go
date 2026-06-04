@@ -55,11 +55,10 @@ type BuildRunner interface {
 	// asynchronously. Callers learn the build's progress via Status, not
 	// via Trigger.
 	//
-	// queueName selects the runner-specific job configuration.
-	// Returns an error if the request is invalid.
+	// The runner is already bound to its queue's job configuration by the
+	// Factory that built it. Returns an error if the request is invalid.
 	Trigger(
 		ctx context.Context,
-		queueName string,
 		base []entity.Change,
 		head []entity.Change,
 		metadata entity.BuildMetadata,
@@ -79,4 +78,19 @@ type BuildRunner interface {
 	// the runner; it does not wait for the build to actually stop. A no-op
 	// on already-terminal builds. Returns an error if the build does not exist.
 	Cancel(ctx context.Context, buildID entity.BuildID) error
+}
+
+// Config carries the per-queue identity handed to a Factory. The system knows
+// only the queue name; everything an implementation needs (endpoint, pipeline,
+// credentials) is injected at construction by the integrator.
+type Config struct {
+	// QueueName identifies the queue this BuildRunner serves.
+	QueueName string
+}
+
+// Factory builds the BuildRunner for a queue. Implementations are provided by
+// integrators (and tests) and inject whatever they need at construction.
+type Factory interface {
+	// For returns the BuildRunner for the given queue.
+	For(cfg Config) (BuildRunner, error)
 }

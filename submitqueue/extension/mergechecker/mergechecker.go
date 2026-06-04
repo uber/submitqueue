@@ -27,7 +27,7 @@ type MergeChecker interface {
 	// Check is a fail-fast mergeability check that optimistically assesses
 	// whether the changes can be merged. A positive result does not
 	// guarantee that the changes will apply cleanly at merge time.
-	Check(ctx context.Context, queue string, change entity.Change) (Result, error)
+	Check(ctx context.Context, change entity.Change) (Result, error)
 }
 
 // Result holds the outcome of a mergeability check.
@@ -37,4 +37,19 @@ type Result struct {
 	// Reason is a human-readable explanation when Mergeable is false.
 	// Empty when Mergeable is true.
 	Reason string
+}
+
+// Config carries the per-queue identity handed to a Factory. The system knows
+// only the queue name; everything an implementation needs is injected at
+// construction by the integrator.
+type Config struct {
+	// QueueName identifies the queue this MergeChecker serves.
+	QueueName string
+}
+
+// Factory builds the MergeChecker for a queue. Implementations are provided by
+// integrators (and tests) and inject whatever they need at construction.
+type Factory interface {
+	// For returns the MergeChecker for the given queue.
+	For(cfg Config) (MergeChecker, error)
 }

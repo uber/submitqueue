@@ -32,6 +32,7 @@ import (
 	queueMySQL "github.com/uber/submitqueue/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	yamlqueueconfig "github.com/uber/submitqueue/submitqueue/extension/queueconfig/yaml"
+	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/submitqueue/gateway/controller"
 	pb "github.com/uber/submitqueue/submitqueue/gateway/protopb"
@@ -199,8 +200,15 @@ func run() error {
 		},
 	))
 
-	// Initialize request log store from shared app database connection
-	requestLogStore := mysqlstorage.NewRequestLogStore(appDB, scope.SubScope("request_log_store"))
+	// Initialize storage from the shared app database connection. The land
+	// controller takes a storage.Factory (static: every queue → this store);
+	// cancel/status use the request log store directly.
+	store, err := mysqlstorage.NewStorage(appDB, scope.SubScope("storage"))
+	if err != nil {
+		return fmt.Errorf("failed to create storage: %w", err)
+	}
+	stores := storage.NewStaticFactory(store)
+	requestLogStore := store.GetRequestLogStore()
 
 	// Load queue configurations from YAML. Path is required so the gateway
 	// can reject requests for unknown queues at the edge.
@@ -215,7 +223,7 @@ func run() error {
 
 	// Create controllers and wrap them for gRPC
 	pingController := controller.NewPingController(logger, scope)
-	landController := controller.NewLandController(logger.Sugar(), scope, cnt, requestLogStore, queueConfigs, registry)
+	landController := controller.NewLandController(logger.Sugar(), scope, cnt, stores, queueConfigs, registry)
 	cancelController := controller.NewCancelController(logger.Sugar(), scope, requestLogStore, registry)
 	statusController := controller.NewStatusController(logger.Sugar(), scope, requestLogStore)
 	gatewayServer := &GatewayServer{
