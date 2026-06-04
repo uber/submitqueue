@@ -1,6 +1,16 @@
 # Bazel wrapper
 BAZEL = ./tool/bazel
 
+# protoc wrapper (hermetic; pinned by .protocversion)
+PROTOC = ./tool/protoc
+
+# protoc plugins (hermetic; versions pinned by the `tool` directives in go.mod).
+# Passed explicitly so protoc never resolves a plugin from the host $PATH.
+PROTOC_PLUGINS = \
+  --plugin=protoc-gen-go=$(CURDIR)/tool/protoc-gen-go \
+  --plugin=protoc-gen-go-grpc=$(CURDIR)/tool/protoc-gen-go-grpc \
+  --plugin=protoc-gen-yarpc-go=$(CURDIR)/tool/protoc-gen-yarpc-go
+
 # Docker Compose wrapper
 COMPOSE = docker-compose
 
@@ -40,7 +50,7 @@ define assert_clean
 	fi
 endef
 
-.PHONY: build build-all-linux build-submitqueue-gateway-linux build-submitqueue-orchestrator-linux build-stovepipe-gateway-linux build-stovepipe-orchestrator-linux check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator license-fix lint lint-fmt lint-license local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-init-stovepipe-queue-schema local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-gateway-start local-stovepipe-orchestrator-start local-stovepipe-start mocks proto query-deps query-targets run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe-gateway run-client-stovepipe-orchestrator run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
+.PHONY: build build-all-linux build-submitqueue-gateway-linux build-submitqueue-orchestrator-linux build-stovepipe-gateway-linux build-stovepipe-orchestrator-linux check-gazelle check-mocks check-proto check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator license-fix lint lint-fmt lint-license local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-init-stovepipe-queue-schema local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-gateway-start local-stovepipe-orchestrator-start local-stovepipe-start mocks proto query-deps query-targets run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe-gateway run-client-stovepipe-orchestrator run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
 
 
 build: ## Build all services and examples
@@ -93,6 +103,10 @@ check-gazelle: ## Check BUILD.bazel files are up to date
 check-mocks: mocks ## Check mock files are up to date
 	$(call assert_clean,make mocks)
 	@echo "Mock files are up to date."
+
+check-proto: proto ## Check generated proto files are up to date
+	$(call assert_clean,make proto)
+	@echo "Proto files are up to date."
 
 check-tidy: tidy ## Check that go.mod and MODULE.bazel are tidy
 	$(call assert_clean,make tidy)
@@ -339,22 +353,26 @@ mocks: ## Generate mock files using mockgen
 
 proto: ## Generate protobuf files from .proto definitions
 	@echo "Generating protobuf files with protoc..."
-	@protoc --go_out=submitqueue/gateway/protopb --go_opt=paths=source_relative \
+	@$(PROTOC) $(PROTOC_PLUGINS) --go_out=submitqueue/gateway/protopb --go_opt=paths=source_relative \
 	  --go-grpc_out=submitqueue/gateway/protopb --go-grpc_opt=paths=source_relative \
 	  --yarpc-go_out=submitqueue/gateway/protopb --yarpc-go_opt=paths=source_relative \
 	  --proto_path=submitqueue/gateway/proto submitqueue/gateway/proto/gateway.proto
-	@protoc --go_out=submitqueue/orchestrator/protopb --go_opt=paths=source_relative \
+	@$(PROTOC) $(PROTOC_PLUGINS) --go_out=submitqueue/orchestrator/protopb --go_opt=paths=source_relative \
 	  --go-grpc_out=submitqueue/orchestrator/protopb --go-grpc_opt=paths=source_relative \
 	  --yarpc-go_out=submitqueue/orchestrator/protopb --yarpc-go_opt=paths=source_relative \
 	  --proto_path=submitqueue/orchestrator/proto submitqueue/orchestrator/proto/orchestrator.proto
-	@protoc --go_out=stovepipe/gateway/protopb --go_opt=paths=source_relative \
+	@$(PROTOC) $(PROTOC_PLUGINS) --go_out=stovepipe/gateway/protopb --go_opt=paths=source_relative \
 	  --go-grpc_out=stovepipe/gateway/protopb --go-grpc_opt=paths=source_relative \
 	  --yarpc-go_out=stovepipe/gateway/protopb --yarpc-go_opt=paths=source_relative \
 	  --proto_path=stovepipe/gateway/proto stovepipe/gateway/proto/gateway.proto
-	@protoc --go_out=stovepipe/orchestrator/protopb --go_opt=paths=source_relative \
+	@$(PROTOC) $(PROTOC_PLUGINS) --go_out=stovepipe/orchestrator/protopb --go_opt=paths=source_relative \
 	  --go-grpc_out=stovepipe/orchestrator/protopb --go-grpc_opt=paths=source_relative \
 	  --yarpc-go_out=stovepipe/orchestrator/protopb --yarpc-go_opt=paths=source_relative \
 	  --proto_path=stovepipe/orchestrator/proto stovepipe/orchestrator/proto/orchestrator.proto
+	@echo "Formatting generated files with goimports..."
+	@go run golang.org/x/tools/cmd/goimports@$(GOIMPORTS_VERSION) -w \
+	  submitqueue/gateway/protopb submitqueue/orchestrator/protopb \
+	  stovepipe/gateway/protopb stovepipe/orchestrator/protopb
 	@echo "Protobuf files generated successfully!"
 
 # Bazel query helpers

@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+#
+# Copyright (c) 2025 Uber Technologies, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Hermetic protoc wrapper. Downloads and pins protoc to the version in
+# .protocversion, then execs it. This mirrors ./tool/bazel (Bazelisk) so that
+# `make proto` produces identical output regardless of any host/homebrew protoc.
+#
+# The binary is cached under ${XDG_CACHE_HOME:-$HOME/.cache}/submitqueue-protoc/
+# and verified against a pinned SHA-256 before use.
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+version="$(tr -d '[:space:]' <"${repo_root}/.protocversion")"
+
+# Map the host OS/arch onto the protobuf release asset suffix.
+os="$(uname -s)"
+arch="$(uname -m)"
+case "${os}" in
+  Darwin) os_part="osx" ;;
+  Linux) os_part="linux" ;;
+  *) echo "tool/protoc: unsupported OS: ${os}" >&2; exit 1 ;;
+esac
+case "${arch}" in
+  arm64 | aarch64) arch_part="aarch_64" ;;
+  x86_64 | amd64) arch_part="x86_64" ;;
+  *) echo "tool/protoc: unsupported arch: ${arch}" >&2; exit 1 ;;
+esac
+plat="${os_part}-${arch_part}"
+
+# Pinned SHA-256 of protoc-${version}-${plat}.zip. Add new entries when bumping
+# .protocversion (see the release page on github.com/protocolbuffers/protobuf).
+checksum=""
+case "${version}:${plat}" in
+  "29.3:osx-aarch_64") checksum="2b8a3403cd097f95f3ba656e14b76c732b6b26d7f183330b11e36ef2bc028765" ;;
+  "29.3:osx-x86_64") checksum="9a788036d8f9854f7b03c305df4777cf0e54e5b081e25bf15252da87e0e90875" ;;
+  "29.3:linux-x86_64") checksum="3e866620c5be27664f3d2fa2d656b5f3e09b5152b42f1bedbf427b333e90021a" ;;
+  "29.3:linux-aarch_64") checksum="6427349140e01f06e049e707a58709a4f221ae73ab9a0425bc4a00c8d0e1ab32" ;;
+esac
+
+if [[ -z "${checksum}" ]]; then
+  echo "tool/protoc: no pinned SHA-256 for ${version}:${plat}." >&2
+  echo "  Download protoc-${version}-${plat}.zip from" >&2
+  echo "  github.com/protocolbuffers/protobuf/releases, record its sha256 in" >&2
+  echo "  tool/protoc, then retry. Refusing to run an unverified protoc." >&2
+  exit 1
+fi
+
+cache_root="${XDG_CACHE_HOME:-}"
+if [[ -z "${cache_root}" ]]; then
+  if [[ -z "${HOME:-}" ]]; then
+    echo "tool/protoc: neither XDG_CACHE_HOME nor HOME is set; cannot locate a cache directory" >&2
+    exit 1
+  fi
+  cache_root="${HOME}/.cache"
+fi
+cache_root="${cache_root}/submitqueue-protoc"
+install_dir="${cache_root}/${version}/${plat}"
+protoc_bin="${install_dir}/bin/protoc"
+
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+if [[ ! -x "${protoc_bin}" ]]; then
+  url="https://github.com/protocolbuffers/protobuf/releases/download/v${version}/protoc-${version}-${plat}.zip"
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "${tmp}"' EXIT
+  echo "tool/protoc: downloading protoc ${version} (${plat})..." >&2
+  curl -fsSL -o "${tmp}/protoc.zip" "${url}"
+  got="$(sha256 "${tmp}/protoc.zip")"
+  if [[ "${got}" != "${checksum}" ]]; then
+    echo "tool/protoc: checksum mismatch for protoc-${version}-${plat}.zip" >&2
+    echo "  expected ${checksum}" >&2
+    echo "  got      ${got}" >&2
+    exit 1
+  fi
+  rm -rf "${install_dir}"
+  mkdir -p "${install_dir}"
+  unzip -q "${tmp}/protoc.zip" -d "${install_dir}"
+fi
+
+exec "${protoc_bin}" "$@"

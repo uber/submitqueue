@@ -49,6 +49,7 @@ use_repo(
     "com_github_uber_go_tally_v4",
     "in_gopkg_yaml_v3",
     "org_golang_google_grpc",
+    "org_golang_google_grpc_cmd_protoc_gen_go_grpc",
     "org_golang_google_protobuf",
     "org_golang_x_oauth2",
     "org_uber_go_fx",
