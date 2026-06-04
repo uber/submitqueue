@@ -28,8 +28,8 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
+	buildfake "github.com/uber/submitqueue/submitqueue/extension/buildrunner/fake"
 	buildrunnermock "github.com/uber/submitqueue/submitqueue/extension/buildrunner/mock"
-	buildnoop "github.com/uber/submitqueue/submitqueue/extension/buildrunner/noop"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -74,7 +74,7 @@ func newMockStorage(ctrl *gomock.Controller, batch entity.Batch) *storagemock.Mo
 }
 
 // newTestController creates a controller with test dependencies. br is the
-// build runner to inject; pass buildnoop.New() for the pass-through default.
+// build runner to inject; pass buildfake.New() for the pass-through default.
 // staticBuildRunnerFactory is a test factory that returns a fixed BuildRunner
 // for any entityqueue.
 type staticBuildRunnerFactory struct{ r buildrunner.BuildRunner }
@@ -111,7 +111,7 @@ func TestNewController(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	batch := testBatch()
 	store := newMockStorage(ctrl, batch)
-	controller := newTestController(t, ctrl, store, buildnoop.New(), nil)
+	controller := newTestController(t, ctrl, store, buildfake.New(), nil)
 
 	require.NotNil(t, controller)
 	assert.Equal(t, consumer.TopicKeyBuild, controller.TopicKey())
@@ -124,7 +124,7 @@ func TestController_Process_Success(t *testing.T) {
 
 	batch := testBatch()
 	store := newMockStorage(ctrl, batch)
-	controller := newTestController(t, ctrl, store, buildnoop.New(), nil)
+	controller := newTestController(t, ctrl, store, buildfake.New(), nil)
 
 	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -315,7 +315,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 	store.EXPECT().GetRequestStore().Return(storagemock.NewMockRequestStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(storagemock.NewMockBuildStore(ctrl)).AnyTimes()
 
-	controller := newTestController(t, ctrl, store, buildnoop.New(), nil)
+	controller := newTestController(t, ctrl, store, buildfake.New(), nil)
 
 	msg := entityqueue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1"), "test-queue", nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -332,7 +332,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 
 	batch := testBatch()
 	store := newMockStorage(ctrl, batch)
-	controller := newTestController(t, ctrl, store, buildnoop.New(), fmt.Errorf("publish failed"))
+	controller := newTestController(t, ctrl, store, buildfake.New(), fmt.Errorf("publish failed"))
 
 	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -347,7 +347,7 @@ func TestController_InterfaceImplementation(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	batch := testBatch()
 	store := newMockStorage(ctrl, batch)
-	controller := newTestController(t, ctrl, store, buildnoop.New(), nil)
+	controller := newTestController(t, ctrl, store, buildfake.New(), nil)
 
 	var _ consumer.Controller = controller
 }

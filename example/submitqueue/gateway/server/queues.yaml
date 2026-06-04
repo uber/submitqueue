@@ -7,3 +7,7 @@ queues:
   - name: test-queue
   - name: e2e-test-queue
   - name: e2e-cancel-queue
+  # Routes to an analyzer that always errors (conflictfake.FailAlways) so e2e can
+  # exercise the conflict-analysis error path. See newQueueRegistry in the
+  # orchestrator example server.
+  - name: e2e-conflict-error-queue

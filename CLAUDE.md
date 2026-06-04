@@ -116,6 +116,14 @@ Vendor-agnostic, pluggable interfaces with implementations in subdirectories:
 2. Implementations at `extension/{ext}/{impl}/`
 3. Factory interface for dependency injection and lifecycle management
 
+**Extensions hold contracts and implementations only — not factories or routing.**
+
+An `extension/{ext}` package contains the behavioral interface, its `Config`, the `Factory` *interface*, and impl constructors `New(...)` that return the interface. It must **not** contain `Factory` *implementations* (`NewFactory()` constructors or factory structs) or any queue-selection logic.
+
+Why: an impl package (e.g. `scorer/heuristic`) can't know the queue topology or the other impls, so a "which impl for which queue" decision doesn't belong there. Per-queue routing — and the small adapters that wrap a `New(...)` impl in the `Factory` interface — live in the wiring layer (e.g. `example/{domain}/{service}/server/main.go`), the one place that knows the full queue set. That's where you route on `Config.QueueName`.
+
+Rule of thumb: if you're about to add a `NewFactory()` or a `map[queue]impl` under `extension/`, it belongs in the wiring layer instead.
+
 **Design interfaces for the technology *space*, not the implementation in front of you.** The interface is a contract every backend will have to satisfy — SQL, key-value (DynamoDB, Bigtable), document, message queue, search, RPC, in-memory, mocks. If the contract assumes a capability that some plausible backend can't provide cheaply, you've baked the current impl's strengths into the API.
 
 Common over-constraints to avoid:

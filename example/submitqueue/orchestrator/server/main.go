@@ -41,16 +41,23 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
-	buildnoop "github.com/uber/submitqueue/submitqueue/extension/buildrunner/noop"
+	buildfake "github.com/uber/submitqueue/submitqueue/extension/buildrunner/fake"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
+	cpfake "github.com/uber/submitqueue/submitqueue/extension/changeprovider/fake"
 	githubprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/github"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/all"
+	conflictfake "github.com/uber/submitqueue/submitqueue/extension/conflict/fake"
+	"github.com/uber/submitqueue/submitqueue/extension/conflict/none"
 	"github.com/uber/submitqueue/submitqueue/extension/mergechecker"
+	mcfake "github.com/uber/submitqueue/submitqueue/extension/mergechecker/fake"
 	githubchecker "github.com/uber/submitqueue/submitqueue/extension/mergechecker/github"
 	"github.com/uber/submitqueue/submitqueue/extension/pusher"
+	pushfake "github.com/uber/submitqueue/submitqueue/extension/pusher/fake"
 	gitpusher "github.com/uber/submitqueue/submitqueue/extension/pusher/git"
 	"github.com/uber/submitqueue/submitqueue/extension/scorer"
+	"github.com/uber/submitqueue/submitqueue/extension/scorer/composite"
+	scorerfake "github.com/uber/submitqueue/submitqueue/extension/scorer/fake"
 	"github.com/uber/submitqueue/submitqueue/extension/scorer/heuristic"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
@@ -219,30 +226,26 @@ func run() error {
 		errs.AlwaysRetryableProcessor,
 	)
 
-	// Create merge checker
-	mc, err := newMergeChecker(logger, scope)
+	// Build the per-queue extension registry: each queue resolves to its own
+	// set of extension implementations (scorer, conflict analyzer, …), falling
+	// back to a baseline profile for queues without an explicit entry. This is
+	// the single place queue topology is known; the extension packages stay
+	// queue-agnostic.
+	queues, err := newQueueRegistry(logger, scope)
 	if err != nil {
-		return fmt.Errorf("failed to create merge checker: %w", err)
+		return fmt.Errorf("failed to build queue registry: %w", err)
 	}
 
-	// Create change provider
-	cp, err := newChangeProvider(logger, scope)
-	if err != nil {
-		return fmt.Errorf("failed to create change provider: %w", err)
-	}
-
-	// Create pusher
-	psh, err := newPusher(logger, scope)
-	if err != nil {
-		return fmt.Errorf("failed to create pusher: %w", err)
-	}
-
-	// Create build runner. The noop runner is the pass-through default
-	// (every build immediately succeeds) until a real backend is wired in.
-	br := buildnoop.New()
+	// Per-extension factories all resolve against the registry by queue name.
+	mcf := mergeCheckerFactory{queues}
+	cpf := changeProviderFactory{queues}
+	pshf := pusherFactory{queues}
+	brf := buildRunnerFactory{queues}
+	scf := scorerFactory{queues}
+	cof := analyzerFactory{queues}
 
 	// Register controllers
-	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, registry, mc, cp, psh, br, cnt, store)
+	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, registry, mcf, cpf, pshf, brf, scf, cof, cnt, store)
 	if err != nil {
 		return err
 	}
@@ -428,40 +431,87 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 //	                                     │        │                       │
 //	                                     └────────┴───────────────────────┘
 
-// Static per-extension factories for the example server: every queue resolves
-// to the single configured implementation. A real deployment would vary the
-// returned implementation by cfg.QueueName (and inject per-queue config).
-type changeProviderFactory struct{ impl changeprovider.ChangeProvider }
-
-func (f changeProviderFactory) For(changeprovider.Config) (changeprovider.ChangeProvider, error) {
-	return f.impl, nil
+// TODO(wiring abstraction): queueExtensions + queueRegistry currently live here
+// as example-local wiring. Evaluate promoting them into a defined abstraction in
+// the submitqueue domain layer (e.g. submitqueue/core/...) — NOT extension/* and
+// NOT cross-domain core/, since the bundle names submitqueue-specific extensions.
+// Do this only when a trigger lands: (1) a second consumer needs the same wiring
+// (a real prod server, or an e2e harness building real per-queue profiles);
+// (2) per-queue config becomes data-driven (build profiles from queueconfig.Store
+// /queues.yaml instead of Go literals); or (3) the bundle grows lifecycle
+// (Close/health/hot-reload). Until then, keep it local — extracting now adds
+// indirection for one hardcoded consumer. See also queueconfig.Store, which holds
+// the per-queue *data* half; a promoted Registry would build impl bundles from it.
+//
+// queueExtensions is the full set of extension implementations for a single
+// queue. Grouping them per queue (rather than per extension) lets the wiring
+// read as "for this queue, here are its scorer, analyzer, pusher, …", and lets
+// a queue profile start from a baseline and override only what differs.
+type queueExtensions struct {
+	mergeChecker   mergechecker.MergeChecker
+	changeProvider changeprovider.ChangeProvider
+	pusher         pusher.Pusher
+	buildRunner    buildrunner.BuildRunner
+	scorer         scorer.Scorer
+	analyzer       conflict.Analyzer
 }
 
-type mergeCheckerFactory struct{ impl mergechecker.MergeChecker }
-
-func (f mergeCheckerFactory) For(mergechecker.Config) (mergechecker.MergeChecker, error) {
-	return f.impl, nil
+// queueRegistry maps a queue name to its extensions, falling back to a default
+// profile for queues without an explicit entry. It is the single place that
+// knows the queue topology; the extension packages remain queue-agnostic.
+type queueRegistry struct {
+	byQueue map[string]queueExtensions
+	def     queueExtensions
 }
 
-type pusherFactory struct{ impl pusher.Pusher }
-
-func (f pusherFactory) For(pusher.Config) (pusher.Pusher, error) { return f.impl, nil }
-
-type buildRunnerFactory struct{ impl buildrunner.BuildRunner }
-
-func (f buildRunnerFactory) For(buildrunner.Config) (buildrunner.BuildRunner, error) {
-	return f.impl, nil
+// get returns the extensions for the named queue, or the default profile.
+func (r queueRegistry) get(queue string) queueExtensions {
+	if e, ok := r.byQueue[queue]; ok {
+		return e
+	}
+	return r.def
 }
 
-type scorerFactory struct{ impl scorer.Scorer }
+// The per-extension factories below are thin adapters: each satisfies its
+// extension's Factory contract by resolving the queue's profile from the
+// registry. All routing logic lives here in the wiring layer.
+type mergeCheckerFactory struct{ reg queueRegistry }
 
-func (f scorerFactory) For(scorer.Config) (scorer.Scorer, error) { return f.impl, nil }
+func (f mergeCheckerFactory) For(cfg mergechecker.Config) (mergechecker.MergeChecker, error) {
+	return f.reg.get(cfg.QueueName).mergeChecker, nil
+}
 
-type conflictFactory struct{ impl conflict.Analyzer }
+type changeProviderFactory struct{ reg queueRegistry }
 
-func (f conflictFactory) For(conflict.Config) (conflict.Analyzer, error) { return f.impl, nil }
+func (f changeProviderFactory) For(cfg changeprovider.Config) (changeprovider.ChangeProvider, error) {
+	return f.reg.get(cfg.QueueName).changeProvider, nil
+}
 
-func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cp changeprovider.ChangeProvider, psh pusher.Pusher, br buildrunner.BuildRunner, cnt counter.Counter, store storage.Storage) (int, error) {
+type pusherFactory struct{ reg queueRegistry }
+
+func (f pusherFactory) For(cfg pusher.Config) (pusher.Pusher, error) {
+	return f.reg.get(cfg.QueueName).pusher, nil
+}
+
+type buildRunnerFactory struct{ reg queueRegistry }
+
+func (f buildRunnerFactory) For(cfg buildrunner.Config) (buildrunner.BuildRunner, error) {
+	return f.reg.get(cfg.QueueName).buildRunner, nil
+}
+
+type scorerFactory struct{ reg queueRegistry }
+
+func (f scorerFactory) For(cfg scorer.Config) (scorer.Scorer, error) {
+	return f.reg.get(cfg.QueueName).scorer, nil
+}
+
+type analyzerFactory struct{ reg queueRegistry }
+
+func (f analyzerFactory) For(cfg conflict.Config) (conflict.Analyzer, error) {
+	return f.reg.get(cfg.QueueName).analyzer, nil
+}
+
+func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mcf mergechecker.Factory, cpf changeprovider.Factory, pshf pusher.Factory, brf buildrunner.Factory, scf scorer.Factory, cof conflict.Factory, cnt counter.Counter, store storage.Storage) (int, error) {
 	var count int
 	requestController := start.NewController(
 		logger,
@@ -494,8 +544,8 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		scope,
 		store,
 		registry,
-		mergeCheckerFactory{impl: mc},
-		changeProviderFactory{impl: cp},
+		mcf,
+		cpf,
 		consumer.TopicKeyValidate,
 		"orchestrator-validate",
 	)
@@ -510,9 +560,7 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		registry,
 		cnt,
 		store,
-		// TODO: replace with a real conflict analyzer (e.g. one backed by
-		// Tango target analysis). The "all" stub serializes the queue.
-		conflictFactory{impl: all.New()},
+		cof,
 		consumer.TopicKeyBatch,
 		"orchestrator-batch",
 	)
@@ -525,20 +573,7 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		logger,
 		scope,
 		store,
-		// Heuristic scorer: bucket the batch by total lines changed across all of
-		// its changes — larger batches are likelier to fail to land.
-		scorerFactory{impl: heuristic.New(
-			[]heuristic.Bucket{
-				{Min: 0, Max: 50, Score: 0.95},
-				{Min: 51, Max: 250, Score: 0.80},
-				{Min: 251, Max: 1000, Score: 0.60},
-				{Min: 1001, Max: 1<<31 - 1, Score: 0.40},
-			},
-			func(_ context.Context, changes entity.BatchChanges) (int, error) {
-				return changes.TotalLinesChanged(), nil
-			},
-			scope.SubScope("scorer"),
-		)},
+		scf,
 		registry,
 		consumer.TopicKeyScore,
 		"orchestrator-score",
@@ -565,7 +600,7 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		logger,
 		scope,
 		store,
-		buildRunnerFactory{impl: br},
+		brf,
 		registry,
 		consumer.TopicKeyBuild,
 		"orchestrator-build",
@@ -579,7 +614,7 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		logger,
 		scope,
 		store,
-		buildRunnerFactory{impl: br},
+		brf,
 		registry,
 		consumer.TopicKeyBuildSignal,
 		"orchestrator-buildsignal",
@@ -594,7 +629,7 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		scope,
 		store,
 		registry,
-		pusherFactory{impl: psh},
+		pshf,
 		consumer.TopicKeyMerge,
 		"orchestrator-merge",
 	)
@@ -685,18 +720,24 @@ func parseTimeout(envVal string, defaultVal time.Duration) time.Duration {
 	return defaultVal
 }
 
-// newMergeChecker creates a MergeChecker for GitHub (github.com).
-// Configured via GITHUB_BASE_URL, GITHUB_TOKEN, and GITHUB_TIMEOUT environment variables.
+// newMergeChecker creates a MergeChecker for GitHub (github.com), configured via
+// GITHUB_BASE_URL, GITHUB_TOKEN, and GITHUB_TIMEOUT. When GITHUB_TOKEN is unset
+// it returns the fake merge checker (every change mergeable unless a URI carries
+// a failure marker, see mergechecker/fake), keeping the example runnable without
+// GitHub and letting e2e tests drive unmergeable scenarios via request payloads.
 func newMergeChecker(logger *zap.Logger, scope tally.Scope) (mergechecker.MergeChecker, error) {
+	if os.Getenv("GITHUB_TOKEN") == "" {
+		logger.Warn("GITHUB_TOKEN not set; using fake merge checker (every change mergeable unless URI-marked)")
+		return mcfake.New(), nil
+	}
+
 	client, err := httpclient.NewClient(getEnv("GITHUB_BASE_URL", "https://api.github.com"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to build GitHub HTTP client: %w", err)
 	}
 
-	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
-		ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
-		client.Transport = &oauth2.Transport{Source: ts, Base: client.Transport}
-	}
+	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: os.Getenv("GITHUB_TOKEN")})
+	client.Transport = &oauth2.Transport{Source: ts, Base: client.Transport}
 
 	client.Timeout = parseTimeout(os.Getenv("GITHUB_TIMEOUT"), 30*time.Second)
 
@@ -707,18 +748,23 @@ func newMergeChecker(logger *zap.Logger, scope tally.Scope) (mergechecker.MergeC
 	}), nil
 }
 
-// newChangeProvider creates a ChangeProvider for GitHub (github.com).
-// Configured via GITHUB_BASE_URL, GITHUB_TOKEN, and GITHUB_TIMEOUT environment variables.
+// newChangeProvider creates a ChangeProvider for GitHub (github.com), configured
+// via GITHUB_BASE_URL, GITHUB_TOKEN, and GITHUB_TIMEOUT. When GITHUB_TOKEN is
+// unset it returns the fake change provider (one empty ChangeInfo per URI unless
+// a URI carries a failure marker, see changeprovider/fake).
 func newChangeProvider(logger *zap.Logger, scope tally.Scope) (changeprovider.ChangeProvider, error) {
+	if os.Getenv("GITHUB_TOKEN") == "" {
+		logger.Warn("GITHUB_TOKEN not set; using fake change provider (empty change info unless URI-marked)")
+		return cpfake.New(), nil
+	}
+
 	client, err := httpclient.NewClient(getEnv("GITHUB_BASE_URL", "https://api.github.com"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to build GitHub HTTP client: %w", err)
 	}
 
-	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
-		ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
-		client.Transport = &oauth2.Transport{Source: ts, Base: client.Transport}
-	}
+	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: os.Getenv("GITHUB_TOKEN")})
+	client.Transport = &oauth2.Transport{Source: ts, Base: client.Transport}
 
 	client.Timeout = parseTimeout(os.Getenv("GITHUB_TIMEOUT"), 30*time.Second)
 
@@ -729,19 +775,16 @@ func newChangeProvider(logger *zap.Logger, scope tally.Scope) (changeprovider.Ch
 	}), nil
 }
 
-// newPusher creates a git-backed Pusher bound to the configured checkout
-// path, remote, and target branch. Configured via PUSHER_CHECKOUT_PATH,
-// PUSHER_REMOTE (default "origin"), and PUSHER_TARGET (default "main").
-//
-// If PUSHER_CHECKOUT_PATH is not set the orchestrator falls back to a
-// no-op pusher that errors when invoked. This keeps the example server
-// runnable in environments that don't exercise the merge controller
-// (e.g. ping-only integration tests, local dev without a git checkout).
+// newPusher creates a git-backed Pusher bound to the configured checkout path,
+// remote, and target branch (PUSHER_CHECKOUT_PATH, PUSHER_REMOTE default
+// "origin", PUSHER_TARGET default "main"). When PUSHER_CHECKOUT_PATH is unset it
+// returns the fake pusher (commits succeed unless a change URI carries a failure
+// marker, see pusher/fake), keeping the example runnable without a git checkout.
 func newPusher(logger *zap.Logger, scope tally.Scope) (pusher.Pusher, error) {
 	checkout := os.Getenv("PUSHER_CHECKOUT_PATH")
 	if checkout == "" {
-		logger.Warn("PUSHER_CHECKOUT_PATH not set; using no-op pusher (merge controller will fail if invoked)")
-		return noopPusher{}, nil
+		logger.Warn("PUSHER_CHECKOUT_PATH not set; using fake pusher (commits succeed unless URI-marked)")
+		return pushfake.New(), nil
 	}
 	return gitpusher.NewPusher(gitpusher.Params{
 		CheckoutPath: checkout,
@@ -752,14 +795,94 @@ func newPusher(logger *zap.Logger, scope tally.Scope) (pusher.Pusher, error) {
 	}), nil
 }
 
-// noopPusher is a fallback Pusher used when PUSHER_CHECKOUT_PATH is not
-// configured. It returns an error on every Push so the merge controller
-// (which treats non-ErrConflict errors as transient and nacks the message)
-// will not silently report success. It exists so the orchestrator can
-// still start up — and serve Ping / accept enqueues — in environments
-// that don't run the merge step.
-type noopPusher struct{}
+// newQueueRegistry builds the per-queue extension profiles for the example.
+// Edge integrations (merge checker, change provider, pusher) and the build
+// runner form a shared baseline; each per-queue profile starts from that
+// baseline and overrides only the extensions that differ — here the scorer and
+// conflict analyzer. Queues without an explicit profile fall back to the
+// baseline. This is the one place queue topology lives; extension packages stay
+// queue-agnostic.
+func newQueueRegistry(logger *zap.Logger, scope tally.Scope) (queueRegistry, error) {
+	mc, err := newMergeChecker(logger, scope)
+	if err != nil {
+		return queueRegistry{}, fmt.Errorf("failed to create merge checker: %w", err)
+	}
+	cp, err := newChangeProvider(logger, scope)
+	if err != nil {
+		return queueRegistry{}, fmt.Errorf("failed to create change provider: %w", err)
+	}
+	psh, err := newPusher(logger, scope)
+	if err != nil {
+		return queueRegistry{}, fmt.Errorf("failed to create pusher: %w", err)
+	}
 
-func (noopPusher) Push(_ context.Context, _ []entity.Change) (pusher.Result, error) {
-	return pusher.Result{}, fmt.Errorf("pusher not configured: set PUSHER_CHECKOUT_PATH to enable pushing")
+	// batchLines buckets a batch by total lines changed across all its changes —
+	// larger batches are likelier to fail to land.
+	batchLines := func(_ context.Context, changes entity.BatchChanges) (int, error) {
+		return changes.TotalLinesChanged(), nil
+	}
+
+	// Baseline profile: shared edge integrations + a fake build runner (every
+	// build succeeds unless a head URI carries a failure marker), plus permissive
+	// defaults for scorer and conflict. The build runner instance is shared by
+	// the build and buildsignal controllers (same profile, same instance) so a
+	// build's recorded outcome survives across their separate factory lookups.
+	//
+	// The scorer is wrapped by scorerfake so a change URI carrying
+	// "sq-fake=score-error" forces a scoring error end-to-end; it is a pure
+	// passthrough otherwise. The analyzer is wrapped by conflictfake with a nil
+	// predicate (passthrough) — swap the predicate (e.g. conflictfake.FailAlways)
+	// on a queue to exercise the analyzer error path, as e2e-conflict-error-queue
+	// below does.
+	base := queueExtensions{
+		mergeChecker:   mc,
+		changeProvider: cp,
+		pusher:         psh,
+		buildRunner:    buildfake.New(),
+		scorer: scorerfake.New(heuristic.New(
+			[]heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.5}},
+			batchLines, scope.SubScope("scorer.default"),
+		)),
+		// TODO: replace the delegate with a real analyzer (e.g. Tango target
+		// analysis). "all" serializes the queue conservatively.
+		analyzer: conflictfake.New(all.New(), nil),
+	}
+
+	// test-queue: bucketed heuristic scorer; conservative (serialized) conflicts
+	// inherited from the baseline.
+	testQueue := base
+	testQueue.scorer = scorerfake.New(heuristic.New(
+		[]heuristic.Bucket{
+			{Min: 0, Max: 1, Score: 0.95},
+			{Min: 2, Max: 5, Score: 0.80},
+			{Min: 6, Max: 20, Score: 0.60},
+			{Min: 21, Max: 1<<31 - 1, Score: 0.40},
+		},
+		batchLines, scope.SubScope("scorer.test-queue"),
+	))
+
+	// e2e-test-queue: composite scorer; no conflicts (maximum parallelism).
+	e2eQueue := base
+	e2eQueue.analyzer = conflictfake.New(none.New(), nil)
+	e2eQueue.scorer = scorerfake.New(composite.New(
+		map[string]scorer.Scorer{
+			"size": heuristic.New([]heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.8}}, batchLines, scope),
+			"flat": heuristic.New([]heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.6}}, batchLines, scope),
+		},
+		composite.Avg, scope.SubScope("scorer.e2e-test-queue"),
+	))
+
+	// e2e-conflict-error-queue: every conflict analysis fails, exercising the
+	// analyzer error path. Scorer/edge integrations inherit the baseline.
+	conflictErrQueue := base
+	conflictErrQueue.analyzer = conflictfake.New(all.New(), conflictfake.FailAlways)
+
+	return queueRegistry{
+		def: base,
+		byQueue: map[string]queueExtensions{
+			"test-queue":               testQueue,
+			"e2e-test-queue":           e2eQueue,
+			"e2e-conflict-error-queue": conflictErrQueue,
+		},
+	}, nil
 }
