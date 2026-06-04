@@ -14,3 +14,21 @@
 
 // Package extension holds Stovepipe-specific extension implementations.
 package extension
+
+import (
+	"context"
+
+	"github.com/uber/submitqueue/stovepipe/entity"
+)
+
+// ChangeIngester subscribes to change events from a VCS source
+// and dispatches them for processing. The source and VCS are
+// implementation details left to the injected backend.
+type ChangeIngester interface {
+	Start(ctx context.Context) error
+}
+
+// ChangeHandler processes a single change received from the ingester.
+type ChangeHandler interface {
+	IngestChange(ctx context.Context, info entity.ChangeInfo) error
+}
