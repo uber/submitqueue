@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "buildkite.go",
         "client.go",
-        "config.go",
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/extension/buildrunner/buildkite",
     visibility = ["//visibility:public"],
