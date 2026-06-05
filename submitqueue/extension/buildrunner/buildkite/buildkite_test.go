@@ -22,6 +22,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"go.uber.org/zap"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/core/httpclient"
@@ -37,8 +39,9 @@ func newTestRunner(t *testing.T, handler http.Handler) *runner {
 	c, err := httpclient.NewClient(srv.URL)
 	require.NoError(t, err)
 	return newRunner(
-		Config{QueueName: "my-queue"},
+		buildrunner.Config{QueueName: "my-queue"},
 		&client{httpClient: c},
+		zap.NewNop().Sugar(),
 	)
 }
 
@@ -48,29 +51,17 @@ func buildJSON(number int, state, webURL string) []byte {
 	return b
 }
 
-// emptyListHandler responds to a metadata-filtered list query with an empty
-// array (no build matches yet), failing the test on any other request.
-func emptyListHandler(t *testing.T) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
-		if req.Method != http.MethodGet {
-			t.Fatalf("unexpected %s request; expected only a metadata list lookup", req.Method)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("[]"))
-	}
-}
-
 // --- Interface / constructor ---
 
 func TestNew_ImplementsInterface(t *testing.T) {
-	r, err := NewBuildRunner(Params{})
+	r, err := NewBuildRunner(Params{Logger: zap.NewNop().Sugar()})
 	require.NoError(t, err)
 	var _ buildrunner.BuildRunner = r
 }
 
 // --- Trigger ---
 
-func TestTrigger_SubmitsCorrectPayloadToBuildkite(t *testing.T) {
+func TestTrigger_SubmitsCorrectPayloadAndReturnsBuildkiteNumber(t *testing.T) {
 	var capturedMethod string
 	var capturedBody []byte
 
@@ -86,7 +77,7 @@ func TestTrigger_SubmitsCorrectPayloadToBuildkite(t *testing.T) {
 
 	id, err := r.Trigger(context.Background(), base, head, nil)
 	require.NoError(t, err)
-	assert.NotEmpty(t, id.ID)
+	assert.Equal(t, encodeBuildNumber(42), id.ID)
 
 	assert.Equal(t, http.MethodPost, capturedMethod)
 
@@ -95,14 +86,6 @@ func TestTrigger_SubmitsCorrectPayloadToBuildkite(t *testing.T) {
 	assert.Equal(t, `["github://org/repo/pull/1/aaa111"]`, req.Env[EnvKeyBaseURIs])
 	assert.Equal(t, `["github://org/repo/pull/2/bbb222"]`, req.Env[EnvKeyHeadURIs])
 	assert.Equal(t, "my-queue", req.Env[EnvKeyQueue])
-	// The SQ build ID is stamped into metadata so Status/Cancel can recover the
-	// build after a cache loss.
-	assert.Equal(t, id.ID, req.MetaData[metaKeyBuildID])
-
-	// After a successful submit the ref is cached, so Status uses getBuild.
-	ref, ok := r.lookupRef(id.ID)
-	require.True(t, ok)
-	assert.Equal(t, encodeBuildRef(42), ref)
 }
 
 func TestTrigger_EmptyBase_ProducesJSONArray(t *testing.T) {
@@ -189,91 +172,33 @@ func TestStatus_ReturnsLiveBuildkiteState(t *testing.T) {
 		_, _ = w.Write(buildJSON(7, "running", "https://buildkite.com/test-org/my-pipeline/builds/7"))
 	}))
 
-	// Inject ref directly (simulates successful Trigger).
-	r.storeRef("some-id", encodeBuildRef(7))
-
-	status, meta, err := r.Status(context.Background(), entity.BuildID{ID: "some-id"})
+	status, meta, err := r.Status(context.Background(), entity.BuildID{ID: encodeBuildNumber(7)})
 	require.NoError(t, err)
 	assert.Equal(t, entity.BuildStatusRunning, status)
 	assert.Equal(t, "https://buildkite.com/test-org/my-pipeline/builds/7", meta["url"])
-}
-
-func TestStatus_RecoversRefAfterCacheMiss(t *testing.T) {
-	var listed bool
-	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		// Cache miss path: Status lists builds filtered by the stamped metadata.
-		require.Equal(t, http.MethodGet, req.Method)
-		assert.Contains(t, req.URL.RawQuery, "meta_data")
-		listed = true
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"number":7,"state":"running","web_url":"https://bk/7"}]`))
-	}))
-
-	// refs is empty (e.g. after a restart); Status must recover the ref.
-	status, meta, err := r.Status(context.Background(), entity.BuildID{ID: "bk-lost"})
-	require.NoError(t, err)
-	assert.True(t, listed)
-	assert.Equal(t, entity.BuildStatusRunning, status)
-	assert.Equal(t, "https://bk/7", meta["url"])
-
-	// The recovered ref is now cached for subsequent calls.
-	ref, ok := r.lookupRef("bk-lost")
-	require.True(t, ok)
-	assert.Equal(t, encodeBuildRef(7), ref)
 }
 
 func TestStatus_BuildkiteNotFound(t *testing.T) {
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
-	r.storeRef("some-id", encodeBuildRef(99))
 
-	_, _, err := r.Status(context.Background(), entity.BuildID{ID: "some-id"})
+	_, _, err := r.Status(context.Background(), entity.BuildID{ID: encodeBuildNumber(99)})
 	require.Error(t, err)
 }
 
 // --- Cancel ---
 
-func TestCancel_CallsBuildkiteWhenRefKnown(t *testing.T) {
+func TestCancel_CallsBuildkite(t *testing.T) {
 	var cancelCalled bool
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		cancelCalled = true
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(buildJSON(5, "canceled", ""))
 	}))
-	r.storeRef("some-id", encodeBuildRef(5))
 
-	require.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: "some-id"}))
+	require.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: encodeBuildNumber(5)}))
 	assert.True(t, cancelCalled)
-}
-
-func TestCancel_RecoversRefAfterCacheMiss(t *testing.T) {
-	var listed, cancelled bool
-	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		switch req.Method {
-		case http.MethodGet:
-			listed = true
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`[{"number":5,"state":"running","web_url":""}]`))
-		case http.MethodPut:
-			cancelled = true
-			w.WriteHeader(http.StatusOK)
-		default:
-			t.Fatalf("unexpected %s request", req.Method)
-		}
-	}))
-
-	// refs is empty; Cancel must recover the ref from metadata first.
-	require.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: "bk-lost"}))
-	assert.True(t, listed, "cancel should look up the build by metadata on cache miss")
-	assert.True(t, cancelled, "cancel should reach Buildkite after recovering the ref")
-}
-
-func TestCancel_NoopWhenBuildNotFound(t *testing.T) {
-	// The metadata lookup finds nothing, so there is nothing to cancel.
-	r := newTestRunner(t, emptyListHandler(t))
-
-	require.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: "some-id"}))
 }
 
 func TestCancel_AlreadyTerminal_Noop(t *testing.T) {
@@ -281,37 +206,26 @@ func TestCancel_AlreadyTerminal_Noop(t *testing.T) {
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 	}))
-	r.storeRef("some-id", encodeBuildRef(5))
 
-	require.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: "some-id"}))
+	require.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: encodeBuildNumber(5)}))
 }
 
 // --- Internal helpers ---
 
-func TestEncodeParseBuildRef_RoundTrip(t *testing.T) {
+func TestEncodeParseBuildNumber_RoundTrip(t *testing.T) {
 	for _, n := range []int{1, 9999, 0} {
-		ref := encodeBuildRef(n)
-		got, err := parseBuildRef(ref)
+		id := encodeBuildNumber(n)
+		got, err := parseBuildNumber(id)
 		require.NoError(t, err)
 		assert.Equal(t, n, got)
 	}
 }
 
-func TestParseBuildRef_Invalid(t *testing.T) {
-	for _, ref := range []string{"", "notanumber", "org/pipeline/1"} {
-		t.Run(ref, func(t *testing.T) {
-			_, err := parseBuildRef(ref)
+func TestParseBuildNumber_Invalid(t *testing.T) {
+	for _, id := range []string{"", "notanumber", "org/pipeline/1"} {
+		t.Run(id, func(t *testing.T) {
+			_, err := parseBuildNumber(id)
 			require.Error(t, err)
 		})
-	}
-}
-
-func TestNewBuildID_Unique(t *testing.T) {
-	seen := make(map[string]bool)
-	for i := 0; i < 100; i++ {
-		id := newBuildID()
-		assert.NotEmpty(t, id)
-		assert.False(t, seen[id], "duplicate build ID: %s", id)
-		seen[id] = true
 	}
 }

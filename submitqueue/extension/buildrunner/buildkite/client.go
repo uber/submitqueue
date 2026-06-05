@@ -21,19 +21,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 )
 
 // client is a thin wrapper around the Buildkite REST endpoints that BuildRunner
-// needs: create, get, list-by-metadata, and cancel a build.
+// needs: create, get, and cancel a build.
 type client struct {
 	httpClient *http.Client
 }
 
 type createBuildRequest struct {
-	Message  string            `json:"message"`
-	Env      map[string]string `json:"env"`
-	MetaData map[string]string `json:"meta_data,omitempty"`
+	Message string            `json:"message"`
+	Env     map[string]string `json:"env"`
 }
 
 // buildResponse is the subset of fields the runner needs from a Buildkite
@@ -63,22 +61,6 @@ func (c *client) getBuild(ctx context.Context, number int) (buildResponse, error
 		return buildResponse{}, err
 	}
 	return build, nil
-}
-
-// findBuildByMeta returns the build in the pipeline whose meta_data[key] equals
-// value. ok is false when no such build exists yet. This lets Status and Cancel
-// recover the Buildkite reference from Buildkite itself (the source of truth)
-// when the in-memory cache misses, e.g. after a process restart.
-func (c *client) findBuildByMeta(ctx context.Context, key, value string) (build buildResponse, ok bool, err error) {
-	u := fmt.Sprintf("/builds?meta_data[%s]=%s", url.QueryEscape(key), url.QueryEscape(value))
-	var builds []buildResponse
-	if err := c.do(ctx, http.MethodGet, u, nil, &builds); err != nil {
-		return buildResponse{}, false, err
-	}
-	if len(builds) == 0 {
-		return buildResponse{}, false, nil
-	}
-	return builds[0], true, nil
 }
 
 // cancelBuild requests cancellation. Returns nil when the build is already

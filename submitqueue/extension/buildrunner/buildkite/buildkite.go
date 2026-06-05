@@ -15,17 +15,9 @@
 // Package buildkite implements buildrunner.BuildRunner backed by the Buildkite
 // CI platform.
 //
-// Trigger calls the Buildkite API directly: it generates a build ID, stamps it
-// into the build's metadata, and returns the ID on success. Cancel calls the
-// Buildkite API directly as well. Both propagate errors to the caller, which can
-// nack and retry via the normal queue consumer path.
-//
-// The in-memory map from SQ build ID to Buildkite reference is a pure latency
-// cache, not the source of truth. Because every build carries its SQ build ID
-// in Buildkite metadata, Status and Cancel re-derive the reference with a
-// metadata-filtered build lookup whenever the cache misses — including after a
-// process restart that empties the map. Nothing about a build's identity lives
-// only in memory.
+// Trigger calls the Buildkite API to create the build and returns the Buildkite
+// build number as the build ID. Status and Cancel parse the number directly
+// from the build ID — no local state is required.
 //
 // The Buildkite build receives base and head change URIs as JSON-encoded
 // environment variables (SQ_BASE_URIS, SQ_HEAD_URIS, SQ_QUEUE). The pipeline
@@ -35,13 +27,12 @@ package buildkite
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
-	"sync"
+
+	"go.uber.org/zap"
 
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
@@ -64,25 +55,11 @@ const (
 	EnvKeyQueue = "SQ_QUEUE"
 )
 
-// metaKeyBuildID is the Buildkite build-metadata key under which the SQ build
-// ID is stored at create time. Status and Cancel filter builds by this key to
-// recover the Buildkite reference when the in-memory cache misses (e.g. after
-// a restart), which keeps that cache from being a durable source of truth.
-const metaKeyBuildID = "sq_build_id"
-
 // runner implements buildrunner.BuildRunner.
 type runner struct {
-	cfg    Config
+	cfg    buildrunner.Config
 	client *client
-
-	// mu protects refs.
-	mu sync.RWMutex
-	// refs maps our internal build ID to the encoded Buildkite reference
-	// ("{number}"). It is a pure latency cache: the durable record is the SQ
-	// build ID stamped into the Buildkite build's metadata, so a missing entry
-	// is recovered via the client's metadata lookup rather than treated as
-	// authoritative.
-	refs map[string]string
+	logger *zap.SugaredLogger
 }
 
 var _ buildrunner.BuildRunner = (*runner)(nil)
@@ -91,12 +68,14 @@ var _ buildrunner.BuildRunner = (*runner)(nil)
 // responsible for configuring HTTPClient with the base URL (via
 // httpclient.BaseURLTransport) and auth (via an Authorization-header transport).
 type Params struct {
-	// Config holds Buildkite-specific configuration for a single queue.
-	Config Config
+	// Config holds the per-queue identity for this BuildRunner.
+	Config buildrunner.Config
 	// HTTPClient is a pre-configured HTTP client. The caller is responsible
 	// for the base URL (via httpclient.BaseURLTransport) and auth (via a
 	// transport layer). If nil, http.DefaultClient is used.
 	HTTPClient *http.Client
+	// Logger is the structured logger.
+	Logger *zap.SugaredLogger
 }
 
 // NewBuildRunner constructs a Buildkite-backed BuildRunner bound to a single
@@ -110,23 +89,22 @@ func NewBuildRunner(params Params) (buildrunner.BuildRunner, error) {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	return newRunner(params.Config, &client{httpClient: httpClient}), nil
+	return newRunner(params.Config, &client{httpClient: httpClient}, params.Logger.Named("buildkite_buildrunner")), nil
 }
 
 // newRunner constructs a runner. Used by NewBuildRunner and by tests.
-func newRunner(cfg Config, c *client) *runner {
+func newRunner(cfg buildrunner.Config, c *client, logger *zap.SugaredLogger) *runner {
 	return &runner{
 		cfg:    cfg,
 		client: c,
-		refs:   make(map[string]string),
+		logger: logger,
 	}
 }
 
-// Trigger generates a unique build ID, calls the Buildkite API to create the
-// build, caches the Buildkite reference, and returns the build ID. Errors are
-// propagated to the caller so the queue consumer can nack and retry.
+// Trigger calls the Buildkite API to create the build and returns the Buildkite
+// build number as the build ID. Errors are propagated to the caller so the
+// queue consumer can nack and retry.
 func (r *runner) Trigger(ctx context.Context, base, head []entity.Change, _ entity.BuildMetadata) (entity.BuildID, error) {
-	id := newBuildID()
 	baseJSON, _ := json.Marshal(flattenURIs(base))
 	headJSON, _ := json.Marshal(flattenURIs(head))
 
@@ -137,9 +115,6 @@ func (r *runner) Trigger(ctx context.Context, base, head []entity.Change, _ enti
 			EnvKeyHeadURIs: string(headJSON),
 			EnvKeyQueue:    r.cfg.QueueName,
 		},
-		MetaData: map[string]string{
-			metaKeyBuildID: id,
-		},
 	}
 
 	resp, err := r.client.createBuild(ctx, req)
@@ -147,102 +122,43 @@ func (r *runner) Trigger(ctx context.Context, base, head []entity.Change, _ enti
 		return entity.BuildID{}, fmt.Errorf("buildkite: create build: %w", err)
 	}
 
-	r.storeRef(id, encodeBuildRef(resp.Number))
-	return entity.BuildID{ID: id}, nil
+	r.logger.Debugw("triggered Buildkite build",
+		"buildkite_number", resp.Number,
+	)
+	return entity.BuildID{ID: encodeBuildNumber(resp.Number)}, nil
 }
 
-// Status returns the current build status. On a cache miss it recovers the
-// Buildkite reference by filtering builds on the stamped SQ build ID, so it
-// works after a restart that emptied the in-memory cache. Returns Accepted when
-// the build is not yet visible in Buildkite.
-//
-// On a cache hit, Status fetches the live state and returns it with the build
-// URL in BuildMetadata["url"].
+// Status fetches the current state of the build from Buildkite and returns it
+// with the build URL in BuildMetadata["url"].
 func (r *runner) Status(ctx context.Context, buildID entity.BuildID) (entity.BuildStatus, entity.BuildMetadata, error) {
-	ref, cached := r.lookupRef(buildID.ID)
+	number, err := parseBuildNumber(buildID.ID)
+	if err != nil {
+		return entity.BuildStatusUnknown, nil, fmt.Errorf("buildkite: malformed build ID: %w", err)
+	}
 
-	var resp buildResponse
-	switch {
-	case cached:
-		number, err := parseBuildRef(ref)
-		if err != nil {
-			return entity.BuildStatusUnknown, nil, fmt.Errorf("buildkite: malformed build ref: %w", err)
-		}
-		resp, err = r.client.getBuild(ctx, number)
-		if err != nil {
-			return entity.BuildStatusUnknown, nil, fmt.Errorf("buildkite: get build: %w", err)
-		}
-	default:
-		found, exists, err := r.client.findBuildByMeta(ctx, metaKeyBuildID, buildID.ID)
-		if err != nil {
-			return entity.BuildStatusUnknown, nil, fmt.Errorf("buildkite: find build: %w", err)
-		}
-		if !exists {
-			// Not yet visible in Buildkite — e.g. after a restart where the cache
-			// was lost but the build was created before. Report Accepted so the
-			// buildsignal poll loop keeps waiting.
-			return entity.BuildStatusAccepted, nil, nil
-		}
-		ref = encodeBuildRef(found.Number)
-		r.storeRef(buildID.ID, ref)
-		resp = found
+	resp, err := r.client.getBuild(ctx, number)
+	if err != nil {
+		return entity.BuildStatusUnknown, nil, fmt.Errorf("buildkite: get build: %w", err)
 	}
 
 	return mapState(resp.State), entity.BuildMetadata{"url": resp.WebURL}, nil
 }
 
-// Cancel calls the Buildkite API to cancel the build. On a cache miss it
-// recovers the reference from the stamped metadata. If no build carries this
-// build ID (not yet submitted), Cancel is a no-op.
+// Cancel calls the Buildkite API to cancel the build. A no-op on already-terminal
+// builds (Buildkite returns 422 for those).
 func (r *runner) Cancel(ctx context.Context, buildID entity.BuildID) error {
-	ref, cached := r.lookupRef(buildID.ID)
-	if !cached {
-		found, exists, err := r.client.findBuildByMeta(ctx, metaKeyBuildID, buildID.ID)
-		if err != nil {
-			return fmt.Errorf("buildkite: find build for cancel: %w", err)
-		}
-		if !exists {
-			return nil
-		}
-		ref = encodeBuildRef(found.Number)
-		r.storeRef(buildID.ID, ref)
-	}
-
-	number, err := parseBuildRef(ref)
+	number, err := parseBuildNumber(buildID.ID)
 	if err != nil {
-		return fmt.Errorf("buildkite: malformed build ref: %w", err)
+		return fmt.Errorf("buildkite: malformed build ID: %w", err)
 	}
 
 	if err := r.client.cancelBuild(ctx, number); err != nil {
 		return fmt.Errorf("buildkite: cancel build: %w", err)
 	}
+	r.logger.Debugw("cancelled Buildkite build",
+		"buildkite_number", number,
+	)
 	return nil
-}
-
-// lookupRef returns the cached Buildkite reference for a build ID.
-func (r *runner) lookupRef(buildID string) (string, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	ref, ok := r.refs[buildID]
-	return ref, ok
-}
-
-// storeRef caches the Buildkite reference for a build ID.
-func (r *runner) storeRef(buildID, ref string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.refs[buildID] = ref
-}
-
-// newBuildID returns a cryptographically random hex string prefixed with "bk-"
-// that uniquely identifies a build within this runner implementation.
-func newBuildID() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		// crypto/rand.Read only fails when the OS entropy source is broken.
-		panic(fmt.Sprintf("buildkite: crypto/rand.Read failed: %v", err))
-	}
-	return "bk-" + hex.EncodeToString(b)
 }
 
 // flattenURIs concatenates the URI lists from all changes into a single slice.
@@ -254,17 +170,16 @@ func flattenURIs(changes []entity.Change) []string {
 	return uris
 }
 
-// encodeBuildRef encodes a Buildkite build number as the internal reference
-// string stored in r.refs.
-func encodeBuildRef(number int) string {
+// encodeBuildNumber encodes a Buildkite build number as the SQ build ID.
+func encodeBuildNumber(number int) string {
 	return strconv.Itoa(number)
 }
 
-// parseBuildRef is the inverse of encodeBuildRef.
-func parseBuildRef(ref string) (int, error) {
-	n, err := strconv.Atoi(ref)
+// parseBuildNumber is the inverse of encodeBuildNumber.
+func parseBuildNumber(id string) (int, error) {
+	n, err := strconv.Atoi(id)
 	if err != nil {
-		return 0, fmt.Errorf("invalid build ref %q", ref)
+		return 0, fmt.Errorf("invalid build ID %q", id)
 	}
 	return n, nil
 }

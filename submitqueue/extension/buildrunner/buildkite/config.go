@@ -13,11 +13,3 @@
 // limitations under the License.
 
 package buildkite
-
-// Config holds the per-queue settings for a Buildkite BuildRunner.
-type Config struct {
-	// QueueName is the SQ queue this runner serves. Passed as SQ_QUEUE in
-	// the build environment so the pipeline script can select queue-specific
-	// test targets.
-	QueueName string
-}
