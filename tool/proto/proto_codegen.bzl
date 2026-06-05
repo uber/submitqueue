@@ -24,13 +24,13 @@ def _go_proto_generated_files_impl(ctx):
         args.add(opt)
     args.add("--plugin=protoc-gen-go={}".format(ctx.executable._protoc_gen_go.path))
     args.add("--plugin=protoc-gen-go-grpc={}".format(ctx.executable._protoc_gen_go_grpc.path))
-    args.add("--plugin=protoc-gen-yarpc-go={}".format(ctx.executable._protoc_gen_yarpc_go.path))
+    args.add("--plugin=protoc-gen-yarpc-go-v2={}".format(ctx.executable._protoc_gen_yarpc_go.path))
     args.add("--go_out={}".format(outputs[0].dirname))
     args.add("--go_opt=paths=source_relative")
     args.add("--go-grpc_out={}".format(outputs[0].dirname))
     args.add("--go-grpc_opt=paths=source_relative")
-    args.add("--yarpc-go_out={}".format(outputs[0].dirname))
-    args.add("--yarpc-go_opt=paths=source_relative")
+    args.add("--yarpc-go-v2_out={}".format(outputs[0].dirname))
+    args.add("--yarpc-go-v2_opt=paths=source_relative")
     args.add("--proto_path={}".format(src.dirname))
     args.add(src.path)
 
@@ -75,7 +75,7 @@ go_proto_generated_files = rule(
             cfg = "exec",
         ),
         "_protoc_gen_yarpc_go": attr.label(
-            default = "@org_uber_go_yarpc//encoding/protobuf/protoc-gen-yarpc-go",
+            default = "@org_uber_go_yarpc//encoding/protobuf/protoc-gen-yarpc-go-v2",
             executable = True,
             cfg = "exec",
         ),
