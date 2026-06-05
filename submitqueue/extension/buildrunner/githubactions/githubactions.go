@@ -75,49 +75,6 @@ type Params struct {
 	ExtraInputs map[string]string
 }
 
-// FactoryParams holds shared dependencies for a GitHub Actions BuildRunner
-// factory. For each queue, For returns a runner with Config.QueueName set to
-// that queue.
-type FactoryParams struct {
-	HTTPClient  *http.Client
-	Logger      *zap.SugaredLogger
-	Owner       string
-	Repo        string
-	WorkflowID  string
-	Ref         string
-	ExtraInputs map[string]string
-}
-
-type factory struct {
-	params FactoryParams
-}
-
-var _ buildrunner.Factory = (*factory)(nil)
-
-// NewFactory constructs a queue-aware GitHub Actions BuildRunner factory.
-func NewFactory(params FactoryParams) (buildrunner.Factory, error) {
-	if err := validateConfig(params.HTTPClient, params.Logger, params.Owner, params.Repo, params.WorkflowID); err != nil {
-		return nil, err
-	}
-	if params.Ref == "" {
-		params.Ref = defaultRef
-	}
-	return &factory{params: params}, nil
-}
-
-func (f *factory) For(cfg buildrunner.Config) (buildrunner.BuildRunner, error) {
-	return NewBuildRunner(Params{
-		Config:      cfg,
-		HTTPClient:  f.params.HTTPClient,
-		Logger:      f.params.Logger,
-		Owner:       f.params.Owner,
-		Repo:        f.params.Repo,
-		WorkflowID:  f.params.WorkflowID,
-		Ref:         f.params.Ref,
-		ExtraInputs: f.params.ExtraInputs,
-	})
-}
-
 type runner struct {
 	cfg         buildrunner.Config
 	ref         string

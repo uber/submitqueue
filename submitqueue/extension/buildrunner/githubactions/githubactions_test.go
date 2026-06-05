@@ -61,8 +61,9 @@ func TestNewBuildRunner_ValidatesConfig(t *testing.T) {
 	assert.Contains(t, err.Error(), "http client is required")
 }
 
-func TestNewFactory_ForBuildsQueueBoundRunner(t *testing.T) {
-	f, err := NewFactory(FactoryParams{
+func TestNewBuildRunner_BindsQueueConfigAndExtraInputs(t *testing.T) {
+	br, err := NewBuildRunner(Params{
+		Config:      buildrunner.Config{QueueName: "queue-a"},
 		HTTPClient:  http.DefaultClient,
 		Logger:      zap.NewNop().Sugar(),
 		Owner:       "uber",
@@ -73,8 +74,6 @@ func TestNewFactory_ForBuildsQueueBoundRunner(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	br, err := f.For(buildrunner.Config{QueueName: "queue-a"})
-	require.NoError(t, err)
 	r := br.(*runner)
 	assert.Equal(t, "queue-a", r.cfg.QueueName)
 	assert.Equal(t, "ubuntu-latest", r.extraInputs["runner"])

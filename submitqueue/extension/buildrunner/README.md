@@ -13,7 +13,7 @@ See [`doc/rfc/submitqueue/build-runner.md`](../../../doc/rfc/submitqueue/build-r
 
 ## Backends
 
-- `noop`: local-development backend that immediately succeeds every build.
+- `fake`: local-development backend; every build succeeds unless a head change URI carries a failure marker (see `fake` package doc).
 - `githubactions`: proof-of-architecture backend that dispatches a GitHub
   Actions workflow. See [`githubactions/README.md`](githubactions/README.md)
   for the workflow inputs and example orchestrator environment variables.
