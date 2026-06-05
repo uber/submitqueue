@@ -28,12 +28,16 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally/v4"
+	genericerrs "github.com/uber/submitqueue/core/errs/generic"
+	mysqlerrs "github.com/uber/submitqueue/core/errs/mysql"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
+	extqueue "github.com/uber/submitqueue/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	yamlqueueconfig "github.com/uber/submitqueue/submitqueue/extension/queueconfig/yaml"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/submitqueue/gateway/controller"
+	logctrl "github.com/uber/submitqueue/submitqueue/gateway/controller/log"
 	pb "github.com/uber/submitqueue/submitqueue/gateway/protopb"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -174,12 +178,29 @@ func run() error {
 		zap.String("queue_dsn", queueDSN),
 	)
 
-	// Build a publish-only topic registry: gateway only feeds the start of the
-	// orchestrator pipeline (TopicKeyStart) and the cancel topic (TopicKeyCancel).
-	// No subscription is configured because the gateway never consumes from the queue.
+	// Stable subscriber name for the log-topic consumer. Falls back to a
+	// time-seeded name when HOSTNAME is unset (e.g. local runs).
+	subscriberName := os.Getenv("HOSTNAME")
+	if subscriberName == "" {
+		subscriberName = fmt.Sprintf("gateway-%d", time.Now().Unix())
+	}
+
+	// Build the topic registry. The gateway publishes to the start of the
+	// orchestrator pipeline (TopicKeyStart) and the cancel topic (TopicKeyCancel) —
+	// both publish-only. It additionally consumes the log topic (TopicKeyLog):
+	// the gateway is the sole writer of the request log, persisting entries that
+	// the orchestrator publishes there.
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{Key: consumer.TopicKeyStart, Name: "start", Queue: mysqlQueue},
 		{Key: consumer.TopicKeyCancel, Name: "cancel", Queue: mysqlQueue},
+		{
+			Key:   consumer.TopicKeyLog,
+			Name:  "log",
+			Queue: mysqlQueue,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "gateway-log",
+			),
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create topic registry: %w", err)
@@ -201,7 +222,8 @@ func run() error {
 
 	// Initialize storage from the shared app database connection. The land
 	// controller writes to this store directly; cancel/status use the request
-	// log store directly.
+	// log store directly. The log consumer (registered below) is the sole
+	// persister of request log entries published by the orchestrator.
 	store, err := mysqlstorage.NewStorage(appDB, scope.SubScope("storage"))
 	if err != nil {
 		return fmt.Errorf("failed to create storage: %w", err)
@@ -236,6 +258,29 @@ func run() error {
 	// Register reflection service for debugging with grpcurl
 	reflection.Register(grpcServer)
 
+	// Create the queue consumer and register the log controller. The gateway is
+	// the sole persister of the request log: the orchestrator publishes entries
+	// to the log topic and this consumer writes them to storage.
+	logConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
+		// Storage (extension/storage/mysql) and queue (extension/messagequeue/mysql)
+		// both run on the same MySQL driver, so a single classifier covers
+		// errors surfaced from either backend.
+		genericerrs.Classifier,
+		mysqlerrs.Classifier,
+	)
+
+	logController := logctrl.NewController(logger.Sugar(), scope, store, consumer.TopicKeyLog, "gateway-log")
+	if err := logConsumer.Register(logController); err != nil {
+		return fmt.Errorf("failed to register log controller: %w", err)
+	}
+
+	if err := logConsumer.Start(ctx); err != nil {
+		// The error can also be a result of a context cancellation due to SIGINT or SIGTERM.
+		// This is expected, just propagate it.
+		return fmt.Errorf("failed to start log consumer: %w", err)
+	}
+	logger.Info("log consumer started")
+
 	// Listen on configurable port
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -257,6 +302,8 @@ func run() error {
 
 	// Wait for interrupt signal or server critical error
 	// If interruption is signaled, gracefully stop the server
+	// If the server exits with an error, cancel the context to signal the consumer
+	// After this, stop the consumer
 	// If an error happens during shutdown, return the actual error, not the context cancellation error
 	var serverErr error
 	select {
@@ -273,10 +320,25 @@ func run() error {
 		serverErr = <-serverErrCh
 	case serverErr = <-serverErrCh:
 		fmt.Println("Shutting down gateway server due to critical GRPC server error...")
+
+		// Cancel the context to signal cancellation to the queue consumer
+		cancel()
 	}
 
 	if serverErr != nil {
-		err = fmt.Errorf("GRPC server exited with error: %w", serverErr)
+		serverErr = fmt.Errorf("GRPC server exited with error: %w", serverErr)
+	}
+
+	// Stop the consumer with a 30s timeout; by this time the context should be
+	// cancelled and the processing threads may already be exiting; recollect them.
+	errStop := logConsumer.Stop(30000)
+	if errStop != nil {
+		errStop = fmt.Errorf("failed to stop consumer: %w", errStop)
+	}
+
+	if errStop != nil || serverErr != nil {
+		// Override context cancellation error with the shutdown error
+		err = errors.Join(errStop, serverErr)
 	}
 
 	return err

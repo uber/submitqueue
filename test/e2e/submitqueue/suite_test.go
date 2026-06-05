@@ -27,10 +27,12 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"github.com/uber/submitqueue/submitqueue/entity"
 	gatewaypb "github.com/uber/submitqueue/submitqueue/gateway/protopb"
 	orchestratorpb "github.com/uber/submitqueue/submitqueue/orchestrator/protopb"
 	"github.com/uber/submitqueue/test/testutil"
@@ -166,6 +168,44 @@ func (s *E2EIntegrationSuite) TestLandRequest_SinglePR() {
 	require.NoError(s.T(), err, "Land request failed")
 	require.NotEmpty(s.T(), resp.Sqid, "SQID should not be empty")
 	s.log.Logf("Land request (single PR) succeeded: sqid=%s", resp.Sqid)
+}
+
+// TestLandRequest_PersistsStartedLogViaGatewayConsumer verifies the request-log
+// ownership invariant end-to-end: the orchestrator only *publishes* request log
+// entries to the log topic (it never writes the request log itself), and the
+// gateway's log consumer drains that topic and persists them to storage.
+//
+// We observe this through the gateway Status RPC: immediately after Land the
+// status is "accepted" (the gateway's synchronous direct write), and once the
+// orchestrator's start controller publishes "started" to the log topic, the
+// gateway consumer persists it and Status advances to "started". Seeing
+// "started" therefore proves the publish→consume→persist path works across both
+// services.
+func (s *E2EIntegrationSuite) TestLandRequest_PersistsStartedLogViaGatewayConsumer() {
+	t := s.T()
+
+	landResp, err := s.gatewayClient.Land(s.ctx, &gatewaypb.LandRequest{
+		Queue:    "e2e-test-queue",
+		Change:   &gatewaypb.Change{Uris: []string{"github://uber/e2e-startlog/pull/4242/abcdef0123456789abcdef0123456789abcdef01"}},
+		Strategy: gatewaypb.Strategy_REBASE,
+	})
+	require.NoError(t, err, "Land request failed")
+	require.NotEmpty(t, landResp.Sqid, "SQID should not be empty")
+	sqid := landResp.Sqid
+	s.log.Logf("Land succeeded: sqid=%s; waiting for gateway consumer to persist 'started'", sqid)
+
+	require.Eventually(t, func() bool {
+		resp, statusErr := s.gatewayClient.Status(s.ctx, &gatewaypb.StatusRequest{Sqid: sqid})
+		if statusErr != nil {
+			s.log.Logf("Status(%s) not ready yet: %v", sqid, statusErr)
+			return false
+		}
+		s.log.Logf("Status(%s) = %q", sqid, resp.Status)
+		return resp.Status == string(entity.RequestStatusStarted)
+	}, 30*time.Second, 500*time.Millisecond,
+		"request %s should reach status %q via the gateway log consumer", sqid, entity.RequestStatusStarted)
+
+	s.log.Logf("Gateway consumer persisted orchestrator-published 'started' log for sqid=%s", sqid)
 }
 
 // TestCancelRequest_InvalidSqid verifies the gateway rejects an empty sqid

@@ -68,7 +68,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/cancel"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/conclude"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/dlq"
-	logctrl "github.com/uber/submitqueue/submitqueue/orchestrator/controller/log"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/merge"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/score"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/speculate"
@@ -382,7 +381,6 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 		{consumer.TopicKeyBuildSignal, "buildsignal", "orchestrator-buildsignal"},
 		{consumer.TopicKeyMerge, "merge", "orchestrator-merge"},
 		{consumer.TopicKeyConclude, "conclude", "orchestrator-conclude"},
-		{consumer.TopicKeyLog, "log", "orchestrator-log"},
 	}
 
 	configs := make([]consumer.TopicConfig, 0, 2*len(primaryTopics))
@@ -418,6 +416,16 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Subscription: dlqSub,
 		})
 	}
+
+	// Publish-only: the orchestrator emits request log entries to the log
+	// topic but never persists them. The gateway is the sole consumer that
+	// writes the request log to storage, so the orchestrator registers no
+	// consuming subscription (and therefore no log DLQ) for this topic.
+	configs = append(configs, consumer.TopicConfig{
+		Key:   consumer.TopicKeyLog,
+		Name:  "log",
+		Queue: q,
+	})
 
 	return consumer.NewTopicRegistry(configs)
 }
@@ -651,26 +659,13 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 	}
 	count++
 
-	logController := logctrl.NewController(
-		logger,
-		scope,
-		store,
-		consumer.TopicKeyLog,
-		"orchestrator-log",
-	)
-	if err := c.Register(logController); err != nil {
-		return count, fmt.Errorf("failed to register log controller: %w", err)
-	}
-	count++
-
 	return count, nil
 }
 
 // registerDLQControllers creates one DLQ reconciler per primary stage and
 // registers them with the DLQ consumer. Each reconciler drives the affected
 // request or batch into a terminal Error/Failed state so the gateway stops
-// reporting it as stuck-in-progress. The log DLQ is a metric-only no-op (log
-// entries are observability, not pipeline state).
+// reporting it as stuck-in-progress.
 func registerDLQControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, store storage.Storage) (int, error) {
 	dlqScope := scope.SubScope("dlq")
 	dlqRegs := []struct {
@@ -687,7 +682,6 @@ func registerDLQControllers(c consumer.Consumer, logger *zap.SugaredLogger, scop
 		{"buildsignal_dlq", dlq.NewDLQBuildSignalController(logger, dlqScope, store, dlq.TopicKey(consumer.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")},
 		{"merge_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(consumer.TopicKeyMerge), "orchestrator-merge-dlq")},
 		{"conclude_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(consumer.TopicKeyConclude), "orchestrator-conclude-dlq")},
-		{"log_dlq", dlq.NewDLQLogController(logger, dlqScope, dlq.TopicKey(consumer.TopicKeyLog), "orchestrator-log-dlq")},
 	}
 	var count int
 	for _, reg := range dlqRegs {

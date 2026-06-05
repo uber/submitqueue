@@ -35,7 +35,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
 
-	return NewController(logger, scope, store, consumer.TopicKeyLog, "orchestrator-log")
+	return NewController(logger, scope, store, consumer.TopicKeyLog, "gateway-log")
 }
 
 func TestController_Process(t *testing.T) {

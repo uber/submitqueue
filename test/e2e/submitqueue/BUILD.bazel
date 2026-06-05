@@ -17,6 +17,7 @@ go_test(
         "integration",
     ],
     deps = [
+        "//submitqueue/entity",
         "//submitqueue/gateway/protopb",
         "//submitqueue/orchestrator/protopb",
         "//test/testutil",

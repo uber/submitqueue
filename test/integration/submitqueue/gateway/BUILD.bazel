@@ -16,11 +16,17 @@ go_test(
         "integration",
     ],
     deps = [
+        "//extension/messagequeue/mysql",
+        "//submitqueue/core/consumer",
+        "//submitqueue/core/request",
+        "//submitqueue/entity",
         "//submitqueue/gateway/protopb",
         "//test/testutil",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",
+        "@com_github_uber_go_tally_v4//:tally",
         "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_zap//:zap",
     ],
 )
