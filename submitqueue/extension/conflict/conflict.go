@@ -56,15 +56,21 @@ type Conflict struct {
 // already in flight, so the speculation layer can decide which batches can
 // safely advance in parallel.
 type Analyzer interface {
-	// Analyze returns the subset of inFlight batches that conflict with
-	// batch, each paired with the type of conflict detected. An empty
-	// result means batch does not conflict with any in-flight batch.
+	// Analyze returns the subset of inFlight batches that conflict with the
+	// candidate, each paired with the type of conflict detected. An empty
+	// result means the candidate does not conflict with any in-flight batch.
 	//
-	// Callers should not include batch itself in inFlight; terminal batches
-	// should be filtered out before calling. A non-nil error indicates the
-	// analysis itself failed (infrastructure issue) and should be treated as
-	// retryable by the caller.
-	Analyze(ctx context.Context, batch entity.Batch, inFlight []entity.Batch) ([]Conflict, error)
+	// Inputs are entity.BatchChanges — each batch's flattened change facts
+	// (URIs + provider details), assembled by the caller — so the analyzer
+	// sees the actual changes rather than just batch IDs, and can reason about
+	// changed targets/files without touching storage. A conflict references the
+	// in-flight batch by its BatchChanges.BatchID.
+	//
+	// Callers should not include the candidate itself in inFlight; terminal
+	// batches should be filtered out before calling. A non-nil error indicates
+	// the analysis itself failed (infrastructure issue) and should be treated
+	// as retryable by the caller.
+	Analyze(ctx context.Context, candidate entity.BatchChanges, inFlight []entity.BatchChanges) ([]Conflict, error)
 }
 
 // Config carries the per-queue identity handed to a Factory. The system knows

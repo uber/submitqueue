@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//core/metrics",
         "//entity/messagequeue",
+        "//submitqueue/core/batchchanges",
         "//submitqueue/core/consumer",
         "//submitqueue/core/request",
         "//submitqueue/entity",

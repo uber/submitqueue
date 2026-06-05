@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/extension/conflict/fake",
     visibility = ["//visibility:public"],
     deps = [
+        "//submitqueue/core/fakemarker",
         "//submitqueue/entity",
         "//submitqueue/extension/conflict",
     ],

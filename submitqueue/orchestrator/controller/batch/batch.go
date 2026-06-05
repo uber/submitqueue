@@ -23,6 +23,7 @@ import (
 	"github.com/uber/submitqueue/core/metrics"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	"github.com/uber/submitqueue/extension/counter"
+	"github.com/uber/submitqueue/submitqueue/core/batchchanges"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
@@ -154,7 +155,25 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		metrics.NamedCounter(c.metricsScope, opName, "conflict_analyzer_errors", 1)
 		return fmt.Errorf("failed to build conflict analyzer for queue=%s: %w", batch.Queue, err)
 	}
-	conflicts, err := analyzer.Analyze(ctx, batch, activeBatches)
+	// Resolve the candidate's and each in-flight batch's changes so the analyzer
+	// sees the actual change set (URIs + provider details), not just batch IDs.
+	// This keeps the storage traversal in the controller, out of the extension.
+	candidateChanges, err := batchchanges.Collect(ctx, c.store, batch)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
+		return fmt.Errorf("failed to collect changes for batchID=%s: %w", batch.ID, err)
+	}
+	inFlightChanges := make([]entity.BatchChanges, 0, len(activeBatches))
+	for _, ab := range activeBatches {
+		abChanges, err := batchchanges.Collect(ctx, c.store, ab)
+		if err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
+			return fmt.Errorf("failed to collect changes for in-flight batchID=%s: %w", ab.ID, err)
+		}
+		inFlightChanges = append(inFlightChanges, abChanges)
+	}
+
+	conflicts, err := analyzer.Analyze(ctx, candidateChanges, inFlightChanges)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "conflict_analyzer_errors", 1)
 		return fmt.Errorf("failed to analyze conflicts for batchID=%s: %w", batch.ID, err)

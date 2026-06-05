@@ -14,12 +14,14 @@
 
 // Package fake provides a conflict.Analyzer that decorates an existing analyzer:
 // it delegates to the wrapped implementation for the happy path, but injects an
-// error when a caller-supplied predicate matches.
+// error when a candidate change URI carries a failure marker of the form
+// "sq-fake=<token>":
 //
-// Unlike the change-facing fakes, Analyze operates on batches — it never sees
-// change URIs — so error injection is predicate-driven rather than marker-driven.
-// To exercise the analyzer's error path in e2e, route a queue to an analyzer
-// built with a failing predicate (e.g. FailAlways) via the queue wiring. It is
+//	sq-fake=conflict-error -> non-nil error (the delegate is not called)
+//
+// Because the analyzer now receives the candidate's changes (entity.BatchChanges
+// with URIs), the same URI-marker convention used by the other fakes works here —
+// a land request can drive the conflict-analysis error path end-to-end. It is
 // intended for examples and tests only, never production.
 package fake
 
@@ -27,36 +29,43 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/uber/submitqueue/submitqueue/core/fakemarker"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 )
 
-// FailOn decides whether Analyze should inject an error for the given inputs.
-type FailOn func(batch entity.Batch, inFlight []entity.Batch) bool
+// Recognized marker token. See the package doc for the convention.
+const tokenError = "conflict-error"
 
-// FailAlways is a FailOn that injects an error on every Analyze call.
-func FailAlways(entity.Batch, []entity.Batch) bool { return true }
-
-// analyzerFake decorates a delegate Analyzer, injecting an error when failOn
-// reports true.
+// analyzerFake decorates a delegate Analyzer, injecting an error when a
+// candidate change URI carries the failure marker.
 type analyzerFake struct {
 	delegate conflict.Analyzer
-	failOn   FailOn
 }
 
 // New returns a conflict.Analyzer that delegates to the given analyzer but
-// returns an error when failOn reports true for the call's inputs. The delegate
-// is the existing analyzer implementation to wrap (e.g. all or none). A nil
-// failOn never injects an error (pure passthrough).
-func New(delegate conflict.Analyzer, failOn FailOn) conflict.Analyzer {
-	return analyzerFake{delegate: delegate, failOn: failOn}
+// returns an error when a candidate change URI carries the
+// "sq-fake=conflict-error" marker. The delegate is the existing analyzer
+// implementation to wrap (e.g. all or none).
+func New(delegate conflict.Analyzer) conflict.Analyzer {
+	return analyzerFake{delegate: delegate}
 }
 
-// Analyze returns an error when failOn reports true; otherwise it delegates to
-// the wrapped analyzer.
-func (a analyzerFake) Analyze(ctx context.Context, batch entity.Batch, inFlight []entity.Batch) ([]conflict.Conflict, error) {
-	if a.failOn != nil && a.failOn(batch, inFlight) {
-		return nil, fmt.Errorf("fake: injected analyze error for batch %q", batch.ID)
+// Analyze returns an error when a candidate change URI carries the failure
+// marker; otherwise it delegates to the wrapped analyzer.
+func (a analyzerFake) Analyze(ctx context.Context, candidate entity.BatchChanges, inFlight []entity.BatchChanges) ([]conflict.Conflict, error) {
+	if markerToken(candidate) == tokenError {
+		return nil, fmt.Errorf("fake: marked conflict-analysis error for batch %q", candidate.BatchID)
 	}
-	return a.delegate.Analyze(ctx, batch, inFlight)
+	return a.delegate.Analyze(ctx, candidate, inFlight)
+}
+
+// markerToken returns the marker token embedded in the first candidate change
+// URI that carries one, or "" if none do.
+func markerToken(changes entity.BatchChanges) string {
+	uris := make([]string, 0, len(changes.Changes))
+	for _, c := range changes.Changes {
+		uris = append(uris, c.URI)
+	}
+	return fakemarker.Token(uris)
 }

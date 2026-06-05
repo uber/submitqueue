@@ -830,10 +830,9 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope) (queueRegistry, err
 	//
 	// The scorer is wrapped by scorerfake so a change URI carrying
 	// "sq-fake=score-error" forces a scoring error end-to-end; it is a pure
-	// passthrough otherwise. The analyzer is wrapped by conflictfake with a nil
-	// predicate (passthrough) — swap the predicate (e.g. conflictfake.FailAlways)
-	// on a queue to exercise the analyzer error path, as e2e-conflict-error-queue
-	// below does.
+	// passthrough otherwise. The analyzer is wrapped by conflictfake so a change
+	// URI carrying "sq-fake=conflict-error" forces a conflict-analysis error;
+	// passthrough otherwise.
 	base := queueExtensions{
 		mergeChecker:   mc,
 		changeProvider: cp,
@@ -845,7 +844,7 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope) (queueRegistry, err
 		)),
 		// TODO: replace the delegate with a real analyzer (e.g. Tango target
 		// analysis). "all" serializes the queue conservatively.
-		analyzer: conflictfake.New(all.New(), nil),
+		analyzer: conflictfake.New(all.New()),
 	}
 
 	// test-queue: bucketed heuristic scorer; conservative (serialized) conflicts
@@ -863,7 +862,7 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope) (queueRegistry, err
 
 	// e2e-test-queue: composite scorer; no conflicts (maximum parallelism).
 	e2eQueue := base
-	e2eQueue.analyzer = conflictfake.New(none.New(), nil)
+	e2eQueue.analyzer = conflictfake.New(none.New())
 	e2eQueue.scorer = scorerfake.New(composite.New(
 		map[string]scorer.Scorer{
 			"size": heuristic.New([]heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.8}}, batchLines, scope),
@@ -872,17 +871,11 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope) (queueRegistry, err
 		composite.Avg, scope.SubScope("scorer.e2e-test-queue"),
 	))
 
-	// e2e-conflict-error-queue: every conflict analysis fails, exercising the
-	// analyzer error path. Scorer/edge integrations inherit the baseline.
-	conflictErrQueue := base
-	conflictErrQueue.analyzer = conflictfake.New(all.New(), conflictfake.FailAlways)
-
 	return queueRegistry{
 		def: base,
 		byQueue: map[string]queueExtensions{
-			"test-queue":               testQueue,
-			"e2e-test-queue":           e2eQueue,
-			"e2e-conflict-error-queue": conflictErrQueue,
+			"test-queue":     testQueue,
+			"e2e-test-queue": e2eQueue,
 		},
 	}, nil
 }

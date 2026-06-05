@@ -57,6 +57,14 @@ func newSequentialCounter(ctrl *gomock.Controller) *countermock.MockCounter {
 	return cnt
 }
 
+// anyChangeStore returns a change store that answers any GetByURI with no
+// records — enough for batchchanges.Collect to assemble empty change facts.
+func anyChangeStore(ctrl *gomock.Controller) *storagemock.MockChangeStore {
+	cs := storagemock.NewMockChangeStore(ctrl)
+	cs.EXPECT().GetByURI(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	return cs
+}
+
 // testRequest returns a standard test request for batch tests.
 func testRequest() entity.Request {
 	return entity.Request{
@@ -86,6 +94,11 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 		mockReqStore.EXPECT().Get(gomock.Any(), req.ID).Return(req, nil).AnyTimes()
 		mockReqStore.EXPECT().UpdateState(gomock.Any(), req.ID, req.Version, req.Version+1, entity.RequestStateBatched).Return(nil).AnyTimes()
 
+		// The batch controller assembles the candidate's changes via
+		// batchchanges.Collect, which reads the change store per URI.
+		mockChangeStore := storagemock.NewMockChangeStore(ctrl)
+		mockChangeStore.EXPECT().GetByURI(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
 		mockBatchDependentStore := storagemock.NewMockBatchDependentStore(ctrl)
 		mockBatchDependentStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
@@ -93,6 +106,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 		mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
 		mockStorage.EXPECT().GetBatchDependentStore().Return(mockBatchDependentStore).AnyTimes()
 		mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
+		mockStorage.EXPECT().GetChangeStore().Return(mockChangeStore).AnyTimes()
 	}
 
 	if analyzer == nil {
@@ -237,13 +251,14 @@ func TestController_Process_WithDependencies(t *testing.T) {
 	mockBatchDependentStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
-	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil).AnyTimes()
 	mockReqStore.EXPECT().UpdateState(gomock.Any(), request.ID, request.Version, request.Version+1, entity.RequestStateBatched).Return(nil)
 
 	mockStorage := storagemock.NewMockStorage(ctrl)
 	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
 	mockStorage.EXPECT().GetBatchDependentStore().Return(mockBatchDependentStore).AnyTimes()
 	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
+	mockStorage.EXPECT().GetChangeStore().Return(anyChangeStore(ctrl)).AnyTimes()
 
 	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), mockStorage, nil, nil)
 
@@ -281,13 +296,14 @@ func TestController_Process_AnalyzerSelectsSubset(t *testing.T) {
 	mockBatchDependentStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
-	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil).AnyTimes()
 	mockReqStore.EXPECT().UpdateState(gomock.Any(), request.ID, request.Version, request.Version+1, entity.RequestStateBatched).Return(nil)
 
 	mockStorage := storagemock.NewMockStorage(ctrl)
 	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
 	mockStorage.EXPECT().GetBatchDependentStore().Return(mockBatchDependentStore).AnyTimes()
 	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
+	mockStorage.EXPECT().GetChangeStore().Return(anyChangeStore(ctrl)).AnyTimes()
 
 	// Analyzer returns duplicate Conflict entries for the same batch (different
 	// conflict types) to prove the controller dedupes by BatchID.
@@ -317,11 +333,12 @@ func TestController_Process_AnalyzerFailure(t *testing.T) {
 	mockBatchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "test-queue", gomock.Any()).Return(nil, nil)
 
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
-	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil).AnyTimes()
 
 	mockStorage := storagemock.NewMockStorage(ctrl)
 	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
 	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
+	mockStorage.EXPECT().GetChangeStore().Return(anyChangeStore(ctrl)).AnyTimes()
 
 	analyzer := conflictmock.NewMockAnalyzer(ctrl)
 	analyzer.EXPECT().Analyze(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("analyzer down"))
@@ -372,7 +389,7 @@ func TestController_Process_HaltedShortCircuit(t *testing.T) {
 			// Batch store with no EXPECTs — must not be queried.
 			mockBatchStore := storagemock.NewMockBatchStore(ctrl)
 			mockReqStore := storagemock.NewMockRequestStore(ctrl)
-			mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+			mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil).AnyTimes()
 			// No UpdateState expected — gomock fails if called.
 
 			mockStorage := storagemock.NewMockStorage(ctrl)
@@ -419,7 +436,7 @@ func TestController_Process_CASLostToCancel(t *testing.T) {
 	mockBatchDependentStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
-	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil).AnyTimes()
 	mockReqStore.EXPECT().UpdateState(
 		gomock.Any(), request.ID, request.Version, request.Version+1, entity.RequestStateBatched,
 	).Return(fmt.Errorf("cas: %w", storage.ErrVersionMismatch))
@@ -428,6 +445,7 @@ func TestController_Process_CASLostToCancel(t *testing.T) {
 	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
 	mockStorage.EXPECT().GetBatchDependentStore().Return(mockBatchDependentStore).AnyTimes()
 	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
+	mockStorage.EXPECT().GetChangeStore().Return(anyChangeStore(ctrl)).AnyTimes()
 
 	// Publisher with no EXPECTs — must not be called.
 	mockPub := queuemock.NewMockPublisher(ctrl)
@@ -471,7 +489,7 @@ func TestController_Process_CASUnexpectedErrorPropagates(t *testing.T) {
 
 	casErr := fmt.Errorf("db connection lost")
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
-	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil).AnyTimes()
 	mockReqStore.EXPECT().UpdateState(
 		gomock.Any(), request.ID, request.Version, request.Version+1, entity.RequestStateBatched,
 	).Return(casErr)
@@ -480,6 +498,7 @@ func TestController_Process_CASUnexpectedErrorPropagates(t *testing.T) {
 	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
 	mockStorage.EXPECT().GetBatchDependentStore().Return(mockBatchDependentStore).AnyTimes()
 	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
+	mockStorage.EXPECT().GetChangeStore().Return(anyChangeStore(ctrl)).AnyTimes()
 
 	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), mockStorage, nil, nil)
 
@@ -516,7 +535,7 @@ func TestController_Process_RecoveryAfterPriorCAS(t *testing.T) {
 	mockBatchDependentStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
-	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil).AnyTimes()
 	mockReqStore.EXPECT().UpdateState(
 		gomock.Any(), request.ID, request.Version, request.Version+1, entity.RequestStateBatched,
 	).Return(nil)
@@ -525,6 +544,7 @@ func TestController_Process_RecoveryAfterPriorCAS(t *testing.T) {
 	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
 	mockStorage.EXPECT().GetBatchDependentStore().Return(mockBatchDependentStore).AnyTimes()
 	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
+	mockStorage.EXPECT().GetChangeStore().Return(anyChangeStore(ctrl)).AnyTimes()
 
 	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), mockStorage, nil, nil)
 

@@ -25,11 +25,11 @@ import (
 )
 
 func TestAnalyze(t *testing.T) {
-	batch := entity.Batch{ID: "queueA/batch/10"}
+	candidate := entity.BatchChanges{BatchID: "queueA/batch/10"}
 
 	tests := []struct {
 		name     string
-		inFlight []entity.Batch
+		inFlight []entity.BatchChanges
 		want     []conflict.Conflict
 	}{
 		{
@@ -39,15 +39,15 @@ func TestAnalyze(t *testing.T) {
 		},
 		{
 			name:     "empty in-flight slice yields no conflicts",
-			inFlight: []entity.Batch{},
+			inFlight: []entity.BatchChanges{},
 			want:     nil,
 		},
 		{
 			name: "every in-flight batch is reported in input order",
-			inFlight: []entity.Batch{
-				{ID: "queueA/batch/1"},
-				{ID: "queueA/batch/2"},
-				{ID: "queueA/batch/3"},
+			inFlight: []entity.BatchChanges{
+				{BatchID: "queueA/batch/1"},
+				{BatchID: "queueA/batch/2"},
+				{BatchID: "queueA/batch/3"},
 			},
 			want: []conflict.Conflict{
 				{BatchID: "queueA/batch/1", Type: conflict.ConflictTypeConservative},
@@ -60,7 +60,7 @@ func TestAnalyze(t *testing.T) {
 	a := New()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := a.Analyze(context.Background(), batch, tt.inFlight)
+			got, err := a.Analyze(context.Background(), candidate, tt.inFlight)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})

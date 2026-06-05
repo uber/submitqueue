@@ -9,6 +9,7 @@ go_library(
         "//core/metrics",
         "//entity/messagequeue",
         "//extension/counter",
+        "//submitqueue/core/batchchanges",
         "//submitqueue/core/consumer",
         "//submitqueue/entity",
         "//submitqueue/extension/conflict",

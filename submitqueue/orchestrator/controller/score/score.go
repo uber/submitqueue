@@ -21,6 +21,7 @@ import (
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/metrics"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
+	"github.com/uber/submitqueue/submitqueue/core/batchchanges"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -183,7 +184,7 @@ func (c *Controller) scoreBatch(ctx context.Context, batch entity.Batch) (float6
 		return 0, fmt.Errorf("failed to build scorer for batch %s: %w", batch.ID, err)
 	}
 
-	changes, err := c.collectBatchChanges(ctx, batch)
+	changes, err := batchchanges.Collect(ctx, c.store, batch)
 	if err != nil {
 		return 0, err
 	}
@@ -193,34 +194,6 @@ func (c *Controller) scoreBatch(ctx context.Context, batch entity.Batch) (float6
 		return 0, fmt.Errorf("failed to score batch %s: %w", batch.ID, err)
 	}
 	return score, nil
-}
-
-// collectBatchChanges assembles the normalized entity.BatchChanges for a batch by
-// resolving each request and reading its change records per URI. For each URI it
-// selects the record owned by the request (GetByURI returns rows for all requests
-// that ever claimed the URI) and appends its URI + details.
-func (c *Controller) collectBatchChanges(ctx context.Context, batch entity.Batch) (entity.BatchChanges, error) {
-	changes := entity.BatchChanges{BatchID: batch.ID, Queue: batch.Queue}
-	for _, requestID := range batch.Contains {
-		request, err := c.store.GetRequestStore().Get(ctx, requestID)
-		if err != nil {
-			return entity.BatchChanges{}, fmt.Errorf("failed to get request %s: %w", requestID, err)
-		}
-		for _, uri := range request.Change.URIs {
-			records, err := c.store.GetChangeStore().GetByURI(ctx, batch.Queue, uri)
-			if err != nil {
-				return entity.BatchChanges{}, fmt.Errorf("failed to read change record for request %s uri=%s: %w", requestID, uri, err)
-			}
-			for _, rec := range records {
-				if rec.RequestID != requestID {
-					continue
-				}
-				changes.Changes = append(changes.Changes, entity.ChangeInfo{URI: rec.URI, Details: rec.Details})
-				break
-			}
-		}
-	}
-	return changes, nil
 }
 
 // publish publishes a batch ID to the specified topic key.

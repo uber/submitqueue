@@ -1,0 +1,25 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "batchchanges",
+    srcs = ["batchchanges.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/core/batchchanges",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//submitqueue/entity",
+        "//submitqueue/extension/storage",
+    ],
+)
+
+go_test(
+    name = "batchchanges_test",
+    srcs = ["batchchanges_test.go"],
+    embed = [":batchchanges"],
+    deps = [
+        "//submitqueue/entity",
+        "//submitqueue/extension/storage/mock",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_mock//gomock",
+    ],
+)

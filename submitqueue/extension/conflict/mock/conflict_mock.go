@@ -43,18 +43,18 @@ func (m *MockAnalyzer) EXPECT() *MockAnalyzerMockRecorder {
 }
 
 // Analyze mocks base method.
-func (m *MockAnalyzer) Analyze(ctx context.Context, batch entity.Batch, inFlight []entity.Batch) ([]conflict.Conflict, error) {
+func (m *MockAnalyzer) Analyze(ctx context.Context, candidate entity.BatchChanges, inFlight []entity.BatchChanges) ([]conflict.Conflict, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Analyze", ctx, batch, inFlight)
+	ret := m.ctrl.Call(m, "Analyze", ctx, candidate, inFlight)
 	ret0, _ := ret[0].([]conflict.Conflict)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Analyze indicates an expected call of Analyze.
-func (mr *MockAnalyzerMockRecorder) Analyze(ctx, batch, inFlight any) *gomock.Call {
+func (mr *MockAnalyzerMockRecorder) Analyze(ctx, candidate, inFlight any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Analyze", reflect.TypeOf((*MockAnalyzer)(nil).Analyze), ctx, batch, inFlight)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Analyze", reflect.TypeOf((*MockAnalyzer)(nil).Analyze), ctx, candidate, inFlight)
 }
 
 // MockFactory is a mock of Factory interface.

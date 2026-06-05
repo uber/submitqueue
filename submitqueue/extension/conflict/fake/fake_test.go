@@ -27,42 +27,39 @@ import (
 )
 
 func TestNew_ImplementsInterface(t *testing.T) {
-	var _ conflict.Analyzer = New(none.New(), nil)
+	var _ conflict.Analyzer = New(none.New())
 }
 
-func TestAnalyze_DelegatesWhenNoFailOn(t *testing.T) {
-	// Delegate to "all": one conflict per in-flight batch. nil failOn -> passthrough.
-	a := New(all.New(), nil)
+func batch(id string, uris ...string) entity.BatchChanges {
+	changes := make([]entity.ChangeInfo, 0, len(uris))
+	for _, u := range uris {
+		changes = append(changes, entity.ChangeInfo{URI: u})
+	}
+	return entity.BatchChanges{BatchID: id, Queue: "q", Changes: changes}
+}
+
+func TestAnalyze_DelegatesWhenUnmarked(t *testing.T) {
+	// Delegate to "all": one conflict per in-flight batch.
+	a := New(all.New())
 	got, err := a.Analyze(context.Background(),
-		entity.Batch{ID: "q/batch/1"},
-		[]entity.Batch{{ID: "q/batch/2"}, {ID: "q/batch/3"}})
+		batch("q/batch/1", "github://o/r/pull/1/a"),
+		[]entity.BatchChanges{batch("q/batch/2"), batch("q/batch/3")})
 	require.NoError(t, err)
 	assert.Len(t, got, 2)
 }
 
-func TestAnalyze_DelegatesWhenFailOnFalse(t *testing.T) {
-	a := New(none.New(), func(entity.Batch, []entity.Batch) bool { return false })
-	got, err := a.Analyze(context.Background(), entity.Batch{ID: "q/batch/1"}, nil)
-	require.NoError(t, err)
-	assert.Empty(t, got)
-}
-
-func TestAnalyze_FailAlways(t *testing.T) {
-	a := New(none.New(), FailAlways)
-	_, err := a.Analyze(context.Background(), entity.Batch{ID: "q/batch/1"}, nil)
+func TestAnalyze_ErrorMarker(t *testing.T) {
+	a := New(all.New())
+	_, err := a.Analyze(context.Background(),
+		batch("q/batch/1", "github://o/r/pull/1/a?sq-fake=conflict-error"),
+		[]entity.BatchChanges{batch("q/batch/2")})
 	require.Error(t, err)
 }
 
-func TestAnalyze_FailOnPredicate(t *testing.T) {
-	// Inject an error only for a specific batch ID.
-	a := New(none.New(), func(b entity.Batch, _ []entity.Batch) bool {
-		return b.ID == "q/batch/bad"
-	})
-
-	_, err := a.Analyze(context.Background(), entity.Batch{ID: "q/batch/bad"}, nil)
+func TestAnalyze_MarkerOnSecondURI(t *testing.T) {
+	a := New(none.New())
+	_, err := a.Analyze(context.Background(),
+		batch("q/batch/1", "github://o/r/pull/1/a", "github://o/r/pull/2/b?sq-fake=conflict-error"),
+		nil)
 	require.Error(t, err)
-
-	got, err := a.Analyze(context.Background(), entity.Batch{ID: "q/batch/ok"}, nil)
-	require.NoError(t, err)
-	assert.Empty(t, got)
 }

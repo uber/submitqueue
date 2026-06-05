@@ -36,14 +36,14 @@ func New() conflict.Analyzer {
 
 // Analyze returns one ConflictTypeConservative Conflict per in-flight batch,
 // preserving the input order. Returns an empty slice when inFlight is empty.
-func (analyzer) Analyze(_ context.Context, _ entity.Batch, inFlight []entity.Batch) ([]conflict.Conflict, error) {
+func (analyzer) Analyze(_ context.Context, _ entity.BatchChanges, inFlight []entity.BatchChanges) ([]conflict.Conflict, error) {
 	if len(inFlight) == 0 {
 		return nil, nil
 	}
 	conflicts := make([]conflict.Conflict, len(inFlight))
 	for i, b := range inFlight {
 		conflicts[i] = conflict.Conflict{
-			BatchID: b.ID,
+			BatchID: b.BatchID,
 			Type:    conflict.ConflictTypeConservative,
 		}
 	}
