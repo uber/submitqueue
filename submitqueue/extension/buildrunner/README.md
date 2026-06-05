@@ -10,3 +10,11 @@ See [`doc/rfc/submitqueue/build-runner.md`](../../../doc/rfc/submitqueue/build-r
 2. Map the `base` and `head` change slices onto the backend's build primitives (apply `base`, apply `head`, validate the result).
 3. Map the runner's lifecycle states down to the `BuildStatus` values: `Accepted` (accepted for execution), `Running` (executing), and the terminal `Succeeded` / `Failed` / `Cancelled`.
 4. Implement internal reconnect / retry so transient failures surface as plain errors without blocking the caller.
+
+## Backends
+
+- `noop`: local-development backend that immediately succeeds every build.
+- `githubactions`: proof-of-architecture backend that dispatches a GitHub
+  Actions workflow. See [`githubactions/README.md`](githubactions/README.md)
+  for the workflow inputs and example orchestrator environment variables.
+- `buildkite`: Buildkite-backed backend.

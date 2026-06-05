@@ -1,0 +1,30 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "githubactions",
+    srcs = [
+        "client.go",
+        "githubactions.go",
+    ],
+    importpath = "github.com/uber/submitqueue/submitqueue/extension/buildrunner/githubactions",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//submitqueue/entity",
+        "//submitqueue/extension/buildrunner",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "githubactions_test",
+    srcs = ["githubactions_test.go"],
+    embed = [":githubactions"],
+    deps = [
+        "//core/httpclient",
+        "//submitqueue/entity",
+        "//submitqueue/extension/buildrunner",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
+    ],
+)
