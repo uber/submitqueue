@@ -12,6 +12,7 @@ go_library(
     deps = [
         "//submitqueue/entity",
         "//submitqueue/extension/buildrunner",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -25,5 +26,6 @@ go_test(
         "//submitqueue/extension/buildrunner",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
     ],
 )
