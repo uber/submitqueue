@@ -43,8 +43,6 @@ import (
 	buildnoop "github.com/uber/submitqueue/submitqueue/extension/buildrunner/noop"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	githubprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/github"
-	"github.com/uber/submitqueue/submitqueue/extension/changestore"
-	mysqlchangestore "github.com/uber/submitqueue/submitqueue/extension/changestore/mysql"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/all"
 	"github.com/uber/submitqueue/submitqueue/extension/mergechecker"
@@ -164,8 +162,6 @@ func run() error {
 		return fmt.Errorf("failed to create storage: %w", err)
 	}
 
-	changeStore := mysqlchangestore.NewChangeStore(appDB, scope.SubScope("changestore"))
-
 	// Open queue database connection
 	// Docker Compose healthchecks ensure MySQL is ready before service starts
 	queueDSN := os.Getenv("QUEUE_MYSQL_DSN")
@@ -234,7 +230,7 @@ func run() error {
 	br := buildnoop.New()
 
 	// Register controllers
-	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cp, psh, br, cnt, store, changeStore); err != nil {
+	if err := registerControllers(c, logger.Sugar(), scope, registry, mc, cp, psh, br, cnt, store); err != nil {
 		return err
 	}
 
@@ -460,12 +456,11 @@ type conflictFactory struct{ impl conflict.Analyzer }
 
 func (f conflictFactory) For(conflict.Config) (conflict.Analyzer, error) { return f.impl, nil }
 
-func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cp changeprovider.ChangeProvider, psh pusher.Pusher, br buildrunner.BuildRunner, cnt counter.Counter, store storage.Storage, changeStore changestore.ChangeStore) error {
+func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cp changeprovider.ChangeProvider, psh pusher.Pusher, br buildrunner.BuildRunner, cnt counter.Counter, store storage.Storage) error {
 	requestController := start.NewController(
 		logger,
 		scope,
 		store,
-		changeStore,
 		registry,
 		consumer.TopicKeyStart,
 		"orchestrator-start",
@@ -490,7 +485,6 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		logger,
 		scope,
 		store,
-		changeStore,
 		registry,
 		mergeCheckerFactory{impl: mc},
 		changeProviderFactory{impl: cp},

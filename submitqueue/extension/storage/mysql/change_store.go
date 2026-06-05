@@ -23,7 +23,7 @@ import (
 
 	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/changestore"
+	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
 
 type changeStore struct {
@@ -32,7 +32,7 @@ type changeStore struct {
 }
 
 // NewChangeStore creates a new MySQL-backed ChangeStore.
-func NewChangeStore(db *sql.DB, scope tally.Scope) changestore.ChangeStore {
+func NewChangeStore(db *sql.DB, scope tally.Scope) storage.ChangeStore {
 	return &changeStore{db: db, scope: scope}
 }
 

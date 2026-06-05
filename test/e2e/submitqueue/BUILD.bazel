@@ -9,7 +9,6 @@ go_test(
         "//example/submitqueue:docker-compose.yml",
         "//extension/counter/mysql/schema",
         "//extension/messagequeue/mysql/schema",
-        "//submitqueue/extension/changestore/mysql/schema",
         "//submitqueue/extension/storage/mysql/schema",
     ],
     tags = [

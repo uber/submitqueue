@@ -26,7 +26,7 @@ import (
 type mysqlStorage struct {
 	db                   *sql.DB
 	requestStore         storage.RequestStore
-	changeProviderStore  storage.ChangeProviderStore
+	changeStore          storage.ChangeStore
 	batchStore           storage.BatchStore
 	batchDependentStore  storage.BatchDependentStore
 	buildStore           storage.BuildStore
@@ -39,7 +39,7 @@ func NewStorage(db *sql.DB, scope tally.Scope) (storage.Storage, error) {
 	return &mysqlStorage{
 		db:                   db,
 		requestStore:         NewRequestStore(db, scope.SubScope("request_store")),
-		changeProviderStore:  NewChangeProviderStore(db, scope.SubScope("change_provider_store")),
+		changeStore:          NewChangeStore(db, scope.SubScope("change_store")),
 		batchStore:           NewBatchStore(db, scope.SubScope("batch_store")),
 		batchDependentStore:  NewBatchDependentStore(db, scope.SubScope("batch_dependent_store")),
 		buildStore:           NewBuildStore(db, scope.SubScope("build_store")),
@@ -53,9 +53,9 @@ func (f *mysqlStorage) GetRequestStore() storage.RequestStore {
 	return f.requestStore
 }
 
-// GetChangeProviderStore returns the MySQL-backed ChangeProviderStore.
-func (f *mysqlStorage) GetChangeProviderStore() storage.ChangeProviderStore {
-	return f.changeProviderStore
+// GetChangeStore returns the MySQL-backed ChangeStore.
+func (f *mysqlStorage) GetChangeStore() storage.ChangeStore {
+	return f.changeStore
 }
 
 // GetBatchStore returns the MySQL-backed BatchStore.
