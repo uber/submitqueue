@@ -37,9 +37,10 @@ type createBuildRequest struct {
 // buildResponse is the subset of fields the runner needs from a Buildkite
 // build object.
 type buildResponse struct {
-	Number int    `json:"number"`
-	State  string `json:"state"`
-	WebURL string `json:"web_url"`
+	Number int               `json:"number"`
+	State  string            `json:"state"`
+	WebURL string            `json:"web_url"`
+	Env    map[string]string `json:"env"`
 }
 
 func (c *client) createBuild(ctx context.Context, req createBuildRequest) (buildResponse, error) {

@@ -47,7 +47,12 @@ func newTestRunner(t *testing.T, handler http.Handler) *runner {
 
 // buildJSON encodes fields into a minimal Buildkite build JSON response.
 func buildJSON(number int, state, webURL string) []byte {
-	b, _ := json.Marshal(buildResponse{Number: number, State: state, WebURL: webURL})
+	return buildJSONWithEnv(number, state, webURL, nil)
+}
+
+// buildJSONWithEnv encodes fields into a Buildkite build JSON response including env vars.
+func buildJSONWithEnv(number int, state, webURL string, env map[string]string) []byte {
+	b, _ := json.Marshal(buildResponse{Number: number, State: state, WebURL: webURL, Env: env})
 	return b
 }
 
@@ -137,6 +142,43 @@ func TestTrigger_BuildkiteError_ReturnsError(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestTrigger_WithMetadata_SetsEnvVar(t *testing.T) {
+	var capturedBody []byte
+	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		capturedBody, _ = io.ReadAll(req.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(buildJSON(10, "scheduled", ""))
+	}))
+
+	metadata := entity.BuildMetadata{"requester": "alice", "ticket": "SQ-42"}
+	_, err := r.Trigger(context.Background(), nil, []entity.Change{{URIs: []string{"u"}}}, metadata)
+	require.NoError(t, err)
+
+	var req createBuildRequest
+	require.NoError(t, json.Unmarshal(capturedBody, &req))
+	require.Contains(t, req.Env, EnvKeyMetadata)
+
+	var got entity.BuildMetadata
+	require.NoError(t, json.Unmarshal([]byte(req.Env[EnvKeyMetadata]), &got))
+	assert.Equal(t, metadata, got)
+}
+
+func TestTrigger_NilMetadata_NoMetadataEnvVar(t *testing.T) {
+	var capturedBody []byte
+	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		capturedBody, _ = io.ReadAll(req.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(buildJSON(11, "scheduled", ""))
+	}))
+
+	_, err := r.Trigger(context.Background(), nil, []entity.Change{{URIs: []string{"u"}}}, nil)
+	require.NoError(t, err)
+
+	var req createBuildRequest
+	require.NoError(t, json.Unmarshal(capturedBody, &req))
+	assert.NotContains(t, req.Env, EnvKeyMetadata)
+}
+
 // --- Status ---
 
 func TestStatus_StateMapping(t *testing.T) {
@@ -185,6 +227,35 @@ func TestStatus_BuildkiteNotFound(t *testing.T) {
 
 	_, _, err := r.Status(context.Background(), entity.BuildID{ID: encodeBuildNumber(99)})
 	require.Error(t, err)
+}
+
+func TestStatus_EchosCallerMetadata(t *testing.T) {
+	metadata := entity.BuildMetadata{"requester": "alice", "ticket": "SQ-42"}
+	metaJSON, _ := json.Marshal(metadata)
+
+	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(buildJSONWithEnv(7, "passed", "https://buildkite.com/test-org/my-pipeline/builds/7",
+			map[string]string{EnvKeyMetadata: string(metaJSON)},
+		))
+	}))
+
+	_, meta, err := r.Status(context.Background(), entity.BuildID{ID: encodeBuildNumber(7)})
+	require.NoError(t, err)
+	assert.Equal(t, "alice", meta["requester"])
+	assert.Equal(t, "SQ-42", meta["ticket"])
+	assert.Equal(t, "https://buildkite.com/test-org/my-pipeline/builds/7", meta["url"])
+}
+
+func TestStatus_NoMetadata_ReturnsOnlyURL(t *testing.T) {
+	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(buildJSON(8, "running", "https://buildkite.com/test-org/my-pipeline/builds/8"))
+	}))
+
+	_, meta, err := r.Status(context.Background(), entity.BuildID{ID: encodeBuildNumber(8)})
+	require.NoError(t, err)
+	assert.Equal(t, entity.BuildMetadata{"url": "https://buildkite.com/test-org/my-pipeline/builds/8"}, meta)
 }
 
 // --- Cancel ---

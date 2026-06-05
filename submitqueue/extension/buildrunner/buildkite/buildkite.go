@@ -23,6 +23,10 @@
 // environment variables (SQ_BASE_URIS, SQ_HEAD_URIS, SQ_QUEUE). The pipeline
 // script fetches each PR's diff with the GitHub API, applies them with
 // `git apply -3`, produces one commit per layer (base, head), then runs CI.
+//
+// Caller-supplied BuildMetadata is forwarded to the build as SQ_METADATA
+// (JSON-encoded). Buildkite echoes env vars back on the build object, so
+// Status recovers and returns the original metadata without any local state.
 package buildkite
 
 import (
@@ -53,6 +57,11 @@ const (
 	// EnvKeyQueue carries the SQ queue name so the pipeline script can select
 	// queue-specific test targets.
 	EnvKeyQueue = "SQ_QUEUE"
+
+	// EnvKeyMetadata carries the JSON-encoded BuildMetadata provided by the
+	// caller to Trigger. Buildkite echoes env vars on the build object, so
+	// Status can recover and return the original metadata without local state.
+	EnvKeyMetadata = "SQ_METADATA"
 )
 
 // runner implements buildrunner.BuildRunner.
@@ -106,17 +115,23 @@ func newRunner(cfg buildrunner.Config, c *client, logger *zap.SugaredLogger) *ru
 // Trigger calls the Buildkite API to create the build and returns the Buildkite
 // build number as the build ID. Errors are propagated to the caller so the
 // queue consumer can nack and retry.
-func (r *runner) Trigger(ctx context.Context, base, head []entity.Change, _ entity.BuildMetadata) (entity.BuildID, error) {
+func (r *runner) Trigger(ctx context.Context, base, head []entity.Change, metadata entity.BuildMetadata) (entity.BuildID, error) {
 	baseJSON, _ := json.Marshal(flattenURIs(base))
 	headJSON, _ := json.Marshal(flattenURIs(head))
 
+	env := map[string]string{
+		EnvKeyBaseURIs: string(baseJSON),
+		EnvKeyHeadURIs: string(headJSON),
+		EnvKeyQueue:    r.cfg.QueueName,
+	}
+	if len(metadata) > 0 {
+		metaJSON, _ := json.Marshal(metadata)
+		env[EnvKeyMetadata] = string(metaJSON)
+	}
+
 	req := createBuildRequest{
 		Message: "submitqueue speculative build",
-		Env: map[string]string{
-			EnvKeyBaseURIs: string(baseJSON),
-			EnvKeyHeadURIs: string(headJSON),
-			EnvKeyQueue:    r.cfg.QueueName,
-		},
+		Env:     env,
 	}
 
 	resp, err := r.client.createBuild(ctx, req)
@@ -131,7 +146,7 @@ func (r *runner) Trigger(ctx context.Context, base, head []entity.Change, _ enti
 }
 
 // Status fetches the current state of the build from Buildkite and returns it
-// with the build URL in BuildMetadata["url"].
+// with the build URL and any caller-supplied metadata in BuildMetadata.
 func (r *runner) Status(ctx context.Context, buildID entity.BuildID) (entity.BuildStatus, entity.BuildMetadata, error) {
 	number, err := parseBuildNumber(buildID.ID)
 	if err != nil {
@@ -143,7 +158,9 @@ func (r *runner) Status(ctx context.Context, buildID entity.BuildID) (entity.Bui
 		return entity.BuildStatusUnknown, nil, fmt.Errorf("buildkite: get build: %w", err)
 	}
 
-	return mapState(resp.State), entity.BuildMetadata{"url": resp.WebURL}, nil
+	meta := decodeMetadata(resp.Env)
+	meta["url"] = resp.WebURL
+	return mapState(resp.State), meta, nil
 }
 
 // Cancel calls the Buildkite API to cancel the build. A no-op on already-terminal
@@ -184,6 +201,20 @@ func parseBuildNumber(id string) (int, error) {
 		return 0, fmt.Errorf("invalid build ID %q", id)
 	}
 	return n, nil
+}
+
+// decodeMetadata recovers the caller-supplied BuildMetadata from the env vars
+// Buildkite echoes back on the build object. Returns an empty non-nil map when
+// SQ_METADATA is absent or cannot be decoded — a corrupt env var must not fail
+// a Status call.
+func decodeMetadata(env map[string]string) entity.BuildMetadata {
+	meta := make(entity.BuildMetadata)
+	raw, ok := env[EnvKeyMetadata]
+	if !ok || raw == "" {
+		return meta
+	}
+	_ = json.Unmarshal([]byte(raw), &meta)
+	return meta
 }
 
 // mapState maps a Buildkite build state string to a BuildStatus.
