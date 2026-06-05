@@ -14,8 +14,8 @@ The pipeline has two cycles: `speculate → build → buildsignal → speculate`
                                      │ LandRequest
                                      ▼
    ┌──────────────────────┐    ┌──────────────────────────────────┐
-   │ log  (terminal sink) │◄───│ start                            │
-   │ Append RequestLog    │    │ Persist Request, emit Started    │
+   │ gateway: log         │◄───│ start                            │
+   │ Persist request log  │    │ Persist Request, emit Started    │
    └──────────────────────┘    └────────────────┬─────────────────┘
               ▲                                 │ RequestID
               │                                 ▼
@@ -90,3 +90,25 @@ The DLQ controllers do not re-attempt the failed work. They decode the payload t
 DLQ consumers are wired with `errs.AlwaysRetryableProcessor` and a very high `Retry.MaxAttempts`, with their own DLQ disabled. That combination makes reconciliation effectively non-droppable: any failure is forced retryable rather than escalating to a second-level dead-letter that nobody consumes. The trade-off is that a genuinely unprocessable DLQ message — typically a malformed payload — must be removed by an operator.
 
 See `submitqueue/orchestrator/controller/dlq/README.md` for the design constraints (simplest possible implementation, reconcile-only, no recovery) and the per-topic controller mapping.
+
+## Ownership by service
+
+Each service owns its own data; the gateway and orchestrator never touch each other's, and the only thing they share is the messaging queue.
+
+### Gateway
+
+The gateway is the RPC entry point and the owner of the request log. It accepts requests, hands them to the orchestrator over the queue, and owns the record of what happened to each request — the only service that reads or writes the request log. It writes that record both directly, as requests arrive, and by consuming the log events the orchestrator emits.
+
+### Orchestrator
+
+The orchestrator runs the pipeline that advances a request from acceptance to a terminal state. It owns the working state of that pipeline — requests, batches, builds, and their bookkeeping — and is the only service that writes it. It drives a request through a series of internal stages, re-entering speculation as CI results arrive and as batches advance.
+
+### Shared: the messaging queue
+
+The two services communicate only through the messaging queue. It is pluggable infrastructure kept in its own database, separate from either service's application data: the gateway publishes incoming requests for the orchestrator to consume, and the orchestrator publishes log events for the gateway to consume.
+
+## Request-log ownership invariant
+
+The request log has exactly one owner: the **gateway**. The orchestrator only emits log events onto the queue; it never persists them. The gateway is the sole consumer of those events and the only writer of the request log.
+
+This keeps all request-log writes in one service: the orchestrator stays a pure pipeline that emits events, and the gateway owns the request log end to end.
