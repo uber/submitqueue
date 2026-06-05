@@ -44,7 +44,7 @@ func NewProvider(params Params) changeprovider.ChangeProvider {
 
 // Get retrieves change information from GitHub for the provided Change.
 // Returns one ChangeInfo per URI (one per PR in stacked changes).
-func (p *provider) Get(ctx context.Context, change entity.Change) (_ []changeprovider.ChangeInfo, retErr error) {
+func (p *provider) Get(ctx context.Context, change entity.Change) (_ []entity.ChangeInfo, retErr error) {
 	op := coremetrics.Begin(p.metricsScope, "get")
 	defer func() { op.Complete(retErr) }()
 
@@ -85,8 +85,8 @@ func (p *provider) Get(ctx context.Context, change entity.Change) (_ []changepro
 func (p *provider) fetchAllPRs(
 	ctx context.Context,
 	changeIDs []entitygithub.ChangeID,
-) ([]changeprovider.ChangeInfo, error) {
-	changeInfos := make([]changeprovider.ChangeInfo, 0, len(changeIDs))
+) ([]entity.ChangeInfo, error) {
+	changeInfos := make([]entity.ChangeInfo, 0, len(changeIDs))
 
 	for _, cid := range changeIDs {
 		prData, err := p.fetchPullRequest(ctx, cid)
@@ -109,7 +109,7 @@ func (p *provider) fetchAllPRs(
 			"org", cid.Org,
 			"repo", cid.Repo,
 			"pr", cid.PRNumber,
-			"files_count", len(changeInfo.ChangedFiles),
+			"files_count", len(changeInfo.Details.ChangedFiles),
 			"head_sha", prData.HeadRefOid,
 		)
 	}

@@ -15,9 +15,9 @@
 package entity
 
 // ChangeRecord represents a single URI's claim by a request, persisted in the change store.
-// The (Queue, URI, RequestID) triple is the identity and is immutable; Metadata may be
-// updated over time as additional information about the change (e.g., PR title, author,
-// mergeability) becomes available.
+// The whole record is immutable: the (Queue, URI, RequestID) triple is its identity and the
+// Details (author, changed files, line counts) are captured once at claim time from the
+// change provider. There is no update path.
 type ChangeRecord struct {
 	// URI identifies the change (RFC 3986). Same scheme/format as entity.Change.URIs.
 	// Example: "github://uber/submitqueue/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab".
@@ -29,7 +29,7 @@ type ChangeRecord struct {
 	// RequestID participates in the change-store primary key so that concurrent claims
 	// by different requests on the same URI coexist as distinct rows. Same-request
 	// retries collide on the PK and are absorbed idempotently; different-request
-	// collisions surface as additional rows that callers detect via FindOverlapping.
+	// collisions surface as additional rows that callers detect via GetByURI.
 	RequestID string `json:"request_id"`
 
 	// Queue is the queue the owning request belongs to. It is the leading column of
@@ -37,21 +37,20 @@ type ChangeRecord struct {
 	// scans and the table is shardable by queue.
 	Queue string `json:"queue"`
 
-	// Metadata is a JSON-encoded blob of provider-specific information about the change
-	// (e.g., PR title, author, mergeable state). Stored as `'{}'` when no metadata has
-	// been populated yet; updated by downstream enrichment.
-	Metadata string `json:"metadata,omitempty"`
+	// Details holds the provider-supplied facts about the change (author, changed
+	// files, line counts). It is captured at claim time (the validate controller, after
+	// fetching from the change provider) and written once with the record — records are
+	// immutable, so Details is never updated after Create.
+	Details ChangeDetails `json:"details"`
 
-	// CreatedAt is the Unix milliseconds timestamp when this record was first created.
+	// CreatedAt is the Unix milliseconds timestamp when this record was created.
 	CreatedAt int64 `json:"created_at"`
 
-	// UpdatedAt is the Unix milliseconds timestamp when this record's Metadata was last updated.
-	// Equal to CreatedAt when the record has never been updated.
+	// UpdatedAt is the Unix milliseconds timestamp when this record was created. Records
+	// are immutable, so it always equals CreatedAt; retained for schema symmetry.
 	UpdatedAt int64 `json:"updated_at"`
 
-	// Version is the optimistic-locking counter for mutable fields (Metadata).
-	// Starts at 1 on Create and is incremented by callers on every update.
-	// Mirrors the request-store convention: callers compute newVersion = oldVersion + 1
-	// and pass both to the update method; the store performs a pure conditional write.
+	// Version is the record version. Records are immutable, so it is always 1; retained
+	// for schema symmetry with the other stores.
 	Version int32 `json:"version"`
 }

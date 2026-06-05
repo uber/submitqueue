@@ -115,7 +115,7 @@ func TestProvider_Get(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, infos, 1)
 			assert.Equal(t, tt.uris[0], infos[0].URI)
-			assert.Len(t, infos[0].ChangedFiles, 2)
+			assert.Len(t, infos[0].Details.ChangedFiles, 2)
 		})
 	}
 }
@@ -154,7 +154,7 @@ func TestProvider_Get_Pagination(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, callCount)
 	require.Len(t, infos, 1)
-	assert.Len(t, infos[0].ChangedFiles, 2)
+	assert.Len(t, infos[0].Details.ChangedFiles, 2)
 }
 
 func TestProvider_Get_MultiplePRs(t *testing.T) {

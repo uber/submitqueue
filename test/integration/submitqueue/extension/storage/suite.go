@@ -336,28 +336,39 @@ func (s *StorageContractSuite) TestStorage_ChangeCreate_DifferentRequestSameURI(
 	assert.Equal(t, []string{queue + "/1", queue + "/2"}, ids)
 }
 
-// TestStorage_ChangeCreate_PreservesMetadata verifies metadata round-trips through the store.
-func (s *StorageContractSuite) TestStorage_ChangeCreate_PreservesMetadata() {
+// sampleDetails is a representative ChangeDetails reused across change-store contract tests.
+func sampleDetails() entity.ChangeDetails {
+	return entity.ChangeDetails{
+		Author: entity.Author{Name: "Ada Lovelace", Email: "ada@example.com"},
+		ChangedFiles: []entity.ChangedFile{
+			{Path: "main.go", LinesAdded: 10, LinesDeleted: 3, LinesModified: 2},
+			{Path: "main_test.go", LinesAdded: 20, LinesDeleted: 0},
+		},
+	}
+}
+
+// TestStorage_ChangeCreate_PreservesDetails verifies typed Details round-trip through the store.
+func (s *StorageContractSuite) TestStorage_ChangeCreate_PreservesDetails() {
 	t := s.T()
 	ctx := s.ctx
-	const queue = "cq-meta"
-	const meta = `{"title":"add new feature"}`
+	const queue = "cq-details"
+	details := sampleDetails()
 
 	require.NoError(t, s.storage.GetChangeStore().Create(ctx, entity.ChangeRecord{
-		URI: changeURI, RequestID: queue + "/1", Queue: queue, Metadata: meta, CreatedAt: 1, UpdatedAt: 1, Version: 1,
+		URI: changeURI, RequestID: queue + "/1", Queue: queue, Details: details, CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
 	got, err := s.storage.GetChangeStore().GetByURI(ctx, queue, changeURI)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
-	assert.JSONEq(t, meta, got[0].Metadata)
+	assert.Equal(t, details, got[0].Details)
 }
 
-// TestStorage_ChangeCreate_EmptyMetadataStoredAsObject verifies empty metadata is stored as "{}".
-func (s *StorageContractSuite) TestStorage_ChangeCreate_EmptyMetadataStoredAsObject() {
+// TestStorage_ChangeCreate_EmptyDetails verifies a zero-value Details round-trips (stored as a JSON object).
+func (s *StorageContractSuite) TestStorage_ChangeCreate_EmptyDetails() {
 	t := s.T()
 	ctx := s.ctx
-	const queue = "cq-emptymeta"
+	const queue = "cq-emptydetails"
 
 	require.NoError(t, s.storage.GetChangeStore().Create(ctx, entity.ChangeRecord{
 		URI: changeURI, RequestID: queue + "/1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
@@ -366,5 +377,5 @@ func (s *StorageContractSuite) TestStorage_ChangeCreate_EmptyMetadataStoredAsObj
 	got, err := s.storage.GetChangeStore().GetByURI(ctx, queue, changeURI)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
-	assert.JSONEq(t, "{}", got[0].Metadata)
+	assert.Equal(t, entity.ChangeDetails{}, got[0].Details)
 }

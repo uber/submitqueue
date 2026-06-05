@@ -34,7 +34,6 @@ query($owner: String!, $repo: String!, $prNumber: Int!, $filesCursor: String) {
           additions
           deletions
           changeType
-          patch
         }
       }
     }
@@ -98,7 +97,6 @@ type fileNode struct {
 	Additions  int    `json:"additions"`
 	Deletions  int    `json:"deletions"`
 	ChangeType string `json:"changeType"`
-	Patch      string `json:"patch"`
 }
 
 // buildGraphQLRequest builds a GraphQL request for fetching pull request data.

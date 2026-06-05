@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/metrics"
@@ -31,11 +30,11 @@ import (
 )
 
 // Controller handles start queue messages.
-// It consumes requests, persists them to the request store, claims their URIs in
-// the change store, and publishes to the validate stage. Both writes are idempotent
-// on retries; the duplicate-detection check itself is performed downstream by the
-// validate controller, which reads the change store and consults the request store
-// for liveness. Implements consumer.Controller.
+// It consumes requests, persists them to the request store, and publishes to the
+// validate stage. The request write is idempotent on retries. URI claiming and
+// duplicate detection are performed downstream by the validate controller (which
+// claims each URI in the change store with its provider details and consults the
+// request store for liveness). Implements consumer.Controller.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
@@ -68,8 +67,8 @@ func NewController(
 }
 
 // Process processes a request delivery from the queue.
-// Persists the request, claims its URIs in the change store, and publishes to validate.
-// Returns nil to ack (success), or error to nack (retry).
+// Persists the request and publishes to validate. Returns nil to ack (success),
+// or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
 	const opName = "process"
 
@@ -113,15 +112,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Claim each URI in the change store. Different requests on the same URI write
-	// distinct rows (different request_id), so cross-request URI overlap does not
-	// collide on insert; the validate controller surfaces it via GetByURI + a
-	// liveness check against the request store.
-	if err := c.claimURIs(ctx, request); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "change_store_errors", 1)
-		return fmt.Errorf("failed to claim URIs for request %s: %w", request.ID, err)
-	}
-
 	// Record the "new" status in the request log.
 	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusStarted, request.Version, "", nil)
 	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID); err != nil {
@@ -139,27 +129,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"topic_key", consumer.TopicKeyValidate,
 	)
 
-	return nil
-}
-
-// claimURIs persists one ChangeRecord per URI in the request. Each Create call is
-// independent; the change store's per-PK idempotency makes the loop safe under
-// queue redelivery (same (Queue, URI, RequestID) is a no-op on retry).
-func (c *Controller) claimURIs(ctx context.Context, request entity.Request) error {
-	now := time.Now().UnixMilli()
-	for _, uri := range request.Change.URIs {
-		record := entity.ChangeRecord{
-			URI:       uri,
-			RequestID: request.ID,
-			Queue:     request.Queue,
-			CreatedAt: now,
-			UpdatedAt: now,
-			Version:   1,
-		}
-		if err := c.store.GetChangeStore().Create(ctx, record); err != nil {
-			return fmt.Errorf("failed to claim uri=%s for request %s: %w", uri, request.ID, err)
-		}
-	}
 	return nil
 }
 
