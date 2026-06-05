@@ -11,4 +11,9 @@ runs:
   steps:
     - name: Run Bazel test
       shell: bash
-      run: ./tool/bazel test ${{ inputs.target }} --test_output=streamed
+      # Pass the target through env rather than interpolating ${{ inputs.target }}
+      # directly into the script, so a composite-action input can never inject
+      # shell commands.
+      env:
+        TARGET: ${{ inputs.target }}
+      run: ./tool/bazel test "$TARGET" --test_output=streamed
