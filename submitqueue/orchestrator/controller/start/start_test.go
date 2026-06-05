@@ -27,7 +27,6 @@ import (
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	changemock "github.com/uber/submitqueue/submitqueue/extension/changestore/mock"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -39,11 +38,13 @@ func newTestController(
 	t *testing.T,
 	ctrl *gomock.Controller,
 	store *storagemock.MockStorage,
-	cs *changemock.MockChangeStore,
+	cs *storagemock.MockChangeStore,
 	publishErr error,
 ) *Controller {
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
+
+	store.EXPECT().GetChangeStore().Return(cs).AnyTimes()
 
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
@@ -63,7 +64,7 @@ func newTestController(
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, store, cs, registry, consumer.TopicKeyStart, "orchestrator-start")
+	return NewController(logger, scope, store, registry, consumer.TopicKeyStart, "orchestrator-start")
 }
 
 // newMockStorage creates a MockStorage with a MockRequestStore that succeeds on Create.
@@ -77,8 +78,8 @@ func newMockStorage(ctrl *gomock.Controller) *storagemock.MockStorage {
 }
 
 // newMockChangeStore returns a MockChangeStore that accepts any Create call.
-func newMockChangeStore(ctrl *gomock.Controller) *changemock.MockChangeStore {
-	cs := changemock.NewMockChangeStore(ctrl)
+func newMockChangeStore(ctrl *gomock.Controller) *storagemock.MockChangeStore {
+	cs := storagemock.NewMockChangeStore(ctrl)
 	cs.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	return cs
 }
@@ -197,7 +198,7 @@ func TestController_Process_AllStrategies(t *testing.T) {
 func TestController_Process_MultipleChanges(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	cs := changemock.NewMockChangeStore(ctrl)
+	cs := storagemock.NewMockChangeStore(ctrl)
 	var captured []entity.ChangeRecord
 	cs.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, record entity.ChangeRecord) error {
@@ -292,7 +293,7 @@ func TestController_Process_AlreadyExistsSucceeds(t *testing.T) {
 func TestController_Process_ChangeStoreFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	cs := changemock.NewMockChangeStore(ctrl)
+	cs := storagemock.NewMockChangeStore(ctrl)
 	cs.EXPECT().Create(gomock.Any(), gomock.Any()).Return(fmt.Errorf("change store down"))
 
 	controller := newTestController(t, ctrl, newMockStorage(ctrl), cs, nil)

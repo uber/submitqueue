@@ -26,7 +26,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/changestore"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
@@ -41,7 +40,6 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	store         storage.Storage
-	changeStore   changestore.ChangeStore
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -55,7 +53,6 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	store storage.Storage,
-	changeStore changestore.ChangeStore,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -64,7 +61,6 @@ func NewController(
 		logger:        logger.Named("start_controller"),
 		metricsScope:  scope.SubScope("start_controller"),
 		store:         store,
-		changeStore:   changeStore,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -160,7 +156,7 @@ func (c *Controller) claimURIs(ctx context.Context, request entity.Request) erro
 			UpdatedAt: now,
 			Version:   1,
 		}
-		if err := c.changeStore.Create(ctx, record); err != nil {
+		if err := c.store.GetChangeStore().Create(ctx, record); err != nil {
 			return fmt.Errorf("failed to claim uri=%s for request %s: %w", uri, request.ID, err)
 		}
 	}

@@ -1,7 +1,7 @@
 -- request_id is part of the PK so concurrent claims by different requests on the
 -- same URI coexist as distinct rows. Same-request retry → PK conflict (no-op via
 -- INSERT IGNORE). Different-request collision → distinct row, surfaced by
--- FindOverlapping. Queue leads the PK so queue-scoped lookups are PK-prefix scans
+-- GetByURI. Queue leads the PK so queue-scoped lookups are PK-prefix scans
 -- and the table is shardable by queue.
 CREATE TABLE IF NOT EXISTS `change` (
     uri         VARCHAR(255) NOT NULL,

@@ -26,7 +26,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
-	"github.com/uber/submitqueue/submitqueue/extension/changestore"
 	"github.com/uber/submitqueue/submitqueue/extension/mergechecker"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
@@ -40,7 +39,6 @@ type Controller struct {
 	logger          *zap.SugaredLogger
 	metricsScope    tally.Scope
 	store           storage.Storage
-	changeStore     changestore.ChangeStore
 	registry        consumer.TopicRegistry
 	mergeCheckers   mergechecker.Factory
 	changeProviders changeprovider.Factory
@@ -56,7 +54,6 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	store storage.Storage,
-	changeStore changestore.ChangeStore,
 	registry consumer.TopicRegistry,
 	mergeCheckers mergechecker.Factory,
 	changeProviders changeprovider.Factory,
@@ -67,7 +64,6 @@ func NewController(
 		logger:          logger.Named("validate_controller"),
 		metricsScope:    scope.SubScope("validate_controller"),
 		store:           store,
-		changeStore:     changeStore,
 		registry:        registry,
 		mergeCheckers:   mergeCheckers,
 		changeProviders: changeProviders,
@@ -201,7 +197,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 func (c *Controller) checkDuplicate(ctx context.Context, request entity.Request) (string, error) {
 	seenOwners := make(map[string]struct{})
 	for _, uri := range request.Change.URIs {
-		records, err := c.changeStore.GetByURI(ctx, request.Queue, uri)
+		records, err := c.store.GetChangeStore().GetByURI(ctx, request.Queue, uri)
 		if err != nil {
 			coremetrics.NamedCounter(c.metricsScope, "process", "change_store_query_errors", 1)
 			return "", fmt.Errorf("failed to query change store for request %s uri=%s: %w", request.ID, uri, err)

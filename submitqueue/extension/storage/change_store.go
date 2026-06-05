@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package changestore
+package storage
 
 //go:generate mockgen -source=change_store.go -destination=mock/change_store_mock.go -package=mock
 

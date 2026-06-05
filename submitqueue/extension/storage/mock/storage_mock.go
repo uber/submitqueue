@@ -96,18 +96,18 @@ func (mr *MockStorageMockRecorder) GetBuildStore() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBuildStore", reflect.TypeOf((*MockStorage)(nil).GetBuildStore))
 }
 
-// GetChangeProviderStore mocks base method.
-func (m *MockStorage) GetChangeProviderStore() storage.ChangeProviderStore {
+// GetChangeStore mocks base method.
+func (m *MockStorage) GetChangeStore() storage.ChangeStore {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetChangeProviderStore")
-	ret0, _ := ret[0].(storage.ChangeProviderStore)
+	ret := m.ctrl.Call(m, "GetChangeStore")
+	ret0, _ := ret[0].(storage.ChangeStore)
 	return ret0
 }
 
-// GetChangeProviderStore indicates an expected call of GetChangeProviderStore.
-func (mr *MockStorageMockRecorder) GetChangeProviderStore() *gomock.Call {
+// GetChangeStore indicates an expected call of GetChangeStore.
+func (mr *MockStorageMockRecorder) GetChangeStore() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetChangeProviderStore", reflect.TypeOf((*MockStorage)(nil).GetChangeProviderStore))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetChangeStore", reflect.TypeOf((*MockStorage)(nil).GetChangeStore))
 }
 
 // GetRequestLogStore mocks base method.

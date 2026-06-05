@@ -16,6 +16,7 @@ package storage
 
 import (
 	"context"
+	"sort"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -226,4 +227,144 @@ func (s *StorageContractSuite) TestStorage_CreateDuplicate() {
 	assert.ErrorIs(t, err, storage.ErrAlreadyExists, "should return ErrAlreadyExists")
 
 	s.log.Logf("CreateDuplicate test passed: prevented duplicate creation")
+}
+
+// changeURI is a representative change URI reused across change-store contract tests.
+const changeURI = "github://uber/x/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+// Change-store contract tests scope each case to a distinct queue so they stay
+// isolated without truncation (GetByURI is scoped by (queue, uri)).
+
+// TestStorage_ChangeCreateAndGet_NoMatch verifies GetByURI returns empty for an unclaimed URI.
+func (s *StorageContractSuite) TestStorage_ChangeCreateAndGet_NoMatch() {
+	t := s.T()
+	ctx := s.ctx
+	const queue = "cq-nomatch"
+
+	require.NoError(t, s.storage.GetChangeStore().Create(ctx, entity.ChangeRecord{
+		URI: changeURI, RequestID: queue + "/1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
+	}))
+
+	got, err := s.storage.GetChangeStore().GetByURI(ctx, queue, "github://uber/x/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+// TestStorage_ChangeCreateAndGet_Match verifies a created record is returned by GetByURI.
+func (s *StorageContractSuite) TestStorage_ChangeCreateAndGet_Match() {
+	t := s.T()
+	ctx := s.ctx
+	const queue = "cq-match"
+
+	require.NoError(t, s.storage.GetChangeStore().Create(ctx, entity.ChangeRecord{
+		URI: changeURI, RequestID: queue + "/1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
+	}))
+
+	got, err := s.storage.GetChangeStore().GetByURI(ctx, queue, changeURI)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, queue+"/1", got[0].RequestID)
+	assert.Equal(t, changeURI, got[0].URI)
+	assert.Equal(t, queue, got[0].Queue)
+	assert.Equal(t, int32(1), got[0].Version)
+}
+
+// TestStorage_ChangeGetByURI_DoesNotExcludeSelf verifies the store does not filter by request_id.
+func (s *StorageContractSuite) TestStorage_ChangeGetByURI_DoesNotExcludeSelf() {
+	t := s.T()
+	ctx := s.ctx
+	const queue = "cq-self"
+
+	require.NoError(t, s.storage.GetChangeStore().Create(ctx, entity.ChangeRecord{
+		URI: changeURI, RequestID: queue + "/1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
+	}))
+
+	got, err := s.storage.GetChangeStore().GetByURI(ctx, queue, changeURI)
+	require.NoError(t, err)
+	require.Len(t, got, 1, "store returns the row even when caller might consider it self")
+	assert.Equal(t, queue+"/1", got[0].RequestID)
+}
+
+// TestStorage_ChangeGetByURI_QueueScoped verifies GetByURI never returns rows from another queue.
+func (s *StorageContractSuite) TestStorage_ChangeGetByURI_QueueScoped() {
+	t := s.T()
+	ctx := s.ctx
+
+	require.NoError(t, s.storage.GetChangeStore().Create(ctx, entity.ChangeRecord{
+		URI: changeURI, RequestID: "cq-scoped-A/1", Queue: "cq-scoped-A", CreatedAt: 1, UpdatedAt: 1, Version: 1,
+	}))
+
+	got, err := s.storage.GetChangeStore().GetByURI(ctx, "cq-scoped-B", changeURI)
+	require.NoError(t, err)
+	assert.Empty(t, got, "GetByURI must not return rows from a different queue")
+}
+
+// TestStorage_ChangeCreate_Idempotent verifies a repeated Create of the same PK is a no-op.
+func (s *StorageContractSuite) TestStorage_ChangeCreate_Idempotent() {
+	t := s.T()
+	ctx := s.ctx
+	const queue = "cq-idem"
+	rec := entity.ChangeRecord{URI: changeURI, RequestID: queue + "/1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1}
+
+	require.NoError(t, s.storage.GetChangeStore().Create(ctx, rec))
+	require.NoError(t, s.storage.GetChangeStore().Create(ctx, rec), "second insert with same PK must succeed (INSERT IGNORE)")
+
+	got, err := s.storage.GetChangeStore().GetByURI(ctx, queue, changeURI)
+	require.NoError(t, err)
+	assert.Len(t, got, 1, "idempotent create must not duplicate rows")
+}
+
+// TestStorage_ChangeCreate_DifferentRequestSameURI verifies distinct requests on one URI coexist.
+func (s *StorageContractSuite) TestStorage_ChangeCreate_DifferentRequestSameURI() {
+	t := s.T()
+	ctx := s.ctx
+	const queue = "cq-multi"
+
+	require.NoError(t, s.storage.GetChangeStore().Create(ctx, entity.ChangeRecord{
+		URI: changeURI, RequestID: queue + "/1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
+	}))
+	require.NoError(t, s.storage.GetChangeStore().Create(ctx, entity.ChangeRecord{
+		URI: changeURI, RequestID: queue + "/2", Queue: queue, CreatedAt: 2, UpdatedAt: 2, Version: 1,
+	}))
+
+	got, err := s.storage.GetChangeStore().GetByURI(ctx, queue, changeURI)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+
+	ids := []string{got[0].RequestID, got[1].RequestID}
+	sort.Strings(ids)
+	assert.Equal(t, []string{queue + "/1", queue + "/2"}, ids)
+}
+
+// TestStorage_ChangeCreate_PreservesMetadata verifies metadata round-trips through the store.
+func (s *StorageContractSuite) TestStorage_ChangeCreate_PreservesMetadata() {
+	t := s.T()
+	ctx := s.ctx
+	const queue = "cq-meta"
+	const meta = `{"title":"add new feature"}`
+
+	require.NoError(t, s.storage.GetChangeStore().Create(ctx, entity.ChangeRecord{
+		URI: changeURI, RequestID: queue + "/1", Queue: queue, Metadata: meta, CreatedAt: 1, UpdatedAt: 1, Version: 1,
+	}))
+
+	got, err := s.storage.GetChangeStore().GetByURI(ctx, queue, changeURI)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.JSONEq(t, meta, got[0].Metadata)
+}
+
+// TestStorage_ChangeCreate_EmptyMetadataStoredAsObject verifies empty metadata is stored as "{}".
+func (s *StorageContractSuite) TestStorage_ChangeCreate_EmptyMetadataStoredAsObject() {
+	t := s.T()
+	ctx := s.ctx
+	const queue = "cq-emptymeta"
+
+	require.NoError(t, s.storage.GetChangeStore().Create(ctx, entity.ChangeRecord{
+		URI: changeURI, RequestID: queue + "/1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
+	}))
+
+	got, err := s.storage.GetChangeStore().GetByURI(ctx, queue, changeURI)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.JSONEq(t, "{}", got[0].Metadata)
 }
