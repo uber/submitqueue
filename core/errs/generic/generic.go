@@ -25,16 +25,19 @@ import (
 
 // Classifier recognises generic, non-backend-specific errors and returns
 // errs.Unknown for anything it does not recognise so the surrounding
-// errs.Classify walker can keep looking down the unwrap chain.
+// classifier-processor walk can keep looking down the unwrap chain.
 //
 // The classifier is stateless; this package-level singleton is the canonical
-// handle. Pass it into consumer.New as a vararg.
+// handle. Pass it as one of the variadic classifiers to
+// errs.NewClassifierProcessor; the resulting processor is what gets handed to
+// consumer.New.
 var Classifier errs.Classifier = classifier{}
 
 type classifier struct{}
 
 // Classify inspects a single node. Per the errs.Classifier contract, this
-// must not call errors.Is / errors.As — errs.Classify owns the chain walk.
+// must not call errors.Is / errors.As — the classifier-processor owns the
+// chain walk.
 func (classifier) Classify(err error) errs.Verdict {
 	// Cancellation signals that the caller aborted the work in flight
 	// (process shutdown, deadline on the inbound RPC, parent operation gone) —
@@ -44,8 +47,8 @@ func (classifier) Classify(err error) errs.Verdict {
 	// Cases where cancellation truly means "do not run this again" are
 	// caller-specific and should be expressed by wrapping with an explicit
 	// NewUserError / NewDependencyError before returning; the pass-1
-	// framework-wrap check in errs.Classify will then short-circuit before
-	// this classifier is consulted.
+	// framework-wrap check in the classifier-processor will then short-circuit
+	// before this classifier is consulted.
 	if err == context.Canceled {
 		return errs.InfraRetryable
 	}

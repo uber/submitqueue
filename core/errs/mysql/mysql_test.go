@@ -117,19 +117,20 @@ func TestClassifier_NetErrors(t *testing.T) {
 }
 
 func TestClassifier_Unknown(t *testing.T) {
-	// A plain, unrecognised error must yield Unknown so the package-level
-	// errs.Classify walker can move on to the next node in the chain rather
-	// than locking in a verdict.
+	// A plain, unrecognised error must yield Unknown so the surrounding
+	// classifier-processor walker can move on to the next node in the chain
+	// rather than locking in a verdict.
 	assert.Equal(t, errs.Unknown, Classifier.Classify(errors.New("anything")))
 	assert.Equal(t, errs.Unknown, Classifier.Classify(nil))
 }
 
-func TestClassifier_AppliedViaClassify(t *testing.T) {
-	// End-to-end behavior: the consumer's call site is
-	// `err = errs.Classify(err, mysqlerrs.Classifier)`, followed by
-	// errs.IsUserError / IsRetryable / IsDependencyError type checks. These
-	// tests pin that contract — given an err from a controller, the returned
-	// chain answers the right question.
+func TestClassifier_AppliedViaProcessor(t *testing.T) {
+	// End-to-end behavior: the consumer's call site runs the configured
+	// errs.ErrorProcessor (typically errs.NewClassifierProcessor(
+	// mysqlerrs.Classifier)) and then inspects errs.IsUserError /
+	// IsRetryable / IsDependencyError. These tests pin that contract — given
+	// an err from a controller, the returned chain answers the right question.
+	p := errs.NewClassifierProcessor(Classifier)
 
 	t.Run("mysql connection error surfaces as retryable infra", func(t *testing.T) {
 		// Simulates the queue or storage layer returning a wrapped net.OpError
@@ -137,7 +138,7 @@ func TestClassifier_AppliedViaClassify(t *testing.T) {
 		netErr := &net.OpError{Op: "read", Net: "tcp", Err: errors.New("reset")}
 		wrapped := fmt.Errorf("publish: %w", netErr)
 
-		out := errs.Classify(wrapped, Classifier)
+		out := p.Process(wrapped)
 		assert.True(t, errs.IsRetryable(out))
 		assert.False(t, errs.IsUserError(out))
 	})
@@ -146,7 +147,7 @@ func TestClassifier_AppliedViaClassify(t *testing.T) {
 		dl := &gomysql.MySQLError{Number: 1213, Message: "deadlock"}
 		wrapped := fmt.Errorf("update: %w", dl)
 
-		out := errs.Classify(wrapped, Classifier)
+		out := p.Process(wrapped)
 		assert.True(t, errs.IsRetryable(out))
 	})
 
@@ -155,8 +156,8 @@ func TestClassifier_AppliedViaClassify(t *testing.T) {
 		wrapped := fmt.Errorf("select: %w", se)
 
 		// Verdict Infra means "non-retryable infra" — the default for an
-		// unwrapped chain — so Classify leaves the chain alone.
-		out := errs.Classify(wrapped, Classifier)
+		// unwrapped chain — so the processor leaves the chain alone.
+		out := p.Process(wrapped)
 		assert.False(t, errs.IsRetryable(out))
 		assert.False(t, errs.IsUserError(out))
 		assert.Same(t, wrapped, out, "Infra verdict should not add a wrap")
@@ -167,7 +168,7 @@ func TestClassifier_AppliedViaClassify(t *testing.T) {
 		// a duplicate-key as a user error must wrap with errs.NewUserError
 		// explicitly (see the controller-override test below).
 		dup := &gomysql.MySQLError{Number: 1062, Message: "duplicate"}
-		out := errs.Classify(dup, Classifier)
+		out := p.Process(dup)
 		assert.False(t, errs.IsRetryable(out))
 		assert.False(t, errs.IsUserError(out))
 		assert.Same(t, dup, out, "Infra verdict should not add a wrap")
@@ -177,7 +178,7 @@ func TestClassifier_AppliedViaClassify(t *testing.T) {
 		dup := &gomysql.MySQLError{Number: 1062, Message: "duplicate"}
 		err := errs.NewUserError(fmt.Errorf("create: %w", dup))
 
-		out := errs.Classify(err, Classifier)
+		out := p.Process(err)
 		assert.Same(t, err, out)
 		assert.True(t, errs.IsUserError(out))
 		assert.False(t, errs.IsRetryable(out))
@@ -185,12 +186,12 @@ func TestClassifier_AppliedViaClassify(t *testing.T) {
 
 	t.Run("controller-level User wrap beats deeper mysql classification", func(t *testing.T) {
 		// Even though the underlying cause is a transient mysql deadlock, the
-		// outermost frame is an explicit NewUserError. Classify sees a framework
-		// wrap already in the chain and returns the chain untouched.
+		// outermost frame is an explicit NewUserError. The processor sees a
+		// framework wrap already in the chain and returns the chain untouched.
 		deadlock := &gomysql.MySQLError{Number: 1213, Message: "deadlock"}
 		err := errs.NewUserError(fmt.Errorf("conflict: %w", deadlock))
 
-		out := errs.Classify(err, Classifier)
+		out := p.Process(err)
 		assert.Same(t, err, out)
 		assert.True(t, errs.IsUserError(out))
 		assert.False(t, errs.IsRetryable(out))
@@ -199,18 +200,18 @@ func TestClassifier_AppliedViaClassify(t *testing.T) {
 	t.Run("controller-level Retryable wrap beats deeper mysql schema verdict", func(t *testing.T) {
 		// Inverse: a schema error would normally be non-retryable infra, but the
 		// controller chose to mark it retryable anyway. The outer framework wrap
-		// is already in the chain, so Classify is a no-op.
+		// is already in the chain, so the processor is a no-op.
 		schemaErr := &gomysql.MySQLError{Number: 1054, Message: "unknown column"}
 		err := errs.NewRetryableError(fmt.Errorf("query: %w", schemaErr))
 
-		out := errs.Classify(err, Classifier)
+		out := p.Process(err)
 		assert.Same(t, err, out)
 		assert.True(t, errs.IsRetryable(out))
 	})
 
 	t.Run("unwrapped non-mysql error stays unclassified", func(t *testing.T) {
 		raw := errors.New("something else")
-		out := errs.Classify(raw, Classifier)
+		out := p.Process(raw)
 		assert.Same(t, raw, out)
 		assert.False(t, errs.IsRetryable(out))
 		assert.False(t, errs.IsUserError(out))

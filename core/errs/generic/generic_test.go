@@ -34,8 +34,8 @@ func TestClassifier_Unknown(t *testing.T) {
 		err  error
 	}{
 		// Per-node contract — Classifier should NOT match a wrapped
-		// context.Canceled; the surrounding errs.Classify walk will reach the
-		// inner node and ask Classifier again there.
+		// context.Canceled; the surrounding classifier-processor walk will
+		// reach the inner node and ask Classifier again there.
 		{"wrapped context.Canceled", fmt.Errorf("op: %w", context.Canceled)},
 		{"deadline exceeded", context.DeadlineExceeded},
 		{"plain error", errors.New("anything")},
@@ -49,9 +49,11 @@ func TestClassifier_Unknown(t *testing.T) {
 	}
 }
 
-func TestClassifier_AppliedViaClassify(t *testing.T) {
+func TestClassifier_AppliedViaProcessor(t *testing.T) {
+	p := errs.NewClassifierProcessor(Classifier)
+
 	t.Run("bare context.Canceled becomes retryable infra", func(t *testing.T) {
-		out := errs.Classify(context.Canceled, Classifier)
+		out := p.Process(context.Canceled)
 		assert.True(t, errs.IsRetryable(out))
 	})
 
@@ -59,7 +61,7 @@ func TestClassifier_AppliedViaClassify(t *testing.T) {
 		// The chain walker reaches the inner context.Canceled node and the
 		// classifier matches there.
 		wrapped := fmt.Errorf("process: %w", context.Canceled)
-		out := errs.Classify(wrapped, Classifier)
+		out := p.Process(wrapped)
 		assert.True(t, errs.IsRetryable(out))
 	})
 
@@ -68,7 +70,7 @@ func TestClassifier_AppliedViaClassify(t *testing.T) {
 		// The pass-1 framework-wrap check short-circuits before Classifier
 		// runs.
 		err := errs.NewUserError(context.Canceled)
-		out := errs.Classify(err, Classifier)
+		out := p.Process(err)
 		assert.Same(t, err, out)
 		assert.False(t, errs.IsRetryable(out))
 		assert.True(t, errs.IsUserError(out))

@@ -18,8 +18,8 @@
 //
 // The classifier inspects a single error node at a time, as required by the
 // errs.Classifier contract. It returns errs.Unknown for nodes it does not
-// recognise so the surrounding errs.Classify chain walk can continue to
-// deeper nodes.
+// recognise so the surrounding classifier-processor chain walk can continue
+// to deeper nodes.
 package mysql
 
 import (
@@ -43,19 +43,21 @@ import (
 //   - net.Error values (including *net.OpError, *net.DNSError) — transient
 //     network failures while talking to the server, retryable.
 //
-// Anything else returns errs.Unknown so the surrounding errs.Classify walker
-// can keep looking down the unwrap chain.
+// Anything else returns errs.Unknown so the surrounding classifier-processor
+// walker can keep looking down the unwrap chain.
 //
 // The classifier never returns errs.User. Constraint violations and similar
 // codes that a caller might want to surface as user errors must be wrapped
 // explicitly with errs.NewUserError at the controller — only the controller
 // knows whether a duplicate key, FK violation, etc. reflects bad input from
 // the user or an internal invariant being broken. The framework-wrap check
-// in errs.Classify short-circuits before this classifier runs, so an
-// explicit controller wrap always wins.
+// in the classifier-processor short-circuits before this classifier runs, so
+// an explicit controller wrap always wins.
 //
 // The classifier is stateless; this package-level singleton is the canonical
-// handle. Pass it into errs.Classify (typically as a vararg to consumer.New).
+// handle. Pass it as one of the variadic classifiers to
+// errs.NewClassifierProcessor; the resulting processor is what gets handed to
+// consumer.New.
 var Classifier errs.Classifier = classifier{}
 
 type classifier struct{}
@@ -65,8 +67,9 @@ type classifier struct{}
 func (classifier) Classify(err error) errs.Verdict {
 	// MySQL server-reported errors. We do the type assertion directly on the
 	// current node (not errors.As) so an outer framework wrap (e.g. an explicit
-	// NewUserError from the controller) keeps winning — errs.Classify owns the
-	// chain walk and stops at any *userError / *infraError it sees first.
+	// NewUserError from the controller) keeps winning — the classifier-processor
+	// owns the chain walk and stops at any *userError / *infraError it sees
+	// first.
 	if me, ok := err.(*gomysql.MySQLError); ok {
 		return classifyMySQLNumber(me.Number)
 	}

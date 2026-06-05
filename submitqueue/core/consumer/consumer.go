@@ -61,7 +61,7 @@ type consumer struct {
 	logger       *zap.SugaredLogger
 	metricsScope tally.Scope
 	registry     TopicRegistry
-	classifiers  []errs.Classifier
+	processor    errs.ErrorProcessor
 
 	mu            sync.Mutex
 	stopped       bool
@@ -78,21 +78,20 @@ type activeSubscription struct {
 
 // New creates a new consumer.
 //
-// registry provides queue and subscription config for topics. classifiers are
-// the per-backend error classifiers used to decide whether an error returned
-// by a controller is retryable (nack for redelivery) or non-retryable (reject
-// to DLQ). The consumer runs errs.Classify(err, classifiers...) exactly once
-// per failing delivery and then drives ack/nack/reject from the resulting
-// chain via plain errs.IsRetryable type checks. Pass any backend-specific
-// classifiers the controllers rely on (e.g. core/errs/mysql.Classifier);
-// passing none is fine for tests where controllers always return explicit
-// framework-wrapped errors.
-func New(logger *zap.SugaredLogger, scope tally.Scope, registry TopicRegistry, classifiers ...errs.Classifier) Consumer {
+// registry provides queue and subscription config for topics. processor is the
+// error-classification policy applied exactly once per failing controller
+// return — typically errs.NewClassifierProcessor(...) for primary pipeline
+// consumers (per-node classifier walk that preserves controller-attached
+// framework wraps), or errs.AlwaysRetryableProcessor for narrowly-scoped
+// consumers such as DLQ reconciliation that must redeliver on any failure.
+// processor must not be nil; callers that genuinely want no transformation
+// can pass errs.NewClassifierProcessor() with no classifiers.
+func New(logger *zap.SugaredLogger, scope tally.Scope, registry TopicRegistry, processor errs.ErrorProcessor) Consumer {
 	return &consumer{
 		logger:        logger,
 		metricsScope:  scope.SubScope("consumer"),
 		registry:      registry,
-		classifiers:   classifiers,
+		processor:     processor,
 		subscriptions: make(map[TopicKey]*activeSubscription),
 	}
 }
@@ -381,11 +380,11 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 	metrics.NamedTimer(controllerScope, opName, "controller_latency", elapsed, metrics.NewTag("success", successTag))
 
 	if err != nil {
-		// Single explicit classification pass: if err's chain does not already
-		// carry a framework wrap, ask the configured classifiers and prepend
-		// the matching framework type. Downstream errs.IsRetryable / IsUserError
-		// calls then only do a plain type check on the result.
-		err = errs.Classify(err, m.classifiers...)
+		// Single explicit classification pass through the configured
+		// ErrorProcessor. Primary consumers use a classifier-based processor
+		// (preserves controller framework wraps); DLQ consumers use the
+		// always-retryable processor (forces redelivery on any error).
+		err = m.processor.Process(err)
 
 		// Check if the error is non-retryable (poison pill message)
 		if !errs.IsRetryable(err) {

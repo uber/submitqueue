@@ -23,11 +23,11 @@ Errors are classified along two axes:
 A returned `error` reaches `IsUserError` / `IsRetryable` / `IsDependencyError` carrying one of the framework types (`*userError` / `*infraError`). It gets there one of two ways:
 
 1. **Explicit wrap by the controller** — the controller knows the meaning of the failure and wraps the cause with `NewUserError`, `NewRetryableError`, `NewDependencyError`, or `NewRetryableDependencyError` before returning.
-2. **Automatic wrap by `Classify`** — the controller returns a raw driver/library/sentinel error, and a per-backend `Classifier` recognises it later in the pipeline (typically inside the consumer) and adds the appropriate framework wrap.
+2. **Automatic wrap by the classifier-based `ErrorProcessor`** — the controller returns a raw driver/library/sentinel error, and a per-backend `Classifier` recognises it later in the pipeline (typically inside the consumer, after `ErrorProcessor.Process` runs) and adds the appropriate framework wrap.
 
 Both routes feed the same downstream helpers; the chain that reaches `IsRetryable` looks identical regardless of who wrapped it.
 
-## `Classify` and the `Classifier` Interface
+## `ErrorProcessor`, `Classifier`, and the Processing Pass
 
 `Classifier` inspects a **single error node** and returns a `Verdict`:
 
@@ -39,14 +39,22 @@ type Classifier interface {
 
 Verdicts: `Unknown` (this node carries no signal), `User`, `Infra`, `InfraRetryable`, `InfraDependency`, `InfraDependencyRetryable`.
 
-`Classify(err, classifiers...)` is the single, explicit pass that turns a raw chain into a wrapped one. It is called **exactly once per chain** — typically by the consumer immediately after the controller returns. After that point, callers use only the `IsXxx` helpers, which are pure type checks.
+An `ErrorProcessor` runs the per-chain pass that turns a raw chain into a wrapped one. It is called **exactly once per chain** — typically by the consumer immediately after the controller returns. After that point, callers use only the `IsXxx` helpers, which are pure type checks.
 
-`Classify` walks the chain twice:
+Two implementations ship in this package:
 
-1. **Pass 1 — framework-wrap check.** A cheap type switch looks for an existing `*userError` / `*infraError` anywhere in the chain. If found, the chain is already interpretable and `Classify` returns `err` unchanged. **No classifier is invoked.**
-2. **Pass 2 — classifier walk.** From outermost to innermost node, each registered classifier is asked for a verdict. The first non-`Unknown` verdict wins and `err` is wrapped with the matching framework constructor.
+- **`NewClassifierProcessor(classifiers...)`** — the standard pass for primary pipeline consumers. Walks the chain twice:
+  1. **Pass 1 — framework-wrap check.** A cheap type switch looks for an existing `*userError` / `*infraError` anywhere in the chain. If found, the chain is already interpretable and the processor returns `err` unchanged. **No classifier is invoked.**
+  2. **Pass 2 — classifier walk.** From outermost to innermost node, each registered classifier is asked for a verdict. The first non-`Unknown` verdict wins and `err` is wrapped with the matching framework constructor.
 
-If no classifier recognises anything, `err` is returned unchanged — and behaves as non-retryable infra at the helper layer.
+  If no classifier recognises anything, `err` is returned unchanged — and behaves as non-retryable infra at the helper layer.
+
+- **`AlwaysRetryableProcessor`** — unconditionally wraps every non-nil error with `NewRetryableError`, overriding any inner framework wrap. Use it for narrowly-scoped consumers — typically DLQ reconciliation — that must redeliver on any failure because there is no further dead-letter destination. Side-effect: an inner `*infraError(dependency=true)` is masked by the outer `retryable=true` wrap, since `errors.As` matches the outermost `*infraError` first. This is acceptable for the intended DLQ use case where only `IsRetryable` drives transport behaviour; do not pair this processor with a primary pipeline consumer or genuine user errors will retry forever instead of reaching their DLQ.
+
+### Choosing a processor
+
+- **Primary pipeline consumer** → `NewClassifierProcessor(...)`. Controllers' explicit `NewUserError` / `NewDependencyError` wraps must survive so user errors don't get retried, and unclassified backend errors must be inspected by the registered classifiers.
+- **DLQ reconciliation consumer** → `AlwaysRetryableProcessor`. The DLQ is the last stop; any unprocessable message must come back for another attempt rather than silently drop. The DLQ subscription itself runs with a very high `Retry.MaxAttempts` and with its own DLQ disabled, so "always retryable + bounded-but-effectively-infinite attempts" is the convergence guarantee.
 
 ## Adding a Backend-Specific Classifier
 
@@ -77,21 +85,24 @@ func (classifier) Classify(err error) errs.Verdict {
 }
 ```
 
-Servers wire each classifier into the consumer as a vararg. Order matters only when two classifiers might both match a node — earlier classifiers win:
+Servers wire each classifier into the consumer's `ErrorProcessor`. Order matters only when two classifiers might both match a node — earlier classifiers win:
 
 ```go
 import (
+    "github.com/uber/submitqueue/core/errs"
     genericerrs "github.com/uber/submitqueue/core/errs/generic"
     mysqlerrs   "github.com/uber/submitqueue/core/errs/mysql"
 )
 
 c := consumer.New(logger, scope, registry,
-    genericerrs.Classifier,
-    mysqlerrs.Classifier,
+    errs.NewClassifierProcessor(
+        genericerrs.Classifier,
+        mysqlerrs.Classifier,
+    ),
 )
 ```
 
-Tests follow the same shape: assert per-node behaviour against `Classifier.Classify(node)` directly, and assert end-to-end behaviour by running `errs.Classify(err, Classifier)` and checking the helpers (`IsRetryable`, `IsUserError`, …) on the result. See `core/errs/mysql/mysql_test.go` and `core/errs/generic/generic_test.go`.
+Tests follow the same shape: assert per-node behaviour against `Classifier.Classify(node)` directly, and assert end-to-end behaviour by running `errs.NewClassifierProcessor(Classifier).Process(err)` and checking the helpers (`IsRetryable`, `IsUserError`, …) on the result. See `core/errs/mysql/mysql_test.go` and `core/errs/generic/generic_test.go`.
 
 ## Overriding Classification from a Controller
 
@@ -106,8 +117,9 @@ if errors.Is(err, storage.ErrNotFound) {
     return errs.NewUserError(fmt.Errorf("request %s: %w", id, err))
 }
 if err != nil {
-    // Hand the raw error to Classify — the mysql classifier will recognise
-    // deadlocks, lock-wait timeouts, etc. and wrap them as retryable infra.
+    // Hand the raw error to the consumer's ErrorProcessor — the mysql
+    // classifier will recognise deadlocks, lock-wait timeouts, etc. and wrap
+    // them as retryable infra.
     return fmt.Errorf("get %s: %w", id, err)
 }
 ```
@@ -119,7 +131,7 @@ Two practical rules fall out of the short-circuit semantics:
 
 ## Extensions Return Plain Go Errors
 
-Extension interfaces (`MergeChecker`, `Storage`, `Publisher`) return standard `error` values. They may define their own domain-specific sentinel errors (e.g. `storage.ErrNotFound`, `storage.ErrVersionMismatch`) but they do **not** classify errors as user or infra — that is the controller's (and `Classify`'s) job.
+Extension interfaces (`MergeChecker`, `Storage`, `Publisher`) return standard `error` values. They may define their own domain-specific sentinel errors (e.g. `storage.ErrNotFound`, `storage.ErrVersionMismatch`) but they do **not** classify errors as user or infra — that is the controller's (and the consumer's `ErrorProcessor`'s) job.
 
 This separation keeps extensions reusable across contexts. The same `storage.ErrNotFound` might be a user error in one controller (user requested a non-existent resource) and an infra error in another (expected record is missing).
 
@@ -151,4 +163,4 @@ errors.Is(err, ErrNotFound)       // true — cause is in the chain
 | `IsRetryable(err)`  | `err` is or wraps an infra error with the retryable flag set |
 | `IsDependencyError(err)` | `err` is or wraps an infra error marked as dependency   |
 
-All three are type-only checks. They do not invoke classifiers — pair them with a preceding `Classify` call when the controller's error may not carry an explicit wrap.
+All three are type-only checks. They do not invoke classifiers — pair them with a preceding `ErrorProcessor.Process` call when the controller's error may not carry an explicit wrap.

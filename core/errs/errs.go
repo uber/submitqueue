@@ -143,88 +143,14 @@ const (
 //
 // Classifiers must not call errors.As / errors.Is themselves, which would walk
 // the chain and could shadow a classification carried by an outer node (such
-// as a controller's explicit NewUserError wrap). The package-level Classify
-// function owns the walk.
+// as a controller's explicit NewUserError wrap). The classifier-based
+// ErrorProcessor (see NewClassifierProcessor) owns the walk.
 //
 // Classifiers are typically stateless; the canonical convention is to expose a
 // package-level singleton value (e.g. mysqlerrs.Classifier) rather than a
 // constructor.
 type Classifier interface {
 	Classify(err error) Verdict
-}
-
-// Classify is the single, explicit classification pass. It is intended to be
-// called exactly once per error chain — typically by the consumer immediately
-// after a controller returns — and produces a chain that subsequent IsUserError
-// / IsRetryable / IsDependencyError calls can interpret with simple type
-// checks (no further classifier walks).
-//
-// Semantics:
-//
-//   - nil in, nil out.
-//   - If err's chain already carries a framework classification (*userError or
-//     *infraError anywhere in the chain), returns err unchanged — the chain is
-//     already interpretable by IsUserError / IsRetryable / IsDependencyError.
-//   - Otherwise, walks the chain from outermost to innermost, asking each
-//     classifier per node. The FIRST non-Unknown verdict wins; the outermost
-//     such node determines the wrap. err is wrapped with the framework
-//     constructor matching that verdict (User -> NewUserError, InfraRetryable
-//     -> NewRetryableError, etc.) and the wrapped error is returned.
-//   - Verdict Infra means "non-retryable infra" — which is already the default
-//     behavior for an unwrapped chain, so no wrap is added.
-//   - If no classifier recognises anything, err is returned unchanged.
-//
-// Implementation: two passes over the chain. Pass 1 is a cheap type check
-// looking for an existing framework wrap and short-circuits if one is found —
-// no classifier is invoked. Pass 2 runs the configured classifiers per node.
-// Walking the chain is cheap relative to a classifier call, so this avoids
-// running classifiers whenever the chain is already classified deeper down.
-//
-// NOTE: this central classifier model cannot disambiguate errors of the same
-// underlying type produced by different extensions (e.g. a net.OpError from a
-// mysql connection vs the same type from an HTTP caller would both match the
-// mysql classifier here). Resolving that requires per-extension provenance
-// tagging; intentionally deferred.
-func Classify(err error, classifiers ...Classifier) error {
-	if err == nil {
-		return nil
-	}
-
-	// Pass 1 — cheap framework-wrap check. If any node already carries a
-	// framework type, the chain is interpretable as-is and classifiers are
-	// never invoked.
-	for cur := err; cur != nil; cur = errors.Unwrap(cur) {
-		switch cur.(type) {
-		case *userError, *infraError:
-			return err
-		}
-	}
-
-	// Pass 2 — run classifiers per node from outermost to innermost. Stop at
-	// the first non-Unknown verdict.
-	var verdict Verdict
-	for cur := err; cur != nil && verdict == Unknown; cur = errors.Unwrap(cur) {
-		for _, c := range classifiers {
-			if v := c.Classify(cur); v != Unknown {
-				verdict = v
-				break
-			}
-		}
-	}
-
-	switch verdict {
-	case User:
-		return NewUserError(err)
-	case InfraRetryable:
-		return NewRetryableError(err)
-	case InfraDependency:
-		return NewDependencyError(err)
-	case InfraDependencyRetryable:
-		return NewRetryableDependencyError(err)
-	}
-	// Unknown or Infra — no wrap needed; the existing chain already behaves as
-	// non-retryable infra at the IsRetryable / IsUserError layer.
-	return err
 }
 
 // IsUserError reports whether err is or wraps a user error, i.e. an error

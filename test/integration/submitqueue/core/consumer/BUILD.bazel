@@ -12,6 +12,7 @@ go_test(
         "integration",
     ],
     deps = [
+        "//core/errs",
         "//entity/messagequeue",
         "//extension/messagequeue",
         "//extension/messagequeue/mysql",

@@ -1,0 +1,48 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "dlq",
+    srcs = [
+        "batch.go",
+        "buildsignal.go",
+        "dlq.go",
+        "log.go",
+        "request.go",
+    ],
+    importpath = "github.com/uber/submitqueue/submitqueue/orchestrator/controller/dlq",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//core/metrics",
+        "//submitqueue/core/consumer",
+        "//submitqueue/entity",
+        "//submitqueue/extension/storage",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "dlq_test",
+    srcs = [
+        "batch_test.go",
+        "buildsignal_test.go",
+        "dlq_test.go",
+        "log_test.go",
+        "request_test.go",
+    ],
+    embed = [":dlq"],
+    deps = [
+        "//core/errs",
+        "//entity/messagequeue",
+        "//extension/messagequeue/mock",
+        "//submitqueue/core/consumer",
+        "//submitqueue/entity",
+        "//submitqueue/extension/storage",
+        "//submitqueue/extension/storage/mock",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_uber_go_tally_v4//:tally",
+        "@org_uber_go_mock//gomock",
+        "@org_uber_go_zap//zaptest",
+    ],
+)
