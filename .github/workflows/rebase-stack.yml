@@ -37,8 +37,26 @@
 
 name: Rebase Stacked PRs
 
+# SECURITY: this workflow is triggered by `pull_request_target`, NOT
+# `pull_request`. The distinction is critical because this job holds a
+# privileged, repo-write PAT (STACK_REBASE_TOKEN).
+#
+#   - `pull_request`        runs the workflow file from the PR's HEAD ref.
+#                           A contributor could edit THIS file in their own PR
+#                           (e.g. drop the `merged` guard), close the PR, and
+#                           run arbitrary code with the PAT. Same-repo branch
+#                           PRs (the stacked-PR model) DO receive secrets, so
+#                           this is exploitable — a secret-exfiltration hole.
+#   - `pull_request_target` always runs the workflow file from the DEFAULT
+#                           branch (main). PR edits to this file are ignored,
+#                           so the privileged logic is fixed at main's version.
+#
+# `pull_request_target` is safe HERE specifically because the job never builds
+# or executes PR code: it only replays commits with `git rebase` (which runs
+# nothing from the tree) and validates the resulting diff is byte-identical
+# before force-pushing. It does not run `make`, tests, or any PR script.
 on:
-  pull_request:
+  pull_request_target:
     types:
       - closed
 
@@ -52,8 +70,11 @@ jobs:
     name: Rebase Stack
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
+    # Scope the privileged PAT to a protected Environment restricted to `main`
+    # so the secret cannot be used from any other ref/context.
+    environment: stack-rebase
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           # Fetch full history so rebase --onto works correctly.
           fetch-depth: 0

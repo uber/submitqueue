@@ -1,0 +1,32 @@
+# zizmor (GitHub Actions security auditor) configuration.
+#
+# Every ignore below is an INTENTIONAL, reviewed exception with a concrete
+# justification — not a blanket mute. New findings outside these are expected
+# to fail the `workflow-security` CI job.
+rules:
+  # rebase-stack.yml deliberately uses `pull_request_target` so the privileged
+  # workflow definition (which holds the STACK_REBASE_TOKEN PAT) is always taken
+  # from `main`, never from PR-controlled content. It never builds or runs PR
+  # code — only `git rebase` replay + byte-identical diff validation before
+  # force-push — so the usual pull_request_target code-execution risk does not
+  # apply. See the SECURITY comment block at the top of that workflow.
+  dangerous-triggers:
+    ignore:
+      - rebase-stack.yml
+  # These workflows MUST persist the checkout credentials because they push:
+  #   - rebase-stack.yml force-pushes rebased branches using STACK_REBASE_TOKEN
+  #   - tag-go-pseudoversion.yml pushes pseudo-version tags using the default token
+  # Neither uploads build artifacts, so persisted credentials cannot leak via
+  # the artipacked vector. CI jobs that DO run untrusted PR code set
+  # persist-credentials: false in ci.yml.
+  artipacked:
+    ignore:
+      - rebase-stack.yml
+      - tag-go-pseudoversion.yml
+  # dependabot.yml intentionally disables scheduled version-update PRs
+  # (open-pull-requests-limit: 0) and relies only on security updates, which
+  # should be applied promptly. A version-update cooldown would add nothing
+  # (no version PRs are opened) and we do not want to delay security fixes.
+  dependabot-cooldown:
+    ignore:
+      - dependabot.yml
