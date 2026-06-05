@@ -60,6 +60,17 @@ func TestGatewayIntegration(t *testing.T) {
 	suite.Run(t, new(GatewayIntegrationSuite))
 }
 
+// The log consumer runs inside the gateway-service container, so this suite can
+// only observe persistence black-box through the Status RPC — there is no
+// in-process channel/HookSignal to wait on across the container boundary. A
+// bounded poll is therefore the deterministic-enough analog: persistTimeout is a
+// safety net (a failure here means something is genuinely stuck, not a timing
+// race), and persistPollInterval bounds how often we re-query.
+const (
+	persistTimeout      = 30 * time.Second
+	persistPollInterval = 500 * time.Millisecond
+)
+
 func (s *GatewayIntegrationSuite) SetupSuite() {
 	t := s.T()
 	s.ctx = context.Background()
@@ -190,7 +201,7 @@ func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 			return false
 		}
 		return resp.Status == string(entity.RequestStatusStarted)
-	}, 30*time.Second, 500*time.Millisecond,
+	}, persistTimeout, persistPollInterval,
 		"gateway log consumer should persist the published request log for sqid=%s", sqid)
 
 	s.log.Logf("Request log consumer test passed: entry persisted and readable via Status")

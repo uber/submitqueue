@@ -28,6 +28,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally/v4"
+	"github.com/uber/submitqueue/core/errs"
 	genericerrs "github.com/uber/submitqueue/core/errs/generic"
 	mysqlerrs "github.com/uber/submitqueue/core/errs/mysql"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
@@ -178,12 +179,18 @@ func run() error {
 		zap.String("queue_dsn", queueDSN),
 	)
 
-	// Stable subscriber name for the log-topic consumer. Falls back to a
-	// time-seeded name when HOSTNAME is unset (e.g. local runs).
-	subscriberName := os.Getenv("HOSTNAME")
-	if subscriberName == "" {
-		subscriberName = fmt.Sprintf("gateway-%d", time.Now().Unix())
+	// Subscriber name for the log-topic consumer. It must be unique per running
+	// instance: SubscriberName identifies a subscriber for partition leases, so
+	// two gateway processes on the same host (sharing HOSTNAME) would otherwise
+	// contend for the same lease. Append the PID to keep co-located instances
+	// distinct; the PID is stable for the life of the process. Offset tracking
+	// stays keyed on the shared ConsumerGroup ("gateway-log"), not this name.
+	// Falls back to a time-seeded name when HOSTNAME is unset (e.g. local runs).
+	hostname := os.Getenv("HOSTNAME")
+	if hostname == "" {
+		hostname = fmt.Sprintf("gateway-%d", time.Now().Unix())
 	}
+	subscriberName := fmt.Sprintf("%s-%d", hostname, os.Getpid())
 
 	// Build the topic registry. The gateway publishes to the start of the
 	// orchestrator pipeline (TopicKeyStart) and the cancel topic (TopicKeyCancel) —
@@ -262,11 +269,13 @@ func run() error {
 	// the sole persister of the request log: the orchestrator publishes entries
 	// to the log topic and this consumer writes them to storage.
 	logConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
-		// Storage (extension/storage/mysql) and queue (extension/messagequeue/mysql)
-		// both run on the same MySQL driver, so a single classifier covers
-		// errors surfaced from either backend.
-		genericerrs.Classifier,
-		mysqlerrs.Classifier,
+		errs.NewClassifierProcessor(
+			// Storage (extension/storage/mysql) and queue (extension/messagequeue/mysql)
+			// both run on the same MySQL driver, so a single classifier covers
+			// errors surfaced from either backend.
+			genericerrs.Classifier,
+			mysqlerrs.Classifier,
+		),
 	)
 
 	logController := logctrl.NewController(logger.Sugar(), scope, store, consumer.TopicKeyLog, "gateway-log")
@@ -337,8 +346,10 @@ func run() error {
 	}
 
 	if errStop != nil || serverErr != nil {
-		// Override context cancellation error with the shutdown error
-		err = errors.Join(errStop, serverErr)
+		// Override context cancellation error with the shutdown error. The server
+		// error is the primary/root failure, so it leads; the consumer-stop error
+		// is secondary cleanup.
+		err = errors.Join(serverErr, errStop)
 	}
 
 	return err

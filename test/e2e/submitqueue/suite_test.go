@@ -56,6 +56,17 @@ func TestE2EIntegration(t *testing.T) {
 	suite.Run(t, new(E2EIntegrationSuite))
 }
 
+// The gateway log consumer runs inside the gateway-service container, so this
+// suite can only observe persistence black-box through the Status RPC — there is
+// no in-process channel/HookSignal to wait on across the container boundary. A
+// bounded poll is therefore the deterministic-enough analog: persistTimeout is a
+// safety net (a failure here means something is genuinely stuck, not a timing
+// race), and persistPollInterval bounds how often we re-query.
+const (
+	persistTimeout      = 30 * time.Second
+	persistPollInterval = 500 * time.Millisecond
+)
+
 func (s *E2EIntegrationSuite) SetupSuite() {
 	t := s.T()
 	s.ctx = context.Background()
@@ -202,7 +213,7 @@ func (s *E2EIntegrationSuite) TestLandRequest_PersistsStartedLogViaGatewayConsum
 		}
 		s.log.Logf("Status(%s) = %q", sqid, resp.Status)
 		return resp.Status == string(entity.RequestStatusStarted)
-	}, 30*time.Second, 500*time.Millisecond,
+	}, persistTimeout, persistPollInterval,
 		"request %s should reach status %q via the gateway log consumer", sqid, entity.RequestStatusStarted)
 
 	s.log.Logf("Gateway consumer persisted orchestrator-published 'started' log for sqid=%s", sqid)
