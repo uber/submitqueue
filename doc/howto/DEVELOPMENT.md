@@ -86,12 +86,7 @@ GoLand works with Go modules automatically. Open the project root and GoLand wil
 
 ```bash
 # macOS
-brew install protobuf grpcurl
-
-# Go protoc plugins (only if modifying .proto files)
-go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-go install go.uber.org/yarpc/encoding/protobuf/protoc-gen-yarpc-go@latest
+brew install grpcurl
 ```
 
 ## Common Make Targets
@@ -138,8 +133,8 @@ See [TESTING.md](TESTING.md) for the full testing guide, including integration a
 ## Troubleshooting
 
 **Proto generation fails:**
-- Ensure all three protoc plugins are installed (see Optional Tools above)
-- Check that `protoc` is in your PATH: `which protoc`
+- Run `make proto`; Bazel provides the pinned `protoc` and plugin toolchain.
+- If Bazel cannot fetch tools, check network access and the repository cache configuration in `.bazelrc`.
 
 **Build fails after proto changes:**
 - Run `make proto` to regenerate proto files

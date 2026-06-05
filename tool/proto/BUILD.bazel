@@ -1,0 +1,35 @@
+load("//tool/proto:proto_codegen.bzl", "go_proto_generated_files")
+
+go_proto_generated_files(
+    name = "submitqueue_gateway",
+    src = "//submitqueue/gateway/proto:gateway.proto",
+    out_dir = "submitqueue_gateway",
+)
+
+go_proto_generated_files(
+    name = "submitqueue_orchestrator",
+    src = "//submitqueue/orchestrator/proto:orchestrator.proto",
+    out_dir = "submitqueue_orchestrator",
+)
+
+go_proto_generated_files(
+    name = "stovepipe_gateway",
+    src = "//stovepipe/gateway/proto:gateway.proto",
+    out_dir = "stovepipe_gateway",
+)
+
+go_proto_generated_files(
+    name = "stovepipe_orchestrator",
+    src = "//stovepipe/orchestrator/proto:orchestrator.proto",
+    out_dir = "stovepipe_orchestrator",
+)
+
+filegroup(
+    name = "generated",
+    srcs = [
+        ":stovepipe_gateway",
+        ":stovepipe_orchestrator",
+        ":submitqueue_gateway",
+        ":submitqueue_orchestrator",
+    ],
+)
