@@ -55,7 +55,7 @@ func buildJSON(number int, state, webURL string) []byte {
 
 func TestNew_ImplementsInterface(t *testing.T) {
 	r, err := NewBuildRunner(Params{Logger: zap.NewNop().Sugar()})
-	require.NoError(t, err)
+	require.Error(t, err, "http client is required")
 	var _ buildrunner.BuildRunner = r
 }
 

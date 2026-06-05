@@ -85,11 +85,13 @@ type Params struct {
 // root (e.g. "https://api.buildkite.com/v2/organizations/{org}/pipelines/{slug}"),
 // and an auth transport that injects the Authorization header.
 func NewBuildRunner(params Params) (buildrunner.BuildRunner, error) {
-	httpClient := params.HTTPClient
-	if httpClient == nil {
-		httpClient = http.DefaultClient
+	if params.HTTPClient == nil {
+		return nil, fmt.Errorf("http client is required")
 	}
-	return newRunner(params.Config, &client{httpClient: httpClient}, params.Logger.Named("buildkite_buildrunner")), nil
+	if params.Logger == nil {
+		return nil, fmt.Errorf("logger is required")
+	}
+	return newRunner(params.Config, &client{httpClient: params.HTTPClient}, params.Logger.Named("buildkite_buildrunner")), nil
 }
 
 // newRunner constructs a runner. Used by NewBuildRunner and by tests.
