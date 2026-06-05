@@ -21,6 +21,7 @@ import (
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
@@ -45,16 +46,11 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	stores storage.Factory,
+	store storage.Storage,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
-	// TODO(queue-aware): make this controller queue-aware during Process — derive the
-	// queue from the loaded entity and use it for structured logging, metrics scoping,
-	// and per-queue storage resolution. Today it uses the default store because the
-	// queue is only known after the by-ID load.
-	store, _ := stores.For("")
 	return &Controller{
 		logger:        logger.Named("conclude_controller"),
 		metricsScope:  scope.SubScope("conclude_controller"),
@@ -106,8 +102,17 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		metrics.NamedCounter(c.metricsScope, "process", "unexpected_state_errors", 1)
 		return fmt.Errorf("unexpected batch state %q for batch %s: %w", batch.State, batch.ID, err)
 	}
+	requestStatus, err := requestStateToStatus(requestState)
+	if err != nil {
+		// Unreachable: batchStateToRequestState only returns terminal request states.
+		return fmt.Errorf("failed to map request state %s to status: %w", requestState, err)
+	}
 
-	// Update each request's state to reflect the batch outcome.
+	// Reconcile each request to the batch's terminal state and emit a terminal
+	// log entry. The flow is idempotent under at-least-once delivery: a prior
+	// attempt may have completed the CAS but failed before publishing the log,
+	// so the log publish must still run when the request is already in the
+	// target terminal state.
 	for _, requestID := range batch.Contains {
 		request, err := c.store.GetRequestStore().Get(ctx, requestID)
 		if err != nil {
@@ -115,18 +120,47 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 			return fmt.Errorf("failed to get request %s: %w", requestID, err)
 		}
 
-		newVersion := request.Version + 1
-		if err := c.store.GetRequestStore().UpdateState(ctx, requestID, request.Version, newVersion, requestState); err != nil {
-			metrics.NamedCounter(c.metricsScope, "process", "request_update_errors", 1)
-			return fmt.Errorf("failed to update request %s state to %s: %w", requestID, requestState, err)
-		}
-		request.Version = newVersion
+		switch {
+		case request.State == requestState:
+			// Idempotent retry: a prior delivery already wrote the terminal
+			// state. Skip the CAS and fall through to the log publish.
+			metrics.NamedCounter(c.metricsScope, "process", "already_reconciled", 1)
+		case entity.IsRequestStateTerminal(request.State):
+			// Divergent terminal state — a concurrent path (e.g. a racing
+			// cancel-not-yet-batched transition) reached terminal first. Skip
+			// the reconcile and the log publish; the other writer owns the
+			// terminal log entry for the state it actually wrote.
+			c.logger.Warnw("request already in different terminal state, skipping reconcile",
+				"batch_id", batch.ID,
+				"request_id", requestID,
+				"actual_state", string(request.State),
+				"expected_state", string(requestState),
+			)
+			metrics.NamedCounter(c.metricsScope, "process", "terminal_state_divergence", 1)
+			continue
+		default:
+			newVersion := request.Version + 1
+			if err := c.store.GetRequestStore().UpdateState(ctx, requestID, request.Version, newVersion, requestState); err != nil {
+				metrics.NamedCounter(c.metricsScope, "process", "request_update_errors", 1)
+				return fmt.Errorf("failed to update request %s state to %s: %w", requestID, requestState, err)
+			}
+			request.Version = newVersion
+			request.State = requestState
 
-		c.logger.Infow("updated request state",
-			"batch_id", batch.ID,
-			"request_id", requestID,
-			"new_state", string(requestState),
-		)
+			c.logger.Infow("updated request state",
+				"batch_id", batch.ID,
+				"request_id", requestID,
+				"new_state", string(requestState),
+			)
+		}
+
+		logEntry := entity.NewRequestLog(requestID, requestStatus, request.Version, "", map[string]string{
+			"batch_id": batch.ID,
+		})
+		if err := corerequest.PublishLog(ctx, c.registry, logEntry, requestID); err != nil {
+			metrics.NamedCounter(c.metricsScope, "process", "log_publish_errors", 1)
+			return fmt.Errorf("failed to publish request log for %s: %w", requestID, err)
+		}
 	}
 
 	return nil // Success - message will be acked
@@ -158,5 +192,19 @@ func batchStateToRequestState(state entity.BatchState) (entity.RequestState, err
 		return entity.RequestStateCancelled, nil
 	default:
 		return entity.RequestStateUnknown, fmt.Errorf("non-terminal batch state: %s", state)
+	}
+}
+
+// requestStateToStatus maps a terminal request state to the corresponding log status.
+func requestStateToStatus(state entity.RequestState) (entity.RequestStatus, error) {
+	switch state {
+	case entity.RequestStateLanded:
+		return entity.RequestStatusLanded, nil
+	case entity.RequestStateError:
+		return entity.RequestStatusError, nil
+	case entity.RequestStateCancelled:
+		return entity.RequestStatusCancelled, nil
+	default:
+		return entity.RequestStatusUnknown, fmt.Errorf("non-terminal request state: %s", state)
 	}
 }

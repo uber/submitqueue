@@ -20,6 +20,13 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded runs for the same PR to save runner minutes. Never cancel
+# in-progress runs for `push` (main) or `merge_group` — those must complete so
+# the default branch and merge queue always have a definitive result.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # ---------------------------------------------------------------------------
   # LINT (gofmt via Go SDK, yamlfmt via go run)
@@ -29,7 +36,11 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # This job executes untrusted PR code (make build/test/lint). Don't
+          # leave the GITHUB_TOKEN in the workspace git config while it runs.
+          persist-credentials: false
       - uses: ./.github/actions/setup
 
       - name: Run linters
@@ -43,7 +54,11 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # This job executes untrusted PR code (make build/test/lint). Don't
+          # leave the GITHUB_TOKEN in the workspace git config while it runs.
+          persist-credentials: false
       - uses: ./.github/actions/setup
 
       - name: Check module files are tidy
@@ -60,7 +75,11 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # This job executes untrusted PR code (make build/test/lint). Don't
+          # leave the GITHUB_TOKEN in the workspace git config while it runs.
+          persist-credentials: false
       - uses: ./.github/actions/setup
 
       - name: Build project
@@ -77,7 +96,11 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # This job executes untrusted PR code (make build/test/lint). Don't
+          # leave the GITHUB_TOKEN in the workspace git config while it runs.
+          persist-credentials: false
       - uses: ./.github/actions/setup
 
       - name: Run E2E tests
@@ -88,7 +111,11 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # This job executes untrusted PR code (make build/test/lint). Don't
+          # leave the GITHUB_TOKEN in the workspace git config while it runs.
+          persist-credentials: false
       - uses: ./.github/actions/setup
 
       - name: Run Gateway integration tests
@@ -99,7 +126,11 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # This job executes untrusted PR code (make build/test/lint). Don't
+          # leave the GITHUB_TOKEN in the workspace git config while it runs.
+          persist-credentials: false
       - uses: ./.github/actions/setup
 
       - name: Run Orchestrator integration tests
@@ -113,7 +144,11 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # This job executes untrusted PR code (make build/test/lint). Don't
+          # leave the GITHUB_TOKEN in the workspace git config while it runs.
+          persist-credentials: false
       - uses: ./.github/actions/setup
       - uses: ./.github/actions/run-bazel-test
         with:
@@ -124,7 +159,11 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # This job executes untrusted PR code (make build/test/lint). Don't
+          # leave the GITHUB_TOKEN in the workspace git config while it runs.
+          persist-credentials: false
       - uses: ./.github/actions/setup
       - uses: ./.github/actions/run-bazel-test
         with:
@@ -135,7 +174,11 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # This job executes untrusted PR code (make build/test/lint). Don't
+          # leave the GITHUB_TOKEN in the workspace git config while it runs.
+          persist-credentials: false
       - uses: ./.github/actions/setup
       - uses: ./.github/actions/run-bazel-test
         with:
@@ -149,11 +192,70 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # This job executes untrusted PR code (make build/test/lint). Don't
+          # leave the GITHUB_TOKEN in the workspace git config while it runs.
+          persist-credentials: false
       - uses: ./.github/actions/setup
       - uses: ./.github/actions/run-bazel-test
         with:
           target: //test/integration/submitqueue/core/consumer/...
+
+  # ---------------------------------------------------------------------------
+  # WORKFLOW SECURITY LINT
+  #
+  # Guards against regressions in the workflows themselves: actionlint checks
+  # general validity; zizmor audits for GitHub Actions security smells
+  # (dangerous triggers, unpinned `uses:`, credential persistence, template
+  # injection). Keeps the pull_request_target / SHA-pinning hardening from
+  # silently eroding in future edits.
+  # ---------------------------------------------------------------------------
+  workflow-security:
+    name: Workflow Security Lint
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: actionlint
+        uses: raven-actions/actionlint@205b530c5d9fa8f44ae9ed59f341a0db994aa6f8 # v2.1.2
+      - name: zizmor
+        uses: zizmorcore/zizmor-action@5f14fd08f7cf1cb1609c1e344975f152c7ee938d # v0.5.6
+        with:
+          # Pin the zizmor TOOL version (distinct from the action tag above) for
+          # reproducible audits matching local validation.
+          version: "1.25.2"
+          # Fail the job on findings without requiring GitHub Advanced Security
+          # / SARIF upload (which needs security-events: write and degrades on
+          # fork PRs). Keeps the gate self-contained.
+          advanced-security: false
+
+      # ci.yml and the composite actions it calls run untrusted PR code under
+      # the `pull_request` trigger. A repository secret referenced anywhere on
+      # that path is reachable by a malicious PR and can be exfiltrated on the
+      # PR run (before any review), so this path must stay secret-free — route
+      # any secret-bearing step through a SEPARATE trusted workflow
+      # (workflow_run / pull_request_target) that does not execute PR code.
+      #
+      # This guard catches ACCIDENTAL reintroduction by honest contributors; a
+      # malicious actor controlling ci.yml could delete the guard itself, so the
+      # real defenses remain (a) secrets scoped to a main-only Environment so a
+      # PR-triggered job cannot obtain them, and (b) CODEOWNERS review on
+      # .github/. GITHUB_TOKEN (least-privilege, read-only here) is allowlisted.
+      - name: Guard — no repository secrets on the untrusted-code path
+        run: |
+          hits="$(grep -rnE '\$\{\{[^}]*secrets\.' \
+            .github/workflows/ci.yml .github/actions \
+            | grep -vE 'secrets\.GITHUB_TOKEN' || true)"
+          if [ -n "$hits" ]; then
+            echo "::error::Repository secret referenced on the untrusted-code CI path (ci.yml / composite actions):" >&2
+            echo "$hits" >&2
+            echo "Move secret-bearing steps to a separate trusted workflow that does not run PR code." >&2
+            exit 1
+          fi
+          echo "OK: no repository secrets referenced in ci.yml or its composite actions."
 
   # ---------------------------------------------------------------------------
   # REQUIRED CHECKS GATE
@@ -179,12 +281,17 @@ jobs:
       - queue-integration-test
       - storage-integration-test
       - consumer-integration-test
+      - workflow-security
     steps:
       - name: Fail if any required check did not succeed
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}
+        # Pass the job-results context via env (not inline ${{ }} in the script)
+        # so there is no template expansion inside the run block.
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
           echo "One or more required checks did not succeed:" >&2
-          echo '${{ toJSON(needs) }}' >&2
+          echo "$NEEDS_JSON" >&2
           exit 1
 
       - name: All required checks passed

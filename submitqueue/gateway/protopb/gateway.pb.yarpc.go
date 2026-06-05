@@ -8,14 +8,13 @@ import (
 	"io/ioutil"
 	"reflect"
 
-	"github.com/gogo/protobuf/jsonpb"
-	"github.com/gogo/protobuf/proto"
 	"go.uber.org/fx"
 	"go.uber.org/yarpc"
 	"go.uber.org/yarpc/api/transport"
 	"go.uber.org/yarpc/api/x/restriction"
-	"go.uber.org/yarpc/encoding/protobuf"
 	"go.uber.org/yarpc/encoding/protobuf/reflection"
+	v2 "go.uber.org/yarpc/encoding/protobuf/v2"
+	"google.golang.org/protobuf/proto"
 )
 
 var _ = ioutil.NopCloser
@@ -28,9 +27,9 @@ type SubmitQueueGatewayYARPCClient interface {
 	Status(context.Context, *StatusRequest, ...yarpc.CallOption) (*StatusResponse, error)
 }
 
-func newSubmitQueueGatewayYARPCClient(clientConfig transport.ClientConfig, anyResolver jsonpb.AnyResolver, options ...protobuf.ClientOption) SubmitQueueGatewayYARPCClient {
-	return &_SubmitQueueGatewayYARPCCaller{protobuf.NewStreamClient(
-		protobuf.ClientParams{
+func newSubmitQueueGatewayYARPCClient(clientConfig transport.ClientConfig, anyResolver v2.AnyResolver, options ...v2.ClientOption) SubmitQueueGatewayYARPCClient {
+	return &_SubmitQueueGatewayYARPCCaller{v2.NewStreamClient(
+		v2.ClientParams{
 			ServiceName:  "uber.submitqueue.gateway.SubmitQueueGateway",
 			ClientConfig: clientConfig,
 			AnyResolver:  anyResolver,
@@ -40,7 +39,7 @@ func newSubmitQueueGatewayYARPCClient(clientConfig transport.ClientConfig, anyRe
 }
 
 // NewSubmitQueueGatewayYARPCClient builds a new YARPC client for the SubmitQueueGateway service.
-func NewSubmitQueueGatewayYARPCClient(clientConfig transport.ClientConfig, options ...protobuf.ClientOption) SubmitQueueGatewayYARPCClient {
+func NewSubmitQueueGatewayYARPCClient(clientConfig transport.ClientConfig, options ...v2.ClientOption) SubmitQueueGatewayYARPCClient {
 	return newSubmitQueueGatewayYARPCClient(clientConfig, nil, options...)
 }
 
@@ -54,19 +53,19 @@ type SubmitQueueGatewayYARPCServer interface {
 
 type buildSubmitQueueGatewayYARPCProceduresParams struct {
 	Server      SubmitQueueGatewayYARPCServer
-	AnyResolver jsonpb.AnyResolver
+	AnyResolver v2.AnyResolver
 }
 
 func buildSubmitQueueGatewayYARPCProcedures(params buildSubmitQueueGatewayYARPCProceduresParams) []transport.Procedure {
 	handler := &_SubmitQueueGatewayYARPCHandler{params.Server}
-	return protobuf.BuildProcedures(
-		protobuf.BuildProceduresParams{
+	return v2.BuildProcedures(
+		v2.BuildProceduresParams{
 			ServiceName: "uber.submitqueue.gateway.SubmitQueueGateway",
-			UnaryHandlerParams: []protobuf.BuildProceduresUnaryHandlerParams{
+			UnaryHandlerParams: []v2.BuildProceduresUnaryHandlerParams{
 				{
 					MethodName: "Ping",
-					Handler: protobuf.NewUnaryHandler(
-						protobuf.UnaryHandlerParams{
+					Handler: v2.NewUnaryHandler(
+						v2.UnaryHandlerParams{
 							Handle:      handler.Ping,
 							NewRequest:  newSubmitQueueGatewayServicePingYARPCRequest,
 							AnyResolver: params.AnyResolver,
@@ -75,8 +74,8 @@ func buildSubmitQueueGatewayYARPCProcedures(params buildSubmitQueueGatewayYARPCP
 				},
 				{
 					MethodName: "Land",
-					Handler: protobuf.NewUnaryHandler(
-						protobuf.UnaryHandlerParams{
+					Handler: v2.NewUnaryHandler(
+						v2.UnaryHandlerParams{
 							Handle:      handler.Land,
 							NewRequest:  newSubmitQueueGatewayServiceLandYARPCRequest,
 							AnyResolver: params.AnyResolver,
@@ -85,8 +84,8 @@ func buildSubmitQueueGatewayYARPCProcedures(params buildSubmitQueueGatewayYARPCP
 				},
 				{
 					MethodName: "Cancel",
-					Handler: protobuf.NewUnaryHandler(
-						protobuf.UnaryHandlerParams{
+					Handler: v2.NewUnaryHandler(
+						v2.UnaryHandlerParams{
 							Handle:      handler.Cancel,
 							NewRequest:  newSubmitQueueGatewayServiceCancelYARPCRequest,
 							AnyResolver: params.AnyResolver,
@@ -95,8 +94,8 @@ func buildSubmitQueueGatewayYARPCProcedures(params buildSubmitQueueGatewayYARPCP
 				},
 				{
 					MethodName: "Status",
-					Handler: protobuf.NewUnaryHandler(
-						protobuf.UnaryHandlerParams{
+					Handler: v2.NewUnaryHandler(
+						v2.UnaryHandlerParams{
 							Handle:      handler.Status,
 							NewRequest:  newSubmitQueueGatewayServiceStatusYARPCRequest,
 							AnyResolver: params.AnyResolver,
@@ -104,8 +103,8 @@ func buildSubmitQueueGatewayYARPCProcedures(params buildSubmitQueueGatewayYARPCP
 					),
 				},
 			},
-			OnewayHandlerParams: []protobuf.BuildProceduresOnewayHandlerParams{},
-			StreamHandlerParams: []protobuf.BuildProceduresStreamHandlerParams{},
+			OnewayHandlerParams: []v2.BuildProceduresOnewayHandlerParams{},
+			StreamHandlerParams: []v2.BuildProceduresStreamHandlerParams{},
 		},
 	)
 }
@@ -123,7 +122,7 @@ type FxSubmitQueueGatewayYARPCClientParams struct {
 	fx.In
 
 	Provider    yarpc.ClientConfig
-	AnyResolver jsonpb.AnyResolver  `name:"yarpcfx" optional:"true"`
+	AnyResolver v2.AnyResolver      `name:"yarpcfx" optional:"true"`
 	Restriction restriction.Checker `optional:"true"`
 }
 
@@ -147,13 +146,13 @@ type FxSubmitQueueGatewayYARPCClientResult struct {
 //	  protopb.NewFxSubmitQueueGatewayYARPCClient("service-name"),
 //	  ...
 //	)
-func NewFxSubmitQueueGatewayYARPCClient(name string, options ...protobuf.ClientOption) interface{} {
+func NewFxSubmitQueueGatewayYARPCClient(name string, options ...v2.ClientOption) interface{} {
 	return func(params FxSubmitQueueGatewayYARPCClientParams) FxSubmitQueueGatewayYARPCClientResult {
 		cc := params.Provider.ClientConfig(name)
 
 		if params.Restriction != nil {
 			if namer, ok := cc.GetUnaryOutbound().(transport.Namer); ok {
-				if err := params.Restriction.Check(protobuf.Encoding, namer.TransportName()); err != nil {
+				if err := params.Restriction.Check(v2.Encoding, namer.TransportName()); err != nil {
 					panic(err.Error())
 				}
 			}
@@ -173,7 +172,7 @@ type FxSubmitQueueGatewayYARPCProceduresParams struct {
 	fx.In
 
 	Server      SubmitQueueGatewayYARPCServer
-	AnyResolver jsonpb.AnyResolver `name:"yarpcfx" optional:"true"`
+	AnyResolver v2.AnyResolver `name:"yarpcfx" optional:"true"`
 }
 
 // FxSubmitQueueGatewayYARPCProceduresResult defines the output
@@ -203,22 +202,16 @@ func NewFxSubmitQueueGatewayYARPCProcedures() interface{} {
 				Server:      params.Server,
 				AnyResolver: params.AnyResolver,
 			}),
-			ReflectionMeta: SubmitQueueGatewayReflectionMeta,
+			ReflectionMeta: reflection.ServerMeta{
+				ServiceName:     "uber.submitqueue.gateway.SubmitQueueGateway",
+				FileDescriptors: yarpcFileDescriptorClosuref1a937782ebbded5,
+			},
 		}
 	}
 }
 
-// SubmitQueueGatewayReflectionMeta is the reflection server metadata
-// required for using the gRPC reflection protocol with YARPC.
-//
-// See https://github.com/grpc/grpc/blob/master/doc/server-reflection.md.
-var SubmitQueueGatewayReflectionMeta = reflection.ServerMeta{
-	ServiceName:     "uber.submitqueue.gateway.SubmitQueueGateway",
-	FileDescriptors: yarpcFileDescriptorClosuref1a937782ebbded5,
-}
-
 type _SubmitQueueGatewayYARPCCaller struct {
-	streamClient protobuf.StreamClient
+	streamClient v2.StreamClient
 }
 
 func (c *_SubmitQueueGatewayYARPCCaller) Ping(ctx context.Context, request *PingRequest, options ...yarpc.CallOption) (*PingResponse, error) {
@@ -228,7 +221,7 @@ func (c *_SubmitQueueGatewayYARPCCaller) Ping(ctx context.Context, request *Ping
 	}
 	response, ok := responseMessage.(*PingResponse)
 	if !ok {
-		return nil, protobuf.CastError(emptySubmitQueueGatewayServicePingYARPCResponse, responseMessage)
+		return nil, v2.CastError(emptySubmitQueueGatewayServicePingYARPCResponse, responseMessage)
 	}
 	return response, err
 }
@@ -240,7 +233,7 @@ func (c *_SubmitQueueGatewayYARPCCaller) Land(ctx context.Context, request *Land
 	}
 	response, ok := responseMessage.(*LandResponse)
 	if !ok {
-		return nil, protobuf.CastError(emptySubmitQueueGatewayServiceLandYARPCResponse, responseMessage)
+		return nil, v2.CastError(emptySubmitQueueGatewayServiceLandYARPCResponse, responseMessage)
 	}
 	return response, err
 }
@@ -252,7 +245,7 @@ func (c *_SubmitQueueGatewayYARPCCaller) Cancel(ctx context.Context, request *Ca
 	}
 	response, ok := responseMessage.(*CancelResponse)
 	if !ok {
-		return nil, protobuf.CastError(emptySubmitQueueGatewayServiceCancelYARPCResponse, responseMessage)
+		return nil, v2.CastError(emptySubmitQueueGatewayServiceCancelYARPCResponse, responseMessage)
 	}
 	return response, err
 }
@@ -264,7 +257,7 @@ func (c *_SubmitQueueGatewayYARPCCaller) Status(ctx context.Context, request *St
 	}
 	response, ok := responseMessage.(*StatusResponse)
 	if !ok {
-		return nil, protobuf.CastError(emptySubmitQueueGatewayServiceStatusYARPCResponse, responseMessage)
+		return nil, v2.CastError(emptySubmitQueueGatewayServiceStatusYARPCResponse, responseMessage)
 	}
 	return response, err
 }
@@ -279,7 +272,7 @@ func (h *_SubmitQueueGatewayYARPCHandler) Ping(ctx context.Context, requestMessa
 	if requestMessage != nil {
 		request, ok = requestMessage.(*PingRequest)
 		if !ok {
-			return nil, protobuf.CastError(emptySubmitQueueGatewayServicePingYARPCRequest, requestMessage)
+			return nil, v2.CastError(emptySubmitQueueGatewayServicePingYARPCRequest, requestMessage)
 		}
 	}
 	response, err := h.server.Ping(ctx, request)
@@ -295,7 +288,7 @@ func (h *_SubmitQueueGatewayYARPCHandler) Land(ctx context.Context, requestMessa
 	if requestMessage != nil {
 		request, ok = requestMessage.(*LandRequest)
 		if !ok {
-			return nil, protobuf.CastError(emptySubmitQueueGatewayServiceLandYARPCRequest, requestMessage)
+			return nil, v2.CastError(emptySubmitQueueGatewayServiceLandYARPCRequest, requestMessage)
 		}
 	}
 	response, err := h.server.Land(ctx, request)
@@ -311,7 +304,7 @@ func (h *_SubmitQueueGatewayYARPCHandler) Cancel(ctx context.Context, requestMes
 	if requestMessage != nil {
 		request, ok = requestMessage.(*CancelRequest)
 		if !ok {
-			return nil, protobuf.CastError(emptySubmitQueueGatewayServiceCancelYARPCRequest, requestMessage)
+			return nil, v2.CastError(emptySubmitQueueGatewayServiceCancelYARPCRequest, requestMessage)
 		}
 	}
 	response, err := h.server.Cancel(ctx, request)
@@ -327,7 +320,7 @@ func (h *_SubmitQueueGatewayYARPCHandler) Status(ctx context.Context, requestMes
 	if requestMessage != nil {
 		request, ok = requestMessage.(*StatusRequest)
 		if !ok {
-			return nil, protobuf.CastError(emptySubmitQueueGatewayServiceStatusYARPCRequest, requestMessage)
+			return nil, v2.CastError(emptySubmitQueueGatewayServiceStatusYARPCRequest, requestMessage)
 		}
 	}
 	response, err := h.server.Status(ctx, request)
@@ -430,7 +423,7 @@ var yarpcFileDescriptorClosuref1a937782ebbded5 = [][]byte{
 func init() {
 	yarpc.RegisterClientBuilder(
 		func(clientConfig transport.ClientConfig, structField reflect.StructField) SubmitQueueGatewayYARPCClient {
-			return NewSubmitQueueGatewayYARPCClient(clientConfig, protobuf.ClientBuilderOptions(clientConfig, structField)...)
+			return NewSubmitQueueGatewayYARPCClient(clientConfig, v2.ClientBuilderOptions(clientConfig, structField)...)
 		},
 	)
 }

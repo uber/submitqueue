@@ -8,14 +8,13 @@ import (
 	"io/ioutil"
 	"reflect"
 
-	"github.com/gogo/protobuf/jsonpb"
-	"github.com/gogo/protobuf/proto"
 	"go.uber.org/fx"
 	"go.uber.org/yarpc"
 	"go.uber.org/yarpc/api/transport"
 	"go.uber.org/yarpc/api/x/restriction"
-	"go.uber.org/yarpc/encoding/protobuf"
 	"go.uber.org/yarpc/encoding/protobuf/reflection"
+	v2 "go.uber.org/yarpc/encoding/protobuf/v2"
+	"google.golang.org/protobuf/proto"
 )
 
 var _ = ioutil.NopCloser
@@ -25,9 +24,9 @@ type StovepipeOrchestratorYARPCClient interface {
 	Ping(context.Context, *PingRequest, ...yarpc.CallOption) (*PingResponse, error)
 }
 
-func newStovepipeOrchestratorYARPCClient(clientConfig transport.ClientConfig, anyResolver jsonpb.AnyResolver, options ...protobuf.ClientOption) StovepipeOrchestratorYARPCClient {
-	return &_StovepipeOrchestratorYARPCCaller{protobuf.NewStreamClient(
-		protobuf.ClientParams{
+func newStovepipeOrchestratorYARPCClient(clientConfig transport.ClientConfig, anyResolver v2.AnyResolver, options ...v2.ClientOption) StovepipeOrchestratorYARPCClient {
+	return &_StovepipeOrchestratorYARPCCaller{v2.NewStreamClient(
+		v2.ClientParams{
 			ServiceName:  "uber.submitqueue.stovepipe.orchestrator.StovepipeOrchestrator",
 			ClientConfig: clientConfig,
 			AnyResolver:  anyResolver,
@@ -37,7 +36,7 @@ func newStovepipeOrchestratorYARPCClient(clientConfig transport.ClientConfig, an
 }
 
 // NewStovepipeOrchestratorYARPCClient builds a new YARPC client for the StovepipeOrchestrator service.
-func NewStovepipeOrchestratorYARPCClient(clientConfig transport.ClientConfig, options ...protobuf.ClientOption) StovepipeOrchestratorYARPCClient {
+func NewStovepipeOrchestratorYARPCClient(clientConfig transport.ClientConfig, options ...v2.ClientOption) StovepipeOrchestratorYARPCClient {
 	return newStovepipeOrchestratorYARPCClient(clientConfig, nil, options...)
 }
 
@@ -48,19 +47,19 @@ type StovepipeOrchestratorYARPCServer interface {
 
 type buildStovepipeOrchestratorYARPCProceduresParams struct {
 	Server      StovepipeOrchestratorYARPCServer
-	AnyResolver jsonpb.AnyResolver
+	AnyResolver v2.AnyResolver
 }
 
 func buildStovepipeOrchestratorYARPCProcedures(params buildStovepipeOrchestratorYARPCProceduresParams) []transport.Procedure {
 	handler := &_StovepipeOrchestratorYARPCHandler{params.Server}
-	return protobuf.BuildProcedures(
-		protobuf.BuildProceduresParams{
+	return v2.BuildProcedures(
+		v2.BuildProceduresParams{
 			ServiceName: "uber.submitqueue.stovepipe.orchestrator.StovepipeOrchestrator",
-			UnaryHandlerParams: []protobuf.BuildProceduresUnaryHandlerParams{
+			UnaryHandlerParams: []v2.BuildProceduresUnaryHandlerParams{
 				{
 					MethodName: "Ping",
-					Handler: protobuf.NewUnaryHandler(
-						protobuf.UnaryHandlerParams{
+					Handler: v2.NewUnaryHandler(
+						v2.UnaryHandlerParams{
 							Handle:      handler.Ping,
 							NewRequest:  newStovepipeOrchestratorServicePingYARPCRequest,
 							AnyResolver: params.AnyResolver,
@@ -68,8 +67,8 @@ func buildStovepipeOrchestratorYARPCProcedures(params buildStovepipeOrchestrator
 					),
 				},
 			},
-			OnewayHandlerParams: []protobuf.BuildProceduresOnewayHandlerParams{},
-			StreamHandlerParams: []protobuf.BuildProceduresStreamHandlerParams{},
+			OnewayHandlerParams: []v2.BuildProceduresOnewayHandlerParams{},
+			StreamHandlerParams: []v2.BuildProceduresStreamHandlerParams{},
 		},
 	)
 }
@@ -87,7 +86,7 @@ type FxStovepipeOrchestratorYARPCClientParams struct {
 	fx.In
 
 	Provider    yarpc.ClientConfig
-	AnyResolver jsonpb.AnyResolver  `name:"yarpcfx" optional:"true"`
+	AnyResolver v2.AnyResolver      `name:"yarpcfx" optional:"true"`
 	Restriction restriction.Checker `optional:"true"`
 }
 
@@ -111,13 +110,13 @@ type FxStovepipeOrchestratorYARPCClientResult struct {
 //	  protopb.NewFxStovepipeOrchestratorYARPCClient("service-name"),
 //	  ...
 //	)
-func NewFxStovepipeOrchestratorYARPCClient(name string, options ...protobuf.ClientOption) interface{} {
+func NewFxStovepipeOrchestratorYARPCClient(name string, options ...v2.ClientOption) interface{} {
 	return func(params FxStovepipeOrchestratorYARPCClientParams) FxStovepipeOrchestratorYARPCClientResult {
 		cc := params.Provider.ClientConfig(name)
 
 		if params.Restriction != nil {
 			if namer, ok := cc.GetUnaryOutbound().(transport.Namer); ok {
-				if err := params.Restriction.Check(protobuf.Encoding, namer.TransportName()); err != nil {
+				if err := params.Restriction.Check(v2.Encoding, namer.TransportName()); err != nil {
 					panic(err.Error())
 				}
 			}
@@ -137,7 +136,7 @@ type FxStovepipeOrchestratorYARPCProceduresParams struct {
 	fx.In
 
 	Server      StovepipeOrchestratorYARPCServer
-	AnyResolver jsonpb.AnyResolver `name:"yarpcfx" optional:"true"`
+	AnyResolver v2.AnyResolver `name:"yarpcfx" optional:"true"`
 }
 
 // FxStovepipeOrchestratorYARPCProceduresResult defines the output
@@ -167,22 +166,16 @@ func NewFxStovepipeOrchestratorYARPCProcedures() interface{} {
 				Server:      params.Server,
 				AnyResolver: params.AnyResolver,
 			}),
-			ReflectionMeta: StovepipeOrchestratorReflectionMeta,
+			ReflectionMeta: reflection.ServerMeta{
+				ServiceName:     "uber.submitqueue.stovepipe.orchestrator.StovepipeOrchestrator",
+				FileDescriptors: yarpcFileDescriptorClosure96b6e6782baaa298,
+			},
 		}
 	}
 }
 
-// StovepipeOrchestratorReflectionMeta is the reflection server metadata
-// required for using the gRPC reflection protocol with YARPC.
-//
-// See https://github.com/grpc/grpc/blob/master/doc/server-reflection.md.
-var StovepipeOrchestratorReflectionMeta = reflection.ServerMeta{
-	ServiceName:     "uber.submitqueue.stovepipe.orchestrator.StovepipeOrchestrator",
-	FileDescriptors: yarpcFileDescriptorClosure96b6e6782baaa298,
-}
-
 type _StovepipeOrchestratorYARPCCaller struct {
-	streamClient protobuf.StreamClient
+	streamClient v2.StreamClient
 }
 
 func (c *_StovepipeOrchestratorYARPCCaller) Ping(ctx context.Context, request *PingRequest, options ...yarpc.CallOption) (*PingResponse, error) {
@@ -192,7 +185,7 @@ func (c *_StovepipeOrchestratorYARPCCaller) Ping(ctx context.Context, request *P
 	}
 	response, ok := responseMessage.(*PingResponse)
 	if !ok {
-		return nil, protobuf.CastError(emptyStovepipeOrchestratorServicePingYARPCResponse, responseMessage)
+		return nil, v2.CastError(emptyStovepipeOrchestratorServicePingYARPCResponse, responseMessage)
 	}
 	return response, err
 }
@@ -207,7 +200,7 @@ func (h *_StovepipeOrchestratorYARPCHandler) Ping(ctx context.Context, requestMe
 	if requestMessage != nil {
 		request, ok = requestMessage.(*PingRequest)
 		if !ok {
-			return nil, protobuf.CastError(emptyStovepipeOrchestratorServicePingYARPCRequest, requestMessage)
+			return nil, v2.CastError(emptyStovepipeOrchestratorServicePingYARPCRequest, requestMessage)
 		}
 	}
 	response, err := h.server.Ping(ctx, request)
@@ -256,7 +249,7 @@ var yarpcFileDescriptorClosure96b6e6782baaa298 = [][]byte{
 func init() {
 	yarpc.RegisterClientBuilder(
 		func(clientConfig transport.ClientConfig, structField reflect.StructField) StovepipeOrchestratorYARPCClient {
-			return NewStovepipeOrchestratorYARPCClient(clientConfig, protobuf.ClientBuilderOptions(clientConfig, structField)...)
+			return NewStovepipeOrchestratorYARPCClient(clientConfig, v2.ClientBuilderOptions(clientConfig, structField)...)
 		},
 	)
 }

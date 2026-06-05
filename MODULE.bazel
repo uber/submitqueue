@@ -9,6 +9,9 @@ bazel_dep(name = "rules_proto", version = "7.1.0")
 # dependencies) from source on every cold build. Requires
 # --incompatible_enable_proto_toolchain_resolution (set in .bazelrc).
 protoc = use_extension("@toolchains_protoc//protoc:extensions.bzl", "protoc")
+protoc.toolchain(
+    version = "v29.3",
+)
 use_repo(protoc, "toolchains_protoc_hub")
 
 register_toolchains("@toolchains_protoc_hub//:all")
@@ -37,18 +40,23 @@ go_sdk.host()
 
 go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
 go_deps.from_file(go_mod = "//:go.mod")
+go_deps.module(
+    path = "google.golang.org/grpc/cmd/protoc-gen-go-grpc",
+    sum = "h1:F29+wU6Ee6qgu9TddPgooOdaqsxTMunOoj8KA5yuS5A=",
+    version = "v1.5.1",
+)
 
 # All *direct* Go dependencies of the module have to be listed explicitly
 use_repo(
     go_deps,
     "com_github_data_dog_go_sqlmock",
     "com_github_go_sql_driver_mysql",
-    "com_github_gogo_protobuf",
     "com_github_spf13_cobra",
     "com_github_stretchr_testify",
     "com_github_uber_go_tally_v4",
     "in_gopkg_yaml_v3",
     "org_golang_google_grpc",
+    "org_golang_google_grpc_cmd_protoc_gen_go_grpc",
     "org_golang_google_protobuf",
     "org_golang_x_oauth2",
     "org_uber_go_fx",

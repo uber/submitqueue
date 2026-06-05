@@ -28,7 +28,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	scorermock "github.com/uber/submitqueue/submitqueue/extension/scorer/mock"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
@@ -107,7 +106,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 	scorerFactory := scorermock.NewMockFactory(ctrl)
 	scorerFactory.EXPECT().For(gomock.Any()).Return(scorer, nil).AnyTimes()
 
-	return NewController(logger, scope, storage.NewStaticFactory(store), scorerFactory, registry, consumer.TopicKeyScore, "orchestrator-score")
+	return NewController(logger, scope, store, scorerFactory, registry, consumer.TopicKeyScore, "orchestrator-score")
 }
 
 func TestNewController(t *testing.T) {
@@ -360,7 +359,7 @@ func TestController_Process_TerminalShortCircuit(t *testing.T) {
 
 			scorerFactory := scorermock.NewMockFactory(ctrl)
 			scorerFactory.EXPECT().For(gomock.Any()).Return(mockScorer, nil).AnyTimes()
-			controller := NewController(logger, scope, storage.NewStaticFactory(mockStorage), scorerFactory, registry, consumer.TopicKeyScore, "orchestrator-score")
+			controller := NewController(logger, scope, mockStorage, scorerFactory, registry, consumer.TopicKeyScore, "orchestrator-score")
 
 			msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 			delivery := queuemock.NewMockDelivery(ctrl)
@@ -410,7 +409,7 @@ func TestController_Process_CancellingShortCircuit(t *testing.T) {
 
 	scorerFactory := scorermock.NewMockFactory(ctrl)
 	scorerFactory.EXPECT().For(gomock.Any()).Return(mockScorer, nil).AnyTimes()
-	controller := NewController(logger, scope, storage.NewStaticFactory(mockStorage), scorerFactory, registry, consumer.TopicKeyScore, "orchestrator-score")
+	controller := NewController(logger, scope, mockStorage, scorerFactory, registry, consumer.TopicKeyScore, "orchestrator-score")
 
 	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)

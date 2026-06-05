@@ -461,14 +461,10 @@ type conflictFactory struct{ impl conflict.Analyzer }
 func (f conflictFactory) For(conflict.Config) (conflict.Analyzer, error) { return f.impl, nil }
 
 func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mc mergechecker.MergeChecker, cp changeprovider.ChangeProvider, psh pusher.Pusher, br buildrunner.BuildRunner, cnt counter.Counter, store storage.Storage, changeStore changestore.ChangeStore) error {
-	// Static storage factory: every queue resolves to the one configured store.
-	// The factory is the injection point for future per-queue backends.
-	stores := storage.NewStaticFactory(store)
-
 	requestController := start.NewController(
 		logger,
 		scope,
-		stores,
+		store,
 		changeStore,
 		registry,
 		consumer.TopicKeyStart,
@@ -481,7 +477,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	cancelController := cancel.NewController(
 		logger,
 		scope,
-		stores,
+		store,
 		registry,
 		consumer.TopicKeyCancel,
 		"orchestrator-cancel",
@@ -493,7 +489,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	validateController := validate.NewController(
 		logger,
 		scope,
-		stores,
+		store,
 		changeStore,
 		registry,
 		mergeCheckerFactory{impl: mc},
@@ -510,7 +506,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 		scope,
 		registry,
 		cnt,
-		stores,
+		store,
 		// TODO: replace with a real conflict analyzer (e.g. one backed by
 		// Tango target analysis). The "all" stub serializes the queue.
 		conflictFactory{impl: all.New()},
@@ -524,7 +520,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	scoreController := score.NewController(
 		logger,
 		scope,
-		stores,
+		store,
 		// TODO: replace with a real scorer
 		scorerFactory{impl: heuristic.New(
 			[]heuristic.Bucket{
@@ -549,7 +545,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	speculateController := speculate.NewController(
 		logger,
 		scope,
-		stores,
+		store,
 		registry,
 		consumer.TopicKeySpeculate,
 		"orchestrator-speculate",
@@ -561,7 +557,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	buildController := build.NewController(
 		logger,
 		scope,
-		stores,
+		store,
 		buildRunnerFactory{impl: br},
 		registry,
 		consumer.TopicKeyBuild,
@@ -574,7 +570,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	buildsignalController := buildsignal.NewController(
 		logger,
 		scope,
-		stores,
+		store,
 		buildRunnerFactory{impl: br},
 		registry,
 		consumer.TopicKeyBuildSignal,
@@ -587,7 +583,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	mergeController := merge.NewController(
 		logger,
 		scope,
-		stores,
+		store,
 		registry,
 		pusherFactory{impl: psh},
 		consumer.TopicKeyMerge,
@@ -600,7 +596,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	concludeController := conclude.NewController(
 		logger,
 		scope,
-		stores,
+		store,
 		registry,
 		consumer.TopicKeyConclude,
 		"orchestrator-conclude",
@@ -612,7 +608,7 @@ func registerControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope t
 	logController := logctrl.NewController(
 		logger,
 		scope,
-		stores,
+		store,
 		consumer.TopicKeyLog,
 		"orchestrator-log",
 	)

@@ -59,7 +59,7 @@ func newRegistry(t *testing.T, ctrl *gomock.Controller) (consumer.TopicRegistry,
 }
 
 func newController(t *testing.T, store storage.Storage, registry consumer.TopicRegistry) *Controller {
-	return NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, storage.NewStaticFactory(store), registry, consumer.TopicKeyCancel, "orchestrator-cancel")
+	return NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, registry, consumer.TopicKeyCancel, "orchestrator-cancel")
 }
 
 func newDelivery(t *testing.T, ctrl *gomock.Controller, payload []byte, partitionKey string) consumer.Delivery {

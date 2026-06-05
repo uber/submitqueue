@@ -1,1 +1,6 @@
-* @uber/submitqueue-admins @uber/submitqueue-maintainers @behinddwalls @sbalabanov 
+* @uber/submitqueue-admins @uber/submitqueue-maintainers @behinddwalls @sbalabanov
+
+# CI workflows, composite actions, and other automation are privileged
+# (secrets, write tokens). Require admin review for any change under .github/.
+# CODEOWNERS is last-match-wins, so this overrides the `*` rule for these paths.
+/.github/ @uber/submitqueue-admins

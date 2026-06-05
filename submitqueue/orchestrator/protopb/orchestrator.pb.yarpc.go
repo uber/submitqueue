@@ -8,14 +8,13 @@ import (
 	"io/ioutil"
 	"reflect"
 
-	"github.com/gogo/protobuf/jsonpb"
-	"github.com/gogo/protobuf/proto"
 	"go.uber.org/fx"
 	"go.uber.org/yarpc"
 	"go.uber.org/yarpc/api/transport"
 	"go.uber.org/yarpc/api/x/restriction"
-	"go.uber.org/yarpc/encoding/protobuf"
 	"go.uber.org/yarpc/encoding/protobuf/reflection"
+	v2 "go.uber.org/yarpc/encoding/protobuf/v2"
+	"google.golang.org/protobuf/proto"
 )
 
 var _ = ioutil.NopCloser
@@ -25,9 +24,9 @@ type SubmitQueueOrchestratorYARPCClient interface {
 	Ping(context.Context, *PingRequest, ...yarpc.CallOption) (*PingResponse, error)
 }
 
-func newSubmitQueueOrchestratorYARPCClient(clientConfig transport.ClientConfig, anyResolver jsonpb.AnyResolver, options ...protobuf.ClientOption) SubmitQueueOrchestratorYARPCClient {
-	return &_SubmitQueueOrchestratorYARPCCaller{protobuf.NewStreamClient(
-		protobuf.ClientParams{
+func newSubmitQueueOrchestratorYARPCClient(clientConfig transport.ClientConfig, anyResolver v2.AnyResolver, options ...v2.ClientOption) SubmitQueueOrchestratorYARPCClient {
+	return &_SubmitQueueOrchestratorYARPCCaller{v2.NewStreamClient(
+		v2.ClientParams{
 			ServiceName:  "uber.submitqueue.orchestrator.SubmitQueueOrchestrator",
 			ClientConfig: clientConfig,
 			AnyResolver:  anyResolver,
@@ -37,7 +36,7 @@ func newSubmitQueueOrchestratorYARPCClient(clientConfig transport.ClientConfig, 
 }
 
 // NewSubmitQueueOrchestratorYARPCClient builds a new YARPC client for the SubmitQueueOrchestrator service.
-func NewSubmitQueueOrchestratorYARPCClient(clientConfig transport.ClientConfig, options ...protobuf.ClientOption) SubmitQueueOrchestratorYARPCClient {
+func NewSubmitQueueOrchestratorYARPCClient(clientConfig transport.ClientConfig, options ...v2.ClientOption) SubmitQueueOrchestratorYARPCClient {
 	return newSubmitQueueOrchestratorYARPCClient(clientConfig, nil, options...)
 }
 
@@ -48,19 +47,19 @@ type SubmitQueueOrchestratorYARPCServer interface {
 
 type buildSubmitQueueOrchestratorYARPCProceduresParams struct {
 	Server      SubmitQueueOrchestratorYARPCServer
-	AnyResolver jsonpb.AnyResolver
+	AnyResolver v2.AnyResolver
 }
 
 func buildSubmitQueueOrchestratorYARPCProcedures(params buildSubmitQueueOrchestratorYARPCProceduresParams) []transport.Procedure {
 	handler := &_SubmitQueueOrchestratorYARPCHandler{params.Server}
-	return protobuf.BuildProcedures(
-		protobuf.BuildProceduresParams{
+	return v2.BuildProcedures(
+		v2.BuildProceduresParams{
 			ServiceName: "uber.submitqueue.orchestrator.SubmitQueueOrchestrator",
-			UnaryHandlerParams: []protobuf.BuildProceduresUnaryHandlerParams{
+			UnaryHandlerParams: []v2.BuildProceduresUnaryHandlerParams{
 				{
 					MethodName: "Ping",
-					Handler: protobuf.NewUnaryHandler(
-						protobuf.UnaryHandlerParams{
+					Handler: v2.NewUnaryHandler(
+						v2.UnaryHandlerParams{
 							Handle:      handler.Ping,
 							NewRequest:  newSubmitQueueOrchestratorServicePingYARPCRequest,
 							AnyResolver: params.AnyResolver,
@@ -68,8 +67,8 @@ func buildSubmitQueueOrchestratorYARPCProcedures(params buildSubmitQueueOrchestr
 					),
 				},
 			},
-			OnewayHandlerParams: []protobuf.BuildProceduresOnewayHandlerParams{},
-			StreamHandlerParams: []protobuf.BuildProceduresStreamHandlerParams{},
+			OnewayHandlerParams: []v2.BuildProceduresOnewayHandlerParams{},
+			StreamHandlerParams: []v2.BuildProceduresStreamHandlerParams{},
 		},
 	)
 }
@@ -87,7 +86,7 @@ type FxSubmitQueueOrchestratorYARPCClientParams struct {
 	fx.In
 
 	Provider    yarpc.ClientConfig
-	AnyResolver jsonpb.AnyResolver  `name:"yarpcfx" optional:"true"`
+	AnyResolver v2.AnyResolver      `name:"yarpcfx" optional:"true"`
 	Restriction restriction.Checker `optional:"true"`
 }
 
@@ -111,13 +110,13 @@ type FxSubmitQueueOrchestratorYARPCClientResult struct {
 //	  protopb.NewFxSubmitQueueOrchestratorYARPCClient("service-name"),
 //	  ...
 //	)
-func NewFxSubmitQueueOrchestratorYARPCClient(name string, options ...protobuf.ClientOption) interface{} {
+func NewFxSubmitQueueOrchestratorYARPCClient(name string, options ...v2.ClientOption) interface{} {
 	return func(params FxSubmitQueueOrchestratorYARPCClientParams) FxSubmitQueueOrchestratorYARPCClientResult {
 		cc := params.Provider.ClientConfig(name)
 
 		if params.Restriction != nil {
 			if namer, ok := cc.GetUnaryOutbound().(transport.Namer); ok {
-				if err := params.Restriction.Check(protobuf.Encoding, namer.TransportName()); err != nil {
+				if err := params.Restriction.Check(v2.Encoding, namer.TransportName()); err != nil {
 					panic(err.Error())
 				}
 			}
@@ -137,7 +136,7 @@ type FxSubmitQueueOrchestratorYARPCProceduresParams struct {
 	fx.In
 
 	Server      SubmitQueueOrchestratorYARPCServer
-	AnyResolver jsonpb.AnyResolver `name:"yarpcfx" optional:"true"`
+	AnyResolver v2.AnyResolver `name:"yarpcfx" optional:"true"`
 }
 
 // FxSubmitQueueOrchestratorYARPCProceduresResult defines the output
@@ -167,22 +166,16 @@ func NewFxSubmitQueueOrchestratorYARPCProcedures() interface{} {
 				Server:      params.Server,
 				AnyResolver: params.AnyResolver,
 			}),
-			ReflectionMeta: SubmitQueueOrchestratorReflectionMeta,
+			ReflectionMeta: reflection.ServerMeta{
+				ServiceName:     "uber.submitqueue.orchestrator.SubmitQueueOrchestrator",
+				FileDescriptors: yarpcFileDescriptorClosure96b6e6782baaa298,
+			},
 		}
 	}
 }
 
-// SubmitQueueOrchestratorReflectionMeta is the reflection server metadata
-// required for using the gRPC reflection protocol with YARPC.
-//
-// See https://github.com/grpc/grpc/blob/master/doc/server-reflection.md.
-var SubmitQueueOrchestratorReflectionMeta = reflection.ServerMeta{
-	ServiceName:     "uber.submitqueue.orchestrator.SubmitQueueOrchestrator",
-	FileDescriptors: yarpcFileDescriptorClosure96b6e6782baaa298,
-}
-
 type _SubmitQueueOrchestratorYARPCCaller struct {
-	streamClient protobuf.StreamClient
+	streamClient v2.StreamClient
 }
 
 func (c *_SubmitQueueOrchestratorYARPCCaller) Ping(ctx context.Context, request *PingRequest, options ...yarpc.CallOption) (*PingResponse, error) {
@@ -192,7 +185,7 @@ func (c *_SubmitQueueOrchestratorYARPCCaller) Ping(ctx context.Context, request 
 	}
 	response, ok := responseMessage.(*PingResponse)
 	if !ok {
-		return nil, protobuf.CastError(emptySubmitQueueOrchestratorServicePingYARPCResponse, responseMessage)
+		return nil, v2.CastError(emptySubmitQueueOrchestratorServicePingYARPCResponse, responseMessage)
 	}
 	return response, err
 }
@@ -207,7 +200,7 @@ func (h *_SubmitQueueOrchestratorYARPCHandler) Ping(ctx context.Context, request
 	if requestMessage != nil {
 		request, ok = requestMessage.(*PingRequest)
 		if !ok {
-			return nil, protobuf.CastError(emptySubmitQueueOrchestratorServicePingYARPCRequest, requestMessage)
+			return nil, v2.CastError(emptySubmitQueueOrchestratorServicePingYARPCRequest, requestMessage)
 		}
 	}
 	response, err := h.server.Ping(ctx, request)
@@ -256,7 +249,7 @@ var yarpcFileDescriptorClosure96b6e6782baaa298 = [][]byte{
 func init() {
 	yarpc.RegisterClientBuilder(
 		func(clientConfig transport.ClientConfig, structField reflect.StructField) SubmitQueueOrchestratorYARPCClient {
-			return NewSubmitQueueOrchestratorYARPCClient(clientConfig, protobuf.ClientBuilderOptions(clientConfig, structField)...)
+			return NewSubmitQueueOrchestratorYARPCClient(clientConfig, v2.ClientBuilderOptions(clientConfig, structField)...)
 		},
 	)
 }

@@ -41,7 +41,10 @@ func batchIDPayload(t *testing.T, id string) []byte {
 }
 
 // newTestController creates a controller with test dependencies.
-func newTestController(t *testing.T, ctrl *gomock.Controller, mockStorage *storagemock.MockStorage) *Controller {
+// expectLogPublish controls whether the log topic publisher is wired with an
+// expectation; tests that don't reach the log publish step pass false so an
+// unexpected publish would fail the test.
+func newTestController(t *testing.T, ctrl *gomock.Controller, mockStorage *storagemock.MockStorage, expectLogPublish bool) (*Controller, *queuemock.MockPublisher) {
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
 
@@ -53,15 +56,26 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, mockStorage *stora
 		mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
 	}
 
-	registry, err := consumer.NewTopicRegistry(nil)
+	mockPub := queuemock.NewMockPublisher(ctrl)
+	if expectLogPublish {
+		mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	}
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{
+			{Key: consumer.TopicKeyLog, Name: "log", Queue: mockQ},
+		},
+	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, storage.NewStaticFactory(mockStorage), registry, consumer.TopicKeyConclude, "orchestrator-conclude")
+	return NewController(logger, scope, mockStorage, registry, consumer.TopicKeyConclude, "orchestrator-conclude"), mockPub
 }
 
 func TestNewController(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	controller := newTestController(t, ctrl, nil)
+	controller, _ := newTestController(t, ctrl, nil, false)
 
 	require.NotNil(t, controller)
 	assert.Equal(t, consumer.TopicKeyConclude, controller.TopicKey())
@@ -71,11 +85,12 @@ func TestNewController(t *testing.T) {
 
 func TestController_Process(t *testing.T) {
 	tests := []struct {
-		name       string
-		batch      entity.Batch
-		setupStore func(*gomock.Controller) *storagemock.MockStorage
-		wantErr    bool
-		retryable  bool
+		name             string
+		batch            entity.Batch
+		setupStore       func(*gomock.Controller) *storagemock.MockStorage
+		expectLogPublish bool
+		wantErr          bool
+		retryable        bool
 	}{
 		{
 			name: "succeeded batch lands requests",
@@ -111,6 +126,7 @@ func TestController_Process(t *testing.T) {
 				mockStorage.EXPECT().GetRequestStore().Return(mockRequestStore).AnyTimes()
 				return mockStorage
 			},
+			expectLogPublish: true,
 		},
 		{
 			name: "failed batch errors requests",
@@ -142,6 +158,7 @@ func TestController_Process(t *testing.T) {
 				mockStorage.EXPECT().GetRequestStore().Return(mockRequestStore).AnyTimes()
 				return mockStorage
 			},
+			expectLogPublish: true,
 		},
 		{
 			name: "cancelled batch cancels requests",
@@ -173,6 +190,74 @@ func TestController_Process(t *testing.T) {
 				mockStorage.EXPECT().GetRequestStore().Return(mockRequestStore).AnyTimes()
 				return mockStorage
 			},
+			expectLogPublish: true,
+		},
+		{
+			name: "idempotent retry: request already in target terminal state still publishes log",
+			batch: entity.Batch{
+				ID:       "test-queue/batch/8",
+				Queue:    "test-queue",
+				Contains: []string{"test-queue/20"},
+				State:    entity.BatchStateSucceeded,
+				Version:  2,
+			},
+			setupStore: func(ctrl *gomock.Controller) *storagemock.MockStorage {
+				mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+				mockBatchStore.EXPECT().Get(gomock.Any(), "test-queue/batch/8").Return(entity.Batch{
+					ID:       "test-queue/batch/8",
+					Queue:    "test-queue",
+					Contains: []string{"test-queue/20"},
+					State:    entity.BatchStateSucceeded,
+					Version:  2,
+				}, nil)
+
+				// Request is already Landed (prior delivery wrote it). UpdateState
+				// must NOT be called — gomock will fail the test if it is.
+				mockRequestStore := storagemock.NewMockRequestStore(ctrl)
+				mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/20").Return(entity.Request{
+					ID: "test-queue/20", Version: 7, State: entity.RequestStateLanded,
+				}, nil)
+
+				mockStorage := storagemock.NewMockStorage(ctrl)
+				mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+				mockStorage.EXPECT().GetRequestStore().Return(mockRequestStore).AnyTimes()
+				return mockStorage
+			},
+			expectLogPublish: true,
+		},
+		{
+			name: "divergent terminal state skips reconcile and log publish",
+			batch: entity.Batch{
+				ID:       "test-queue/batch/9",
+				Queue:    "test-queue",
+				Contains: []string{"test-queue/30"},
+				State:    entity.BatchStateSucceeded,
+				Version:  2,
+			},
+			setupStore: func(ctrl *gomock.Controller) *storagemock.MockStorage {
+				mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+				mockBatchStore.EXPECT().Get(gomock.Any(), "test-queue/batch/9").Return(entity.Batch{
+					ID:       "test-queue/batch/9",
+					Queue:    "test-queue",
+					Contains: []string{"test-queue/30"},
+					State:    entity.BatchStateSucceeded,
+					Version:  2,
+				}, nil)
+
+				// Request is already in a *different* terminal state (Cancelled).
+				// Conclude must not write the log entry (the other writer owns it),
+				// and must not attempt UpdateState.
+				mockRequestStore := storagemock.NewMockRequestStore(ctrl)
+				mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/30").Return(entity.Request{
+					ID: "test-queue/30", Version: 5, State: entity.RequestStateCancelled,
+				}, nil)
+
+				mockStorage := storagemock.NewMockStorage(ctrl)
+				mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+				mockStorage.EXPECT().GetRequestStore().Return(mockRequestStore).AnyTimes()
+				return mockStorage
+			},
+			expectLogPublish: false,
 		},
 		{
 			name: "non-terminal batch state returns error",
@@ -201,7 +286,7 @@ func TestController_Process(t *testing.T) {
 			retryable: false,
 		},
 		{
-			name: "request store get failure is retryable",
+			name: "request store get failure returns error",
 			batch: entity.Batch{
 				ID:       "test-queue/batch/5",
 				Queue:    "test-queue",
@@ -231,7 +316,7 @@ func TestController_Process(t *testing.T) {
 			retryable: false,
 		},
 		{
-			name: "request store update failure is retryable",
+			name: "request store update failure returns error",
 			batch: entity.Batch{
 				ID:       "test-queue/batch/6",
 				Queue:    "test-queue",
@@ -296,7 +381,7 @@ func TestController_Process(t *testing.T) {
 				mockStorage = tt.setupStore(ctrl)
 			}
 
-			controller := newTestController(t, ctrl, mockStorage)
+			controller, _ := newTestController(t, ctrl, mockStorage, tt.expectLogPublish)
 
 			msg := entityqueue.NewMessage(tt.batch.ID, batchIDPayload(t, tt.batch.ID), tt.batch.Queue, nil)
 			delivery := queuemock.NewMockDelivery(ctrl)
@@ -324,7 +409,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 	mockStorage := storagemock.NewMockStorage(ctrl)
 	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
 
-	controller := newTestController(t, ctrl, mockStorage)
+	controller, _ := newTestController(t, ctrl, mockStorage, false)
 
 	msg := entityqueue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1"), "test-queue", nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -338,7 +423,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 
 func TestController_InterfaceImplementation(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	controller := newTestController(t, ctrl, nil)
+	controller, _ := newTestController(t, ctrl, nil, false)
 
 	var _ consumer.Controller = controller
 }

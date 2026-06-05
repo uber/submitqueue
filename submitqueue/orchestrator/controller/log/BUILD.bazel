@@ -24,7 +24,6 @@ go_test(
         "//extension/messagequeue/mock",
         "//submitqueue/core/consumer",
         "//submitqueue/entity",
-        "//submitqueue/extension/storage",
         "//submitqueue/extension/storage/mock",
         "@com_github_stretchr_testify//require",
         "@com_github_uber_go_tally_v4//:tally",
