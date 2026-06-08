@@ -25,14 +25,8 @@ import (
 // WatchedURIPrefixes is a list of URI prefixes to match against ChangeInfo.URI.
 // Example: "git://github.com/uber/go-code/refs/heads/main"
 // watches all commits on the main branch of uber/go-code.
-type Config struct {
-	WatchedURIPrefixes []string
-}
-
-// ShouldProcess returns true if the commit event's URI matches
-// any of the configured watched prefixes.
-func ShouldProcess(cfg Config, event entity.ChangeInfo) bool {
-	for _, prefix := range cfg.WatchedURIPrefixes {
+func ShouldProcess(event entity.ChangeInfo, watchedPrefixes []string) bool {
+	for _, prefix := range watchedPrefixes {
 		if strings.HasPrefix(event.URI, prefix) {
 			return true
 		}
