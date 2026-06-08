@@ -55,6 +55,8 @@ services:
       - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
       # Path to YAML queue configuration baked into the image
       - QUEUE_CONFIG_PATH=/root/queues.yaml
+      # Stable subscriber name for the request-log consumer
+      - HOSTNAME=gateway-dev
     depends_on:
       mysql-app:
         condition: service_healthy

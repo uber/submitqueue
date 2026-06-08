@@ -29,6 +29,10 @@ import (
 // Controller handles log queue messages.
 // It consumes request log entries and persists them to storage.
 // Implements consumer.Controller interface for integration with the consumer.
+//
+// The request log is written exclusively by the gateway: other services
+// (e.g. the orchestrator) only publish log entries to the log topic, and this
+// controller is the single consumer that persists them to storage.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
@@ -40,7 +44,7 @@ type Controller struct {
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
 
-// NewController creates a new log controller for the orchestrator.
+// NewController creates a new log controller for the gateway.
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,

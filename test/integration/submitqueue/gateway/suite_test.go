@@ -30,12 +30,19 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"github.com/uber-go/tally/v4"
+	queueMySQL "github.com/uber/submitqueue/extension/messagequeue/mysql"
+	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
+	"github.com/uber/submitqueue/submitqueue/entity"
 	pb "github.com/uber/submitqueue/submitqueue/gateway/protopb"
 	"github.com/uber/submitqueue/test/testutil"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
@@ -52,6 +59,17 @@ type GatewayIntegrationSuite struct {
 func TestGatewayIntegration(t *testing.T) {
 	suite.Run(t, new(GatewayIntegrationSuite))
 }
+
+// The log consumer runs inside the gateway-service container, so this suite can
+// only observe persistence black-box through the Status RPC — there is no
+// in-process channel/HookSignal to wait on across the container boundary. A
+// bounded poll is therefore the deterministic-enough analog: persistTimeout is a
+// safety net (a failure here means something is genuinely stuck, not a timing
+// race), and persistPollInterval bounds how often we re-query.
+const (
+	persistTimeout      = 30 * time.Second
+	persistPollInterval = 500 * time.Millisecond
+)
 
 func (s *GatewayIntegrationSuite) SetupSuite() {
 	t := s.T()
@@ -143,4 +161,48 @@ func (s *GatewayIntegrationSuite) TestLandAPI() {
 	assert.Equal(t, 1, msgCount, "should have 1 message in queue")
 
 	s.log.Logf("Land API test passed: request stored and message published")
+}
+
+// TestRequestLogConsumer verifies the gateway's log-topic consumer in isolation:
+// no orchestrator runs in this stack, so the test itself publishes a request log
+// entry to the log topic exactly as the orchestrator does in production (via
+// submitqueue/core/request.PublishLog). The gateway is the sole writer of the
+// request log; this asserts its consumer drains the log topic and persists the
+// entry to storage, observable through the Status RPC.
+func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
+	t := s.T()
+
+	// Build a publisher against the shared queue database. NewQueue only wires up
+	// stores; nothing consumes until a subscriber is started, so this publish-only
+	// use does not interfere with the gateway container's consumer.
+	queue, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB:           s.queueDB,
+		Logger:       zap.NewNop(),
+		MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err, "failed to create queue publisher")
+	defer queue.Close()
+
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: consumer.TopicKeyLog, Name: "log", Queue: queue},
+	})
+	require.NoError(t, err, "failed to create topic registry")
+
+	const sqid = "log-consumer-test/1"
+	logEntry := entity.NewRequestLog(sqid, entity.RequestStatusStarted, 1, "", nil)
+	require.NoError(t, corerequest.PublishLog(s.ctx, registry, logEntry, sqid),
+		"failed to publish request log to log topic")
+
+	s.log.Logf("Published 'started' log for sqid=%s; waiting for gateway consumer to persist it", sqid)
+
+	require.Eventually(t, func() bool {
+		resp, statusErr := s.client.Status(s.ctx, &pb.StatusRequest{Sqid: sqid})
+		if statusErr != nil {
+			return false
+		}
+		return resp.Status == string(entity.RequestStatusStarted)
+	}, persistTimeout, persistPollInterval,
+		"gateway log consumer should persist the published request log for sqid=%s", sqid)
+
+	s.log.Logf("Request log consumer test passed: entry persisted and readable via Status")
 }

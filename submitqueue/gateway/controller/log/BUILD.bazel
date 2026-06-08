@@ -3,7 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "log",
     srcs = ["log.go"],
-    importpath = "github.com/uber/submitqueue/submitqueue/orchestrator/controller/log",
+    importpath = "github.com/uber/submitqueue/submitqueue/gateway/controller/log",
     visibility = ["//visibility:public"],
     deps = [
         "//core/metrics",

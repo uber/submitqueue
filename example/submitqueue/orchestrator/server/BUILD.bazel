@@ -49,7 +49,6 @@ go_library(
         "//submitqueue/orchestrator/controller/cancel",
         "//submitqueue/orchestrator/controller/conclude",
         "//submitqueue/orchestrator/controller/dlq",
-        "//submitqueue/orchestrator/controller/log",
         "//submitqueue/orchestrator/controller/merge",
         "//submitqueue/orchestrator/controller/score",
         "//submitqueue/orchestrator/controller/speculate",
