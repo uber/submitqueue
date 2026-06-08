@@ -49,6 +49,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/all"
 	conflictfake "github.com/uber/submitqueue/submitqueue/extension/conflict/fake"
+	"github.com/uber/submitqueue/submitqueue/extension/conflict/fileoverlap"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/none"
 	"github.com/uber/submitqueue/submitqueue/extension/mergechecker"
 	mcfake "github.com/uber/submitqueue/submitqueue/extension/mergechecker/fake"
@@ -875,12 +876,18 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.
 	conflictErrQueue := base
 	conflictErrQueue.analyzer = conflictfake.New(all.New(), conflictfake.FailAlways)
 
+	// file-overlap-queue: a real analyzer that serializes only batches sharing
+	// a changed file, resolving each batch's files itself via the resolver.
+	fileOverlapQueue := base
+	fileOverlapQueue.analyzer = fileoverlap.New(resolver)
+
 	return queueRegistry{
 		def: base,
 		byQueue: map[string]queueExtensions{
 			"test-queue":               testQueue,
 			"e2e-test-queue":           e2eQueue,
 			"e2e-conflict-error-queue": conflictErrQueue,
+			"file-overlap-queue":       fileOverlapQueue,
 		},
 	}, nil
 }
