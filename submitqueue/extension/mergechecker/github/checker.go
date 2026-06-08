@@ -60,12 +60,14 @@ func NewMergeChecker(params Params) mergechecker.MergeChecker {
 	}
 }
 
-// Check assesses whether a change can merge cleanly using the GitHub GraphQL API.
-func (c *mergeChecker) Check(ctx context.Context, change entity.Change) (result mergechecker.Result, retErr error) {
+// Check assesses whether a request's change can merge cleanly using the GitHub GraphQL API.
+func (c *mergeChecker) Check(ctx context.Context, request entity.Request) (result mergechecker.Result, retErr error) {
 	const opName = "check"
 
 	op := metrics.Begin(c.metricsScope, opName)
 	defer func() { op.Complete(retErr) }()
+
+	change := request.Change
 
 	// Parse all change IDs
 	// TODO: classify parse errors as user errors (non-retryable) vs system errors.

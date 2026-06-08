@@ -22,12 +22,13 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 )
 
-// MergeChecker predicts whether a set of changes can merge cleanly.
+// MergeChecker predicts whether a request's changes can merge cleanly.
 type MergeChecker interface {
 	// Check is a fail-fast mergeability check that optimistically assesses
-	// whether the changes can be merged. A positive result does not
+	// whether the request's changes can be merged. It is handed the request
+	// identity and reads request.Change itself. A positive result does not
 	// guarantee that the changes will apply cleanly at merge time.
-	Check(ctx context.Context, change entity.Change) (Result, error)
+	Check(ctx context.Context, request entity.Request) (Result, error)
 }
 
 // Result holds the outcome of a mergeability check.

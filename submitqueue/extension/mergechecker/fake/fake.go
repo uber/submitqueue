@@ -52,9 +52,9 @@ func New() mergechecker.MergeChecker {
 }
 
 // Check reports the change as mergeable unless a recognized marker token is
-// present in one of its URIs.
-func (checker) Check(_ context.Context, change entity.Change) (mergechecker.Result, error) {
-	switch fakemarker.Token(change.URIs) {
+// present in one of the request's change URIs.
+func (checker) Check(_ context.Context, request entity.Request) (mergechecker.Result, error) {
+	switch fakemarker.Token(request.Change.URIs) {
 	case tokenUnmergeable:
 		return mergechecker.Result{Mergeable: false, Reason: "fake: marked unmergeable"}, nil
 	case tokenError:

@@ -156,7 +156,7 @@ func TestMergeChecker_Check(t *testing.T) {
 			defer server.Close()
 
 			mc := newTestMergeChecker(t, server.URL)
-			result, err := mc.Check(context.Background(), tt.change)
+			result, err := mc.Check(context.Background(), entity.Request{Change: tt.change})
 			if tt.wantErr {
 				require.Error(t, err)
 				return

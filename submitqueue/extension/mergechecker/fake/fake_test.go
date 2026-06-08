@@ -66,7 +66,7 @@ func TestChecker_Check(t *testing.T) {
 	c := New()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res, err := c.Check(context.Background(), entity.Change{URIs: tt.uris})
+			res, err := c.Check(context.Background(), entity.Request{Change: entity.Change{URIs: tt.uris}})
 			if tt.wantErr {
 				require.Error(t, err)
 				return
