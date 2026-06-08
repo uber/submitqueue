@@ -46,7 +46,7 @@ func requestIDPayload(t *testing.T, id string) []byte {
 // mockChangeProvider is a simple mock that returns test data.
 type mockChangeProvider struct{}
 
-func (m *mockChangeProvider) Get(ctx context.Context, change entity.Change) ([]entity.ChangeInfo, error) {
+func (m *mockChangeProvider) Get(ctx context.Context, request entity.Request) ([]entity.ChangeInfo, error) {
 	return []entity.ChangeInfo{
 		{
 			URI: "github://org/repo/pull/123/abcdef0123456789abcdef0123456789abcdef01",

@@ -43,18 +43,18 @@ func (m *MockChangeProvider) EXPECT() *MockChangeProviderMockRecorder {
 }
 
 // Get mocks base method.
-func (m *MockChangeProvider) Get(ctx context.Context, change entity.Change) ([]entity.ChangeInfo, error) {
+func (m *MockChangeProvider) Get(ctx context.Context, request entity.Request) ([]entity.ChangeInfo, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Get", ctx, change)
+	ret := m.ctrl.Call(m, "Get", ctx, request)
 	ret0, _ := ret[0].([]entity.ChangeInfo)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Get indicates an expected call of Get.
-func (mr *MockChangeProviderMockRecorder) Get(ctx, change any) *gomock.Call {
+func (mr *MockChangeProviderMockRecorder) Get(ctx, request any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockChangeProvider)(nil).Get), ctx, change)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockChangeProvider)(nil).Get), ctx, request)
 }
 
 // MockFactory is a mock of Factory interface.

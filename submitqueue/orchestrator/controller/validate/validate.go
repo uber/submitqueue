@@ -161,7 +161,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		coremetrics.NamedCounter(c.metricsScope, "process", "change_provider_errors", 1)
 		return fmt.Errorf("failed to build change provider for queue %s: %w", request.Queue, err)
 	}
-	changeInfos, err := changeProvider.Get(ctx, request.Change)
+	changeInfos, err := changeProvider.Get(ctx, request)
 	if err != nil {
 		coremetrics.NamedCounter(c.metricsScope, "process", "change_provider_errors", 1)
 		return fmt.Errorf("failed to fetch change information for request %s: %w", request.ID, err)

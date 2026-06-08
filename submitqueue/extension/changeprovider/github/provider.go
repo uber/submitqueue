@@ -42,11 +42,13 @@ func NewProvider(params Params) changeprovider.ChangeProvider {
 	}
 }
 
-// Get retrieves change information from GitHub for the provided Change.
+// Get retrieves change information from GitHub for the request's change.
 // Returns one ChangeInfo per URI (one per PR in stacked changes).
-func (p *provider) Get(ctx context.Context, change entity.Change) (_ []entity.ChangeInfo, retErr error) {
+func (p *provider) Get(ctx context.Context, request entity.Request) (_ []entity.ChangeInfo, retErr error) {
 	op := coremetrics.Begin(p.metricsScope, "get")
 	defer func() { op.Complete(retErr) }()
+
+	change := request.Change
 
 	// Parse all change IDs
 	changeIDs := make([]entitygithub.ChangeID, 0, len(change.URIs))
