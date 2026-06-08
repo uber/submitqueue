@@ -29,17 +29,24 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/uber/submitqueue/core/httpclient"
+	"github.com/uber/submitqueue/submitqueue/core/changeset"
+	changesetfake "github.com/uber/submitqueue/submitqueue/core/changeset/fake"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 )
 
-func newTestRunner(t *testing.T, handler http.Handler) *runner {
+func newTestRunner(t *testing.T, handler http.Handler, resolver ...changeset.Resolver) *runner {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
 	c, err := httpclient.NewClient(srv.URL)
 	require.NoError(t, err)
+
+	r := changeset.Resolver(changesetfake.New())
+	if len(resolver) > 0 {
+		r = resolver[0]
+	}
 
 	return newRunner(
 		buildrunner.Config{QueueName: "my-queue"},
@@ -51,6 +58,7 @@ func newTestRunner(t *testing.T, handler http.Handler) *runner {
 			repo:       "submitqueue",
 			workflowID: "submitqueue-ci.yml",
 		},
+		r,
 		zap.NewNop().Sugar(),
 	)
 }
@@ -84,6 +92,10 @@ func TestTrigger_DispatchesWorkflowAndReturnsRunID(t *testing.T) {
 	var capturedPath string
 	var capturedBody []byte
 
+	resolver := changesetfake.New().
+		Set("base-batch", entity.Change{URIs: []string{"github://org/repo/pull/1/aaa111"}}).
+		Set("head-batch", entity.Change{URIs: []string{"github://org/repo/pull/2/bbb222"}})
+
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		capturedMethod = req.Method
 		capturedPath = req.URL.String()
@@ -93,13 +105,11 @@ func TestTrigger_DispatchesWorkflowAndReturnsRunID(t *testing.T) {
 			RunURL:        "https://api.github.com/repos/uber/submitqueue/actions/runs/42",
 			HTMLURL:       "https://github.com/uber/submitqueue/actions/runs/42",
 		})
-	}))
+	}), resolver)
 
-	base := []entity.Change{{URIs: []string{"github://org/repo/pull/1/aaa111"}}}
-	head := []entity.Change{{URIs: []string{"github://org/repo/pull/2/bbb222"}}}
 	metadata := entity.BuildMetadata{"requester": "alice"}
 
-	id, err := r.Trigger(context.Background(), base, head, metadata)
+	id, err := r.Trigger(context.Background(), []entity.Batch{{ID: "base-batch"}}, entity.Batch{ID: "head-batch"}, metadata)
 	require.NoError(t, err)
 	assert.Equal(t, "42", id.ID)
 
@@ -123,12 +133,13 @@ func TestTrigger_DispatchesWorkflowAndReturnsRunID(t *testing.T) {
 
 func TestTrigger_EmptyBaseProducesJSONArray(t *testing.T) {
 	var capturedBody []byte
+	resolver := changesetfake.New().Set("head-batch", entity.Change{URIs: []string{"u"}})
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		capturedBody, _ = io.ReadAll(req.Body)
 		_ = json.NewEncoder(w).Encode(dispatchWorkflowResponse{WorkflowRunID: 7})
-	}))
+	}), resolver)
 
-	_, err := r.Trigger(context.Background(), nil, []entity.Change{{URIs: []string{"u"}}}, nil)
+	_, err := r.Trigger(context.Background(), nil, entity.Batch{ID: "head-batch"}, nil)
 	require.NoError(t, err)
 
 	var req dispatchWorkflowRequest
@@ -142,7 +153,7 @@ func TestTrigger_ErrorsWhenDispatchResponseHasNoRunID(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(dispatchWorkflowResponse{})
 	}))
 
-	_, err := r.Trigger(context.Background(), nil, nil, nil)
+	_, err := r.Trigger(context.Background(), nil, entity.Batch{ID: "head-batch"}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "response missing workflow_run_id")
 }

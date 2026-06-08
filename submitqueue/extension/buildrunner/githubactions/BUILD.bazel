@@ -9,6 +9,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/extension/buildrunner/githubactions",
     visibility = ["//visibility:public"],
     deps = [
+        "//submitqueue/core/changeset",
         "//submitqueue/entity",
         "//submitqueue/extension/buildrunner",
         "@org_uber_go_zap//:zap",
@@ -21,6 +22,8 @@ go_test(
     embed = [":githubactions"],
     deps = [
         "//core/httpclient",
+        "//submitqueue/core/changeset",
+        "//submitqueue/core/changeset/fake",
         "//submitqueue/entity",
         "//submitqueue/extension/buildrunner",
         "@com_github_stretchr_testify//assert",

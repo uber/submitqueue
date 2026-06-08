@@ -20,26 +20,35 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	changesetfake "github.com/uber/submitqueue/submitqueue/core/changeset/fake"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 )
 
+const headBatchID = "head-batch"
+
+// newFake returns a fake runner whose head batch resolves to a single change
+// carrying the given URIs.
+func newFake(uris ...string) buildrunner.BuildRunner {
+	return New(changesetfake.New().Set(headBatchID, entity.Change{URIs: uris}))
+}
+
 func TestNew_ImplementsInterface(t *testing.T) {
-	var _ buildrunner.BuildRunner = New()
+	var _ buildrunner.BuildRunner = New(changesetfake.New())
 }
 
 func TestRunner_Trigger_UniqueIDs(t *testing.T) {
 	ctx := context.Background()
 
-	id1, err := New().Trigger(ctx, nil, []entity.Change{{URIs: []string{"github://o/r/pull/1/a"}}}, nil)
+	id1, err := newFake("github://o/r/pull/1/a").Trigger(ctx, nil, entity.Batch{ID: headBatchID}, nil)
 	require.NoError(t, err)
 	assert.NotEmpty(t, id1.ID)
 
-	// Same runner instance, different trigger.
-	r := New()
-	id2, err := r.Trigger(ctx, nil, nil, nil)
+	// Same runner instance, different trigger (empty head — no marker).
+	r := New(changesetfake.New())
+	id2, err := r.Trigger(ctx, nil, entity.Batch{ID: "x"}, nil)
 	require.NoError(t, err)
-	id3, err := r.Trigger(ctx, nil, nil, nil)
+	id3, err := r.Trigger(ctx, nil, entity.Batch{ID: "x"}, nil)
 	require.NoError(t, err)
 	assert.NotEqual(t, id2, id3)
 
@@ -49,9 +58,8 @@ func TestRunner_Trigger_UniqueIDs(t *testing.T) {
 }
 
 func TestRunner_TriggerError(t *testing.T) {
-	r := New()
-	_, err := r.Trigger(context.Background(), nil,
-		[]entity.Change{{URIs: []string{"github://o/r/pull/1/a?sq-fake=trigger-error"}}}, nil)
+	r := newFake("github://o/r/pull/1/a?sq-fake=trigger-error")
+	_, err := r.Trigger(context.Background(), nil, entity.Batch{ID: headBatchID}, nil)
 	require.Error(t, err)
 }
 
@@ -88,8 +96,8 @@ func TestRunner_Status(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := New()
-			id, err := r.Trigger(ctx, nil, []entity.Change{{URIs: tt.headURIs}}, nil)
+			r := newFake(tt.headURIs...)
+			id, err := r.Trigger(ctx, nil, entity.Batch{ID: headBatchID}, nil)
 			require.NoError(t, err)
 
 			status, _, err := r.Status(ctx, id)
@@ -104,7 +112,7 @@ func TestRunner_Status(t *testing.T) {
 }
 
 func TestRunner_Status_UnknownBuildSucceeds(t *testing.T) {
-	r := New()
+	r := New(changesetfake.New())
 	status, _, err := r.Status(context.Background(), entity.BuildID{ID: "never-triggered"})
 	require.NoError(t, err)
 	assert.Equal(t, entity.BuildStatusSucceeded, status)
@@ -115,16 +123,15 @@ func TestRunner_Status_UnknownBuildSucceeds(t *testing.T) {
 // back correctly by a different runner instance.
 func TestStatus_StatelessAcrossInstances(t *testing.T) {
 	ctx := context.Background()
-	id, err := New().Trigger(ctx, nil,
-		[]entity.Change{{URIs: []string{"github://o/r/pull/1/a?sq-fake=build-fail"}}}, nil)
+	id, err := newFake("github://o/r/pull/1/a?sq-fake=build-fail").Trigger(ctx, nil, entity.Batch{ID: headBatchID}, nil)
 	require.NoError(t, err)
 
-	status, _, err := New().Status(ctx, id)
+	status, _, err := New(changesetfake.New()).Status(ctx, id)
 	require.NoError(t, err)
 	assert.Equal(t, entity.BuildStatusFailed, status)
 }
 
 func TestRunner_Cancel(t *testing.T) {
-	r := New()
+	r := New(changesetfake.New())
 	assert.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: "any"}))
 }

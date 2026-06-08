@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/extension/buildrunner/fake",
     visibility = ["//visibility:public"],
     deps = [
+        "//submitqueue/core/changeset",
         "//submitqueue/core/fakemarker",
         "//submitqueue/entity",
         "//submitqueue/extension/buildrunner",
@@ -17,6 +18,7 @@ go_test(
     srcs = ["fake_test.go"],
     embed = [":fake"],
     deps = [
+        "//submitqueue/core/changeset/fake",
         "//submitqueue/entity",
         "//submitqueue/extension/buildrunner",
         "@com_github_stretchr_testify//assert",

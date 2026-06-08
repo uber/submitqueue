@@ -114,16 +114,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return nil
 	}
 
-	// Assemble base (dependency batches in order) and head (this batch).
-	base, err := c.collectChanges(ctx, batch.Dependencies)
+	// Load the dependency batches (base) as identity; the build runner resolves
+	// each batch's changes itself. head is this batch.
+	base, err := c.loadBatches(ctx, batch.Dependencies)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to assemble base changes for batch %s: %w", batch.ID, err)
-	}
-	head, err := c.collectChanges(ctx, []string{batch.ID})
-	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to assemble head changes for batch %s: %w", batch.ID, err)
+		return fmt.Errorf("failed to load dependency batches for batch %s: %w", batch.ID, err)
 	}
 
 	// Trigger the build with the queue's build runner. metadata is nil
@@ -134,7 +130,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		metrics.NamedCounter(c.metricsScope, opName, "trigger_errors", 1)
 		return fmt.Errorf("failed to build runner for batch %s: %w", batch.ID, err)
 	}
-	buildID, err := buildRunner.Trigger(ctx, base, head, nil)
+	buildID, err := buildRunner.Trigger(ctx, base, batch, nil)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "trigger_errors", 1)
 		return fmt.Errorf("failed to trigger build for batch %s: %w", batch.ID, err)
@@ -173,28 +169,22 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	return nil // Success - message will be acked
 }
 
-// collectChanges loads each batch by ID and concatenates the Change values
-// from its contained requests in batch order. Used to build the base
-// (dependency batches) and head (this batch) inputs to BuildRunner.Trigger.
-func (c *Controller) collectChanges(ctx context.Context, batchIDs []string) ([]entity.Change, error) {
+// loadBatches loads each batch by ID, preserving order. Used to load the base
+// (dependency batches) identity handed to BuildRunner.Trigger; the build runner
+// resolves each batch's changes itself.
+func (c *Controller) loadBatches(ctx context.Context, batchIDs []string) ([]entity.Batch, error) {
 	if len(batchIDs) == 0 {
 		return nil, nil
 	}
-	var changes []entity.Change
+	batches := make([]entity.Batch, 0, len(batchIDs))
 	for _, bID := range batchIDs {
 		b, err := c.store.GetBatchStore().Get(ctx, bID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get batch %s: %w", bID, err)
 		}
-		for _, reqID := range b.Contains {
-			req, err := c.store.GetRequestStore().Get(ctx, reqID)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get request %s for batch %s: %w", reqID, bID, err)
-			}
-			changes = append(changes, req.Change)
-		}
+		batches = append(batches, b)
 	}
-	return changes, nil
+	return batches, nil
 }
 
 // publish publishes a build's ID to the specified topic key. Only the

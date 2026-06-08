@@ -40,10 +40,11 @@ type BuildRunner interface {
 	// Validation is implicit and holistic — it is what the runner does
 	// after applying everything, not a per-change action.
 	//
-	// base contains changes from the dependency batches (an assumed-good
-	// prefix). head contains changes from the batch being verified.
-	// Splitting them lets a runner cache or short-circuit the base when
-	// it has validated the same prefix before, and lets it attribute
+	// base is the dependency batches (an assumed-good prefix); head is the
+	// batch being verified. The runner resolves each batch's changes itself
+	// through an injected changeset resolver. Keeping base and head as
+	// separate batch inputs lets a runner cache or short-circuit the base
+	// when it has validated the same prefix before, and lets it attribute
 	// terminal failure to base vs head in BuildMetadata.
 	//
 	// metadata carries free-form caller-supplied attributes (e.g. requester,
@@ -59,8 +60,8 @@ type BuildRunner interface {
 	// Factory that built it. Returns an error if the request is invalid.
 	Trigger(
 		ctx context.Context,
-		base []entity.Change,
-		head []entity.Change,
+		base []entity.Batch,
+		head entity.Batch,
 		metadata entity.BuildMetadata,
 	) (buildID entity.BuildID, err error)
 

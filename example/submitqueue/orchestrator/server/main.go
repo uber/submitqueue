@@ -833,7 +833,7 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.
 		mergeChecker:   mc,
 		changeProvider: cp,
 		pusher:         psh,
-		buildRunner:    buildfake.New(),
+		buildRunner:    buildfake.New(resolver),
 		scorer: scorerfake.New(resolver, heuristic.New(
 			resolver,
 			[]heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.5}},

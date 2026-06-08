@@ -29,6 +29,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 )
@@ -58,6 +59,8 @@ type Params struct {
 	// The token needs actions:write to dispatch/cancel workflows and actions:read
 	// to poll status.
 	HTTPClient *http.Client
+	// Resolver resolves a batch's changes (base and head batches).
+	Resolver changeset.Resolver
 	// Logger is the structured logger.
 	Logger *zap.SugaredLogger
 	// Owner is the repository owner or organization, for example "uber".
@@ -80,6 +83,7 @@ type runner struct {
 	ref         string
 	extraInputs map[string]string
 	client      *client
+	resolver    changeset.Resolver
 	logger      *zap.SugaredLogger
 }
 
@@ -105,11 +109,12 @@ func NewBuildRunner(params Params) (buildrunner.BuildRunner, error) {
 			repo:       params.Repo,
 			workflowID: params.WorkflowID,
 		},
+		params.Resolver,
 		params.Logger.Named("githubactions_buildrunner"),
 	), nil
 }
 
-func newRunner(cfg buildrunner.Config, ref string, extraInputs map[string]string, c *client, logger *zap.SugaredLogger) *runner {
+func newRunner(cfg buildrunner.Config, ref string, extraInputs map[string]string, c *client, resolver changeset.Resolver, logger *zap.SugaredLogger) *runner {
 	copied := make(map[string]string, len(extraInputs))
 	for k, v := range extraInputs {
 		copied[k] = v
@@ -119,6 +124,7 @@ func newRunner(cfg buildrunner.Config, ref string, extraInputs map[string]string
 		ref:         ref,
 		extraInputs: copied,
 		client:      c,
+		resolver:    resolver,
 		logger:      logger,
 	}
 }
@@ -145,8 +151,17 @@ func validateConfig(httpClient *http.Client, logger *zap.SugaredLogger, owner, r
 // Trigger dispatches the configured GitHub Actions workflow and returns the
 // GitHub workflow run ID as the SubmitQueue build ID. Errors are propagated to
 // the caller so the queue consumer can nack and retry.
-func (r *runner) Trigger(ctx context.Context, base, head []entity.Change, metadata entity.BuildMetadata) (entity.BuildID, error) {
-	inputs, err := r.dispatchInputs(base, head, metadata)
+func (r *runner) Trigger(ctx context.Context, base []entity.Batch, head entity.Batch, metadata entity.BuildMetadata) (entity.BuildID, error) {
+	baseChanges, err := buildrunner.ResolveBatches(ctx, r.resolver, base)
+	if err != nil {
+		return entity.BuildID{}, fmt.Errorf("github actions: resolve base: %w", err)
+	}
+	headChanges, err := r.resolver.ChangesForBatch(ctx, head)
+	if err != nil {
+		return entity.BuildID{}, fmt.Errorf("github actions: resolve head: %w", err)
+	}
+
+	inputs, err := r.dispatchInputs(baseChanges, headChanges, metadata)
 	if err != nil {
 		return entity.BuildID{}, err
 	}

@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/core/fakemarker"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
@@ -57,21 +58,28 @@ const outcomeOK = "ok"
 // per-build state: the outcome is encoded in the BuildID at Trigger and read
 // back out at Status. Uniqueness comes from a random suffix per ID, so it needs
 // no shared counter and never collides across instances or processes.
-type runner struct{}
+type runner struct {
+	resolver changeset.Resolver
+}
 
 // New returns a buildrunner.BuildRunner that defaults to succeeding and honors
-// marker tokens embedded in head change URIs.
-func New() buildrunner.BuildRunner {
-	return &runner{}
+// marker tokens embedded in head change URIs. The resolver resolves the head
+// batch's changes so the marker can be inspected.
+func New(resolver changeset.Resolver) buildrunner.BuildRunner {
+	return &runner{resolver: resolver}
 }
 
 // Trigger fails when a head change URI carries the trigger-error marker;
 // otherwise it returns a unique BuildID that encodes the terminal outcome the
 // build should report at Status time (decided from the head marker). The base
-// changes and metadata are ignored.
-func (r *runner) Trigger(_ context.Context, _ []entity.Change, head []entity.Change, _ entity.BuildMetadata) (entity.BuildID, error) {
+// batches and metadata are ignored.
+func (r *runner) Trigger(ctx context.Context, _ []entity.Batch, head entity.Batch, _ entity.BuildMetadata) (entity.BuildID, error) {
+	headChanges, err := r.resolver.ChangesForBatch(ctx, head)
+	if err != nil {
+		return entity.BuildID{}, fmt.Errorf("fake: resolve head: %w", err)
+	}
 	outcome := outcomeOK
-	switch fakemarker.TokenInChanges(head) {
+	switch fakemarker.TokenInChanges(headChanges) {
 	case tokenTriggerError:
 		return entity.BuildID{}, fmt.Errorf("fake: marked trigger error")
 	case tokenFail:

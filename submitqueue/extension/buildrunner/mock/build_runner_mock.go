@@ -73,7 +73,7 @@ func (mr *MockBuildRunnerMockRecorder) Status(ctx, buildID any) *gomock.Call {
 }
 
 // Trigger mocks base method.
-func (m *MockBuildRunner) Trigger(ctx context.Context, base, head []entity.Change, metadata entity.BuildMetadata) (entity.BuildID, error) {
+func (m *MockBuildRunner) Trigger(ctx context.Context, base []entity.Batch, head entity.Batch, metadata entity.BuildMetadata) (entity.BuildID, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Trigger", ctx, base, head, metadata)
 	ret0, _ := ret[0].(entity.BuildID)

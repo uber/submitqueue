@@ -25,6 +25,7 @@ import (
 	"github.com/uber/submitqueue/core/errs"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
+	changesetfake "github.com/uber/submitqueue/submitqueue/core/changeset/fake"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
@@ -74,7 +75,7 @@ func newMockStorage(ctrl *gomock.Controller, batch entity.Batch) *storagemock.Mo
 }
 
 // newTestController creates a controller with test dependencies. br is the
-// build runner to inject; pass buildfake.New() for the pass-through default.
+// build runner to inject; pass buildfake.New(changesetfake.New()) for the pass-through default.
 // staticBuildRunnerFactory is a test factory that returns a fixed BuildRunner
 // for any entityqueue.
 type staticBuildRunnerFactory struct{ r buildrunner.BuildRunner }
@@ -111,7 +112,7 @@ func TestNewController(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	batch := testBatch()
 	store := newMockStorage(ctrl, batch)
-	controller := newTestController(t, ctrl, store, buildfake.New(), nil)
+	controller := newTestController(t, ctrl, store, buildfake.New(changesetfake.New()), nil)
 
 	require.NotNil(t, controller)
 	assert.Equal(t, consumer.TopicKeyBuild, controller.TopicKey())
@@ -124,7 +125,7 @@ func TestController_Process_Success(t *testing.T) {
 
 	batch := testBatch()
 	store := newMockStorage(ctrl, batch)
-	controller := newTestController(t, ctrl, store, buildfake.New(), nil)
+	controller := newTestController(t, ctrl, store, buildfake.New(changesetfake.New()), nil)
 
 	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -135,10 +136,10 @@ func TestController_Process_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestController_Process_TriggersWithBaseAndHead verifies the controller
-// splits the input to BuildRunner.Trigger into base (dependency batches in
-// order, concatenated) and head (this batch's changes in order), persists
-// the initial Accepted Build, and publishes it to the buildsignal topic.
+// TestController_Process_TriggersWithBaseAndHead verifies the controller hands
+// BuildRunner.Trigger the base (dependency batches in order) and head (this
+// batch) as identity, persists the initial Accepted Build, and publishes it to
+// the buildsignal topic. The runner resolves each batch's changes itself.
 func TestController_Process_TriggersWithBaseAndHead(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
@@ -155,17 +156,10 @@ func TestController_Process_TriggersWithBaseAndHead(t *testing.T) {
 		Dependencies: []string{depBatch.ID},
 		Contains:     []string{"test-queue/head-1", "test-queue/head-2"},
 	}
-	depReq := entity.Request{ID: "test-queue/dep-1", Change: entity.Change{URIs: []string{"github://o/r/pull/9/aaa"}}}
-	head1 := entity.Request{ID: "test-queue/head-1", Change: entity.Change{URIs: []string{"github://o/r/pull/1/aaa"}}}
-	head2 := entity.Request{ID: "test-queue/head-2", Change: entity.Change{URIs: []string{"github://o/r/pull/2/bbb"}}}
 
 	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
 	mockBatchStore.EXPECT().Get(gomock.Any(), headBatch.ID).Return(headBatch, nil).AnyTimes()
 	mockBatchStore.EXPECT().Get(gomock.Any(), depBatch.ID).Return(depBatch, nil).AnyTimes()
-	mockRequestStore := storagemock.NewMockRequestStore(ctrl)
-	mockRequestStore.EXPECT().Get(gomock.Any(), depReq.ID).Return(depReq, nil)
-	mockRequestStore.EXPECT().Get(gomock.Any(), head1.ID).Return(head1, nil)
-	mockRequestStore.EXPECT().Get(gomock.Any(), head2.ID).Return(head2, nil)
 
 	var created entity.Build
 	mockBuildStore := storagemock.NewMockBuildStore(ctrl)
@@ -178,13 +172,11 @@ func TestController_Process_TriggersWithBaseAndHead(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
-	store.EXPECT().GetRequestStore().Return(mockRequestStore).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(mockBuildStore).AnyTimes()
 
 	br := buildrunnermock.NewMockBuildRunner(ctrl)
-	wantBase := []entity.Change{depReq.Change}
-	wantHead := []entity.Change{head1.Change, head2.Change}
-	br.EXPECT().Trigger(gomock.Any(), wantBase, wantHead, gomock.Nil()).Return(entity.BuildID{ID: "build-xyz"}, nil)
+	// base is the dependency batches (identity); head is this batch.
+	br.EXPECT().Trigger(gomock.Any(), []entity.Batch{depBatch}, headBatch, gomock.Nil()).Return(entity.BuildID{ID: "build-xyz"}, nil)
 
 	var publishedTopic string
 	var published entity.BuildID
@@ -315,7 +307,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 	store.EXPECT().GetRequestStore().Return(storagemock.NewMockRequestStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(storagemock.NewMockBuildStore(ctrl)).AnyTimes()
 
-	controller := newTestController(t, ctrl, store, buildfake.New(), nil)
+	controller := newTestController(t, ctrl, store, buildfake.New(changesetfake.New()), nil)
 
 	msg := entityqueue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1"), "test-queue", nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -332,7 +324,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 
 	batch := testBatch()
 	store := newMockStorage(ctrl, batch)
-	controller := newTestController(t, ctrl, store, buildfake.New(), fmt.Errorf("publish failed"))
+	controller := newTestController(t, ctrl, store, buildfake.New(changesetfake.New()), fmt.Errorf("publish failed"))
 
 	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -347,7 +339,7 @@ func TestController_InterfaceImplementation(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	batch := testBatch()
 	store := newMockStorage(ctrl, batch)
-	controller := newTestController(t, ctrl, store, buildfake.New(), nil)
+	controller := newTestController(t, ctrl, store, buildfake.New(changesetfake.New()), nil)
 
 	var _ consumer.Controller = controller
 }

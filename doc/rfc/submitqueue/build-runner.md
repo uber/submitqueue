@@ -46,13 +46,15 @@ See `extension/buildrunner/build_runner.go` for the exact Go signatures. The sec
 
 ### Trigger: base + head
 
-`Trigger` takes two ordered lists of changes and a free-form metadata map:
+> **Revised by [extension-contract.md](extension-contract.md).** `Trigger` now takes identity at the batch granularity — `base []entity.Batch` (the dependency batches) and `head entity.Batch` (the batch under test) — and the runner resolves each batch's changes itself through an injected `changeset.Resolver`. The base/head split below still holds; only the boundary type changed from resolved `[]entity.Change` to batch identity. The "rejected: list-of-lists of changes" note is superseded by that RFC's "identity in, resolve internally" principle.
 
-- **`base`** — changes from the dependency batches (assumed-good prefix). Ordered.
-- **`head`** — changes from the batch being verified. Ordered.
+`Trigger` takes the base dependency batches, the head batch, and a free-form metadata map:
+
+- **`base`** — the dependency batches (assumed-good prefix), ordered. The runner resolves their changes.
+- **`head`** — the batch being verified. The runner resolves its changes.
 - **`metadata`** — caller-supplied attributes (requester, ticket ID, trace ID, etc.) the provider MAY persist or echo back via `Status`. Schema is caller/provider-defined; the interface treats it as opaque. `nil` is equivalent to an empty map.
 
-The provider applies `base` then `head` in order on top of the queue's target branch and validates the resulting tree. Validation is **implicit and holistic**: it is not a per-change action, it is what the provider does after applying everything.
+The provider resolves and applies `base` then `head` in order on top of the queue's target branch and validates the resulting tree. Validation is **implicit and holistic**: it is not a per-change action, it is what the provider does after applying everything.
 
 Why split base and head:
 
@@ -60,9 +62,7 @@ Why split base and head:
 - Lets a provider cache or short-circuit the base when it has validated the same prefix before — a hot path for stacked-batch speculation.
 - Lets the provider attribute terminal failure to base vs head in `BuildMetadata` without the orchestrator having to round-trip the split itself.
 
-Rejected: a single flat `changes []entity.Change`. Provider would have to deduce base via prefix matching and could not distinguish "base broke" from "head broke" without out-of-band hints. Loses the orchestrator's clearest piece of structural information at the boundary for no gain.
-
-Rejected: list-of-lists, one slice per batch. Pushes batch structure across the boundary, which the provider does not care about. The provider thinks in terms of "stuff to apply before" and "stuff to validate" — base / head matches that mental model. Batches are an orchestrator concept.
+Rejected: a single flat input with no base/head split. Provider would have to deduce base via prefix matching and could not distinguish "base broke" from "head broke" without out-of-band hints. Loses the orchestrator's clearest piece of structural information at the boundary for no gain.
 
 ### Async vs sync contract
 

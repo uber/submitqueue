@@ -27,20 +27,29 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/core/httpclient"
+	"github.com/uber/submitqueue/submitqueue/core/changeset"
+	changesetfake "github.com/uber/submitqueue/submitqueue/core/changeset/fake"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 )
 
-// newTestRunner creates a runner backed by a test HTTP server.
-func newTestRunner(t *testing.T, handler http.Handler) *runner {
+// newTestRunner creates a runner backed by a test HTTP server. An optional
+// resolver seeds the batch changes the runner resolves; omit it for tests that
+// do not trigger builds (Status/Cancel).
+func newTestRunner(t *testing.T, handler http.Handler, resolver ...changeset.Resolver) *runner {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 	c, err := httpclient.NewClient(srv.URL)
 	require.NoError(t, err)
+	r := changeset.Resolver(changesetfake.New())
+	if len(resolver) > 0 {
+		r = resolver[0]
+	}
 	return newRunner(
 		buildrunner.Config{QueueName: "my-queue"},
 		&client{httpClient: c},
+		r,
 		zap.NewNop().Sugar(),
 	)
 }
@@ -70,17 +79,18 @@ func TestTrigger_SubmitsCorrectPayloadAndReturnsBuildkiteNumber(t *testing.T) {
 	var capturedMethod string
 	var capturedBody []byte
 
+	resolver := changesetfake.New().
+		Set("base-batch", entity.Change{URIs: []string{"github://org/repo/pull/1/aaa111"}}).
+		Set("head-batch", entity.Change{URIs: []string{"github://org/repo/pull/2/bbb222"}})
+
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		capturedMethod = req.Method
 		capturedBody, _ = io.ReadAll(req.Body)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(buildJSON(42, "scheduled", "https://buildkite.com/test-org/my-pipeline/builds/42"))
-	}))
+	}), resolver)
 
-	base := []entity.Change{{URIs: []string{"github://org/repo/pull/1/aaa111"}}}
-	head := []entity.Change{{URIs: []string{"github://org/repo/pull/2/bbb222"}}}
-
-	id, err := r.Trigger(context.Background(), base, head, nil)
+	id, err := r.Trigger(context.Background(), []entity.Batch{{ID: "base-batch"}}, entity.Batch{ID: "head-batch"}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, encodeBuildNumber(42), id.ID)
 
@@ -95,13 +105,14 @@ func TestTrigger_SubmitsCorrectPayloadAndReturnsBuildkiteNumber(t *testing.T) {
 
 func TestTrigger_EmptyBase_ProducesJSONArray(t *testing.T) {
 	var capturedBody []byte
+	resolver := changesetfake.New().Set("head-batch", entity.Change{URIs: []string{"u"}})
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		capturedBody, _ = io.ReadAll(req.Body)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(buildJSON(1, "scheduled", ""))
-	}))
+	}), resolver)
 
-	_, err := r.Trigger(context.Background(), nil, []entity.Change{{URIs: []string{"u"}}}, nil)
+	_, err := r.Trigger(context.Background(), nil, entity.Batch{ID: "head-batch"}, nil)
 	require.NoError(t, err)
 
 	var req createBuildRequest
@@ -112,17 +123,17 @@ func TestTrigger_EmptyBase_ProducesJSONArray(t *testing.T) {
 
 func TestTrigger_MultipleChangesFlattened(t *testing.T) {
 	var capturedBody []byte
+	resolver := changesetfake.New().Set("head-batch",
+		entity.Change{URIs: []string{"github://org/repo/pull/1/aaa"}},
+		entity.Change{URIs: []string{"github://org/repo/pull/2/bbb", "github://org/repo/pull/3/ccc"}},
+	)
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		capturedBody, _ = io.ReadAll(req.Body)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(buildJSON(2, "scheduled", ""))
-	}))
+	}), resolver)
 
-	head := []entity.Change{
-		{URIs: []string{"github://org/repo/pull/1/aaa"}},
-		{URIs: []string{"github://org/repo/pull/2/bbb", "github://org/repo/pull/3/ccc"}},
-	}
-	_, err := r.Trigger(context.Background(), nil, head, nil)
+	_, err := r.Trigger(context.Background(), nil, entity.Batch{ID: "head-batch"}, nil)
 	require.NoError(t, err)
 
 	var req createBuildRequest
@@ -138,20 +149,21 @@ func TestTrigger_BuildkiteError_ReturnsError(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 
-	_, err := r.Trigger(context.Background(), nil, nil, nil)
+	_, err := r.Trigger(context.Background(), nil, entity.Batch{ID: "head-batch"}, nil)
 	require.Error(t, err)
 }
 
 func TestTrigger_WithMetadata_SetsEnvVar(t *testing.T) {
 	var capturedBody []byte
+	resolver := changesetfake.New().Set("head-batch", entity.Change{URIs: []string{"u"}})
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		capturedBody, _ = io.ReadAll(req.Body)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(buildJSON(10, "scheduled", ""))
-	}))
+	}), resolver)
 
 	metadata := entity.BuildMetadata{"requester": "alice", "ticket": "SQ-42"}
-	_, err := r.Trigger(context.Background(), nil, []entity.Change{{URIs: []string{"u"}}}, metadata)
+	_, err := r.Trigger(context.Background(), nil, entity.Batch{ID: "head-batch"}, metadata)
 	require.NoError(t, err)
 
 	var req createBuildRequest
@@ -165,13 +177,14 @@ func TestTrigger_WithMetadata_SetsEnvVar(t *testing.T) {
 
 func TestTrigger_NilMetadata_NoMetadataEnvVar(t *testing.T) {
 	var capturedBody []byte
+	resolver := changesetfake.New().Set("head-batch", entity.Change{URIs: []string{"u"}})
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		capturedBody, _ = io.ReadAll(req.Body)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(buildJSON(11, "scheduled", ""))
-	}))
+	}), resolver)
 
-	_, err := r.Trigger(context.Background(), nil, []entity.Change{{URIs: []string{"u"}}}, nil)
+	_, err := r.Trigger(context.Background(), nil, entity.Batch{ID: "head-batch"}, nil)
 	require.NoError(t, err)
 
 	var req createBuildRequest

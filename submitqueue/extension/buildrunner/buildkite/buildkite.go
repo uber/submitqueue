@@ -38,6 +38,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 )
@@ -66,9 +67,10 @@ const (
 
 // runner implements buildrunner.BuildRunner.
 type runner struct {
-	cfg    buildrunner.Config
-	client *client
-	logger *zap.SugaredLogger
+	cfg      buildrunner.Config
+	client   *client
+	resolver changeset.Resolver
+	logger   *zap.SugaredLogger
 }
 
 var _ buildrunner.BuildRunner = (*runner)(nil)
@@ -83,6 +85,8 @@ type Params struct {
 	// for the base URL (via httpclient.BaseURLTransport) and auth (via a
 	// transport layer). If nil, http.DefaultClient is used.
 	HTTPClient *http.Client
+	// Resolver resolves a batch's changes (base and head batches).
+	Resolver changeset.Resolver
 	// Logger is the structured logger.
 	Logger *zap.SugaredLogger
 }
@@ -100,24 +104,34 @@ func NewBuildRunner(params Params) (buildrunner.BuildRunner, error) {
 	if params.Logger == nil {
 		return nil, fmt.Errorf("logger is required")
 	}
-	return newRunner(params.Config, &client{httpClient: params.HTTPClient}, params.Logger.Named("buildkite_buildrunner")), nil
+	return newRunner(params.Config, &client{httpClient: params.HTTPClient}, params.Resolver, params.Logger.Named("buildkite_buildrunner")), nil
 }
 
 // newRunner constructs a runner. Used by NewBuildRunner and by tests.
-func newRunner(cfg buildrunner.Config, c *client, logger *zap.SugaredLogger) *runner {
+func newRunner(cfg buildrunner.Config, c *client, resolver changeset.Resolver, logger *zap.SugaredLogger) *runner {
 	return &runner{
-		cfg:    cfg,
-		client: c,
-		logger: logger,
+		cfg:      cfg,
+		client:   c,
+		resolver: resolver,
+		logger:   logger,
 	}
 }
 
 // Trigger calls the Buildkite API to create the build and returns the Buildkite
 // build number as the build ID. Errors are propagated to the caller so the
 // queue consumer can nack and retry.
-func (r *runner) Trigger(ctx context.Context, base, head []entity.Change, metadata entity.BuildMetadata) (entity.BuildID, error) {
-	baseJSON, _ := json.Marshal(flattenURIs(base))
-	headJSON, _ := json.Marshal(flattenURIs(head))
+func (r *runner) Trigger(ctx context.Context, base []entity.Batch, head entity.Batch, metadata entity.BuildMetadata) (entity.BuildID, error) {
+	baseChanges, err := buildrunner.ResolveBatches(ctx, r.resolver, base)
+	if err != nil {
+		return entity.BuildID{}, fmt.Errorf("buildkite: resolve base: %w", err)
+	}
+	headChanges, err := r.resolver.ChangesForBatch(ctx, head)
+	if err != nil {
+		return entity.BuildID{}, fmt.Errorf("buildkite: resolve head: %w", err)
+	}
+
+	baseJSON, _ := json.Marshal(flattenURIs(baseChanges))
+	headJSON, _ := json.Marshal(flattenURIs(headChanges))
 
 	env := map[string]string{
 		EnvKeyBaseURIs: string(baseJSON),
