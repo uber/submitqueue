@@ -138,6 +138,8 @@ The cost of "callers loop over a small batch" is usually negligible. The cost of
 
 When in doubt, ask: *"If the next implementation were DynamoDB / Kafka / Bigtable / a remote RPC service / an in-memory map, could it satisfy this signature without contortion?"* If the answer is no, simplify the contract.
 
+**Input contract — identity in, resolve internally.** A decision/action extension takes the orchestrator's thin reference entity at its pipeline-stage granularity — `entity.Request` (request stage) or `entity.Batch` / `[]entity.Batch` (batch stage) — never controller-pre-resolved data. It resolves the granular content it needs (changes, diffs, targets) through dependencies injected at its `Factory` (e.g. a request store, a change provider), not a global aggregator. Stores (`storage`, `changestore`) and config (`queueconfig`) are the exception — they are the resolution *targets* and stay key/value-shaped per the rule above. `conflict.Analyzer` is the reference shape; every new extension or signature change must follow it. See [doc/rfc/submitqueue/extension-contract.md](doc/rfc/submitqueue/extension-contract.md).
+
 ### Import Paths
 
 Paths follow the directory layout: shared code is top-level, domain code nests under the domain folder (`submitqueue/`, `stovepipe/`).
