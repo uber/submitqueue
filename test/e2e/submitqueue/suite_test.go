@@ -167,18 +167,63 @@ func (s *E2EIntegrationSuite) TestPingOrchestrator() {
 	s.log.Logf("Orchestrator ping: %s", resp.Message)
 }
 
+// TestLandRequest_SinglePR drives a normal request through the orchestrator
+// pipeline and asserts it lands. e2e-test-queue is wired with immediate fakes
+// (every stage succeeds), so the happy path reaches the terminal "landed" status.
 func (s *E2EIntegrationSuite) TestLandRequest_SinglePR() {
+	s.landAndWait("github://uber/e2e-service/pull/123/abcdef0123456789abcdef0123456789abcdef01", "landed", 30*time.Second)
+}
+
+// TestLandRequest_BuildFails verifies that a build failure (injected via the
+// fake build runner's "sq-fake=build-fail" marker) drives the request to a
+// terminal "error" rather than landing. This is the end-to-end guard for the
+// speculate build-gating fix: before that fix the batch ignored its own failed
+// build and still merged.
+func (s *E2EIntegrationSuite) TestLandRequest_BuildFails() {
+	s.landAndWait("github://uber/e2e-service/pull/124/abcdef0123456789abcdef0123456789abcdef02?sq-fake=build-fail", "error", 30*time.Second)
+}
+
+// landAndWait submits a single-URI land request to e2e-test-queue and asserts
+// it reaches the expected terminal status.
+func (s *E2EIntegrationSuite) landAndWait(uri, wantStatus string, timeout time.Duration) {
+	t := s.T()
 	req := &gatewaypb.LandRequest{
 		Queue:    "e2e-test-queue",
-		Change:   &gatewaypb.Change{Uris: []string{"github://uber/e2e-service/pull/123/abcdef0123456789abcdef0123456789abcdef01"}},
+		Change:   &gatewaypb.Change{Uris: []string{uri}},
 		Strategy: gatewaypb.Strategy_REBASE,
 	}
 
-	s.log.Logf("Sending Land request (single PR) for queue=%s", req.Queue)
+	s.log.Logf("Sending Land request for queue=%s uri=%s", req.Queue, uri)
 	resp, err := s.gatewayClient.Land(s.ctx, req)
-	require.NoError(s.T(), err, "Land request failed")
-	require.NotEmpty(s.T(), resp.Sqid, "SQID should not be empty")
-	s.log.Logf("Land request (single PR) succeeded: sqid=%s", resp.Sqid)
+	require.NoError(t, err, "Land request failed")
+	require.NotEmpty(t, resp.Sqid, "SQID should not be empty")
+
+	final := s.waitForStatus(resp.Sqid, timeout)
+	assert.Equal(t, wantStatus, final)
+}
+
+// waitForStatus polls the gateway Status RPC until the request reaches a
+// terminal status (landed / error / cancelled) and returns it, or fails the
+// test if no terminal status is observed within timeout.
+func (s *E2EIntegrationSuite) waitForStatus(sqid string, timeout time.Duration) string {
+	t := s.T()
+	var final string
+	require.Eventually(t, func() bool {
+		resp, err := s.gatewayClient.Status(s.ctx, &gatewaypb.StatusRequest{Sqid: sqid})
+		if err != nil {
+			s.log.Logf("Status RPC error for sqid=%s: %v", sqid, err)
+			return false
+		}
+		switch resp.Status {
+		case "landed", "error", "cancelled":
+			final = resp.Status
+			s.log.Logf("sqid=%s reached terminal status=%s last_error=%q", sqid, resp.Status, resp.LastError)
+			return true
+		default:
+			return false
+		}
+	}, timeout, 500*time.Millisecond, "sqid=%s did not reach a terminal status within %s", sqid, timeout)
+	return final
 }
 
 // TestLandRequest_PersistsStartedLogViaGatewayConsumer verifies the request-log
@@ -186,12 +231,13 @@ func (s *E2EIntegrationSuite) TestLandRequest_SinglePR() {
 // entries to the log topic (it never writes the request log itself), and the
 // gateway's log consumer drains that topic and persists them to storage.
 //
-// We observe this through the gateway Status RPC: immediately after Land the
-// status is "accepted" (the gateway's synchronous direct write), and once the
-// orchestrator's start controller publishes "started" to the log topic, the
-// gateway consumer persists it and Status advances to "started". Seeing
-// "started" therefore proves the publish→consume→persist path works across both
-// services.
+// We assert on the durable request_log table rather than the live Status RPC.
+// request_log is append-only and the gateway consumer is its sole writer, so a
+// "started" row proves the orchestrator-publish → gateway-consume → persist path
+// ran. The Status RPC only returns the *current* status, and "started" is a
+// transient intermediate state: on the fast happy path the request reaches a
+// terminal status within a single poll interval, so polling Status for "started"
+// loses the race. The persisted log row, by contrast, never disappears.
 func (s *E2EIntegrationSuite) TestLandRequest_PersistsStartedLogViaGatewayConsumer() {
 	t := s.T()
 
@@ -206,15 +252,17 @@ func (s *E2EIntegrationSuite) TestLandRequest_PersistsStartedLogViaGatewayConsum
 	s.log.Logf("Land succeeded: sqid=%s; waiting for gateway consumer to persist 'started'", sqid)
 
 	require.Eventually(t, func() bool {
-		resp, statusErr := s.gatewayClient.Status(s.ctx, &gatewaypb.StatusRequest{Sqid: sqid})
-		if statusErr != nil {
-			s.log.Logf("Status(%s) not ready yet: %v", sqid, statusErr)
+		var count int
+		queryErr := s.db.QueryRowContext(s.ctx,
+			"SELECT COUNT(*) FROM request_log WHERE request_id = ? AND status = ?",
+			sqid, string(entity.RequestStatusStarted)).Scan(&count)
+		if queryErr != nil {
+			s.log.Logf("request_log query for sqid=%s not ready yet: %v", sqid, queryErr)
 			return false
 		}
-		s.log.Logf("Status(%s) = %q", sqid, resp.Status)
-		return resp.Status == string(entity.RequestStatusStarted)
+		return count > 0
 	}, persistTimeout, persistPollInterval,
-		"request %s should reach status %q via the gateway log consumer", sqid, entity.RequestStatusStarted)
+		"request %s should have a %q entry persisted by the gateway log consumer", sqid, entity.RequestStatusStarted)
 
 	s.log.Logf("Gateway consumer persisted orchestrator-published 'started' log for sqid=%s", sqid)
 }

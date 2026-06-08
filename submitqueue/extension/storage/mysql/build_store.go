@@ -44,23 +44,41 @@ func (s *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retE
 	op := metrics.Begin(s.scope, "get")
 	defer func() { op.Complete(retErr) }()
 
+	return s.scanBuild(ctx,
+		"SELECT id, batch_id, speculation_path, score, status FROM build WHERE id = ?",
+		"id="+id, id)
+}
+
+// GetByBatchID retrieves the build scheduled for the given batch. There is at
+// most one build per batch in the current model, so it returns that single row
+// (LIMIT 1). Returns ErrNotFound if no build exists for the batch.
+func (s *buildStore) GetByBatchID(ctx context.Context, batchID string) (ret entity.Build, retErr error) {
+	op := metrics.Begin(s.scope, "get_by_batch_id")
+	defer func() { op.Complete(retErr) }()
+
+	return s.scanBuild(ctx,
+		"SELECT id, batch_id, speculation_path, score, status FROM build WHERE batch_id = ? LIMIT 1",
+		"batch_id="+batchID, batchID)
+}
+
+// scanBuild runs a single-row build query and decodes the result, including the
+// speculation_path JSON column. label is used only for error context (e.g.
+// "id=…" or "batch_id=…"). Returns ErrNotFound when the query matches no row.
+func (s *buildStore) scanBuild(ctx context.Context, query, label string, args ...any) (entity.Build, error) {
 	var build entity.Build
 	var speculationPathJSON []byte
 
-	err := s.db.QueryRowContext(ctx,
-		"SELECT id, batch_id, speculation_path, score, status FROM build WHERE id = ?",
-		id,
-	).Scan(&build.ID, &build.BatchID, &speculationPathJSON, &build.Score, &build.Status)
-
+	err := s.db.QueryRowContext(ctx, query, args...).
+		Scan(&build.ID, &build.BatchID, &speculationPathJSON, &build.Score, &build.Status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.Build{}, storage.WrapNotFound(err)
 	}
 	if err != nil {
-		return entity.Build{}, fmt.Errorf("failed to get build entity id=%s from the database: %w", id, err)
+		return entity.Build{}, fmt.Errorf("failed to get build entity %s from the database: %w", label, err)
 	}
 
 	if err := json.Unmarshal(speculationPathJSON, &build.SpeculationPath); err != nil {
-		return entity.Build{}, fmt.Errorf("failed to unmarshal speculation_path for build entity id=%s from the database: %w", id, err)
+		return entity.Build{}, fmt.Errorf("failed to unmarshal speculation_path for build entity %s from the database: %w", label, err)
 	}
 
 	return build, nil

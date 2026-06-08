@@ -70,6 +70,21 @@ func (mr *MockBuildStoreMockRecorder) Get(ctx, id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockBuildStore)(nil).Get), ctx, id)
 }
 
+// GetByBatchID mocks base method.
+func (m *MockBuildStore) GetByBatchID(ctx context.Context, batchID string) (entity.Build, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetByBatchID", ctx, batchID)
+	ret0, _ := ret[0].(entity.Build)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetByBatchID indicates an expected call of GetByBatchID.
+func (mr *MockBuildStoreMockRecorder) GetByBatchID(ctx, batchID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByBatchID", reflect.TypeOf((*MockBuildStore)(nil).GetByBatchID), ctx, batchID)
+}
+
 // UpdateStatus mocks base method.
 func (m *MockBuildStore) UpdateStatus(ctx context.Context, id string, newStatus entity.BuildStatus) error {
 	m.ctrl.T.Helper()

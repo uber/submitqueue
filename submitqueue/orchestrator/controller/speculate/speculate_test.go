@@ -51,6 +51,16 @@ func testBatch(state entity.BatchState, deps ...string) entity.Batch {
 	}
 }
 
+// expectOwnBuildSucceeded returns a BuildStore mock whose GetByBatchID reports
+// the batch's own build as Succeeded, satisfying the own-build gate in
+// tryFinalize so the Speculating-path tests reach dependency evaluation.
+func expectOwnBuildSucceeded(ctrl *gomock.Controller, batchID string) *storagemock.MockBuildStore {
+	bs := storagemock.NewMockBuildStore(ctrl)
+	bs.EXPECT().GetByBatchID(gomock.Any(), batchID).Return(
+		entity.Build{ID: "fake-build-" + batchID, BatchID: batchID, Status: entity.BuildStatusSucceeded}, nil)
+	return bs
+}
+
 // newTestController wires a controller with a registry covering all topics the
 // speculate controller may publish to. The publisher returns publishErr (or nil).
 func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock.MockStorage, publishErr error) *Controller {
@@ -140,6 +150,7 @@ func TestController_Process_FinalizeNoDeps(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetBuildStore().Return(expectOwnBuildSucceeded(ctrl, batch.ID)).AnyTimes()
 
 	controller := newTestController(t, ctrl, store, nil)
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
@@ -160,6 +171,7 @@ func TestController_Process_FinalizeAllDepsSucceeded(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetBuildStore().Return(expectOwnBuildSucceeded(ctrl, batch.ID)).AnyTimes()
 
 	controller := newTestController(t, ctrl, store, nil)
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
@@ -178,6 +190,7 @@ func TestController_Process_WaitingOnDep(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetBuildStore().Return(expectOwnBuildSucceeded(ctrl, batch.ID)).AnyTimes()
 
 	controller := newTestController(t, ctrl, store, nil)
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
@@ -198,6 +211,7 @@ func TestController_Process_FailedDepFailsBatch(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetBuildStore().Return(expectOwnBuildSucceeded(ctrl, batch.ID)).AnyTimes()
 
 	controller := newTestController(t, ctrl, store, nil)
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
@@ -220,6 +234,72 @@ func TestController_Process_CancelledDepSkipped(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetBuildStore().Return(expectOwnBuildSucceeded(ctrl, batch.ID)).AnyTimes()
+
+	controller := newTestController(t, ctrl, store, nil)
+	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
+}
+
+// tryFinalize: a failed own build must fail the batch (Speculating → Failed)
+// and publish to conclude, independent of any dependencies. This is the core
+// build-gating fix — previously a failed build still advanced to merge.
+func TestController_Process_FailedOwnBuildFailsBatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	batch := testBatch(entity.BatchStateSpeculating)
+
+	batchStore := storagemock.NewMockBatchStore(ctrl)
+	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateFailed).Return(nil)
+
+	buildStore := storagemock.NewMockBuildStore(ctrl)
+	buildStore.EXPECT().GetByBatchID(gomock.Any(), batch.ID).Return(
+		entity.Build{ID: "fake-build-fail-1", BatchID: batch.ID, Status: entity.BuildStatusFailed}, nil)
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
+
+	controller := newTestController(t, ctrl, store, nil)
+	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
+}
+
+// tryFinalize: a build still running parks the batch — no merge, no state change.
+func TestController_Process_WaitingOnOwnBuild(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	batch := testBatch(entity.BatchStateSpeculating)
+
+	batchStore := storagemock.NewMockBatchStore(ctrl)
+	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+	// No UpdateState expected — the build has not finished.
+
+	buildStore := storagemock.NewMockBuildStore(ctrl)
+	buildStore.EXPECT().GetByBatchID(gomock.Any(), batch.ID).Return(
+		entity.Build{ID: "fake-build-run-1", BatchID: batch.ID, Status: entity.BuildStatusRunning}, nil)
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
+
+	controller := newTestController(t, ctrl, store, nil)
+	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
+}
+
+// tryFinalize: when the Build row is not yet persisted (race with the build
+// controller), the batch waits — no merge, no state change.
+func TestController_Process_OwnBuildNotFoundWaits(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	batch := testBatch(entity.BatchStateSpeculating)
+
+	batchStore := storagemock.NewMockBatchStore(ctrl)
+	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+	// No UpdateState expected — no build to gate on yet.
+
+	buildStore := storagemock.NewMockBuildStore(ctrl)
+	buildStore.EXPECT().GetByBatchID(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
 
 	controller := newTestController(t, ctrl, store, nil)
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
@@ -358,10 +438,10 @@ func TestController_Process_CancellingTerminalFlow(t *testing.T) {
 	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
-	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{
-		ID: batch.ID, BatchID: batch.ID, Status: entity.BuildStatusRunning,
+	buildStore.EXPECT().GetByBatchID(gomock.Any(), batch.ID).Return(entity.Build{
+		ID: "fake-build-run-1", BatchID: batch.ID, Status: entity.BuildStatusRunning,
 	}, nil)
-	buildStore.EXPECT().UpdateStatus(gomock.Any(), batch.ID, entity.BuildStatusCancelled).Return(nil)
+	buildStore.EXPECT().UpdateStatus(gomock.Any(), "fake-build-run-1", entity.BuildStatusCancelled).Return(nil)
 
 	depStore := storagemock.NewMockBatchDependentStore(ctrl)
 	depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{
@@ -423,8 +503,8 @@ func TestController_Process_CancellingBuildAlreadyTerminal(t *testing.T) {
 	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
-	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{
-		ID: batch.ID, BatchID: batch.ID, Status: entity.BuildStatusSucceeded,
+	buildStore.EXPECT().GetByBatchID(gomock.Any(), batch.ID).Return(entity.Build{
+		ID: "fake-build-ok-1", BatchID: batch.ID, Status: entity.BuildStatusSucceeded,
 	}, nil)
 	// No UpdateStatus expected — the build is already terminal.
 
@@ -454,7 +534,7 @@ func TestController_Process_CancellingNoBuildYet(t *testing.T) {
 	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
-	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
+	buildStore.EXPECT().GetByBatchID(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
 	// No UpdateStatus expected.
 
 	depStore := storagemock.NewMockBatchDependentStore(ctrl)
@@ -484,7 +564,7 @@ func TestController_Process_CancellingNoDependents(t *testing.T) {
 	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
-	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
+	buildStore.EXPECT().GetByBatchID(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
 
 	depStore := storagemock.NewMockBatchDependentStore(ctrl)
 	depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{BatchID: batch.ID, Dependents: []string{}, Version: 1}, nil)
@@ -528,7 +608,7 @@ func TestController_Process_CancellingTerminalCASVersionMismatch(t *testing.T) {
 		Return(storage.ErrVersionMismatch)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
-	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
+	buildStore.EXPECT().GetByBatchID(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
