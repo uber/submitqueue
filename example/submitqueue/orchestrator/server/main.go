@@ -775,16 +775,17 @@ func newChangeProvider(logger *zap.Logger, scope tally.Scope) (changeprovider.Ch
 // "origin", PUSHER_TARGET default "main"). When PUSHER_CHECKOUT_PATH is unset it
 // returns the fake pusher (commits succeed unless a change URI carries a failure
 // marker, see pusher/fake), keeping the example runnable without a git checkout.
-func newPusher(logger *zap.Logger, scope tally.Scope) (pusher.Pusher, error) {
+func newPusher(logger *zap.Logger, scope tally.Scope, resolver changeset.Resolver) (pusher.Pusher, error) {
 	checkout := os.Getenv("PUSHER_CHECKOUT_PATH")
 	if checkout == "" {
 		logger.Warn("PUSHER_CHECKOUT_PATH not set; using fake pusher (commits succeed unless URI-marked)")
-		return pushfake.New(), nil
+		return pushfake.New(resolver), nil
 	}
 	return gitpusher.NewPusher(gitpusher.Params{
 		CheckoutPath: checkout,
 		Remote:       getEnv("PUSHER_REMOTE", "origin"),
 		Target:       getEnv("PUSHER_TARGET", "main"),
+		Resolver:     resolver,
 		Logger:       logger.Sugar(),
 		MetricsScope: scope.SubScope("pusher"),
 	}), nil
@@ -806,7 +807,7 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.
 	if err != nil {
 		return queueRegistry{}, fmt.Errorf("failed to create change provider: %w", err)
 	}
-	psh, err := newPusher(logger, scope)
+	psh, err := newPusher(logger, scope, resolver)
 	if err != nil {
 		return queueRegistry{}, fmt.Errorf("failed to create pusher: %w", err)
 	}

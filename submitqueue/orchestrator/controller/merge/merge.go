@@ -120,19 +120,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return c.fanout(ctx, batch.ID, batch.Queue)
 	}
 
-	changes, err := c.collectChanges(ctx, batch)
-	if err != nil {
-		coremetrics.NamedCounter(c.metricsScope, "process", "request_load_errors", 1)
-		return fmt.Errorf("failed to collect changes for batch %s: %w", batch.ID, err)
-	}
-
 	push, err := c.pushers.For(pusher.Config{QueueName: batch.Queue})
 	if err != nil {
 		coremetrics.NamedCounter(c.metricsScope, "process", "push_errors", 1)
 		return fmt.Errorf("failed to build pusher for batch %s: %w", batch.ID, err)
 	}
 
-	pushRes, pushErr := push.Push(ctx, changes)
+	// Push a single batch today; the pusher resolves its changes itself. The
+	// list parameter designs for a future merge-train.
+	pushRes, pushErr := push.Push(ctx, []entity.Batch{batch})
 
 	var newState entity.BatchState
 	switch {
@@ -140,7 +136,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		newState = entity.BatchStateSucceeded
 		c.logger.Infow("merged batch",
 			"batch_id", batch.ID,
-			"outcomes", pushRes.Outcomes,
+			"outcomes", pushRes.Batches,
 		)
 	case errors.Is(pushErr, pusher.ErrConflict):
 		coremetrics.NamedCounter(c.metricsScope, "process", "push_conflicts", 1)
@@ -164,21 +160,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	batch.State = newState
 
 	return c.fanout(ctx, batch.ID, batch.Queue)
-}
-
-// collectChanges loads each request in batch.Contains and returns its
-// Change. The result preserves batch.Contains order so the Pusher applies
-// the changes in the same order the requests were batched.
-func (c *Controller) collectChanges(ctx context.Context, batch entity.Batch) ([]entity.Change, error) {
-	changes := make([]entity.Change, 0, len(batch.Contains))
-	for _, requestID := range batch.Contains {
-		request, err := c.store.GetRequestStore().Get(ctx, requestID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get request %s: %w", requestID, err)
-		}
-		changes = append(changes, request.Change)
-	}
-	return changes, nil
 }
 
 // fanout publishes the batch ID to conclude (so requests are updated) and

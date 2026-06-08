@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//core/metrics",
+        "//submitqueue/core/changeset",
         "//submitqueue/entity",
         "//submitqueue/entity/github",
         "//submitqueue/extension/pusher",
@@ -20,6 +21,7 @@ go_test(
     srcs = ["git_pusher_test.go"],
     embed = [":git"],
     deps = [
+        "//submitqueue/core/changeset/fake",
         "//submitqueue/entity",
         "//submitqueue/extension/pusher",
         "@com_github_stretchr_testify//assert",
