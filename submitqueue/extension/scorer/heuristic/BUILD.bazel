@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//core/metrics",
+        "//submitqueue/core/changeset",
         "//submitqueue/entity",
         "//submitqueue/extension/scorer",
         "@com_github_uber_go_tally//:tally",
@@ -18,6 +19,7 @@ go_test(
     srcs = ["scorer_test.go"],
     embed = [":heuristic"],
     deps = [
+        "//submitqueue/core/changeset/fake",
         "//submitqueue/entity",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

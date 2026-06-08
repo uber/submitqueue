@@ -19,6 +19,7 @@ go_library(
         "//extension/counter/mysql",
         "//extension/messagequeue",
         "//extension/messagequeue/mysql",
+        "//submitqueue/core/changeset",
         "//submitqueue/core/consumer",
         "//submitqueue/entity",
         "//submitqueue/extension/buildrunner",

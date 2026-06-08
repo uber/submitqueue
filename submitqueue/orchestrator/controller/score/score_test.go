@@ -166,8 +166,10 @@ func TestController_Process_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestController_Process_BatchLevelScore verifies the controller assembles all of the
-// batch's changes into one BatchChanges and persists the single score the scorer returns.
+// TestController_Process_BatchLevelScore verifies the controller hands the batch
+// identity to the scorer and persists the single score it returns. Resolving the
+// batch's changes is the scorer's concern (via the changeset resolver), not the
+// controller's.
 func TestController_Process_BatchLevelScore(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
@@ -179,41 +181,19 @@ func TestController_Process_BatchLevelScore(t *testing.T) {
 		Version:  1,
 	}
 
-	request1 := entity.Request{
-		ID:      "test-queue/1",
-		Queue:   "test-queue",
-		Change:  entity.Change{URIs: []string{"github://uber/repo/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
-		State:   entity.RequestStateStarted,
-		Version: 1,
-	}
-	request2 := entity.Request{
-		ID:      "test-queue/2",
-		Queue:   "test-queue",
-		Change:  entity.Change{URIs: []string{"github://uber/repo/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},
-		State:   entity.RequestStateStarted,
-		Version: 1,
-	}
-
 	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
 	mockBatchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
 	// The single batch-level score is persisted.
 	mockBatchStore.EXPECT().UpdateScoreAndState(gomock.Any(), batch.ID, batch.Version, batch.Version+1, 0.7, entity.BatchStateScored).Return(nil)
 
-	mockRequestStore := storagemock.NewMockRequestStore(ctrl)
-	mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/1").Return(request1, nil)
-	mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/2").Return(request2, nil)
-
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
-	store.EXPECT().GetRequestStore().Return(mockRequestStore).AnyTimes()
-	store.EXPECT().GetChangeStore().Return(mockChangeStore(ctrl, request1, request2)).AnyTimes()
 
-	// Capture the BatchChanges to assert both requests' changes were gathered.
+	// The controller passes the batch identity to the scorer and persists its score.
 	mockScorer := scorermock.NewMockScorer(ctrl)
 	mockScorer.EXPECT().Score(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, changes entity.BatchChanges) (float64, error) {
-			assert.Equal(t, batch.ID, changes.BatchID)
-			assert.Len(t, changes.Changes, 2)
+		func(_ context.Context, b entity.Batch) (float64, error) {
+			assert.Equal(t, batch.ID, b.ID)
 			return 0.7, nil
 		},
 	)
@@ -260,7 +240,7 @@ func TestController_Process_ScorerFailure(t *testing.T) {
 	mockBatchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
 
 	mockRequestStore := storagemock.NewMockRequestStore(ctrl)
-	mockRequestStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+	mockRequestStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil).AnyTimes()
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
@@ -292,7 +272,7 @@ func TestController_Process_UpdateScoreFailure(t *testing.T) {
 	mockBatchStore.EXPECT().UpdateScoreAndState(gomock.Any(), batch.ID, batch.Version, batch.Version+1, gomock.Any(), entity.BatchStateScored).Return(fmt.Errorf("version mismatch"))
 
 	mockRequestStore := storagemock.NewMockRequestStore(ctrl)
-	mockRequestStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+	mockRequestStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil).AnyTimes()
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()

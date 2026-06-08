@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/extension/scorer/fake",
     visibility = ["//visibility:public"],
     deps = [
+        "//submitqueue/core/changeset",
         "//submitqueue/core/fakemarker",
         "//submitqueue/entity",
         "//submitqueue/extension/scorer",
@@ -17,6 +18,8 @@ go_test(
     srcs = ["fake_test.go"],
     embed = [":fake"],
     deps = [
+        "//submitqueue/core/changeset",
+        "//submitqueue/core/changeset/fake",
         "//submitqueue/entity",
         "//submitqueue/extension/scorer",
         "//submitqueue/extension/scorer/heuristic",
