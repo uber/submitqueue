@@ -1,0 +1,36 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "start",
+    srcs = ["start.go"],
+    importpath = "github.com/uber/submitqueue/stovepipe/orchestrator/controller/start",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//core/consumer",
+        "//core/metrics",
+        "//entity/messagequeue",
+        "//stovepipe/core/topickey",
+        "//stovepipe/entity",
+        "//stovepipe/entity/git",
+        "@com_github_uber_go_tally//:tally",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "start_test",
+    srcs = ["start_test.go"],
+    embed = [":start"],
+    deps = [
+        "//core/consumer",
+        "//entity/messagequeue",
+        "//extension/messagequeue/mock",
+        "//stovepipe/core/topickey",
+        "//stovepipe/entity",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_uber_go_tally//:tally",
+        "@org_uber_go_mock//gomock",
+        "@org_uber_go_zap//zaptest",
+    ],
+)
