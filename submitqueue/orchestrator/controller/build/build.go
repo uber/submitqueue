@@ -114,6 +114,17 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return nil
 	}
 
+	existing, err := c.store.GetBuildStore().GetByBatchID(ctx, batch.ID)
+	if err != nil {
+		if !errors.Is(err, storage.ErrNotFound) {
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return fmt.Errorf("failed to get existing build for batch %s: %w", batch.ID, err)
+		}
+	} else {
+		metrics.NamedCounter(c.metricsScope, opName, "build_already_exists", 1)
+		return c.publishExisting(ctx, existing)
+	}
+
 	// Assemble base (dependency batches in order) and head (this batch).
 	base, err := c.collectChanges(ctx, batch.Dependencies)
 	if err != nil {
@@ -148,11 +159,20 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	// Persist the initial Build snapshot so the buildsignal poll loop has a
-	// row to UpdateStatus against. ErrAlreadyExists is benign — a redelivery
-	// of this message after a previous successful Create.
-	if err := c.store.GetBuildStore().Create(ctx, build); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to persist build %s: %w", build.ID, err)
+	// row to UpdateStatus against. ErrAlreadyExists means either this exact
+	// build or another build for the same batch already won a redelivery race;
+	// publish the stored row so the poll loop follows the source of truth.
+	if err := c.store.GetBuildStore().Create(ctx, build); err != nil {
+		if !errors.Is(err, storage.ErrAlreadyExists) {
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return fmt.Errorf("failed to persist build %s: %w", build.ID, err)
+		}
+		build, err = c.store.GetBuildStore().GetByBatchID(ctx, batch.ID)
+		if err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return fmt.Errorf("failed to get existing build for batch %s after duplicate create: %w", batch.ID, err)
+		}
+		metrics.NamedCounter(c.metricsScope, opName, "build_already_exists", 1)
 	}
 
 	// Hand off to the buildsignal poll loop; it calls Status, updates the
@@ -171,6 +191,20 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	)
 
 	return nil // Success - message will be acked
+}
+
+func (c *Controller) publishExisting(ctx context.Context, build entity.Build) error {
+	if err := c.publish(ctx, consumer.TopicKeyBuildSignal, build); err != nil {
+		metrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1)
+		return fmt.Errorf("failed to publish existing build to buildsignal: %w", err)
+	}
+	c.logger.Infow("published existing build to buildsignal",
+		"batch_id", build.BatchID,
+		"build_id", build.ID,
+		"status", string(build.Status),
+		"topic_key", consumer.TopicKeyBuildSignal,
+	)
+	return nil
 }
 
 // collectChanges loads each batch by ID and concatenates the Change values

@@ -115,12 +115,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	// Terminal state: re-fan-out for self-healing in case a previous publish
 	// was lost. Always re-publish to conclude (idempotent on the batch ID).
-	// For Cancelled specifically also re-publish to dependents — a crash
-	// between the terminal CAS and the dependent publish would otherwise
-	// leave them stuck waiting on a Cancelled dep.
+	// For terminal states that unblock downstream dependencies by being observed
+	// as terminal non-success, also re-publish to dependents. A crash between
+	// the terminal CAS and the dependent publish would otherwise leave them
+	// stuck waiting.
 	if batch.State.IsTerminal() {
 		metrics.NamedCounter(c.metricsScope, opName, "self_heal_terminal", 1)
-		if batch.State == entity.BatchStateCancelled {
+		if batch.State == entity.BatchStateCancelled || batch.State == entity.BatchStateFailed {
 			if err := c.respeculateDependents(ctx, batch); err != nil {
 				return err
 			}
@@ -198,10 +199,10 @@ func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error 
 		return fmt.Errorf("failed to get build for batch %s: %w", batch.ID, err)
 	}
 
-	switch build.Status {
-	case entity.BuildStatusSucceeded:
+	switch {
+	case build.Status == entity.BuildStatusSucceeded:
 		// Own build passed; fall through to dependency evaluation.
-	case entity.BuildStatusFailed:
+	case build.Status.IsTerminal():
 		return c.failOnBuild(ctx, batch, build)
 	default:
 		// Accepted, Running, or any other non-terminal status: the build is
@@ -289,15 +290,22 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 	return c.failBatch(ctx, batch)
 }
 
-// failBatch CASes a Speculating batch to Failed and publishes to the conclude
-// queue so the request store and request log get reconciled. Without this
-// transition the batch would sit in Speculating forever — no downstream event
-// ever fires for it again.
+// failBatch CASes a Speculating batch to Failed, wakes downstream dependents so
+// they can observe the terminal dependency, and publishes to the conclude queue
+// so the request store and request log get reconciled. Without this transition
+// the batch would sit in Speculating forever — no downstream event ever fires
+// for it again.
 func (c *Controller) failBatch(ctx context.Context, batch entity.Batch) error {
 	newVersion := batch.Version + 1
 	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateFailed); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to update batch %s state to failed: %w", batch.ID, err)
+	}
+	batch.Version = newVersion
+	batch.State = entity.BatchStateFailed
+
+	if err := c.respeculateDependents(ctx, batch); err != nil {
+		return err
 	}
 
 	if err := c.publish(ctx, consumer.TopicKeyConclude, batch.ID, batch.Queue); err != nil {

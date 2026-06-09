@@ -49,15 +49,14 @@ func (s *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retE
 		"id="+id, id)
 }
 
-// GetByBatchID retrieves the build scheduled for the given batch. There is at
-// most one build per batch in the current model, so it returns that single row
-// (LIMIT 1). Returns ErrNotFound if no build exists for the batch.
+// GetByBatchID retrieves the single build scheduled for the given batch.
+// Returns ErrNotFound if no build exists for the batch.
 func (s *buildStore) GetByBatchID(ctx context.Context, batchID string) (ret entity.Build, retErr error) {
 	op := metrics.Begin(s.scope, "get_by_batch_id")
 	defer func() { op.Complete(retErr) }()
 
 	return s.scanBuild(ctx,
-		"SELECT id, batch_id, speculation_path, score, status FROM build WHERE batch_id = ? LIMIT 1",
+		"SELECT id, batch_id, speculation_path, score, status FROM build WHERE batch_id = ?",
 		"batch_id="+batchID, batchID)
 }
 
@@ -84,7 +83,8 @@ func (s *buildStore) scanBuild(ctx context.Context, query, label string, args ..
 	return build, nil
 }
 
-// Create creates a new build. The build must have a unique ID already assigned. Returns ErrAlreadyExists if the build ID already exists.
+// Create creates a new build. The build must have a unique ID and batch ID.
+// Returns ErrAlreadyExists if either uniqueness constraint is violated.
 func (s *buildStore) Create(ctx context.Context, build entity.Build) (retErr error) {
 	op := metrics.Begin(s.scope, "create")
 	defer func() { op.Complete(retErr) }()

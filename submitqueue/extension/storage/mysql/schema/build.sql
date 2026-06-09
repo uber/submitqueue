@@ -5,6 +5,5 @@ CREATE TABLE IF NOT EXISTS build (
     score FLOAT NOT NULL,
     status VARCHAR(64) NOT NULL,
     PRIMARY KEY (id),
-    -- Supports GetByBatchID: SELECT ... WHERE batch_id = ?
-    INDEX idx_batch_id (batch_id)
+    UNIQUE KEY uniq_batch_id (batch_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
