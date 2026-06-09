@@ -592,6 +592,278 @@ func (x *StatusResponse) GetMetadata() map[string]string {
 	return nil
 }
 
+// ListRequest defines a request to list queue requests whose lifecycles overlap a time window.
+type ListRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Name of the queue whose requests should be returned.
+	Queue string `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
+	// Inclusive lower bound for lifecycle-overlap filtering, in Unix epoch milliseconds.
+	StartTimeMs int64 `protobuf:"varint,2,opt,name=start_time_ms,json=startTimeMs,proto3" json:"start_time_ms,omitempty"`
+	// Exclusive upper bound for lifecycle-overlap filtering, in Unix epoch milliseconds.
+	EndTimeMs int64 `protobuf:"varint,3,opt,name=end_time_ms,json=endTimeMs,proto3" json:"end_time_ms,omitempty"`
+	// Optional current status filters. Values use the same customer-facing strings returned by Status.
+	Statuses []string `protobuf:"bytes,4,rep,name=statuses,proto3" json:"statuses,omitempty"`
+	// Maximum number of requests to return. Zero means the server default.
+	PageSize int32 `protobuf:"varint,5,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	// Opaque token returned by a previous List response.
+	PageToken     string `protobuf:"bytes,6,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListRequest) Reset() {
+	*x = ListRequest{}
+	mi := &file_gateway_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListRequest) ProtoMessage() {}
+
+func (x *ListRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gateway_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListRequest.ProtoReflect.Descriptor instead.
+func (*ListRequest) Descriptor() ([]byte, []int) {
+	return file_gateway_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ListRequest) GetQueue() string {
+	if x != nil {
+		return x.Queue
+	}
+	return ""
+}
+
+func (x *ListRequest) GetStartTimeMs() int64 {
+	if x != nil {
+		return x.StartTimeMs
+	}
+	return 0
+}
+
+func (x *ListRequest) GetEndTimeMs() int64 {
+	if x != nil {
+		return x.EndTimeMs
+	}
+	return 0
+}
+
+func (x *ListRequest) GetStatuses() []string {
+	if x != nil {
+		return x.Statuses
+	}
+	return nil
+}
+
+func (x *ListRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *ListRequest) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
+// RequestSummary is the current gateway-owned view of one request for queue-listing UX.
+type RequestSummary struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Globally unique request ID, as returned by Land.
+	Sqid string `protobuf:"bytes,1,opt,name=sqid,proto3" json:"sqid,omitempty"`
+	// Queue the request belongs to.
+	Queue string `protobuf:"bytes,2,opt,name=queue,proto3" json:"queue,omitempty"`
+	// Change URIs submitted with the request.
+	ChangeUris []string `protobuf:"bytes,3,rep,name=change_uris,json=changeUris,proto3" json:"change_uris,omitempty"`
+	// Current customer-friendly status of the request.
+	Status string `protobuf:"bytes,4,opt,name=status,proto3" json:"status,omitempty"`
+	// Last error message associated with the current status. Empty string if there is no error.
+	LastError string `protobuf:"bytes,5,opt,name=last_error,json=lastError,proto3" json:"last_error,omitempty"`
+	// Free-form key-value metadata associated with the current status.
+	Metadata map[string]string `protobuf:"bytes,6,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Time the request entered SubmitQueue, in Unix epoch milliseconds.
+	StartedAtMs int64 `protobuf:"varint,7,opt,name=started_at_ms,json=startedAtMs,proto3" json:"started_at_ms,omitempty"`
+	// Time the visible summary state last changed, in Unix epoch milliseconds.
+	UpdatedAtMs int64 `protobuf:"varint,8,opt,name=updated_at_ms,json=updatedAtMs,proto3" json:"updated_at_ms,omitempty"`
+	// Time the request completed, in Unix epoch milliseconds. Zero if the request is not terminal.
+	CompletedAtMs int64 `protobuf:"varint,9,opt,name=completed_at_ms,json=completedAtMs,proto3" json:"completed_at_ms,omitempty"`
+	// True when status is terminal, e.g. "landed", "error", or "cancelled".
+	Terminal      bool `protobuf:"varint,10,opt,name=terminal,proto3" json:"terminal,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RequestSummary) Reset() {
+	*x = RequestSummary{}
+	mi := &file_gateway_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RequestSummary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RequestSummary) ProtoMessage() {}
+
+func (x *RequestSummary) ProtoReflect() protoreflect.Message {
+	mi := &file_gateway_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RequestSummary.ProtoReflect.Descriptor instead.
+func (*RequestSummary) Descriptor() ([]byte, []int) {
+	return file_gateway_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *RequestSummary) GetSqid() string {
+	if x != nil {
+		return x.Sqid
+	}
+	return ""
+}
+
+func (x *RequestSummary) GetQueue() string {
+	if x != nil {
+		return x.Queue
+	}
+	return ""
+}
+
+func (x *RequestSummary) GetChangeUris() []string {
+	if x != nil {
+		return x.ChangeUris
+	}
+	return nil
+}
+
+func (x *RequestSummary) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *RequestSummary) GetLastError() string {
+	if x != nil {
+		return x.LastError
+	}
+	return ""
+}
+
+func (x *RequestSummary) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+func (x *RequestSummary) GetStartedAtMs() int64 {
+	if x != nil {
+		return x.StartedAtMs
+	}
+	return 0
+}
+
+func (x *RequestSummary) GetUpdatedAtMs() int64 {
+	if x != nil {
+		return x.UpdatedAtMs
+	}
+	return 0
+}
+
+func (x *RequestSummary) GetCompletedAtMs() int64 {
+	if x != nil {
+		return x.CompletedAtMs
+	}
+	return 0
+}
+
+func (x *RequestSummary) GetTerminal() bool {
+	if x != nil {
+		return x.Terminal
+	}
+	return false
+}
+
+// ListResponse defines a page of queue request summaries.
+type ListResponse struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Requests []*RequestSummary      `protobuf:"bytes,1,rep,name=requests,proto3" json:"requests,omitempty"`
+	// Opaque token for the next page. Empty when no further page exists.
+	NextPageToken string `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListResponse) Reset() {
+	*x = ListResponse{}
+	mi := &file_gateway_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListResponse) ProtoMessage() {}
+
+func (x *ListResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gateway_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListResponse.ProtoReflect.Descriptor instead.
+func (*ListResponse) Descriptor() ([]byte, []int) {
+	return file_gateway_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ListResponse) GetRequests() []*RequestSummary {
+	if x != nil {
+		return x.Requests
+	}
+	return nil
+}
+
+func (x *ListResponse) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
+}
+
 // Generic error with metadata. Each custom error type should extend this message.
 type Error struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -603,7 +875,7 @@ type Error struct {
 
 func (x *Error) Reset() {
 	*x = Error{}
-	mi := &file_gateway_proto_msgTypes[9]
+	mi := &file_gateway_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -615,7 +887,7 @@ func (x *Error) String() string {
 func (*Error) ProtoMessage() {}
 
 func (x *Error) ProtoReflect() protoreflect.Message {
-	mi := &file_gateway_proto_msgTypes[9]
+	mi := &file_gateway_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -628,7 +900,7 @@ func (x *Error) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Error.ProtoReflect.Descriptor instead.
 func (*Error) Descriptor() ([]byte, []int) {
-	return file_gateway_proto_rawDescGZIP(), []int{9}
+	return file_gateway_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *Error) GetMessage() string {
@@ -651,7 +923,7 @@ type UnrecognizedQueueError struct {
 
 func (x *UnrecognizedQueueError) Reset() {
 	*x = UnrecognizedQueueError{}
-	mi := &file_gateway_proto_msgTypes[10]
+	mi := &file_gateway_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -663,7 +935,7 @@ func (x *UnrecognizedQueueError) String() string {
 func (*UnrecognizedQueueError) ProtoMessage() {}
 
 func (x *UnrecognizedQueueError) ProtoReflect() protoreflect.Message {
-	mi := &file_gateway_proto_msgTypes[10]
+	mi := &file_gateway_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -676,7 +948,7 @@ func (x *UnrecognizedQueueError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnrecognizedQueueError.ProtoReflect.Descriptor instead.
 func (*UnrecognizedQueueError) Descriptor() ([]byte, []int) {
-	return file_gateway_proto_rawDescGZIP(), []int{10}
+	return file_gateway_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *UnrecognizedQueueError) GetError() *Error {
@@ -706,7 +978,7 @@ type RequestNotFoundError struct {
 
 func (x *RequestNotFoundError) Reset() {
 	*x = RequestNotFoundError{}
-	mi := &file_gateway_proto_msgTypes[11]
+	mi := &file_gateway_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -718,7 +990,7 @@ func (x *RequestNotFoundError) String() string {
 func (*RequestNotFoundError) ProtoMessage() {}
 
 func (x *RequestNotFoundError) ProtoReflect() protoreflect.Message {
-	mi := &file_gateway_proto_msgTypes[11]
+	mi := &file_gateway_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -731,7 +1003,7 @@ func (x *RequestNotFoundError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RequestNotFoundError.ProtoReflect.Descriptor instead.
 func (*RequestNotFoundError) Descriptor() ([]byte, []int) {
-	return file_gateway_proto_rawDescGZIP(), []int{11}
+	return file_gateway_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *RequestNotFoundError) GetError() *Error {
@@ -781,7 +1053,35 @@ const file_gateway_proto_rawDesc = "" +
 	"\bmetadata\x18\x03 \x03(\v26.uber.submitqueue.gateway.StatusResponse.MetadataEntryR\bmetadata\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"!\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xbf\x01\n" +
+	"\vListRequest\x12\x14\n" +
+	"\x05queue\x18\x01 \x01(\tR\x05queue\x12\"\n" +
+	"\rstart_time_ms\x18\x02 \x01(\x03R\vstartTimeMs\x12\x1e\n" +
+	"\vend_time_ms\x18\x03 \x01(\x03R\tendTimeMs\x12\x1a\n" +
+	"\bstatuses\x18\x04 \x03(\tR\bstatuses\x12\x1b\n" +
+	"\tpage_size\x18\x05 \x01(\x05R\bpageSize\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\x06 \x01(\tR\tpageToken\"\xaf\x03\n" +
+	"\x0eRequestSummary\x12\x12\n" +
+	"\x04sqid\x18\x01 \x01(\tR\x04sqid\x12\x14\n" +
+	"\x05queue\x18\x02 \x01(\tR\x05queue\x12\x1f\n" +
+	"\vchange_uris\x18\x03 \x03(\tR\n" +
+	"changeUris\x12\x16\n" +
+	"\x06status\x18\x04 \x01(\tR\x06status\x12\x1d\n" +
+	"\n" +
+	"last_error\x18\x05 \x01(\tR\tlastError\x12R\n" +
+	"\bmetadata\x18\x06 \x03(\v26.uber.submitqueue.gateway.RequestSummary.MetadataEntryR\bmetadata\x12\"\n" +
+	"\rstarted_at_ms\x18\a \x01(\x03R\vstartedAtMs\x12\"\n" +
+	"\rupdated_at_ms\x18\b \x01(\x03R\vupdatedAtMs\x12&\n" +
+	"\x0fcompleted_at_ms\x18\t \x01(\x03R\rcompletedAtMs\x12\x1a\n" +
+	"\bterminal\x18\n" +
+	" \x01(\bR\bterminal\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"|\n" +
+	"\fListResponse\x12D\n" +
+	"\brequests\x18\x01 \x03(\v2(.uber.submitqueue.gateway.RequestSummaryR\brequests\x12&\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"!\n" +
 	"\x05Error\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"e\n" +
 	"\x16UnrecognizedQueueError\x125\n" +
@@ -795,12 +1095,13 @@ const file_gateway_proto_rawDesc = "" +
 	"\n" +
 	"\x06REBASE\x10\x01\x12\x11\n" +
 	"\rSQUASH_REBASE\x10\x02\x12\t\n" +
-	"\x05MERGE\x10\x032\x84\x03\n" +
+	"\x05MERGE\x10\x032\xdd\x03\n" +
 	"\x12SubmitQueueGateway\x12W\n" +
 	"\x04Ping\x12%.uber.submitqueue.gateway.PingRequest\x1a&.uber.submitqueue.gateway.PingResponse\"\x00\x12W\n" +
 	"\x04Land\x12%.uber.submitqueue.gateway.LandRequest\x1a&.uber.submitqueue.gateway.LandResponse\"\x00\x12]\n" +
 	"\x06Cancel\x12'.uber.submitqueue.gateway.CancelRequest\x1a(.uber.submitqueue.gateway.CancelResponse\"\x00\x12]\n" +
-	"\x06Status\x12'.uber.submitqueue.gateway.StatusRequest\x1a(.uber.submitqueue.gateway.StatusResponse\"\x00Bg\n" +
+	"\x06Status\x12'.uber.submitqueue.gateway.StatusRequest\x1a(.uber.submitqueue.gateway.StatusResponse\"\x00\x12W\n" +
+	"\x04List\x12%.uber.submitqueue.gateway.ListRequest\x1a&.uber.submitqueue.gateway.ListResponse\"\x00Bg\n" +
 	"\x1ccom.uber.submitqueue.gatewayB\fGatewayProtoP\x01Z7github.com/uber/submitqueue/submitqueue/gateway/protopbb\x06proto3"
 
 var (
@@ -816,7 +1117,7 @@ func file_gateway_proto_rawDescGZIP() []byte {
 }
 
 var file_gateway_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_gateway_proto_goTypes = []any{
 	(Strategy)(0),                  // 0: uber.submitqueue.gateway.Strategy
 	(*PingRequest)(nil),            // 1: uber.submitqueue.gateway.PingRequest
@@ -828,30 +1129,38 @@ var file_gateway_proto_goTypes = []any{
 	(*CancelResponse)(nil),         // 7: uber.submitqueue.gateway.CancelResponse
 	(*StatusRequest)(nil),          // 8: uber.submitqueue.gateway.StatusRequest
 	(*StatusResponse)(nil),         // 9: uber.submitqueue.gateway.StatusResponse
-	(*Error)(nil),                  // 10: uber.submitqueue.gateway.Error
-	(*UnrecognizedQueueError)(nil), // 11: uber.submitqueue.gateway.UnrecognizedQueueError
-	(*RequestNotFoundError)(nil),   // 12: uber.submitqueue.gateway.RequestNotFoundError
-	nil,                            // 13: uber.submitqueue.gateway.StatusResponse.MetadataEntry
+	(*ListRequest)(nil),            // 10: uber.submitqueue.gateway.ListRequest
+	(*RequestSummary)(nil),         // 11: uber.submitqueue.gateway.RequestSummary
+	(*ListResponse)(nil),           // 12: uber.submitqueue.gateway.ListResponse
+	(*Error)(nil),                  // 13: uber.submitqueue.gateway.Error
+	(*UnrecognizedQueueError)(nil), // 14: uber.submitqueue.gateway.UnrecognizedQueueError
+	(*RequestNotFoundError)(nil),   // 15: uber.submitqueue.gateway.RequestNotFoundError
+	nil,                            // 16: uber.submitqueue.gateway.StatusResponse.MetadataEntry
+	nil,                            // 17: uber.submitqueue.gateway.RequestSummary.MetadataEntry
 }
 var file_gateway_proto_depIdxs = []int32{
 	3,  // 0: uber.submitqueue.gateway.LandRequest.change:type_name -> uber.submitqueue.gateway.Change
 	0,  // 1: uber.submitqueue.gateway.LandRequest.strategy:type_name -> uber.submitqueue.gateway.Strategy
-	13, // 2: uber.submitqueue.gateway.StatusResponse.metadata:type_name -> uber.submitqueue.gateway.StatusResponse.MetadataEntry
-	10, // 3: uber.submitqueue.gateway.UnrecognizedQueueError.error:type_name -> uber.submitqueue.gateway.Error
-	10, // 4: uber.submitqueue.gateway.RequestNotFoundError.error:type_name -> uber.submitqueue.gateway.Error
-	1,  // 5: uber.submitqueue.gateway.SubmitQueueGateway.Ping:input_type -> uber.submitqueue.gateway.PingRequest
-	4,  // 6: uber.submitqueue.gateway.SubmitQueueGateway.Land:input_type -> uber.submitqueue.gateway.LandRequest
-	6,  // 7: uber.submitqueue.gateway.SubmitQueueGateway.Cancel:input_type -> uber.submitqueue.gateway.CancelRequest
-	8,  // 8: uber.submitqueue.gateway.SubmitQueueGateway.Status:input_type -> uber.submitqueue.gateway.StatusRequest
-	2,  // 9: uber.submitqueue.gateway.SubmitQueueGateway.Ping:output_type -> uber.submitqueue.gateway.PingResponse
-	5,  // 10: uber.submitqueue.gateway.SubmitQueueGateway.Land:output_type -> uber.submitqueue.gateway.LandResponse
-	7,  // 11: uber.submitqueue.gateway.SubmitQueueGateway.Cancel:output_type -> uber.submitqueue.gateway.CancelResponse
-	9,  // 12: uber.submitqueue.gateway.SubmitQueueGateway.Status:output_type -> uber.submitqueue.gateway.StatusResponse
-	9,  // [9:13] is the sub-list for method output_type
-	5,  // [5:9] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	16, // 2: uber.submitqueue.gateway.StatusResponse.metadata:type_name -> uber.submitqueue.gateway.StatusResponse.MetadataEntry
+	17, // 3: uber.submitqueue.gateway.RequestSummary.metadata:type_name -> uber.submitqueue.gateway.RequestSummary.MetadataEntry
+	11, // 4: uber.submitqueue.gateway.ListResponse.requests:type_name -> uber.submitqueue.gateway.RequestSummary
+	13, // 5: uber.submitqueue.gateway.UnrecognizedQueueError.error:type_name -> uber.submitqueue.gateway.Error
+	13, // 6: uber.submitqueue.gateway.RequestNotFoundError.error:type_name -> uber.submitqueue.gateway.Error
+	1,  // 7: uber.submitqueue.gateway.SubmitQueueGateway.Ping:input_type -> uber.submitqueue.gateway.PingRequest
+	4,  // 8: uber.submitqueue.gateway.SubmitQueueGateway.Land:input_type -> uber.submitqueue.gateway.LandRequest
+	6,  // 9: uber.submitqueue.gateway.SubmitQueueGateway.Cancel:input_type -> uber.submitqueue.gateway.CancelRequest
+	8,  // 10: uber.submitqueue.gateway.SubmitQueueGateway.Status:input_type -> uber.submitqueue.gateway.StatusRequest
+	10, // 11: uber.submitqueue.gateway.SubmitQueueGateway.List:input_type -> uber.submitqueue.gateway.ListRequest
+	2,  // 12: uber.submitqueue.gateway.SubmitQueueGateway.Ping:output_type -> uber.submitqueue.gateway.PingResponse
+	5,  // 13: uber.submitqueue.gateway.SubmitQueueGateway.Land:output_type -> uber.submitqueue.gateway.LandResponse
+	7,  // 14: uber.submitqueue.gateway.SubmitQueueGateway.Cancel:output_type -> uber.submitqueue.gateway.CancelResponse
+	9,  // 15: uber.submitqueue.gateway.SubmitQueueGateway.Status:output_type -> uber.submitqueue.gateway.StatusResponse
+	12, // 16: uber.submitqueue.gateway.SubmitQueueGateway.List:output_type -> uber.submitqueue.gateway.ListResponse
+	12, // [12:17] is the sub-list for method output_type
+	7,  // [7:12] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_gateway_proto_init() }
@@ -865,7 +1174,7 @@ func file_gateway_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gateway_proto_rawDesc), len(file_gateway_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   13,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

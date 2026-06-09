@@ -14,6 +14,7 @@ go_library(
         "queue_config.go",
         "request.go",
         "request_log.go",
+        "request_summary.go",
         "speculation_tree.go",
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/entity",

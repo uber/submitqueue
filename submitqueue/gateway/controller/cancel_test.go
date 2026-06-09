@@ -57,27 +57,40 @@ func newCancelTestRegistryWithNoopPublisher(t *testing.T, ctrl *gomock.Controlle
 	return registry
 }
 
-// newRequestLogStoreNoop returns a RequestLogStore mock whose List returns a single
-// dummy entry (so existence check passes) and whose Insert silently succeeds for any input.
-func newRequestLogStoreNoop(t *testing.T, ctrl *gomock.Controller) *storagemock.MockRequestLogStore {
+// newCancelStorageNoop returns a storage mock whose request log existence check,
+// log insert, and summary upsert all succeed.
+func newCancelStorageNoop(t *testing.T, ctrl *gomock.Controller) storage.Storage {
 	t.Helper()
-	store := storagemock.NewMockRequestLogStore(ctrl)
-	store.EXPECT().List(gomock.Any(), gomock.Any()).Return([]entity.RequestLog{{}}, nil).AnyTimes()
-	store.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	logStore := storagemock.NewMockRequestLogStore(ctrl)
+	logStore.EXPECT().List(gomock.Any(), gomock.Any()).Return([]entity.RequestLog{{}}, nil).AnyTimes()
+	logStore.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
+	summaryStore.EXPECT().UpsertFromLog(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
+	store.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
+	return store
+}
+
+func newCancelStorage(t *testing.T, ctrl *gomock.Controller, logStore storage.RequestLogStore, summaryStore storage.RequestSummaryStore) storage.Storage {
+	t.Helper()
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
+	store.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
 	return store
 }
 
 func TestNewCancelController(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, newRequestLogStoreNoop(t, ctrl), newCancelTestRegistryWithNoopPublisher(t, ctrl))
+	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, newCancelStorageNoop(t, ctrl), newCancelTestRegistryWithNoopPublisher(t, ctrl))
 	require.NotNil(t, controller)
 }
 
 func TestCancel_HappyPath(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, newRequestLogStoreNoop(t, ctrl), newCancelTestRegistryWithNoopPublisher(t, ctrl))
+	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, newCancelStorageNoop(t, ctrl), newCancelTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
 	req := &pb.CancelRequest{Sqid: "test-queue/42", Reason: "user changed their mind"}
@@ -90,7 +103,7 @@ func TestCancel_HappyPath(t *testing.T) {
 func TestCancel_ReturnsErrorOnEmptySqid(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, newRequestLogStoreNoop(t, ctrl), newCancelTestRegistryWithNoopPublisher(t, ctrl))
+	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, newCancelStorageNoop(t, ctrl), newCancelTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
 	req := &pb.CancelRequest{Sqid: "", Reason: "anything"}
@@ -115,7 +128,7 @@ func TestCancel_PublishesToQueue(t *testing.T) {
 		},
 	)
 
-	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, newRequestLogStoreNoop(t, ctrl), registry)
+	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, newCancelStorageNoop(t, ctrl), registry)
 	ctx := context.Background()
 
 	req := &pb.CancelRequest{Sqid: "my-queue/7", Reason: "obsolete change"}
@@ -147,6 +160,8 @@ func TestCancel_InsertsCancellingLog(t *testing.T) {
 			return nil
 		},
 	).Times(1)
+	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
+	summaryStore.EXPECT().UpsertFromLog(gomock.Any(), gomock.Any()).Return(nil)
 
 	registry, publisher := newCancelTestRegistry(t, ctrl)
 	insertedBeforePublish := false
@@ -157,7 +172,7 @@ func TestCancel_InsertsCancellingLog(t *testing.T) {
 		},
 	)
 
-	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, logStore, registry)
+	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, newCancelStorage(t, ctrl, logStore, summaryStore), registry)
 
 	req := &pb.CancelRequest{Sqid: "my-queue/42", Reason: "obsolete change"}
 	_, err := controller.Cancel(context.Background(), req)
@@ -177,12 +192,13 @@ func TestCancel_LogInsertFailure(t *testing.T) {
 	logStore := storagemock.NewMockRequestLogStore(ctrl)
 	logStore.EXPECT().List(gomock.Any(), "q/1").Return([]entity.RequestLog{{}}, nil)
 	logStore.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(fmt.Errorf("db unavailable"))
+	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
 
 	registry, publisher := newCancelTestRegistry(t, ctrl)
 	// No Publish expectation: log insert must fail before publish runs.
 	_ = publisher
 
-	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, logStore, registry)
+	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, newCancelStorage(t, ctrl, logStore, summaryStore), registry)
 	_, err := controller.Cancel(context.Background(), &pb.CancelRequest{Sqid: "q/1"})
 	require.Error(t, err)
 }
@@ -193,7 +209,7 @@ func TestCancel_ReturnsErrorOnPublishFailure(t *testing.T) {
 	registry, publisher := newCancelTestRegistry(t, ctrl)
 	publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("queue unavailable"))
 
-	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, newRequestLogStoreNoop(t, ctrl), registry)
+	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, newCancelStorageNoop(t, ctrl), registry)
 	ctx := context.Background()
 
 	req := &pb.CancelRequest{Sqid: "test-queue/1"}
@@ -211,12 +227,13 @@ func TestCancel_UnknownSqidIsUserError(t *testing.T) {
 	logStore := storagemock.NewMockRequestLogStore(ctrl)
 	logStore.EXPECT().List(gomock.Any(), "ghost/1").Return(nil, storage.ErrNotFound)
 	// No Insert expectation: existence check must short-circuit before Insert.
+	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
 
 	registry, publisher := newCancelTestRegistry(t, ctrl)
 	// No Publish expectation: existence check must short-circuit before Publish.
 	_ = publisher
 
-	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, logStore, registry)
+	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, newCancelStorage(t, ctrl, logStore, summaryStore), registry)
 	_, err := controller.Cancel(context.Background(), &pb.CancelRequest{Sqid: "ghost/1"})
 	require.Error(t, err)
 	assert.True(t, IsRequestNotFound(err))
@@ -236,11 +253,12 @@ func TestCancel_RequestLogLookupFailure(t *testing.T) {
 
 	logStore := storagemock.NewMockRequestLogStore(ctrl)
 	logStore.EXPECT().List(gomock.Any(), "q/1").Return(nil, fmt.Errorf("log backend down"))
+	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
 
 	registry, publisher := newCancelTestRegistry(t, ctrl)
 	_ = publisher
 
-	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, logStore, registry)
+	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, newCancelStorage(t, ctrl, logStore, summaryStore), registry)
 	_, err := controller.Cancel(context.Background(), &pb.CancelRequest{Sqid: "q/1"})
 	require.Error(t, err)
 	assert.False(t, errs.IsUserError(err))

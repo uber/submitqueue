@@ -54,6 +54,7 @@ type GatewayServer struct {
 	landController   *controller.LandController
 	cancelController *controller.CancelController
 	statusController *controller.StatusController
+	listController   *controller.ListController
 }
 
 // Ping delegates to the controller
@@ -74,6 +75,11 @@ func (s *GatewayServer) Cancel(ctx context.Context, req *pb.CancelRequest) (*pb.
 // Status delegates to the controller
 func (s *GatewayServer) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusResponse, error) {
 	return s.statusController.Status(ctx, req)
+}
+
+// List delegates to the controller
+func (s *GatewayServer) List(ctx context.Context, req *pb.ListRequest) (*pb.ListResponse, error) {
+	return s.listController.List(ctx, req)
 }
 
 func main() {
@@ -236,6 +242,7 @@ func run() error {
 		return fmt.Errorf("failed to create storage: %w", err)
 	}
 	requestLogStore := store.GetRequestLogStore()
+	requestSummaryStore := store.GetRequestSummaryStore()
 
 	// Load queue configurations from YAML. Path is required so the gateway
 	// can reject requests for unknown queues at the edge.
@@ -251,13 +258,15 @@ func run() error {
 	// Create controllers and wrap them for gRPC
 	pingController := controller.NewPingController(logger, scope)
 	landController := controller.NewLandController(logger.Sugar(), scope, cnt, store, queueConfigs, registry)
-	cancelController := controller.NewCancelController(logger.Sugar(), scope, requestLogStore, registry)
+	cancelController := controller.NewCancelController(logger.Sugar(), scope, store, registry)
 	statusController := controller.NewStatusController(logger.Sugar(), scope, requestLogStore)
+	listController := controller.NewListController(logger.Sugar(), scope, requestSummaryStore, queueConfigs)
 	gatewayServer := &GatewayServer{
 		pingController:   pingController,
 		landController:   landController,
 		cancelController: cancelController,
 		statusController: statusController,
+		listController:   listController,
 	}
 
 	pb.RegisterSubmitQueueGatewayServer(grpcServer, gatewayServer)
