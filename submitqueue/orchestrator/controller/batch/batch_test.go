@@ -292,9 +292,9 @@ func TestController_Process_AnalyzerSelectsSubset(t *testing.T) {
 	// Analyzer returns duplicate Conflict entries for the same batch (different
 	// conflict types) to prove the controller dedupes by BatchID.
 	analyzer := conflictmock.NewMockAnalyzer(ctrl)
-	analyzer.EXPECT().Analyze(gomock.Any(), gomock.Any(), gomock.Any()).Return([]conflict.Conflict{
-		{BatchID: "test-queue/batch/2", Type: conflict.ConflictTypeConservative},
-		{BatchID: "test-queue/batch/2", Type: conflict.ConflictTypeTargetOverlap},
+	analyzer.EXPECT().Analyze(gomock.Any(), gomock.Any(), gomock.Any()).Return([]entity.Conflict{
+		{BatchID: "test-queue/batch/2", Type: entity.ConflictTypeConservative},
+		{BatchID: "test-queue/batch/2", Type: entity.ConflictTypeTargetOverlap},
 	}, nil)
 
 	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), mockStorage, analyzer, nil)

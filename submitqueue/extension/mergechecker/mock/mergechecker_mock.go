@@ -43,10 +43,10 @@ func (m *MockMergeChecker) EXPECT() *MockMergeCheckerMockRecorder {
 }
 
 // Check mocks base method.
-func (m *MockMergeChecker) Check(ctx context.Context, request entity.Request) (mergechecker.Result, error) {
+func (m *MockMergeChecker) Check(ctx context.Context, request entity.Request) (entity.MergeResult, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Check", ctx, request)
-	ret0, _ := ret[0].(mergechecker.Result)
+	ret0, _ := ret[0].(entity.MergeResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

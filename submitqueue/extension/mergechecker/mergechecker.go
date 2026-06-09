@@ -28,16 +28,7 @@ type MergeChecker interface {
 	// whether the request's changes can be merged. It is handed the request
 	// identity and reads request.Change itself. A positive result does not
 	// guarantee that the changes will apply cleanly at merge time.
-	Check(ctx context.Context, request entity.Request) (Result, error)
-}
-
-// Result holds the outcome of a mergeability check.
-type Result struct {
-	// Mergeable is true if the request's changes are expected to merge cleanly.
-	Mergeable bool
-	// Reason is a human-readable explanation when Mergeable is false.
-	// Empty when Mergeable is true.
-	Reason string
+	Check(ctx context.Context, request entity.Request) (entity.MergeResult, error)
 }
 
 // Config carries the per-queue identity handed to a Factory. The system knows

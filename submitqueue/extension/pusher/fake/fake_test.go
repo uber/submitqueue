@@ -45,7 +45,7 @@ func TestPusher_Push_Committed(t *testing.T) {
 	seen := map[string]bool{}
 	for i, out := range res.Batches[0].Outcomes {
 		assert.Equal(t, changes[i], out.Change)
-		assert.Equal(t, pusher.OutcomeStatusCommitted, out.Status)
+		assert.Equal(t, entity.OutcomeStatusCommitted, out.Status)
 		require.Len(t, out.CommitSHAs, 1)
 		assert.False(t, seen[out.CommitSHAs[0]], "commit SHAs must be unique")
 		seen[out.CommitSHAs[0]] = true

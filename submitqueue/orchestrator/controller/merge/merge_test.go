@@ -118,14 +118,14 @@ func TestController_Process_SuccessfulMerge(t *testing.T) {
 
 	mockPusher := pushermock.NewMockPusher(ctrl)
 	mockPusher.EXPECT().Push(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, batches []entity.Batch) (pusher.Result, error) {
+		func(_ context.Context, batches []entity.Batch) (entity.PushResult, error) {
 			require.Len(t, batches, 1)
 			assert.Equal(t, batch.ID, batches[0].ID)
-			return pusher.Result{Batches: []pusher.BatchOutcome{{
+			return entity.PushResult{Batches: []entity.BatchOutcome{{
 				BatchID: batch.ID,
-				Outcomes: []pusher.ChangeOutcome{{
+				Outcomes: []entity.ChangeOutcome{{
 					Change:     change,
-					Status:     pusher.OutcomeStatusCommitted,
+					Status:     entity.OutcomeStatusCommitted,
 					CommitSHAs: []string{"deadbeef"},
 				}},
 			}}}, nil
@@ -173,10 +173,10 @@ func TestController_Process_ForwardsBatchToPusher(t *testing.T) {
 
 	mockPusher := pushermock.NewMockPusher(ctrl)
 	mockPusher.EXPECT().Push(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, batches []entity.Batch) (pusher.Result, error) {
+		func(_ context.Context, batches []entity.Batch) (entity.PushResult, error) {
 			require.Len(t, batches, 1)
 			assert.Equal(t, requestIDs, batches[0].Contains, "batch forwarded with Contains in order")
-			return pusher.Result{Batches: []pusher.BatchOutcome{{BatchID: batchID}}}, nil
+			return entity.PushResult{Batches: []entity.BatchOutcome{{BatchID: batchID}}}, nil
 		},
 	)
 
@@ -217,7 +217,7 @@ func TestController_Process_PushConflictMarksBatchFailed(t *testing.T) {
 
 	mockPusher := pushermock.NewMockPusher(ctrl)
 	mockPusher.EXPECT().Push(gomock.Any(), gomock.Any()).Return(
-		pusher.Result{},
+		entity.PushResult{},
 		fmt.Errorf("apply: %w", pusher.ErrConflict),
 	)
 
@@ -257,7 +257,7 @@ func TestController_Process_PushInfraFailureReturnsError(t *testing.T) {
 
 	mockPusher := pushermock.NewMockPusher(ctrl)
 	mockPusher.EXPECT().Push(gomock.Any(), gomock.Any()).Return(
-		pusher.Result{},
+		entity.PushResult{},
 		fmt.Errorf("ssh: connection refused"),
 	)
 
@@ -415,10 +415,10 @@ func TestController_Process_PublishFailureSurfaces(t *testing.T) {
 
 	mockPusher := pushermock.NewMockPusher(ctrl)
 	mockPusher.EXPECT().Push(gomock.Any(), gomock.Any()).Return(
-		pusher.Result{Batches: []pusher.BatchOutcome{{
+		entity.PushResult{Batches: []entity.BatchOutcome{{
 			BatchID: batchID,
-			Outcomes: []pusher.ChangeOutcome{{
-				Status: pusher.OutcomeStatusCommitted, CommitSHAs: []string{"abc"},
+			Outcomes: []entity.ChangeOutcome{{
+				Status: entity.OutcomeStatusCommitted, CommitSHAs: []string{"abc"},
 			}},
 		}}}, nil,
 	)

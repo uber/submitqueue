@@ -261,7 +261,7 @@ func TestPusher_Push_SingleChangeSingleURIProducesOneCommit(t *testing.T) {
 	require.Len(t, res.Batches[0].Outcomes, 1)
 
 	out := res.Batches[0].Outcomes[0]
-	assert.Equal(t, pusher.OutcomeStatusCommitted, out.Status)
+	assert.Equal(t, entity.OutcomeStatusCommitted, out.Status)
 	require.Len(t, out.CommitSHAs, 1)
 	assert.Equal(t, []string{out.CommitSHAs[0]}, f.remoteCommitsSinceSeed(t))
 	assert.Equal(t, "hello\nearth\n", f.remoteFile(t, "hello.txt"))
@@ -293,7 +293,7 @@ func TestPusher_Push_StackedURIsProduceMultipleCommitsForOneChange(t *testing.T)
 	require.Len(t, res.Batches[0].Outcomes, 1)
 
 	out := res.Batches[0].Outcomes[0]
-	assert.Equal(t, pusher.OutcomeStatusCommitted, out.Status)
+	assert.Equal(t, entity.OutcomeStatusCommitted, out.Status)
 	require.Len(t, out.CommitSHAs, 2)
 	assert.Equal(t, out.CommitSHAs, f.remoteCommitsSinceSeed(t))
 	assert.Equal(t, "hello\nearth\ngoodbye\n", f.remoteFile(t, "hello.txt"))
@@ -316,7 +316,7 @@ func TestPusher_Push_AlreadyLandedChangeIsRebasedOut(t *testing.T) {
 	require.Len(t, res.Batches[0].Outcomes, 1)
 
 	out := res.Batches[0].Outcomes[0]
-	assert.Equal(t, pusher.OutcomeStatusAlreadyExisted, out.Status)
+	assert.Equal(t, entity.OutcomeStatusAlreadyExisted, out.Status)
 	assert.Empty(t, out.CommitSHAs)
 	assert.Equal(t, mainBeforePush, f.remoteHEAD(t),
 		"rebased-out push should not advance the remote tip")
@@ -336,10 +336,10 @@ func TestPusher_Push_MixedChangesPartiallyRebasedOut(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, res.Batches[0].Outcomes, 2)
 
-	assert.Equal(t, pusher.OutcomeStatusAlreadyExisted, res.Batches[0].Outcomes[0].Status)
+	assert.Equal(t, entity.OutcomeStatusAlreadyExisted, res.Batches[0].Outcomes[0].Status)
 	assert.Empty(t, res.Batches[0].Outcomes[0].CommitSHAs)
 
-	assert.Equal(t, pusher.OutcomeStatusCommitted, res.Batches[0].Outcomes[1].Status)
+	assert.Equal(t, entity.OutcomeStatusCommitted, res.Batches[0].Outcomes[1].Status)
 	require.Len(t, res.Batches[0].Outcomes[1].CommitSHAs, 1)
 
 	assert.Equal(t, "extra\n", f.remoteFile(t, "extra.txt"))
@@ -410,7 +410,7 @@ func TestPusher_Push_RecoversAfterPriorConflict(t *testing.T) {
 		f.batchFor("b2", entity.Change{URIs: []string{uri(freshSHA)}}),
 	})
 	require.NoError(t, err)
-	assert.Equal(t, pusher.OutcomeStatusCommitted, res.Batches[0].Outcomes[0].Status)
+	assert.Equal(t, entity.OutcomeStatusCommitted, res.Batches[0].Outcomes[0].Status)
 	assert.Equal(t, "extra\n", f.remoteFile(t, "extra.txt"))
 }
 

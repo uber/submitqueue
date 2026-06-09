@@ -63,13 +63,13 @@ func New(resolver changeset.Resolver) pusher.Pusher {
 // Push resolves each batch's changes and reports every change as committed with
 // a synthetic commit SHA, grouped per batch, unless a recognized marker token in
 // one of the changes requests a failure.
-func (p *fakePusher) Push(ctx context.Context, batches []entity.Batch) (pusher.Result, error) {
+func (p *fakePusher) Push(ctx context.Context, batches []entity.Batch) (entity.PushResult, error) {
 	perBatch := make([][]entity.Change, len(batches))
 	var all []entity.Change
 	for i, b := range batches {
 		cs, err := p.resolver.ChangesForBatch(ctx, b)
 		if err != nil {
-			return pusher.Result{}, fmt.Errorf("fake: resolve batch %s: %w", b.ID, err)
+			return entity.PushResult{}, fmt.Errorf("fake: resolve batch %s: %w", b.ID, err)
 		}
 		perBatch[i] = cs
 		all = append(all, cs...)
@@ -77,23 +77,23 @@ func (p *fakePusher) Push(ctx context.Context, batches []entity.Batch) (pusher.R
 
 	switch fakemarker.TokenInChanges(all) {
 	case tokenConflict:
-		return pusher.Result{}, pusher.ErrConflict
+		return entity.PushResult{}, pusher.ErrConflict
 	case tokenError:
-		return pusher.Result{}, fmt.Errorf("fake: marked push error")
+		return entity.PushResult{}, fmt.Errorf("fake: marked push error")
 	}
 
-	result := make([]pusher.BatchOutcome, len(batches))
+	result := make([]entity.BatchOutcome, len(batches))
 	for i, b := range batches {
-		outcomes := make([]pusher.ChangeOutcome, 0, len(perBatch[i]))
+		outcomes := make([]entity.ChangeOutcome, 0, len(perBatch[i]))
 		for _, change := range perBatch[i] {
 			sha := fmt.Sprintf("fake-%d", p.counter.Add(1))
-			outcomes = append(outcomes, pusher.ChangeOutcome{
+			outcomes = append(outcomes, entity.ChangeOutcome{
 				Change:     change,
-				Status:     pusher.OutcomeStatusCommitted,
+				Status:     entity.OutcomeStatusCommitted,
 				CommitSHAs: []string{sha},
 			})
 		}
-		result[i] = pusher.BatchOutcome{BatchID: b.ID, Outcomes: outcomes}
+		result[i] = entity.BatchOutcome{BatchID: b.ID, Outcomes: outcomes}
 	}
-	return pusher.Result{Batches: result}, nil
+	return entity.PushResult{Batches: result}, nil
 }

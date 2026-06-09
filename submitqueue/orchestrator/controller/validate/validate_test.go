@@ -66,7 +66,7 @@ func (m *mockChangeProvider) Get(ctx context.Context, request entity.Request) ([
 // newMergeableMock returns a mock MergeChecker that always returns mergeable.
 func newMergeableMock(ctrl *gomock.Controller) *mergecheckermock.MockMergeChecker {
 	mc := mergecheckermock.NewMockMergeChecker(ctrl)
-	mc.EXPECT().Check(gomock.Any(), gomock.Any()).Return(mergechecker.Result{Mergeable: true}, nil).AnyTimes()
+	mc.EXPECT().Check(gomock.Any(), gomock.Any()).Return(entity.MergeResult{Mergeable: true}, nil).AnyTimes()
 	return mc
 }
 
@@ -280,7 +280,7 @@ func TestController_Process_NotMergeable(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	mc := mergecheckermock.NewMockMergeChecker(ctrl)
-	mc.EXPECT().Check(gomock.Any(), gomock.Any()).Return(mergechecker.Result{Mergeable: false}, nil)
+	mc.EXPECT().Check(gomock.Any(), gomock.Any()).Return(entity.MergeResult{Mergeable: false}, nil)
 
 	request := entity.Request{
 		ID:           "test-queue/123",
@@ -307,7 +307,7 @@ func TestController_Process_MergeCheckError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	mc := mergecheckermock.NewMockMergeChecker(ctrl)
-	mc.EXPECT().Check(gomock.Any(), gomock.Any()).Return(mergechecker.Result{}, fmt.Errorf("merge check failed"))
+	mc.EXPECT().Check(gomock.Any(), gomock.Any()).Return(entity.MergeResult{}, fmt.Errorf("merge check failed"))
 
 	request := entity.Request{
 		ID:           "test-queue/123",

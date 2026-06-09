@@ -43,10 +43,10 @@ func (m *MockAnalyzer) EXPECT() *MockAnalyzerMockRecorder {
 }
 
 // Analyze mocks base method.
-func (m *MockAnalyzer) Analyze(ctx context.Context, batch entity.Batch, inFlight []entity.Batch) ([]conflict.Conflict, error) {
+func (m *MockAnalyzer) Analyze(ctx context.Context, batch entity.Batch, inFlight []entity.Batch) ([]entity.Conflict, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Analyze", ctx, batch, inFlight)
-	ret0, _ := ret[0].([]conflict.Conflict)
+	ret0, _ := ret[0].([]entity.Conflict)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

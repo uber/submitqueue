@@ -33,6 +33,6 @@ func New() conflict.Analyzer {
 }
 
 // Analyze always returns a nil conflict slice, regardless of inputs.
-func (analyzer) Analyze(_ context.Context, _ entity.Batch, _ []entity.Batch) ([]conflict.Conflict, error) {
+func (analyzer) Analyze(_ context.Context, _ entity.Batch, _ []entity.Batch) ([]entity.Conflict, error) {
 	return nil, nil
 }
