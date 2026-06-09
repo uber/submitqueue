@@ -32,7 +32,7 @@ type SpeculationTreeStore interface {
 	// Returns ErrAlreadyExists if the entry already exists.
 	Create(ctx context.Context, speculationTree entity.SpeculationTree) error
 
-	// UpdateSpeculations updates the speculations of a speculation tree.
-	// Returns ErrNotFound if the speculation tree is not found.
-	UpdateSpeculations(ctx context.Context, batchID string, speculations []entity.SpeculationInfo) error
+	// Update overwrites the paths of an existing speculation tree, identified by
+	// speculationTree.BatchID. Returns ErrNotFound if the speculation tree is not found.
+	Update(ctx context.Context, speculationTree entity.SpeculationTree) error
 }
