@@ -48,9 +48,9 @@ func (s *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retE
 	var speculationPathJSON []byte
 
 	err := s.db.QueryRowContext(ctx,
-		"SELECT id, batch_id, speculation_path, score, status FROM build WHERE id = ?",
+		"SELECT id, batch_id, speculation_path, status FROM build WHERE id = ?",
 		id,
-	).Scan(&build.ID, &build.BatchID, &speculationPathJSON, &build.Score, &build.Status)
+	).Scan(&build.ID, &build.BatchID, &speculationPathJSON, &build.Status)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.Build{}, storage.WrapNotFound(err)
@@ -77,8 +77,8 @@ func (s *buildStore) Create(ctx context.Context, build entity.Build) (retErr err
 	}
 
 	_, err = s.db.ExecContext(ctx,
-		"INSERT INTO build (id, batch_id, speculation_path, score, status) VALUES (?, ?, ?, ?, ?)",
-		build.ID, build.BatchID, speculationPathJSON, build.Score, build.Status,
+		"INSERT INTO build (id, batch_id, speculation_path, status) VALUES (?, ?, ?, ?)",
+		build.ID, build.BatchID, speculationPathJSON, build.Status,
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError

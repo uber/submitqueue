@@ -70,16 +70,16 @@ func (mr *MockSpeculationTreeStoreMockRecorder) Get(ctx, batchID any) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockSpeculationTreeStore)(nil).Get), ctx, batchID)
 }
 
-// UpdateSpeculations mocks base method.
-func (m *MockSpeculationTreeStore) UpdateSpeculations(ctx context.Context, batchID string, speculations []entity.SpeculationInfo) error {
+// Update mocks base method.
+func (m *MockSpeculationTreeStore) Update(ctx context.Context, speculationTree entity.SpeculationTree) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateSpeculations", ctx, batchID, speculations)
+	ret := m.ctrl.Call(m, "Update", ctx, speculationTree)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// UpdateSpeculations indicates an expected call of UpdateSpeculations.
-func (mr *MockSpeculationTreeStoreMockRecorder) UpdateSpeculations(ctx, batchID, speculations any) *gomock.Call {
+// Update indicates an expected call of Update.
+func (mr *MockSpeculationTreeStoreMockRecorder) Update(ctx, speculationTree any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateSpeculations", reflect.TypeOf((*MockSpeculationTreeStore)(nil).UpdateSpeculations), ctx, batchID, speculations)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Update", reflect.TypeOf((*MockSpeculationTreeStore)(nil).Update), ctx, speculationTree)
 }

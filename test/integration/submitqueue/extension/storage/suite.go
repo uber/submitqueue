@@ -381,3 +381,101 @@ func (s *StorageContractSuite) TestStorage_ChangeCreate_EmptyDetails() {
 	require.Len(t, got, 1)
 	assert.Equal(t, entity.ChangeDetails{}, got[0].Details)
 }
+
+// sampleSpeculationTree returns a representative tree for the given batch: a
+// fallback path (build alone) and a speculative path (build on an assumed-good
+// base), exercising every SpeculationPathInfo field.
+func sampleSpeculationTree(batchID string) entity.SpeculationTree {
+	return entity.SpeculationTree{
+		BatchID: batchID,
+		Paths: []entity.SpeculationPathInfo{
+			{
+				Path:   entity.SpeculationPath{Base: nil, Head: batchID},
+				Score:  0.5,
+				Status: entity.SpeculationPathStatusCandidate,
+			},
+			{
+				Path:    entity.SpeculationPath{Base: []string{"q/batch/1", "q/batch/2"}, Head: batchID},
+				Score:   0.25,
+				Status:  entity.SpeculationPathStatusBuilding,
+				BuildID: "build-42",
+			},
+		},
+	}
+}
+
+// TestStorage_SpeculationCreateAndGet verifies a tree round-trips through the
+// store preserving every path field (Base/Head, Score, Status, BuildID).
+func (s *StorageContractSuite) TestStorage_SpeculationCreateAndGet() {
+	t := s.T()
+	ctx := s.ctx
+
+	tree := sampleSpeculationTree("spec/create-get")
+
+	require.NoError(t, s.storage.GetSpeculationTreeStore().Create(ctx, tree))
+
+	retrieved, err := s.storage.GetSpeculationTreeStore().Get(ctx, tree.BatchID)
+	require.NoError(t, err)
+	assert.Equal(t, tree, retrieved, "speculation tree should round-trip unchanged")
+}
+
+// TestStorage_SpeculationCreateDuplicate verifies a repeated Create for the same
+// batch returns ErrAlreadyExists.
+func (s *StorageContractSuite) TestStorage_SpeculationCreateDuplicate() {
+	t := s.T()
+	ctx := s.ctx
+
+	tree := sampleSpeculationTree("spec/duplicate")
+
+	require.NoError(t, s.storage.GetSpeculationTreeStore().Create(ctx, tree))
+
+	err := s.storage.GetSpeculationTreeStore().Create(ctx, tree)
+	assert.ErrorIs(t, err, storage.ErrAlreadyExists, "duplicate create should return ErrAlreadyExists")
+}
+
+// TestStorage_SpeculationUpdate verifies Update overwrites the entire set of
+// paths for a batch (the controller persists the whole tree each respeculate).
+func (s *StorageContractSuite) TestStorage_SpeculationUpdate() {
+	t := s.T()
+	ctx := s.ctx
+
+	tree := sampleSpeculationTree("spec/update")
+	require.NoError(t, s.storage.GetSpeculationTreeStore().Create(ctx, tree))
+
+	// Respeculate: the speculative base broke, so its path is cancelled and the
+	// fallback advanced to passed — a wholesale replacement of the paths.
+	updated := entity.SpeculationTree{
+		BatchID: tree.BatchID,
+		Paths: []entity.SpeculationPathInfo{
+			{
+				Path:    entity.SpeculationPath{Base: nil, Head: tree.BatchID},
+				Score:   0.75,
+				Status:  entity.SpeculationPathStatusPassed,
+				BuildID: "build-99",
+			},
+		},
+	}
+	require.NoError(t, s.storage.GetSpeculationTreeStore().Update(ctx, updated))
+
+	retrieved, err := s.storage.GetSpeculationTreeStore().Get(ctx, tree.BatchID)
+	require.NoError(t, err)
+	assert.Equal(t, updated, retrieved, "Update should overwrite the whole tree")
+}
+
+// TestStorage_SpeculationGetNotFound verifies Get for an unknown batch returns ErrNotFound.
+func (s *StorageContractSuite) TestStorage_SpeculationGetNotFound() {
+	t := s.T()
+	ctx := s.ctx
+
+	_, err := s.storage.GetSpeculationTreeStore().Get(ctx, "spec/nonexistent")
+	assert.ErrorIs(t, err, storage.ErrNotFound, "Get for unknown batch should return ErrNotFound")
+}
+
+// TestStorage_SpeculationUpdateNotFound verifies Update for an unknown batch returns ErrNotFound.
+func (s *StorageContractSuite) TestStorage_SpeculationUpdateNotFound() {
+	t := s.T()
+	ctx := s.ctx
+
+	err := s.storage.GetSpeculationTreeStore().Update(ctx, sampleSpeculationTree("spec/update-nonexistent"))
+	assert.ErrorIs(t, err, storage.ErrNotFound, "Update for unknown batch should return ErrNotFound")
+}
