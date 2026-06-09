@@ -36,9 +36,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/core/consumer"
 	queueMySQL "github.com/uber/submitqueue/extension/messagequeue/mysql"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	pb "github.com/uber/submitqueue/submitqueue/gateway/protopb"
 	"github.com/uber/submitqueue/test/testutil"
@@ -184,7 +185,7 @@ func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 	defer queue.Close()
 
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
-		{Key: consumer.TopicKeyLog, Name: "log", Queue: queue},
+		{Key: topickey.TopicKeyLog, Name: "log", Queue: queue},
 	})
 	require.NoError(t, err, "failed to create topic registry")
 

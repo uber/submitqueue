@@ -22,10 +22,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	scorermock "github.com/uber/submitqueue/submitqueue/extension/scorer/mock"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
@@ -118,9 +119,9 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
-			{Key: consumer.TopicKeyConclude, Name: "conclude", Queue: mockQ},
-			{Key: consumer.TopicKeyLog, Name: "log", Queue: mockQ},
+			{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
+			{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
 		},
 	)
 	require.NoError(t, err)
@@ -128,7 +129,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 	scorerFactory := scorermock.NewMockFactory(ctrl)
 	scorerFactory.EXPECT().For(gomock.Any()).Return(scorer, nil).AnyTimes()
 
-	return NewController(logger, scope, store, scorerFactory, registry, consumer.TopicKeyScore, "orchestrator-score")
+	return NewController(logger, scope, store, scorerFactory, registry, topickey.TopicKeyScore, "orchestrator-score")
 }
 
 func TestNewController(t *testing.T) {
@@ -140,7 +141,7 @@ func TestNewController(t *testing.T) {
 	controller := newTestController(t, ctrl, store, mockScorer, nil)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicKeyScore, controller.TopicKey())
+	assert.Equal(t, topickey.TopicKeyScore, controller.TopicKey())
 	assert.Equal(t, "orchestrator-score", controller.ConsumerGroup())
 	assert.Equal(t, "score", controller.Name())
 }
@@ -363,16 +364,16 @@ func TestController_Process_TerminalShortCircuit(t *testing.T) {
 
 			registry, err := consumer.NewTopicRegistry(
 				[]consumer.TopicConfig{
-					{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
-					{Key: consumer.TopicKeyConclude, Name: "conclude", Queue: mockQ},
-					{Key: consumer.TopicKeyLog, Name: "log", Queue: mockQ},
+					{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
+					{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: mockQ},
+					{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
 				},
 			)
 			require.NoError(t, err)
 
 			scorerFactory := scorermock.NewMockFactory(ctrl)
 			scorerFactory.EXPECT().For(gomock.Any()).Return(mockScorer, nil).AnyTimes()
-			controller := NewController(logger, scope, mockStorage, scorerFactory, registry, consumer.TopicKeyScore, "orchestrator-score")
+			controller := NewController(logger, scope, mockStorage, scorerFactory, registry, topickey.TopicKeyScore, "orchestrator-score")
 
 			msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 			delivery := queuemock.NewMockDelivery(ctrl)
@@ -413,16 +414,16 @@ func TestController_Process_CancellingShortCircuit(t *testing.T) {
 
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
-			{Key: consumer.TopicKeyConclude, Name: "conclude", Queue: mockQ},
-			{Key: consumer.TopicKeyLog, Name: "log", Queue: mockQ},
+			{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
+			{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
 		},
 	)
 	require.NoError(t, err)
 
 	scorerFactory := scorermock.NewMockFactory(ctrl)
 	scorerFactory.EXPECT().For(gomock.Any()).Return(mockScorer, nil).AnyTimes()
-	controller := NewController(logger, scope, mockStorage, scorerFactory, registry, consumer.TopicKeyScore, "orchestrator-score")
+	controller := NewController(logger, scope, mockStorage, scorerFactory, registry, topickey.TopicKeyScore, "orchestrator-score")
 
 	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)

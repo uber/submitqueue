@@ -20,10 +20,11 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/metrics"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
@@ -119,14 +120,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("failed to publish request log: %w", err)
 	}
 
-	if err := c.publish(ctx, consumer.TopicKeyValidate, request.ID, request.Queue); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeyValidate, request.ID, request.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to validate: %w", err)
 	}
 
 	c.logger.Infow("published request to validate",
 		"request_id", request.ID,
-		"topic_key", consumer.TopicKeyValidate,
+		"topic_key", topickey.TopicKeyValidate,
 	)
 
 	return nil

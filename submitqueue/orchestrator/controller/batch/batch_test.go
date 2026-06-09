@@ -24,10 +24,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/core/consumer"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	countermock "github.com/uber/submitqueue/extension/counter/mock"
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/all"
@@ -110,14 +111,14 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeyScore, Name: "score", Queue: mockQ}},
+		[]consumer.TopicConfig{{Key: topickey.TopicKeyScore, Name: "score", Queue: mockQ}},
 	)
 	require.NoError(t, err)
 
 	analyzerFactory := conflictmock.NewMockFactory(ctrl)
 	analyzerFactory.EXPECT().For(gomock.Any()).Return(analyzer, nil).AnyTimes()
 
-	return NewController(logger, scope, registry, cnt, mockStorage, analyzerFactory, consumer.TopicKeyBatch, "orchestrator-batch")
+	return NewController(logger, scope, registry, cnt, mockStorage, analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch")
 }
 
 func TestNewController(t *testing.T) {
@@ -125,7 +126,7 @@ func TestNewController(t *testing.T) {
 	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), nil, nil, nil)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicKeyBatch, controller.TopicKey())
+	assert.Equal(t, topickey.TopicKeyBatch, controller.TopicKey())
 	assert.Equal(t, "orchestrator-batch", controller.ConsumerGroup())
 	assert.Equal(t, "batch", controller.Name())
 }
@@ -435,7 +436,7 @@ func TestController_Process_CASLostToCancel(t *testing.T) {
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeyScore, Name: "score", Queue: mockQ}},
+		[]consumer.TopicConfig{{Key: topickey.TopicKeyScore, Name: "score", Queue: mockQ}},
 	)
 	require.NoError(t, err)
 
@@ -443,7 +444,7 @@ func TestController_Process_CASLostToCancel(t *testing.T) {
 	analyzerFactory.EXPECT().For(gomock.Any()).Return(all.New(), nil).AnyTimes()
 	controller := NewController(
 		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, newSequentialCounter(ctrl),
-		mockStorage, analyzerFactory, consumer.TopicKeyBatch, "orchestrator-batch",
+		mockStorage, analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch",
 	)
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)

@@ -25,10 +25,11 @@ import (
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/pusher"
 	pushermock "github.com/uber/submitqueue/submitqueue/extension/pusher/mock"
@@ -60,8 +61,8 @@ func newRegistry(t *testing.T, ctrl *gomock.Controller, publishErr error) consum
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
-		{Key: consumer.TopicKeyConclude, Name: "conclude", Queue: mockQ},
-		{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
+		{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: mockQ},
+		{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
 	})
 	require.NoError(t, err)
 	return registry
@@ -83,12 +84,12 @@ func TestNewController(t *testing.T) {
 		store,
 		newRegistry(t, ctrl, nil),
 		newPusherFactory(ctrl, pushermock.NewMockPusher(ctrl)),
-		consumer.TopicKeyMerge,
+		topickey.TopicKeyMerge,
 		"orchestrator-merge",
 	)
 
 	require.NotNil(t, c)
-	assert.Equal(t, consumer.TopicKeyMerge, c.TopicKey())
+	assert.Equal(t, topickey.TopicKeyMerge, c.TopicKey())
 	assert.Equal(t, "orchestrator-merge", c.ConsumerGroup())
 	assert.Equal(t, "merge", c.Name())
 	var _ consumer.Controller = c
@@ -138,7 +139,7 @@ func TestController_Process_SuccessfulMerge(t *testing.T) {
 		store,
 		newRegistry(t, ctrl, nil),
 		newPusherFactory(ctrl, mockPusher),
-		consumer.TopicKeyMerge,
+		topickey.TopicKeyMerge,
 		"orchestrator-merge",
 	)
 
@@ -186,7 +187,7 @@ func TestController_Process_ForwardsBatchToPusher(t *testing.T) {
 		store,
 		newRegistry(t, ctrl, nil),
 		newPusherFactory(ctrl, mockPusher),
-		consumer.TopicKeyMerge,
+		topickey.TopicKeyMerge,
 		"orchestrator-merge",
 	)
 
@@ -227,7 +228,7 @@ func TestController_Process_PushConflictMarksBatchFailed(t *testing.T) {
 		store,
 		newRegistry(t, ctrl, nil),
 		newPusherFactory(ctrl, mockPusher),
-		consumer.TopicKeyMerge,
+		topickey.TopicKeyMerge,
 		"orchestrator-merge",
 	)
 
@@ -267,7 +268,7 @@ func TestController_Process_PushInfraFailureReturnsError(t *testing.T) {
 		store,
 		newRegistry(t, ctrl, nil),
 		newPusherFactory(ctrl, mockPusher),
-		consumer.TopicKeyMerge,
+		topickey.TopicKeyMerge,
 		"orchestrator-merge",
 	)
 
@@ -308,7 +309,7 @@ func TestController_Process_TerminalBatchSkipsPushButFansOut(t *testing.T) {
 				store,
 				newRegistry(t, ctrl, nil),
 				newPusherFactory(ctrl, mockPusher),
-				consumer.TopicKeyMerge,
+				topickey.TopicKeyMerge,
 				"orchestrator-merge",
 			)
 
@@ -347,8 +348,8 @@ func TestController_Process_CancellingShortCircuit(t *testing.T) {
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
-		{Key: consumer.TopicKeyConclude, Name: "conclude", Queue: mockQ},
-		{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
+		{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: mockQ},
+		{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
 	})
 	require.NoError(t, err)
 
@@ -358,7 +359,7 @@ func TestController_Process_CancellingShortCircuit(t *testing.T) {
 		store,
 		registry,
 		newPusherFactory(ctrl, mockPusher),
-		consumer.TopicKeyMerge,
+		topickey.TopicKeyMerge,
 		"orchestrator-merge",
 	)
 
@@ -383,13 +384,51 @@ func TestController_Process_BatchStoreGetFailureNotRetryable(t *testing.T) {
 		store,
 		newRegistry(t, ctrl, nil),
 		newPusherFactory(ctrl, pushermock.NewMockPusher(ctrl)),
-		consumer.TopicKeyMerge,
+		topickey.TopicKeyMerge,
 		"orchestrator-merge",
 	)
 
 	err := c.Process(context.Background(), newDelivery(t, ctrl, batchID, "test-queue"))
 	require.Error(t, err)
 	assert.False(t, errs.IsRetryable(err))
+}
+
+func TestController_Process_RequestStoreFailurePropagates(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	const reqID = "test-queue/6"
+	const batchID = "test-queue/batch/6"
+
+	batch := entity.Batch{
+		ID:       batchID,
+		Queue:    "test-queue",
+		Contains: []string{reqID},
+		State:    entity.BatchStateMerging,
+		Version:  1,
+	}
+
+	batchStore := storagemock.NewMockBatchStore(ctrl)
+	batchStore.EXPECT().Get(gomock.Any(), batchID).Return(batch, nil)
+
+	requestStore := storagemock.NewMockRequestStore(ctrl)
+	requestStore.EXPECT().Get(gomock.Any(), reqID).Return(entity.Request{}, fmt.Errorf("db connection lost"))
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
+
+	c := NewController(
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+		store,
+		newRegistry(t, ctrl, nil),
+		newPusherFactory(ctrl, pushermock.NewMockPusher(ctrl)),
+		topickey.TopicKeyMerge,
+		"orchestrator-merge",
+	)
+
+	err := c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue))
+	require.Error(t, err)
 }
 
 func TestController_Process_PublishFailureSurfaces(t *testing.T) {
@@ -429,7 +468,7 @@ func TestController_Process_PublishFailureSurfaces(t *testing.T) {
 		store,
 		newRegistry(t, ctrl, fmt.Errorf("queue down")),
 		newPusherFactory(ctrl, mockPusher),
-		consumer.TopicKeyMerge,
+		topickey.TopicKeyMerge,
 		"orchestrator-merge",
 	)
 

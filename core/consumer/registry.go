@@ -27,35 +27,6 @@ import (
 // choose their own naming conventions.
 type TopicKey string
 
-const (
-	// TopicKeyStart is the pipeline stage where new requests arrive from the gateway.
-	TopicKeyStart TopicKey = "start"
-	// TopicKeyCancel is the pipeline stage where cancellation requests arrive from the gateway.
-	TopicKeyCancel TopicKey = "cancel"
-	// TopicKeyValidate is the pipeline stage where requests are published for validation.
-	TopicKeyValidate TopicKey = "validate"
-	// TopicKeyBatch is the pipeline stage where validated requests are published for batching.
-	TopicKeyBatch TopicKey = "batch"
-	// TopicKeyScore is the pipeline stage where batches are published for scoring.
-	TopicKeyScore TopicKey = "score"
-	// TopicKeySpeculate is the pipeline stage where scored batches are published for speculation.
-	TopicKeySpeculate TopicKey = "speculate"
-	// TopicKeyBuild is the pipeline stage where speculated batches are published for builds.
-	TopicKeyBuild TopicKey = "build"
-	// TopicKeyBuildSignal is the polling stage for triggered builds. Each
-	// message carries a Build; the consumer calls BuildRunner.Status,
-	// persists the latest status, publishes the batch ID to TopicKeySpeculate
-	// so the state machine re-evaluates, and re-publishes itself via
-	// PublishAfter when the build has not yet reached a terminal state.
-	TopicKeyBuildSignal TopicKey = "buildsignal"
-	// TopicKeyMerge is the pipeline stage where speculated batches are published for merging.
-	TopicKeyMerge TopicKey = "merge"
-	// TopicKeyConclude is the pipeline stage where merged requests are published for conclusion.
-	TopicKeyConclude TopicKey = "conclude"
-	// TopicKeyLog is the pipeline stage where per-request logs are written.
-	TopicKeyLog TopicKey = "log"
-)
-
 // String returns the topic key as a string.
 func (t TopicKey) String() string {
 	return string(t)

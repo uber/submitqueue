@@ -30,6 +30,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
 	genericerrs "github.com/uber/submitqueue/core/errs/generic"
 	mysqlerrs "github.com/uber/submitqueue/core/errs/mysql"
@@ -38,8 +39,7 @@ import (
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	extqueue "github.com/uber/submitqueue/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/extension/messagequeue/mysql"
-	"github.com/uber/submitqueue/submitqueue/core/changeset"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 	buildfake "github.com/uber/submitqueue/submitqueue/extension/buildrunner/fake"
@@ -373,16 +373,16 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 		groupSuffix string
 	}
 	primaryTopics := []topicSpec{
-		{consumer.TopicKeyStart, "start", "orchestrator-start"},
-		{consumer.TopicKeyCancel, "cancel", "orchestrator-cancel"},
-		{consumer.TopicKeyValidate, "validate", "orchestrator-validate"},
-		{consumer.TopicKeyBatch, "batch", "orchestrator-batch"},
-		{consumer.TopicKeyScore, "score", "orchestrator-score"},
-		{consumer.TopicKeySpeculate, "speculate", "orchestrator-speculate"},
-		{consumer.TopicKeyBuild, "build", "orchestrator-build"},
-		{consumer.TopicKeyBuildSignal, "buildsignal", "orchestrator-buildsignal"},
-		{consumer.TopicKeyMerge, "merge", "orchestrator-merge"},
-		{consumer.TopicKeyConclude, "conclude", "orchestrator-conclude"},
+		{topickey.TopicKeyStart, "start", "orchestrator-start"},
+		{topickey.TopicKeyCancel, "cancel", "orchestrator-cancel"},
+		{topickey.TopicKeyValidate, "validate", "orchestrator-validate"},
+		{topickey.TopicKeyBatch, "batch", "orchestrator-batch"},
+		{topickey.TopicKeyScore, "score", "orchestrator-score"},
+		{topickey.TopicKeySpeculate, "speculate", "orchestrator-speculate"},
+		{topickey.TopicKeyBuild, "build", "orchestrator-build"},
+		{topickey.TopicKeyBuildSignal, "buildsignal", "orchestrator-buildsignal"},
+		{topickey.TopicKeyMerge, "merge", "orchestrator-merge"},
+		{topickey.TopicKeyConclude, "conclude", "orchestrator-conclude"},
 	}
 
 	configs := make([]consumer.TopicConfig, 0, 2*len(primaryTopics))
@@ -424,7 +424,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 	// writes the request log to storage, so the orchestrator registers no
 	// consuming subscription (and therefore no log DLQ) for this topic.
 	configs = append(configs, consumer.TopicConfig{
-		Key:   consumer.TopicKeyLog,
+		Key:   topickey.TopicKeyLog,
 		Name:  "log",
 		Queue: q,
 	})
@@ -528,7 +528,7 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		scope,
 		store,
 		registry,
-		consumer.TopicKeyStart,
+		topickey.TopicKeyStart,
 		"orchestrator-start",
 	)
 	if err := c.Register(requestController); err != nil {
@@ -541,7 +541,7 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		scope,
 		store,
 		registry,
-		consumer.TopicKeyCancel,
+		topickey.TopicKeyCancel,
 		"orchestrator-cancel",
 	)
 	if err := c.Register(cancelController); err != nil {
@@ -556,7 +556,7 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		registry,
 		mcf,
 		cpf,
-		consumer.TopicKeyValidate,
+		topickey.TopicKeyValidate,
 		"orchestrator-validate",
 	)
 	if err := c.Register(validateController); err != nil {
@@ -571,7 +571,7 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		cnt,
 		store,
 		cof,
-		consumer.TopicKeyBatch,
+		topickey.TopicKeyBatch,
 		"orchestrator-batch",
 	)
 	if err := c.Register(batchController); err != nil {
@@ -585,7 +585,7 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		store,
 		scf,
 		registry,
-		consumer.TopicKeyScore,
+		topickey.TopicKeyScore,
 		"orchestrator-score",
 	)
 	if err := c.Register(scoreController); err != nil {
@@ -598,7 +598,7 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		scope,
 		store,
 		registry,
-		consumer.TopicKeySpeculate,
+		topickey.TopicKeySpeculate,
 		"orchestrator-speculate",
 	)
 	if err := c.Register(speculateController); err != nil {
@@ -612,7 +612,7 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		store,
 		brf,
 		registry,
-		consumer.TopicKeyBuild,
+		topickey.TopicKeyBuild,
 		"orchestrator-build",
 	)
 	if err := c.Register(buildController); err != nil {
@@ -626,7 +626,7 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		store,
 		brf,
 		registry,
-		consumer.TopicKeyBuildSignal,
+		topickey.TopicKeyBuildSignal,
 		"orchestrator-buildsignal",
 	)
 	if err := c.Register(buildsignalController); err != nil {
@@ -640,7 +640,7 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		store,
 		registry,
 		pshf,
-		consumer.TopicKeyMerge,
+		topickey.TopicKeyMerge,
 		"orchestrator-merge",
 	)
 	if err := c.Register(mergeController); err != nil {
@@ -653,7 +653,7 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		scope,
 		store,
 		registry,
-		consumer.TopicKeyConclude,
+		topickey.TopicKeyConclude,
 		"orchestrator-conclude",
 	)
 	if err := c.Register(concludeController); err != nil {
@@ -674,16 +674,16 @@ func registerDLQControllers(c consumer.Consumer, logger *zap.SugaredLogger, scop
 		name string
 		ctl  consumer.Controller
 	}{
-		{"start_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeLandRequestID, dlq.TopicKey(consumer.TopicKeyStart), "orchestrator-start-dlq")},
-		{"cancel_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeCancelRequestID, dlq.TopicKey(consumer.TopicKeyCancel), "orchestrator-cancel-dlq")},
-		{"validate_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeRequestID, dlq.TopicKey(consumer.TopicKeyValidate), "orchestrator-validate-dlq")},
-		{"batch_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeRequestID, dlq.TopicKey(consumer.TopicKeyBatch), "orchestrator-batch-dlq")},
-		{"score_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(consumer.TopicKeyScore), "orchestrator-score-dlq")},
-		{"speculate_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(consumer.TopicKeySpeculate), "orchestrator-speculate-dlq")},
-		{"build_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(consumer.TopicKeyBuild), "orchestrator-build-dlq")},
-		{"buildsignal_dlq", dlq.NewDLQBuildSignalController(logger, dlqScope, store, dlq.TopicKey(consumer.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")},
-		{"merge_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(consumer.TopicKeyMerge), "orchestrator-merge-dlq")},
-		{"conclude_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(consumer.TopicKeyConclude), "orchestrator-conclude-dlq")},
+		{"start_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeLandRequestID, dlq.TopicKey(topickey.TopicKeyStart), "orchestrator-start-dlq")},
+		{"cancel_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeCancelRequestID, dlq.TopicKey(topickey.TopicKeyCancel), "orchestrator-cancel-dlq")},
+		{"validate_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeRequestID, dlq.TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")},
+		{"batch_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeRequestID, dlq.TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")},
+		{"score_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyScore), "orchestrator-score-dlq")},
+		{"speculate_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeySpeculate), "orchestrator-speculate-dlq")},
+		{"build_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyBuild), "orchestrator-build-dlq")},
+		{"buildsignal_dlq", dlq.NewDLQBuildSignalController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")},
+		{"merge_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")},
+		{"conclude_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyConclude), "orchestrator-conclude-dlq")},
 	}
 	var count int
 	for _, reg := range dlqRegs {

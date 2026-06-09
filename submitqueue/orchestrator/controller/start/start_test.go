@@ -22,10 +22,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
@@ -55,13 +56,13 @@ func newTestController(
 
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Key: consumer.TopicKeyValidate, Name: "validate", Queue: mockQ},
-			{Key: consumer.TopicKeyLog, Name: "log", Queue: mockQ},
+			{Key: topickey.TopicKeyValidate, Name: "validate", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
 		},
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, store, registry, consumer.TopicKeyStart, "orchestrator-start")
+	return NewController(logger, scope, store, registry, topickey.TopicKeyStart, "orchestrator-start")
 }
 
 // newMockStorage creates a MockStorage with a MockRequestStore that succeeds on Create.
@@ -91,7 +92,7 @@ func TestNewController(t *testing.T) {
 	controller := newTestController(t, ctrl, newMockStorage(ctrl), nil)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicKeyStart, controller.TopicKey())
+	assert.Equal(t, topickey.TopicKeyStart, controller.TopicKey())
 	assert.Equal(t, "orchestrator-start", controller.ConsumerGroup())
 	assert.Equal(t, "start", controller.Name())
 }

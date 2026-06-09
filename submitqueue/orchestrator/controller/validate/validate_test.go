@@ -22,10 +22,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	changeprovidermock "github.com/uber/submitqueue/submitqueue/extension/changeprovider/mock"
 	"github.com/uber/submitqueue/submitqueue/extension/mergechecker"
@@ -116,7 +117,7 @@ func newTestController(
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeyBatch, Name: "batch", Queue: mockQ}},
+		[]consumer.TopicConfig{{Key: topickey.TopicKeyBatch, Name: "batch", Queue: mockQ}},
 	)
 	require.NoError(t, err)
 
@@ -127,7 +128,7 @@ func newTestController(
 	cpFactory := changeprovidermock.NewMockFactory(ctrl)
 	cpFactory.EXPECT().For(gomock.Any()).Return(cp, nil).AnyTimes()
 
-	return NewController(logger, scope, store, registry, mcFactory, cpFactory, consumer.TopicKeyValidate, "orchestrator-validate")
+	return NewController(logger, scope, store, registry, mcFactory, cpFactory, topickey.TopicKeyValidate, "orchestrator-validate")
 }
 
 func TestNewController(t *testing.T) {
@@ -145,7 +146,7 @@ func TestNewController(t *testing.T) {
 	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), mc, nil)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicKeyValidate, controller.TopicKey())
+	assert.Equal(t, topickey.TopicKeyValidate, controller.TopicKey())
 	assert.Equal(t, "orchestrator-validate", controller.ConsumerGroup())
 	assert.Equal(t, "validate", controller.Name())
 }

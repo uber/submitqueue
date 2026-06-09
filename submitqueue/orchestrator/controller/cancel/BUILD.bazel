@@ -6,9 +6,10 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/orchestrator/controller/cancel",
     visibility = ["//visibility:public"],
     deps = [
+        "//core/consumer",
         "//entity/messagequeue",
-        "//submitqueue/core/consumer",
         "//submitqueue/core/request",
+        "//submitqueue/core/topickey",
         "//submitqueue/entity",
         "//submitqueue/extension/storage",
         "@com_github_uber_go_tally//:tally",
@@ -21,9 +22,10 @@ go_test(
     srcs = ["cancel_test.go"],
     embed = [":cancel"],
     deps = [
+        "//core/consumer",
         "//entity/messagequeue",
         "//extension/messagequeue/mock",
-        "//submitqueue/core/consumer",
+        "//submitqueue/core/topickey",
         "//submitqueue/entity",
         "//submitqueue/extension/storage",
         "//submitqueue/extension/storage/mock",

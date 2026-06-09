@@ -6,8 +6,8 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/orchestrator/controller/conclude",
     visibility = ["//visibility:public"],
     deps = [
+        "//core/consumer",
         "//core/metrics",
-        "//submitqueue/core/consumer",
         "//submitqueue/core/request",
         "//submitqueue/entity",
         "//submitqueue/extension/storage",
@@ -21,10 +21,11 @@ go_test(
     srcs = ["conclude_test.go"],
     embed = [":conclude"],
     deps = [
+        "//core/consumer",
         "//core/errs",
         "//entity/messagequeue",
         "//extension/messagequeue/mock",
-        "//submitqueue/core/consumer",
+        "//submitqueue/core/topickey",
         "//submitqueue/entity",
         "//submitqueue/extension/storage",
         "//submitqueue/extension/storage/mock",

@@ -22,10 +22,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
@@ -69,15 +70,15 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Key: consumer.TopicKeyBuild, Name: "build", Queue: mockQ},
-			{Key: consumer.TopicKeyMerge, Name: "merge", Queue: mockQ},
-			{Key: consumer.TopicKeyConclude, Name: "conclude", Queue: mockQ},
-			{Key: consumer.TopicKeyLog, Name: "log", Queue: mockQ},
+			{Key: topickey.TopicKeyBuild, Name: "build", Queue: mockQ},
+			{Key: topickey.TopicKeyMerge, Name: "merge", Queue: mockQ},
+			{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
 		},
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, store, registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
+	return NewController(logger, scope, store, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
 }
 
 // runProcess builds a delivery for batchID and invokes Process once.
@@ -95,7 +96,7 @@ func TestNewController(t *testing.T) {
 	controller := newTestController(t, ctrl, store, nil)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicKeySpeculate, controller.TopicKey())
+	assert.Equal(t, topickey.TopicKeySpeculate, controller.TopicKey())
 	assert.Equal(t, "orchestrator-speculate", controller.ConsumerGroup())
 	assert.Equal(t, "speculate", controller.Name())
 
@@ -270,13 +271,13 @@ func TestController_Process_TerminalSelfHeals(t *testing.T) {
 
 			registry, err := consumer.NewTopicRegistry(
 				[]consumer.TopicConfig{
-					{Key: consumer.TopicKeyConclude, Name: "conclude", Queue: mockQ},
+					{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: mockQ},
 				},
 			)
 			require.NoError(t, err)
 
 			logger := zaptest.NewLogger(t).Sugar()
-			controller := NewController(logger, tally.NoopScope, store, registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
+			controller := NewController(logger, tally.NoopScope, store, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
 
 			require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
 		})
@@ -324,14 +325,14 @@ func TestController_Process_CancelledTerminalSelfHealsDependents(t *testing.T) {
 
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Key: consumer.TopicKeyConclude, Name: "conclude", Queue: mockQ},
-			{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
+			{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: mockQ},
+			{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
 		},
 	)
 	require.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
-	controller := NewController(logger, tally.NoopScope, store, registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
+	controller := NewController(logger, tally.NoopScope, store, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
 
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
 
@@ -392,14 +393,14 @@ func TestController_Process_CancellingTerminalFlow(t *testing.T) {
 
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Key: consumer.TopicKeyConclude, Name: "conclude", Queue: mockQ},
-			{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
+			{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: mockQ},
+			{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
 		},
 	)
 	require.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
-	controller := NewController(logger, tally.NoopScope, store, registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
+	controller := NewController(logger, tally.NoopScope, store, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
 
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
 
@@ -502,13 +503,13 @@ func TestController_Process_CancellingNoDependents(t *testing.T) {
 
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Key: consumer.TopicKeyConclude, Name: "conclude", Queue: mockQ},
+			{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: mockQ},
 		},
 	)
 	require.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
-	controller := NewController(logger, tally.NoopScope, store, registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
+	controller := NewController(logger, tally.NoopScope, store, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
 
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
 }
@@ -542,14 +543,14 @@ func TestController_Process_CancellingTerminalCASVersionMismatch(t *testing.T) {
 
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Key: consumer.TopicKeyConclude, Name: "conclude", Queue: mockQ},
-			{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
+			{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: mockQ},
+			{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
 		},
 	)
 	require.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
-	controller := NewController(logger, tally.NoopScope, store, registry, consumer.TopicKeySpeculate, "orchestrator-speculate")
+	controller := NewController(logger, tally.NoopScope, store, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
 
 	err = runProcess(t, ctrl, controller, batch.ID)
 	require.Error(t, err)

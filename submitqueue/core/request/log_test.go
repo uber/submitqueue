@@ -20,9 +20,10 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/uber/submitqueue/core/consumer"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"go.uber.org/mock/gomock"
 )
@@ -39,7 +40,7 @@ func newTestRegistry(t *testing.T, ctrl *gomock.Controller, publishErr error) co
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeyLog, Name: "log", Queue: mockQ}},
+		[]consumer.TopicConfig{{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ}},
 	)
 	require.NoError(t, err)
 	return registry
@@ -94,7 +95,7 @@ func TestPublishBatchLogs_PartialFailure(t *testing.T) {
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeyLog, Name: "log", Queue: mockQ}},
+		[]consumer.TopicConfig{{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ}},
 	)
 	require.NoError(t, err)
 
@@ -137,7 +138,7 @@ func TestPublishLog_MessageIDScopedByStatus(t *testing.T) {
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeyLog, Name: "log", Queue: mockQ}},
+		[]consumer.TopicConfig{{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ}},
 	)
 	require.NoError(t, err)
 

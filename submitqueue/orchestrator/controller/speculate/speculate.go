@@ -20,9 +20,10 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/metrics"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
@@ -153,7 +154,7 @@ func (c *Controller) startSpeculation(ctx context.Context, batch entity.Batch) e
 		"speculation_chain", append(append([]string{}, batch.Dependencies...), batch.ID),
 	)
 
-	if err := c.publish(ctx, consumer.TopicKeyBuild, batch.ID, batch.Queue); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeyBuild, batch.ID, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to build: %w", err)
 	}
@@ -216,7 +217,7 @@ func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error 
 		return nil
 	}
 
-	if err := c.publish(ctx, consumer.TopicKeyMerge, batch.ID, batch.Queue); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeyMerge, batch.ID, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to merge: %w", err)
 	}
@@ -249,7 +250,7 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 		return fmt.Errorf("failed to update batch %s state to failed: %w", batch.ID, err)
 	}
 
-	if err := c.publish(ctx, consumer.TopicKeyConclude, batch.ID, batch.Queue); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeyConclude, batch.ID, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to conclude: %w", err)
 	}
@@ -317,7 +318,7 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 		return err
 	}
 
-	if err := c.publish(ctx, consumer.TopicKeyConclude, batch.ID, batch.Queue); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeyConclude, batch.ID, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to conclude: %w", err)
 	}
@@ -383,7 +384,7 @@ func (c *Controller) respeculateDependents(ctx context.Context, batch entity.Bat
 		// reads, consumer-pool parallelism / backpressure, and the existing
 		// state-machine dispatch in Process all argue for the publish. Revisit
 		// if the extra message hop ever shows up as latency or cost.
-		if err := c.publish(ctx, consumer.TopicKeySpeculate, depID, batch.Queue); err != nil {
+		if err := c.publish(ctx, topickey.TopicKeySpeculate, depID, batch.Queue); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 			return fmt.Errorf("failed to publish dependent batch %s to speculate: %w", depID, err)
 		}
@@ -413,7 +414,7 @@ func (c *Controller) fetchDependencies(ctx context.Context, batch entity.Batch) 
 // a terminal state. Used for self-healing when a previous publish was lost:
 // re-sending to conclude guarantees request-state reconciliation.
 func (c *Controller) fanout(ctx context.Context, batchID, partitionKey string) error {
-	if err := c.publish(ctx, consumer.TopicKeyConclude, batchID, partitionKey); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeyConclude, batchID, partitionKey); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to conclude: %w", err)
 	}

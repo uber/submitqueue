@@ -149,7 +149,8 @@ Paths follow the directory layout: shared code is top-level, domain code nests u
 - Proto (generated): `github.com/uber/submitqueue/{domain}/{service}/protopb`
 - Domain entities: `github.com/uber/submitqueue/{domain}/entity` (e.g. `.../submitqueue/entity`)
 - Domain extensions: `github.com/uber/submitqueue/{domain}/extension/{ext}[/{impl}]` (e.g. `.../submitqueue/extension/storage/mysql`)
-- Domain-internal infra: `github.com/uber/submitqueue/{domain}/core/{pkg}` (e.g. `.../submitqueue/core/consumer`, `.../submitqueue/core/request`)
+- Cross-domain consumer framework: `github.com/uber/submitqueue/core/consumer`; domain pipeline topic keys: `github.com/uber/submitqueue/{domain}/core/topickey`
+- Domain-internal infra: `github.com/uber/submitqueue/{domain}/core/{pkg}` (e.g. `.../submitqueue/core/request`)
 - Shared entities: `github.com/uber/submitqueue/entity/{name}` (e.g. `.../entity/messagequeue`)
 - Shared extensions: `github.com/uber/submitqueue/extension/{name}` (e.g. `.../extension/messagequeue`)
 - Cross-domain infra: `github.com/uber/submitqueue/core/{pkg}` (e.g. `.../core/errs`, `.../core/metrics`)

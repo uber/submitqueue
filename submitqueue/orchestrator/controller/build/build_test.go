@@ -22,11 +22,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
-	changesetfake "github.com/uber/submitqueue/submitqueue/core/changeset/fake"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 	buildfake "github.com/uber/submitqueue/submitqueue/extension/buildrunner/fake"
@@ -101,11 +101,11 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeyBuildSignal, Name: "buildsignal", Queue: mockQ}},
+		[]consumer.TopicConfig{{Key: topickey.TopicKeyBuildSignal, Name: "buildsignal", Queue: mockQ}},
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, store, staticBuildRunnerFactory{r: br}, registry, consumer.TopicKeyBuild, "orchestrator-build")
+	return NewController(logger, scope, store, staticBuildRunnerFactory{r: br}, registry, topickey.TopicKeyBuild, "orchestrator-build")
 }
 
 func TestNewController(t *testing.T) {
@@ -115,7 +115,7 @@ func TestNewController(t *testing.T) {
 	controller := newTestController(t, ctrl, store, buildfake.New(changesetfake.New()), nil)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicKeyBuild, controller.TopicKey())
+	assert.Equal(t, topickey.TopicKeyBuild, controller.TopicKey())
 	assert.Equal(t, "orchestrator-build", controller.ConsumerGroup())
 	assert.Equal(t, "build", controller.Name())
 }
@@ -193,11 +193,11 @@ func TestController_Process_TriggersWithBaseAndHead(t *testing.T) {
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeyBuildSignal, Name: "buildsignal", Queue: mockQ}},
+		[]consumer.TopicConfig{{Key: topickey.TopicKeyBuildSignal, Name: "buildsignal", Queue: mockQ}},
 	)
 	require.NoError(t, err)
 
-	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, staticBuildRunnerFactory{r: br}, registry, consumer.TopicKeyBuild, "orchestrator-build")
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, staticBuildRunnerFactory{r: br}, registry, topickey.TopicKeyBuild, "orchestrator-build")
 
 	msg := entityqueue.NewMessage(headBatch.ID, batchIDPayload(t, headBatch.ID), headBatch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -252,10 +252,10 @@ func TestController_Process_BuildStoreAlreadyExistsIsSwallowed(t *testing.T) {
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeyBuildSignal, Name: "buildsignal", Queue: mockQ}},
+		[]consumer.TopicConfig{{Key: topickey.TopicKeyBuildSignal, Name: "buildsignal", Queue: mockQ}},
 	)
 	require.NoError(t, err)
-	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, staticBuildRunnerFactory{r: br}, registry, consumer.TopicKeyBuild, "orchestrator-build")
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, staticBuildRunnerFactory{r: br}, registry, topickey.TopicKeyBuild, "orchestrator-build")
 
 	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -284,10 +284,10 @@ func TestController_Process_TriggerFailure(t *testing.T) {
 		Return(entity.BuildID{}, fmt.Errorf("provider down"))
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeyBuildSignal, Name: "buildsignal", Queue: queuemock.NewMockQueue(ctrl)}},
+		[]consumer.TopicConfig{{Key: topickey.TopicKeyBuildSignal, Name: "buildsignal", Queue: queuemock.NewMockQueue(ctrl)}},
 	)
 	require.NoError(t, err)
-	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, staticBuildRunnerFactory{r: br}, registry, consumer.TopicKeyBuild, "orchestrator-build")
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, staticBuildRunnerFactory{r: br}, registry, topickey.TopicKeyBuild, "orchestrator-build")
 
 	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)

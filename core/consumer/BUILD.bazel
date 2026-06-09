@@ -7,7 +7,7 @@ go_library(
         "controller.go",
         "registry.go",
     ],
-    importpath = "github.com/uber/submitqueue/submitqueue/core/consumer",
+    importpath = "github.com/uber/submitqueue/core/consumer",
     visibility = ["//visibility:public"],
     deps = [
         "//core/errs",
@@ -27,11 +27,12 @@ go_test(
     ],
     deps = [
         ":consumer",
+        "//core/consumer/mock",
         "//core/errs",
         "//entity/messagequeue",
         "//extension/messagequeue",
         "//extension/messagequeue/mock",
-        "//submitqueue/core/consumer/mock",
+        "//submitqueue/core/topickey",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_uber_go_tally//:tally",

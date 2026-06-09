@@ -28,13 +28,14 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
 	genericerrs "github.com/uber/submitqueue/core/errs/generic"
 	mysqlerrs "github.com/uber/submitqueue/core/errs/mysql"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	extqueue "github.com/uber/submitqueue/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/extension/messagequeue/mysql"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	yamlqueueconfig "github.com/uber/submitqueue/submitqueue/extension/queueconfig/yaml"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/submitqueue/gateway/controller"
@@ -198,10 +199,10 @@ func run() error {
 	// the gateway is the sole writer of the request log, persisting entries that
 	// the orchestrator publishes there.
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
-		{Key: consumer.TopicKeyStart, Name: "start", Queue: mysqlQueue},
-		{Key: consumer.TopicKeyCancel, Name: "cancel", Queue: mysqlQueue},
+		{Key: topickey.TopicKeyStart, Name: "start", Queue: mysqlQueue},
+		{Key: topickey.TopicKeyCancel, Name: "cancel", Queue: mysqlQueue},
 		{
-			Key:   consumer.TopicKeyLog,
+			Key:   topickey.TopicKeyLog,
 			Name:  "log",
 			Queue: mysqlQueue,
 			Subscription: extqueue.DefaultSubscriptionConfig(
@@ -278,7 +279,7 @@ func run() error {
 		),
 	)
 
-	logController := logctrl.NewController(logger.Sugar(), scope, store, consumer.TopicKeyLog, "gateway-log")
+	logController := logctrl.NewController(logger.Sugar(), scope, store, topickey.TopicKeyLog, "gateway-log")
 	if err := logConsumer.Register(logController); err != nil {
 		return fmt.Errorf("failed to register log controller: %w", err)
 	}

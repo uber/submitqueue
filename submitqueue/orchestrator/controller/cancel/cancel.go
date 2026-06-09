@@ -59,9 +59,10 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/core/consumer"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
@@ -286,7 +287,7 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 		c.metricsScope.Counter("batch_already_cancelling").Inc(1)
 	}
 
-	if err := c.publishBatchID(ctx, consumer.TopicKeySpeculate, batch.ID, batch.Queue); err != nil {
+	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, batch.ID, batch.Queue); err != nil {
 		c.metricsScope.Counter("publish_errors").Inc(1)
 		return fmt.Errorf("failed to hand off cancelled batch %s to speculate: %w", batch.ID, err)
 	}

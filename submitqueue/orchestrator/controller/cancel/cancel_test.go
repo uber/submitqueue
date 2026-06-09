@@ -22,9 +22,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/core/consumer"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
@@ -50,16 +51,16 @@ func newRegistry(t *testing.T, ctrl *gomock.Controller) (consumer.TopicRegistry,
 	q.EXPECT().Publisher().Return(pub).AnyTimes()
 
 	reg, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
-		{Key: consumer.TopicKeyCancel, Name: "cancel", Queue: q},
-		{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: q},
-		{Key: consumer.TopicKeyLog, Name: "log", Queue: q},
+		{Key: topickey.TopicKeyCancel, Name: "cancel", Queue: q},
+		{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: q},
+		{Key: topickey.TopicKeyLog, Name: "log", Queue: q},
 	})
 	require.NoError(t, err)
 	return reg, pub
 }
 
 func newController(t *testing.T, store storage.Storage, registry consumer.TopicRegistry) *Controller {
-	return NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, registry, consumer.TopicKeyCancel, "orchestrator-cancel")
+	return NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, registry, topickey.TopicKeyCancel, "orchestrator-cancel")
 }
 
 func newDelivery(t *testing.T, ctrl *gomock.Controller, payload []byte, partitionKey string) consumer.Delivery {
@@ -79,7 +80,7 @@ func TestNewController(t *testing.T) {
 	controller := newController(t, store, registry)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicKeyCancel, controller.TopicKey())
+	assert.Equal(t, topickey.TopicKeyCancel, controller.TopicKey())
 	assert.Equal(t, "orchestrator-cancel", controller.ConsumerGroup())
 	assert.Equal(t, "cancel", controller.Name())
 
