@@ -21,6 +21,7 @@ import (
 	"github.com/uber-go/tally/v4"
 	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
@@ -87,10 +88,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"attempt", delivery.Attempt(),
 	)
 
-	// Persist request log to storage
-	if err := c.store.GetRequestLogStore().Insert(ctx, logEntry); err != nil {
+	// Persist request log and summary to storage.
+	if err := corerequest.PersistLog(ctx, c.store, logEntry); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to insert request log: %w", err)
+		return fmt.Errorf("failed to persist request log: %w", err)
 	}
 
 	return nil // Success - message will be acked

@@ -67,8 +67,11 @@ func newTestRegistryWithNoopPublisher(t *testing.T, ctrl *gomock.Controller) con
 func noopStorage(ctrl *gomock.Controller) storage.Storage {
 	logStore := storagemock.NewMockRequestLogStore(ctrl)
 	logStore.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
+	summaryStore.EXPECT().UpsertFromLog(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
+	store.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
 	return store
 }
 

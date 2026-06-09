@@ -16,6 +16,7 @@ package entity
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -96,6 +97,10 @@ const (
 type RequestLog struct {
 	// RequestID is the ID of the request this log entry belongs to. References entity.Request.ID.
 	RequestID string `json:"request_id"`
+	// Queue is the queue this request belongs to. New log producers should set it explicitly.
+	Queue string `json:"queue"`
+	// ChangeURIs are the original change URIs submitted with the request. They are populated by gateway-originated accepted logs.
+	ChangeURIs []string `json:"change_uris"`
 	// TimestampMs is the time this log entry was created, in milliseconds since Unix epoch.
 	TimestampMs int64 `json:"timestamp_ms"`
 	// Status is the request status at the time this log entry was created. It may contain requests states from the state machine and also display-friendly intermediate statuses.
@@ -117,11 +122,24 @@ type RequestLog struct {
 // lastError is the last error message associated with the status at the time of this log entry, empty string if no error.
 // metadata is a set of key-value pairs providing additional context for this log entry. Not constrained to any specific format or schema, used for display or debugging purposes.
 func NewRequestLog(requestID string, status RequestStatus, requestVersion int32, lastError string, metadata map[string]string) RequestLog {
+	return NewRequestLogWithDetails(requestID, QueueFromRequestID(requestID), nil, status, requestVersion, lastError, metadata)
+}
+
+// NewRequestLogWithDetails creates a new RequestLog with queue and change information for list summaries.
+func NewRequestLogWithDetails(requestID, queue string, changeURIs []string, status RequestStatus, requestVersion int32, lastError string, metadata map[string]string) RequestLog {
 	if metadata == nil {
 		metadata = make(map[string]string)
 	}
+	if queue == "" {
+		queue = QueueFromRequestID(requestID)
+	}
+	if changeURIs == nil {
+		changeURIs = []string{}
+	}
 	return RequestLog{
 		RequestID:      requestID,
+		Queue:          queue,
+		ChangeURIs:     changeURIs,
 		TimestampMs:    time.Now().UnixMilli(),
 		Status:         status,
 		RequestVersion: requestVersion,
@@ -146,5 +164,53 @@ func RequestLogFromBytes(data []byte) (RequestLog, error) {
 	if log.Metadata == nil {
 		log.Metadata = make(map[string]string)
 	}
+	if log.ChangeURIs == nil {
+		log.ChangeURIs = []string{}
+	}
+	if log.Queue == "" {
+		log.Queue = QueueFromRequestID(log.RequestID)
+	}
 	return log, nil
+}
+
+// QueueFromRequestID extracts the queue from the current "<queue>/<number>" request ID format.
+// It strips only a trailing numeric path segment so queue names may contain slashes.
+func QueueFromRequestID(requestID string) string {
+	idx := strings.LastIndex(requestID, "/")
+	if idx <= 0 || idx == len(requestID)-1 {
+		return ""
+	}
+	for _, r := range requestID[idx+1:] {
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	return requestID[:idx]
+}
+
+// IsKnownRequestStatus returns true if status is a public request status emitted by SubmitQueue.
+func IsKnownRequestStatus(status RequestStatus) bool {
+	switch status {
+	case RequestStatusAccepted,
+		RequestStatusStarted,
+		RequestStatusValidating,
+		RequestStatusValidated,
+		RequestStatusBatching,
+		RequestStatusBatched,
+		RequestStatusScored,
+		RequestStatusSpeculating,
+		RequestStatusSpeculated,
+		RequestStatusBuilding,
+		RequestStatusBuilt,
+		RequestStatusWaitingPath,
+		RequestStatusLanding,
+		RequestStatusProcessing,
+		RequestStatusLanded,
+		RequestStatusError,
+		RequestStatusCancelling,
+		RequestStatusCancelled:
+		return true
+	default:
+		return false
+	}
 }
