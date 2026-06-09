@@ -22,9 +22,10 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap"
 
+	"github.com/uber/submitqueue/core/consumer"
 	coremetrics "github.com/uber/submitqueue/core/metrics"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/pusher"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -184,11 +185,11 @@ func (c *Controller) collectChanges(ctx context.Context, batch entity.Batch) ([]
 // fanout publishes the batch ID to conclude (so requests are updated) and
 // to speculate (so dependents can re-evaluate now that this batch is done).
 func (c *Controller) fanout(ctx context.Context, batchID, partitionKey string) error {
-	if err := c.publish(ctx, consumer.TopicKeyConclude, batchID, partitionKey); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeyConclude, batchID, partitionKey); err != nil {
 		coremetrics.NamedCounter(c.metricsScope, "process", "publish_conclude_errors", 1)
 		return fmt.Errorf("failed to publish to conclude: %w", err)
 	}
-	if err := c.publish(ctx, consumer.TopicKeySpeculate, batchID, partitionKey); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeySpeculate, batchID, partitionKey); err != nil {
 		coremetrics.NamedCounter(c.metricsScope, "process", "publish_speculate_errors", 1)
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}

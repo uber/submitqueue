@@ -20,9 +20,10 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	pb "github.com/uber/submitqueue/submitqueue/gateway/protopb"
@@ -43,7 +44,7 @@ type CancelController struct {
 
 // NewCancelController creates a new instance of the gateway cancel controller.
 // The controller writes a RequestStatusCancelling log entry through requestLogStore and
-// publishes cancel requests to the topic registered under consumer.TopicKeyCancel.
+// publishes cancel requests to the topic registered under topickey.TopicKeyCancel.
 func NewCancelController(logger *zap.SugaredLogger, scope tally.Scope, requestLogStore storage.RequestLogStore, registry consumer.TopicRegistry) *CancelController {
 	return &CancelController{
 		logger:          logger,
@@ -115,7 +116,7 @@ func (c *CancelController) Cancel(ctx context.Context, req *pb.CancelRequest) (*
 
 	c.logger.Infow("cancel request published to queue",
 		"sqid", cancelRequest.ID,
-		"topic_key", consumer.TopicKeyCancel,
+		"topic_key", topickey.TopicKeyCancel,
 	)
 	c.metricsScope.Counter("cancel_publish_success").Inc(1)
 
@@ -133,14 +134,14 @@ func (c *CancelController) publishToQueue(ctx context.Context, cancelRequest ent
 	// TODO: figure best way to ID and partition the message according to new guidelines on queue usage
 	msg := entityqueue.NewMessage(cancelRequest.ID, payload, cancelRequest.ID, nil)
 
-	q, ok := c.registry.Queue(consumer.TopicKeyCancel)
+	q, ok := c.registry.Queue(topickey.TopicKeyCancel)
 	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", consumer.TopicKeyCancel)
+		return fmt.Errorf("no queue registered for topic key %s", topickey.TopicKeyCancel)
 	}
 
-	topicName, ok := c.registry.TopicName(consumer.TopicKeyCancel)
+	topicName, ok := c.registry.TopicName(topickey.TopicKeyCancel)
 	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", consumer.TopicKeyCancel)
+		return fmt.Errorf("no topic name registered for topic key %s", topickey.TopicKeyCancel)
 	}
 
 	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {

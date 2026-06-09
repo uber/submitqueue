@@ -22,10 +22,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	buildrunnermock "github.com/uber/submitqueue/submitqueue/extension/buildrunner/mock"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
@@ -59,8 +60,8 @@ func newTestHarness(t *testing.T, ctrl *gomock.Controller) *testHarness {
 	speculateQ.EXPECT().Publisher().Return(speculatePub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
-		{Key: consumer.TopicKeyBuildSignal, Name: "buildsignal", Queue: signalQ},
-		{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: speculateQ},
+		{Key: topickey.TopicKeyBuildSignal, Name: "buildsignal", Queue: signalQ},
+		{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: speculateQ},
 	})
 	require.NoError(t, err)
 
@@ -76,7 +77,7 @@ func newTestHarness(t *testing.T, ctrl *gomock.Controller) *testHarness {
 		store,
 		brFactory,
 		registry,
-		consumer.TopicKeyBuildSignal,
+		topickey.TopicKeyBuildSignal,
 		"orchestrator-buildsignal",
 	)
 	return &testHarness{
@@ -108,7 +109,7 @@ func TestController_Identity(t *testing.T) {
 	h := newTestHarness(t, ctrl)
 
 	assert.Equal(t, "buildsignal", h.controller.Name())
-	assert.Equal(t, consumer.TopicKeyBuildSignal, h.controller.TopicKey())
+	assert.Equal(t, topickey.TopicKeyBuildSignal, h.controller.TopicKey())
 	assert.Equal(t, "orchestrator-buildsignal", h.controller.ConsumerGroup())
 
 	var _ consumer.Controller = h.controller

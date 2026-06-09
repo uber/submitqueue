@@ -20,10 +20,11 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/metrics"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	"github.com/uber/submitqueue/extension/counter"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -293,14 +294,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// Publish to score topic for further processing.
 	// If it fails and the controller retries, a new batch will be created with the new batch ID but the same request ID.
 	// The downstream logic should be able to handle stale entries by looking at the state of the batch.
-	if err := c.publish(ctx, consumer.TopicKeyScore, batch.ID, batch.Queue); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeyScore, batch.ID, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish batch ID to score topic: %w", err)
 	}
 
 	c.logger.Infow("published batch to score topic",
 		"batch_id", batch.ID,
-		"topic_key", consumer.TopicKeyScore,
+		"topic_key", topickey.TopicKeyScore,
 	)
 
 	return nil // Success - message will be acked

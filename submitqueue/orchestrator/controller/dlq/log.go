@@ -18,8 +18,8 @@ import (
 	"context"
 
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/metrics"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"go.uber.org/zap"
 )
 

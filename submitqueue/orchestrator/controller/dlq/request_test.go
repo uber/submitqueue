@@ -20,9 +20,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber/submitqueue/core/consumer"
 	queue "github.com/uber/submitqueue/entity/messagequeue"
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -33,7 +34,7 @@ func TestDLQRequestController_InterfaceAndAccessors(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
 
-	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, DecodeRequestID, TopicKey(consumer.TopicKeyValidate), "orchestrator-validate-dlq")
+	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, DecodeRequestID, TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
 
 	assert.Equal(t, "validate_dlq", c.Name())
 	assert.Equal(t, consumer.TopicKey("validate_dlq"), c.TopicKey())
@@ -56,7 +57,7 @@ func TestDLQRequestController_Process_LandRequestPayload(t *testing.T) {
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 
-	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, DecodeLandRequestID, TopicKey(consumer.TopicKeyStart), "orchestrator-start-dlq")
+	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, DecodeLandRequestID, TopicKey(topickey.TopicKeyStart), "orchestrator-start-dlq")
 
 	payload, err := entity.LandRequest{ID: "q/1", Queue: "q"}.ToBytes()
 	require.NoError(t, err)
@@ -81,7 +82,7 @@ func TestDLQRequestController_Process_CancelRequestPayload(t *testing.T) {
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 
-	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, DecodeCancelRequestID, TopicKey(consumer.TopicKeyCancel), "orchestrator-cancel-dlq")
+	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, DecodeCancelRequestID, TopicKey(topickey.TopicKeyCancel), "orchestrator-cancel-dlq")
 
 	payload, err := entity.CancelRequest{ID: "q/7", Reason: "user"}.ToBytes()
 	require.NoError(t, err)
@@ -106,7 +107,7 @@ func TestDLQRequestController_Process_RequestIDPayload(t *testing.T) {
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 
-	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, DecodeRequestID, TopicKey(consumer.TopicKeyBatch), "orchestrator-batch-dlq")
+	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, DecodeRequestID, TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")
 
 	payload, err := entity.RequestID{ID: "q/3"}.ToBytes()
 	require.NoError(t, err)
@@ -131,7 +132,7 @@ func TestDLQRequestController_Process_AlreadyTerminalSkipsUpdateButLogsAnyway(t 
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 
-	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, DecodeRequestID, TopicKey(consumer.TopicKeyValidate), "orchestrator-validate-dlq")
+	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, DecodeRequestID, TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
 
 	payload, err := entity.RequestID{ID: "q/1"}.ToBytes()
 	require.NoError(t, err)
@@ -146,7 +147,7 @@ func TestDLQRequestController_Process_MalformedPayloadFails(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	// no store calls expected
 
-	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, DecodeRequestID, TopicKey(consumer.TopicKeyValidate), "orchestrator-validate-dlq")
+	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, DecodeRequestID, TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
 
 	delivery := newMockDelivery(ctrl, []byte("not json"))
 	err := c.Process(context.Background(), delivery)
@@ -159,7 +160,7 @@ func TestDLQRequestController_Process_EmptyIDFails(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	// no store calls expected
 
-	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, DecodeRequestID, TopicKey(consumer.TopicKeyValidate), "orchestrator-validate-dlq")
+	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, DecodeRequestID, TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
 
 	payload, err := entity.RequestID{ID: ""}.ToBytes()
 	require.NoError(t, err)

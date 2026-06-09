@@ -47,5 +47,5 @@ Reconciliation is safe to run more than once for the same message:
 ## See also
 
 - `core/errs/README.md` — the error-processing framework, including `AlwaysRetryableProcessor` and the choice of processor for primary vs. DLQ consumers.
-- `submitqueue/core/consumer/README.md` — how the consumer applies the processor to controller errors and decides ack/nack/reject.
+- `core/consumer/README.md` — how the consumer applies the processor to controller errors and decides ack/nack/reject.
 - `doc/rfc/submitqueue/workflow.md` — the per-stage primary pipeline that the DLQ companions mirror.

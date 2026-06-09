@@ -16,9 +16,10 @@ go_test(
         "integration",
     ],
     deps = [
+        "//core/consumer",
         "//extension/messagequeue/mysql",
-        "//submitqueue/core/consumer",
         "//submitqueue/core/request",
+        "//submitqueue/core/topickey",
         "//submitqueue/entity",
         "//submitqueue/gateway/protopb",
         "//test/testutil",

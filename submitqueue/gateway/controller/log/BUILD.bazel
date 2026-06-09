@@ -6,8 +6,8 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/gateway/controller/log",
     visibility = ["//visibility:public"],
     deps = [
+        "//core/consumer",
         "//core/metrics",
-        "//submitqueue/core/consumer",
         "//submitqueue/entity",
         "//submitqueue/extension/storage",
         "@com_github_uber_go_tally//:tally",
@@ -22,7 +22,7 @@ go_test(
     deps = [
         "//entity/messagequeue",
         "//extension/messagequeue/mock",
-        "//submitqueue/core/consumer",
+        "//submitqueue/core/topickey",
         "//submitqueue/entity",
         "//submitqueue/extension/storage/mock",
         "@com_github_stretchr_testify//require",

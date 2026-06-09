@@ -12,11 +12,11 @@ go_test(
         "integration",
     ],
     deps = [
+        "//core/consumer",
         "//core/errs",
         "//entity/messagequeue",
         "//extension/messagequeue",
         "//extension/messagequeue/mysql",
-        "//submitqueue/core/consumer",
         "//test/testutil",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_stretchr_testify//require",

@@ -27,10 +27,11 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/core/metrics"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -174,7 +175,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	// Re-evaluate the batch state machine with the latest build status.
-	if err := c.publishBatchID(ctx, consumer.TopicKeySpeculate, build.BatchID, msg.PartitionKey); err != nil {
+	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, build.BatchID, msg.PartitionKey); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}

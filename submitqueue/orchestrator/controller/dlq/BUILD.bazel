@@ -12,8 +12,8 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/orchestrator/controller/dlq",
     visibility = ["//visibility:public"],
     deps = [
+        "//core/consumer",
         "//core/metrics",
-        "//submitqueue/core/consumer",
         "//submitqueue/entity",
         "//submitqueue/extension/storage",
         "@com_github_uber_go_tally//:tally",
@@ -32,10 +32,11 @@ go_test(
     ],
     embed = [":dlq"],
     deps = [
+        "//core/consumer",
         "//core/errs",
         "//entity/messagequeue",
         "//extension/messagequeue/mock",
-        "//submitqueue/core/consumer",
+        "//submitqueue/core/topickey",
         "//submitqueue/entity",
         "//submitqueue/extension/storage",
         "//submitqueue/extension/storage/mock",

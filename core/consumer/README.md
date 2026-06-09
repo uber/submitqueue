@@ -26,7 +26,7 @@ The top-level orchestrator. Register controllers, start consuming, and stop grac
 
 ```go
 registry, _ := consumer.NewTopicRegistry([]consumer.TopicConfig{
-    {Key: consumer.TopicKeyStart, Name: "request", Queue: q, Subscription: subConfig},
+    {Key: topickey.TopicKeyStart, Name: "request", Queue: q, Subscription: subConfig},
 })
 
 c := consumer.New(logger, scope, registry,
@@ -71,13 +71,13 @@ The `TopicRegistry` maps topic keys to queue backends, topic names, and subscrip
 ```go
 registry, _ := consumer.NewTopicRegistry([]consumer.TopicConfig{
     {
-        Key:          consumer.TopicKeyStart,
+        Key:          topickey.TopicKeyStart,
         Name:         "request",
         Queue:        q,
         Subscription: extqueue.DefaultSubscriptionConfig("worker-1", "orchestrator"),
     },
     {
-        Key:   consumer.TopicKeyBuild,
+        Key:   topickey.TopicKeyBuild,
         Name:  "build",
         Queue: q,
         // No Subscription — publish-only topic
@@ -85,7 +85,7 @@ registry, _ := consumer.NewTopicRegistry([]consumer.TopicConfig{
 })
 ```
 
-**Topic keys** are fixed identifiers for pipeline stages (e.g., `TopicKeyStart`, `TopicKeyBuild`). The actual queue topic name is configured separately, so library consumers can use their own naming conventions.
+**Topic keys** are fixed identifiers for pipeline stages (e.g., `TopicKeyStart`, `TopicKeyBuild`). Constants live in each domain's `core/topickey` package; this package defines only the `TopicKey` type and registry machinery. The actual queue topic name is configured separately, so library consumers can use their own naming conventions.
 
 ## Error Handling
 

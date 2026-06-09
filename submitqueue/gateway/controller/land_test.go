@@ -22,11 +22,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	countermock "github.com/uber/submitqueue/extension/counter/mock"
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/queueconfig"
 	qcmock "github.com/uber/submitqueue/submitqueue/extension/queueconfig/mock"
@@ -47,7 +48,7 @@ func newTestRegistry(t *testing.T, ctrl *gomock.Controller) (consumer.TopicRegis
 	q.EXPECT().Publisher().Return(pub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
-		{Key: consumer.TopicKeyStart, Name: "start", Queue: q},
+		{Key: topickey.TopicKeyStart, Name: "start", Queue: q},
 	})
 	require.NoError(t, err)
 	return registry, pub

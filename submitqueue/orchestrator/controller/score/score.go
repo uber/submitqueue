@@ -19,10 +19,11 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/metrics"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/scorer"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -160,14 +161,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	// Publish to speculate topic
-	if err := c.publish(ctx, consumer.TopicKeySpeculate, batch.ID, batch.Queue); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeySpeculate, batch.ID, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}
 
 	c.logger.Infow("published batch to speculate",
 		"batch_id", batch.ID,
-		"topic_key", consumer.TopicKeySpeculate,
+		"topic_key", topickey.TopicKeySpeculate,
 	)
 
 	return nil // Success - message will be acked
