@@ -27,7 +27,6 @@ package entity
 type ChangeInfo struct {
 	// URI is the canonical VCS identifier for this change.
 	// Scheme is "git://"; path encodes host, repo, ref, and new revision.
-	// This mirrors the ChangeInfo.URI pattern used in SubmitQueue.
 	URI string `json:"uri"`
 
 	// PreviousURI is the URI of the prior revision on the same ref, if known.
@@ -35,15 +34,8 @@ type ChangeInfo struct {
 	// Example: "git://github.com/uber/go-code/refs/heads/main/aabbccdd..."
 	PreviousURI string `json:"previous_uri,omitempty"`
 
-	// Author is the identity of the person who authored the change.
-	Author Author `json:"author"`
-}
-
-// Author identifies the person who authored a change.
-// Mirrors SubmitQueue's Author to keep the two domains consistent.
-type Author struct {
-	// Name is the display name of the author.
-	Name string `json:"name"`
-	// Email is the email address of the author.
-	Email string `json:"email,omitempty"`
+	// AuthorName is the display name of the person who authored the change.
+	AuthorName string `json:"author_name,omitempty"`
+	// AuthorEmail is the email address of the author.
+	AuthorEmail string `json:"author_email,omitempty"`
 }

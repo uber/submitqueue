@@ -1,0 +1,13 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "changeingester",
+    srcs = ["logging.go"],
+    importpath = "github.com/uber/submitqueue/stovepipe/extension/changeingester",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//stovepipe/entity",
+        "//stovepipe/extension",
+        "@org_uber_go_zap//:zap",
+    ],
+)
