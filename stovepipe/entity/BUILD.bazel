@@ -3,8 +3,9 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "entity",
     srcs = [
+        "batch.go",
+        "commit.go",
         "entity.go",
-        "ingest_request.go",
     ],
     importpath = "github.com/uber/submitqueue/stovepipe/entity",
     visibility = ["//visibility:public"],

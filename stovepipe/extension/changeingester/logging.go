@@ -39,8 +39,8 @@ func (h LoggingHandler) IngestChange(ctx context.Context, info entity.ChangeInfo
 	h.logger.Info("ingested change",
 		zap.String("uri", info.URI),
 		zap.String("previous_uri", info.PreviousURI),
-		zap.String("author", info.Author.Name),
-		zap.String("author_email", info.Author.Email),
+		zap.String("author_name", info.AuthorName),
+		zap.String("author_email", info.AuthorEmail),
 	)
 	return nil
 }
