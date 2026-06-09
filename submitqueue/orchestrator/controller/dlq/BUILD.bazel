@@ -16,7 +16,7 @@ go_library(
         "//submitqueue/core/consumer",
         "//submitqueue/entity",
         "//submitqueue/extension/storage",
-        "@com_github_uber_go_tally_v4//:tally",
+        "@com_github_uber_go_tally//:tally",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -41,7 +41,7 @@ go_test(
         "//submitqueue/extension/storage/mock",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
-        "@com_github_uber_go_tally_v4//:tally",
+        "@com_github_uber_go_tally//:tally",
         "@org_uber_go_mock//gomock",
         "@org_uber_go_zap//zaptest",
     ],

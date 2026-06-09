@@ -13,7 +13,7 @@ go_library(
     deps = [
         "//stovepipe/orchestrator/controller",
         "//stovepipe/orchestrator/protopb",
-        "@com_github_uber_go_tally_v4//:tally",
+        "@com_github_uber_go_tally//:tally",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//reflection",
         "@org_uber_go_zap//:zap",

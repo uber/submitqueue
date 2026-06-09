@@ -56,7 +56,7 @@ go_library(
         "//submitqueue/orchestrator/controller/validate",
         "//submitqueue/orchestrator/protopb",
         "@com_github_go_sql_driver_mysql//:mysql",
-        "@com_github_uber_go_tally_v4//:tally",
+        "@com_github_uber_go_tally//:tally",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//reflection",
         "@org_golang_x_oauth2//:oauth2",

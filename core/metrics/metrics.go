@@ -17,7 +17,7 @@ package metrics
 import (
 	"time"
 
-	"github.com/uber-go/tally/v4"
+	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/core/errs"
 )
 

@@ -22,7 +22,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/uber-go/tally/v4"
+	"github.com/uber-go/tally"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	storagesuite "github.com/uber/submitqueue/test/integration/submitqueue/extension/storage"
 	"github.com/uber/submitqueue/test/testutil"

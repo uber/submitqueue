@@ -14,7 +14,7 @@ go_library(
         "//submitqueue/entity",
         "//submitqueue/entity/github",
         "//submitqueue/extension/mergechecker",
-        "@com_github_uber_go_tally_v4//:tally",
+        "@com_github_uber_go_tally//:tally",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -34,7 +34,7 @@ go_test(
         "//submitqueue/extension/mergechecker",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
-        "@com_github_uber_go_tally_v4//:tally",
+        "@com_github_uber_go_tally//:tally",
         "@org_uber_go_zap//zaptest",
     ],
 )

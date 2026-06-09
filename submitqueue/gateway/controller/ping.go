@@ -19,7 +19,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/uber-go/tally/v4"
+	"github.com/uber-go/tally"
 	pb "github.com/uber/submitqueue/submitqueue/gateway/protopb"
 	"go.uber.org/zap"
 )
