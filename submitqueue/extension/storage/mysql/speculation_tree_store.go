@@ -45,12 +45,12 @@ func (s *speculationTreeStore) Get(ctx context.Context, batchID string) (ret ent
 	defer func() { op.Complete(retErr) }()
 
 	var st entity.SpeculationTree
-	var speculationsJSON []byte
+	var pathsJSON []byte
 
 	err := s.db.QueryRowContext(ctx,
-		"SELECT batch_id, speculations FROM speculation_tree WHERE batch_id = ?",
+		"SELECT batch_id, paths, version FROM speculation_tree WHERE batch_id = ?",
 		batchID,
-	).Scan(&st.BatchID, &speculationsJSON)
+	).Scan(&st.BatchID, &pathsJSON, &st.Version)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.SpeculationTree{}, storage.WrapNotFound(err)
@@ -59,8 +59,8 @@ func (s *speculationTreeStore) Get(ctx context.Context, batchID string) (ret ent
 		return entity.SpeculationTree{}, fmt.Errorf("failed to get speculation tree entity batchID=%s from the database: %w", batchID, err)
 	}
 
-	if err := json.Unmarshal(speculationsJSON, &st.Speculations); err != nil {
-		return entity.SpeculationTree{}, fmt.Errorf("failed to unmarshal speculations for speculation tree entity batchID=%s from the database: %w", batchID, err)
+	if err := json.Unmarshal(pathsJSON, &st.Paths); err != nil {
+		return entity.SpeculationTree{}, fmt.Errorf("failed to unmarshal paths for speculation tree entity batchID=%s from the database: %w", batchID, err)
 	}
 
 	return st, nil
@@ -71,14 +71,14 @@ func (s *speculationTreeStore) Create(ctx context.Context, speculationTree entit
 	op := metrics.Begin(s.scope, "create")
 	defer func() { op.Complete(retErr) }()
 
-	speculationsJSON, err := json.Marshal(speculationTree.Speculations)
+	pathsJSON, err := json.Marshal(speculationTree.Paths)
 	if err != nil {
-		return fmt.Errorf("failed to marshal speculations batchID=%s for Create speculation tree entity: %w", speculationTree.BatchID, err)
+		return fmt.Errorf("failed to marshal paths batchID=%s for Create speculation tree entity: %w", speculationTree.BatchID, err)
 	}
 
 	_, err = s.db.ExecContext(ctx,
-		"INSERT INTO speculation_tree (batch_id, speculations) VALUES (?, ?)",
-		speculationTree.BatchID, speculationsJSON,
+		"INSERT INTO speculation_tree (batch_id, paths, version) VALUES (?, ?, ?)",
+		speculationTree.BatchID, pathsJSON, speculationTree.Version,
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
@@ -91,22 +91,26 @@ func (s *speculationTreeStore) Create(ctx context.Context, speculationTree entit
 	return nil
 }
 
-// UpdateSpeculations updates the speculations of a speculation tree. Returns ErrNotFound if the speculation tree is not found.
-func (s *speculationTreeStore) UpdateSpeculations(ctx context.Context, batchID string, speculations []entity.SpeculationInfo) (retErr error) {
-	op := metrics.Begin(s.scope, "update_speculations")
+// Update overwrites the paths of an existing speculation tree and sets its
+// version to newVersion if the current persisted version matches oldVersion.
+// If versions do not match (or no tree exists for batchID), returns
+// ErrVersionMismatch. Version arithmetic is owned by the caller; this is a
+// pure conditional write.
+func (s *speculationTreeStore) Update(ctx context.Context, batchID string, oldVersion, newVersion int32, paths []entity.SpeculationPathInfo) (retErr error) {
+	op := metrics.Begin(s.scope, "update")
 	defer func() { op.Complete(retErr) }()
 
-	speculationsJSON, err := json.Marshal(speculations)
+	pathsJSON, err := json.Marshal(paths)
 	if err != nil {
-		return fmt.Errorf("failed to marshal speculations batchID=%s for UpdateSpeculations: %w", batchID, err)
+		return fmt.Errorf("failed to marshal paths batchID=%s for Update: %w", batchID, err)
 	}
 
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE speculation_tree SET speculations = ? WHERE batch_id = ?",
-		speculationsJSON, batchID,
+		"UPDATE speculation_tree SET paths = ?, version = ? WHERE batch_id = ? AND version = ?",
+		pathsJSON, newVersion, batchID, oldVersion,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to update speculations for batchID=%q: %w", batchID, err)
+		return fmt.Errorf("failed to update speculation tree for batchID=%q oldVersion=%d newVersion=%d: %w", batchID, oldVersion, newVersion, err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
@@ -114,9 +118,18 @@ func (s *speculationTreeStore) UpdateSpeculations(ctx context.Context, batchID s
 		return fmt.Errorf("failed to get rows affected from update for batchID=%q: %w", batchID, err)
 	}
 
-	if rowsAffected != 1 {
-		return storage.WrapNotFound(fmt.Errorf("speculation tree entity batchID=%s", batchID))
+	switch rowsAffected {
+	case 1:
+		return nil
+	case 0:
+		return fmt.Errorf(
+			"version mismatch for speculation tree update: batchID=%q expected_version=%d: %w",
+			batchID, oldVersion, storage.ErrVersionMismatch,
+		)
+	default:
+		return fmt.Errorf(
+			"unexpected rows affected %d for speculation tree update batchID=%q",
+			rowsAffected, batchID,
+		)
 	}
-
-	return nil
 }
