@@ -1,0 +1,9 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "enumerator",
+    srcs = ["enumerator.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/extension/speculation/enumerator",
+    visibility = ["//visibility:public"],
+    deps = ["//submitqueue/entity"],
+)
