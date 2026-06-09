@@ -14,11 +14,13 @@
 
 package entity
 
-// BatchChanges is the normalized, batch-level view of all changes in a batch,
-// assembled by the score controller and handed to a Scorer. A Batch references
-// only request IDs, so the controller resolves each request's change records and
-// flattens their details into Changes — giving the scorer the whole batch's
-// change facts in one value without coupling it to storage.
+// BatchChanges is the normalized, batch-level view of all changes in a batch:
+// one ChangeInfo per claimed URI, aggregated across every request the batch
+// contains. It is produced by the shared changeset resolver (Resolver.DetailedForBatch)
+// and consumed by a Scorer. A Batch references only request IDs, so the resolver
+// resolves each request's change records and flattens their details into Changes —
+// giving the scorer the whole batch's change facts in one value without coupling
+// it to storage.
 type BatchChanges struct {
 	// BatchID is the batch being scored. Format: "<queue>/batch/<counter_value>".
 	BatchID string

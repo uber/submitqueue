@@ -1,0 +1,23 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "fake",
+    srcs = ["fake.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/core/changeset/fake",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//submitqueue/core/changeset",
+        "//submitqueue/entity",
+    ],
+)
+
+go_test(
+    name = "fake_test",
+    srcs = ["fake_test.go"],
+    embed = [":fake"],
+    deps = [
+        "//submitqueue/entity",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)
