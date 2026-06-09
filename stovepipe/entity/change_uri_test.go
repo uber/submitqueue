@@ -12,17 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package topickey defines Stovepipe pipeline stage identifiers.
-package topickey
+package entity
 
-import "github.com/uber/submitqueue/core/consumer"
+import (
+	"testing"
 
-// TopicKey is the shared pipeline stage identifier type.
-type TopicKey = consumer.TopicKey
-
-const (
-	// TopicKeyStart is the pipeline stage where trunk change events arrive from the gateway.
-	TopicKeyStart TopicKey = "start"
-	// TopicKeyValidate is the pipeline stage where commits are published for metadata resolution.
-	TopicKeyValidate TopicKey = "validate"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestChangeURI_RoundTrip(t *testing.T) {
+	original := ChangeURI{URI: "git://uber/monorepo/main/abcdef0123456789abcdef0123456789abcdef01"}
+	data, err := original.ToBytes()
+	require.NoError(t, err)
+
+	got, err := ChangeURIFromBytes(data)
+	require.NoError(t, err)
+	assert.Equal(t, original, got)
+}
