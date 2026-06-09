@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally/v4"
 
 	"github.com/uber/submitqueue/core/metrics"
@@ -30,6 +31,14 @@ import (
 )
 
 const activeCompletedAtMs = int64(1<<63 - 1)
+
+// maxSummaryUpsertAttempts bounds the optimistic-concurrency retry loop in UpsertFromLog. Writes
+// to a single request's summary are almost always serialized through the pipeline, so contention
+// is rare and a small bound is sufficient; exceeding it surfaces as storage.ErrVersionMismatch.
+const maxSummaryUpsertAttempts = 8
+
+// initialSummaryVersion is the optimistic-lock version a freshly inserted summary row starts at.
+const initialSummaryVersion = int64(1)
 
 type requestSummaryStore struct {
 	db    *sql.DB
@@ -42,6 +51,11 @@ type requestSummaryRow struct {
 	statusTimestampMs     int64
 	winnerTerminalVersion bool
 	dbCompletedAtMs       int64
+	// version is the optimistic-lock version of the summary row itself, distinct from
+	// requestVersion (the reconciliation version sourced from the Request entity). It is an
+	// internal read-model concern, populated on read and never exposed through the
+	// RequestSummaryStore interface; insert owns the initial value.
+	version int64
 }
 
 // NewRequestSummaryStore creates a new MySQL-backed RequestSummaryStore.
@@ -50,42 +64,57 @@ func NewRequestSummaryStore(db *sql.DB, scope tally.Scope) storage.RequestSummar
 }
 
 // UpsertFromLog incrementally merges one request-log event into the summary read model.
+//
+// This repo forbids database transactions, so the merge uses optimistic concurrency instead of a
+// SELECT ... FOR UPDATE: read the current summary without a lock, merge the incoming log in memory,
+// then write back with a conditional update guarded by the row version (the same pattern as
+// requestStore.UpdateState). A concurrent writer — another gateway write path or a redelivered log
+// event — invalidates the read, in which case we re-read and re-merge. Merges are monotonic (the
+// winner only advances by request version or timestamp), so the loop converges; re-applying a log
+// that has already been merged is a no-op.
 func (s *requestSummaryStore) UpsertFromLog(ctx context.Context, log entity.RequestLog) (retErr error) {
 	op := metrics.Begin(s.scope, "upsert_from_log")
 	defer func() { op.Complete(retErr) }()
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin request summary upsert transaction for request_id=%s: %w", log.RequestID, err)
+	if log.Queue == "" {
+		log.Queue = entity.QueueFromRequestID(log.RequestID)
 	}
-	defer func() {
-		if retErr != nil {
-			_ = tx.Rollback()
-		}
-	}()
 
-	existing, err := s.getForUpdate(ctx, tx, log.RequestID)
-	if errors.Is(err, sql.ErrNoRows) {
-		if log.Queue == "" {
-			log.Queue = entity.QueueFromRequestID(log.RequestID)
-		}
-		if log.Queue == "" {
-			return fmt.Errorf("request summary upsert requires queue for request_id=%s", log.RequestID)
-		}
-		if err := s.insert(ctx, tx, rowFromLog(log)); err != nil {
+	for attempt := 0; attempt < maxSummaryUpsertAttempts; attempt++ {
+		existing, found, err := s.get(ctx, log.RequestID)
+		if err != nil {
 			return err
 		}
-		return tx.Commit()
-	}
-	if err != nil {
-		return err
+
+		if !found {
+			if log.Queue == "" {
+				return fmt.Errorf("request summary upsert requires queue for request_id=%s", log.RequestID)
+			}
+			inserted, err := s.insert(ctx, rowFromLog(log))
+			if err != nil {
+				return err
+			}
+			if inserted {
+				return nil
+			}
+			// Lost the insert race; another writer created the row first. Retry into the merge path.
+			continue
+		}
+
+		// Version arithmetic is owned here, not in the conditional write: compute the next version
+		// and only assign it on a successful write (newVersion = oldVersion + 1).
+		next := mergeSummary(existing, log)
+		updated, err := s.update(ctx, existing.version, existing.version+1, next)
+		if err != nil {
+			return err
+		}
+		if updated {
+			return nil
+		}
+		// The row version moved under us; re-read and merge against the new winner.
 	}
 
-	next := mergeSummary(existing, log)
-	if err := s.update(ctx, tx, next); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return fmt.Errorf("request summary upsert for request_id=%s did not converge after %d attempts: %w", log.RequestID, maxSummaryUpsertAttempts, storage.ErrVersionMismatch)
 }
 
 // List returns a page of request summaries matching the queue, time window, and optional statuses.
@@ -119,7 +148,7 @@ func (s *requestSummaryStore) List(ctx context.Context, opts storage.RequestSumm
 	}
 
 	args = append(args, opts.Limit+1)
-	query := "SELECT request_id, queue, change_uri, status, request_version, status_timestamp_ms, winner_terminal_version, last_error, metadata, started_at_ms, updated_at_ms, completed_at_ms, terminal FROM request_summary WHERE " +
+	query := "SELECT request_id, queue, change_uri, status, request_version, status_timestamp_ms, winner_terminal_version, last_error, metadata, started_at_ms, updated_at_ms, completed_at_ms, terminal, version FROM request_summary WHERE " +
 		strings.Join(clauses, " AND ") +
 		" ORDER BY started_at_ms DESC, request_id DESC LIMIT ?"
 
@@ -151,42 +180,65 @@ func (s *requestSummaryStore) List(ctx context.Context, opts storage.RequestSumm
 	return storage.RequestSummaryListResult{Requests: summaries, NextCursor: nextCursor}, nil
 }
 
-func (s *requestSummaryStore) getForUpdate(ctx context.Context, tx *sql.Tx, requestID string) (requestSummaryRow, error) {
-	row := tx.QueryRowContext(ctx,
-		"SELECT request_id, queue, change_uri, status, request_version, status_timestamp_ms, winner_terminal_version, last_error, metadata, started_at_ms, updated_at_ms, completed_at_ms, terminal FROM request_summary WHERE request_id = ? FOR UPDATE",
+// get reads the current summary row without locking. Returns found=false when no row exists.
+func (s *requestSummaryStore) get(ctx context.Context, requestID string) (requestSummaryRow, bool, error) {
+	row := s.db.QueryRowContext(ctx,
+		"SELECT request_id, queue, change_uri, status, request_version, status_timestamp_ms, winner_terminal_version, last_error, metadata, started_at_ms, updated_at_ms, completed_at_ms, terminal, version FROM request_summary WHERE request_id = ?",
 		requestID,
 	)
-	return scanRequestSummary(row)
+	summary, err := scanRequestSummary(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return requestSummaryRow{}, false, nil
+	}
+	if err != nil {
+		return requestSummaryRow{}, false, fmt.Errorf("failed to get request summary for request_id=%s: %w", requestID, err)
+	}
+	return summary, true, nil
 }
 
-func (s *requestSummaryStore) insert(ctx context.Context, tx *sql.Tx, row requestSummaryRow) error {
+// insert creates a fresh summary row at version 1. Returns inserted=false (no error) when a
+// concurrent writer already created the row (duplicate primary key), so the caller can re-read
+// and merge instead.
+func (s *requestSummaryStore) insert(ctx context.Context, row requestSummaryRow) (bool, error) {
 	changeURIsJSON, metadataJSON, err := marshalSummaryJSON(row.summary)
 	if err != nil {
-		return err
+		return false, err
 	}
-	_, err = tx.ExecContext(ctx,
-		"INSERT INTO request_summary (request_id, queue, change_uri, status, request_version, status_timestamp_ms, winner_terminal_version, last_error, metadata, started_at_ms, updated_at_ms, completed_at_ms, terminal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		row.summary.RequestID, row.summary.Queue, changeURIsJSON, row.summary.Status, row.requestVersion, row.statusTimestampMs, row.winnerTerminalVersion, row.summary.LastError, metadataJSON, row.summary.StartedAtMs, row.summary.UpdatedAtMs, row.dbCompletedAtMs, row.summary.Terminal,
+	_, err = s.db.ExecContext(ctx,
+		"INSERT INTO request_summary (request_id, queue, change_uri, status, request_version, status_timestamp_ms, winner_terminal_version, last_error, metadata, started_at_ms, updated_at_ms, completed_at_ms, terminal, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		row.summary.RequestID, row.summary.Queue, changeURIsJSON, row.summary.Status, row.requestVersion, row.statusTimestampMs, row.winnerTerminalVersion, row.summary.LastError, metadataJSON, row.summary.StartedAtMs, row.summary.UpdatedAtMs, row.dbCompletedAtMs, row.summary.Terminal, initialSummaryVersion,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to insert request summary request_id=%s: %w", row.summary.RequestID, err)
+		var mysqlErr *mysql.MySQLError
+		// MySQL error 1062 is "Duplicate entry": another writer inserted this request_id first.
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to insert request summary request_id=%s: %w", row.summary.RequestID, err)
 	}
-	return nil
+	return true, nil
 }
 
-func (s *requestSummaryStore) update(ctx context.Context, tx *sql.Tx, row requestSummaryRow) error {
+// update is a pure conditional write guarded by the row version: it writes newVersion only if the
+// persisted version still matches oldVersion. Returns updated=false (no error) on a version
+// mismatch so the caller can re-read and retry. Version arithmetic is owned by the caller.
+func (s *requestSummaryStore) update(ctx context.Context, oldVersion, newVersion int64, row requestSummaryRow) (bool, error) {
 	changeURIsJSON, metadataJSON, err := marshalSummaryJSON(row.summary)
 	if err != nil {
-		return err
+		return false, err
 	}
-	_, err = tx.ExecContext(ctx,
-		"UPDATE request_summary SET queue = ?, change_uri = ?, status = ?, request_version = ?, status_timestamp_ms = ?, winner_terminal_version = ?, last_error = ?, metadata = ?, started_at_ms = ?, updated_at_ms = ?, completed_at_ms = ?, terminal = ? WHERE request_id = ?",
-		row.summary.Queue, changeURIsJSON, row.summary.Status, row.requestVersion, row.statusTimestampMs, row.winnerTerminalVersion, row.summary.LastError, metadataJSON, row.summary.StartedAtMs, row.summary.UpdatedAtMs, row.dbCompletedAtMs, row.summary.Terminal, row.summary.RequestID,
+	result, err := s.db.ExecContext(ctx,
+		"UPDATE request_summary SET queue = ?, change_uri = ?, status = ?, request_version = ?, status_timestamp_ms = ?, winner_terminal_version = ?, last_error = ?, metadata = ?, started_at_ms = ?, updated_at_ms = ?, completed_at_ms = ?, terminal = ?, version = ? WHERE request_id = ? AND version = ?",
+		row.summary.Queue, changeURIsJSON, row.summary.Status, row.requestVersion, row.statusTimestampMs, row.winnerTerminalVersion, row.summary.LastError, metadataJSON, row.summary.StartedAtMs, row.summary.UpdatedAtMs, row.dbCompletedAtMs, row.summary.Terminal, newVersion, row.summary.RequestID, oldVersion,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to update request summary request_id=%s: %w", row.summary.RequestID, err)
+		return false, fmt.Errorf("failed to update request summary request_id=%s: %w", row.summary.RequestID, err)
 	}
-	return nil
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to read rows affected for request summary request_id=%s: %w", row.summary.RequestID, err)
+	}
+	return rowsAffected == 1, nil
 }
 
 type summaryScanner interface {
@@ -211,6 +263,7 @@ func scanRequestSummary(scanner summaryScanner) (requestSummaryRow, error) {
 		&row.summary.UpdatedAtMs,
 		&row.dbCompletedAtMs,
 		&row.summary.Terminal,
+		&row.version,
 	)
 	if err != nil {
 		return requestSummaryRow{}, err
