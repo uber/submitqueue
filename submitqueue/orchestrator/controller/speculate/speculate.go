@@ -115,12 +115,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	// Terminal state: re-fan-out for self-healing in case a previous publish
 	// was lost. Always re-publish to conclude (idempotent on the batch ID).
-	// For Cancelled specifically also re-publish to dependents — a crash
-	// between the terminal CAS and the dependent publish would otherwise
-	// leave them stuck waiting on a Cancelled dep.
+	// For terminal states that unblock downstream dependencies by being observed
+	// as terminal non-success, also re-publish to dependents. A crash between
+	// the terminal CAS and the dependent publish would otherwise leave them
+	// stuck waiting.
 	if batch.State.IsTerminal() {
 		metrics.NamedCounter(c.metricsScope, opName, "self_heal_terminal", 1)
-		if batch.State == entity.BatchStateCancelled {
+		if batch.State == entity.BatchStateCancelled || batch.State == entity.BatchStateFailed {
 			if err := c.respeculateDependents(ctx, batch); err != nil {
 				return err
 			}
@@ -170,8 +171,11 @@ func (c *Controller) startSpeculation(ctx context.Context, batch entity.Batch) e
 	return nil
 }
 
-// tryFinalize publishes to merge and transitions to Merging iff every
-// dependency batch has reached Succeeded. Cancelled deps are treated as
+// tryFinalize publishes to merge and transitions to Merging iff this batch's
+// own build has Succeeded AND every dependency batch has reached Succeeded.
+// The own-build gate comes first: a Failed build fails the batch, and a build
+// still in flight (or not yet persisted) parks the batch until the next
+// buildsignal re-triggers speculate. Cancelled deps are treated as
 // out-of-the-way: the cancelled batch will never land, so it can no longer
 // conflict — drop it from the chain and proceed. Failed deps still cascade
 // via failOnDependency. If some deps are still in flight, the call is a
@@ -182,6 +186,37 @@ func (c *Controller) startSpeculation(ctx context.Context, batch entity.Batch) e
 // from the chain and re-issue speculation for the surviving ordering(s)
 // — instead of cascading the failure into requests that could still land.
 func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error {
+	// Gate on the batch's own build before considering dependencies
+	build, err := c.store.GetBuildStore().GetByBatchID(ctx, batch.ID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			// The build controller has not persisted the Build yet (race with
+			// startSpeculation's publish to build). Wait for the next event.
+			metrics.NamedCounter(c.metricsScope, opName, "waiting_on_build", 1)
+			return nil
+		}
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return fmt.Errorf("failed to get build for batch %s: %w", batch.ID, err)
+	}
+
+	switch {
+	case build.Status == entity.BuildStatusSucceeded:
+		// Own build passed; fall through to dependency evaluation.
+	case build.Status.IsTerminal():
+		return c.failOnBuild(ctx, batch, build)
+	default:
+		// Accepted, Running, or any other non-terminal status: the build is
+		// still in flight. buildsignal re-triggers speculate on every poll, so
+		// simply wait.
+		metrics.NamedCounter(c.metricsScope, opName, "waiting_on_build", 1)
+		c.logger.Debugw("own build not yet succeeded; waiting",
+			"batch_id", batch.ID,
+			"build_id", build.ID,
+			"build_status", string(build.Status),
+		)
+		return nil
+	}
+
 	deps, err := c.fetchDependencies(ctx, batch)
 	if err != nil {
 		return err
@@ -230,11 +265,21 @@ func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error 
 	return nil
 }
 
+// failOnBuild transitions a Speculating batch to Failed when its own build has
+// reached a non-succeeding terminal status, then reconciles via failBatch.
+func (c *Controller) failOnBuild(ctx context.Context, batch entity.Batch, build entity.Build) error {
+	metrics.NamedCounter(c.metricsScope, opName, "build_failed", 1)
+	c.logger.Warnw("own build in non-succeeding terminal state; failing batch",
+		"batch_id", batch.ID,
+		"build_id", build.ID,
+		"build_status", string(build.Status),
+	)
+	return c.failBatch(ctx, batch)
+}
+
 // failOnDependency transitions a Speculating batch to Failed when one of its
-// dependencies has reached a non-succeeding terminal state, then publishes to
-// the conclude queue so the request store and request log get reconciled.
-// Without this transition the batch would sit in Speculating forever — no
-// downstream event ever fires for it again.
+// dependencies has reached a non-succeeding terminal state, then reconciles
+// via failBatch.
 func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, dep entity.Batch) error {
 	metrics.NamedCounter(c.metricsScope, opName, "dependency_failed", 1)
 	c.logger.Warnw("dependency in non-succeeding terminal state; failing batch",
@@ -242,11 +287,25 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 		"dependency_id", dep.ID,
 		"dependency_state", string(dep.State),
 	)
+	return c.failBatch(ctx, batch)
+}
 
+// failBatch CASes a Speculating batch to Failed, wakes downstream dependents so
+// they can observe the terminal dependency, and publishes to the conclude queue
+// so the request store and request log get reconciled. Without this transition
+// the batch would sit in Speculating forever — no downstream event ever fires
+// for it again.
+func (c *Controller) failBatch(ctx context.Context, batch entity.Batch) error {
 	newVersion := batch.Version + 1
 	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateFailed); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to update batch %s state to failed: %w", batch.ID, err)
+	}
+	batch.Version = newVersion
+	batch.State = entity.BatchStateFailed
+
+	if err := c.respeculateDependents(ctx, batch); err != nil {
+		return err
 	}
 
 	if err := c.publish(ctx, consumer.TopicKeyConclude, batch.ID, batch.Queue); err != nil {
@@ -326,17 +385,17 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 }
 
 // cancelBuild flips any in-flight Build entity for the batch to
-// BuildStatusCancelled. Builds use build.ID == batch.ID, so a single Get
-// covers every build scheduled for the batch. Tolerates ErrNotFound (no
-// build was ever scheduled — the batch was cancelled before speculation
-// started building) and skips already-terminal builds.
+// BuildStatusCancelled. It looks the build up by batch ID (build.ID is the
+// runner-assigned ID, not the batch ID). Tolerates ErrNotFound (no build was
+// ever scheduled — the batch was cancelled before speculation started building)
+// and skips already-terminal builds.
 //
 // This is the hook point for a future external CI integration: today the
 // system has no external runner, so the local state flip is the complete
 // cancellation. Once a runner exists, it must be invoked here before the
 // local UpdateStatus.
 func (c *Controller) cancelBuild(ctx context.Context, batch entity.Batch) error {
-	build, err := c.store.GetBuildStore().Get(ctx, batch.ID)
+	build, err := c.store.GetBuildStore().GetByBatchID(ctx, batch.ID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			metrics.NamedCounter(c.metricsScope, opName, "cancel_build_not_found", 1)
@@ -351,9 +410,9 @@ func (c *Controller) cancelBuild(ctx context.Context, batch entity.Batch) error 
 		return nil
 	}
 
-	if err := c.store.GetBuildStore().UpdateStatus(ctx, batch.ID, entity.BuildStatusCancelled); err != nil {
+	if err := c.store.GetBuildStore().UpdateStatus(ctx, build.ID, entity.BuildStatusCancelled); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to cancel build for batch %s: %w", batch.ID, err)
+		return fmt.Errorf("failed to cancel build %s for batch %s: %w", build.ID, batch.ID, err)
 	}
 	metrics.NamedCounter(c.metricsScope, opName, "cancel_build_done", 1)
 	return nil
