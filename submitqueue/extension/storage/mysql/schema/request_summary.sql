@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS request_summary (
     updated_at_ms BIGINT NOT NULL,
     completed_at_ms BIGINT NOT NULL,
     terminal BOOLEAN NOT NULL,
+    version BIGINT NOT NULL,
     PRIMARY KEY (request_id),
     KEY idx_request_summary_queue_started (queue, started_at_ms DESC, request_id DESC),
     KEY idx_request_summary_queue_completed (queue, completed_at_ms)
