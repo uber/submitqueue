@@ -9,7 +9,7 @@ go_library(
         "//core/metrics",
         "//submitqueue/entity",
         "//submitqueue/extension/scorer",
-        "@com_github_uber_go_tally_v4//:tally",
+        "@com_github_uber_go_tally//:tally",
     ],
 )
 
@@ -21,6 +21,6 @@ go_test(
         "//submitqueue/entity",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
-        "@com_github_uber_go_tally_v4//:tally",
+        "@com_github_uber_go_tally//:tally",
     ],
 )

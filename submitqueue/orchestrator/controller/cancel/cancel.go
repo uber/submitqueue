@@ -58,7 +58,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/uber-go/tally/v4"
+	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"

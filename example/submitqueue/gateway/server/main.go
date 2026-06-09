@@ -27,7 +27,7 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/uber-go/tally/v4"
+	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/core/errs"
 	genericerrs "github.com/uber/submitqueue/core/errs/generic"
 	mysqlerrs "github.com/uber/submitqueue/core/errs/mysql"

@@ -53,7 +53,7 @@ use_repo(
     "com_github_go_sql_driver_mysql",
     "com_github_spf13_cobra",
     "com_github_stretchr_testify",
-    "com_github_uber_go_tally_v4",
+    "com_github_uber_go_tally",
     "in_gopkg_yaml_v3",
     "org_golang_google_grpc",
     "org_golang_google_grpc_cmd_protoc_gen_go_grpc",

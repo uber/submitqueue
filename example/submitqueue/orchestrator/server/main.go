@@ -29,7 +29,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"golang.org/x/oauth2"
 
-	"github.com/uber-go/tally/v4"
+	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/core/errs"
 	genericerrs "github.com/uber/submitqueue/core/errs/generic"
 	mysqlerrs "github.com/uber/submitqueue/core/errs/mysql"
