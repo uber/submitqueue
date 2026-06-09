@@ -22,7 +22,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/uber-go/tally/v4"
+	"github.com/uber-go/tally"
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	countersuite "github.com/uber/submitqueue/test/integration/extension/counter"
 	"github.com/uber/submitqueue/test/testutil"

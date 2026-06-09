@@ -22,6 +22,6 @@ go_test(
         "//submitqueue/extension/scorer/heuristic",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
-        "@com_github_uber_go_tally_v4//:tally",
+        "@com_github_uber_go_tally//:tally",
     ],
 )

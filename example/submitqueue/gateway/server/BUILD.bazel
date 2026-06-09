@@ -24,7 +24,7 @@ go_library(
         "//submitqueue/gateway/controller/log",
         "//submitqueue/gateway/protopb",
         "@com_github_go_sql_driver_mysql//:mysql",
-        "@com_github_uber_go_tally_v4//:tally",
+        "@com_github_uber_go_tally//:tally",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//reflection",

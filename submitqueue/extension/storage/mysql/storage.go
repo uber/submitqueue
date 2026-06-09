@@ -18,7 +18,7 @@ import (
 	"database/sql"
 
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/uber-go/tally/v4"
+	"github.com/uber-go/tally"
 
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )

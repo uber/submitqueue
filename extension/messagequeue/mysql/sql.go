@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/uber-go/tally/v4"
+	"github.com/uber-go/tally"
 	"go.uber.org/zap"
 
 	extqueue "github.com/uber/submitqueue/extension/messagequeue"
