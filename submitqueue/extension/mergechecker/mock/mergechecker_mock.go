@@ -43,18 +43,18 @@ func (m *MockMergeChecker) EXPECT() *MockMergeCheckerMockRecorder {
 }
 
 // Check mocks base method.
-func (m *MockMergeChecker) Check(ctx context.Context, change entity.Change) (mergechecker.Result, error) {
+func (m *MockMergeChecker) Check(ctx context.Context, request entity.Request) (mergechecker.Result, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Check", ctx, change)
+	ret := m.ctrl.Call(m, "Check", ctx, request)
 	ret0, _ := ret[0].(mergechecker.Result)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Check indicates an expected call of Check.
-func (mr *MockMergeCheckerMockRecorder) Check(ctx, change any) *gomock.Call {
+func (mr *MockMergeCheckerMockRecorder) Check(ctx, request any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Check", reflect.TypeOf((*MockMergeChecker)(nil).Check), ctx, change)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Check", reflect.TypeOf((*MockMergeChecker)(nil).Check), ctx, request)
 }
 
 // MockFactory is a mock of Factory interface.

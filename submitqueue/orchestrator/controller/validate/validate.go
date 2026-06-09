@@ -140,7 +140,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		coremetrics.NamedCounter(c.metricsScope, "process", "merge_check_errors", 1)
 		return fmt.Errorf("failed to build merge checker for queue %s: %w", request.Queue, err)
 	}
-	mergeResult, err := mergeChecker.Check(ctx, request.Change)
+	mergeResult, err := mergeChecker.Check(ctx, request)
 	if err != nil {
 		coremetrics.NamedCounter(c.metricsScope, "process", "merge_check_errors", 1)
 		return fmt.Errorf("merge check failed: %w", err)
