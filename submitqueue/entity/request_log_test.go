@@ -51,6 +51,8 @@ func TestRequestLog_ToBytes(t *testing.T) {
 func TestRequestLogFromBytes(t *testing.T) {
 	original := RequestLog{
 		RequestID:      "my-queue/999",
+		Queue:          "my-queue",
+		ChangeURIs:     []string{"github://uber/repo/pull/1/abcdef"},
 		TimestampMs:    1709568000000,
 		Status:         RequestStatusProcessing,
 		RequestVersion: 3,
@@ -65,6 +67,8 @@ func TestRequestLogFromBytes(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, original.RequestID, deserialized.RequestID)
+	assert.Equal(t, original.Queue, deserialized.Queue)
+	assert.Equal(t, original.ChangeURIs, deserialized.ChangeURIs)
 	assert.Equal(t, original.TimestampMs, deserialized.TimestampMs)
 	assert.Equal(t, original.Status, deserialized.Status)
 	assert.Equal(t, original.RequestVersion, deserialized.RequestVersion)
@@ -103,6 +107,8 @@ func TestRequestLog_SerializationRoundTrip(t *testing.T) {
 			name: "with all fields populated",
 			log: RequestLog{
 				RequestID:      "queue1/100",
+				Queue:          "queue1",
+				ChangeURIs:     []string{},
 				TimestampMs:    1709568000000,
 				Status:         RequestStatusLanded,
 				RequestVersion: 5,
@@ -114,6 +120,8 @@ func TestRequestLog_SerializationRoundTrip(t *testing.T) {
 			name: "with error",
 			log: RequestLog{
 				RequestID:      "queue2/200",
+				Queue:          "queue2",
+				ChangeURIs:     []string{},
 				TimestampMs:    1709568001000,
 				Status:         RequestStatusError,
 				RequestVersion: 2,
@@ -125,6 +133,8 @@ func TestRequestLog_SerializationRoundTrip(t *testing.T) {
 			name: "with zero version",
 			log: RequestLog{
 				RequestID:      "queue3/300",
+				Queue:          "queue3",
+				ChangeURIs:     []string{},
 				TimestampMs:    1709568002000,
 				Status:         RequestStatusStarted,
 				RequestVersion: 0,
@@ -145,4 +155,11 @@ func TestRequestLog_SerializationRoundTrip(t *testing.T) {
 			assert.Equal(t, tt.log, deserialized)
 		})
 	}
+}
+
+func TestQueueFromRequestID(t *testing.T) {
+	assert.Equal(t, "queue", QueueFromRequestID("queue/100"))
+	assert.Equal(t, "org/queue", QueueFromRequestID("org/queue/100"))
+	assert.Empty(t, QueueFromRequestID("queue/not-a-number"))
+	assert.Empty(t, QueueFromRequestID("queue"))
 }

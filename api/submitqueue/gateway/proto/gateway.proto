@@ -100,6 +100,53 @@ message StatusResponse {
     map<string, string> metadata = 3;
 }
 
+// ListRequest defines a request to list queue requests whose lifecycles overlap a time window.
+message ListRequest {
+    // Name of the queue whose requests should be returned.
+    string queue = 1;
+    // Inclusive lower bound for lifecycle-overlap filtering, in Unix epoch milliseconds.
+    int64 start_time_ms = 2;
+    // Exclusive upper bound for lifecycle-overlap filtering, in Unix epoch milliseconds.
+    int64 end_time_ms = 3;
+    // Optional current status filters. Values use the same customer-facing strings returned by Status.
+    repeated string statuses = 4;
+    // Maximum number of requests to return. Zero means the server default.
+    int32 page_size = 5;
+    // Opaque token returned by a previous List response.
+    string page_token = 6;
+}
+
+// RequestSummary is the current gateway-owned view of one request for queue-listing UX.
+message RequestSummary {
+    // Globally unique request ID, as returned by Land.
+    string sqid = 1;
+    // Queue the request belongs to.
+    string queue = 2;
+    // Change URIs submitted with the request.
+    repeated string change_uris = 3;
+    // Current customer-friendly status of the request.
+    string status = 4;
+    // Last error message associated with the current status. Empty string if there is no error.
+    string last_error = 5;
+    // Free-form key-value metadata associated with the current status.
+    map<string, string> metadata = 6;
+    // Time the request entered SubmitQueue, in Unix epoch milliseconds.
+    int64 started_at_ms = 7;
+    // Time the visible summary state last changed, in Unix epoch milliseconds.
+    int64 updated_at_ms = 8;
+    // Time the request completed, in Unix epoch milliseconds. Zero if the request is not terminal.
+    int64 completed_at_ms = 9;
+    // True when status is terminal, e.g. "landed", "error", or "cancelled".
+    bool terminal = 10;
+}
+
+// ListResponse defines a page of queue request summaries.
+message ListResponse {
+    repeated RequestSummary requests = 1;
+    // Opaque token for the next page. Empty when no further page exists.
+    string next_page_token = 2;
+}
+
 // ***************
 // Error messages, returned as `google.rpc.Status` messages.
 // ***************
@@ -155,4 +202,7 @@ service SubmitQueueGateway {
     // Status returns the current status of a previously submitted request, identified by its sqid.
     // The status is eventually consistent with the request store and reconciled from the append-only request log.
     rpc Status(StatusRequest) returns (StatusResponse) {}
+
+    // List returns request summaries for one queue whose lifecycles overlap a time window.
+    rpc List(ListRequest) returns (ListResponse) {}
 }
