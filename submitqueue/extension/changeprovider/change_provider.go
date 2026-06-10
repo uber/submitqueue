@@ -29,10 +29,11 @@ import (
 // entity.Author, entity.ChangedFile — live in the entity package so the same typed
 // facts can be persisted (entity.ChangeRecord) and scored without re-declaration.
 type ChangeProvider interface {
-	// Get retrieves change information for the provided Change.
+	// Get retrieves change information for the provided request.
+	// It is handed the request identity and reads request.Change itself.
 	// For a Change with multiple URIs (e.g., stacked PRs), returns one ChangeInfo per URI.
 	// Returns a slice of ChangeInfo, one for each change in the stack.
-	Get(ctx context.Context, change entity.Change) ([]entity.ChangeInfo, error)
+	Get(ctx context.Context, request entity.Request) ([]entity.ChangeInfo, error)
 }
 
 // Config carries the per-queue identity handed to a Factory. The system knows

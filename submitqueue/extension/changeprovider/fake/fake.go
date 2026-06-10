@@ -47,9 +47,10 @@ func New() changeprovider.ChangeProvider {
 	return provider{}
 }
 
-// Get returns one ChangeInfo per URI in the change, unless a recognized marker
-// token requests a failure. The "one ChangeInfo per URI" contract is preserved.
-func (provider) Get(_ context.Context, change entity.Change) ([]entity.ChangeInfo, error) {
+// Get returns one ChangeInfo per URI in the request's change, unless a recognized
+// marker token requests a failure. The "one ChangeInfo per URI" contract is preserved.
+func (provider) Get(_ context.Context, request entity.Request) ([]entity.ChangeInfo, error) {
+	change := request.Change
 	if fakemarker.Token(change.URIs) == tokenError {
 		return nil, fmt.Errorf("fake: marked provider error")
 	}
