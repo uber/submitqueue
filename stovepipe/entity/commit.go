@@ -32,24 +32,12 @@ func IsCommitStatusTerminal(s CommitStatus) bool {
 	return s == CommitStatusSucceeded || s == CommitStatusFailed
 }
 
-// Commit is a trunk commit tracked by Stovepipe. The SHA scoped by Repository and
-// Branch is the natural identity and dedup key: a commit announced by both a webhook
-// and a poll backfill resolves to the same record and is processed once.
+// Commit is a trunk commit tracked by Stovepipe's gateway.
 type Commit struct {
-	// SHA is the full commit hash. Identity key; immutable after creation.
-	SHA string
-	// Repository is the repository URI (e.g. "github.com/uber/go-code").
-	Repository string
-	// Branch is the target branch (e.g. "main").
-	Branch string
-	// CommitterTimeMs is the committer timestamp in milliseconds since epoch.
-	// Used to order commits within a range and to establish the trunk sequence.
-	CommitterTimeMs int64
+	// URI is the canonical change identity from the originating ChangeEvent.
+	URI string
 	// Status is the current validation state of this commit.
 	Status CommitStatus
-	// Version is incremented on each update and used for optimistic locking.
-	// Version arithmetic lives in the controller; the store performs a pure conditional write.
-	Version int32
 	// CreatedAt is the time this commit was first recorded, in milliseconds since epoch.
 	CreatedAt int64
 	// UpdatedAt is the time this commit was last updated, in milliseconds since epoch.

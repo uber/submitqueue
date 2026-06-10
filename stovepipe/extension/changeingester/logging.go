@@ -35,12 +35,9 @@ func New(logger *zap.Logger) extension.ChangeHandler {
 	return LoggingHandler{logger: logger}
 }
 
-func (h LoggingHandler) IngestChange(ctx context.Context, info entity.ChangeInfo) error {
+func (h LoggingHandler) IngestChange(ctx context.Context, event entity.ChangeEvent) error {
 	h.logger.Info("ingested change",
-		zap.String("uri", info.URI),
-		zap.String("previous_uri", info.PreviousURI),
-		zap.String("author_name", info.AuthorName),
-		zap.String("author_email", info.AuthorEmail),
+		zap.String("uri", event.URI),
 	)
 	return nil
 }

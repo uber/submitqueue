@@ -30,5 +30,5 @@ type ChangeIngester interface {
 
 // ChangeHandler processes a single change received from the ingester.
 type ChangeHandler interface {
-	IngestChange(ctx context.Context, info entity.ChangeInfo) error
+	IngestChange(ctx context.Context, event entity.ChangeEvent) error
 }
