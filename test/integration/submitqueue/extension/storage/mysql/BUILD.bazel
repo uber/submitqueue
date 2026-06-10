@@ -12,6 +12,8 @@ go_test(
         "integration",
     ],
     deps = [
+        "//submitqueue/entity",
+        "//submitqueue/extension/storage",
         "//submitqueue/extension/storage/mysql",
         "//test/integration/submitqueue/extension/storage",
         "//test/testutil",

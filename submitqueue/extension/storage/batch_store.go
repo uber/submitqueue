@@ -41,6 +41,13 @@ type BatchStore interface {
 	// Version arithmetic is owned by the caller; the store performs a pure conditional write.
 	UpdateScoreAndState(ctx context.Context, id string, oldVersion, newVersion int32, score float64, newState entity.BatchState) error
 
-	// GetByQueueAndStates retrieves all batches that belong to the given queue and are in the given states.
-	GetByQueueAndStates(ctx context.Context, queue string, states []entity.BatchState) ([]entity.Batch, error)
+	// ListActive returns all active (non-terminal) batches in the given queue.
+	// "Active" means the batch's persisted state is not terminal — see
+	// entity.BatchState.IsTerminal. Callers that need a narrower set filter the
+	// result by state in memory.
+	//
+	// The store tracks active membership internally (added on Create, self-healed
+	// on read) so this is a key-prefix read rather than a secondary-index query;
+	// see the implementation and extension/storage/mysql/schema/README.md.
+	ListActive(ctx context.Context, queue string) ([]entity.Batch, error)
 }

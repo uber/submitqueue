@@ -78,7 +78,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 
 	if mockStorage == nil {
 		mockBatchStore := storagemock.NewMockBatchStore(ctrl)
-		mockBatchStore.EXPECT().GetByQueueAndStates(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+		mockBatchStore.EXPECT().ListActive(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 		mockBatchStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 		mockReqStore := storagemock.NewMockRequestStore(ctrl)
@@ -209,14 +209,21 @@ func TestController_Process_WithDependencies(t *testing.T) {
 		Version:      1,
 	}
 
-	// Set up storage with active batches to become dependencies.
+	// Set up storage with active batches to become dependencies. ListActive
+	// returns every non-terminal batch; the controller filters to
+	// Created/Speculating/Merging in memory. The Scored and Cancelling batches
+	// below must be excluded — note no BatchDependent expectations are registered
+	// for them, so the default all.New() analyzer would fail the test on an
+	// unexpected mock call if the filter let them through.
 	activeBatches := []entity.Batch{
 		{ID: "test-queue/batch/1", Queue: "test-queue", State: entity.BatchStateCreated, Version: 1},
 		{ID: "test-queue/batch/2", Queue: "test-queue", State: entity.BatchStateSpeculating, Version: 2},
+		{ID: "test-queue/batch/3", Queue: "test-queue", State: entity.BatchStateScored, Version: 1},
+		{ID: "test-queue/batch/4", Queue: "test-queue", State: entity.BatchStateCancelling, Version: 1},
 	}
 
 	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
-	mockBatchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "test-queue", gomock.Any()).Return(activeBatches, nil)
+	mockBatchStore.EXPECT().ListActive(gomock.Any(), "test-queue").Return(activeBatches, nil)
 	mockBatchStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 
 	mockBatchDependentStore := storagemock.NewMockBatchDependentStore(ctrl)
@@ -268,7 +275,7 @@ func TestController_Process_AnalyzerSelectsSubset(t *testing.T) {
 	}
 
 	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
-	mockBatchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "test-queue", gomock.Any()).Return(activeBatches, nil)
+	mockBatchStore.EXPECT().ListActive(gomock.Any(), "test-queue").Return(activeBatches, nil)
 	mockBatchStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 
 	mockBatchDependentStore := storagemock.NewMockBatchDependentStore(ctrl)
@@ -314,7 +321,7 @@ func TestController_Process_AnalyzerFailure(t *testing.T) {
 	request := testRequest()
 
 	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
-	mockBatchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "test-queue", gomock.Any()).Return(nil, nil)
+	mockBatchStore.EXPECT().ListActive(gomock.Any(), "test-queue").Return(nil, nil)
 
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
 	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
@@ -410,7 +417,7 @@ func TestController_Process_CASLostToCancel(t *testing.T) {
 	request := testRequest()
 
 	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
-	mockBatchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "test-queue", gomock.Any()).Return(nil, nil)
+	mockBatchStore.EXPECT().ListActive(gomock.Any(), "test-queue").Return(nil, nil)
 	// Create must NOT be called — gomock fails if it is.
 
 	mockBatchDependentStore := storagemock.NewMockBatchDependentStore(ctrl)
@@ -463,7 +470,7 @@ func TestController_Process_CASUnexpectedErrorPropagates(t *testing.T) {
 	request := testRequest()
 
 	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
-	mockBatchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "test-queue", gomock.Any()).Return(nil, nil)
+	mockBatchStore.EXPECT().ListActive(gomock.Any(), "test-queue").Return(nil, nil)
 	// Create must NOT be called — gomock fails if it is.
 
 	mockBatchDependentStore := storagemock.NewMockBatchDependentStore(ctrl)
@@ -509,7 +516,7 @@ func TestController_Process_RecoveryAfterPriorCAS(t *testing.T) {
 	request.Version = 2 // prior attempt bumped from 1 → 2
 
 	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
-	mockBatchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "test-queue", gomock.Any()).Return(nil, nil)
+	mockBatchStore.EXPECT().ListActive(gomock.Any(), "test-queue").Return(nil, nil)
 	mockBatchStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 
 	mockBatchDependentStore := storagemock.NewMockBatchDependentStore(ctrl)

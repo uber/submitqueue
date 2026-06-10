@@ -46,6 +46,12 @@ func (s *StorageContractSuite) SetStorage(store storage.Storage) {
 	s.storage = store
 }
 
+// GetStorage returns the storage instance under test, for implementation-specific
+// suites that need to assert backend-internal behavior alongside the contract tests.
+func (s *StorageContractSuite) GetStorage() storage.Storage {
+	return s.storage
+}
+
 // SetLogger sets the logger for tests
 func (s *StorageContractSuite) SetLogger(log *testutil.TestLogger) {
 	s.log = log
@@ -378,4 +384,94 @@ func (s *StorageContractSuite) TestStorage_ChangeCreate_EmptyDetails() {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, entity.ChangeDetails{}, got[0].Details)
+}
+
+// newBatch builds a batch fixture for the active-listing tests.
+func newBatch(id, queue string, state entity.BatchState) entity.Batch {
+	return entity.Batch{
+		ID:           id,
+		Queue:        queue,
+		Contains:     []string{id + "/req"},
+		Dependencies: []string{},
+		State:        state,
+		Version:      1,
+	}
+}
+
+// activeBatchIDs returns the sorted IDs of the queue's active batches, for stable comparison.
+func (s *StorageContractSuite) activeBatchIDs(queue string) []string {
+	t := s.T()
+	batches, err := s.storage.GetBatchStore().ListActive(s.ctx, queue)
+	require.NoError(t, err)
+	ids := make([]string, 0, len(batches))
+	for _, b := range batches {
+		ids = append(ids, b.ID)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// TestStorage_BatchListActive_ReturnsActive verifies a freshly created batch is
+// listed as active, and that ListActive resolves the full entity.
+func (s *StorageContractSuite) TestStorage_BatchListActive_ReturnsActive() {
+	t := s.T()
+	ctx := s.ctx
+	const queue = "bq-active"
+
+	require.NoError(t, s.storage.GetBatchStore().Create(ctx, newBatch(queue+"/batch/1", queue, entity.BatchStateCreated)))
+	require.NoError(t, s.storage.GetBatchStore().Create(ctx, newBatch(queue+"/batch/2", queue, entity.BatchStateSpeculating)))
+
+	batches, err := s.storage.GetBatchStore().ListActive(ctx, queue)
+	require.NoError(t, err)
+	require.Len(t, batches, 2)
+	assert.Equal(t, []string{queue + "/batch/1", queue + "/batch/2"}, s.activeBatchIDs(queue))
+}
+
+// TestStorage_BatchListActive_ExcludesTerminal verifies that a batch transitioned
+// to a terminal state via UpdateState drops out of the active listing.
+func (s *StorageContractSuite) TestStorage_BatchListActive_ExcludesTerminal() {
+	t := s.T()
+	ctx := s.ctx
+	const queue = "bq-terminal"
+
+	require.NoError(t, s.storage.GetBatchStore().Create(ctx, newBatch(queue+"/batch/1", queue, entity.BatchStateMerging)))
+	require.NoError(t, s.storage.GetBatchStore().Create(ctx, newBatch(queue+"/batch/2", queue, entity.BatchStateCreated)))
+
+	// batch/1 lands; it must no longer be active.
+	require.NoError(t, s.storage.GetBatchStore().UpdateState(ctx, queue+"/batch/1", 1, 2, entity.BatchStateSucceeded))
+
+	assert.Equal(t, []string{queue + "/batch/2"}, s.activeBatchIDs(queue))
+}
+
+// TestStorage_BatchListActive_ExcludesTerminalViaScoreAndState covers the other
+// terminal write path (UpdateScoreAndState) used by the score/speculate pipeline.
+func (s *StorageContractSuite) TestStorage_BatchListActive_ExcludesTerminalViaScoreAndState() {
+	t := s.T()
+	ctx := s.ctx
+	const queue = "bq-terminal-score"
+
+	require.NoError(t, s.storage.GetBatchStore().Create(ctx, newBatch(queue+"/batch/1", queue, entity.BatchStateCreated)))
+	require.NoError(t, s.storage.GetBatchStore().UpdateScoreAndState(ctx, queue+"/batch/1", 1, 2, 0.5, entity.BatchStateFailed))
+
+	assert.Empty(t, s.activeBatchIDs(queue))
+}
+
+// TestStorage_BatchListActive_QueueScoped verifies the listing is scoped to one queue.
+func (s *StorageContractSuite) TestStorage_BatchListActive_QueueScoped() {
+	t := s.T()
+	ctx := s.ctx
+	const queueA = "bq-scoped-a"
+	const queueB = "bq-scoped-b"
+
+	require.NoError(t, s.storage.GetBatchStore().Create(ctx, newBatch(queueA+"/batch/1", queueA, entity.BatchStateCreated)))
+	require.NoError(t, s.storage.GetBatchStore().Create(ctx, newBatch(queueB+"/batch/1", queueB, entity.BatchStateCreated)))
+	require.NoError(t, s.storage.GetBatchStore().Create(ctx, newBatch(queueB+"/batch/2", queueB, entity.BatchStateCreated)))
+
+	assert.Equal(t, []string{queueA + "/batch/1"}, s.activeBatchIDs(queueA))
+	assert.Equal(t, []string{queueB + "/batch/1", queueB + "/batch/2"}, s.activeBatchIDs(queueB))
+}
+
+// TestStorage_BatchListActive_UnknownQueue returns an empty set for a queue with no batches.
+func (s *StorageContractSuite) TestStorage_BatchListActive_UnknownQueue() {
+	assert.Empty(s.T(), s.activeBatchIDs("bq-does-not-exist"))
 }

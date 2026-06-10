@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
@@ -87,6 +86,19 @@ func (s *batchStore) Create(ctx context.Context, batch entity.Batch) (retErr err
 		return fmt.Errorf("failed to marshal dependencies=%v id=%s for Create batch entity: %w", batch.Dependencies, batch.ID, err)
 	}
 
+	// Write membership before the batch row (no transaction) so a batch row is
+	// never visible to ListActive without its membership. ON DUPLICATE KEY UPDATE is
+	// an idempotent no-op on PK conflict (retry-safe) while still surfacing real
+	// errors, unlike INSERT IGNORE which would swallow them and let Create proceed
+	// without a valid membership. A create that fails after this point leaves a
+	// dangling row, which ListActive skips and the reconcile job reclaims.
+	if _, err = s.db.ExecContext(ctx,
+		"INSERT INTO active_batch (queue, batch_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE batch_id = batch_id",
+		batch.Queue, batch.ID,
+	); err != nil {
+		return fmt.Errorf("failed to insert active_batch membership for batch entity id=%s queue=%s: %w", batch.ID, batch.Queue, err)
+	}
+
 	_, err = s.db.ExecContext(ctx,
 		"INSERT INTO batch (id, queue, contains, dependencies, score, state, version) VALUES (?, ?, ?, ?, ?, ?, ?)",
 		batch.ID, batch.Queue, containsJSON, dependenciesJSON, batch.Score, batch.State, batch.Version,
@@ -96,6 +108,10 @@ func (s *batchStore) Create(ctx context.Context, batch entity.Batch) (retErr err
 		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
 			return fmt.Errorf("batch entity id=%s: %w", batch.ID, storage.ErrAlreadyExists)
 		}
+		// Leave the membership row in place: a returned error doesn't prove the
+		// batch row was not written (an ambiguous failure can commit it and still
+		// error), so deleting could permanently hide a live batch from ListActive.
+		// A dangling row is the safe direction.
 		return fmt.Errorf("failed to insert batch entity id=%s: %w", batch.ID, err)
 	}
 
@@ -174,52 +190,81 @@ func (s *batchStore) UpdateScoreAndState(ctx context.Context, id string, oldVers
 	return nil
 }
 
-// GetByQueueAndStates retrieves all batches that belong to the given queue and are in the given states.
-func (s *batchStore) GetByQueueAndStates(ctx context.Context, queue string, states []entity.BatchState) (ret []entity.Batch, retErr error) {
-	op := metrics.Begin(s.scope, "get_by_queue_and_states")
+// ListActive returns all active (non-terminal) batches in the given queue.
+//
+// Membership is tracked in active_batch (queue leads the PK), so listing is a
+// PK-prefix scan that ports cleanly to a key-value store. Each member is fetched
+// by primary key: a terminal batch's membership is best-effort removed (race-free,
+// its id is never reused), while a missing batch is skipped but NOT removed (it
+// may belong to an in-flight Create that hasn't written its batch row yet).
+func (s *batchStore) ListActive(ctx context.Context, queue string) (ret []entity.Batch, retErr error) {
+	op := metrics.Begin(s.scope, "list_active")
 	defer func() { op.Complete(retErr) }()
 
-	if len(states) == 0 {
-		return nil, nil
-	}
-
-	query := "SELECT id, queue, contains, dependencies, score, state, version FROM batch WHERE queue = ? AND state IN (?" + strings.Repeat(", ?", len(states)-1) + ")"
-
-	args := make([]any, 1+len(states))
-	args[0] = queue
-	for i, state := range states {
-		args[i+1] = state
-	}
-
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	// Read all membership rows and release the connection before resolving each
+	// batch, since Get issues its own query.
+	ids, err := s.activeBatchIDs(ctx, queue)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query batches by queue=%q states=%v from the database: %w", queue, states, err)
+		return nil, err
 	}
-	defer rows.Close()
 
 	var results []entity.Batch
-	for rows.Next() {
-		var batch entity.Batch
-		var containsJSON []byte
-		var dependenciesJSON []byte
-
-		if err := rows.Scan(&batch.ID, &batch.Queue, &containsJSON, &dependenciesJSON, &batch.Score, &batch.State, &batch.Version); err != nil {
-			return nil, fmt.Errorf("failed to scan batch entity by queue=%q states=%v from the database: %w", queue, states, err)
+	for _, id := range ids {
+		batch, err := s.Get(ctx, id)
+		if err != nil {
+			if storage.IsNotFound(err) {
+				// Missing batch: either an in-flight Create or a dangling row. We
+				// can't tell them apart, so skip without deleting.
+				continue
+			}
+			return nil, fmt.Errorf("failed to get active batch id=%q queue=%q: %w", id, queue, err)
 		}
-
-		if err := json.Unmarshal(containsJSON, &batch.Contains); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal contains for batch entity id=%s from the database: %w", batch.ID, err)
+		if batch.State.IsTerminal() {
+			// Stale membership: the batch has finished. Race-free to remove since
+			// its id is never reused.
+			s.removeActive(ctx, queue, id)
+			continue
 		}
-
-		if err := json.Unmarshal(dependenciesJSON, &batch.Dependencies); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal dependencies for batch entity id=%s from the database: %w", batch.ID, err)
-		}
-
 		results = append(results, batch)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate batches by queue=%q states=%v from the database: %w", queue, states, err)
 	}
 
 	return results, nil
+}
+
+// activeBatchIDs reads the batch IDs recorded as active for the queue, owning the
+// result set's lifecycle so the caller can resolve each batch after it's closed.
+func (s *batchStore) activeBatchIDs(ctx context.Context, queue string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT batch_id FROM active_batch WHERE queue = ?",
+		queue,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query active batch membership for queue=%q: %w", queue, err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to scan active batch membership for queue=%q: %w", queue, err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate active batch membership for queue=%q: %w", queue, err)
+	}
+	return ids, nil
+}
+
+// removeActive best-effort deletes a single active_batch membership row, used by
+// ListActive to reclaim terminal batches' memberships. Failures are counted and
+// ignored — the row is harmless and the next read retries.
+func (s *batchStore) removeActive(ctx context.Context, queue, batchID string) {
+	if _, err := s.db.ExecContext(ctx,
+		"DELETE FROM active_batch WHERE queue = ? AND batch_id = ?",
+		queue, batchID,
+	); err != nil {
+		metrics.NamedCounter(s.scope, "list_active", "self_heal_errors", 1)
+	}
 }

@@ -143,7 +143,7 @@ func TestProcess_CancelsUnbatchedRequest(t *testing.T) {
 	)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "q", gomock.Any()).Return(nil, nil)
+	batchStore.EXPECT().ListActive(gomock.Any(), "q").Return(nil, nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
@@ -174,7 +174,7 @@ func TestProcess_AlreadyCancelling_SkipsMarkCancelling(t *testing.T) {
 	reqStore.EXPECT().UpdateState(gomock.Any(), "q/1", int32(3), int32(4), entity.RequestStateCancelled).Return(nil)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "q", gomock.Any()).Return(nil, nil)
+	batchStore.EXPECT().ListActive(gomock.Any(), "q").Return(nil, nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
@@ -227,7 +227,7 @@ func TestProcess_UnbatchedVersionMismatch_Retryable(t *testing.T) {
 	)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "q", gomock.Any()).Return(nil, nil)
+	batchStore.EXPECT().ListActive(gomock.Any(), "q").Return(nil, nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
@@ -275,7 +275,7 @@ func TestProcess_BatchPath_HandsOffToSpeculate(t *testing.T) {
 	reqStore.EXPECT().UpdateState(gomock.Any(), "q/1", int32(2), int32(3), entity.RequestStateCancelling).Return(nil)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "q", gomock.Any()).Return([]entity.Batch{batch}, nil)
+	batchStore.EXPECT().ListActive(gomock.Any(), "q").Return([]entity.Batch{batch}, nil)
 	// Single batch CAS: intent only. No terminal CAS.
 	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(3), int32(4), entity.BatchStateCancelling).Return(nil)
 
@@ -324,7 +324,7 @@ func TestProcess_BatchAlreadyCancelling_RepublishesToSpeculate(t *testing.T) {
 	// No request UpdateState — already in Cancelling.
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "q", gomock.Any()).Return([]entity.Batch{batch}, nil)
+	batchStore.EXPECT().ListActive(gomock.Any(), "q").Return([]entity.Batch{batch}, nil)
 	// No batch UpdateState — already in Cancelling.
 
 	store := storagemock.NewMockStorage(ctrl)
@@ -355,7 +355,7 @@ func TestProcess_BatchIntentVersionMismatch_Retryable(t *testing.T) {
 	reqStore.EXPECT().UpdateState(gomock.Any(), "q/1", int32(2), int32(3), entity.RequestStateCancelling).Return(nil)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "q", gomock.Any()).Return([]entity.Batch{batch}, nil)
+	batchStore.EXPECT().ListActive(gomock.Any(), "q").Return([]entity.Batch{batch}, nil)
 	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelling).
 		Return(storage.ErrVersionMismatch)
 
