@@ -22,10 +22,10 @@ import (
 )
 
 // Config controls which VCS URIs are watched.
-// WatchedURIPrefixes is a list of URI prefixes to match against ChangeInfo.URI.
+// WatchedURIPrefixes is a list of URI prefixes to match against ChangeEvent.URI.
 // Example: "git://github.com/uber/go-code/refs/heads/main"
 // watches all commits on the main branch of uber/go-code.
-func ShouldProcess(event entity.ChangeInfo, watchedPrefixes []string) bool {
+func ShouldProcess(event entity.ChangeEvent, watchedPrefixes []string) bool {
 	for _, prefix := range watchedPrefixes {
 		if strings.HasPrefix(event.URI, prefix) {
 			return true

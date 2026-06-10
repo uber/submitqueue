@@ -25,6 +25,8 @@ import (
 
 // LoggingHandler is a stub ChangeHandler that logs received changes.
 // Replace with real persistence logic once DB schema is ready.
+// Implementations must resolve entity.Commit.SequenceNumber (via `git rev-list --count`)
+// before persisting — a zero value indicates the field was not populated.
 type LoggingHandler struct {
 	logger *zap.Logger
 }
@@ -35,12 +37,9 @@ func New(logger *zap.Logger) extension.ChangeHandler {
 	return LoggingHandler{logger: logger}
 }
 
-func (h LoggingHandler) IngestChange(ctx context.Context, info entity.ChangeInfo) error {
+func (h LoggingHandler) IngestChange(ctx context.Context, event entity.ChangeEvent) error {
 	h.logger.Info("ingested change",
-		zap.String("uri", info.URI),
-		zap.String("previous_uri", info.PreviousURI),
-		zap.String("author_name", info.AuthorName),
-		zap.String("author_email", info.AuthorEmail),
+		zap.String("uri", event.URI),
 	)
 	return nil
 }

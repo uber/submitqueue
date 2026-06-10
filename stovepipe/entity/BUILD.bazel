@@ -3,22 +3,11 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "entity",
     srcs = [
-        "batch.go",
+        "change_event.go",
+        "change_uri.go",
         "commit.go",
-        "entity.go",
     ],
     importpath = "github.com/uber/submitqueue/stovepipe/entity",
     visibility = ["//visibility:public"],
-    deps = ["//platform/base/change"],
-)
-
-go_test(
-    name = "entity_test",
-    srcs = ["ingest_request_test.go"],
-    embed = [":entity"],
-    deps = [
-        "//platform/base/change",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-    ],
+    deps = ["//platform/base/change/git"],
 )

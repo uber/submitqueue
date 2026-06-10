@@ -14,44 +14,50 @@
 
 package entity
 
-// CommitStatus is the validation state of a trunk commit as determined by Stovepipe.
-type CommitStatus string
+// CommitStatusKind is the validation state of a trunk commit as determined by Stovepipe.
+type CommitStatusKind string
 
 const (
-	// CommitStatusUnknown is the default state when a commit is first ingested.
+	// CommitStatusKindUnknown is the default state when a commit is first ingested.
 	// The commit has landed on main but has not yet been validated.
-	CommitStatusUnknown CommitStatus = ""
-	// CommitStatusSucceeded means the relevant targets build and test successfully at this commit.
-	CommitStatusSucceeded CommitStatus = "succeeded"
-	// CommitStatusFailed means a target is broken at this commit; it is the offending change.
-	CommitStatusFailed CommitStatus = "failed"
+	CommitStatusKindUnknown CommitStatusKind = ""
+	// CommitStatusKindIngested means the commit has been received and recorded by the gateway.
+	CommitStatusKindIngested CommitStatusKind = "ingested"
+	// CommitStatusKindQueued means the commit is waiting to enter the validation pipeline.
+	CommitStatusKindQueued CommitStatusKind = "queued"
+	// CommitStatusKindProcessing means the commit is actively being validated.
+	CommitStatusKindProcessing CommitStatusKind = "processing"
+	// CommitStatusKindSucceeded means the relevant targets build and test successfully at this commit.
+	CommitStatusKindSucceeded CommitStatusKind = "succeeded"
+	// CommitStatusKindFailed means a target is broken at this commit; it is the offending change.
+	CommitStatusKindFailed CommitStatusKind = "failed"
 )
 
 // IsCommitStatusTerminal returns true if the status is a final, irreversible state.
-func IsCommitStatusTerminal(s CommitStatus) bool {
-	return s == CommitStatusSucceeded || s == CommitStatusFailed
+func IsCommitStatusTerminal(s CommitStatusKind) bool {
+	return s == CommitStatusKindSucceeded || s == CommitStatusKindFailed
 }
 
-// Commit is a trunk commit tracked by Stovepipe. The SHA scoped by Repository and
-// Branch is the natural identity and dedup key: a commit announced by both a webhook
-// and a poll backfill resolves to the same record and is processed once.
+// Commit is a trunk commit tracked by Stovepipe's gateway.
+// URI is the primary key — it is the canonical change identity from the originating ChangeEvent.
 type Commit struct {
-	// SHA is the full commit hash. Identity key; immutable after creation.
-	SHA string
-	// Repository is the repository URI (e.g. "github.com/uber/go-code").
-	Repository string
-	// Branch is the target branch (e.g. "main").
-	Branch string
-	// CommitterTimeMs is the committer timestamp in milliseconds since epoch.
-	// Used to order commits within a range and to establish the trunk sequence.
-	CommitterTimeMs int64
-	// Status is the current validation state of this commit.
-	Status CommitStatus
-	// Version is incremented on each update and used for optimistic locking.
-	// Version arithmetic lives in the controller; the store performs a pure conditional write.
-	Version int32
+	// URI is the canonical change identity from the originating ChangeEvent.
+	URI string
+	// SequenceNumber is the number of commits reachable from this commit on the trunk branch,
+	// derived from `git rev-list --count`. Higher values are newer.
+	// Must be populated at ingestion time — a zero value indicates the field was not set.
+	SequenceNumber int64
 	// CreatedAt is the time this commit was first recorded, in milliseconds since epoch.
 	CreatedAt int64
-	// UpdatedAt is the time this commit was last updated, in milliseconds since epoch.
-	UpdatedAt int64
+}
+
+// CommitStatus is a point-in-time validation status entry for a Commit.
+// Multiple CommitStatus records form the status history of a single Commit.
+type CommitStatus struct {
+	// CommitURI is the URI of the Commit this status belongs to.
+	CommitURI string
+	// Status is the validation state recorded at this point in time.
+	Status CommitStatusKind
+	// CreatedAt is the time this status was recorded, in milliseconds since epoch.
+	CreatedAt int64
 }
