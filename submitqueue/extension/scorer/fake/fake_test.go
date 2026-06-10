@@ -21,42 +21,50 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/submitqueue/core/changeset"
+	changesetfake "github.com/uber/submitqueue/submitqueue/core/changeset/fake"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/scorer"
 	"github.com/uber/submitqueue/submitqueue/extension/scorer/heuristic"
 )
 
+const batchID = "q/batch/1"
+
 func TestNew_ImplementsInterface(t *testing.T) {
-	var _ scorer.Scorer = New(nil)
+	var _ scorer.Scorer = New(nil, nil)
 }
 
-// delegate returns a heuristic scorer that scores every batch at want.
-func delegate(t *testing.T, want float64) scorer.Scorer {
-	t.Helper()
+// resolverFor returns a changeset resolver seeded so that batchID's detailed
+// changes carry the given URIs.
+func resolverFor(uris ...string) changeset.Resolver {
+	changes := make([]entity.ChangeInfo, 0, len(uris))
+	for _, u := range uris {
+		changes = append(changes, entity.ChangeInfo{URI: u})
+	}
+	return changesetfake.New().SetDetailed(batchID, entity.BatchChanges{BatchID: batchID, Queue: "q", Changes: changes})
+}
+
+// delegate returns a heuristic scorer (backed by resolver) that scores every batch at want.
+func delegate(resolver changeset.Resolver, want float64) scorer.Scorer {
 	return heuristic.New(
+		resolver,
 		[]heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: want}},
 		func(_ context.Context, c entity.BatchChanges) (int, error) { return len(c.Changes), nil },
 		tally.NoopScope,
 	)
 }
 
-func batch(uris ...string) entity.BatchChanges {
-	changes := make([]entity.ChangeInfo, 0, len(uris))
-	for _, u := range uris {
-		changes = append(changes, entity.ChangeInfo{URI: u})
-	}
-	return entity.BatchChanges{BatchID: "q/batch/1", Queue: "q", Changes: changes}
-}
-
 func TestScore_DelegatesWhenUnmarked(t *testing.T) {
-	s := New(delegate(t, 0.7))
-	got, err := s.Score(context.Background(), batch("github://o/r/pull/1/a"))
+	r := resolverFor("github://o/r/pull/1/a")
+	s := New(r, delegate(r, 0.7))
+	got, err := s.Score(context.Background(), entity.Batch{ID: batchID})
 	require.NoError(t, err)
 	assert.Equal(t, 0.7, got)
 }
 
 func TestScore_ErrorMarker(t *testing.T) {
-	s := New(delegate(t, 0.7))
-	_, err := s.Score(context.Background(), batch("github://o/r/pull/1/a?sq-fake=score-error"))
+	r := resolverFor("github://o/r/pull/1/a?sq-fake=score-error")
+	s := New(r, delegate(r, 0.7))
+	_, err := s.Score(context.Background(), entity.Batch{ID: batchID})
 	require.Error(t, err)
 }

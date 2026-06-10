@@ -38,6 +38,7 @@ import (
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	extqueue "github.com/uber/submitqueue/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/extension/messagequeue/mysql"
+	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
@@ -230,7 +231,7 @@ func run() error {
 	// back to a baseline profile for queues without an explicit entry. This is
 	// the single place queue topology is known; the extension packages stay
 	// queue-agnostic.
-	queues, err := newQueueRegistry(logger, scope)
+	queues, err := newQueueRegistry(logger, scope, changeset.New(store.GetRequestStore(), store.GetChangeStore()))
 	if err != nil {
 		return fmt.Errorf("failed to build queue registry: %w", err)
 	}
@@ -796,7 +797,7 @@ func newPusher(logger *zap.Logger, scope tally.Scope) (pusher.Pusher, error) {
 // conflict analyzer. Queues without an explicit profile fall back to the
 // baseline. This is the one place queue topology lives; extension packages stay
 // queue-agnostic.
-func newQueueRegistry(logger *zap.Logger, scope tally.Scope) (queueRegistry, error) {
+func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.Resolver) (queueRegistry, error) {
 	mc, err := newMergeChecker(logger, scope)
 	if err != nil {
 		return queueRegistry{}, fmt.Errorf("failed to create merge checker: %w", err)
@@ -833,7 +834,8 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope) (queueRegistry, err
 		changeProvider: cp,
 		pusher:         psh,
 		buildRunner:    buildfake.New(),
-		scorer: scorerfake.New(heuristic.New(
+		scorer: scorerfake.New(resolver, heuristic.New(
+			resolver,
 			[]heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.5}},
 			batchLines, scope.SubScope("scorer.default"),
 		)),
@@ -845,7 +847,8 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope) (queueRegistry, err
 	// test-queue: bucketed heuristic scorer; conservative (serialized) conflicts
 	// inherited from the baseline.
 	testQueue := base
-	testQueue.scorer = scorerfake.New(heuristic.New(
+	testQueue.scorer = scorerfake.New(resolver, heuristic.New(
+		resolver,
 		[]heuristic.Bucket{
 			{Min: 0, Max: 1, Score: 0.95},
 			{Min: 2, Max: 5, Score: 0.80},
@@ -858,10 +861,10 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope) (queueRegistry, err
 	// e2e-test-queue: composite scorer; no conflicts (maximum parallelism).
 	e2eQueue := base
 	e2eQueue.analyzer = conflictfake.New(none.New(), nil)
-	e2eQueue.scorer = scorerfake.New(composite.New(
+	e2eQueue.scorer = scorerfake.New(resolver, composite.New(
 		map[string]scorer.Scorer{
-			"size": heuristic.New([]heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.8}}, batchLines, scope),
-			"flat": heuristic.New([]heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.6}}, batchLines, scope),
+			"size": heuristic.New(resolver, []heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.8}}, batchLines, scope),
+			"flat": heuristic.New(resolver, []heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.6}}, batchLines, scope),
 		},
 		composite.Avg, scope.SubScope("scorer.e2e-test-queue"),
 	))

@@ -130,7 +130,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return nil
 	}
 
-	// Score each request's change and take the minimum (worst-case) as the batch score
+	// Score the batch. The scorer resolves the batch's changes itself.
 	batchScore, err := c.scoreBatch(ctx, batch)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "scorer_errors", 1)
@@ -173,54 +173,20 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	return nil // Success - message will be acked
 }
 
-// scoreBatch normalizes the batch's changes and scores them as a whole. It resolves
-// each request in the batch, reads that request's change records (one per URI), and
-// flattens their provider-supplied details into a single entity.BatchChanges, which
-// the scorer turns into one probability for the batch.
+// scoreBatch builds the queue's scorer and scores the batch. The scorer is handed
+// the batch identity and resolves the batch's changes itself (via the shared
+// changeset resolver injected at its factory), turning them into one probability.
 func (c *Controller) scoreBatch(ctx context.Context, batch entity.Batch) (float64, error) {
 	sc, err := c.scorers.For(scorer.Config{QueueName: batch.Queue})
 	if err != nil {
 		return 0, fmt.Errorf("failed to build scorer for batch %s: %w", batch.ID, err)
 	}
 
-	changes, err := c.collectBatchChanges(ctx, batch)
-	if err != nil {
-		return 0, err
-	}
-
-	score, err := sc.Score(ctx, changes)
+	score, err := sc.Score(ctx, batch)
 	if err != nil {
 		return 0, fmt.Errorf("failed to score batch %s: %w", batch.ID, err)
 	}
 	return score, nil
-}
-
-// collectBatchChanges assembles the normalized entity.BatchChanges for a batch by
-// resolving each request and reading its change records per URI. For each URI it
-// selects the record owned by the request (GetByURI returns rows for all requests
-// that ever claimed the URI) and appends its URI + details.
-func (c *Controller) collectBatchChanges(ctx context.Context, batch entity.Batch) (entity.BatchChanges, error) {
-	changes := entity.BatchChanges{BatchID: batch.ID, Queue: batch.Queue}
-	for _, requestID := range batch.Contains {
-		request, err := c.store.GetRequestStore().Get(ctx, requestID)
-		if err != nil {
-			return entity.BatchChanges{}, fmt.Errorf("failed to get request %s: %w", requestID, err)
-		}
-		for _, uri := range request.Change.URIs {
-			records, err := c.store.GetChangeStore().GetByURI(ctx, batch.Queue, uri)
-			if err != nil {
-				return entity.BatchChanges{}, fmt.Errorf("failed to read change record for request %s uri=%s: %w", requestID, uri, err)
-			}
-			for _, rec := range records {
-				if rec.RequestID != requestID {
-					continue
-				}
-				changes.Changes = append(changes.Changes, entity.ChangeInfo{URI: rec.URI, Details: rec.Details})
-				break
-			}
-		}
-	}
-	return changes, nil
 }
 
 // publish publishes a batch ID to the specified topic key.

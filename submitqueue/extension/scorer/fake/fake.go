@@ -27,6 +27,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/core/fakemarker"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/scorer"
@@ -36,25 +37,31 @@ import (
 const tokenError = "score-error"
 
 // scorerFake decorates a delegate Scorer, injecting an error when a change URI
-// carries the failure marker.
+// carries the failure marker. It resolves the batch itself to inspect URIs.
 type scorerFake struct {
+	resolver changeset.Resolver
 	delegate scorer.Scorer
 }
 
 // New returns a scorer.Scorer that delegates to the given scorer but returns an
-// error when a change URI carries the "sq-fake=score-error" marker. The delegate
-// is the existing scorer implementation to wrap (e.g. heuristic or composite).
-func New(delegate scorer.Scorer) scorer.Scorer {
-	return scorerFake{delegate: delegate}
+// error when a change URI carries the "sq-fake=score-error" marker. The resolver
+// resolves the batch's changes so the marker can be inspected; the delegate is the
+// existing scorer implementation to wrap (e.g. heuristic or composite).
+func New(resolver changeset.Resolver, delegate scorer.Scorer) scorer.Scorer {
+	return scorerFake{resolver: resolver, delegate: delegate}
 }
 
 // Score returns an error when a change URI carries the failure marker; otherwise
 // it delegates to the wrapped scorer.
-func (s scorerFake) Score(ctx context.Context, changes entity.BatchChanges) (float64, error) {
+func (s scorerFake) Score(ctx context.Context, batch entity.Batch) (float64, error) {
+	changes, err := s.resolver.DetailedForBatch(ctx, batch)
+	if err != nil {
+		return 0, err
+	}
 	if markerToken(changes) == tokenError {
 		return 0, fmt.Errorf("fake: marked score error")
 	}
-	return s.delegate.Score(ctx, changes)
+	return s.delegate.Score(ctx, batch)
 }
 
 // markerToken returns the marker token embedded in the first change URI that

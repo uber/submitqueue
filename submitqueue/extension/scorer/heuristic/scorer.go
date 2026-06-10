@@ -20,6 +20,7 @@ import (
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/core/metrics"
+	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/scorer"
 )
@@ -40,6 +41,8 @@ type Bucket struct {
 // heuristicScorer computes a success probability by bucketing a metric extracted from a batch of changes.
 // It follows the Java HeuristicsBasedSuccessPredictor pattern.
 type heuristicScorer struct {
+	// resolver resolves the batch identity into its detailed changes.
+	resolver changeset.Resolver
 	// buckets is the list of ranges to match against.
 	buckets []Bucket
 	// valueFunc extracts the numeric value from a batch of changes.
@@ -48,24 +51,30 @@ type heuristicScorer struct {
 	scope tally.Scope
 }
 
-// New creates a new heuristic Scorer with the given buckets and value function.
+// New creates a new heuristic Scorer with the given resolver, buckets and value function.
 // Panics if valueFunc is nil.
-func New(buckets []Bucket, valueFunc ValueFunc, scope tally.Scope) scorer.Scorer {
+func New(resolver changeset.Resolver, buckets []Bucket, valueFunc ValueFunc, scope tally.Scope) scorer.Scorer {
 	if valueFunc == nil {
 		panic("heuristic.New: valueFunc must not be nil")
 	}
 	return &heuristicScorer{
+		resolver:  resolver,
 		buckets:   buckets,
 		valueFunc: valueFunc,
 		scope:     scope,
 	}
 }
 
-// Score extracts the value from the batch of changes, then returns the probability score for the
-// first bucket whose range [Min, Max] contains the value. Returns an error if no bucket matches.
-func (s *heuristicScorer) Score(ctx context.Context, changes entity.BatchChanges) (ret float64, retErr error) {
+// Score resolves the batch's changes, extracts the metric, then returns the probability
+// score for the first bucket whose range [Min, Max] contains the value. Returns an error
+// if no bucket matches.
+func (s *heuristicScorer) Score(ctx context.Context, batch entity.Batch) (ret float64, retErr error) {
 	op := metrics.Begin(s.scope, "score")
 	defer func() { op.Complete(retErr) }()
+	changes, err := s.resolver.DetailedForBatch(ctx, batch)
+	if err != nil {
+		return 0, err
+	}
 	value, err := s.valueFunc(ctx, changes)
 	if err != nil {
 		return 0, err
