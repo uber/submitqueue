@@ -30,6 +30,7 @@ go_library(
         "//submitqueue/extension/conflict",
         "//submitqueue/extension/conflict/all",
         "//submitqueue/extension/conflict/fake",
+        "//submitqueue/extension/conflict/fileoverlap",
         "//submitqueue/extension/conflict/none",
         "//submitqueue/extension/mergechecker",
         "//submitqueue/extension/mergechecker/fake",

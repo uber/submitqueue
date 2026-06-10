@@ -1,0 +1,26 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "fileoverlap",
+    srcs = ["fileoverlap.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/extension/conflict/fileoverlap",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//submitqueue/core/changeset",
+        "//submitqueue/entity",
+        "//submitqueue/extension/conflict",
+    ],
+)
+
+go_test(
+    name = "fileoverlap_test",
+    srcs = ["fileoverlap_test.go"],
+    embed = [":fileoverlap"],
+    deps = [
+        "//submitqueue/core/changeset/fake",
+        "//submitqueue/entity",
+        "//submitqueue/extension/conflict",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)
