@@ -1,0 +1,94 @@
+// Copyright (c) 2025 Uber Technologies, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package uber.submitqueue.pushqueue;
+
+option go_package = "github.com/uber/submitqueue/pushqueue/gateway/protopb";
+option java_multiple_files = true;
+option java_outer_classname = "GatewayProto";
+option java_package = "com.uber.submitqueue.pushqueue";
+
+enum Strategy {
+    STRATEGY_UNSPECIFIED = 0;
+    STRATEGY_REBASE = 1;
+    STRATEGY_SQUASH_REBASE = 2;
+    STRATEGY_MERGE = 3;
+}
+
+message Queue {
+    string name = 1;
+    string address = 2;
+    string target = 3;
+}
+
+message LandItem {
+    repeated string uris = 1;
+    Strategy strategy = 2;
+}
+
+enum OutcomeStatus {
+    OUTCOME_STATUS_UNSPECIFIED = 0;
+    OUTCOME_STATUS_COMMITTED = 1;
+    OUTCOME_STATUS_ALREADY_EXISTED = 2;
+}
+
+message ItemOutcome {
+    OutcomeStatus status = 1;
+    repeated string revision_ids = 2;
+}
+
+message LandRequest {
+    Queue queue = 1;
+    repeated LandItem items = 2;
+}
+
+message LandResponse {
+    bool success = 1;
+    repeated ItemOutcome outcomes = 2;
+    string finalize_error = 3;
+}
+
+message CheckMergeabilityRequest {
+    Queue queue = 1;
+    repeated LandItem items = 2;
+}
+
+message MergeabilityItemResult {
+    bool mergeable = 1;
+    string reason = 2;
+}
+
+message CheckMergeabilityResponse {
+    bool mergeable = 1;
+    repeated MergeabilityItemResult results = 2;
+}
+
+message PingRequest {
+    string message = 1;
+}
+
+message PingResponse {
+    string message = 1;
+    string service_name = 2;
+    int64 timestamp = 3;
+    string hostname = 4;
+}
+
+service PushQueueGateway {
+    rpc Ping(PingRequest) returns (PingResponse) {}
+    rpc Land(LandRequest) returns (LandResponse) {}
+    rpc CheckMergeability(CheckMergeabilityRequest) returns (CheckMergeabilityResponse) {}
+}
