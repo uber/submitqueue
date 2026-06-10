@@ -1,0 +1,13 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mock",
+    srcs = ["vcs_mock.go"],
+    importpath = "github.com/uber/submitqueue/pushqueue/extension/vcs/mock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pushqueue/entity",
+        "//pushqueue/extension/vcs",
+        "@com_github_golang_mock//gomock",
+    ],
+)
