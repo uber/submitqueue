@@ -108,34 +108,26 @@ func TestController_Process_SuccessfulMerge(t *testing.T) {
 		Version:  4,
 	}
 	change := entity.Change{URIs: []string{"github://o/r/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
-	request := entity.Request{
-		ID:      reqID,
-		Queue:   "test-queue",
-		Change:  change,
-		State:   entity.RequestStateProcessing,
-		Version: 2,
-	}
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batchID).Return(batch, nil)
 	batchStore.EXPECT().UpdateState(gomock.Any(), batchID, int32(4), int32(5), entity.BatchStateSucceeded).Return(nil)
 
-	requestStore := storagemock.NewMockRequestStore(ctrl)
-	requestStore.EXPECT().Get(gomock.Any(), reqID).Return(request, nil)
-
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
-	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
 	mockPusher := pushermock.NewMockPusher(ctrl)
 	mockPusher.EXPECT().Push(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, changes []entity.Change) (pusher.Result, error) {
-			require.Len(t, changes, 1)
-			assert.Equal(t, change, changes[0])
-			return pusher.Result{Outcomes: []pusher.ChangeOutcome{{
-				Change:     change,
-				Status:     pusher.OutcomeStatusCommitted,
-				CommitSHAs: []string{"deadbeef"},
+		func(_ context.Context, batches []entity.Batch) (pusher.Result, error) {
+			require.Len(t, batches, 1)
+			assert.Equal(t, batch.ID, batches[0].ID)
+			return pusher.Result{Batches: []pusher.BatchOutcome{{
+				BatchID: batch.ID,
+				Outcomes: []pusher.ChangeOutcome{{
+					Change:     change,
+					Status:     pusher.OutcomeStatusCommitted,
+					CommitSHAs: []string{"deadbeef"},
+				}},
 			}}}, nil
 		},
 	)
@@ -154,16 +146,15 @@ func TestController_Process_SuccessfulMerge(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestController_Process_PassesAllChangesInBatchOrder(t *testing.T) {
+// TestController_Process_ForwardsBatchToPusher verifies the controller forwards
+// the batch identity (with its full Contains, in order) to the pusher, which
+// resolves the changes itself. Change resolution order is the pusher's concern,
+// covered by the git pusher tests.
+func TestController_Process_ForwardsBatchToPusher(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	const batchID = "test-queue/batch/multi"
 	requestIDs := []string{"test-queue/1", "test-queue/2", "test-queue/3"}
-	changes := []entity.Change{
-		{URIs: []string{"github://o/r/pull/1/1111111111111111111111111111111111111111"}},
-		{URIs: []string{"github://o/r/pull/2/2222222222222222222222222222222222222222"}},
-		{URIs: []string{"github://o/r/pull/3/3333333333333333333333333333333333333333"}},
-	}
 
 	batch := entity.Batch{
 		ID:       batchID,
@@ -177,30 +168,15 @@ func TestController_Process_PassesAllChangesInBatchOrder(t *testing.T) {
 	batchStore.EXPECT().Get(gomock.Any(), batchID).Return(batch, nil)
 	batchStore.EXPECT().UpdateState(gomock.Any(), batchID, int32(1), int32(2), entity.BatchStateSucceeded).Return(nil)
 
-	requestStore := storagemock.NewMockRequestStore(ctrl)
-	for i, rid := range requestIDs {
-		requestStore.EXPECT().Get(gomock.Any(), rid).Return(entity.Request{
-			ID: rid, Change: changes[i],
-		}, nil)
-	}
-
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
-	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
 	mockPusher := pushermock.NewMockPusher(ctrl)
 	mockPusher.EXPECT().Push(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, got []entity.Change) (pusher.Result, error) {
-			assert.Equal(t, changes, got, "changes must be in batch.Contains order")
-			outcomes := make([]pusher.ChangeOutcome, len(got))
-			for i, ch := range got {
-				outcomes[i] = pusher.ChangeOutcome{
-					Change:     ch,
-					Status:     pusher.OutcomeStatusCommitted,
-					CommitSHAs: []string{fmt.Sprintf("sha-%d", i)},
-				}
-			}
-			return pusher.Result{Outcomes: outcomes}, nil
+		func(_ context.Context, batches []entity.Batch) (pusher.Result, error) {
+			require.Len(t, batches, 1)
+			assert.Equal(t, requestIDs, batches[0].Contains, "batch forwarded with Contains in order")
+			return pusher.Result{Batches: []pusher.BatchOutcome{{BatchID: batchID}}}, nil
 		},
 	)
 
@@ -236,14 +212,8 @@ func TestController_Process_PushConflictMarksBatchFailed(t *testing.T) {
 	batchStore.EXPECT().Get(gomock.Any(), batchID).Return(batch, nil)
 	batchStore.EXPECT().UpdateState(gomock.Any(), batchID, int32(3), int32(4), entity.BatchStateFailed).Return(nil)
 
-	requestStore := storagemock.NewMockRequestStore(ctrl)
-	requestStore.EXPECT().Get(gomock.Any(), reqID).Return(entity.Request{
-		ID: reqID, Change: entity.Change{URIs: []string{"github://o/r/pull/2/2222222222222222222222222222222222222222"}},
-	}, nil)
-
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
-	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
 	mockPusher := pushermock.NewMockPusher(ctrl)
 	mockPusher.EXPECT().Push(gomock.Any(), gomock.Any()).Return(
@@ -282,14 +252,8 @@ func TestController_Process_PushInfraFailureReturnsError(t *testing.T) {
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batchID).Return(batch, nil)
 
-	requestStore := storagemock.NewMockRequestStore(ctrl)
-	requestStore.EXPECT().Get(gomock.Any(), reqID).Return(entity.Request{
-		ID: reqID, Change: entity.Change{URIs: []string{"github://o/r/pull/3/3333333333333333333333333333333333333333"}},
-	}, nil)
-
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
-	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
 	mockPusher := pushermock.NewMockPusher(ctrl)
 	mockPusher.EXPECT().Push(gomock.Any(), gomock.Any()).Return(
@@ -428,44 +392,6 @@ func TestController_Process_BatchStoreGetFailureNotRetryable(t *testing.T) {
 	assert.False(t, errs.IsRetryable(err))
 }
 
-func TestController_Process_RequestStoreFailurePropagates(t *testing.T) {
-	ctrl := gomock.NewController(t)
-
-	const reqID = "test-queue/6"
-	const batchID = "test-queue/batch/6"
-
-	batch := entity.Batch{
-		ID:       batchID,
-		Queue:    "test-queue",
-		Contains: []string{reqID},
-		State:    entity.BatchStateMerging,
-		Version:  1,
-	}
-
-	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().Get(gomock.Any(), batchID).Return(batch, nil)
-
-	requestStore := storagemock.NewMockRequestStore(ctrl)
-	requestStore.EXPECT().Get(gomock.Any(), reqID).Return(entity.Request{}, fmt.Errorf("db connection lost"))
-
-	store := storagemock.NewMockStorage(ctrl)
-	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
-	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
-
-	c := NewController(
-		zaptest.NewLogger(t).Sugar(),
-		tally.NoopScope,
-		store,
-		newRegistry(t, ctrl, nil),
-		newPusherFactory(ctrl, pushermock.NewMockPusher(ctrl)),
-		consumer.TopicKeyMerge,
-		"orchestrator-merge",
-	)
-
-	err := c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue))
-	require.Error(t, err)
-}
-
 func TestController_Process_PublishFailureSurfaces(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
@@ -484,19 +410,16 @@ func TestController_Process_PublishFailureSurfaces(t *testing.T) {
 	batchStore.EXPECT().Get(gomock.Any(), batchID).Return(batch, nil)
 	batchStore.EXPECT().UpdateState(gomock.Any(), batchID, int32(2), int32(3), entity.BatchStateSucceeded).Return(nil)
 
-	requestStore := storagemock.NewMockRequestStore(ctrl)
-	requestStore.EXPECT().Get(gomock.Any(), reqID).Return(entity.Request{
-		ID: reqID, Change: entity.Change{URIs: []string{"github://o/r/pull/7/7777777777777777777777777777777777777777"}},
-	}, nil)
-
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
-	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
 	mockPusher := pushermock.NewMockPusher(ctrl)
 	mockPusher.EXPECT().Push(gomock.Any(), gomock.Any()).Return(
-		pusher.Result{Outcomes: []pusher.ChangeOutcome{{
-			Status: pusher.OutcomeStatusCommitted, CommitSHAs: []string{"abc"},
+		pusher.Result{Batches: []pusher.BatchOutcome{{
+			BatchID: batchID,
+			Outcomes: []pusher.ChangeOutcome{{
+				Status: pusher.OutcomeStatusCommitted, CommitSHAs: []string{"abc"},
+			}},
 		}}}, nil,
 	)
 

@@ -62,6 +62,7 @@ import (
 	"go.uber.org/zap"
 
 	coremetrics "github.com/uber/submitqueue/core/metrics"
+	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	entitygithub "github.com/uber/submitqueue/submitqueue/entity/github"
 	"github.com/uber/submitqueue/submitqueue/extension/pusher"
@@ -82,6 +83,8 @@ type Params struct {
 	Remote string
 	// Target is the destination branch ref on the remote (e.g. "main").
 	Target string
+	// Resolver resolves each batch's changes.
+	Resolver changeset.Resolver
 	// Logger is the structured logger.
 	Logger *zap.SugaredLogger
 	// MetricsScope is the metrics scope for instrumentation.
@@ -98,6 +101,7 @@ type gitPusher struct {
 	checkoutPath    string
 	remote          string
 	target          string
+	resolver        changeset.Resolver
 	logger          *zap.SugaredLogger
 	metricsScope    tally.Scope
 	maxPushAttempts int
@@ -121,6 +125,7 @@ func NewPusher(params Params) pusher.Pusher {
 		checkoutPath:    params.CheckoutPath,
 		remote:          params.Remote,
 		target:          params.Target,
+		resolver:        params.Resolver,
 		logger:          params.Logger.Named("git_pusher"),
 		metricsScope:    params.MetricsScope.SubScope("git_pusher"),
 		maxPushAttempts: maxAttempts,
@@ -128,9 +133,22 @@ func NewPusher(params Params) pusher.Pusher {
 }
 
 // Push fulfils the pusher.Pusher contract.
-func (p *gitPusher) Push(ctx context.Context, changes []entity.Change) (ret pusher.Result, retErr error) {
+func (p *gitPusher) Push(ctx context.Context, batches []entity.Batch) (ret pusher.Result, retErr error) {
 	op := coremetrics.Begin(p.metricsScope, "push")
 	defer func() { op.Complete(retErr) }()
+
+	// Resolve each batch's changes, keeping per-batch counts so the flat
+	// outcomes can be regrouped per batch on success.
+	perBatch := make([][]entity.Change, len(batches))
+	var changes []entity.Change
+	for i, b := range batches {
+		cs, err := p.resolver.ChangesForBatch(ctx, b)
+		if err != nil {
+			return pusher.Result{}, fmt.Errorf("resolve batch %s: %w", b.ID, err)
+		}
+		perBatch[i] = cs
+		changes = append(changes, cs...)
+	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -154,7 +172,7 @@ func (p *gitPusher) Push(ctx context.Context, changes []entity.Change) (ret push
 				"target", p.target,
 				"outcomes", outcomes,
 			)
-			return pusher.Result{Outcomes: outcomes}, nil
+			return pusher.Result{Batches: groupByBatch(batches, perBatch, outcomes)}, nil
 		}
 
 		// Was the failure caused by the remote tip moving under us between
@@ -188,6 +206,19 @@ func (p *gitPusher) Push(ctx context.Context, changes []entity.Change) (ret push
 
 	coremetrics.NamedCounter(p.metricsScope, "push", "stale_base_giveup", 1)
 	return pusher.Result{}, fmt.Errorf("exceeded %d push attempts due to remote contention: %w", p.maxPushAttempts, lastErr)
+}
+
+// groupByBatch splits the flat, apply-ordered outcomes back into one
+// BatchOutcome per input batch, using each batch's resolved change count.
+func groupByBatch(batches []entity.Batch, perBatch [][]entity.Change, outcomes []pusher.ChangeOutcome) []pusher.BatchOutcome {
+	result := make([]pusher.BatchOutcome, len(batches))
+	pos := 0
+	for i, b := range batches {
+		n := len(perBatch[i])
+		result[i] = pusher.BatchOutcome{BatchID: b.ID, Outcomes: outcomes[pos : pos+n]}
+		pos += n
+	}
+	return result
 }
 
 // tryPush runs one full reset+cherry-pick+push cycle. The returned baseSHA

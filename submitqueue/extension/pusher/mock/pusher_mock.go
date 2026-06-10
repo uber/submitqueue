@@ -43,18 +43,18 @@ func (m *MockPusher) EXPECT() *MockPusherMockRecorder {
 }
 
 // Push mocks base method.
-func (m *MockPusher) Push(ctx context.Context, changes []entity.Change) (pusher.Result, error) {
+func (m *MockPusher) Push(ctx context.Context, batches []entity.Batch) (pusher.Result, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Push", ctx, changes)
+	ret := m.ctrl.Call(m, "Push", ctx, batches)
 	ret0, _ := ret[0].(pusher.Result)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Push indicates an expected call of Push.
-func (mr *MockPusherMockRecorder) Push(ctx, changes any) *gomock.Call {
+func (mr *MockPusherMockRecorder) Push(ctx, batches any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Push", reflect.TypeOf((*MockPusher)(nil).Push), ctx, changes)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Push", reflect.TypeOf((*MockPusher)(nil).Push), ctx, batches)
 }
 
 // MockFactory is a mock of Factory interface.

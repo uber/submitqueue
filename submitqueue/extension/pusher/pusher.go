@@ -59,16 +59,29 @@ type ChangeOutcome struct {
 	CommitSHAs []string
 }
 
-// Result is the outcome of a successful Push call.
-type Result struct {
-	// Outcomes is one entry per input change, in the same order as the
-	// changes passed to Push. The slice length equals the input length.
+// BatchOutcome groups the per-change outcomes for a single input batch, so a
+// merge-train push (several batches in one call) stays correlatable back to the
+// batch each change belonged to. There is no per-batch status: Push is
+// all-or-nothing across the whole call (see the atomicity contract), so a
+// per-batch pass/fail would be uniformly redundant.
+type BatchOutcome struct {
+	// BatchID is the input batch this outcome corresponds to.
+	BatchID string
+	// Outcomes is one entry per change in the batch, in apply order.
 	Outcomes []ChangeOutcome
 }
 
-// Pusher applies a list of Changes on top of a target branch and pushes the
-// result to the source-control remote. Each implementation is bound to a
-// specific (checkout, remote, target) at construction time.
+// Result is the outcome of a successful Push call.
+type Result struct {
+	// Batches is one entry per input batch, in the same order as the batches
+	// passed to Push. The slice length equals the input length.
+	Batches []BatchOutcome
+}
+
+// Pusher applies the changes of one or more batches on top of a target branch
+// and pushes the result to the source-control remote. Each implementation is
+// bound to a specific (checkout, remote, target) at construction time and
+// resolves each batch's changes itself through an injected changeset resolver.
 //
 // Atomicity contract: when Push returns a non-nil error, NO change has been
 // pushed to the remote — neither partially nor fully. Implementations must
@@ -76,15 +89,19 @@ type Result struct {
 // when any change fails to apply. Callers can treat a non-nil error as
 // "the remote is exactly as it was before the call".
 //
-// On success, len(Result.Outcomes) == len(changes) and Outcomes[i] describes
-// what happened to changes[i]. A change can produce multiple commits
-// (OutcomeStatusCommitted, CommitSHAs populated in apply order) or none at
-// all (OutcomeStatusAlreadyExisted, CommitSHAs empty) — the latter happens
-// when the change's content is already present on the target branch.
+// On success, len(Result.Batches) == len(batches) and Batches[i] describes what
+// happened to batches[i], with one ChangeOutcome per change in that batch in
+// apply order. A change can produce multiple commits (OutcomeStatusCommitted,
+// CommitSHAs populated in apply order) or none at all (OutcomeStatusAlreadyExisted,
+// CommitSHAs empty) — the latter happens when the change's content is already
+// present on the target branch.
 type Pusher interface {
-	// Push applies changes onto the target branch and pushes the resulting
-	// commits. See the type-level docs for the atomicity contract.
-	Push(ctx context.Context, changes []entity.Change) (Result, error)
+	// Push resolves and applies the changes of the given batches, in order,
+	// onto the target branch and pushes the resulting commits. The batch list
+	// designs for a merge-train (land several ready batches in one atomic push);
+	// today merge passes a single batch. See the type-level docs for the
+	// atomicity contract.
+	Push(ctx context.Context, batches []entity.Batch) (Result, error)
 }
 
 // Config carries the per-queue identity handed to a Factory. The system knows

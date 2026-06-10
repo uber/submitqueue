@@ -31,6 +31,7 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/uber/submitqueue/submitqueue/core/changeset/fake"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/pusher"
 )
@@ -47,6 +48,7 @@ type gitFixture struct {
 	remoteDir   string
 	checkoutDir string
 	authorDir   string // a separate working clone used to author "PR" commits
+	resolver    *fake.Resolver
 }
 
 func setupGitFixture(t *testing.T) gitFixture {
@@ -81,7 +83,15 @@ func setupGitFixture(t *testing.T) gitFixture {
 		remoteDir:   remoteDir,
 		checkoutDir: checkoutDir,
 		authorDir:   authorDir,
+		resolver:    fake.New(),
 	}
+}
+
+// batchFor seeds the fixture resolver so batch id resolves to the given changes,
+// and returns the batch to pass to Push.
+func (f gitFixture) batchFor(id string, changes ...entity.Change) entity.Batch {
+	f.resolver.Set(id, changes...)
+	return entity.Batch{ID: id}
 }
 
 // configRepo applies the test-only config that lets git commit work in a
@@ -152,6 +162,7 @@ func (f gitFixture) newPusher(t *testing.T) pusher.Pusher {
 		CheckoutPath: f.checkoutDir,
 		Remote:       "origin",
 		Target:       "main",
+		Resolver:     f.resolver,
 		Logger:       zaptest.NewLogger(t).Sugar(),
 		MetricsScope: tally.NoopScope,
 	})
@@ -243,13 +254,13 @@ func TestPusher_Push_SingleChangeSingleURIProducesOneCommit(t *testing.T) {
 	sha := f.pushPRCommit(t, "feature/a", "hello.txt", "hello\nearth\n", "tweak hello")
 	p := f.newPusher(t)
 
-	res, err := p.Push(context.Background(), []entity.Change{
-		{URIs: []string{uri(sha)}},
+	res, err := p.Push(context.Background(), []entity.Batch{
+		f.batchFor("b", entity.Change{URIs: []string{uri(sha)}}),
 	})
 	require.NoError(t, err)
-	require.Len(t, res.Outcomes, 1)
+	require.Len(t, res.Batches[0].Outcomes, 1)
 
-	out := res.Outcomes[0]
+	out := res.Batches[0].Outcomes[0]
 	assert.Equal(t, pusher.OutcomeStatusCommitted, out.Status)
 	require.Len(t, out.CommitSHAs, 1)
 	assert.Equal(t, []string{out.CommitSHAs[0]}, f.remoteCommitsSinceSeed(t))
@@ -275,13 +286,13 @@ func TestPusher_Push_StackedURIsProduceMultipleCommitsForOneChange(t *testing.T)
 	mustGit(t, f.authorDir, "push", "-f", "origin", "feature/stack")
 
 	p := f.newPusher(t)
-	res, err := p.Push(context.Background(), []entity.Change{
-		{URIs: []string{uri(sha1), uri(sha2)}},
+	res, err := p.Push(context.Background(), []entity.Batch{
+		f.batchFor("b", entity.Change{URIs: []string{uri(sha1), uri(sha2)}}),
 	})
 	require.NoError(t, err)
-	require.Len(t, res.Outcomes, 1)
+	require.Len(t, res.Batches[0].Outcomes, 1)
 
-	out := res.Outcomes[0]
+	out := res.Batches[0].Outcomes[0]
 	assert.Equal(t, pusher.OutcomeStatusCommitted, out.Status)
 	require.Len(t, out.CommitSHAs, 2)
 	assert.Equal(t, out.CommitSHAs, f.remoteCommitsSinceSeed(t))
@@ -298,13 +309,13 @@ func TestPusher_Push_AlreadyLandedChangeIsRebasedOut(t *testing.T) {
 	mainBeforePush := f.remoteHEAD(t)
 
 	p := f.newPusher(t)
-	res, err := p.Push(context.Background(), []entity.Change{
-		{URIs: []string{uri(sha)}},
+	res, err := p.Push(context.Background(), []entity.Batch{
+		f.batchFor("b", entity.Change{URIs: []string{uri(sha)}}),
 	})
 	require.NoError(t, err)
-	require.Len(t, res.Outcomes, 1)
+	require.Len(t, res.Batches[0].Outcomes, 1)
 
-	out := res.Outcomes[0]
+	out := res.Batches[0].Outcomes[0]
 	assert.Equal(t, pusher.OutcomeStatusAlreadyExisted, out.Status)
 	assert.Empty(t, out.CommitSHAs)
 	assert.Equal(t, mainBeforePush, f.remoteHEAD(t),
@@ -319,18 +330,17 @@ func TestPusher_Push_MixedChangesPartiallyRebasedOut(t *testing.T) {
 	freshSHA := f.pushPRCommit(t, "feature/b", "extra.txt", "extra\n", "add extra")
 
 	p := f.newPusher(t)
-	res, err := p.Push(context.Background(), []entity.Change{
-		{URIs: []string{uri(subsumedSHA)}},
-		{URIs: []string{uri(freshSHA)}},
+	res, err := p.Push(context.Background(), []entity.Batch{
+		f.batchFor("b", entity.Change{URIs: []string{uri(subsumedSHA)}}, entity.Change{URIs: []string{uri(freshSHA)}}),
 	})
 	require.NoError(t, err)
-	require.Len(t, res.Outcomes, 2)
+	require.Len(t, res.Batches[0].Outcomes, 2)
 
-	assert.Equal(t, pusher.OutcomeStatusAlreadyExisted, res.Outcomes[0].Status)
-	assert.Empty(t, res.Outcomes[0].CommitSHAs)
+	assert.Equal(t, pusher.OutcomeStatusAlreadyExisted, res.Batches[0].Outcomes[0].Status)
+	assert.Empty(t, res.Batches[0].Outcomes[0].CommitSHAs)
 
-	assert.Equal(t, pusher.OutcomeStatusCommitted, res.Outcomes[1].Status)
-	require.Len(t, res.Outcomes[1].CommitSHAs, 1)
+	assert.Equal(t, pusher.OutcomeStatusCommitted, res.Batches[0].Outcomes[1].Status)
+	require.Len(t, res.Batches[0].Outcomes[1].CommitSHAs, 1)
 
 	assert.Equal(t, "extra\n", f.remoteFile(t, "extra.txt"))
 }
@@ -349,8 +359,8 @@ func TestPusher_Push_ConflictReturnsErrConflictAndDoesNotPush(t *testing.T) {
 	conflictingSHA := f.pushPRCommitFrom(t, seedSHA, "feature/b", "hello.txt", "hello\nmars\n", "mars")
 
 	p := f.newPusher(t)
-	_, err := p.Push(context.Background(), []entity.Change{
-		{URIs: []string{uri(conflictingSHA)}},
+	_, err := p.Push(context.Background(), []entity.Batch{
+		f.batchFor("b", entity.Change{URIs: []string{uri(conflictingSHA)}}),
 	})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, pusher.ErrConflict))
@@ -368,13 +378,13 @@ func TestPusher_Push_ResetsBetweenCalls(t *testing.T) {
 	// would fail or include unrelated changes.
 	require.NoError(t, writeFile(filepath.Join(f.checkoutDir, "stray.txt"), "leftover\n"))
 
-	res, err := p.Push(context.Background(), []entity.Change{
-		{URIs: []string{uri(sha)}},
+	res, err := p.Push(context.Background(), []entity.Batch{
+		f.batchFor("b", entity.Change{URIs: []string{uri(sha)}}),
 	})
 	require.NoError(t, err)
-	require.Len(t, res.Outcomes[0].CommitSHAs, 1)
+	require.Len(t, res.Batches[0].Outcomes[0].CommitSHAs, 1)
 
-	out := mustGitOutput(t, f.remoteDir, "ls-tree", "--name-only", res.Outcomes[0].CommitSHAs[0])
+	out := mustGitOutput(t, f.remoteDir, "ls-tree", "--name-only", res.Batches[0].Outcomes[0].CommitSHAs[0])
 	assert.NotContains(t, string(out), "stray.txt", "unrelated file should not have landed")
 	assert.Contains(t, string(out), "hello.txt")
 }
@@ -388,19 +398,19 @@ func TestPusher_Push_RecoversAfterPriorConflict(t *testing.T) {
 	conflictingSHA := f.pushPRCommitFrom(t, seedSHA, "feature/b", "hello.txt", "hello\nmars\n", "mars")
 
 	p := f.newPusher(t)
-	_, err := p.Push(context.Background(), []entity.Change{
-		{URIs: []string{uri(conflictingSHA)}},
+	_, err := p.Push(context.Background(), []entity.Batch{
+		f.batchFor("b", entity.Change{URIs: []string{uri(conflictingSHA)}}),
 	})
 	require.Error(t, err)
 
 	// A subsequent, clean push must succeed even though the prior call left
 	// a cherry-pick in progress before its rollback.
 	freshSHA := f.pushPRCommit(t, "feature/c", "extra.txt", "extra\n", "add extra")
-	res, err := p.Push(context.Background(), []entity.Change{
-		{URIs: []string{uri(freshSHA)}},
+	res, err := p.Push(context.Background(), []entity.Batch{
+		f.batchFor("b2", entity.Change{URIs: []string{uri(freshSHA)}}),
 	})
 	require.NoError(t, err)
-	assert.Equal(t, pusher.OutcomeStatusCommitted, res.Outcomes[0].Status)
+	assert.Equal(t, pusher.OutcomeStatusCommitted, res.Batches[0].Outcomes[0].Status)
 	assert.Equal(t, "extra\n", f.remoteFile(t, "extra.txt"))
 }
 
@@ -417,8 +427,8 @@ func TestPusher_Push_InvalidURIErrors(t *testing.T) {
 	f := setupGitFixture(t)
 	p := f.newPusher(t)
 
-	_, err := p.Push(context.Background(), []entity.Change{
-		{URIs: []string{"not a uri"}},
+	_, err := p.Push(context.Background(), []entity.Batch{
+		f.batchFor("b", entity.Change{URIs: []string{"not a uri"}}),
 	})
 	require.Error(t, err)
 }
@@ -433,12 +443,12 @@ func TestPusher_Push_RetriesWhenRemoteMovesUnderUs(t *testing.T) {
 	f.installRaceHook(t, []string{raceSHA})
 
 	p := f.newPusher(t)
-	res, err := p.Push(context.Background(), []entity.Change{
-		{URIs: []string{uri(featureSHA)}},
+	res, err := p.Push(context.Background(), []entity.Batch{
+		f.batchFor("b", entity.Change{URIs: []string{uri(featureSHA)}}),
 	})
 	require.NoError(t, err)
-	require.Len(t, res.Outcomes, 1)
-	require.Len(t, res.Outcomes[0].CommitSHAs, 1)
+	require.Len(t, res.Batches[0].Outcomes, 1)
+	require.Len(t, res.Batches[0].Outcomes[0].CommitSHAs, 1)
 
 	assert.Equal(t, 2, f.hookInvocations(t),
 		"first attempt rejected by hook, second attempt allowed through")
@@ -447,7 +457,7 @@ func TestPusher_Push_RetriesWhenRemoteMovesUnderUs(t *testing.T) {
 	require.Len(t, commits, 2)
 	assert.Equal(t, raceSHA, commits[0],
 		"race commit landed first via the hook")
-	assert.Equal(t, res.Outcomes[0].CommitSHAs[0], commits[1],
+	assert.Equal(t, res.Batches[0].Outcomes[0].CommitSHAs[0], commits[1],
 		"our cherry-pick landed on top after the retry")
 	assert.Equal(t, "hello\nearth\n", f.remoteFile(t, "hello.txt"))
 }
@@ -465,12 +475,13 @@ func TestPusher_Push_GivesUpAfterMaxAttempts(t *testing.T) {
 		CheckoutPath:    f.checkoutDir,
 		Remote:          "origin",
 		Target:          "main",
+		Resolver:        f.resolver,
 		Logger:          zaptest.NewLogger(t).Sugar(),
 		MetricsScope:    tally.NoopScope,
 		MaxPushAttempts: 2,
 	})
-	_, err := p.Push(context.Background(), []entity.Change{
-		{URIs: []string{uri(featureSHA)}},
+	_, err := p.Push(context.Background(), []entity.Batch{
+		f.batchFor("b", entity.Change{URIs: []string{uri(featureSHA)}}),
 	})
 	require.Error(t, err)
 	assert.Equal(t, 2, f.hookInvocations(t),
