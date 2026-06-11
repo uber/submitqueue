@@ -83,8 +83,8 @@ func (s *buildStore) scanBuild(ctx context.Context, query, label string, args ..
 	return build, nil
 }
 
-// Create creates a new build. The build must have a unique ID and batch ID.
-// Returns ErrAlreadyExists if either uniqueness constraint is violated.
+// Create creates a new build. The build must have a unique ID.
+// Returns ErrAlreadyExists if a build with the same ID already exists.
 func (s *buildStore) Create(ctx context.Context, build entity.Build) (retErr error) {
 	op := metrics.Begin(s.scope, "create")
 	defer func() { op.Complete(retErr) }()

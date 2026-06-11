@@ -4,6 +4,5 @@ CREATE TABLE IF NOT EXISTS build (
     speculation_path JSON NOT NULL,
     score FLOAT NOT NULL,
     status VARCHAR(64) NOT NULL,
-    PRIMARY KEY (id),
-    UNIQUE KEY uniq_batch_id (batch_id)
+    PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

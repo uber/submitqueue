@@ -33,8 +33,8 @@ type BuildStore interface {
 	// Returns ErrNotFound if no build exists for the batch.
 	GetByBatchID(ctx context.Context, batchID string) (entity.Build, error)
 
-	// Create creates a new build. The build must have a unique ID and batch ID.
-	// Returns ErrAlreadyExists if either uniqueness constraint is violated.
+	// Create creates a new build. The build must have a unique ID.
+	// Returns ErrAlreadyExists if a build with the same ID already exists.
 	Create(ctx context.Context, build entity.Build) error
 
 	// UpdateStatus updates the status of a build.

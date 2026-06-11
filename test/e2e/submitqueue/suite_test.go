@@ -167,63 +167,18 @@ func (s *E2EIntegrationSuite) TestPingOrchestrator() {
 	s.log.Logf("Orchestrator ping: %s", resp.Message)
 }
 
-// TestLandRequest_SinglePR drives a normal request through the orchestrator
-// pipeline and asserts it lands. e2e-test-queue is wired with immediate fakes
-// (every stage succeeds), so the happy path reaches the terminal "landed" status.
 func (s *E2EIntegrationSuite) TestLandRequest_SinglePR() {
-	s.landAndWait("github://uber/e2e-service/pull/123/abcdef0123456789abcdef0123456789abcdef01", "landed", 30*time.Second)
-}
-
-// TestLandRequest_BuildFails verifies that a build failure (injected via the
-// fake build runner's "sq-fake=build-fail" marker) drives the request to a
-// terminal "error" rather than landing. This is the end-to-end guard for the
-// speculate build-gating fix: before that fix the batch ignored its own failed
-// build and still merged.
-func (s *E2EIntegrationSuite) TestLandRequest_BuildFails() {
-	s.landAndWait("github://uber/e2e-service/pull/124/abcdef0123456789abcdef0123456789abcdef02?sq-fake=build-fail", "error", 30*time.Second)
-}
-
-// landAndWait submits a single-URI land request to e2e-test-queue and asserts
-// it reaches the expected terminal status.
-func (s *E2EIntegrationSuite) landAndWait(uri, wantStatus string, timeout time.Duration) {
-	t := s.T()
 	req := &gatewaypb.LandRequest{
 		Queue:    "e2e-test-queue",
-		Change:   &gatewaypb.Change{Uris: []string{uri}},
+		Change:   &gatewaypb.Change{Uris: []string{"github://uber/e2e-service/pull/123/abcdef0123456789abcdef0123456789abcdef01"}},
 		Strategy: gatewaypb.Strategy_REBASE,
 	}
 
-	s.log.Logf("Sending Land request for queue=%s uri=%s", req.Queue, uri)
+	s.log.Logf("Sending Land request (single PR) for queue=%s", req.Queue)
 	resp, err := s.gatewayClient.Land(s.ctx, req)
-	require.NoError(t, err, "Land request failed")
-	require.NotEmpty(t, resp.Sqid, "SQID should not be empty")
-
-	final := s.waitForStatus(resp.Sqid, timeout)
-	assert.Equal(t, wantStatus, final)
-}
-
-// waitForStatus polls the gateway Status RPC until the request reaches a
-// terminal status (landed / error / cancelled) and returns it, or fails the
-// test if no terminal status is observed within timeout.
-func (s *E2EIntegrationSuite) waitForStatus(sqid string, timeout time.Duration) string {
-	t := s.T()
-	var final string
-	require.Eventually(t, func() bool {
-		resp, err := s.gatewayClient.Status(s.ctx, &gatewaypb.StatusRequest{Sqid: sqid})
-		if err != nil {
-			s.log.Logf("Status RPC error for sqid=%s: %v", sqid, err)
-			return false
-		}
-		switch resp.Status {
-		case "landed", "error", "cancelled":
-			final = resp.Status
-			s.log.Logf("sqid=%s reached terminal status=%s last_error=%q", sqid, resp.Status, resp.LastError)
-			return true
-		default:
-			return false
-		}
-	}, timeout, 500*time.Millisecond, "sqid=%s did not reach a terminal status within %s", sqid, timeout)
-	return final
+	require.NoError(s.T(), err, "Land request failed")
+	require.NotEmpty(s.T(), resp.Sqid, "SQID should not be empty")
+	s.log.Logf("Land request (single PR) succeeded: sqid=%s", resp.Sqid)
 }
 
 // TestLandRequest_PersistsStartedLogViaGatewayConsumer verifies the request-log

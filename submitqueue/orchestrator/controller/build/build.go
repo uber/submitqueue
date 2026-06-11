@@ -159,9 +159,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	// Persist the initial Build snapshot so the buildsignal poll loop has a
-	// row to UpdateStatus against. ErrAlreadyExists means either this exact
-	// build or another build for the same batch already won a redelivery race;
-	// publish the stored row so the poll loop follows the source of truth.
+	// row to UpdateStatus against. The upfront GetByBatchID check is the
+	// idempotency guard against redeliveries; ErrAlreadyExists here is the
+	// residual race where this exact build ID was persisted between that check
+	// and this Create. Re-read by batch ID and publish the stored row so the
+	// poll loop follows the source of truth.
 	if err := c.store.GetBuildStore().Create(ctx, build); err != nil {
 		if !errors.Is(err, storage.ErrAlreadyExists) {
 			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
