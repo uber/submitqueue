@@ -12,5 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package entity holds Stovepipe-specific domain types (distinct from shared repo entity/).
-package entity
+// Package filter implements a filter for commit events.
+package filter
+
+import (
+	"strings"
+
+	"github.com/uber/submitqueue/stovepipe/entity"
+)
+
+// Config controls which VCS URIs are watched.
+// WatchedURIPrefixes is a list of URI prefixes to match against ChangeEvent.URI.
+// Example: "git://github.com/uber/go-code/refs/heads/main"
+// watches all commits on the main branch of uber/go-code.
+func ShouldProcess(event entity.ChangeEvent, watchedPrefixes []string) bool {
+	for _, prefix := range watchedPrefixes {
+		if strings.HasPrefix(event.URI, prefix) {
+			return true
+		}
+	}
+	return false
+}
