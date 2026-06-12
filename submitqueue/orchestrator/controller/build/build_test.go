@@ -26,6 +26,7 @@ import (
 	"github.com/uber/submitqueue/core/errs"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
+	changesetfake "github.com/uber/submitqueue/submitqueue/core/changeset/fake"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"

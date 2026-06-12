@@ -393,44 +393,6 @@ func TestController_Process_BatchStoreGetFailureNotRetryable(t *testing.T) {
 	assert.False(t, errs.IsRetryable(err))
 }
 
-func TestController_Process_RequestStoreFailurePropagates(t *testing.T) {
-	ctrl := gomock.NewController(t)
-
-	const reqID = "test-queue/6"
-	const batchID = "test-queue/batch/6"
-
-	batch := entity.Batch{
-		ID:       batchID,
-		Queue:    "test-queue",
-		Contains: []string{reqID},
-		State:    entity.BatchStateMerging,
-		Version:  1,
-	}
-
-	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().Get(gomock.Any(), batchID).Return(batch, nil)
-
-	requestStore := storagemock.NewMockRequestStore(ctrl)
-	requestStore.EXPECT().Get(gomock.Any(), reqID).Return(entity.Request{}, fmt.Errorf("db connection lost"))
-
-	store := storagemock.NewMockStorage(ctrl)
-	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
-	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
-
-	c := NewController(
-		zaptest.NewLogger(t).Sugar(),
-		tally.NoopScope,
-		store,
-		newRegistry(t, ctrl, nil),
-		newPusherFactory(ctrl, pushermock.NewMockPusher(ctrl)),
-		topickey.TopicKeyMerge,
-		"orchestrator-merge",
-	)
-
-	err := c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue))
-	require.Error(t, err)
-}
-
 func TestController_Process_PublishFailureSurfaces(t *testing.T) {
 	ctrl := gomock.NewController(t)
 

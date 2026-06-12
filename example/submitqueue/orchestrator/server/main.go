@@ -39,6 +39,7 @@ import (
 	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
 	extqueue "github.com/uber/submitqueue/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/extension/messagequeue/mysql"
+	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"

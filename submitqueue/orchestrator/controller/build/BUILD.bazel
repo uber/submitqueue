@@ -27,6 +27,7 @@ go_test(
         "//core/errs",
         "//entity/messagequeue",
         "//extension/messagequeue/mock",
+        "//submitqueue/core/changeset/fake",
         "//submitqueue/core/topickey",
         "//submitqueue/entity",
         "//submitqueue/extension/buildrunner",
