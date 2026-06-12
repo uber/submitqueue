@@ -9,6 +9,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/extension/buildrunner",
     visibility = ["//visibility:public"],
     deps = [
+        "//entity/change",
         "//submitqueue/core/changeset",
         "//submitqueue/entity",
     ],

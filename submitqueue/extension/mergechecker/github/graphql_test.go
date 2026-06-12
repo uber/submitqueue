@@ -20,7 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	entitygithub "github.com/uber/submitqueue/submitqueue/entity/github"
+	entitygithub "github.com/uber/submitqueue/entity/change/github"
 )
 
 func TestBuildGraphQLQuery(t *testing.T) {

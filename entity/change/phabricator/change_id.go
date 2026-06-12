@@ -54,7 +54,7 @@ var diffPattern = regexp.MustCompile(`^[1-9]\d*$`)
 //     code state, analogous to GitHub's head commit SHA on a pull request.
 type ChangeID struct {
 	// Scheme captures the URI scheme. Always "phab" today; kept as a field so
-	// the parsed form mirrors entity/github.ChangeID and so future variants
+	// the parsed form mirrors entity/change/github.ChangeID and so future variants
 	// (e.g., a separate scheme per Phabricator install) are a non-breaking add.
 	Scheme string
 	// RevisionID is the numeric portion of the Phabricator revision identifier

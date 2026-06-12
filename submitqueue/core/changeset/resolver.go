@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/uber/submitqueue/entity/change"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
@@ -37,8 +38,8 @@ func New(requests storage.RequestStore, changes storage.ChangeStore) Resolver {
 
 // ChangesForBatch resolves a batch's requests to their raw changes, in
 // batch.Contains order.
-func (r resolver) ChangesForBatch(ctx context.Context, batch entity.Batch) ([]entity.Change, error) {
-	changes := make([]entity.Change, 0, len(batch.Contains))
+func (r resolver) ChangesForBatch(ctx context.Context, batch entity.Batch) ([]change.Change, error) {
+	changes := make([]change.Change, 0, len(batch.Contains))
 	for _, requestID := range batch.Contains {
 		request, err := r.requests.Get(ctx, requestID)
 		if err != nil {

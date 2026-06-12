@@ -14,7 +14,11 @@
 
 package entity
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/uber/submitqueue/entity/change"
+)
 
 // LandRequest represents the gateway-owned fields of a land request sent over the queue
 // to the orchestrator. It contains only the validated inputs and generated ID — the orchestrator
@@ -25,7 +29,7 @@ type LandRequest struct {
 	// Queue is the name of the queue processing the land request.
 	Queue string `json:"queue"`
 	// Change is the set of code changes to land.
-	Change Change `json:"change"`
+	Change change.Change `json:"change"`
 	// LandStrategy is the source control integration strategy to use for this land operation.
 	LandStrategy RequestLandStrategy `json:"land_strategy"`
 }

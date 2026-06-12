@@ -25,6 +25,7 @@ go_test(
     embed = [":batch"],
     deps = [
         "//core/consumer",
+        "//entity/change",
         "//entity/messagequeue",
         "//extension/counter/mock",
         "//extension/messagequeue/mock",

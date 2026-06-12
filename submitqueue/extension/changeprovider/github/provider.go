@@ -10,8 +10,8 @@ import (
 	"go.uber.org/zap"
 
 	coremetrics "github.com/uber/submitqueue/core/metrics"
+	entitygithub "github.com/uber/submitqueue/entity/change/github"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	entitygithub "github.com/uber/submitqueue/submitqueue/entity/github"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 )
 

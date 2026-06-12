@@ -31,6 +31,7 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/uber/submitqueue/entity/change"
 	"github.com/uber/submitqueue/submitqueue/core/changeset/fake"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/pusher"
@@ -89,7 +90,7 @@ func setupGitFixture(t *testing.T) gitFixture {
 
 // batchFor seeds the fixture resolver so batch id resolves to the given changes,
 // and returns the batch to pass to Push.
-func (f gitFixture) batchFor(id string, changes ...entity.Change) entity.Batch {
+func (f gitFixture) batchFor(id string, changes ...change.Change) entity.Batch {
 	f.resolver.Set(id, changes...)
 	return entity.Batch{ID: id}
 }
@@ -255,7 +256,7 @@ func TestPusher_Push_SingleChangeSingleURIProducesOneCommit(t *testing.T) {
 	p := f.newPusher(t)
 
 	res, err := p.Push(context.Background(), []entity.Batch{
-		f.batchFor("b", entity.Change{URIs: []string{uri(sha)}}),
+		f.batchFor("b", change.Change{URIs: []string{uri(sha)}}),
 	})
 	require.NoError(t, err)
 	require.Len(t, res.Batches[0].Outcomes, 1)
@@ -287,7 +288,7 @@ func TestPusher_Push_StackedURIsProduceMultipleCommitsForOneChange(t *testing.T)
 
 	p := f.newPusher(t)
 	res, err := p.Push(context.Background(), []entity.Batch{
-		f.batchFor("b", entity.Change{URIs: []string{uri(sha1), uri(sha2)}}),
+		f.batchFor("b", change.Change{URIs: []string{uri(sha1), uri(sha2)}}),
 	})
 	require.NoError(t, err)
 	require.Len(t, res.Batches[0].Outcomes, 1)
@@ -310,7 +311,7 @@ func TestPusher_Push_AlreadyLandedChangeIsRebasedOut(t *testing.T) {
 
 	p := f.newPusher(t)
 	res, err := p.Push(context.Background(), []entity.Batch{
-		f.batchFor("b", entity.Change{URIs: []string{uri(sha)}}),
+		f.batchFor("b", change.Change{URIs: []string{uri(sha)}}),
 	})
 	require.NoError(t, err)
 	require.Len(t, res.Batches[0].Outcomes, 1)
@@ -331,7 +332,7 @@ func TestPusher_Push_MixedChangesPartiallyRebasedOut(t *testing.T) {
 
 	p := f.newPusher(t)
 	res, err := p.Push(context.Background(), []entity.Batch{
-		f.batchFor("b", entity.Change{URIs: []string{uri(subsumedSHA)}}, entity.Change{URIs: []string{uri(freshSHA)}}),
+		f.batchFor("b", change.Change{URIs: []string{uri(subsumedSHA)}}, change.Change{URIs: []string{uri(freshSHA)}}),
 	})
 	require.NoError(t, err)
 	require.Len(t, res.Batches[0].Outcomes, 2)
@@ -360,7 +361,7 @@ func TestPusher_Push_ConflictReturnsErrConflictAndDoesNotPush(t *testing.T) {
 
 	p := f.newPusher(t)
 	_, err := p.Push(context.Background(), []entity.Batch{
-		f.batchFor("b", entity.Change{URIs: []string{uri(conflictingSHA)}}),
+		f.batchFor("b", change.Change{URIs: []string{uri(conflictingSHA)}}),
 	})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, pusher.ErrConflict))
@@ -379,7 +380,7 @@ func TestPusher_Push_ResetsBetweenCalls(t *testing.T) {
 	require.NoError(t, writeFile(filepath.Join(f.checkoutDir, "stray.txt"), "leftover\n"))
 
 	res, err := p.Push(context.Background(), []entity.Batch{
-		f.batchFor("b", entity.Change{URIs: []string{uri(sha)}}),
+		f.batchFor("b", change.Change{URIs: []string{uri(sha)}}),
 	})
 	require.NoError(t, err)
 	require.Len(t, res.Batches[0].Outcomes[0].CommitSHAs, 1)
@@ -399,7 +400,7 @@ func TestPusher_Push_RecoversAfterPriorConflict(t *testing.T) {
 
 	p := f.newPusher(t)
 	_, err := p.Push(context.Background(), []entity.Batch{
-		f.batchFor("b", entity.Change{URIs: []string{uri(conflictingSHA)}}),
+		f.batchFor("b", change.Change{URIs: []string{uri(conflictingSHA)}}),
 	})
 	require.Error(t, err)
 
@@ -407,7 +408,7 @@ func TestPusher_Push_RecoversAfterPriorConflict(t *testing.T) {
 	// a cherry-pick in progress before its rollback.
 	freshSHA := f.pushPRCommit(t, "feature/c", "extra.txt", "extra\n", "add extra")
 	res, err := p.Push(context.Background(), []entity.Batch{
-		f.batchFor("b2", entity.Change{URIs: []string{uri(freshSHA)}}),
+		f.batchFor("b2", change.Change{URIs: []string{uri(freshSHA)}}),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, entity.OutcomeStatusCommitted, res.Batches[0].Outcomes[0].Status)
@@ -428,7 +429,7 @@ func TestPusher_Push_InvalidURIErrors(t *testing.T) {
 	p := f.newPusher(t)
 
 	_, err := p.Push(context.Background(), []entity.Batch{
-		f.batchFor("b", entity.Change{URIs: []string{"not a uri"}}),
+		f.batchFor("b", change.Change{URIs: []string{"not a uri"}}),
 	})
 	require.Error(t, err)
 }
@@ -444,7 +445,7 @@ func TestPusher_Push_RetriesWhenRemoteMovesUnderUs(t *testing.T) {
 
 	p := f.newPusher(t)
 	res, err := p.Push(context.Background(), []entity.Batch{
-		f.batchFor("b", entity.Change{URIs: []string{uri(featureSHA)}}),
+		f.batchFor("b", change.Change{URIs: []string{uri(featureSHA)}}),
 	})
 	require.NoError(t, err)
 	require.Len(t, res.Batches[0].Outcomes, 1)
@@ -481,7 +482,7 @@ func TestPusher_Push_GivesUpAfterMaxAttempts(t *testing.T) {
 		MaxPushAttempts: 2,
 	})
 	_, err := p.Push(context.Background(), []entity.Batch{
-		f.batchFor("b", entity.Change{URIs: []string{uri(featureSHA)}}),
+		f.batchFor("b", change.Change{URIs: []string{uri(featureSHA)}}),
 	})
 	require.Error(t, err)
 	assert.Equal(t, 2, f.hookInvocations(t),

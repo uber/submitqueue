@@ -7,9 +7,10 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//core/metrics",
+        "//entity/change",
+        "//entity/change/github",
         "//submitqueue/core/changeset",
         "//submitqueue/entity",
-        "//submitqueue/entity/github",
         "//submitqueue/extension/pusher",
         "@com_github_uber_go_tally//:tally",
         "@org_uber_go_zap//:zap",
@@ -21,6 +22,7 @@ go_test(
     srcs = ["git_pusher_test.go"],
     embed = [":git"],
     deps = [
+        "//entity/change",
         "//submitqueue/core/changeset/fake",
         "//submitqueue/entity",
         "//submitqueue/extension/pusher",

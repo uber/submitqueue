@@ -38,6 +38,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/uber/submitqueue/entity/change"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
@@ -195,7 +196,7 @@ func (r *runner) Cancel(ctx context.Context, buildID entity.BuildID) error {
 }
 
 // flattenURIs concatenates the URI lists from all changes into a single slice.
-func flattenURIs(changes []entity.Change) []string {
+func flattenURIs(changes []change.Change) []string {
 	uris := make([]string, 0, len(changes))
 	for _, c := range changes {
 		uris = append(uris, c.URIs...)

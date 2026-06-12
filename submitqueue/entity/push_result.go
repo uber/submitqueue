@@ -14,6 +14,8 @@
 
 package entity
 
+import "github.com/uber/submitqueue/entity/change"
+
 // OutcomeStatus describes what happened to a single Change during a push.
 type OutcomeStatus string
 
@@ -35,7 +37,7 @@ const (
 // ChangeOutcome describes what happened to a single Change inside a push.
 type ChangeOutcome struct {
 	// Change is the input change this outcome corresponds to.
-	Change Change
+	Change change.Change
 	// Status describes whether the change produced commits or was already
 	// present on the target branch.
 	Status OutcomeStatus

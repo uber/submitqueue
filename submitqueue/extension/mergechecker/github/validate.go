@@ -17,7 +17,7 @@ package github
 import (
 	"fmt"
 
-	entitygithub "github.com/uber/submitqueue/submitqueue/entity/github"
+	entitygithub "github.com/uber/submitqueue/entity/change/github"
 )
 
 // PRMergeableState represents the mergeability state of a pull request.

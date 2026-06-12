@@ -19,13 +19,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber/submitqueue/entity/change"
 )
 
 func TestLandRequest_ToBytes(t *testing.T) {
 	req := LandRequest{
 		ID:    "test-queue/123",
 		Queue: "test-queue",
-		Change: Change{URIs: []string{
+		Change: change.Change{URIs: []string{
 			"github://uber/submitqueue/pull/456/abcdef0123456789abcdef0123456789abcdef01",
 			"github://uber/submitqueue/pull/789/0123456789abcdef0123456789abcdef01234567",
 		}},
@@ -47,7 +48,7 @@ func TestLandRequestFromBytes(t *testing.T) {
 	original := LandRequest{
 		ID:           "my-queue/999",
 		Queue:        "my-queue",
-		Change:       Change{URIs: []string{"code.uber.internal.com/D111"}},
+		Change:       change.Change{URIs: []string{"code.uber.internal.com/D111"}},
 		LandStrategy: RequestLandStrategyMerge,
 	}
 
@@ -95,7 +96,7 @@ func TestLandRequest_SerializationRoundTrip(t *testing.T) {
 			req: LandRequest{
 				ID:    "queue1/100",
 				Queue: "queue1",
-				Change: Change{URIs: []string{
+				Change: change.Change{URIs: []string{
 					"github://uber/repo-a/pull/101/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 					"github://uber/repo-a/pull/102/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 					"github://uber/repo-a/pull/103/cccccccccccccccccccccccccccccccccccccccc",
@@ -108,7 +109,7 @@ func TestLandRequest_SerializationRoundTrip(t *testing.T) {
 			req: LandRequest{
 				ID:           "queue2/200",
 				Queue:        "queue2",
-				Change:       Change{URIs: []string{"code.uber.internal.com/D12345"}},
+				Change:       change.Change{URIs: []string{"code.uber.internal.com/D12345"}},
 				LandStrategy: RequestLandStrategyRebase,
 			},
 		},
@@ -117,7 +118,7 @@ func TestLandRequest_SerializationRoundTrip(t *testing.T) {
 			req: LandRequest{
 				ID:           "queue3/300",
 				Queue:        "queue3",
-				Change:       Change{URIs: []string{"github.uber.com/internal/service/999/deadbeef12"}},
+				Change:       change.Change{URIs: []string{"github.uber.com/internal/service/999/deadbeef12"}},
 				LandStrategy: RequestLandStrategyMerge,
 			},
 		},
