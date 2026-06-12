@@ -14,7 +14,11 @@
 
 package entity
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/uber/submitqueue/entity/change"
+)
 
 // RequestLandStrategy defines the possible source control integration methods.
 type RequestLandStrategy string
@@ -78,20 +82,6 @@ func IsRequestStateHalted(s RequestState) bool {
 	return IsRequestStateTerminal(s) || s == RequestStateCancelling
 }
 
-// Change represents a code change identified by URIs from a code change provider (e.g., GitHub Pull Request, Phabricator Diff).
-// The provider is extracted from the URI scheme. The object is immutable after creation.
-type Change struct {
-	// URIs identifies the change(s) to land (RFC 3986 compliant).
-	// The scheme identifies the change provider, and the path contains provider-specific resource identifiers.
-	//
-	// GitHub is supported by default (though other providers can be added):
-	//   Template: "<scheme>://<org>/<repo>/pull/<pr>/<head_commit_sha>"
-	//   Example:  "github://uber/submitqueue/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"
-	//   Schemes:  "github", "ghe", "ghes". Head commit SHA must be full 40-char lowercase hex.
-	//
-	URIs []string `json:"uris"`
-}
-
 // Request defines a request to land (merge into target branch of the source control repository) a set of code changes.
 // The object is immutable after creation.
 type Request struct {
@@ -104,7 +94,7 @@ type Request struct {
 	// Queue is the name of the queue processing the land request. Queue name is defined in the configuration and should be unique within the system.
 	Queue string `json:"queue"`
 	// Change is a number of code changes (such as pull requests) to land into the target branch. Target branch is defined by the queue configuration.
-	Change Change `json:"change"`
+	Change change.Change `json:"change"`
 	// LandStrategy is the source control integration strategy to use for this land operation.
 	LandStrategy RequestLandStrategy `json:"land_strategy"`
 

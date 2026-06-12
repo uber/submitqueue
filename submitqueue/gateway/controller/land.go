@@ -23,6 +23,7 @@ import (
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/core/metrics"
+	"github.com/uber/submitqueue/entity/change"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	"github.com/uber/submitqueue/extension/counter"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
@@ -99,7 +100,7 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (resp *p
 		return nil, fmt.Errorf("LandController requires the request to have at least one change URI specified: %w", ErrInvalidRequest)
 	}
 
-	change := entity.Change{
+	change := change.Change{
 		URIs: req.Change.GetUris(),
 	}
 

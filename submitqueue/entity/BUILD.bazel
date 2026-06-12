@@ -21,6 +21,7 @@ go_library(
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/entity",
     visibility = ["//visibility:public"],
+    deps = ["//entity/change"],
 )
 
 go_test(
@@ -35,6 +36,7 @@ go_test(
     ],
     embed = [":entity"],
     deps = [
+        "//entity/change",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
     ],

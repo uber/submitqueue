@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"strings"
 
-	entitygithub "github.com/uber/submitqueue/submitqueue/entity/github"
+	entitygithub "github.com/uber/submitqueue/entity/change/github"
 )
 
 // graphQLRequest is the request body for the GitHub GraphQL API.

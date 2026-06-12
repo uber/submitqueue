@@ -24,6 +24,7 @@ import (
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
+	"github.com/uber/submitqueue/entity/change"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
@@ -57,7 +58,7 @@ func testRequest() entity.Request {
 	return entity.Request{
 		ID:    "test-queue/1",
 		Queue: "test-queue",
-		Change: entity.Change{
+		Change: change.Change{
 			URIs: []string{"github://uber/repo/pull/1/abcdef0123456789abcdef0123456789abcdef01"},
 		},
 		State:   entity.RequestStateStarted,

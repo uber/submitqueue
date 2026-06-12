@@ -22,17 +22,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/uber/submitqueue/entity/change"
 	"github.com/uber/submitqueue/submitqueue/entity"
 )
 
 func TestResolverChanges(t *testing.T) {
 	r := New().
-		Set("q/batch/1", entity.Change{URIs: []string{"u1"}}).
-		Set("q/batch/2", entity.Change{URIs: []string{"u2"}}, entity.Change{URIs: []string{"u3"}})
+		Set("q/batch/1", change.Change{URIs: []string{"u1"}}).
+		Set("q/batch/2", change.Change{URIs: []string{"u2"}}, change.Change{URIs: []string{"u3"}})
 
 	got, err := r.ChangesForBatch(context.Background(), entity.Batch{ID: "q/batch/2"})
 	require.NoError(t, err)
-	assert.Equal(t, []entity.Change{{URIs: []string{"u2"}}, {URIs: []string{"u3"}}}, got)
+	assert.Equal(t, []change.Change{{URIs: []string{"u2"}}, {URIs: []string{"u3"}}}, got)
 
 	unseeded, err := r.ChangesForBatch(context.Background(), entity.Batch{ID: "q/batch/unseeded"})
 	require.NoError(t, err)

@@ -9,6 +9,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/extension/buildrunner/buildkite",
     visibility = ["//visibility:public"],
     deps = [
+        "//entity/change",
         "//submitqueue/core/changeset",
         "//submitqueue/entity",
         "//submitqueue/extension/buildrunner",
@@ -22,6 +23,7 @@ go_test(
     embed = [":buildkite"],
     deps = [
         "//core/httpclient",
+        "//entity/change",
         "//submitqueue/core/changeset",
         "//submitqueue/core/changeset/fake",
         "//submitqueue/entity",

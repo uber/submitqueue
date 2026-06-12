@@ -24,6 +24,7 @@ import (
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
+	"github.com/uber/submitqueue/entity/change"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
@@ -137,7 +138,7 @@ func TestNewController(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
+		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
@@ -158,7 +159,7 @@ func TestController_Process_Success(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
+		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
@@ -187,7 +188,7 @@ func TestController_Process_ClaimsChangeRecordsWithDetails(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{uri}},
+		Change:       change.Change{URIs: []string{uri}},
 		LandStrategy: entity.RequestLandStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
@@ -250,7 +251,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
+		Change:       change.Change{URIs: []string{"github://uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
@@ -286,7 +287,7 @@ func TestController_Process_NotMergeable(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/repo/pull/1/abcdef0123456789abcdef0123456789abcdef01"}},
+		Change:       change.Change{URIs: []string{"github://uber/repo/pull/1/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
@@ -313,7 +314,7 @@ func TestController_Process_MergeCheckError(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/repo/pull/1/abcdef0123456789abcdef0123456789abcdef01"}},
+		Change:       change.Change{URIs: []string{"github://uber/repo/pull/1/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
@@ -453,7 +454,7 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			request := entity.Request{
 				ID:           newRequestID,
 				Queue:        queueName,
-				Change:       entity.Change{URIs: uris},
+				Change:       change.Change{URIs: uris},
 				LandStrategy: entity.RequestLandStrategyRebase,
 				State:        entity.RequestStateStarted,
 				Version:      1,
@@ -513,7 +514,7 @@ func TestController_Process_ChangeStoreQueryFailure(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+		Change:       change.Change{URIs: []string{"github://uber/service/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
 		LandStrategy: entity.RequestLandStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,

@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/uber/submitqueue/entity/change"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/core/fakemarker"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -64,8 +65,8 @@ func New(resolver changeset.Resolver) pusher.Pusher {
 // a synthetic commit SHA, grouped per batch, unless a recognized marker token in
 // one of the changes requests a failure.
 func (p *fakePusher) Push(ctx context.Context, batches []entity.Batch) (entity.PushResult, error) {
-	perBatch := make([][]entity.Change, len(batches))
-	var all []entity.Change
+	perBatch := make([][]change.Change, len(batches))
+	var all []change.Change
 	for i, b := range batches {
 		cs, err := p.resolver.ChangesForBatch(ctx, b)
 		if err != nil {

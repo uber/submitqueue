@@ -24,8 +24,8 @@ import (
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/core/metrics"
+	entitygithub "github.com/uber/submitqueue/entity/change/github"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	entitygithub "github.com/uber/submitqueue/submitqueue/entity/github"
 	"github.com/uber/submitqueue/submitqueue/extension/mergechecker"
 	"go.uber.org/zap"
 )

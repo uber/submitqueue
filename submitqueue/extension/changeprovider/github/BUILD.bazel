@@ -12,8 +12,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//core/metrics",
+        "//entity/change/github",
         "//submitqueue/entity",
-        "//submitqueue/entity/github",
         "//submitqueue/extension/changeprovider",
         "@com_github_uber_go_tally//:tally",
         "@org_uber_go_zap//:zap",
@@ -30,8 +30,9 @@ go_test(
     embed = [":github"],
     deps = [
         "//core/httpclient",
+        "//entity/change",
+        "//entity/change/github",
         "//submitqueue/entity",
-        "//submitqueue/entity/github",
         "//submitqueue/extension/changeprovider",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

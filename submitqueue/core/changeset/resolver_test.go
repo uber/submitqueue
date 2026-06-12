@@ -23,12 +23,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/uber/submitqueue/entity/change"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 )
 
 func req(id string, uris ...string) entity.Request {
-	return entity.Request{ID: id, Change: entity.Change{URIs: uris}}
+	return entity.Request{ID: id, Change: change.Change{URIs: uris}}
 }
 
 func TestResolverChanges(t *testing.T) {
@@ -43,7 +44,7 @@ func TestResolverChanges(t *testing.T) {
 	got, err := r.ChangesForBatch(context.Background(), entity.Batch{ID: "q/batch/2", Contains: []string{"r2", "r3"}})
 	require.NoError(t, err)
 	// request order within the batch is preserved.
-	assert.Equal(t, []entity.Change{{URIs: []string{"u2"}}, {URIs: []string{"u3"}}}, got)
+	assert.Equal(t, []change.Change{{URIs: []string{"u2"}}, {URIs: []string{"u3"}}}, got)
 }
 
 func TestResolverChangesEmpty(t *testing.T) {

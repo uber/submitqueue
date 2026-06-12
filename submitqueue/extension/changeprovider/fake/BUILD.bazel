@@ -17,6 +17,7 @@ go_test(
     srcs = ["fake_test.go"],
     embed = [":fake"],
     deps = [
+        "//entity/change",
         "//submitqueue/entity",
         "//submitqueue/extension/changeprovider",
         "@com_github_stretchr_testify//assert",
