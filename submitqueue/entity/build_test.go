@@ -70,8 +70,9 @@ func TestBuild_ToBytes(t *testing.T) {
 	build := Build{
 		ID:      "build-1",
 		BatchID: "batch-1",
-		SpeculationPath: SpeculationPathInfo{
+		SpeculationPath: SpeculationPath{
 			Base: []string{"batch-0", "batch-prev"},
+			Head: "batch-1",
 		},
 		Score:  0.85,
 		Status: BuildStatusAccepted,
@@ -92,8 +93,9 @@ func TestBuildFromBytes(t *testing.T) {
 	original := Build{
 		ID:      "build-42",
 		BatchID: "batch-7",
-		SpeculationPath: SpeculationPathInfo{
+		SpeculationPath: SpeculationPath{
 			Base: []string{"batch-5", "batch-6"},
+			Head: "batch-7",
 		},
 		Score:  0.92,
 		Status: BuildStatusAccepted,
@@ -145,8 +147,9 @@ func TestBuild_SerializationRoundTrip(t *testing.T) {
 			build: Build{
 				ID:      "build-100",
 				BatchID: "batch-50",
-				SpeculationPath: SpeculationPathInfo{
+				SpeculationPath: SpeculationPath{
 					Base: []string{"batch-48", "batch-49"},
+					Head: "batch-50",
 				},
 				Score:  0.75,
 				Status: BuildStatusAccepted,
@@ -166,8 +169,9 @@ func TestBuild_SerializationRoundTrip(t *testing.T) {
 			build: Build{
 				ID:      "build-300",
 				BatchID: "batch-70",
-				SpeculationPath: SpeculationPathInfo{
+				SpeculationPath: SpeculationPath{
 					Base: []string{"batch-65"},
+					Head: "batch-70",
 				},
 				Score:  0,
 				Status: BuildStatusFailed,
