@@ -5,6 +5,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 ## Shared
 
 - [SQL-Based Distributed Queue](sql-queue-rfc.md) - MySQL-based distributed message queue with partition leasing and at-least-once delivery (used by SubmitQueue, Stovepipe, and other repo-local services)
+- [Namespacing the Shared Layer](shared-layer-namespace.md) - Group the cross-domain `core/`, `entity/`, and `extension/` packages under a single `base/` namespace to remove the bare-name collision with each domain's own packages
 
 ## SubmitQueue
 
