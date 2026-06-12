@@ -70,19 +70,19 @@ func (mr *MockBatchStoreMockRecorder) Get(ctx, id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockBatchStore)(nil).Get), ctx, id)
 }
 
-// GetByQueueAndStates mocks base method.
-func (m *MockBatchStore) GetByQueueAndStates(ctx context.Context, queue string, states []entity.BatchState) ([]entity.Batch, error) {
+// ListActive mocks base method.
+func (m *MockBatchStore) ListActive(ctx context.Context, queue string) ([]entity.Batch, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetByQueueAndStates", ctx, queue, states)
+	ret := m.ctrl.Call(m, "ListActive", ctx, queue)
 	ret0, _ := ret[0].([]entity.Batch)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetByQueueAndStates indicates an expected call of GetByQueueAndStates.
-func (mr *MockBatchStoreMockRecorder) GetByQueueAndStates(ctx, queue, states any) *gomock.Call {
+// ListActive indicates an expected call of ListActive.
+func (mr *MockBatchStoreMockRecorder) ListActive(ctx, queue any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByQueueAndStates", reflect.TypeOf((*MockBatchStore)(nil).GetByQueueAndStates), ctx, queue, states)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListActive", reflect.TypeOf((*MockBatchStore)(nil).ListActive), ctx, queue)
 }
 
 // UpdateScoreAndState mocks base method.
