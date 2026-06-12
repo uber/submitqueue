@@ -12,54 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestExtractHeadSHA(t *testing.T) {
-	testCases := []struct {
-		name    string
-		diff    *diffResult
-		want    string
-		wantErr string
-	}{
-		{
-			name: "valid local commits",
-			diff: &diffResult{
-				Properties: properties{
-					LocalCommits: map[string]localCommit{
-						"abc123def456": {Commit: "abc123def456"},
-					},
-				},
-			},
-			want: "abc123def456",
-		},
-		{
-			name: "empty local commits",
-			diff: &diffResult{
-				Properties: properties{
-					LocalCommits: map[string]localCommit{},
-				},
-			},
-			wantErr: "no local commits found",
-		},
-		{
-			name:    "nil local commits",
-			diff:    &diffResult{},
-			wantErr: "no local commits found",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			sha, err := extractHeadSHA(tc.diff)
-			if tc.wantErr != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tc.wantErr)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, sha)
-		})
-	}
-}
-
 func TestBuildQueryDiffsRequest(t *testing.T) {
 	testCases := []struct {
 		name     string

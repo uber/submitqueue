@@ -80,11 +80,6 @@ func TestValidateDiffResponse(t *testing.T) {
 			diffID: 100,
 			diff: &diffResult{
 				Changes: []fileChange{{CurrentPath: "main.go"}},
-				Properties: properties{
-					LocalCommits: map[string]localCommit{
-						"abc123": {Commit: "abc123"},
-					},
-				},
 			},
 		},
 		{
@@ -92,22 +87,8 @@ func TestValidateDiffResponse(t *testing.T) {
 			diffID: 100,
 			diff: &diffResult{
 				Changes: []fileChange{},
-				Properties: properties{
-					LocalCommits: map[string]localCommit{
-						"abc123": {Commit: "abc123"},
-					},
-				},
 			},
 			wantErr: "diff 100 has no file changes",
-		},
-		{
-			name:   "no local commits",
-			diffID: 100,
-			diff: &diffResult{
-				Changes:    []fileChange{{CurrentPath: "main.go"}},
-				Properties: properties{},
-			},
-			wantErr: "no local commits found",
 		},
 	}
 
