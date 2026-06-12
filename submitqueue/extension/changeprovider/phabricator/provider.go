@@ -9,8 +9,8 @@ import (
 	"go.uber.org/zap"
 
 	coremetrics "github.com/uber/submitqueue/core/metrics"
+	entityphab "github.com/uber/submitqueue/entity/change/phabricator"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	entityphab "github.com/uber/submitqueue/submitqueue/entity/phabricator"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 )
 
