@@ -17,8 +17,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 )
 
-const testHeadSHA = "7c0ab82c9f074a8d60292fcd121dde3738e3fb7e"
-
 func newTestProvider(t *testing.T, client *http.Client) changeprovider.ChangeProvider {
 	t.Helper()
 	return NewProvider(Params{
@@ -36,11 +34,6 @@ func validDiffResponse() map[string]*diffResult {
 			Changes: []fileChange{
 				{CurrentPath: "main.go", AddLines: "10", DelLines: "3"},
 				{CurrentPath: "test.go", AddLines: "20", DelLines: "0"},
-			},
-			Properties: properties{
-				LocalCommits: map[string]localCommit{
-					testHeadSHA: {Commit: testHeadSHA},
-				},
 			},
 		},
 	}
@@ -79,26 +72,11 @@ func TestProvider_Get(t *testing.T) {
 				serveConduit(t, w, map[string]*diffResult{
 					"100": {
 						Changes: []fileChange{},
-						Properties: properties{
-							LocalCommits: map[string]localCommit{testHeadSHA: {Commit: testHeadSHA}},
-						},
 					},
 				})
 			},
 			uris:    []string{"phab://D200/100"},
 			wantErr: "diff 100 has no file changes",
-		},
-		{
-			name: "diff with no local commits returns error",
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				serveConduit(t, w, map[string]*diffResult{
-					"100": {
-						Changes: []fileChange{{CurrentPath: "main.go", AddLines: "1", DelLines: "0"}},
-					},
-				})
-			},
-			uris:    []string{"phab://D200/100"},
-			wantErr: "no local commits found",
 		},
 		{
 			name:    "duplicate revision returns error",
@@ -149,13 +127,11 @@ func TestProvider_Get_MultipleDiffs(t *testing.T) {
 				AuthorName:  "Author A",
 				AuthorEmail: "a@example.com",
 				Changes:     []fileChange{{CurrentPath: "file1.go", AddLines: "5", DelLines: "1"}},
-				Properties:  properties{LocalCommits: map[string]localCommit{"sha1": {Commit: "sha1"}}},
 			},
 			"101": {
 				AuthorName:  "Author B",
 				AuthorEmail: "b@example.com",
 				Changes:     []fileChange{{CurrentPath: "file2.go", AddLines: "8", DelLines: "2"}},
-				Properties:  properties{LocalCommits: map[string]localCommit{"sha2": {Commit: "sha2"}}},
 			},
 		})
 	}))
@@ -195,9 +171,6 @@ func TestProvider_Get_FileDetails(t *testing.T) {
 					{CurrentPath: "added.go", AddLines: "52", DelLines: "0"},
 					{CurrentPath: "modified.go", AddLines: "10", DelLines: "5"},
 					{CurrentPath: "deleted.go", AddLines: "0", DelLines: "30"},
-				},
-				Properties: properties{
-					LocalCommits: map[string]localCommit{testHeadSHA: {Commit: testHeadSHA}},
 				},
 			},
 		}
@@ -247,7 +220,6 @@ func TestProvider_Get_Batching(t *testing.T) {
 			result[id] = &diffResult{
 				AuthorName: "Author " + id,
 				Changes:    []fileChange{{CurrentPath: id + ".go", AddLines: "1", DelLines: "0"}},
-				Properties: properties{LocalCommits: map[string]localCommit{"sha": {Commit: "sha"}}},
 			}
 		}
 		serveConduit(t, w, result)
@@ -283,8 +255,7 @@ func TestProvider_Get_BatchingStopsOnError(t *testing.T) {
 		result := make(map[string]*diffResult, len(ids))
 		for _, id := range ids {
 			result[id] = &diffResult{
-				Changes:    []fileChange{{CurrentPath: id + ".go", AddLines: "1", DelLines: "0"}},
-				Properties: properties{LocalCommits: map[string]localCommit{"sha": {Commit: "sha"}}},
+				Changes: []fileChange{{CurrentPath: id + ".go", AddLines: "1", DelLines: "0"}},
 			}
 		}
 		serveConduit(t, w, result)

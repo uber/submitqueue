@@ -91,12 +91,10 @@ func (p *provider) Get(ctx context.Context, request entity.Request) (_ []entity.
 		changeInfo := convertToChangeInfo(cid, diff)
 		changeInfos = append(changeInfos, changeInfo)
 
-		headSHA, _ := extractHeadSHA(diff)
 		p.logger.Debugw("fetched diff data",
 			"revision", cid.Revision(),
 			"diff_id", cid.DiffID,
 			"files_count", len(changeInfo.Details.ChangedFiles),
-			"head_sha", headSHA,
 		)
 	}
 

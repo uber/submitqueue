@@ -34,14 +34,10 @@ func validateChangeConsistency(changeIDs []entityphab.ChangeID) error {
 	return nil
 }
 
-// validateDiffResponse checks that the querydiffs result is well-formed: that
-// it contains at least one file change and a parseable head SHA.
+// validateDiffResponse checks that the querydiffs result is well-formed: that it contains at least one changed file.
 func validateDiffResponse(diffID int, diff *diffResult) error {
 	if len(diff.Changes) == 0 {
 		return fmt.Errorf("diff %d has no file changes", diffID)
-	}
-	if _, err := extractHeadSHA(diff); err != nil {
-		return fmt.Errorf("diff %d: %w", diffID, err)
 	}
 	return nil
 }

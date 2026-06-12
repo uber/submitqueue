@@ -21,7 +21,6 @@ type conduitResponse struct {
 // diffResult represents a single diff from the differential.querydiffs response.
 type diffResult struct {
 	Changes     []fileChange `json:"changes"`
-	Properties  properties   `json:"properties"`
 	AuthorName  string       `json:"authorName"`
 	AuthorEmail string       `json:"authorEmail"`
 }
@@ -31,25 +30,6 @@ type fileChange struct {
 	CurrentPath string `json:"currentPath"`
 	AddLines    string `json:"addLines"`
 	DelLines    string `json:"delLines"`
-}
-
-// properties holds diff metadata from the querydiffs response.
-type properties struct {
-	LocalCommits map[string]localCommit `json:"local:commits"`
-}
-
-// localCommit represents a commit entry from the local:commits property.
-type localCommit struct {
-	Commit string `json:"commit"`
-}
-
-// extractHeadSHA returns the head commit SHA from the diff's local:commits
-// property. The first key of the map is the commit SHA.
-func extractHeadSHA(diff *diffResult) (string, error) {
-	for sha := range diff.Properties.LocalCommits {
-		return sha, nil
-	}
-	return "", fmt.Errorf("no local commits found in diff properties")
 }
 
 // buildQueryDiffsRequest builds query parameters for a differential.querydiffs call.
