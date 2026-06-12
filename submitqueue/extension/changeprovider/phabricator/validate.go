@@ -3,7 +3,7 @@ package phabricator
 import (
 	"fmt"
 
-	entityphab "github.com/uber/submitqueue/submitqueue/entity/phabricator"
+	entityphab "github.com/uber/submitqueue/entity/change/phabricator"
 )
 
 // validateChangeConsistency validates that all changeIDs in the stack are consistent.

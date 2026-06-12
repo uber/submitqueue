@@ -5,8 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	entityphab "github.com/uber/submitqueue/entity/change/phabricator"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	entityphab "github.com/uber/submitqueue/submitqueue/entity/phabricator"
 )
 
 func TestConvertToChangeInfo(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	entityphab "github.com/uber/submitqueue/submitqueue/entity/phabricator"
+	entityphab "github.com/uber/submitqueue/entity/change/phabricator"
 )
 
 func TestValidateChangeConsistency(t *testing.T) {

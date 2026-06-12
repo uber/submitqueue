@@ -13,6 +13,7 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/uber/submitqueue/entity/change"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 )
@@ -102,7 +103,7 @@ func TestProvider_Get(t *testing.T) {
 			}
 
 			p := newTestProvider(t, client)
-			infos, err := p.Get(context.Background(), entity.Request{Change: entity.Change{URIs: tc.uris}})
+			infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{URIs: tc.uris}})
 
 			if tc.wantErr != "" {
 				require.Error(t, err)
@@ -139,7 +140,7 @@ func TestProvider_Get_MultipleDiffs(t *testing.T) {
 
 	client := &http.Client{Transport: &testTransport{baseURL: server.URL}}
 	p := newTestProvider(t, client)
-	infos, err := p.Get(context.Background(), entity.Request{Change: entity.Change{
+	infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{
 		URIs: []string{"phab://D200/100", "phab://D201/101"},
 	}})
 
@@ -153,7 +154,7 @@ func TestProvider_Get_MultipleDiffs(t *testing.T) {
 func TestProvider_Get_ConnectionError(t *testing.T) {
 	client := &http.Client{Transport: &testTransport{baseURL: "http://127.0.0.1:0"}}
 	p := newTestProvider(t, client)
-	_, err := p.Get(context.Background(), entity.Request{Change: entity.Change{
+	_, err := p.Get(context.Background(), entity.Request{Change: change.Change{
 		URIs: []string{"phab://D200/100"},
 	}})
 
@@ -183,7 +184,7 @@ func TestProvider_Get_FileDetails(t *testing.T) {
 
 	client := &http.Client{Transport: &testTransport{baseURL: server.URL}}
 	p := newTestProvider(t, client)
-	infos, err := p.Get(context.Background(), entity.Request{Change: entity.Change{
+	infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{
 		URIs: []string{"phab://D200/100"},
 	}})
 
@@ -235,7 +236,7 @@ func TestProvider_Get_Batching(t *testing.T) {
 
 	client := &http.Client{Transport: &testTransport{baseURL: server.URL}}
 	p := newTestProvider(t, client)
-	infos, err := p.Get(context.Background(), entity.Request{Change: entity.Change{URIs: uris}})
+	infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{URIs: uris}})
 
 	require.NoError(t, err)
 	assert.Equal(t, 3, callCount)
@@ -271,7 +272,7 @@ func TestProvider_Get_BatchingStopsOnError(t *testing.T) {
 
 	client := &http.Client{Transport: &testTransport{baseURL: server.URL}}
 	p := newTestProvider(t, client)
-	_, err := p.Get(context.Background(), entity.Request{Change: entity.Change{URIs: uris}})
+	_, err := p.Get(context.Background(), entity.Request{Change: change.Change{URIs: uris}})
 
 	require.Error(t, err)
 	assert.Equal(t, 2, callCount)

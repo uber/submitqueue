@@ -3,8 +3,8 @@ package phabricator
 import (
 	"strconv"
 
+	entityphab "github.com/uber/submitqueue/entity/change/phabricator"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	entityphab "github.com/uber/submitqueue/submitqueue/entity/phabricator"
 )
 
 // convertToChangeInfo converts a Phabricator diff result to an entity.ChangeInfo.
