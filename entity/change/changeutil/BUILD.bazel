@@ -1,0 +1,15 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "changeutil",
+    srcs = ["hex.go"],
+    importpath = "github.com/uber/submitqueue/entity/change/changeutil",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "changeutil_test",
+    srcs = ["hex_test.go"],
+    embed = [":changeutil"],
+    deps = ["@com_github_stretchr_testify//assert"],
+)

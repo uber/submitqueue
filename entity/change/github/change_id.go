@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/uber/submitqueue/entity/change/changeutil"
 )
 
 // changeIDFormat is the expected format for change IDs, included in error messages.
@@ -91,7 +93,7 @@ func ParseChangeID(raw string) (ChangeID, error) {
 	if sha == "" {
 		return ChangeID{}, fmt.Errorf("invalid change ID %q: empty head commit SHA (expected format: %s)", raw, changeIDFormat)
 	}
-	if !isFullHexSHA(sha) {
+	if !changeutil.IsFullHex(sha, shaLength) {
 		return ChangeID{}, fmt.Errorf("invalid change ID %q: head commit SHA %q must be %d lowercase hex characters (expected format: %s)", raw, sha, shaLength, changeIDFormat)
 	}
 
@@ -132,18 +134,4 @@ func (c ChangeID) String() string {
 // OwnerRepo returns the "{org}/{repo}" string.
 func (c ChangeID) OwnerRepo() string {
 	return fmt.Sprintf("%s/%s", c.Org, c.Repo)
-}
-
-// isFullHexSHA reports whether s is exactly shaLength lowercase hex characters.
-func isFullHexSHA(s string) bool {
-	if len(s) != shaLength {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f') {
-			return false
-		}
-	}
-	return true
 }

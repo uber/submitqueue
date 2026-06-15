@@ -14,7 +14,7 @@
 
 // Package change holds the shared code-change identity used across SubmitQueue,
 // Stovepipe, and other repo-local domains. A Change names code to act on via
-// provider URIs; the URI parsers live in the github and phabricator subpackages.
+// provider URIs; the URI parsers live in the github, phabricator, and git subpackages.
 package change
 
 // Change represents a code change identified by URIs from a code change provider (e.g., GitHub Pull Request, Phabricator Diff).
