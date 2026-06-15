@@ -33,13 +33,10 @@ type fileChange struct {
 }
 
 // buildQueryDiffsRequest builds query parameters for a differential.querydiffs call.
-func buildQueryDiffsRequest(diffIDs []int, apiToken string) url.Values {
+func buildQueryDiffsRequest(diffIDs []int) url.Values {
 	form := url.Values{}
 	for _, id := range diffIDs {
 		form.Add("ids[]", strconv.Itoa(id))
-	}
-	if apiToken != "" {
-		form.Set("api.token", apiToken)
 	}
 	return form
 }
@@ -66,7 +63,10 @@ func doConduitRequest(ctx context.Context, httpClient *http.Client, form url.Val
 // and extracts the diffResults for the requested diff IDs.
 func parseConduitResponse(resp *http.Response, diffIDs []int) (map[int]*diffResult, error) {
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("Conduit API returned status %d and failed to read body: %w", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("Conduit API returned status %d: %s", resp.StatusCode, string(body))
 	}
 

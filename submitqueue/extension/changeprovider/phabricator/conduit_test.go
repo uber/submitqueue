@@ -2,6 +2,7 @@ package phabricator
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,10 +15,9 @@ import (
 
 func TestBuildQueryDiffsRequest(t *testing.T) {
 	testCases := []struct {
-		name     string
-		diffIDs  []int
-		apiToken string
-		wantAll  []string
+		name    string
+		diffIDs []int
+		wantAll []string
 	}{
 		{
 			name:    "single ID",
@@ -29,17 +29,11 @@ func TestBuildQueryDiffsRequest(t *testing.T) {
 			diffIDs: []int{42, 43, 44},
 			wantAll: []string{"ids%5B%5D=42", "ids%5B%5D=43", "ids%5B%5D=44"},
 		},
-		{
-			name:     "includes api.token when set",
-			diffIDs:  []int{42},
-			apiToken: "my-secret",
-			wantAll:  []string{"ids%5B%5D=42", "api.token=my-secret"},
-		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			form := buildQueryDiffsRequest(tc.diffIDs, tc.apiToken)
+			form := buildQueryDiffsRequest(tc.diffIDs)
 			encoded := form.Encode()
 			for _, want := range tc.wantAll {
 				assert.Contains(t, encoded, want)
@@ -60,7 +54,7 @@ func TestDoConduitRequest(t *testing.T) {
 	defer server.Close()
 
 	client := &http.Client{Transport: &testTransport{baseURL: server.URL}}
-	form := buildQueryDiffsRequest([]int{100, 200}, "")
+	form := buildQueryDiffsRequest([]int{100, 200})
 
 	resp, err := doConduitRequest(t.Context(), client, form)
 	require.NoError(t, err)
@@ -73,7 +67,7 @@ func TestDoConduitRequest(t *testing.T) {
 
 func TestDoConduitRequest_ConnectionError(t *testing.T) {
 	client := &http.Client{Transport: &testTransport{baseURL: "http://127.0.0.1:0"}}
-	form := buildQueryDiffsRequest([]int{1}, "")
+	form := buildQueryDiffsRequest([]int{1})
 
 	_, err := doConduitRequest(t.Context(), client, form)
 
@@ -103,6 +97,15 @@ func TestParseConduitResponse(t *testing.T) {
 			resp:    newPlainHTTPResponse("server error", http.StatusInternalServerError),
 			diffIDs: []int{100},
 			wantErr: "Conduit API returned status 500",
+		},
+		{
+			name: "HTTP error with unreadable body",
+			resp: &http.Response{
+				StatusCode: http.StatusBadGateway,
+				Body:       io.NopCloser(&errReader{}),
+			},
+			diffIDs: []int{100},
+			wantErr: "failed to read body",
 		},
 		{
 			name:    "conduit error",
@@ -199,4 +202,10 @@ func (t *testTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	req.URL.Scheme = "http"
 	req.URL.Host = t.baseURL[len("http://"):]
 	return http.DefaultTransport.RoundTrip(req)
+}
+
+type errReader struct{}
+
+func (e *errReader) Read([]byte) (int, error) {
+	return 0, fmt.Errorf("simulated read error")
 }

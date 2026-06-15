@@ -22,10 +22,8 @@ const queryDiffsBatchSize = 10
 type Params struct {
 	// HTTPClient is a pre-configured HTTP client. The caller is responsible for
 	// configuring the base URL (e.g. via httpclient.NewClient) and authentication
-	// (e.g. via oauth2.Transport for Bearer tokens) via transport layers.
+	// (e.g. via a RoundTripper that injects credentials) via transport layers.
 	HTTPClient *http.Client
-	// APIToken is the Conduit API token, sent as the api.token form parameter.
-	APIToken string
 	// Logger is the structured logger.
 	Logger *zap.SugaredLogger
 	// MetricsScope is the metrics scope for instrumentation.
@@ -34,7 +32,6 @@ type Params struct {
 
 type provider struct {
 	httpClient   *http.Client
-	apiToken     string
 	logger       *zap.SugaredLogger
 	metricsScope tally.Scope
 }
@@ -43,7 +40,6 @@ type provider struct {
 func NewProvider(params Params) changeprovider.ChangeProvider {
 	return &provider{
 		httpClient:   params.HTTPClient,
-		apiToken:     params.APIToken,
 		logger:       params.Logger.Named("phabricator_changeprovider"),
 		metricsScope: params.MetricsScope.SubScope("phabricator_changeprovider"),
 	}
@@ -134,7 +130,7 @@ func (p *provider) fetchAllDiffs(ctx context.Context, changeIDs []entityphab.Cha
 
 // fetchDiffBatch fetches a single batch of diffs from Phabricator.
 func (p *provider) fetchDiffBatch(ctx context.Context, diffIDs []int) (map[int]*diffResult, error) {
-	form := buildQueryDiffsRequest(diffIDs, p.apiToken)
+	form := buildQueryDiffsRequest(diffIDs)
 
 	resp, err := doConduitRequest(ctx, p.httpClient, form)
 	if err != nil {
