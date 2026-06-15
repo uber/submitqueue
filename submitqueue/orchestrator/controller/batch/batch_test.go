@@ -26,6 +26,7 @@ import (
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/entity/change"
+	"github.com/uber/submitqueue/entity/mergestrategy"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	countermock "github.com/uber/submitqueue/extension/counter/mock"
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
@@ -65,7 +66,7 @@ func testRequest() entity.Request {
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
-		LandStrategy: entity.RequestLandStrategyRebase,
+		LandStrategy: mergestrategy.MergeStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
@@ -206,7 +207,7 @@ func TestController_Process_WithDependencies(t *testing.T) {
 		ID:           "test-queue/456",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://uber/service/pull/789/789abc1234567890abcdef1234567890abcdef12"}},
-		LandStrategy: entity.RequestLandStrategyRebase,
+		LandStrategy: mergestrategy.MergeStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}

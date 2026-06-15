@@ -18,20 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/uber/submitqueue/entity/change"
-)
-
-// RequestLandStrategy defines the possible source control integration methods.
-type RequestLandStrategy string
-
-const (
-	// RequestLandStrategyUnknown is the unknown strategy. It is set by default when the structure is initialized. It should never be seen in the system and used for error control.
-	RequestLandStrategyUnknown RequestLandStrategy = ""
-	// RequestLandStrategyRebase rebases commits onto the target branch before landing.
-	RequestLandStrategyRebase RequestLandStrategy = "rebase"
-	// RequestLandStrategySquashRebase squashes commits into a single commit before rebasing on top of the target branch.
-	RequestLandStrategySquashRebase RequestLandStrategy = "squash_rebase"
-	// RequestLandStrategyMerge merges commits into the target branch by creating a separate merge commit, preserving the commit history along with hashes.
-	RequestLandStrategyMerge RequestLandStrategy = "merge"
+	"github.com/uber/submitqueue/entity/mergestrategy"
 )
 
 // RequestState defines the possible states of a land request. They are internal and used to implement a state machine. A separate RequestStatus type is used to track the customer-friendly status of a request.
@@ -96,7 +83,7 @@ type Request struct {
 	// Change is a number of code changes (such as pull requests) to land into the target branch. Target branch is defined by the queue configuration.
 	Change change.Change `json:"change"`
 	// LandStrategy is the source control integration strategy to use for this land operation.
-	LandStrategy RequestLandStrategy `json:"land_strategy"`
+	LandStrategy mergestrategy.MergeStrategy `json:"land_strategy"`
 
 	// ****************
 	// Following fields could be changed throughout the lifecycle of the request

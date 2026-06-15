@@ -24,6 +24,7 @@ import (
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/core/consumer"
 	"github.com/uber/submitqueue/core/errs"
+	"github.com/uber/submitqueue/entity/mergestrategy"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	countermock "github.com/uber/submitqueue/extension/counter/mock"
 	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
@@ -289,7 +290,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	assert.Equal(t, "test-queue/123", deserializedReq.ID)
 	assert.Equal(t, "test-queue", deserializedReq.Queue)
 	assert.Equal(t, []string{"github://uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"}, deserializedReq.Change.URIs)
-	assert.Equal(t, entity.RequestLandStrategyRebase, deserializedReq.LandStrategy)
+	assert.Equal(t, mergestrategy.MergeStrategyRebase, deserializedReq.LandStrategy)
 }
 
 func TestLand_ContinuesWhenPublishFails(t *testing.T) {

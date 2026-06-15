@@ -24,6 +24,7 @@ import (
 	"github.com/uber/submitqueue/core/errs"
 	"github.com/uber/submitqueue/core/metrics"
 	"github.com/uber/submitqueue/entity/change"
+	"github.com/uber/submitqueue/entity/mergestrategy"
 	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
 	"github.com/uber/submitqueue/extension/counter"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
@@ -113,7 +114,7 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (resp *p
 	}
 
 	// TODO: pass default queue land strategy to resolver function to process a default.
-	strategy, err := resolveRequestLandStrategy(req.Strategy)
+	strategy, err := resolveMergeStrategy(req.Strategy)
 	if err != nil {
 		return nil, fmt.Errorf("LandController failed to map strategy for queue=%s: %w", req.Queue, err)
 	}
@@ -195,19 +196,19 @@ func (c *LandController) publishToQueue(ctx context.Context, landRequest entity.
 	return nil
 }
 
-// protoStrategyToEntity maps a proto Strategy enum to the entity RequestLandStrategy.
-func resolveRequestLandStrategy(s pb.Strategy) (entity.RequestLandStrategy, error) {
+// resolveMergeStrategy maps a proto Strategy enum to the shared mergestrategy.MergeStrategy.
+func resolveMergeStrategy(s pb.Strategy) (mergestrategy.MergeStrategy, error) {
 	switch s {
 	case pb.Strategy_DEFAULT:
 		// TODO: resolve default strategy based on queue configuration
-		return entity.RequestLandStrategyRebase, nil
+		return mergestrategy.MergeStrategyRebase, nil
 	case pb.Strategy_REBASE:
-		return entity.RequestLandStrategyRebase, nil
+		return mergestrategy.MergeStrategyRebase, nil
 	case pb.Strategy_SQUASH_REBASE:
-		return entity.RequestLandStrategySquashRebase, nil
+		return mergestrategy.MergeStrategySquashRebase, nil
 	case pb.Strategy_MERGE:
-		return entity.RequestLandStrategyMerge, nil
+		return mergestrategy.MergeStrategyMerge, nil
 	default:
-		return entity.RequestLandStrategyUnknown, fmt.Errorf("unknown land strategy in proto message: %v", s)
+		return mergestrategy.MergeStrategyUnknown, fmt.Errorf("unknown land strategy in proto message: %v", s)
 	}
 }

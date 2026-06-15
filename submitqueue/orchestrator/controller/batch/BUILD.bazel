@@ -26,6 +26,7 @@ go_test(
     deps = [
         "//core/consumer",
         "//entity/change",
+        "//entity/mergestrategy",
         "//entity/messagequeue",
         "//extension/counter/mock",
         "//extension/messagequeue/mock",

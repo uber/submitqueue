@@ -15,6 +15,7 @@ go_library(
         "//core/errs",
         "//core/metrics",
         "//entity/change",
+        "//entity/mergestrategy",
         "//entity/messagequeue",
         "//extension/counter",
         "//submitqueue/core/request",
@@ -40,6 +41,7 @@ go_test(
     deps = [
         "//core/consumer",
         "//core/errs",
+        "//entity/mergestrategy",
         "//entity/messagequeue",
         "//extension/counter/mock",
         "//extension/messagequeue/mock",

@@ -28,6 +28,7 @@ go_test(
         "//core/consumer",
         "//core/errs",
         "//entity/change",
+        "//entity/mergestrategy",
         "//entity/messagequeue",
         "//extension/messagequeue/mock",
         "//submitqueue/core/topickey",
