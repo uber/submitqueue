@@ -1,6 +1,6 @@
 # Orchestrator Workflow
 
-The orchestrator processes land requests through a queue-driven pipeline of small, single-purpose controllers. The gateway accepts a request over RPC and hands it off asynchronously; from there each controller consumes one topic, advances the request or batch, and publishes to the next topic. Most hops carry only an ID — the controller fetches the entity from storage — while a few entry points (`start`, `buildsignal`, `log`) carry the full payload because there is no row to fetch yet.
+The orchestrator processes land requests through a queue-driven pipeline of small, single-purpose controllers. The gateway accepts a request over RPC and hands it off asynchronously; from there each controller consumes one topic, advances the request or batch, and publishes to the next topic. Most hops carry only an ID — the controller fetches the entity from storage — while a few entry points (`start`, `buildsignal`, `log`) carry the full payload because there is no row to fetch yet. A stage that crosses a service boundary is the exception: it publishes a full payload to the other service's queue and consumes a full payload back, because neither service can read the other's storage. (The `validate`→`mergeconflictsignal` hop is one such stage: `validate` hands a check to runway and `mergeconflictsignal` consumes the result.) See the queue-payload-boundary rule in [CLAUDE.md](../../../CLAUDE.md).
 
 The pipeline has two cycles: `speculate → build → buildsignal → speculate` (CI feedback loop) and `merge → speculate` (advance the next batch). `conclude` is the only stage that transitions a request to a terminal state; `log` is an append-only sink that any controller can publish to via `submitqueue/core/request.PublishLog`.
 
@@ -21,7 +21,20 @@ The pipeline has two cycles: `speculate → build → buildsignal → speculate`
               │                                 ▼
               │                 ┌──────────────────────────────────┐
               │                 │ validate                         │
-              │                 │ Check mergeability + change meta │
+              │                 │ Dedup, fetch metadata, publish   │
+              │                 │ check request to runway          │
+              │                 └────────────────┬─────────────────┘
+              │                       MergeRequest
+              │                                  ▼
+              │                 ╔══════════════════════════════════╗
+              │                 ║ runway  (separate service)       ║
+              │                 ║ Attempt merge, emit result       ║
+              │                 ╚════════════════┬═════════════════╝
+              │                       MergeResult
+              │                                  ▼
+              │                 ┌──────────────────────────────────┐
+              │                 │ mergeconflictsignal              │
+              │                 │ Correlate result, gate request   │
               │                 └────────────────┬─────────────────┘
               │                                  │ RequestID
               │                                  ▼
@@ -71,7 +84,8 @@ The pipeline has two cycles: `speculate → build → buildsignal → speculate`
 |---|---|---|---|
 | **gateway/Land** | RPC | start | Accept request, mint ID, log Accepted, hand off async |
 | **start** | LandRequest | validate, log | Persist Request and emit Started log |
-| **validate** | RequestID | batch | Check mergeability and fetch change metadata |
+| **validate** | RequestID | merge-conflict-check (runway) | Dedup, fetch change metadata, claim changes, then publish the full check request to runway (keyed by the request id, the correlation id) |
+| **mergeconflictsignal** | MergeResult | batch | Correlate runway's result; advance if mergeable, fail if conflicted |
 | **batch** | RequestID | score | Group request into a Batch with dependencies |
 | **score** | BatchID | speculate, log | Score the batch (∏ per-request scores), persist score |
 | **speculate** | BatchID | build, merge | (stub) Decide whether to verify via CI or land |
@@ -85,7 +99,7 @@ The pipeline has two cycles: `speculate → build → buildsignal → speculate`
 
 Every *consumed* primary pipeline topic above is paired with a `{topic}_dlq` subscription consumed by a dedicated DLQ controller. The `log` topic is the exception: the orchestrator only publishes to it (the gateway is the sole consumer that persists the request log), so it has no orchestrator-side subscription and therefore no DLQ. The consumer framework moves a message to its DLQ once the primary controller returns a non-retryable error or exhausts retries on a retryable one; without the DLQ side the affected request would stay in a non-terminal state forever and the gateway would still report it as "in progress".
 
-The DLQ controllers do not re-attempt the failed work. They decode the payload to recover the affected `RequestID` (start, validate, batch, cancel) or `BatchID` (score, speculate, build, buildsignal, merge, conclude) and drive the entity to a terminal failed state — `RequestStateError` for requests, `BatchStateFailed` for batches with fan-out to the member requests. State writes use the same optimistic-locking CAS as the primary pipeline, so a late primary-pipeline update wins cleanly and a version mismatch is asked back for redelivery.
+The DLQ controllers do not re-attempt the failed work. They decode the payload to recover the affected request (`RequestID`) or batch (`BatchID`) and drive the entity to a terminal failed state — `RequestStateError` for requests, `BatchStateFailed` for batches, with fan-out to the member requests. A DLQ whose topic carries a full payload rather than a bare ID recovers the id from that payload instead — for example the `mergeconflictsignal` DLQ reads it from the runway `MergeResult` the producer echoed back. State writes use the same optimistic-locking CAS as the primary pipeline, so a late primary-pipeline update wins cleanly and a version mismatch is asked back for redelivery.
 
 DLQ consumers are wired with `errs.AlwaysRetryableProcessor` and a very high `Retry.MaxAttempts`, with their own DLQ disabled. That combination makes reconciliation effectively non-droppable: any failure is forced retryable rather than escalating to a second-level dead-letter that nobody consumes. The trade-off is that a genuinely unprocessable DLQ message — typically a malformed payload — must be removed by an operator.
 
