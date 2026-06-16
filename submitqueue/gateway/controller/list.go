@@ -217,9 +217,9 @@ func canonicalStatuses(raw []string) ([]entity.RequestStatus, error) {
 
 func requestSummarySort(sort pb.ListSort) (storage.RequestSummarySort, error) {
 	switch sort {
-	case pb.ListSort_LIST_SORTED_UNSPECIFIED, pb.ListSort_LIST_SORTED_ADMITTED_ASC:
+	case pb.ListSort_SORT_DEFAULT, pb.ListSort_ADMITTED_ASC:
 		return storage.RequestSummarySortAdmittedAsc, nil
-	case pb.ListSort_LIST_SORTED_ADMITTED_DESC:
+	case pb.ListSort_ADMITTED_DESC:
 		return storage.RequestSummarySortAdmittedDesc, nil
 	default:
 		return "", fmt.Errorf("unknown sort %v: %w", sort, ErrInvalidRequest)

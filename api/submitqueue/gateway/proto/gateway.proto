@@ -102,12 +102,12 @@ message StatusResponse {
 
 // ListSort defines supported deterministic orderings for List.
 enum ListSort {
-    // Server default: LIST_SORTED_ADMITTED_ASC.
-    LIST_SORTED_UNSPECIFIED = 0;
+    // Server default: ADMITTED_ASC.
+    SORT_DEFAULT = 0;
     // FIFO/admission order.
-    LIST_SORTED_ADMITTED_ASC = 1;
+    ADMITTED_ASC = 1;
     // Newest admissions first.
-    LIST_SORTED_ADMITTED_DESC = 2;
+    ADMITTED_DESC = 2;
 }
 
 // ListRequest defines a request to list queue requests whose lifecycles overlap a time window.

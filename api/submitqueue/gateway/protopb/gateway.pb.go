@@ -42,25 +42,25 @@ const (
 type ListSort int32
 
 const (
-	// Server default: LIST_SORTED_ADMITTED_ASC.
-	ListSort_LIST_SORTED_UNSPECIFIED ListSort = 0
+	// Server default: ADMITTED_ASC.
+	ListSort_SORT_DEFAULT ListSort = 0
 	// FIFO/admission order.
-	ListSort_LIST_SORTED_ADMITTED_ASC ListSort = 1
+	ListSort_ADMITTED_ASC ListSort = 1
 	// Newest admissions first.
-	ListSort_LIST_SORTED_ADMITTED_DESC ListSort = 2
+	ListSort_ADMITTED_DESC ListSort = 2
 )
 
 // Enum value maps for ListSort.
 var (
 	ListSort_name = map[int32]string{
-		0: "LIST_SORTED_UNSPECIFIED",
-		1: "LIST_SORTED_ADMITTED_ASC",
-		2: "LIST_SORTED_ADMITTED_DESC",
+		0: "SORT_DEFAULT",
+		1: "ADMITTED_ASC",
+		2: "ADMITTED_DESC",
 	}
 	ListSort_value = map[string]int32{
-		"LIST_SORTED_UNSPECIFIED":   0,
-		"LIST_SORTED_ADMITTED_ASC":  1,
-		"LIST_SORTED_ADMITTED_DESC": 2,
+		"SORT_DEFAULT":  0,
+		"ADMITTED_ASC":  1,
+		"ADMITTED_DESC": 2,
 	}
 )
 
@@ -629,7 +629,7 @@ func (x *ListRequest) GetSort() ListSort {
 	if x != nil {
 		return x.Sort
 	}
-	return ListSort_LIST_SORTED_UNSPECIFIED
+	return ListSort_SORT_DEFAULT
 }
 
 // RequestSummary is the current gateway-owned view of one request for queue-listing UX.
@@ -1037,11 +1037,11 @@ const file_gateway_proto_rawDesc = "" +
 	"\x05queue\x18\x02 \x01(\tR\x05queue\"a\n" +
 	"\x14RequestNotFoundError\x125\n" +
 	"\x05error\x18\x01 \x01(\v2\x1f.uber.submitqueue.gateway.ErrorR\x05error\x12\x12\n" +
-	"\x04sqid\x18\x02 \x01(\tR\x04sqid*d\n" +
-	"\bListSort\x12\x1b\n" +
-	"\x17LIST_SORTED_UNSPECIFIED\x10\x00\x12\x1c\n" +
-	"\x18LIST_SORTED_ADMITTED_ASC\x10\x01\x12\x1d\n" +
-	"\x19LIST_SORTED_ADMITTED_DESC\x10\x022\xdd\x03\n" +
+	"\x04sqid\x18\x02 \x01(\tR\x04sqid*A\n" +
+	"\bListSort\x12\x10\n" +
+	"\fSORT_DEFAULT\x10\x00\x12\x10\n" +
+	"\fADMITTED_ASC\x10\x01\x12\x11\n" +
+	"\rADMITTED_DESC\x10\x022\xdd\x03\n" +
 	"\x12SubmitQueueGateway\x12W\n" +
 	"\x04Ping\x12%.uber.submitqueue.gateway.PingRequest\x1a&.uber.submitqueue.gateway.PingResponse\"\x00\x12W\n" +
 	"\x04Land\x12%.uber.submitqueue.gateway.LandRequest\x1a&.uber.submitqueue.gateway.LandResponse\"\x00\x12]\n" +

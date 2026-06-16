@@ -108,7 +108,7 @@ func TestList_UsesRequestedSort(t *testing.T) {
 		Queue:       "q",
 		StartTimeMs: 100,
 		EndTimeMs:   200,
-		Sort:        pb.ListSort_LIST_SORTED_ADMITTED_DESC,
+		Sort:        pb.ListSort_ADMITTED_DESC,
 	})
 
 	require.NoError(t, err)
@@ -278,7 +278,7 @@ func TestList_RejectsMismatchedPageTokenSort(t *testing.T) {
 		Queue:       "q",
 		StartTimeMs: 1,
 		EndTimeMs:   2,
-		Sort:        pb.ListSort_LIST_SORTED_ADMITTED_ASC,
+		Sort:        pb.ListSort_ADMITTED_ASC,
 		PageToken:   token,
 	})
 

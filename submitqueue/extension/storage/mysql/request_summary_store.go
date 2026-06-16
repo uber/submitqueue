@@ -133,7 +133,7 @@ func (s *requestSummaryStore) List(ctx context.Context, opts storage.RequestSumm
 	clauses := []string{
 		"queue = ?",
 		"started_at_ms < ?",
-		"completed_at_ms >= ?",
+		"completed_at_ms > ?",
 	}
 
 	if len(opts.Statuses) > 0 {
