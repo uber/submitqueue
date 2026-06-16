@@ -25,9 +25,7 @@ The outbound topics partition by SubmitQueue queue name (not repo/branch), match
 ```
                  ┌─────────────────────────────────────────────┐
                  │            submitqueue orchestrator          │
-                 │                                             │
-                 │       │                       │             │
-                 └───────┼───────────────────────┼─────────────┘
+                 └───────┬───────────────────────┬─────────────┘
                          │                       │
                    Check (per request)      Job (per batch)
                          │                       │
@@ -43,11 +41,10 @@ The outbound topics partition by SubmitQueue queue name (not repo/branch), match
                 [sq-check-result]       [sq-land-result]
                          │                       │
                          ▼                       ▼
-                 ┌───────┼───────────────────────┼─────────────┐
+                 ┌───────┬───────────────────────┬─────────────┐
                  │  check-result ctrl       land-result ctrl   │
                  │  (update request       (update batch state, │
                  │   mergeability)       fan out to conclude)  │
-                 │                                             │
                  │            submitqueue orchestrator          │
                  └─────────────────────────────────────────────┘
 ```
