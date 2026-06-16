@@ -54,9 +54,6 @@ import (
 	conflictfake "github.com/uber/submitqueue/submitqueue/extension/conflict/fake"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/fileoverlap"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/none"
-	"github.com/uber/submitqueue/submitqueue/extension/pusher"
-	pushfake "github.com/uber/submitqueue/submitqueue/extension/pusher/fake"
-	gitpusher "github.com/uber/submitqueue/submitqueue/extension/pusher/git"
 	"github.com/uber/submitqueue/submitqueue/extension/scorer"
 	"github.com/uber/submitqueue/submitqueue/extension/scorer/composite"
 	scorerfake "github.com/uber/submitqueue/submitqueue/extension/scorer/fake"
@@ -72,6 +69,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/dlq"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/merge"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/mergeconflictsignal"
+	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/mergesignal"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/score"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/speculate"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/start"
@@ -239,13 +237,12 @@ func run() error {
 
 	// Per-extension factories all resolve against the registry by queue name.
 	cpf := changeProviderFactory{queues}
-	pshf := pusherFactory{queues}
 	brf := buildRunnerFactory{queues}
 	scf := scorerFactory{queues}
 	cof := analyzerFactory{queues}
 
 	// Register controllers
-	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, registry, cpf, pshf, brf, scf, cof, cnt, store)
+	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, registry, cpf, brf, scf, cof, cnt, store)
 	if err != nil {
 		return err
 	}
@@ -382,6 +379,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 		{topickey.TopicKeyBuild, "build", "orchestrator-build"},
 		{topickey.TopicKeyBuildSignal, "buildsignal", "orchestrator-buildsignal"},
 		{topickey.TopicKeyMerge, "merge", "orchestrator-merge"},
+		{runwaymq.TopicKeyMergeSignal, "merge-signal", "orchestrator-mergesignal"},
 		{topickey.TopicKeyConclude, "conclude", "orchestrator-conclude"},
 	}
 
@@ -441,6 +439,17 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 		Queue: q,
 	})
 
+	// Publish-only: the orchestrator hands merge requests to runway via the
+	// runway-owned merge queue. Runway is the sole consumer, so the
+	// orchestrator registers no consuming subscription (and no DLQ) here; the
+	// inbound result arrives on the separate merge-signal queue, which is a
+	// consumed primary topic above.
+	configs = append(configs, consumer.TopicConfig{
+		Key:   runwaymq.TopicKeyMerge,
+		Name:  "merge",
+		Queue: q,
+	})
+
 	return consumer.NewTopicRegistry(configs)
 }
 
@@ -473,11 +482,10 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 //
 // queueExtensions is the full set of extension implementations for a single
 // queue. Grouping them per queue (rather than per extension) lets the wiring
-// read as "for this queue, here are its scorer, analyzer, pusher, …", and lets
+// read as "for this queue, here are its scorer, analyzer, change provider, …", and lets
 // a queue profile start from a baseline and override only what differs.
 type queueExtensions struct {
 	changeProvider changeprovider.ChangeProvider
-	pusher         pusher.Pusher
 	buildRunner    buildrunner.BuildRunner
 	scorer         scorer.Scorer
 	analyzer       conflict.Analyzer
@@ -508,12 +516,6 @@ func (f changeProviderFactory) For(cfg changeprovider.Config) (changeprovider.Ch
 	return f.reg.get(cfg.QueueName).changeProvider, nil
 }
 
-type pusherFactory struct{ reg queueRegistry }
-
-func (f pusherFactory) For(cfg pusher.Config) (pusher.Pusher, error) {
-	return f.reg.get(cfg.QueueName).pusher, nil
-}
-
 type buildRunnerFactory struct{ reg queueRegistry }
 
 func (f buildRunnerFactory) For(cfg buildrunner.Config) (buildrunner.BuildRunner, error) {
@@ -532,7 +534,7 @@ func (f analyzerFactory) For(cfg conflict.Config) (conflict.Analyzer, error) {
 	return f.reg.get(cfg.QueueName).analyzer, nil
 }
 
-func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, cpf changeprovider.Factory, pshf pusher.Factory, brf buildrunner.Factory, scf scorer.Factory, cof conflict.Factory, cnt counter.Counter, store storage.Storage) (int, error) {
+func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, cpf changeprovider.Factory, brf buildrunner.Factory, scf scorer.Factory, cof conflict.Factory, cnt counter.Counter, store storage.Storage) (int, error) {
 	var count int
 	requestController := start.NewController(
 		logger,
@@ -663,12 +665,25 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		scope,
 		store,
 		registry,
-		pshf,
+		runwaymq.TopicKeyMerge,
 		topickey.TopicKeyMerge,
 		"orchestrator-merge",
 	)
 	if err := c.Register(mergeController); err != nil {
 		return count, fmt.Errorf("failed to register merge controller: %w", err)
+	}
+	count++
+
+	mergesignalController := mergesignal.NewController(
+		logger,
+		scope,
+		store,
+		registry,
+		runwaymq.TopicKeyMergeSignal,
+		"orchestrator-mergesignal",
+	)
+	if err := c.Register(mergesignalController); err != nil {
+		return count, fmt.Errorf("failed to register mergesignal controller: %w", err)
 	}
 	count++
 
@@ -708,6 +723,7 @@ func registerDLQControllers(c consumer.Consumer, logger *zap.SugaredLogger, scop
 		{"build_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyBuild), "orchestrator-build-dlq")},
 		{"buildsignal_dlq", dlq.NewDLQBuildSignalController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")},
 		{"merge_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")},
+		{"mergesignal_dlq", dlq.NewDLQMergeSignalController(logger, dlqScope, store, dlq.TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-mergesignal-dlq")},
 		{"conclude_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyConclude), "orchestrator-conclude-dlq")},
 	}
 	var count int
@@ -768,29 +784,8 @@ func newChangeProvider(logger *zap.Logger, scope tally.Scope) (changeprovider.Ch
 	}), nil
 }
 
-// newPusher creates a git-backed Pusher bound to the configured checkout path,
-// remote, and target branch (PUSHER_CHECKOUT_PATH, PUSHER_REMOTE default
-// "origin", PUSHER_TARGET default "main"). When PUSHER_CHECKOUT_PATH is unset it
-// returns the fake pusher (commits succeed unless a change URI carries a failure
-// marker, see pusher/fake), keeping the example runnable without a git checkout.
-func newPusher(logger *zap.Logger, scope tally.Scope, resolver changeset.Resolver) (pusher.Pusher, error) {
-	checkout := os.Getenv("PUSHER_CHECKOUT_PATH")
-	if checkout == "" {
-		logger.Warn("PUSHER_CHECKOUT_PATH not set; using fake pusher (commits succeed unless URI-marked)")
-		return pushfake.New(resolver), nil
-	}
-	return gitpusher.NewPusher(gitpusher.Params{
-		CheckoutPath: checkout,
-		Remote:       getEnv("PUSHER_REMOTE", "origin"),
-		Target:       getEnv("PUSHER_TARGET", "main"),
-		Resolver:     resolver,
-		Logger:       logger.Sugar(),
-		MetricsScope: scope.SubScope("pusher"),
-	}), nil
-}
-
 // newQueueRegistry builds the per-queue extension profiles for the example.
-// Edge integrations (merge checker, change provider, pusher) and the build
+// Edge integrations (change provider) and the build
 // runner form a shared baseline; each per-queue profile starts from that
 // baseline and overrides only the extensions that differ — here the scorer and
 // conflict analyzer. Queues without an explicit profile fall back to the
@@ -800,10 +795,6 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.
 	cp, err := newChangeProvider(logger, scope)
 	if err != nil {
 		return queueRegistry{}, fmt.Errorf("failed to create change provider: %w", err)
-	}
-	psh, err := newPusher(logger, scope, resolver)
-	if err != nil {
-		return queueRegistry{}, fmt.Errorf("failed to create pusher: %w", err)
 	}
 
 	// batchLines buckets a batch by total lines changed across all its changes —
@@ -826,7 +817,6 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.
 	// below does.
 	base := queueExtensions{
 		changeProvider: cp,
-		pusher:         psh,
 		buildRunner:    buildfake.New(resolver),
 		scorer: scorerfake.New(resolver, heuristic.New(
 			resolver,
