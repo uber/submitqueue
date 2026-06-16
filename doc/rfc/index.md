@@ -17,3 +17,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 ## Stovepipe
 
 - [Stovepipe Workflow](stovepipe/workflow.md) - Post-merge trunk-validation pipeline: ingest trunk push events (webhook + fallback poll), batch since last green, build to validate, record per-commit health, bisect to the offending commit, hand off to a remediation extension
+
+## Runway
+
+- [Runway Workflow](runway/workflow.md) - Landing service: check request mergeability, land scored batches, publish results back to SubmitQueue
