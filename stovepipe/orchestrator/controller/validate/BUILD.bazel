@@ -1,0 +1,36 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "validate",
+    srcs = ["validate.go"],
+    importpath = "github.com/uber/submitqueue/stovepipe/orchestrator/controller/validate",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//platform/base/messagequeue",
+        "//platform/consumer",
+        "//platform/metrics",
+        "//stovepipe/core/topickey",
+        "//stovepipe/entity",
+        "@com_github_uber_go_tally//:tally",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "validate_test",
+    srcs = ["validate_test.go"],
+    embed = [":validate"],
+    deps = [
+        "//platform/base/change",
+        "//platform/base/messagequeue",
+        "//platform/consumer",
+        "//platform/extension/messagequeue/mock",
+        "//stovepipe/core/topickey",
+        "//stovepipe/entity",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_uber_go_tally//:tally",
+        "@org_uber_go_mock//gomock",
+        "@org_uber_go_zap//zaptest",
+    ],
+)

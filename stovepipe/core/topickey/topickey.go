@@ -25,4 +25,7 @@ const (
 	TopicKeyStart TopicKey = "start"
 	// TopicKeyValidate is the pipeline stage where commits are published for metadata resolution.
 	TopicKeyValidate TopicKey = "validate"
+	// TopicKeyBatch is the pipeline stage where validated commits are aggregated, since the last
+	// known green, into a contiguous validation batch.
+	TopicKeyBatch TopicKey = "batch"
 )
