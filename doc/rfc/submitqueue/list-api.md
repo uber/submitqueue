@@ -24,8 +24,8 @@ boundary and must not read orchestrator-owned working tables.
 
 At a high level:
 
-- **Input** — queue name, time window, optional status filters, and pagination
-  cursor.
+- **Input** — queue name, time window, optional status filters, sort order, and
+  pagination cursor.
 - **Output** — a page of request summaries and the next cursor.
 
 Each request summary should include:
@@ -85,6 +85,35 @@ The filter should accept multiple statuses so the UX can ask for groups such as
 server should validate status strings against the public status vocabulary it
 can emit; unknown statuses are caller errors rather than silent misses.
 
+## Sorting
+
+`List` should expose sorting as an enum, not as free-form field names. The first
+supported sort modes are admission-time orderings:
+
+```
+enum ListSort {
+  LIST_SORTED_UNSPECIFIED = 0; // server default: LIST_SORTED_ADMITTED_ASC
+  LIST_SORTED_ADMITTED_ASC = 1; // FIFO: started_at_ms ASC, sqid ASC
+  LIST_SORTED_ADMITTED_DESC = 2; // newest admissions first: started_at_ms DESC, sqid DESC
+}
+```
+
+The default should be FIFO/admission order so the first page gives the clearest
+answer to "what is at the head of the queue?" for simple queue views. Clients
+that want a recent-activity/history view can request
+`LIST_SORTED_ADMITTED_DESC`.
+
+These names intentionally use "admitted" rather than "queue position." Admission
+order is gateway-owned and can be derived from request-log/summary data. Queue
+position is a stronger scheduler/backend concept: it may differ from FIFO once
+batching, speculation, cancellation, priority, or retries are involved.
+
+TODO: if a backend supports a real queue-position signal, add a nullable
+`queue_position` summary column and a corresponding enum value such as
+`LIST_SORTED_QUEUE_POSITION_ASC`. The RFC should define exactly which requests
+have positions, when positions change, how terminal requests sort, and how
+cursor pagination behaves over a mutable position before exposing that mode.
+
 ## Read Model
 
 Serving `List` directly from the append-only request log would force the gateway
@@ -105,10 +134,11 @@ rules.
 
 This is deliberately a query store, unlike the mostly key-oriented stores used
 by the pipeline. Its boundary should be page-in/page-out: queue, time window,
-statuses, cursor, and limit in; rows plus next cursor out. The backend owns the
-indexing strategy for lifecycle overlap. For SQL, avoid an unindexed open-ended
-OR by representing "still running" with an index-friendly sentinel completion
-time or by splitting active and completed scans.
+statuses, sort, cursor, and limit in; rows plus next cursor out. The backend owns
+the indexing strategy for lifecycle overlap and supported sort modes. For SQL,
+avoid an unindexed open-ended OR by representing "still running" with an
+index-friendly sentinel completion time or by splitting active and completed
+scans.
 
 Every request-log persistence path must update this read model through the same
 helper: direct gateway writes such as `Land` and `Cancel`, plus the gateway log
@@ -173,8 +203,9 @@ considered active for future time-window overlap.
 underlying set changes while users page through it.
 
 The cursor should be opaque to clients and tied to the original query shape:
-queue, time window, status filter, and the last row seen. Reusing a cursor with a
-different queue, time window, or status filter should be rejected.
+queue, time window, status filter, sort order, and the last row seen. Reusing a
+cursor with a different queue, time window, status filter, or sort order should
+be rejected.
 
 Default page size should be modest. The API should cap page size so a single UX
 request cannot force an unbounded queue scan.
@@ -202,6 +233,7 @@ timeline/debug information for the same period.
    ┌────────────────────────────────────────────┐
    │ gateway:List                               │
    │   validate queue + time window + statuses  │
+   │   validate sort + cursor query shape       │
    │   read summaries by lifecycle/status match │
    │   return page of current request summaries │
    └────────────────────────────────────────────┘
