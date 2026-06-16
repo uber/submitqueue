@@ -19,11 +19,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"time"
 )
 
-const header = `// Copyright (c) 2025 Uber Technologies, Inc.
-//
+// licenseBody is everything after the copyright line. The copyright line itself
+// carries a year, which is validated by pattern (any 4-digit year) rather than
+// pinned to a single value — so files authored in earlier years keep passing
+// while new files are stamped with the current year.
+const licenseBody = `//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -35,6 +40,20 @@ const header = `// Copyright (c) 2025 Uber Technologies, Inc.
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.`
+
+// copyrightLineRe matches the first line of the header with any 4-digit year.
+var copyrightLineRe = regexp.MustCompile(`^// Copyright \(c\) \d{4} Uber Technologies, Inc\.$`)
+
+// copyrightLine returns the copyright line for a given year.
+func copyrightLine(year int) string {
+	return fmt.Sprintf("// Copyright (c) %d Uber Technologies, Inc.", year)
+}
+
+// header returns the full license header stamped with the given year, used when
+// adding a header in -fix mode.
+func header(year int) string {
+	return copyrightLine(year) + "\n" + licenseBody
+}
 
 func main() {
 	fix := flag.Bool("fix", false, "add missing license headers in-place")
@@ -156,6 +175,7 @@ func isGeneratedFile(path string) bool {
 }
 
 // hasLicenseHeader checks if a file starts with the expected license header.
+// The copyright year may be any 4-digit year; the rest must match exactly.
 func hasLicenseHeader(path string) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -171,11 +191,19 @@ func hasLicenseHeader(path string) (bool, error) {
 		}
 	}
 
-	return strings.HasPrefix(content, header), nil
+	nl := strings.Index(content, "\n")
+	if nl < 0 {
+		return false, nil
+	}
+	if !copyrightLineRe.MatchString(content[:nl]) {
+		return false, nil
+	}
+	return strings.HasPrefix(content[nl+1:], licenseBody), nil
 }
 
-// addLicenseHeader prepends the license header to a file.
-// If the file starts with a //go:build directive, the header is placed after it.
+// addLicenseHeader prepends the license header (stamped with the current year)
+// to a file. If the file starts with a //go:build directive, the header is
+// placed after it.
 func addLicenseHeader(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -183,18 +211,20 @@ func addLicenseHeader(path string) error {
 	}
 	content := string(data)
 
+	hdr := header(time.Now().Year())
+
 	var result string
 	if strings.HasPrefix(content, "//go:build ") {
 		idx := strings.Index(content, "\n")
 		if idx >= 0 {
 			buildLine := content[:idx+1]
 			rest := content[idx+1:]
-			result = buildLine + "\n" + header + "\n\n" + strings.TrimLeft(rest, "\n")
+			result = buildLine + "\n" + hdr + "\n\n" + strings.TrimLeft(rest, "\n")
 		} else {
-			result = content + "\n\n" + header + "\n"
+			result = content + "\n\n" + hdr + "\n"
 		}
 	} else {
-		result = header + "\n\n" + content
+		result = hdr + "\n\n" + content
 	}
 
 	return os.WriteFile(path, []byte(result), 0644)

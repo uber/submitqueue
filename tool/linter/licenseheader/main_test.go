@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -46,6 +47,8 @@ func TestIsGeneratedFile(t *testing.T) {
 func TestHasLicenseHeader(t *testing.T) {
 	dir := t.TempDir()
 
+	curr := header(time.Now().Year())
+
 	tests := []struct {
 		name    string
 		content string
@@ -53,7 +56,12 @@ func TestHasLicenseHeader(t *testing.T) {
 	}{
 		{
 			name:    "has header",
-			content: header + "\n\npackage foo\n",
+			content: curr + "\n\npackage foo\n",
+			want:    true,
+		},
+		{
+			name:    "older year still valid",
+			content: header(2025) + "\n\npackage foo\n",
 			want:    true,
 		},
 		{
@@ -63,12 +71,22 @@ func TestHasLicenseHeader(t *testing.T) {
 		},
 		{
 			name:    "go:build then header",
-			content: "//go:build linux\n\n" + header + "\n\npackage foo\n",
+			content: "//go:build linux\n\n" + curr + "\n\npackage foo\n",
 			want:    true,
 		},
 		{
 			name:    "go:build without header",
 			content: "//go:build linux\n\npackage foo\n",
+			want:    false,
+		},
+		{
+			name:    "wrong company fails",
+			content: "// Copyright (c) 2025 Someone Else, Inc.\n" + licenseBody + "\n\npackage foo\n",
+			want:    false,
+		},
+		{
+			name:    "non-numeric year fails",
+			content: "// Copyright (c) YYYY Uber Technologies, Inc.\n" + licenseBody + "\n\npackage foo\n",
 			want:    false,
 		},
 	}
@@ -96,7 +114,7 @@ func TestAddLicenseHeader(t *testing.T) {
 		require.NoError(t, err)
 		content := string(data)
 
-		assert.True(t, strings.HasPrefix(content, header))
+		assert.True(t, strings.HasPrefix(content, header(time.Now().Year())))
 		assert.Contains(t, content, "package foo")
 	})
 
@@ -112,7 +130,7 @@ func TestAddLicenseHeader(t *testing.T) {
 		content := string(data)
 
 		assert.True(t, strings.HasPrefix(content, "//go:build linux\n"))
-		assert.Contains(t, content, header)
+		assert.Contains(t, content, header(time.Now().Year()))
 		assert.Contains(t, content, "package foo")
 
 		// Verify order: build directive, then header, then package
@@ -158,7 +176,7 @@ func TestAddLicenseHeader(t *testing.T) {
 		require.NoError(t, err)
 		content := string(data)
 
-		assert.True(t, strings.HasPrefix(content, header))
+		assert.True(t, strings.HasPrefix(content, header(time.Now().Year())))
 		assert.Contains(t, content, "syntax = \"proto3\"")
 	})
 }
