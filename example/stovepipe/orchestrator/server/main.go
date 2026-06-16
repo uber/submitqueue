@@ -37,6 +37,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/topickey"
 	"github.com/uber/submitqueue/stovepipe/orchestrator/controller"
 	"github.com/uber/submitqueue/stovepipe/orchestrator/controller/start"
+	"github.com/uber/submitqueue/stovepipe/orchestrator/controller/validate"
 	pb "github.com/uber/submitqueue/stovepipe/orchestrator/protopb"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -161,7 +162,18 @@ func run() error {
 	if err := primaryConsumer.Register(startController); err != nil {
 		return fmt.Errorf("failed to register start controller: %w", err)
 	}
-	logger.Info("controllers registered", zap.Int("primary", 1))
+
+	validateController := validate.NewController(validate.Params{
+		Logger:        logger.Sugar(),
+		Scope:         scope,
+		Registry:      registry,
+		TopicKey:      topickey.TopicKeyValidate,
+		ConsumerGroup: "orchestrator-validate",
+	})
+	if err := primaryConsumer.Register(validateController); err != nil {
+		return fmt.Errorf("failed to register validate controller: %w", err)
+	}
+	logger.Info("controllers registered", zap.Int("primary", 2))
 
 	if err := primaryConsumer.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start primary consumer: %w", err)
@@ -241,6 +253,14 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Queue: q,
 			Subscription: extqueue.DefaultSubscriptionConfig(
 				subscriberName, "orchestrator-validate",
+			),
+		},
+		{
+			Key:   topickey.TopicKeyBatch,
+			Name:  "batch",
+			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "orchestrator-batch",
 			),
 		},
 	})
