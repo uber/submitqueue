@@ -53,12 +53,14 @@ window" filter.
 A request belongs in `[T1, T2)` when it was active at any point in that interval:
 
 - it started before `T2`, and
-- it either has not completed, or completed at or after `T1`.
+- it either has not completed, or completed after `T1`.
 
 This is the behavior the UX needs for questions like "what was running between
 10:00 and 10:30?" A request that began at 09:55 and completed at 10:05 should
 appear. A request that began at 10:20 and is still running should appear. A
-request that completed at 09:59 should not.
+request that completed at 09:59 should not. A request that completed exactly at
+10:00 should not appear in `[10:00, 10:30)` because it was not active inside the
+half-open interval.
 
 `List` returns the request's **current** reconciled status at read time for rows
 that match the window. It is not a historical "status as of T2" API. A historical
@@ -92,16 +94,16 @@ supported sort modes are admission-time orderings:
 
 ```
 enum ListSort {
-  LIST_SORTED_UNSPECIFIED = 0; // server default: LIST_SORTED_ADMITTED_ASC
-  LIST_SORTED_ADMITTED_ASC = 1; // FIFO: started_at_ms ASC, sqid ASC
-  LIST_SORTED_ADMITTED_DESC = 2; // newest admissions first: started_at_ms DESC, sqid DESC
+  SORT_DEFAULT = 0; // server default: ADMITTED_ASC
+  ADMITTED_ASC = 1; // FIFO: started_at_ms ASC, sqid ASC
+  ADMITTED_DESC = 2; // newest admissions first: started_at_ms DESC, sqid DESC
 }
 ```
 
 The default should be FIFO/admission order so the first page gives the clearest
 answer to "what is at the head of the queue?" for simple queue views. Clients
 that want a recent-activity/history view can request
-`LIST_SORTED_ADMITTED_DESC`.
+`ADMITTED_DESC`.
 
 These names intentionally use "admitted" rather than "queue position." Admission
 order is gateway-owned and can be derived from request-log/summary data. Queue
@@ -110,7 +112,7 @@ batching, speculation, cancellation, priority, or retries are involved.
 
 TODO: if a backend supports a real queue-position signal, add a nullable
 `queue_position` summary column and a corresponding enum value such as
-`LIST_SORTED_QUEUE_POSITION_ASC`. The RFC should define exactly which requests
+`QUEUE_POSITION_ASC`. The RFC should define exactly which requests
 have positions, when positions change, how terminal requests sort, and how
 cursor pagination behaves over a mutable position before exposing that mode.
 
