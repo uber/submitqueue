@@ -79,17 +79,17 @@ func (s *requestSummaryStore) UpsertFromLog(ctx context.Context, log entity.Requ
 	if log.Queue == "" {
 		log.Queue = entity.QueueFromRequestID(log.RequestID)
 	}
+	if log.Queue == "" {
+		return fmt.Errorf("request summary upsert requires queue for request_id=%s", log.RequestID)
+	}
 
 	for attempt := 0; attempt < maxSummaryUpsertAttempts; attempt++ {
-		existing, found, err := s.get(ctx, log.RequestID)
+		existing, found, err := s.get(ctx, log.Queue, log.RequestID)
 		if err != nil {
 			return err
 		}
 
 		if !found {
-			if log.Queue == "" {
-				return fmt.Errorf("request summary upsert requires queue for request_id=%s", log.RequestID)
-			}
 			inserted, err := s.insert(ctx, rowFromLog(log))
 			if err != nil {
 				return err
@@ -126,6 +126,9 @@ func (s *requestSummaryStore) List(ctx context.Context, opts storage.RequestSumm
 		return storage.RequestSummaryListResult{}, fmt.Errorf("request summary list requires a positive limit")
 	}
 
+	// request_summary intentionally has no secondary indexes. The composite primary key is
+	// (queue, request_id), so List is a queue-scoped scan with SQL-side filtering, sorting, and
+	// pagination over the queue's retained summary rows.
 	args := []any{opts.Queue, opts.EndTimeMs, opts.StartTimeMs}
 	clauses := []string{
 		"queue = ?",
@@ -201,17 +204,17 @@ func listSortSQL(sort storage.RequestSummarySort) (cursorClause string, orderBy 
 }
 
 // get reads the current summary row without locking. Returns found=false when no row exists.
-func (s *requestSummaryStore) get(ctx context.Context, requestID string) (requestSummaryRow, bool, error) {
+func (s *requestSummaryStore) get(ctx context.Context, queue string, requestID string) (requestSummaryRow, bool, error) {
 	row := s.db.QueryRowContext(ctx,
-		"SELECT request_id, queue, change_uri, status, request_version, status_timestamp_ms, winner_terminal_version, last_error, metadata, started_at_ms, updated_at_ms, completed_at_ms, terminal, version FROM request_summary WHERE request_id = ?",
-		requestID,
+		"SELECT request_id, queue, change_uri, status, request_version, status_timestamp_ms, winner_terminal_version, last_error, metadata, started_at_ms, updated_at_ms, completed_at_ms, terminal, version FROM request_summary WHERE queue = ? AND request_id = ?",
+		queue, requestID,
 	)
 	summary, err := scanRequestSummary(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return requestSummaryRow{}, false, nil
 	}
 	if err != nil {
-		return requestSummaryRow{}, false, fmt.Errorf("failed to get request summary for request_id=%s: %w", requestID, err)
+		return requestSummaryRow{}, false, fmt.Errorf("failed to get request summary for queue=%s request_id=%s: %w", queue, requestID, err)
 	}
 	return summary, true, nil
 }
@@ -248,8 +251,8 @@ func (s *requestSummaryStore) update(ctx context.Context, oldVersion, newVersion
 		return false, err
 	}
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE request_summary SET queue = ?, change_uri = ?, status = ?, request_version = ?, status_timestamp_ms = ?, winner_terminal_version = ?, last_error = ?, metadata = ?, started_at_ms = ?, updated_at_ms = ?, completed_at_ms = ?, terminal = ?, version = ? WHERE request_id = ? AND version = ?",
-		row.summary.Queue, changeURIsJSON, row.summary.Status, row.requestVersion, row.statusTimestampMs, row.winnerTerminalVersion, row.summary.LastError, metadataJSON, row.summary.StartedAtMs, row.summary.UpdatedAtMs, row.dbCompletedAtMs, row.summary.Terminal, newVersion, row.summary.RequestID, oldVersion,
+		"UPDATE request_summary SET change_uri = ?, status = ?, request_version = ?, status_timestamp_ms = ?, winner_terminal_version = ?, last_error = ?, metadata = ?, started_at_ms = ?, updated_at_ms = ?, completed_at_ms = ?, terminal = ?, version = ? WHERE queue = ? AND request_id = ? AND version = ?",
+		changeURIsJSON, row.summary.Status, row.requestVersion, row.statusTimestampMs, row.winnerTerminalVersion, row.summary.LastError, metadataJSON, row.summary.StartedAtMs, row.summary.UpdatedAtMs, row.dbCompletedAtMs, row.summary.Terminal, newVersion, row.summary.Queue, row.summary.RequestID, oldVersion,
 	)
 	if err != nil {
 		return false, fmt.Errorf("failed to update request summary request_id=%s: %w", row.summary.RequestID, err)
@@ -336,7 +339,7 @@ func rowFromLog(log entity.RequestLog) requestSummaryRow {
 
 func mergeSummary(existing requestSummaryRow, log entity.RequestLog) requestSummaryRow {
 	next := existing
-	if log.Queue != "" {
+	if next.summary.Queue == "" && log.Queue != "" {
 		next.summary.Queue = log.Queue
 	}
 	if len(next.summary.ChangeURIs) == 0 && len(log.ChangeURIs) > 0 {
