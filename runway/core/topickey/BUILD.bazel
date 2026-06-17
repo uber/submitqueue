@@ -1,9 +1,0 @@
-load("@rules_go//go:def.bzl", "go_library")
-
-go_library(
-    name = "topickey",
-    srcs = ["topickey.go"],
-    importpath = "github.com/uber/submitqueue/runway/core/topickey",
-    visibility = ["//visibility:public"],
-    deps = ["//platform/consumer"],
-)

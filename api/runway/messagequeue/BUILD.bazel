@@ -1,0 +1,31 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "messagequeue",
+    srcs = [
+        "merge.go",
+        "topics.go",
+    ],
+    importpath = "github.com/uber/submitqueue/api/runway/messagequeue",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api/base/messagequeue/protopb",  # keep
+        "//api/runway/messagequeue/protopb",  # keep
+        "//platform/consumer",
+        "@org_golang_google_protobuf//encoding/protojson",
+        "@org_golang_google_protobuf//proto",
+    ],
+)
+
+go_test(
+    name = "messagequeue_test",
+    srcs = ["merge_test.go"],
+    embed = [":messagequeue"],
+    deps = [
+        "//api/base/change/protopb",
+        "//api/base/mergestrategy/protopb",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_protobuf//proto",
+    ],
+)
