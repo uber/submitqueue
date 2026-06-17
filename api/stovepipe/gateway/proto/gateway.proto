@@ -21,6 +21,8 @@ option java_multiple_files = true;
 option java_outer_classname = "GatewayProto";
 option java_package = "com.uber.submitqueue.stovepipe";
 
+import "api/base/change/proto/change.proto";
+
 // PingRequest is the request for the Ping method
 message PingRequest {
     // Optional message to include in the ping
@@ -39,8 +41,27 @@ message PingResponse {
     string hostname = 4;
 }
 
+// IngestRequest defines a request to ingest a trunk commit into Stovepipe, triggering its verification (build and test) post-merge/post-submit.
+message IngestRequest {
+    // Name of the queue processing the ingest request. The queue should be defined in the configuration, otherwise an error is returned.
+    string queue = 1;
+    // Change (trunk commit) to ingest, identified by URI. The target trunk and build/test configuration are defined by the queue configuration.
+    // Stovepipe ingests commits that are already on trunk; for git, supply a "git://<remote>/<repo>/<ref>/<commit_sha>" URI.
+    uber.base.change.Change change = 2;
+}
+
+// IngestResponse defines the response to an ingest request.
+message IngestResponse {
+    // Globally unique identifier for the ingested commit's verification request (the "stovepipe id", spid). Used to track the request lifecycle.
+    string spid = 1;
+}
+
 // StovepipeGateway provides the Stovepipe gateway API.
 service StovepipeGateway {
     // Ping returns a response indicating the service is alive
     rpc Ping(PingRequest) returns (PingResponse) {}
+
+    // Ingest accepts a trunk commit and triggers its verification (post-merge/post-submit build and test).
+    // The processing is asynchronous and returns an IngestResponse immediately; the verification runs in the background.
+    rpc Ingest(IngestRequest) returns (IngestResponse) {}
 }
