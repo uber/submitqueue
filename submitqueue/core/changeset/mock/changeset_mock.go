@@ -13,7 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
-	"github.com/uber/submitqueue/entity/change"
+	"github.com/uber/submitqueue/platform/base/change"
 	entity "github.com/uber/submitqueue/submitqueue/entity"
 	gomock "go.uber.org/mock/gomock"
 )

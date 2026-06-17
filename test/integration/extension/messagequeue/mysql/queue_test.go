@@ -30,10 +30,10 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap/zaptest"
 
-	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	extqueue "github.com/uber/submitqueue/extension/messagequeue"
-	queueMySQL "github.com/uber/submitqueue/extension/messagequeue/mysql"
-	queueAdmin "github.com/uber/submitqueue/extension/messagequeue/mysql/ctl/lib"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
+	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
+	queueAdmin "github.com/uber/submitqueue/platform/extension/messagequeue/mysql/ctl/lib"
 	"github.com/uber/submitqueue/test/testutil"
 )
 
@@ -82,7 +82,7 @@ func (s *SQLQueueIntegrationSuite) SetupSuite() {
 	s.log.Logf("Connected to MySQL for queue testing")
 
 	// Apply schemas programmatically from directory (queue has 3 schema files)
-	schemaDir := testutil.SchemaDir("extension/messagequeue/mysql/schema")
+	schemaDir := testutil.SchemaDir("platform/extension/messagequeue/mysql/schema")
 	testutil.ApplySchema(t, s.log, s.db, schemaDir)
 
 	s.log.Logf("Schemas applied successfully")

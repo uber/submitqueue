@@ -29,8 +29,8 @@ package entity
 import (
 	"encoding/json"
 
-	"github.com/uber/submitqueue/entity/change"
-	"github.com/uber/submitqueue/entity/mergestrategy"
+	"github.com/uber/submitqueue/platform/base/change"
+	"github.com/uber/submitqueue/platform/base/mergestrategy"
 )
 
 // MergeStep is one step of an ordered merge: a single set of change(s) applied

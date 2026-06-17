@@ -10,8 +10,8 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/extension/mergechecker/github",
     visibility = ["//visibility:public"],
     deps = [
-        "//core/metrics",
-        "//entity/change/github",
+        "//platform/base/change/github",
+        "//platform/metrics",
         "//submitqueue/entity",
         "//submitqueue/extension/mergechecker",
         "@com_github_uber_go_tally//:tally",
@@ -28,9 +28,9 @@ go_test(
     ],
     embed = [":github"],
     deps = [
-        "//core/httpclient",
-        "//entity/change",
-        "//entity/change/github",
+        "//platform/base/change",
+        "//platform/base/change/github",
+        "//platform/http",
         "//submitqueue/entity",
         "//submitqueue/extension/mergechecker",
         "@com_github_stretchr_testify//assert",

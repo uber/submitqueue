@@ -5,7 +5,7 @@ go_library(
     srcs = ["fakemarker.go"],
     importpath = "github.com/uber/submitqueue/submitqueue/core/fakemarker",
     visibility = ["//visibility:public"],
-    deps = ["//entity/change"],
+    deps = ["//platform/base/change"],
 )
 
 go_test(
@@ -13,7 +13,7 @@ go_test(
     srcs = ["fakemarker_test.go"],
     embed = [":fakemarker"],
     deps = [
-        "//entity/change",
+        "//platform/base/change",
         "@com_github_stretchr_testify//assert",
     ],
 )

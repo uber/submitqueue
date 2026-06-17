@@ -20,8 +20,8 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/core/consumer"
-	"github.com/uber/submitqueue/core/metrics"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"

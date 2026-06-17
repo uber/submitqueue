@@ -36,8 +36,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/core/consumer"
-	queueMySQL "github.com/uber/submitqueue/extension/messagequeue/mysql"
+	"github.com/uber/submitqueue/platform/consumer"
+	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -104,10 +104,10 @@ func (s *GatewayIntegrationSuite) SetupSuite() {
 
 	// Apply schemas programmatically to application database
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("submitqueue/extension/storage/mysql/schema"))
-	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("extension/counter/mysql/schema"))
+	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("platform/extension/counter/mysql/schema"))
 
 	// Apply schemas programmatically to queue database
-	testutil.ApplySchema(t, s.log, s.queueDB, testutil.SchemaDir("extension/messagequeue/mysql/schema"))
+	testutil.ApplySchema(t, s.log, s.queueDB, testutil.SchemaDir("platform/extension/messagequeue/mysql/schema"))
 
 	s.log.Logf("Schemas applied successfully")
 

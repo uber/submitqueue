@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "git",
+    srcs = ["change_id.go"],
+    importpath = "github.com/uber/submitqueue/platform/base/change/git",
+    visibility = ["//visibility:public"],
+    deps = ["//platform/base/change/changeutil"],
+)
+
+go_test(
+    name = "git_test",
+    srcs = ["change_id_test.go"],
+    embed = [":git"],
+    deps = [
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

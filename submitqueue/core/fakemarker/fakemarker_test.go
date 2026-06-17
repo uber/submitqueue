@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/uber/submitqueue/entity/change"
+	"github.com/uber/submitqueue/platform/base/change"
 )
 
 func TestToken(t *testing.T) {

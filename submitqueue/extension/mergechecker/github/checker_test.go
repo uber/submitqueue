@@ -25,8 +25,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/core/httpclient"
-	"github.com/uber/submitqueue/entity/change"
+	phttp "github.com/uber/submitqueue/platform/http"
+	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/mergechecker"
 	"go.uber.org/zap/zaptest"
@@ -34,7 +34,7 @@ import (
 
 func newTestMergeChecker(t *testing.T, serverURL string) mergechecker.MergeChecker {
 	t.Helper()
-	client, err := httpclient.NewClient(serverURL)
+	client, err := phttp.NewClient(serverURL)
 	require.NoError(t, err)
 	return NewMergeChecker(Params{
 		HTTPClient:   client,

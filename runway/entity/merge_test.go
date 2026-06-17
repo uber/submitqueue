@@ -19,8 +19,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/uber/submitqueue/entity/change"
-	"github.com/uber/submitqueue/entity/mergestrategy"
+	"github.com/uber/submitqueue/platform/base/change"
+	"github.com/uber/submitqueue/platform/base/mergestrategy"
 )
 
 func TestMergeRequestRoundTrip(t *testing.T) {

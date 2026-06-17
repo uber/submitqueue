@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/stovepipe/orchestrator/controller",
     visibility = ["//visibility:public"],
     deps = [
-        "//core/metrics",
+        "//platform/metrics",
         "//stovepipe/orchestrator/protopb",
         "@com_github_uber_go_tally//:tally",
         "@org_uber_go_zap//:zap",

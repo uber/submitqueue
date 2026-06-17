@@ -3,7 +3,7 @@ package github
 import (
 	"fmt"
 
-	entitygithub "github.com/uber/submitqueue/entity/change/github"
+	entitygithub "github.com/uber/submitqueue/platform/base/change/github"
 )
 
 // validateChangeConsistency validates that all changeIDs in the stack are consistent.

@@ -1,0 +1,25 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "messagequeue",
+    srcs = [
+        "delivery.go",
+        "publisher.go",
+        "queue.go",
+        "subscriber.go",
+        "subscription_config.go",
+    ],
+    importpath = "github.com/uber/submitqueue/platform/extension/messagequeue",
+    visibility = ["//visibility:public"],
+    deps = ["//platform/base/messagequeue"],
+)
+
+go_test(
+    name = "messagequeue_test",
+    srcs = ["subscription_config_test.go"],
+    embed = [":messagequeue"],
+    deps = [
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

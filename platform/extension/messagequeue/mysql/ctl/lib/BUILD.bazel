@@ -1,0 +1,23 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "lib",
+    srcs = [
+        "admin.go",
+        "format.go",
+    ],
+    importpath = "github.com/uber/submitqueue/platform/extension/messagequeue/mysql/ctl/lib",
+    visibility = ["//visibility:public"],
+    deps = ["//platform/extension/messagequeue/mysql"],
+)
+
+go_test(
+    name = "lib_test",
+    srcs = ["admin_test.go"],
+    embed = [":lib"],
+    deps = [
+        "@com_github_data_dog_go_sqlmock//:go-sqlmock",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -1,0 +1,18 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "phabricator",
+    srcs = ["change_id.go"],
+    importpath = "github.com/uber/submitqueue/platform/base/change/phabricator",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "phabricator_test",
+    srcs = ["change_id_test.go"],
+    embed = [":phabricator"],
+    deps = [
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

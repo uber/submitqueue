@@ -1,7 +1,7 @@
 package github
 
 import (
-	entitygithub "github.com/uber/submitqueue/entity/change/github"
+	entitygithub "github.com/uber/submitqueue/platform/base/change/github"
 	"github.com/uber/submitqueue/submitqueue/entity"
 )
 

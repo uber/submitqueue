@@ -20,9 +20,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/uber/submitqueue/core/consumer"
-	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
+	"github.com/uber/submitqueue/platform/consumer"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"go.uber.org/mock/gomock"

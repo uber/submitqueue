@@ -26,8 +26,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/uber/submitqueue/core/httpclient"
-	"github.com/uber/submitqueue/entity/change"
+	phttp "github.com/uber/submitqueue/platform/http"
+	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	changesetfake "github.com/uber/submitqueue/submitqueue/core/changeset/fake"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -41,7 +41,7 @@ func newTestRunner(t *testing.T, handler http.Handler, resolver ...changeset.Res
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	c, err := httpclient.NewClient(srv.URL)
+	c, err := phttp.NewClient(srv.URL)
 	require.NoError(t, err)
 	r := changeset.Resolver(changesetfake.New())
 	if len(resolver) > 0 {

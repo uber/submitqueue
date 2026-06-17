@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/test/integration/extension/counter",
     visibility = ["//visibility:public"],
     deps = [
-        "//extension/counter",
+        "//platform/extension/counter",
         "//test/testutil",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

@@ -9,8 +9,8 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap"
 
-	coremetrics "github.com/uber/submitqueue/core/metrics"
-	entitygithub "github.com/uber/submitqueue/entity/change/github"
+	coremetrics "github.com/uber/submitqueue/platform/metrics"
+	entitygithub "github.com/uber/submitqueue/platform/base/change/github"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 )

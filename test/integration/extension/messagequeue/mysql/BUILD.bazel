@@ -5,17 +5,17 @@ go_test(
     srcs = ["queue_test.go"],
     data = [
         "docker-compose.yml",
-        "//extension/messagequeue/mysql/schema",
+        "//platform/extension/messagequeue/mysql/schema",
     ],
     tags = [
         "external",
         "integration",
     ],
     deps = [
-        "//entity/messagequeue",
-        "//extension/messagequeue",
-        "//extension/messagequeue/mysql",
-        "//extension/messagequeue/mysql/ctl/lib",
+        "//platform/base/messagequeue",
+        "//platform/extension/messagequeue",
+        "//platform/extension/messagequeue/mysql",
+        "//platform/extension/messagequeue/mysql/ctl/lib",
         "//test/testutil",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_stretchr_testify//assert",

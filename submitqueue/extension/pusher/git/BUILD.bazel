@@ -6,9 +6,9 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/extension/pusher/git",
     visibility = ["//visibility:public"],
     deps = [
-        "//core/metrics",
-        "//entity/change",
-        "//entity/change/github",
+        "//platform/base/change",
+        "//platform/base/change/github",
+        "//platform/metrics",
         "//submitqueue/core/changeset",
         "//submitqueue/entity",
         "//submitqueue/extension/pusher",
@@ -22,7 +22,7 @@ go_test(
     srcs = ["git_pusher_test.go"],
     embed = [":git"],
     deps = [
-        "//entity/change",
+        "//platform/base/change",
         "//submitqueue/core/changeset/fake",
         "//submitqueue/entity",
         "//submitqueue/extension/pusher",

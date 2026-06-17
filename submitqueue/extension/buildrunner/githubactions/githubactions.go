@@ -29,7 +29,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/uber/submitqueue/entity/change"
+	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
@@ -56,7 +56,7 @@ type Params struct {
 	// Config holds the per-queue identity for this BuildRunner.
 	Config buildrunner.Config
 	// HTTPClient is a pre-configured GitHub API client. The caller is responsible
-	// for base URL resolution (e.g. via httpclient.BaseURLTransport) and auth.
+	// for base URL resolution (e.g. via platform/http.BaseURLTransport) and auth.
 	// The token needs actions:write to dispatch/cancel workflows and actions:read
 	// to poll status.
 	HTTPClient *http.Client

@@ -59,8 +59,8 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/core/consumer"
-	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"

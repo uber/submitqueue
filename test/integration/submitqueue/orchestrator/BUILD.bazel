@@ -7,8 +7,8 @@ go_test(
         "//:MODULE.bazel",
         "//:go.mod",
         "//example/submitqueue/orchestrator/server:docker-compose.yml",
-        "//extension/counter/mysql/schema",
-        "//extension/messagequeue/mysql/schema",
+        "//platform/extension/counter/mysql/schema",
+        "//platform/extension/messagequeue/mysql/schema",
         "//submitqueue/extension/storage/mysql/schema",
     ],
     tags = [

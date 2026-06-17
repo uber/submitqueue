@@ -1,8 +1,0 @@
-load("@rules_go//go:def.bzl", "go_library")
-
-go_library(
-    name = "mergestrategy",
-    srcs = ["mergestrategy.go"],
-    importpath = "github.com/uber/submitqueue/entity/mergestrategy",
-    visibility = ["//visibility:public"],
-)

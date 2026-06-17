@@ -14,7 +14,7 @@
 
 package entity
 
-import "github.com/uber/submitqueue/entity/change"
+import "github.com/uber/submitqueue/platform/base/change"
 
 // OutcomeStatus describes what happened to a single Change during a push.
 type OutcomeStatus string

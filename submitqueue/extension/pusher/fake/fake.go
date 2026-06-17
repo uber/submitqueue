@@ -32,7 +32,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/uber/submitqueue/entity/change"
+	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/core/fakemarker"
 	"github.com/uber/submitqueue/submitqueue/entity"

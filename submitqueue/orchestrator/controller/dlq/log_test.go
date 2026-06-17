@@ -20,7 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/uber/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"

@@ -15,7 +15,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/extension/storage/mysql",
     visibility = ["//visibility:public"],
     deps = [
-        "//core/metrics",
+        "//platform/metrics",
         "//submitqueue/entity",
         "//submitqueue/extension/storage",
         "@com_github_go_sql_driver_mysql//:mysql",

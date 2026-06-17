@@ -5,5 +5,5 @@ go_library(
     srcs = ["topickey.go"],
     importpath = "github.com/uber/submitqueue/stovepipe/core/topickey",
     visibility = ["//visibility:public"],
-    deps = ["//core/consumer"],
+    deps = ["//platform/consumer"],
 )
