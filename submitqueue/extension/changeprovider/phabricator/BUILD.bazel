@@ -10,8 +10,8 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/extension/changeprovider/phabricator",
     visibility = ["//visibility:public"],
     deps = [
-        "//core/metrics",
-        "//entity/change/phabricator",
+        "//platform/base/change/phabricator",
+        "//platform/metrics",
         "//submitqueue/entity",
         "//submitqueue/extension/changeprovider",
         "@com_github_uber_go_tally//:tally",
@@ -28,8 +28,8 @@ go_test(
     ],
     embed = [":phabricator"],
     deps = [
-        "//entity/change",
-        "//entity/change/phabricator",
+        "//platform/base/change",
+        "//platform/base/change/phabricator",
         "//submitqueue/entity",
         "//submitqueue/extension/changeprovider",
         "@com_github_stretchr_testify//assert",

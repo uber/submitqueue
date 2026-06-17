@@ -8,8 +8,8 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap"
 
-	coremetrics "github.com/uber/submitqueue/core/metrics"
-	entityphab "github.com/uber/submitqueue/entity/change/phabricator"
+	changephab "github.com/uber/submitqueue/platform/base/change/phabricator"
+	coremetrics "github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 )
@@ -53,9 +53,9 @@ func (p *provider) Get(ctx context.Context, request entity.Request) (_ []entity.
 
 	change := request.Change
 
-	changeIDs := make([]entityphab.ChangeID, 0, len(change.URIs))
+	changeIDs := make([]changephab.ChangeID, 0, len(change.URIs))
 	for _, uri := range change.URIs {
-		parsed, err := entityphab.ParseChangeID(uri)
+		parsed, err := changephab.ParseChangeID(uri)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse Phabricator change ID %q: %w", uri, err)
 		}
@@ -93,7 +93,7 @@ func (p *provider) Get(ctx context.Context, request entity.Request) (_ []entity.
 }
 
 // fetchAllDiffs fetches diff data for all change IDs in batches of queryDiffsBatchSize.
-func (p *provider) fetchAllDiffs(ctx context.Context, changeIDs []entityphab.ChangeID) (map[int]*diffResult, error) {
+func (p *provider) fetchAllDiffs(ctx context.Context, changeIDs []changephab.ChangeID) (map[int]*diffResult, error) {
 	diffIDs := make([]int, 0, len(changeIDs))
 	for _, cid := range changeIDs {
 		diffIDs = append(diffIDs, cid.DiffID)

@@ -5,12 +5,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	entityphab "github.com/uber/submitqueue/entity/change/phabricator"
+	changephab "github.com/uber/submitqueue/platform/base/change/phabricator"
 	"github.com/uber/submitqueue/submitqueue/entity"
 )
 
 func TestConvertToChangeInfo(t *testing.T) {
-	parsed := entityphab.ChangeID{Scheme: "phab", RevisionID: 12345, DiffID: 100}
+	parsed := changephab.ChangeID{Scheme: "phab", RevisionID: 12345, DiffID: 100}
 	diff := &diffResult{
 		AuthorName:  "Alice",
 		AuthorEmail: "alice@example.com",
