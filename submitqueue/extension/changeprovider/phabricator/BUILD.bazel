@@ -1,0 +1,40 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "phabricator",
+    srcs = [
+        "conduit.go",
+        "convert.go",
+        "provider.go",
+    ],
+    importpath = "github.com/uber/submitqueue/submitqueue/extension/changeprovider/phabricator",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//platform/base/change/phabricator",
+        "//platform/metrics",
+        "//submitqueue/entity",
+        "//submitqueue/extension/changeprovider",
+        "@com_github_uber_go_tally//:tally",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "phabricator_test",
+    srcs = [
+        "conduit_test.go",
+        "convert_test.go",
+        "provider_test.go",
+    ],
+    embed = [":phabricator"],
+    deps = [
+        "//platform/base/change",
+        "//platform/base/change/phabricator",
+        "//submitqueue/entity",
+        "//submitqueue/extension/changeprovider",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_uber_go_tally//:tally",
+        "@org_uber_go_zap//zaptest",
+    ],
+)
