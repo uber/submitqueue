@@ -24,8 +24,8 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap"
 
-	"github.com/uber/submitqueue/platform/metrics"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/metrics"
 )
 
 // sqlmessageStore is the SQL implementation of messageStore

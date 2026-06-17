@@ -28,8 +28,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/platform/base/change"
+	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	changesetfake "github.com/uber/submitqueue/submitqueue/core/changeset/fake"
 	"github.com/uber/submitqueue/submitqueue/entity"

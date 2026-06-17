@@ -23,8 +23,8 @@ import (
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/errs"
-	"github.com/uber/submitqueue/platform/metrics"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
+	"github.com/uber/submitqueue/platform/metrics"
 	"go.uber.org/zap"
 )
 

@@ -14,9 +14,9 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap/zaptest"
 
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
-	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/test/testutil"

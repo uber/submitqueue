@@ -8,8 +8,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	consumer "github.com/uber/submitqueue/platform/consumer"
 	messagequeue "github.com/uber/submitqueue/platform/base/messagequeue"
+	consumer "github.com/uber/submitqueue/platform/consumer"
 	gomock "go.uber.org/mock/gomock"
 )
 

@@ -20,10 +20,10 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/platform/consumer"
-	"github.com/uber/submitqueue/platform/metrics"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/extension/counter"
+	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"

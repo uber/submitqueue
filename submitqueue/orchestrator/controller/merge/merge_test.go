@@ -25,10 +25,10 @@ import (
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 
-	"github.com/uber/submitqueue/platform/consumer"
-	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/base/change"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"

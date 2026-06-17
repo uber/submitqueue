@@ -25,9 +25,9 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap"
 
-	"github.com/uber/submitqueue/platform/metrics"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
+	"github.com/uber/submitqueue/platform/metrics"
 )
 
 const (

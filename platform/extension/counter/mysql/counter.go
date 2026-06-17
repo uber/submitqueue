@@ -20,8 +20,8 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/extension/counter"
+	"github.com/uber/submitqueue/platform/metrics"
 )
 
 type mysqlCounter struct {

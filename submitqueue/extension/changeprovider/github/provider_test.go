@@ -12,8 +12,8 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap/zaptest"
 
-	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/platform/base/change"
+	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 )

@@ -20,8 +20,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/uber/submitqueue/platform/consumer"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
