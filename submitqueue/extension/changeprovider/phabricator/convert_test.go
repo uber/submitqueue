@@ -40,8 +40,8 @@ func TestConvertFiles(t *testing.T) {
 				{CurrentPath: "b.go", AddLines: "0", DelLines: "3"},
 			},
 			expected: []entity.ChangedFile{
-				{Path: "a.go", LinesAdded: 10, LinesDeleted: 5, LinesModified: 15},
-				{Path: "b.go", LinesAdded: 0, LinesDeleted: 3, LinesModified: 3},
+				{Path: "a.go", LinesAdded: 10, LinesDeleted: 5},
+				{Path: "b.go", LinesAdded: 0, LinesDeleted: 3},
 			},
 		},
 		{
@@ -55,7 +55,7 @@ func TestConvertFiles(t *testing.T) {
 				{CurrentPath: "c.go", AddLines: "not_a_number", DelLines: ""},
 			},
 			expected: []entity.ChangedFile{
-				{Path: "c.go", LinesAdded: 0, LinesDeleted: 0, LinesModified: 0},
+				{Path: "c.go"},
 			},
 		},
 		{
@@ -64,7 +64,7 @@ func TestConvertFiles(t *testing.T) {
 				{CurrentPath: "new.go", AddLines: "52", DelLines: "0"},
 			},
 			expected: []entity.ChangedFile{
-				{Path: "new.go", LinesAdded: 52, LinesDeleted: 0, LinesModified: 52},
+				{Path: "new.go", LinesAdded: 52},
 			},
 		},
 	}

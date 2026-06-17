@@ -23,18 +23,17 @@ func convertToChangeInfo(parsed entityphab.ChangeID, diff *diffResult) entity.Ch
 
 // convertFiles converts Phabricator file changes to entity.ChangedFile structs.
 // Phabricator reports addLines and delLines as strings; parsing failures default
-// to zero. Unlike GitHub, Phabricator reports both additions and deletions, so
-// LinesModified is set to their sum.
+// to zero. The Conduit API does not return a separate modified-lines count, so
+// LinesModified is left at its zero value.
 func convertFiles(changes []fileChange) []entity.ChangedFile {
 	files := make([]entity.ChangedFile, 0, len(changes))
 	for _, c := range changes {
 		added, _ := strconv.Atoi(c.AddLines)
 		deleted, _ := strconv.Atoi(c.DelLines)
 		files = append(files, entity.ChangedFile{
-			Path:          c.CurrentPath,
-			LinesAdded:    added,
-			LinesDeleted:  deleted,
-			LinesModified: added + deleted,
+			Path:         c.CurrentPath,
+			LinesAdded:   added,
+			LinesDeleted: deleted,
 		})
 	}
 	return files

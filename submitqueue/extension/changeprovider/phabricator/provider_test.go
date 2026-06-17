@@ -197,17 +197,17 @@ func TestProvider_Get_FileDetails(t *testing.T) {
 	assert.Equal(t, "added.go", files[0].Path)
 	assert.Equal(t, 52, files[0].LinesAdded)
 	assert.Equal(t, 0, files[0].LinesDeleted)
-	assert.Equal(t, 52, files[0].LinesModified)
+	assert.Equal(t, 0, files[0].LinesModified)
 
 	assert.Equal(t, "modified.go", files[1].Path)
 	assert.Equal(t, 10, files[1].LinesAdded)
 	assert.Equal(t, 5, files[1].LinesDeleted)
-	assert.Equal(t, 15, files[1].LinesModified)
+	assert.Equal(t, 0, files[1].LinesModified)
 
 	assert.Equal(t, "deleted.go", files[2].Path)
 	assert.Equal(t, 0, files[2].LinesAdded)
 	assert.Equal(t, 30, files[2].LinesDeleted)
-	assert.Equal(t, 30, files[2].LinesModified)
+	assert.Equal(t, 0, files[2].LinesModified)
 }
 
 func TestProvider_Get_Batching(t *testing.T) {
