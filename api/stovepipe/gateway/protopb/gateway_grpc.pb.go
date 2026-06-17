@@ -34,7 +34,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	StovepipeGateway_Ping_FullMethodName = "/uber.submitqueue.stovepipe.StovepipeGateway/Ping"
+	StovepipeGateway_Ping_FullMethodName   = "/uber.submitqueue.stovepipe.StovepipeGateway/Ping"
+	StovepipeGateway_Ingest_FullMethodName = "/uber.submitqueue.stovepipe.StovepipeGateway/Ingest"
 )
 
 // StovepipeGatewayClient is the client API for StovepipeGateway service.
@@ -45,6 +46,9 @@ const (
 type StovepipeGatewayClient interface {
 	// Ping returns a response indicating the service is alive
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
+	// Ingest accepts a trunk commit and triggers its verification (post-merge/post-submit build and test).
+	// The processing is asynchronous and returns an IngestResponse immediately; the verification runs in the background.
+	Ingest(ctx context.Context, in *IngestRequest, opts ...grpc.CallOption) (*IngestResponse, error)
 }
 
 type stovepipeGatewayClient struct {
@@ -65,6 +69,16 @@ func (c *stovepipeGatewayClient) Ping(ctx context.Context, in *PingRequest, opts
 	return out, nil
 }
 
+func (c *stovepipeGatewayClient) Ingest(ctx context.Context, in *IngestRequest, opts ...grpc.CallOption) (*IngestResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(IngestResponse)
+	err := c.cc.Invoke(ctx, StovepipeGateway_Ingest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StovepipeGatewayServer is the server API for StovepipeGateway service.
 // All implementations must embed UnimplementedStovepipeGatewayServer
 // for forward compatibility.
@@ -73,6 +87,9 @@ func (c *stovepipeGatewayClient) Ping(ctx context.Context, in *PingRequest, opts
 type StovepipeGatewayServer interface {
 	// Ping returns a response indicating the service is alive
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
+	// Ingest accepts a trunk commit and triggers its verification (post-merge/post-submit build and test).
+	// The processing is asynchronous and returns an IngestResponse immediately; the verification runs in the background.
+	Ingest(context.Context, *IngestRequest) (*IngestResponse, error)
 	mustEmbedUnimplementedStovepipeGatewayServer()
 }
 
@@ -85,6 +102,9 @@ type UnimplementedStovepipeGatewayServer struct{}
 
 func (UnimplementedStovepipeGatewayServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Ping not implemented")
+}
+func (UnimplementedStovepipeGatewayServer) Ingest(context.Context, *IngestRequest) (*IngestResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Ingest not implemented")
 }
 func (UnimplementedStovepipeGatewayServer) mustEmbedUnimplementedStovepipeGatewayServer() {}
 func (UnimplementedStovepipeGatewayServer) testEmbeddedByValue()                          {}
@@ -125,6 +145,24 @@ func _StovepipeGateway_Ping_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StovepipeGateway_Ingest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IngestRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StovepipeGatewayServer).Ingest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StovepipeGateway_Ingest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StovepipeGatewayServer).Ingest(ctx, req.(*IngestRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // StovepipeGateway_ServiceDesc is the grpc.ServiceDesc for StovepipeGateway service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -135,6 +173,10 @@ var StovepipeGateway_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Ping",
 			Handler:    _StovepipeGateway_Ping_Handler,
+		},
+		{
+			MethodName: "Ingest",
+			Handler:    _StovepipeGateway_Ingest_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

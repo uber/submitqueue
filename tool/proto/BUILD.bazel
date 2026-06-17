@@ -42,6 +42,7 @@ go_proto_generated_files(
 go_proto_generated_files(
     name = "api_stovepipe_gateway",
     srcs = ["//api/stovepipe/gateway/proto:gateway.proto"],
+    imports = ["//api/base/change/proto:change.proto"],
     out_dir = "api_stovepipe_gateway",
 )
 
