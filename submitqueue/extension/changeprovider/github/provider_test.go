@@ -12,8 +12,8 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap/zaptest"
 
-	"github.com/uber/submitqueue/core/httpclient"
-	"github.com/uber/submitqueue/entity/change"
+	"github.com/uber/submitqueue/platform/base/change"
+	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 )
@@ -29,7 +29,7 @@ const (
 
 func newTestProvider(t *testing.T, serverURL string) changeprovider.ChangeProvider {
 	t.Helper()
-	client, err := httpclient.NewClient(serverURL)
+	client, err := phttp.NewClient(serverURL)
 	require.NoError(t, err)
 	return NewProvider(Params{
 		HTTPClient:   client,

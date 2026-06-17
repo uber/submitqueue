@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	entitygithub "github.com/uber/submitqueue/entity/change/github"
+	entitygithub "github.com/uber/submitqueue/platform/base/change/github"
 )
 
 func TestValidateChangeConsistency(t *testing.T) {

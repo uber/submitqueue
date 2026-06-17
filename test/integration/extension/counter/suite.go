@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/uber/submitqueue/extension/counter"
+	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/test/testutil"
 )
 

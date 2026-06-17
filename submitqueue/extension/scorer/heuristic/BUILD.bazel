@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/extension/scorer/heuristic",
     visibility = ["//visibility:public"],
     deps = [
-        "//core/metrics",
+        "//platform/metrics",
         "//submitqueue/core/changeset",
         "//submitqueue/entity",
         "//submitqueue/extension/scorer",

@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
-	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
+	mysqlcounter "github.com/uber/submitqueue/platform/extension/counter/mysql"
 	countersuite "github.com/uber/submitqueue/test/integration/extension/counter"
 	"github.com/uber/submitqueue/test/testutil"
 )
@@ -68,7 +68,7 @@ func (s *MySQLCounterIntegrationSuite) SetupSuite() {
 	require.NoError(t, err, "failed to connect to MySQL")
 
 	// Apply schemas programmatically from directory
-	schemaDir := testutil.SchemaDir("extension/counter/mysql/schema")
+	schemaDir := testutil.SchemaDir("platform/extension/counter/mysql/schema")
 	testutil.ApplySchema(t, s.log, s.db, schemaDir)
 
 	s.log.Logf("Schemas applied successfully")

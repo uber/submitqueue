@@ -19,7 +19,7 @@
 // from them.
 package topickey
 
-import "github.com/uber/submitqueue/core/consumer"
+import "github.com/uber/submitqueue/platform/consumer"
 
 // TopicKey is the shared pipeline stage identifier type.
 type TopicKey = consumer.TopicKey

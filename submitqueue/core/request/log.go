@@ -18,8 +18,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/uber/submitqueue/core/consumer"
-	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 )

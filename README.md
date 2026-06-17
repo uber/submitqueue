@@ -8,6 +8,10 @@ SubmitQueue is a high-performance speculative merge queue that keeps your trunk 
 
 Designed for large monorepos and fast-moving teams where concurrent changes can introduce subtle conflicts and destabilize builds.
 
+## Repository layout
+
+Cross-domain Go code (errors, metrics, consumer framework, HTTP helpers, shared entities, shared extension contracts) lives under [`platform/`](platform/README.md). Each product domain has its own tree (`submitqueue/`, `stovepipe/`, …) with `gateway/`, `orchestrator/`, `entity/`, `extension/`, and domain-local `core/`. See [CLAUDE.md](CLAUDE.md) for conventions and import paths.
+
 ## Quick Start
 
 Requires Docker and Docker Compose. See [Development Setup](doc/howto/DEVELOPMENT.md) for full prerequisites.

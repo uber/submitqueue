@@ -28,13 +28,13 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/core/consumer"
-	"github.com/uber/submitqueue/core/errs"
-	genericerrs "github.com/uber/submitqueue/core/errs/generic"
-	mysqlerrs "github.com/uber/submitqueue/core/errs/mysql"
-	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
-	extqueue "github.com/uber/submitqueue/extension/messagequeue"
-	queueMySQL "github.com/uber/submitqueue/extension/messagequeue/mysql"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
+	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
+	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
+	mysqlcounter "github.com/uber/submitqueue/platform/extension/counter/mysql"
+	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
+	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	yamlqueueconfig "github.com/uber/submitqueue/submitqueue/extension/queueconfig/yaml"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
@@ -271,7 +271,7 @@ func run() error {
 	// to the log topic and this consumer writes them to storage.
 	logConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
 		errs.NewClassifierProcessor(
-			// Storage (extension/storage/mysql) and queue (extension/messagequeue/mysql)
+			// Storage (submitqueue/extension/storage/mysql) and queue (platform/extension/messagequeue/mysql)
 			// both run on the same MySQL driver, so a single classifier covers
 			// errors surfaced from either backend.
 			genericerrs.Classifier,

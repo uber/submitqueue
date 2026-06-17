@@ -42,7 +42,7 @@ The build stage needs a vendor-agnostic abstraction for talking to a Build Runne
 - **`Status`** — fetch the current `BuildStatus` and runner-defined metadata for a build; MAY round-trip to the runner.
 - **`Cancel`** — request cancellation; returns once the request reaches the runner, not once the build stops.
 
-See `extension/buildrunner/build_runner.go` for the exact Go signatures. The sections below record why the contract is shaped this way.
+See `submitqueue/extension/buildrunner/build_runner.go` for the exact Go signatures. The sections below record why the contract is shaped this way.
 
 ### Trigger: base + head
 

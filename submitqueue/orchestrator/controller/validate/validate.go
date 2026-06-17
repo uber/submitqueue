@@ -21,10 +21,10 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/core/consumer"
-	"github.com/uber/submitqueue/core/errs"
-	coremetrics "github.com/uber/submitqueue/core/metrics"
-	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
+	coremetrics "github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
@@ -121,7 +121,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	// Duplicate detection: look for any other in-flight request that has already
 	// claimed an overlapping URI in this queue. Per-queue partition leasing
-	// (see core/consumer + extension/messagequeue) guarantees serial processing within
+	// (see platform/consumer + platform/extension/messagequeue) guarantees serial processing within
 	// a queue, so the read-then-claim sequence below is race-free.
 	if dupID, err := c.checkDuplicate(ctx, request); err != nil {
 		return err

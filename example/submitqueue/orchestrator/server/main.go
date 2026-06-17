@@ -30,15 +30,15 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/core/consumer"
-	"github.com/uber/submitqueue/core/errs"
-	genericerrs "github.com/uber/submitqueue/core/errs/generic"
-	mysqlerrs "github.com/uber/submitqueue/core/errs/mysql"
-	"github.com/uber/submitqueue/core/httpclient"
-	"github.com/uber/submitqueue/extension/counter"
-	mysqlcounter "github.com/uber/submitqueue/extension/counter/mysql"
-	extqueue "github.com/uber/submitqueue/extension/messagequeue"
-	queueMySQL "github.com/uber/submitqueue/extension/messagequeue/mysql"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
+	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
+	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
+	"github.com/uber/submitqueue/platform/extension/counter"
+	mysqlcounter "github.com/uber/submitqueue/platform/extension/counter/mysql"
+	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
+	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
+	"github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -218,7 +218,7 @@ func run() error {
 	primaryConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
 		errs.NewClassifierProcessor(
 			genericerrs.Classifier,
-			// Storage (extension/storage/mysql) and queue (extension/messagequeue/mysql)
+			// Storage (submitqueue/extension/storage/mysql) and queue (platform/extension/messagequeue/mysql)
 			// both run on the same MySQL driver, so a single classifier covers
 			// errors surfaced from either backend.
 			mysqlerrs.Classifier,
@@ -444,8 +444,8 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 
 // TODO(wiring abstraction): queueExtensions + queueRegistry currently live here
 // as example-local wiring. Evaluate promoting them into a defined abstraction in
-// the submitqueue domain layer (e.g. submitqueue/core/...) — NOT extension/* and
-// NOT cross-domain core/, since the bundle names submitqueue-specific extensions.
+// the submitqueue domain layer (e.g. submitqueue/core/...) — not `submitqueue/extension/*`
+// and not `platform/*`, since the bundle names submitqueue-specific extensions.
 // Do this only when a trigger lands: (1) a second consumer needs the same wiring
 // (a real prod server, or an e2e harness building real per-queue profiles);
 // (2) per-queue config becomes data-driven (build profiles from queueconfig.Store
@@ -728,7 +728,7 @@ func newMergeChecker(logger *zap.Logger, scope tally.Scope) (mergechecker.MergeC
 		return mcfake.New(), nil
 	}
 
-	client, err := httpclient.NewClient(getEnv("GITHUB_BASE_URL", "https://api.github.com"))
+	client, err := http.NewClient(getEnv("GITHUB_BASE_URL", "https://api.github.com"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to build GitHub HTTP client: %w", err)
 	}
@@ -755,7 +755,7 @@ func newChangeProvider(logger *zap.Logger, scope tally.Scope) (changeprovider.Ch
 		return cpfake.New(), nil
 	}
 
-	client, err := httpclient.NewClient(getEnv("GITHUB_BASE_URL", "https://api.github.com"))
+	client, err := http.NewClient(getEnv("GITHUB_BASE_URL", "https://api.github.com"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to build GitHub HTTP client: %w", err)
 	}

@@ -23,7 +23,7 @@ package fakemarker
 import (
 	"strings"
 
-	"github.com/uber/submitqueue/entity/change"
+	"github.com/uber/submitqueue/platform/base/change"
 )
 
 // Prefix introduces a marker token in a change URI: "sq-fake=<token>".

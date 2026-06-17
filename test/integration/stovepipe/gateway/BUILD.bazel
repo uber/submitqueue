@@ -7,7 +7,7 @@ go_test(
         "//:MODULE.bazel",
         "//:go.mod",
         "//example/stovepipe/gateway/server:docker-compose.yml",
-        "//extension/messagequeue/mysql/schema",
+        "//platform/extension/messagequeue/mysql/schema",
     ],
     tags = [
         "external",

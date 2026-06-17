@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/extension/scorer/composite",
     visibility = ["//visibility:public"],
     deps = [
-        "//core/metrics",
+        "//platform/metrics",
         "//submitqueue/entity",
         "//submitqueue/extension/scorer",
         "@com_github_uber_go_tally//:tally",

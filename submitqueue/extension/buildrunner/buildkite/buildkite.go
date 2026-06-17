@@ -38,7 +38,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/uber/submitqueue/entity/change"
+	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
@@ -78,12 +78,12 @@ var _ buildrunner.BuildRunner = (*runner)(nil)
 
 // Params holds the dependencies for a Buildkite BuildRunner. The caller is
 // responsible for configuring HTTPClient with the base URL (via
-// httpclient.BaseURLTransport) and auth (via an Authorization-header transport).
+// platform/http.BaseURLTransport) and auth (via an Authorization-header transport).
 type Params struct {
 	// Config holds the per-queue identity for this BuildRunner.
 	Config buildrunner.Config
 	// HTTPClient is a pre-configured HTTP client. The caller is responsible
-	// for the base URL (via httpclient.BaseURLTransport) and auth (via a
+	// for the base URL (via platform/http.BaseURLTransport) and auth (via a
 	// transport layer). If nil, http.DefaultClient is used.
 	HTTPClient *http.Client
 	// Resolver resolves a batch's changes (base and head batches).

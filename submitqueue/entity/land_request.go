@@ -17,8 +17,8 @@ package entity
 import (
 	"encoding/json"
 
-	"github.com/uber/submitqueue/entity/change"
-	"github.com/uber/submitqueue/entity/mergestrategy"
+	"github.com/uber/submitqueue/platform/base/change"
+	"github.com/uber/submitqueue/platform/base/mergestrategy"
 )
 
 // LandRequest represents the gateway-owned fields of a land request sent over the queue

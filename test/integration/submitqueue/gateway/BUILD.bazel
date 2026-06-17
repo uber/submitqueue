@@ -7,8 +7,8 @@ go_test(
         "//:MODULE.bazel",
         "//:go.mod",
         "//example/submitqueue/gateway/server:docker-compose.yml",
-        "//extension/counter/mysql/schema",
-        "//extension/messagequeue/mysql/schema",
+        "//platform/extension/counter/mysql/schema",
+        "//platform/extension/messagequeue/mysql/schema",
         "//submitqueue/extension/storage/mysql/schema",
     ],
     tags = [
@@ -16,8 +16,8 @@ go_test(
         "integration",
     ],
     deps = [
-        "//core/consumer",
-        "//extension/messagequeue/mysql",
+        "//platform/consumer",
+        "//platform/extension/messagequeue/mysql",
         "//submitqueue/core/request",
         "//submitqueue/core/topickey",
         "//submitqueue/entity",

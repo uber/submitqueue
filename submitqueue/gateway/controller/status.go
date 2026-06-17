@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/core/errs"
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	pb "github.com/uber/submitqueue/submitqueue/gateway/protopb"

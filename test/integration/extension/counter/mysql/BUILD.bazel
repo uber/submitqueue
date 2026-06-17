@@ -5,14 +5,14 @@ go_test(
     srcs = ["counter_test.go"],
     data = [
         "docker-compose.yml",
-        "//extension/counter/mysql/schema",
+        "//platform/extension/counter/mysql/schema",
     ],
     tags = [
         "external",
         "integration",
     ],
     deps = [
-        "//extension/counter/mysql",
+        "//platform/extension/counter/mysql",
         "//test/integration/extension/counter",
         "//test/testutil",
         "@com_github_go_sql_driver_mysql//:mysql",

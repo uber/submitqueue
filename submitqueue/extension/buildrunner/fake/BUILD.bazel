@@ -18,7 +18,7 @@ go_test(
     srcs = ["fake_test.go"],
     embed = [":fake"],
     deps = [
-        "//entity/change",
+        "//platform/base/change",
         "//submitqueue/core/changeset/fake",
         "//submitqueue/entity",
         "//submitqueue/extension/buildrunner",

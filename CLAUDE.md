@@ -36,35 +36,39 @@ request.Version = newVersion
 
 ```
 submitqueue/                        # repo root (Go module github.com/uber/submitqueue)
-├── core/                       # SHARED cross-domain infrastructure (errs, httpclient, metrics) — no domain deps
-├── entity/                     # SHARED domain entities
-│   └── queue/                  # Queue-specific entities (Message)
-├── extension/                  # SHARED extensions
-│   └── queue/                  # Messaging queue abstraction (interface + mysql/)
-├── submitqueue/                # SubmitQueue domain
-│   ├── gateway/                # Gateway service (port 8081) - entry point
-│   ├── orchestrator/           # Orchestrator service (port 8082) - coordinates jobs
-│   ├── entity/                 # SubmitQueue-specific domain entities
-│   ├── extension/              # SubmitQueue-specific extension impls (storage, counter, mergechecker, ...)
-│   └── core/                   # SubmitQueue-internal shared infra (consumer, request)
-├── stovepipe/                  # Stovepipe domain
-│   ├── gateway/                # Gateway service: commit deployment verification entry point
-│   ├── orchestrator/           # Orchestrator service: commit verification pipeline
-│   ├── entity/                 # Stovepipe-specific domain entities
-│   ├── extension/              # Stovepipe-specific extension impls
-│   └── core/                   # Stovepipe-internal shared infra (placeholder; mirrors submitqueue/core)
-├── tool/                       # Development and CI tooling
+├── platform/                       # SHARED cross-domain packages — no domain deps
+│   ├── errs/, metrics/, consumer/, http/
+│   ├── base/                       # SHARED entities (change/, messagequeue/, …)
+│   └── extension/                  # SHARED extension contracts + backends (counter/, messagequeue/, …)
+├── submitqueue/                    # SubmitQueue domain
+│   ├── gateway/                    # Gateway service (port 8081) - entry point
+│   ├── orchestrator/               # Orchestrator service (port 8082) - coordinates jobs
+│   ├── entity/                     # SubmitQueue-specific domain entities
+│   ├── extension/                  # SubmitQueue-specific extension impls (storage, counter, mergechecker, …)
+│   └── core/                       # SubmitQueue-internal shared infra (consumer wiring, request, topickey, …)
+├── stovepipe/                      # Stovepipe domain
+│   ├── gateway/                    # Gateway service: commit deployment verification entry point
+│   ├── orchestrator/               # Orchestrator service: commit verification pipeline
+│   ├── entity/                     # Stovepipe-specific domain entities
+│   ├── extension/                  # Stovepipe-specific extension impls
+│   └── core/                       # Stovepipe-internal shared infra (placeholder; mirrors submitqueue/core)
+├── tool/                           # Development and CI tooling
 ├── example/
-│   ├── submitqueue/            # Runnable SubmitQueue servers/clients + Docker Compose
-│   └── stovepipe/              # Runnable Stovepipe servers/clients
+│   ├── submitqueue/                # Runnable SubmitQueue servers/clients + Docker Compose
+│   └── stovepipe/                  # Runnable Stovepipe servers/clients
 ├── test/
-│   ├── e2e/submitqueue/        # End-to-end tests (full stack)
-│   ├── integration/            # Integration tests (core/, submitqueue/, stovepipe/)
-│   └── testutil/               # Test utilities (ComposeStack, MySQL helpers)
-└── doc/                        # Documentation
+│   ├── e2e/submitqueue/            # End-to-end tests (full stack)
+│   ├── integration/                # Integration tests (platform/, submitqueue/, stovepipe/, …)
+│   └── testutil/                   # Test utilities (ComposeStack, MySQL helpers)
+└── doc/                            # Documentation
 ```
 
-The repo hosts shared building blocks at the top level — cross-domain infrastructure in `core/`, shared entities in `entity/`, shared extensions in `extension/` — followed by one folder per **domain** (`submitqueue/`, `stovepipe/`). Each domain owns the same internal layout (`gateway/`, `orchestrator/`, `entity/`, `extension/`, `core/`); a domain's own `core/` (e.g. `submitqueue/core/`) holds infra shared only between that domain's services.
+The `platform/` tree holds code reused across domains (infrastructure, shared entities, shared extension contracts). Each **domain** (`submitqueue/`, `stovepipe/`, …) keeps the same internal layout (`gateway/`, `orchestrator/`, `entity/`, `extension/`, `core/`); a domain's own `core/` (e.g. `submitqueue/core/`) holds infra shared only between that domain's services.
+
+### Platform notes
+
+- Import path `github.com/uber/submitqueue/platform/http` uses Go package name `http` and aliases the standard library as `nethttp` inside the package. Source files that also import `net/http` should import the platform package with a distinct alias (for example `phttp "github.com/uber/submitqueue/platform/http"`) and call `phttp.NewClient`, `phttp.BaseURLTransport`, etc.
+- `platform/base` is the shared entity root; subpackages (`change`, `messagequeue`, …) hold concrete types. The root `base` package is documentation-only.
 
 ### Services
 
@@ -101,7 +105,7 @@ Controllers receive `consumer.Delivery` (subset interface without Ack/Nack) to e
 
 ### Entities
 
-Domain objects in `entity/`, organized by domain. Guidelines:
+Domain objects live under each domain's `entity/` tree, or under `platform/base/` when shared across domains. Guidelines:
 1. Pure and framework-agnostic — no external dependencies
 2. Value types, not references
 3. `int64` milliseconds for timestamps (`CreatedAt int64`) and durations (`TimeoutMs int64`)
@@ -112,17 +116,17 @@ Domain objects in `entity/`, organized by domain. Guidelines:
 ### Extensions
 
 Vendor-agnostic, pluggable interfaces with implementations in subdirectories:
-1. Define interfaces at `extension/{ext}/`
-2. Implementations at `extension/{ext}/{impl}/`
-3. Factory interface for dependency injection and lifecycle management
+1. **Shared across domains** — define interfaces at `platform/extension/{ext}/`, implementations at `platform/extension/{ext}/{impl}/`.
+2. **Domain-specific** — define at `{domain}/extension/{ext}/`, implementations at `{domain}/extension/{ext}/{impl}/`.
+3. Factory interface for dependency injection and lifecycle management (constructed in wiring, not inside `platform/extension` packages).
 
 **Extensions hold contracts and implementations only — not factories or routing.**
 
-An `extension/{ext}` package contains the behavioral interface, its `Config`, the `Factory` *interface*, and impl constructors `New(...)` that return the interface. It must **not** contain `Factory` *implementations* (`NewFactory()` constructors or factory structs) or any queue-selection logic.
+A `{domain}/extension/{ext}` or `platform/extension/{ext}` package contains the behavioral interface, its `Config`, the `Factory` *interface*, and impl constructors `New(...)` that return the interface. It must **not** contain `Factory` *implementations* (`NewFactory()` constructors or factory structs) or any queue-selection logic.
 
 Why: an impl package (e.g. `scorer/heuristic`) can't know the queue topology or the other impls, so a "which impl for which queue" decision doesn't belong there. Per-queue routing — and the small adapters that wrap a `New(...)` impl in the `Factory` interface — live in the wiring layer (e.g. `example/{domain}/{service}/server/main.go`), the one place that knows the full queue set. That's where you route on `Config.QueueName`.
 
-Rule of thumb: if you're about to add a `NewFactory()` or a `map[queue]impl` under `extension/`, it belongs in the wiring layer instead.
+Rule of thumb: if you're about to add a `NewFactory()` or a `map[queue]impl` under `{domain}/extension/` or `platform/extension/`, it belongs in the wiring layer instead.
 
 **Design interfaces for the technology *space*, not the implementation in front of you.** The interface is a contract every backend will have to satisfy — SQL, key-value (DynamoDB, Bigtable), document, message queue, search, RPC, in-memory, mocks. If the contract assumes a capability that some plausible backend can't provide cheaply, you've baked the current impl's strengths into the API.
 
@@ -142,18 +146,18 @@ When in doubt, ask: *"If the next implementation were DynamoDB / Kafka / Bigtabl
 
 ### Import Paths
 
-Paths follow the directory layout: shared code is top-level, domain code nests under the domain folder (`submitqueue/`, `stovepipe/`).
+Paths follow the directory layout: shared packages live under `platform/` at the repo root; domain code nests under `submitqueue/`, `stovepipe/`, and other domain folders.
 
 - RPC Controllers: `github.com/uber/submitqueue/{domain}/{service}/controller` (e.g. `.../submitqueue/gateway/controller`)
 - Queue Controllers: `github.com/uber/submitqueue/{domain}/{service}/controller/{step}`
 - Proto (generated): `github.com/uber/submitqueue/{domain}/{service}/protopb`
 - Domain entities: `github.com/uber/submitqueue/{domain}/entity` (e.g. `.../submitqueue/entity`)
 - Domain extensions: `github.com/uber/submitqueue/{domain}/extension/{ext}[/{impl}]` (e.g. `.../submitqueue/extension/storage/mysql`)
-- Cross-domain consumer framework: `github.com/uber/submitqueue/core/consumer`; domain pipeline topic keys: `github.com/uber/submitqueue/{domain}/core/topickey`
+- Cross-domain consumer framework: `github.com/uber/submitqueue/platform/consumer`; domain pipeline topic keys: `github.com/uber/submitqueue/{domain}/core/topickey`
 - Domain-internal infra: `github.com/uber/submitqueue/{domain}/core/{pkg}` (e.g. `.../submitqueue/core/request`)
-- Shared entities: `github.com/uber/submitqueue/entity/{name}` (e.g. `.../entity/messagequeue`)
-- Shared extensions: `github.com/uber/submitqueue/extension/{name}` (e.g. `.../extension/messagequeue`)
-- Cross-domain infra: `github.com/uber/submitqueue/core/{pkg}` (e.g. `.../core/errs`, `.../core/metrics`)
+- Shared entities: `github.com/uber/submitqueue/platform/base/{pkg}` (e.g. `.../platform/base/messagequeue`)
+- Shared extensions: `github.com/uber/submitqueue/platform/extension/{ext}[/{impl}]` (e.g. `.../platform/extension/messagequeue/mysql`)
+- Cross-domain infra: `github.com/uber/submitqueue/platform/{pkg}` (e.g. `.../platform/errs`, `.../platform/metrics`, `.../platform/http`)
 
 ## Development
 
@@ -225,11 +229,11 @@ make clean              # Clean Bazel cache
 2. Wire up in `example/{domain}/{service}/server/main.go`
 
 **Add new extension:**
-1. Create the extension under `{domain}/extension/{ext}/{impl}/` (domain-specific, e.g. `submitqueue/extension/...`) or top-level `extension/{ext}/{impl}/` (shared across domains) with factory and interfaces
+1. Create the extension under `{domain}/extension/{ext}/{impl}/` (domain-specific, e.g. `submitqueue/extension/...`) or `platform/extension/{ext}/{impl}/` (shared across domains) with factory and interfaces
 2. Add `BUILD.bazel`, tests, and README.md
 
 **Add new entity:**
-1. Create `{domain}/entity/{entity}.go` (domain-specific) or top-level `entity/{name}/{entity}.go` (shared) with test file and `BUILD.bazel`
+1. Create `{domain}/entity/{entity}.go` (domain-specific) or add packages under `platform/base/` (shared) with test file and `BUILD.bazel`
 
 **Add gomock for an extension interface:**
 
@@ -252,7 +256,7 @@ To create a mock package for a new extension (e.g., `submitqueue/extension/newex
 3. Run `make mocks` to generate mock files into the new directory.
 4. Run `make gazelle` to create the `BUILD.bazel` file automatically.
 
-For inline mocks (mock in the same package, e.g., `extension/messagequeue/mysql/mock_stores.go`):
+For inline mocks (mock in the same package, e.g., `platform/extension/messagequeue/mysql/mock_stores.go`):
 
 1. Add a `//go:generate` directive with `-package=mypkg` and `-destination=mock_file.go`.
 2. Run `make mocks` and `make gazelle`.
@@ -305,9 +309,9 @@ CI runs on every PR and enforces all checks via a `required-checks` gate. **Befo
 3. **Value types over pointers** — prefer value types for structs, configs, and return values. Use `(T, bool)` to signal absence instead of `*T`. Pointers only when mutation or shared ownership is needed.
 4. **Errors for failures, not control flow** — reserve `error` returns for unexpected or infrastructure failures. Use result types (structs, bools) for expected outcomes like `(Result, error)` or `(T, bool)`. Avoid sentinel errors that represent non-failure states.
 
-### Error Classification (`core/errs`)
+### Error Classification (`platform/errs`)
 
-Errors are classified by origin (user vs infra) and retryability. The framework lives in `core/errs/`. See [core/errs/README.md](core/errs/README.md) for full details.
+Errors are classified by origin (user vs infra) and retryability. The framework lives in `platform/errs/`. See [platform/errs/README.md](platform/errs/README.md) for full details.
 
 **Key rules:**
 1. **Non-retryable by default** — a plain `fmt.Errorf(...)` is non-retryable. Wrap with `errs.NewRetryableError(...)` to opt in to retry.

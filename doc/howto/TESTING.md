@@ -23,13 +23,13 @@ SubmitQueue uses **two separate databases** to demonstrate proper architectural 
 
 ### 1. Application Database
 - **Purpose**: Business data (requests, counters, batches)
-- **Schema**: `submitqueue/extension/storage/mysql/schema`, `extension/counter/mysql/schema`
+- **Schema**: `submitqueue/extension/storage/mysql/schema`, `platform/extension/counter/mysql/schema`
 - **Used by**: Gateway (stores requests), Orchestrator (reads/updates request state)
 - **Connection**: `MYSQL_DSN`
 
 ### 2. Queue Database
 - **Purpose**: Messaging infrastructure (queue messages, offsets, partition leases)
-- **Schema**: `extension/messagequeue/mysql/schema`
+- **Schema**: `platform/extension/messagequeue/mysql/schema`
 - **Used by**: Gateway (publishes), Orchestrator (consumes)
 - **Connection**: `QUEUE_MYSQL_DSN`
 
