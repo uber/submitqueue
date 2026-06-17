@@ -67,10 +67,6 @@ func (p *provider) Get(ctx context.Context, request entity.Request) (_ []entity.
 		"uris", change.URIs,
 	)
 
-	if err := validateChangeConsistency(changeIDs); err != nil {
-		return nil, err
-	}
-
 	diffs, err := p.fetchAllDiffs(ctx, changeIDs)
 	if err != nil {
 		return nil, err
@@ -79,11 +75,6 @@ func (p *provider) Get(ctx context.Context, request entity.Request) (_ []entity.
 	changeInfos := make([]entity.ChangeInfo, 0, len(changeIDs))
 	for _, cid := range changeIDs {
 		diff := diffs[cid.DiffID]
-
-		if err := validateDiffResponse(cid.DiffID, diff); err != nil {
-			return nil, err
-		}
-
 		changeInfo := convertToChangeInfo(cid, diff)
 		changeInfos = append(changeInfos, changeInfo)
 

@@ -67,28 +67,6 @@ func TestProvider_Get(t *testing.T) {
 			uris:    []string{"phab://D200/100"},
 			wantErr: "Conduit API returned status 500",
 		},
-		{
-			name: "diff with no changes returns error",
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				serveConduit(t, w, map[string]*diffResult{
-					"100": {
-						Changes: []fileChange{},
-					},
-				})
-			},
-			uris:    []string{"phab://D200/100"},
-			wantErr: "diff 100 has no file changes",
-		},
-		{
-			name:    "duplicate revision returns error",
-			uris:    []string{"phab://D200/100", "phab://D200/101"},
-			wantErr: "duplicate revision D200",
-		},
-		{
-			name:    "duplicate diff returns error",
-			uris:    []string{"phab://D200/100", "phab://D201/100"},
-			wantErr: "duplicate diff 100",
-		},
 	}
 
 	for _, tc := range testCases {

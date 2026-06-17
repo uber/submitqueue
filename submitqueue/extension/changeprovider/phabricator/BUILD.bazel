@@ -6,7 +6,6 @@ go_library(
         "conduit.go",
         "convert.go",
         "provider.go",
-        "validate.go",
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/extension/changeprovider/phabricator",
     visibility = ["//visibility:public"],
@@ -26,7 +25,6 @@ go_test(
         "conduit_test.go",
         "convert_test.go",
         "provider_test.go",
-        "validate_test.go",
     ],
     embed = [":phabricator"],
     deps = [
