@@ -32,6 +32,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	changepb "github.com/uber/submitqueue/api/base/change/protopb"
+	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	gatewaypb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	orchestratorpb "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -170,8 +172,8 @@ func (s *E2EIntegrationSuite) TestPingOrchestrator() {
 func (s *E2EIntegrationSuite) TestLandRequest_SinglePR() {
 	req := &gatewaypb.LandRequest{
 		Queue:    "e2e-test-queue",
-		Change:   &gatewaypb.Change{Uris: []string{"github://uber/e2e-service/pull/123/abcdef0123456789abcdef0123456789abcdef01"}},
-		Strategy: gatewaypb.Strategy_REBASE,
+		Change:   &changepb.Change{Uris: []string{"github://uber/e2e-service/pull/123/abcdef0123456789abcdef0123456789abcdef01"}},
+		Strategy: mergestrategypb.Strategy_REBASE,
 	}
 
 	s.log.Logf("Sending Land request (single PR) for queue=%s", req.Queue)
@@ -197,8 +199,8 @@ func (s *E2EIntegrationSuite) TestLandRequest_PersistsStartedLogViaGatewayConsum
 
 	landResp, err := s.gatewayClient.Land(s.ctx, &gatewaypb.LandRequest{
 		Queue:    "e2e-test-queue",
-		Change:   &gatewaypb.Change{Uris: []string{"github://uber/e2e-startlog/pull/4242/abcdef0123456789abcdef0123456789abcdef01"}},
-		Strategy: gatewaypb.Strategy_REBASE,
+		Change:   &changepb.Change{Uris: []string{"github://uber/e2e-startlog/pull/4242/abcdef0123456789abcdef0123456789abcdef01"}},
+		Strategy: mergestrategypb.Strategy_REBASE,
 	})
 	require.NoError(t, err, "Land request failed")
 	require.NotEmpty(t, landResp.Sqid, "SQID should not be empty")
@@ -245,8 +247,8 @@ func (s *E2EIntegrationSuite) TestCancelRequest_BeforeBatch() {
 
 	landReq := &gatewaypb.LandRequest{
 		Queue:    "e2e-cancel-queue",
-		Change:   &gatewaypb.Change{Uris: []string{"github://uber/e2e-nonexistent/pull/9999/deadbeef"}},
-		Strategy: gatewaypb.Strategy_REBASE,
+		Change:   &changepb.Change{Uris: []string{"github://uber/e2e-nonexistent/pull/9999/deadbeef"}},
+		Strategy: mergestrategypb.Strategy_REBASE,
 	}
 	landResp, err := s.gatewayClient.Land(s.ctx, landReq)
 	require.NoError(t, err, "Land failed")

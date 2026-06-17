@@ -36,6 +36,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
+	changepb "github.com/uber/submitqueue/api/base/change/protopb"
+	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	"github.com/uber/submitqueue/platform/consumer"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
@@ -144,8 +146,8 @@ func (s *GatewayIntegrationSuite) TestLandAPI() {
 
 	req := &pb.LandRequest{
 		Queue:    "test-queue",
-		Change:   &pb.Change{Uris: []string{"github://uber/integration-test/pull/123/abcdef0123456789abcdef0123456789abcdef01"}},
-		Strategy: pb.Strategy_REBASE,
+		Change:   &changepb.Change{Uris: []string{"github://uber/integration-test/pull/123/abcdef0123456789abcdef0123456789abcdef01"}},
+		Strategy: mergestrategypb.Strategy_REBASE,
 	}
 
 	s.log.Logf("Sending Land request for queue=%s", req.Queue)

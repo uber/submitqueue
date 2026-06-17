@@ -1,0 +1,40 @@
+load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//proto:def.bzl", "go_proto_library")
+load("@rules_proto//proto:defs.bzl", "proto_library")
+
+exports_files(
+    ["mergestrategy.proto"],
+    visibility = ["//tool/proto:__pkg__"],
+)
+
+proto_library(
+    name = "mergestrategypb_proto",
+    srcs = ["mergestrategy.proto"],
+    visibility = ["//visibility:public"],
+)
+
+# keep
+go_proto_library(
+    name = "mergestrategypb_go_proto",
+    compilers = [
+        "@rules_go//proto:go_proto",
+        "@rules_go//proto:go_grpc_v2",
+    ],
+    importpath = "github.com/uber/submitqueue/api/base/mergestrategy/proto",
+    proto = ":mergestrategypb_proto",
+    visibility = ["//visibility:public"],
+)
+
+go_library(
+    name = "proto",
+    embed = [":mergestrategypb_go_proto"],
+    importpath = "github.com/uber/submitqueue/api/base/mergestrategy/proto",
+    visibility = ["//visibility:public"],
+)
+
+go_library(
+    name = "protopb",
+    embed = [":mergestrategypb_go_proto"],
+    importpath = "github.com/uber/submitqueue/api/base/mergestrategy/protopb",
+    visibility = ["//visibility:public"],
+)

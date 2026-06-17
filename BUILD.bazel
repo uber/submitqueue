@@ -7,6 +7,8 @@ load("@gazelle//:def.bzl", "gazelle")
 # gazelle:exclude .claude
 
 # Resolve protobuf import ambiguities - use the actual protopb packages, not the proto aliases
+# gazelle:resolve go github.com/uber/submitqueue/api/base/change/protopb //api/base/change/protopb
+# gazelle:resolve go github.com/uber/submitqueue/api/base/mergestrategy/protopb //api/base/mergestrategy/protopb
 # gazelle:resolve go github.com/uber/submitqueue/api/submitqueue/gateway/protopb //api/submitqueue/gateway/protopb
 # gazelle:resolve go github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb //api/submitqueue/orchestrator/protopb
 # gazelle:resolve go github.com/uber/submitqueue/api/stovepipe/gateway/protopb //api/stovepipe/gateway/protopb

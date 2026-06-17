@@ -17,6 +17,8 @@ go_test(
         "integration",
     ],
     deps = [
+        "//api/base/change/protopb",
+        "//api/base/mergestrategy/protopb",
         "//api/submitqueue/gateway/protopb",
         "//api/submitqueue/orchestrator/protopb",
         "//submitqueue/entity",

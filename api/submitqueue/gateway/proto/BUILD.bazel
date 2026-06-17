@@ -11,6 +11,10 @@ proto_library(
     name = "gatewaypb_proto",
     srcs = ["gateway.proto"],
     visibility = ["//visibility:public"],
+    deps = [
+        "//api/base/change/proto:changepb_proto",
+        "//api/base/mergestrategy/proto:mergestrategypb_proto",
+    ],
 )
 
 # keep
@@ -23,6 +27,11 @@ go_proto_library(
     importpath = "github.com/uber/submitqueue/api/submitqueue/gateway/proto",
     proto = ":gatewaypb_proto",
     visibility = ["//visibility:public"],
+    # keep
+    deps = [
+        "//api/base/change/proto:changepb_go_proto",
+        "//api/base/mergestrategy/proto:mergestrategypb_go_proto",
+    ],
 )
 
 go_library(

@@ -31,7 +31,7 @@ GOIMPORTS_VERSION ?= v0.33.0
 # (the out_dir convention in tool/proto/BUILD.bazel) and copied back here. A
 # package may hold multiple .proto files (e.g. an RPC contract plus messagequeue
 # contracts); all generated stubs land in the same protopb/ dir.
-PROTO_PACKAGES = api/submitqueue/gateway api/submitqueue/orchestrator api/stovepipe/gateway api/stovepipe/orchestrator
+PROTO_PACKAGES = api/base/change api/base/mergestrategy api/base/messagequeue api/submitqueue/gateway api/submitqueue/orchestrator api/stovepipe/gateway api/stovepipe/orchestrator
 
 # Set REPO_ROOT for docker-compose
 export REPO_ROOT := $(shell pwd)
@@ -346,8 +346,10 @@ proto: ## Generate protobuf files from .proto definitions
 	@$(BAZEL) build //tool/proto:generated
 	@set -e; for pkg in $(PROTO_PACKAGES); do \
 	  out=$$(echo $$pkg | tr / _); \
+	  mkdir -p $$pkg/protopb; \
 	  for f in bazel-bin/tool/proto/$$out/*.go; do \
 	    cp -f $$f $$pkg/protopb/$$(basename $$f); \
+	    chmod 0644 $$pkg/protopb/$$(basename $$f); \
 	  done; \
 	done
 	@$(BAZEL) run @rules_go//go -- run golang.org/x/tools/cmd/goimports@$(GOIMPORTS_VERSION) -w $(addsuffix /protopb,$(PROTO_PACKAGES))

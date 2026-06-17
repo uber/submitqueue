@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/platform/base/mergestrategy"
@@ -197,16 +198,16 @@ func (c *LandController) publishToQueue(ctx context.Context, landRequest entity.
 }
 
 // resolveMergeStrategy maps a proto Strategy enum to the shared mergestrategy.MergeStrategy.
-func resolveMergeStrategy(s pb.Strategy) (mergestrategy.MergeStrategy, error) {
+func resolveMergeStrategy(s mergestrategypb.Strategy) (mergestrategy.MergeStrategy, error) {
 	switch s {
-	case pb.Strategy_DEFAULT:
+	case mergestrategypb.Strategy_DEFAULT:
 		// TODO: resolve default strategy based on queue configuration
 		return mergestrategy.MergeStrategyRebase, nil
-	case pb.Strategy_REBASE:
+	case mergestrategypb.Strategy_REBASE:
 		return mergestrategy.MergeStrategyRebase, nil
-	case pb.Strategy_SQUASH_REBASE:
+	case mergestrategypb.Strategy_SQUASH_REBASE:
 		return mergestrategy.MergeStrategySquashRebase, nil
-	case pb.Strategy_MERGE:
+	case mergestrategypb.Strategy_MERGE:
 		return mergestrategy.MergeStrategyMerge, nil
 	default:
 		return mergestrategy.MergeStrategyUnknown, fmt.Errorf("unknown land strategy in proto message: %v", s)

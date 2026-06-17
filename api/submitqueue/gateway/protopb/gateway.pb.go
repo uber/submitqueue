@@ -25,6 +25,8 @@ import (
 	sync "sync"
 	unsafe "unsafe"
 
+	protopb "github.com/uber/submitqueue/api/base/change/protopb"
+	protopb1 "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
@@ -35,63 +37,6 @@ const (
 	// Verify that runtime/protoimpl is sufficiently up-to-date.
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
-
-// Strategy defines the possible source control integration methods
-type Strategy int32
-
-const (
-	// Default strategy (let server decide based on configuration)
-	Strategy_DEFAULT Strategy = 0
-	// Rebase commits onto target branch before landing
-	Strategy_REBASE Strategy = 1
-	// Same as REBASE but squash commits into a single commit before rebase
-	Strategy_SQUASH_REBASE Strategy = 2
-	// Merge commits into the target branch by creating a separate merge commit, preserving the commit history along with hashes
-	Strategy_MERGE Strategy = 3
-)
-
-// Enum value maps for Strategy.
-var (
-	Strategy_name = map[int32]string{
-		0: "DEFAULT",
-		1: "REBASE",
-		2: "SQUASH_REBASE",
-		3: "MERGE",
-	}
-	Strategy_value = map[string]int32{
-		"DEFAULT":       0,
-		"REBASE":        1,
-		"SQUASH_REBASE": 2,
-		"MERGE":         3,
-	}
-)
-
-func (x Strategy) Enum() *Strategy {
-	p := new(Strategy)
-	*p = x
-	return p
-}
-
-func (x Strategy) String() string {
-	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
-}
-
-func (Strategy) Descriptor() protoreflect.EnumDescriptor {
-	return file_gateway_proto_enumTypes[0].Descriptor()
-}
-
-func (Strategy) Type() protoreflect.EnumType {
-	return &file_gateway_proto_enumTypes[0]
-}
-
-func (x Strategy) Number() protoreflect.EnumNumber {
-	return protoreflect.EnumNumber(x)
-}
-
-// Deprecated: Use Strategy.Descriptor instead.
-func (Strategy) EnumDescriptor() ([]byte, []int) {
-	return file_gateway_proto_rawDescGZIP(), []int{0}
-}
 
 // PingRequest is the request for the Ping method
 type PingRequest struct {
@@ -212,84 +157,26 @@ func (x *PingResponse) GetHostname() string {
 	return ""
 }
 
-// Change represents a code change identified by URIs from a code change provider (e.g., GitHub Pull Request, Phabricator Diff).
-// The provider is extracted from the URI scheme.
-type Change struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// URIs identifying the change(s) to land (RFC 3986 compliant).
-	// The scheme identifies the change provider, and the path contains provider-specific resource identifiers.
-	//
-	// GitHub is supported by default (though other providers can be added):
-	//
-	//	Template: "<scheme>://<org>/<repo>/pull/<pr>/<head_commit_sha>"
-	//	Example:  "github://uber/submitqueue/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"
-	//	Schemes:  "github" (github.com), "ghe" (GitHub Enterprise), "ghes" (GitHub Enterprise Server).
-	//	The path mirrors the canonical PR URL so URIs can be constructed by trivial substitution.
-	//	The head commit SHA must be the full 40-character lowercase hex SHA of the PR's head commit,
-	//	as returned by GitHub's API (graphql `headRefOid`). Abbreviated SHAs are rejected because
-	//	the staleness check downstream compares with strict string equality against the full SHA.
-	//
-	// SubmitQueue guarantees changes are landed in order with no other changes in between.
-	// SubmitQueue does not guarantee each change is individually valid, but produces a validity marker on such changes.
-	// The user is responsible for including all changes in a stack in order, starting from the earliest change.
-	Uris          []string `protobuf:"bytes,1,rep,name=uris,proto3" json:"uris,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Change) Reset() {
-	*x = Change{}
-	mi := &file_gateway_proto_msgTypes[2]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Change) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Change) ProtoMessage() {}
-
-func (x *Change) ProtoReflect() protoreflect.Message {
-	mi := &file_gateway_proto_msgTypes[2]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Change.ProtoReflect.Descriptor instead.
-func (*Change) Descriptor() ([]byte, []int) {
-	return file_gateway_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *Change) GetUris() []string {
-	if x != nil {
-		return x.Uris
-	}
-	return nil
-}
-
 // LandRequest defines a request to land (merge into target branch of the source control repository) a set of code changes.
+//
+// SubmitQueue guarantees changes are landed in order with no other changes in between.
+// SubmitQueue does not guarantee each change is individually valid, but produces a validity marker on such changes.
+// The user is responsible for including all changes in a stack in order, starting from the earliest change.
 type LandRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Name of the queue processing the land request. The queue should be defined in the configuration, otherwise an error is returned.
 	Queue string `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
 	// Change (such as a pull request) to land into the target branch. Target branch is defined by the queue configuration.
-	Change *Change `protobuf:"bytes,2,opt,name=change,proto3" json:"change,omitempty"`
+	Change *protopb.Change `protobuf:"bytes,2,opt,name=change,proto3" json:"change,omitempty"`
 	// Source control integration strategy to use for this land operation. If not specified, the default queue strategy is used.
-	Strategy      Strategy `protobuf:"varint,4,opt,name=strategy,proto3,enum=uber.submitqueue.gateway.Strategy" json:"strategy,omitempty"`
+	Strategy      protopb1.Strategy `protobuf:"varint,4,opt,name=strategy,proto3,enum=uber.base.mergestrategy.Strategy" json:"strategy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *LandRequest) Reset() {
 	*x = LandRequest{}
-	mi := &file_gateway_proto_msgTypes[3]
+	mi := &file_gateway_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -301,7 +188,7 @@ func (x *LandRequest) String() string {
 func (*LandRequest) ProtoMessage() {}
 
 func (x *LandRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gateway_proto_msgTypes[3]
+	mi := &file_gateway_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -314,7 +201,7 @@ func (x *LandRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LandRequest.ProtoReflect.Descriptor instead.
 func (*LandRequest) Descriptor() ([]byte, []int) {
-	return file_gateway_proto_rawDescGZIP(), []int{3}
+	return file_gateway_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *LandRequest) GetQueue() string {
@@ -324,18 +211,18 @@ func (x *LandRequest) GetQueue() string {
 	return ""
 }
 
-func (x *LandRequest) GetChange() *Change {
+func (x *LandRequest) GetChange() *protopb.Change {
 	if x != nil {
 		return x.Change
 	}
 	return nil
 }
 
-func (x *LandRequest) GetStrategy() Strategy {
+func (x *LandRequest) GetStrategy() protopb1.Strategy {
 	if x != nil {
 		return x.Strategy
 	}
-	return Strategy_DEFAULT
+	return protopb1.Strategy(0)
 }
 
 // LandResponse defines the response to a land request.
@@ -349,7 +236,7 @@ type LandResponse struct {
 
 func (x *LandResponse) Reset() {
 	*x = LandResponse{}
-	mi := &file_gateway_proto_msgTypes[4]
+	mi := &file_gateway_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -361,7 +248,7 @@ func (x *LandResponse) String() string {
 func (*LandResponse) ProtoMessage() {}
 
 func (x *LandResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gateway_proto_msgTypes[4]
+	mi := &file_gateway_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -374,7 +261,7 @@ func (x *LandResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LandResponse.ProtoReflect.Descriptor instead.
 func (*LandResponse) Descriptor() ([]byte, []int) {
-	return file_gateway_proto_rawDescGZIP(), []int{4}
+	return file_gateway_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *LandResponse) GetSqid() string {
@@ -397,7 +284,7 @@ type CancelRequest struct {
 
 func (x *CancelRequest) Reset() {
 	*x = CancelRequest{}
-	mi := &file_gateway_proto_msgTypes[5]
+	mi := &file_gateway_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -409,7 +296,7 @@ func (x *CancelRequest) String() string {
 func (*CancelRequest) ProtoMessage() {}
 
 func (x *CancelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gateway_proto_msgTypes[5]
+	mi := &file_gateway_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -422,7 +309,7 @@ func (x *CancelRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelRequest.ProtoReflect.Descriptor instead.
 func (*CancelRequest) Descriptor() ([]byte, []int) {
-	return file_gateway_proto_rawDescGZIP(), []int{5}
+	return file_gateway_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *CancelRequest) GetSqid() string {
@@ -452,7 +339,7 @@ type CancelResponse struct {
 
 func (x *CancelResponse) Reset() {
 	*x = CancelResponse{}
-	mi := &file_gateway_proto_msgTypes[6]
+	mi := &file_gateway_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -464,7 +351,7 @@ func (x *CancelResponse) String() string {
 func (*CancelResponse) ProtoMessage() {}
 
 func (x *CancelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gateway_proto_msgTypes[6]
+	mi := &file_gateway_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -477,7 +364,7 @@ func (x *CancelResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelResponse.ProtoReflect.Descriptor instead.
 func (*CancelResponse) Descriptor() ([]byte, []int) {
-	return file_gateway_proto_rawDescGZIP(), []int{6}
+	return file_gateway_proto_rawDescGZIP(), []int{5}
 }
 
 // StatusRequest defines a request to look up the current status of a previously submitted request.
@@ -491,7 +378,7 @@ type StatusRequest struct {
 
 func (x *StatusRequest) Reset() {
 	*x = StatusRequest{}
-	mi := &file_gateway_proto_msgTypes[7]
+	mi := &file_gateway_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -503,7 +390,7 @@ func (x *StatusRequest) String() string {
 func (*StatusRequest) ProtoMessage() {}
 
 func (x *StatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gateway_proto_msgTypes[7]
+	mi := &file_gateway_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -516,7 +403,7 @@ func (x *StatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusRequest.ProtoReflect.Descriptor instead.
 func (*StatusRequest) Descriptor() ([]byte, []int) {
-	return file_gateway_proto_rawDescGZIP(), []int{7}
+	return file_gateway_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *StatusRequest) GetSqid() string {
@@ -543,7 +430,7 @@ type StatusResponse struct {
 
 func (x *StatusResponse) Reset() {
 	*x = StatusResponse{}
-	mi := &file_gateway_proto_msgTypes[8]
+	mi := &file_gateway_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -555,7 +442,7 @@ func (x *StatusResponse) String() string {
 func (*StatusResponse) ProtoMessage() {}
 
 func (x *StatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gateway_proto_msgTypes[8]
+	mi := &file_gateway_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -568,7 +455,7 @@ func (x *StatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusResponse.ProtoReflect.Descriptor instead.
 func (*StatusResponse) Descriptor() ([]byte, []int) {
-	return file_gateway_proto_rawDescGZIP(), []int{8}
+	return file_gateway_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *StatusResponse) GetStatus() string {
@@ -603,7 +490,7 @@ type Error struct {
 
 func (x *Error) Reset() {
 	*x = Error{}
-	mi := &file_gateway_proto_msgTypes[9]
+	mi := &file_gateway_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -615,7 +502,7 @@ func (x *Error) String() string {
 func (*Error) ProtoMessage() {}
 
 func (x *Error) ProtoReflect() protoreflect.Message {
-	mi := &file_gateway_proto_msgTypes[9]
+	mi := &file_gateway_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -628,7 +515,7 @@ func (x *Error) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Error.ProtoReflect.Descriptor instead.
 func (*Error) Descriptor() ([]byte, []int) {
-	return file_gateway_proto_rawDescGZIP(), []int{9}
+	return file_gateway_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Error) GetMessage() string {
@@ -651,7 +538,7 @@ type UnrecognizedQueueError struct {
 
 func (x *UnrecognizedQueueError) Reset() {
 	*x = UnrecognizedQueueError{}
-	mi := &file_gateway_proto_msgTypes[10]
+	mi := &file_gateway_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -663,7 +550,7 @@ func (x *UnrecognizedQueueError) String() string {
 func (*UnrecognizedQueueError) ProtoMessage() {}
 
 func (x *UnrecognizedQueueError) ProtoReflect() protoreflect.Message {
-	mi := &file_gateway_proto_msgTypes[10]
+	mi := &file_gateway_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -676,7 +563,7 @@ func (x *UnrecognizedQueueError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnrecognizedQueueError.ProtoReflect.Descriptor instead.
 func (*UnrecognizedQueueError) Descriptor() ([]byte, []int) {
-	return file_gateway_proto_rawDescGZIP(), []int{10}
+	return file_gateway_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *UnrecognizedQueueError) GetError() *Error {
@@ -706,7 +593,7 @@ type RequestNotFoundError struct {
 
 func (x *RequestNotFoundError) Reset() {
 	*x = RequestNotFoundError{}
-	mi := &file_gateway_proto_msgTypes[11]
+	mi := &file_gateway_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -718,7 +605,7 @@ func (x *RequestNotFoundError) String() string {
 func (*RequestNotFoundError) ProtoMessage() {}
 
 func (x *RequestNotFoundError) ProtoReflect() protoreflect.Message {
-	mi := &file_gateway_proto_msgTypes[11]
+	mi := &file_gateway_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -731,7 +618,7 @@ func (x *RequestNotFoundError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RequestNotFoundError.ProtoReflect.Descriptor instead.
 func (*RequestNotFoundError) Descriptor() ([]byte, []int) {
-	return file_gateway_proto_rawDescGZIP(), []int{11}
+	return file_gateway_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *RequestNotFoundError) GetError() *Error {
@@ -752,20 +639,18 @@ var File_gateway_proto protoreflect.FileDescriptor
 
 const file_gateway_proto_rawDesc = "" +
 	"\n" +
-	"\rgateway.proto\x12\x18uber.submitqueue.gateway\"'\n" +
+	"\rgateway.proto\x12\x18uber.submitqueue.gateway\x1a\"api/base/change/proto/change.proto\x1a0api/base/mergestrategy/proto/mergestrategy.proto\"'\n" +
 	"\vPingRequest\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"\x85\x01\n" +
 	"\fPingResponse\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12!\n" +
 	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12\x1c\n" +
 	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x1a\n" +
-	"\bhostname\x18\x04 \x01(\tR\bhostname\"\x1c\n" +
-	"\x06Change\x12\x12\n" +
-	"\x04uris\x18\x01 \x03(\tR\x04uris\"\x9d\x01\n" +
+	"\bhostname\x18\x04 \x01(\tR\bhostname\"\x94\x01\n" +
 	"\vLandRequest\x12\x14\n" +
-	"\x05queue\x18\x01 \x01(\tR\x05queue\x128\n" +
-	"\x06change\x18\x02 \x01(\v2 .uber.submitqueue.gateway.ChangeR\x06change\x12>\n" +
-	"\bstrategy\x18\x04 \x01(\x0e2\".uber.submitqueue.gateway.StrategyR\bstrategy\"\"\n" +
+	"\x05queue\x18\x01 \x01(\tR\x05queue\x120\n" +
+	"\x06change\x18\x02 \x01(\v2\x18.uber.base.change.ChangeR\x06change\x12=\n" +
+	"\bstrategy\x18\x04 \x01(\x0e2!.uber.base.mergestrategy.StrategyR\bstrategy\"\"\n" +
 	"\fLandResponse\x12\x12\n" +
 	"\x04sqid\x18\x01 \x01(\tR\x04sqid\";\n" +
 	"\rCancelRequest\x12\x12\n" +
@@ -789,13 +674,7 @@ const file_gateway_proto_rawDesc = "" +
 	"\x05queue\x18\x02 \x01(\tR\x05queue\"a\n" +
 	"\x14RequestNotFoundError\x125\n" +
 	"\x05error\x18\x01 \x01(\v2\x1f.uber.submitqueue.gateway.ErrorR\x05error\x12\x12\n" +
-	"\x04sqid\x18\x02 \x01(\tR\x04sqid*A\n" +
-	"\bStrategy\x12\v\n" +
-	"\aDEFAULT\x10\x00\x12\n" +
-	"\n" +
-	"\x06REBASE\x10\x01\x12\x11\n" +
-	"\rSQUASH_REBASE\x10\x02\x12\t\n" +
-	"\x05MERGE\x10\x032\x84\x03\n" +
+	"\x04sqid\x18\x02 \x01(\tR\x04sqid2\x84\x03\n" +
 	"\x12SubmitQueueGateway\x12W\n" +
 	"\x04Ping\x12%.uber.submitqueue.gateway.PingRequest\x1a&.uber.submitqueue.gateway.PingResponse\"\x00\x12W\n" +
 	"\x04Land\x12%.uber.submitqueue.gateway.LandRequest\x1a&.uber.submitqueue.gateway.LandResponse\"\x00\x12]\n" +
@@ -815,38 +694,37 @@ func file_gateway_proto_rawDescGZIP() []byte {
 	return file_gateway_proto_rawDescData
 }
 
-var file_gateway_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_gateway_proto_goTypes = []any{
-	(Strategy)(0),                  // 0: uber.submitqueue.gateway.Strategy
-	(*PingRequest)(nil),            // 1: uber.submitqueue.gateway.PingRequest
-	(*PingResponse)(nil),           // 2: uber.submitqueue.gateway.PingResponse
-	(*Change)(nil),                 // 3: uber.submitqueue.gateway.Change
-	(*LandRequest)(nil),            // 4: uber.submitqueue.gateway.LandRequest
-	(*LandResponse)(nil),           // 5: uber.submitqueue.gateway.LandResponse
-	(*CancelRequest)(nil),          // 6: uber.submitqueue.gateway.CancelRequest
-	(*CancelResponse)(nil),         // 7: uber.submitqueue.gateway.CancelResponse
-	(*StatusRequest)(nil),          // 8: uber.submitqueue.gateway.StatusRequest
-	(*StatusResponse)(nil),         // 9: uber.submitqueue.gateway.StatusResponse
-	(*Error)(nil),                  // 10: uber.submitqueue.gateway.Error
-	(*UnrecognizedQueueError)(nil), // 11: uber.submitqueue.gateway.UnrecognizedQueueError
-	(*RequestNotFoundError)(nil),   // 12: uber.submitqueue.gateway.RequestNotFoundError
-	nil,                            // 13: uber.submitqueue.gateway.StatusResponse.MetadataEntry
+	(*PingRequest)(nil),            // 0: uber.submitqueue.gateway.PingRequest
+	(*PingResponse)(nil),           // 1: uber.submitqueue.gateway.PingResponse
+	(*LandRequest)(nil),            // 2: uber.submitqueue.gateway.LandRequest
+	(*LandResponse)(nil),           // 3: uber.submitqueue.gateway.LandResponse
+	(*CancelRequest)(nil),          // 4: uber.submitqueue.gateway.CancelRequest
+	(*CancelResponse)(nil),         // 5: uber.submitqueue.gateway.CancelResponse
+	(*StatusRequest)(nil),          // 6: uber.submitqueue.gateway.StatusRequest
+	(*StatusResponse)(nil),         // 7: uber.submitqueue.gateway.StatusResponse
+	(*Error)(nil),                  // 8: uber.submitqueue.gateway.Error
+	(*UnrecognizedQueueError)(nil), // 9: uber.submitqueue.gateway.UnrecognizedQueueError
+	(*RequestNotFoundError)(nil),   // 10: uber.submitqueue.gateway.RequestNotFoundError
+	nil,                            // 11: uber.submitqueue.gateway.StatusResponse.MetadataEntry
+	(*protopb.Change)(nil),         // 12: uber.base.change.Change
+	(protopb1.Strategy)(0),         // 13: uber.base.mergestrategy.Strategy
 }
 var file_gateway_proto_depIdxs = []int32{
-	3,  // 0: uber.submitqueue.gateway.LandRequest.change:type_name -> uber.submitqueue.gateway.Change
-	0,  // 1: uber.submitqueue.gateway.LandRequest.strategy:type_name -> uber.submitqueue.gateway.Strategy
-	13, // 2: uber.submitqueue.gateway.StatusResponse.metadata:type_name -> uber.submitqueue.gateway.StatusResponse.MetadataEntry
-	10, // 3: uber.submitqueue.gateway.UnrecognizedQueueError.error:type_name -> uber.submitqueue.gateway.Error
-	10, // 4: uber.submitqueue.gateway.RequestNotFoundError.error:type_name -> uber.submitqueue.gateway.Error
-	1,  // 5: uber.submitqueue.gateway.SubmitQueueGateway.Ping:input_type -> uber.submitqueue.gateway.PingRequest
-	4,  // 6: uber.submitqueue.gateway.SubmitQueueGateway.Land:input_type -> uber.submitqueue.gateway.LandRequest
-	6,  // 7: uber.submitqueue.gateway.SubmitQueueGateway.Cancel:input_type -> uber.submitqueue.gateway.CancelRequest
-	8,  // 8: uber.submitqueue.gateway.SubmitQueueGateway.Status:input_type -> uber.submitqueue.gateway.StatusRequest
-	2,  // 9: uber.submitqueue.gateway.SubmitQueueGateway.Ping:output_type -> uber.submitqueue.gateway.PingResponse
-	5,  // 10: uber.submitqueue.gateway.SubmitQueueGateway.Land:output_type -> uber.submitqueue.gateway.LandResponse
-	7,  // 11: uber.submitqueue.gateway.SubmitQueueGateway.Cancel:output_type -> uber.submitqueue.gateway.CancelResponse
-	9,  // 12: uber.submitqueue.gateway.SubmitQueueGateway.Status:output_type -> uber.submitqueue.gateway.StatusResponse
+	12, // 0: uber.submitqueue.gateway.LandRequest.change:type_name -> uber.base.change.Change
+	13, // 1: uber.submitqueue.gateway.LandRequest.strategy:type_name -> uber.base.mergestrategy.Strategy
+	11, // 2: uber.submitqueue.gateway.StatusResponse.metadata:type_name -> uber.submitqueue.gateway.StatusResponse.MetadataEntry
+	8,  // 3: uber.submitqueue.gateway.UnrecognizedQueueError.error:type_name -> uber.submitqueue.gateway.Error
+	8,  // 4: uber.submitqueue.gateway.RequestNotFoundError.error:type_name -> uber.submitqueue.gateway.Error
+	0,  // 5: uber.submitqueue.gateway.SubmitQueueGateway.Ping:input_type -> uber.submitqueue.gateway.PingRequest
+	2,  // 6: uber.submitqueue.gateway.SubmitQueueGateway.Land:input_type -> uber.submitqueue.gateway.LandRequest
+	4,  // 7: uber.submitqueue.gateway.SubmitQueueGateway.Cancel:input_type -> uber.submitqueue.gateway.CancelRequest
+	6,  // 8: uber.submitqueue.gateway.SubmitQueueGateway.Status:input_type -> uber.submitqueue.gateway.StatusRequest
+	1,  // 9: uber.submitqueue.gateway.SubmitQueueGateway.Ping:output_type -> uber.submitqueue.gateway.PingResponse
+	3,  // 10: uber.submitqueue.gateway.SubmitQueueGateway.Land:output_type -> uber.submitqueue.gateway.LandResponse
+	5,  // 11: uber.submitqueue.gateway.SubmitQueueGateway.Cancel:output_type -> uber.submitqueue.gateway.CancelResponse
+	7,  // 12: uber.submitqueue.gateway.SubmitQueueGateway.Status:output_type -> uber.submitqueue.gateway.StatusResponse
 	9,  // [9:13] is the sub-list for method output_type
 	5,  // [5:9] is the sub-list for method input_type
 	5,  // [5:5] is the sub-list for extension type_name
@@ -864,14 +742,13 @@ func file_gateway_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gateway_proto_rawDesc), len(file_gateway_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   13,
+			NumEnums:      0,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_gateway_proto_goTypes,
 		DependencyIndexes: file_gateway_proto_depIdxs,
-		EnumInfos:         file_gateway_proto_enumTypes,
 		MessageInfos:      file_gateway_proto_msgTypes,
 	}.Build()
 	File_gateway_proto = out.File

@@ -1,0 +1,40 @@
+// Copyright (c) 2025 Uber Technologies, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package uber.base.messagequeue;
+
+import "google/protobuf/descriptor.proto";
+
+option go_package = "github.com/uber/submitqueue/api/base/messagequeue/protopb";
+option java_multiple_files = true;
+option java_outer_classname = "MessageQueueProto";
+option java_package = "com.uber.submitqueue.base.messagequeue";
+
+// Topic-binding option: the shared wire contract annotation that binds a queue
+// payload message to the topic(s) that carry it. A message queue payload — in
+// any domain — annotates itself with the canonical wire topic name(s), making
+// the topic-to-payload binding part of the language-neutral proto contract
+// rather than out-of-band Go wiring. A single payload may list several topics
+// (one shape can serve a queue pair, e.g. a dry-run check and a committing
+// merge). Domains import this rather than redefining their own.
+extend google.protobuf.MessageOptions {
+    // topics are the canonical wire topic names that carry this message. The
+    // reverse index (topic -> message) is derivable; this is the single source
+    // of truth. The strings match the consumer.TopicKey values used in Go
+    // wiring. Extension field 50001 is in the 50000-99999 range reserved for
+    // organization-internal use.
+    repeated string topics = 50001;
+}

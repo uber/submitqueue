@@ -1,0 +1,41 @@
+load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//proto:def.bzl", "go_proto_library")
+load("@rules_proto//proto:defs.bzl", "proto_library")
+
+exports_files(
+    ["messagequeue.proto"],
+    visibility = ["//tool/proto:__pkg__"],
+)
+
+proto_library(
+    name = "messagequeuepb_proto",
+    srcs = ["messagequeue.proto"],
+    visibility = ["//visibility:public"],
+    deps = ["@protobuf//:descriptor_proto"],
+)
+
+# keep
+go_proto_library(
+    name = "messagequeuepb_go_proto",
+    compilers = [
+        "@rules_go//proto:go_proto",
+        "@rules_go//proto:go_grpc_v2",
+    ],
+    importpath = "github.com/uber/submitqueue/api/base/messagequeue/proto",
+    proto = ":messagequeuepb_proto",
+    visibility = ["//visibility:public"],
+)
+
+go_library(
+    name = "proto",
+    embed = [":messagequeuepb_go_proto"],
+    importpath = "github.com/uber/submitqueue/api/base/messagequeue/proto",
+    visibility = ["//visibility:public"],
+)
+
+go_library(
+    name = "protopb",
+    embed = [":messagequeuepb_go_proto"],
+    importpath = "github.com/uber/submitqueue/api/base/messagequeue/protopb",
+    visibility = ["//visibility:public"],
+)

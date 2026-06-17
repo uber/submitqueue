@@ -21,6 +21,9 @@ option java_multiple_files = true;
 option java_outer_classname = "GatewayProto";
 option java_package = "com.uber.submitqueue.gateway";
 
+import "api/base/change/proto/change.proto";
+import "api/base/mergestrategy/proto/mergestrategy.proto";
+
 // ***************
 // API domain definitions.
 // ***************
@@ -43,47 +46,18 @@ message PingResponse {
     string hostname = 4;
 }
 
-// Strategy defines the possible source control integration methods
-enum Strategy {
-    // Default strategy (let server decide based on configuration)
-    DEFAULT = 0;
-    // Rebase commits onto target branch before landing
-    REBASE = 1;
-    // Same as REBASE but squash commits into a single commit before rebase
-    SQUASH_REBASE = 2;
-    // Merge commits into the target branch by creating a separate merge commit, preserving the commit history along with hashes
-    MERGE = 3;
-}
-
-// Change represents a code change identified by URIs from a code change provider (e.g., GitHub Pull Request, Phabricator Diff).
-// The provider is extracted from the URI scheme.
-message Change {
-    // URIs identifying the change(s) to land (RFC 3986 compliant).
-    // The scheme identifies the change provider, and the path contains provider-specific resource identifiers.
-    //
-    // GitHub is supported by default (though other providers can be added):
-    //   Template: "<scheme>://<org>/<repo>/pull/<pr>/<head_commit_sha>"
-    //   Example:  "github://uber/submitqueue/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"
-    //   Schemes:  "github" (github.com), "ghe" (GitHub Enterprise), "ghes" (GitHub Enterprise Server).
-    //   The path mirrors the canonical PR URL so URIs can be constructed by trivial substitution.
-    //   The head commit SHA must be the full 40-character lowercase hex SHA of the PR's head commit,
-    //   as returned by GitHub's API (graphql `headRefOid`). Abbreviated SHAs are rejected because
-    //   the staleness check downstream compares with strict string equality against the full SHA.
-    //
-    // SubmitQueue guarantees changes are landed in order with no other changes in between.
-    // SubmitQueue does not guarantee each change is individually valid, but produces a validity marker on such changes.
-    // The user is responsible for including all changes in a stack in order, starting from the earliest change.
-    repeated string uris = 1;
-}
-
 // LandRequest defines a request to land (merge into target branch of the source control repository) a set of code changes.
+//
+// SubmitQueue guarantees changes are landed in order with no other changes in between.
+// SubmitQueue does not guarantee each change is individually valid, but produces a validity marker on such changes.
+// The user is responsible for including all changes in a stack in order, starting from the earliest change.
 message LandRequest {
     // Name of the queue processing the land request. The queue should be defined in the configuration, otherwise an error is returned.
     string queue = 1;
     // Change (such as a pull request) to land into the target branch. Target branch is defined by the queue configuration.
-    Change change = 2;
+    uber.base.change.Change change = 2;
     // Source control integration strategy to use for this land operation. If not specified, the default queue strategy is used.
-    Strategy strategy = 4;
+    uber.base.mergestrategy.Strategy strategy = 4;
 }
 
 // LandResponse defines the response to a land request.

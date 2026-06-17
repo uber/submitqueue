@@ -5,6 +5,12 @@ bazel_dep(name = "rules_go", version = "0.57.0")
 bazel_dep(name = "gazelle", version = "0.45.0")
 bazel_dep(name = "rules_proto", version = "7.1.0")
 
+# Direct dep so the well-known type proto_library targets (e.g.
+# @protobuf//:descriptor_proto, needed by the message queue topics option that
+# extends google.protobuf.MessageOptions) are visible by apparent name.
+# Toolchain resolution is unaffected: toolchains_protoc is registered first.
+bazel_dep(name = "protobuf", version = "29.1")
+
 # Use a prebuilt protoc binary instead of compiling protoc (and its abseil/upb
 # dependencies) from source on every cold build. Requires
 # --incompatible_enable_proto_toolchain_resolution (set in .bazelrc).

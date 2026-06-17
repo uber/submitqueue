@@ -1,0 +1,44 @@
+// Copyright (c) 2025 Uber Technologies, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package uber.base.change;
+
+option go_package = "github.com/uber/submitqueue/api/base/change/protopb";
+option java_multiple_files = true;
+option java_outer_classname = "ChangeProto";
+option java_package = "com.uber.submitqueue.base.change";
+
+// Change represents a code change identified by URIs from a code change provider
+// (e.g. a GitHub Pull Request, a Phabricator Diff, or a git commit). The provider
+// is extracted from the URI scheme.
+//
+// This is the shared wire contract for change identity, reused across SubmitQueue,
+// Stovepipe, and other repo-local domains — the proto-level analog of the
+// platform/base/change Go entity. Domains import it rather than redefining their own.
+message Change {
+    // URIs identifying the change(s) (RFC 3986 compliant). The scheme identifies the
+    // change provider, and the path contains provider-specific resource identifiers.
+    //
+    // Supported by default (other providers can be added):
+    //   GitHub PR:   "github://<org>/<repo>/pull/<pr>/<head_commit_sha>"
+    //                ("ghe"/"ghes" schemes for GitHub Enterprise)
+    //   git commit:  "git://<remote>/<repo>/<ref>/<commit_sha>"
+    //                (<ref> is a fully-qualified, percent-encoded git ref)
+    //
+    // The commit SHA must be the full 40-character lowercase hex SHA; abbreviated
+    // SHAs are rejected because downstream staleness checks compare by strict equality.
+    repeated string uris = 1;
+}

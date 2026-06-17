@@ -11,6 +11,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/gateway/controller",
     visibility = ["//visibility:public"],
     deps = [
+        "//api/base/mergestrategy/protopb",
         "//api/submitqueue/gateway/protopb",
         "//platform/base/change",
         "//platform/base/mergestrategy",
@@ -39,6 +40,8 @@ go_test(
     ],
     embed = [":controller"],
     deps = [
+        "//api/base/change/protopb",
+        "//api/base/mergestrategy/protopb",
         "//api/submitqueue/gateway/protopb",
         "//platform/base/mergestrategy",
         "//platform/base/messagequeue",
