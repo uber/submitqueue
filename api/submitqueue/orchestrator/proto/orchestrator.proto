@@ -14,12 +14,12 @@
 
 syntax = "proto3";
 
-package uber.submitqueue.stovepipe.orchestrator;
+package uber.submitqueue.orchestrator;
 
-option go_package = "github.com/uber/submitqueue/stovepipe/orchestrator/protopb";
+option go_package = "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb";
 option java_multiple_files = true;
 option java_outer_classname = "OrchestratorProto";
-option java_package = "com.uber.submitqueue.stovepipe.orchestrator";
+option java_package = "com.uber.submitqueue.orchestrator";
 
 // PingRequest is the request for the Ping method
 message PingRequest {
@@ -39,8 +39,8 @@ message PingResponse {
     string hostname = 4;
 }
 
-// StovepipeOrchestrator provides the Stovepipe orchestrator API.
-service StovepipeOrchestrator {
+// SubmitQueueOrchestrator provides the orchestrator API
+service SubmitQueueOrchestrator {
     // Ping returns a response indicating the service is alive
     rpc Ping(PingRequest) returns (PingResponse) {}
 }

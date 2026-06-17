@@ -36,6 +36,9 @@ request.Version = newVersion
 
 ```
 submitqueue/                        # repo root (Go module github.com/uber/submitqueue)
+├── api/                            # Wire contracts (proto) by domain/service
+│   ├── submitqueue/{gateway,orchestrator}/{proto,protopb}/
+│   └── stovepipe/{gateway,orchestrator}/{proto,protopb}/
 ├── platform/                       # SHARED cross-domain packages — no domain deps
 │   ├── errs/, metrics/, consumer/, http/
 │   ├── base/                       # SHARED entities (change/, messagequeue/, …)
@@ -65,6 +68,8 @@ submitqueue/                        # repo root (Go module github.com/uber/submi
 
 The `platform/` tree holds code reused across domains (infrastructure, shared entities, shared extension contracts). Each **domain** (`submitqueue/`, `stovepipe/`, …) keeps the same internal layout (`gateway/`, `orchestrator/`, `entity/`, `extension/`, `core/`); a domain's own `core/` (e.g. `submitqueue/core/`) holds infra shared only between that domain's services.
 
+The `api/` tree holds all wire contracts (proto definitions and their committed generated stubs), organized by `domain/service`: `api/{domain}/{service}/proto/` for `.proto` sources and `api/{domain}/{service}/protopb/` for generated Go. A service package may hold multiple `.proto` files — its RPC contract (`{service}.proto`) alongside messagequeue contracts (queue payload schemas) — all generating into the same `protopb/`.
+
 ### Platform notes
 
 - Import path `github.com/uber/submitqueue/platform/http` uses Go package name `http` and aliases the standard library as `nethttp` inside the package. Source files that also import `net/http` should import the platform package with a distinct alias (for example `phttp "github.com/uber/submitqueue/platform/http"`) and call `phttp.NewClient`, `phttp.BaseURLTransport`, etc.
@@ -76,15 +81,15 @@ Each service follows the same layout:
 
 ```
 <service>/
-├── controller/          # Business logic (pure, transport-agnostic)
-│   ├── {method}.go      # RPC controllers (e.g., land.go, ping.go)
-│   ├── {method}_test.go
-│   └── {step}/          # Queue message controllers (e.g., request/)
-│       ├── {step}.go
-│       └── {step}_test.go
-├── proto/               # Proto definitions (.proto files)
-└── protopb/             # Generated proto code (committed to repo)
+└── controller/          # Business logic (pure, transport-agnostic)
+    ├── {method}.go      # RPC controllers (e.g., land.go, ping.go)
+    ├── {method}_test.go
+    └── {step}/          # Queue message controllers (e.g., request/)
+        ├── {step}.go
+        └── {step}_test.go
 ```
+
+Wire contracts for a service live separately under `api/{domain}/{service}/` (see Project Layout): `proto/` holds `.proto` sources and `protopb/` holds the committed generated stubs.
 
 ### Controllers
 
@@ -150,7 +155,7 @@ Paths follow the directory layout: shared packages live under `platform/` at the
 
 - RPC Controllers: `github.com/uber/submitqueue/{domain}/{service}/controller` (e.g. `.../submitqueue/gateway/controller`)
 - Queue Controllers: `github.com/uber/submitqueue/{domain}/{service}/controller/{step}`
-- Proto (generated): `github.com/uber/submitqueue/{domain}/{service}/protopb`
+- Proto (generated): `github.com/uber/submitqueue/api/{domain}/{service}/protopb`
 - Domain entities: `github.com/uber/submitqueue/{domain}/entity` (e.g. `.../submitqueue/entity`)
 - Domain extensions: `github.com/uber/submitqueue/{domain}/extension/{ext}[/{impl}]` (e.g. `.../submitqueue/extension/storage/mysql`)
 - Cross-domain consumer framework: `github.com/uber/submitqueue/platform/consumer`; domain pipeline topic keys: `github.com/uber/submitqueue/{domain}/core/topickey`
@@ -173,9 +178,11 @@ Bazel with Bzlmod (NOT WORKSPACE).
 ### Proto Generation
 
 Generated proto files are committed. When modifying `.proto` files:
-1. Edit in `{domain}/{service}/proto/` (e.g. `submitqueue/gateway/proto/`)
-2. `make proto` (generates `*.pb.go`, `*_grpc.pb.go`, `*.pb.yarpc.go`)
+1. Edit in `api/{domain}/{service}/proto/` (e.g. `api/submitqueue/gateway/proto/`)
+2. `make proto` (generates `*.pb.go`, `*_grpc.pb.go`, `*.pb.yarpc.go` into `api/{domain}/{service}/protopb/`)
 3. Commit all generated files
+
+To add a new `.proto` to a service (e.g. messagequeue contracts), drop it in the service's `api/{domain}/{service}/proto/` dir, add it to that package's `srcs` in `api/{domain}/{service}/proto/BUILD.bazel` and its `exports_files`, then `make proto && make gazelle`. The codegen and `make proto` copy loop already handle multiple `.proto` files per package.
 
 ### Naming Conventions
 
@@ -220,7 +227,7 @@ make clean              # Clean Bazel cache
 ### Common Workflows
 
 **Add new RPC method:**
-1. Edit `{domain}/{service}/proto/*.proto` → `make proto`
+1. Edit `api/{domain}/{service}/proto/*.proto` → `make proto`
 2. Add controller in `{domain}/{service}/controller/`
 3. Wire up in `example/{domain}/{service}/server/main.go`
 

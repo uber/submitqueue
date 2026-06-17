@@ -3,11 +3,11 @@ load("@rules_go//go:def.bzl", "go_library")
 go_library(
     name = "protopb",
     srcs = [
-        "orchestrator.pb.go",
-        "orchestrator.pb.yarpc.go",
-        "orchestrator_grpc.pb.go",
+        "gateway.pb.go",
+        "gateway.pb.yarpc.go",
+        "gateway_grpc.pb.go",
     ],
-    importpath = "github.com/uber/submitqueue/submitqueue/orchestrator/protopb",
+    importpath = "github.com/uber/submitqueue/api/stovepipe/gateway/protopb",
     visibility = ["//visibility:public"],
     deps = [
         "@org_golang_google_grpc//:grpc",

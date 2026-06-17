@@ -168,8 +168,8 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x1a\n" +
 	"\bhostname\x18\x04 \x01(\tR\bhostname2\x8e\x01\n" +
 	"\x15StovepipeOrchestrator\x12u\n" +
-	"\x04Ping\x124.uber.submitqueue.stovepipe.orchestrator.PingRequest\x1a5.uber.submitqueue.stovepipe.orchestrator.PingResponse\"\x00B~\n" +
-	"+com.uber.submitqueue.stovepipe.orchestratorB\x11OrchestratorProtoP\x01Z:github.com/uber/submitqueue/stovepipe/orchestrator/protopbb\x06proto3"
+	"\x04Ping\x124.uber.submitqueue.stovepipe.orchestrator.PingRequest\x1a5.uber.submitqueue.stovepipe.orchestrator.PingResponse\"\x00B\x82\x01\n" +
+	"+com.uber.submitqueue.stovepipe.orchestratorB\x11OrchestratorProtoP\x01Z>github.com/uber/submitqueue/api/stovepipe/orchestrator/protopbb\x06proto3"
 
 var (
 	file_orchestrator_proto_rawDescOnce sync.Once

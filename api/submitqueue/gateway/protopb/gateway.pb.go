@@ -800,8 +800,8 @@ const file_gateway_proto_rawDesc = "" +
 	"\x04Ping\x12%.uber.submitqueue.gateway.PingRequest\x1a&.uber.submitqueue.gateway.PingResponse\"\x00\x12W\n" +
 	"\x04Land\x12%.uber.submitqueue.gateway.LandRequest\x1a&.uber.submitqueue.gateway.LandResponse\"\x00\x12]\n" +
 	"\x06Cancel\x12'.uber.submitqueue.gateway.CancelRequest\x1a(.uber.submitqueue.gateway.CancelResponse\"\x00\x12]\n" +
-	"\x06Status\x12'.uber.submitqueue.gateway.StatusRequest\x1a(.uber.submitqueue.gateway.StatusResponse\"\x00Bg\n" +
-	"\x1ccom.uber.submitqueue.gatewayB\fGatewayProtoP\x01Z7github.com/uber/submitqueue/submitqueue/gateway/protopbb\x06proto3"
+	"\x06Status\x12'.uber.submitqueue.gateway.StatusRequest\x1a(.uber.submitqueue.gateway.StatusResponse\"\x00Bk\n" +
+	"\x1ccom.uber.submitqueue.gatewayB\fGatewayProtoP\x01Z;github.com/uber/submitqueue/api/submitqueue/gateway/protopbb\x06proto3"
 
 var (
 	file_gateway_proto_rawDescOnce sync.Once

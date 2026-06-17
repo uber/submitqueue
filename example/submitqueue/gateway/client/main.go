@@ -21,7 +21,7 @@ import (
 	"os"
 	"time"
 
-	pb "github.com/uber/submitqueue/submitqueue/gateway/protopb"
+	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

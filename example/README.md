@@ -145,7 +145,7 @@ grpcurl -plaintext localhost:8084 describe uber.submitqueue.stovepipe.orchestrat
 ### Gateway Service
 
 **Service**: `uber.submitqueue.gateway.SubmitQueueGateway`
-**Proto**: `submitqueue/gateway/proto/gateway.proto`
+**Proto**: `api/submitqueue/gateway/proto/gateway.proto`
 
 | Method | Description |
 |--------|-------------|
@@ -155,7 +155,7 @@ grpcurl -plaintext localhost:8084 describe uber.submitqueue.stovepipe.orchestrat
 ### Orchestrator Service
 
 **Service**: `uber.submitqueue.orchestrator.SubmitQueueOrchestrator`
-**Proto**: `submitqueue/orchestrator/proto/orchestrator.proto`
+**Proto**: `api/submitqueue/orchestrator/proto/orchestrator.proto`
 
 | Method | Description |
 |--------|-------------|
@@ -164,7 +164,7 @@ grpcurl -plaintext localhost:8084 describe uber.submitqueue.stovepipe.orchestrat
 ### Stovepipe Gateway
 
 **Service**: `uber.submitqueue.stovepipe.StovepipeGateway`
-**Proto**: `stovepipe/gateway/proto/gateway.proto`
+**Proto**: `api/stovepipe/gateway/proto/gateway.proto`
 
 | Method | Description |
 |--------|-------------|
@@ -173,7 +173,7 @@ grpcurl -plaintext localhost:8084 describe uber.submitqueue.stovepipe.orchestrat
 ### Stovepipe Orchestrator
 
 **Service**: `uber.submitqueue.stovepipe.orchestrator.StovepipeOrchestrator`
-**Proto**: `stovepipe/orchestrator/proto/orchestrator.proto`
+**Proto**: `api/stovepipe/orchestrator/proto/orchestrator.proto`
 
 | Method | Description |
 |--------|-------------|

@@ -20,13 +20,13 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
+	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
-	pb "github.com/uber/submitqueue/submitqueue/gateway/protopb"
 	"go.uber.org/zap"
 )
 

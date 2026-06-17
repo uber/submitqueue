@@ -6,33 +6,10 @@ def _strip_proto_suffix(filename):
     return filename[:-len(".proto")]
 
 def _go_proto_generated_files_impl(ctx):
-    src = ctx.file.src
-    base = _strip_proto_suffix(src.basename)
-
     out_dir = ctx.attr.out_dir
-    outputs = [
-        ctx.actions.declare_file("{}/{}.pb.go".format(out_dir, base)),
-        ctx.actions.declare_file("{}/{}.pb.yarpc.go".format(out_dir, base)),
-        ctx.actions.declare_file("{}/{}_grpc.pb.go".format(out_dir, base)),
-    ]
 
     proto_toolchain = ctx.toolchains["@rules_proto//proto:toolchain_type"].proto
     protoc = proto_toolchain.proto_compiler
-
-    args = ctx.actions.args()
-    for opt in proto_toolchain.protoc_opts:
-        args.add(opt)
-    args.add("--plugin=protoc-gen-go={}".format(ctx.executable._protoc_gen_go.path))
-    args.add("--plugin=protoc-gen-go-grpc={}".format(ctx.executable._protoc_gen_go_grpc.path))
-    args.add("--plugin=protoc-gen-yarpc-go-v2={}".format(ctx.executable._protoc_gen_yarpc_go.path))
-    args.add("--go_out={}".format(outputs[0].dirname))
-    args.add("--go_opt=paths=source_relative")
-    args.add("--go-grpc_out={}".format(outputs[0].dirname))
-    args.add("--go-grpc_opt=paths=source_relative")
-    args.add("--yarpc-go-v2_out={}".format(outputs[0].dirname))
-    args.add("--yarpc-go-v2_opt=paths=source_relative")
-    args.add("--proto_path={}".format(src.dirname))
-    args.add(src.path)
 
     tools = [
         protoc,
@@ -41,26 +18,54 @@ def _go_proto_generated_files_impl(ctx):
         ctx.executable._protoc_gen_yarpc_go,
     ]
 
-    ctx.actions.run_shell(
-        inputs = [src],
-        outputs = outputs,
-        tools = tools,
-        command = "mkdir -p {out_dir} && {protoc} \"$@\"".format(
-            out_dir = outputs[0].dirname,
-            protoc = protoc.executable.path,
-        ),
-        arguments = [args],
-        mnemonic = "HermeticGoProto",
-        progress_message = "Generating Go protobuf files for {}".format(src.short_path),
-    )
+    all_outputs = []
 
-    return [DefaultInfo(files = depset(outputs))]
+    # Generate independently per source so a package can hold multiple .proto
+    # files (e.g. an RPC service contract alongside messagequeue contracts).
+    for src in ctx.files.srcs:
+        base = _strip_proto_suffix(src.basename)
+        outputs = [
+            ctx.actions.declare_file("{}/{}.pb.go".format(out_dir, base)),
+            ctx.actions.declare_file("{}/{}.pb.yarpc.go".format(out_dir, base)),
+            ctx.actions.declare_file("{}/{}_grpc.pb.go".format(out_dir, base)),
+        ]
+        all_outputs.extend(outputs)
+
+        args = ctx.actions.args()
+        for opt in proto_toolchain.protoc_opts:
+            args.add(opt)
+        args.add("--plugin=protoc-gen-go={}".format(ctx.executable._protoc_gen_go.path))
+        args.add("--plugin=protoc-gen-go-grpc={}".format(ctx.executable._protoc_gen_go_grpc.path))
+        args.add("--plugin=protoc-gen-yarpc-go-v2={}".format(ctx.executable._protoc_gen_yarpc_go.path))
+        args.add("--go_out={}".format(outputs[0].dirname))
+        args.add("--go_opt=paths=source_relative")
+        args.add("--go-grpc_out={}".format(outputs[0].dirname))
+        args.add("--go-grpc_opt=paths=source_relative")
+        args.add("--yarpc-go-v2_out={}".format(outputs[0].dirname))
+        args.add("--yarpc-go-v2_opt=paths=source_relative")
+        args.add("--proto_path={}".format(src.dirname))
+        args.add(src.path)
+
+        ctx.actions.run_shell(
+            inputs = [src],
+            outputs = outputs,
+            tools = tools,
+            command = "mkdir -p {out_dir} && {protoc} \"$@\"".format(
+                out_dir = outputs[0].dirname,
+                protoc = protoc.executable.path,
+            ),
+            arguments = [args],
+            mnemonic = "HermeticGoProto",
+            progress_message = "Generating Go protobuf files for {}".format(src.short_path),
+        )
+
+    return [DefaultInfo(files = depset(all_outputs))]
 
 go_proto_generated_files = rule(
     implementation = _go_proto_generated_files_impl,
     attrs = {
-        "src": attr.label(
-            allow_single_file = [".proto"],
+        "srcs": attr.label_list(
+            allow_files = [".proto"],
             mandatory = True,
         ),
         "out_dir": attr.string(mandatory = True),

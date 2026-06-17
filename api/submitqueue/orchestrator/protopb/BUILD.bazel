@@ -7,7 +7,7 @@ go_library(
         "orchestrator.pb.yarpc.go",
         "orchestrator_grpc.pb.go",
     ],
-    importpath = "github.com/uber/submitqueue/stovepipe/orchestrator/protopb",
+    importpath = "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb",
     visibility = ["//visibility:public"],
     deps = [
         "@org_golang_google_grpc//:grpc",

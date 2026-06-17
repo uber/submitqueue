@@ -16,7 +16,7 @@ syntax = "proto3";
 
 package uber.submitqueue.gateway;
 
-option go_package = "github.com/uber/submitqueue/submitqueue/gateway/protopb";
+option go_package = "github.com/uber/submitqueue/api/submitqueue/gateway/protopb";
 option java_multiple_files = true;
 option java_outer_classname = "GatewayProto";
 option java_package = "com.uber.submitqueue.gateway";

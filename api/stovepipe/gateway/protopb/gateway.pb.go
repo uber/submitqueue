@@ -168,8 +168,8 @@ const file_gateway_proto_rawDesc = "" +
 	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x1a\n" +
 	"\bhostname\x18\x04 \x01(\tR\bhostname2o\n" +
 	"\x10StovepipeGateway\x12[\n" +
-	"\x04Ping\x12'.uber.submitqueue.stovepipe.PingRequest\x1a(.uber.submitqueue.stovepipe.PingResponse\"\x00Bg\n" +
-	"\x1ecom.uber.submitqueue.stovepipeB\fGatewayProtoP\x01Z5github.com/uber/submitqueue/stovepipe/gateway/protopbb\x06proto3"
+	"\x04Ping\x12'.uber.submitqueue.stovepipe.PingRequest\x1a(.uber.submitqueue.stovepipe.PingResponse\"\x00Bk\n" +
+	"\x1ecom.uber.submitqueue.stovepipeB\fGatewayProtoP\x01Z9github.com/uber/submitqueue/api/stovepipe/gateway/protopbb\x06proto3"
 
 var (
 	file_gateway_proto_rawDescOnce sync.Once

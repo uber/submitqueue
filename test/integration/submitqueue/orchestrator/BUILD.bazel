@@ -16,7 +16,7 @@ go_test(
         "integration",
     ],
     deps = [
-        "//submitqueue/orchestrator/protopb",
+        "//api/submitqueue/orchestrator/protopb",
         "//test/testutil",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

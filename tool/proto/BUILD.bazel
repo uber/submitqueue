@@ -1,35 +1,35 @@
 load("//tool/proto:proto_codegen.bzl", "go_proto_generated_files")
 
 go_proto_generated_files(
-    name = "submitqueue_gateway",
-    src = "//submitqueue/gateway/proto:gateway.proto",
-    out_dir = "submitqueue_gateway",
+    name = "api_submitqueue_gateway",
+    srcs = ["//api/submitqueue/gateway/proto:gateway.proto"],
+    out_dir = "api_submitqueue_gateway",
 )
 
 go_proto_generated_files(
-    name = "submitqueue_orchestrator",
-    src = "//submitqueue/orchestrator/proto:orchestrator.proto",
-    out_dir = "submitqueue_orchestrator",
+    name = "api_submitqueue_orchestrator",
+    srcs = ["//api/submitqueue/orchestrator/proto:orchestrator.proto"],
+    out_dir = "api_submitqueue_orchestrator",
 )
 
 go_proto_generated_files(
-    name = "stovepipe_gateway",
-    src = "//stovepipe/gateway/proto:gateway.proto",
-    out_dir = "stovepipe_gateway",
+    name = "api_stovepipe_gateway",
+    srcs = ["//api/stovepipe/gateway/proto:gateway.proto"],
+    out_dir = "api_stovepipe_gateway",
 )
 
 go_proto_generated_files(
-    name = "stovepipe_orchestrator",
-    src = "//stovepipe/orchestrator/proto:orchestrator.proto",
-    out_dir = "stovepipe_orchestrator",
+    name = "api_stovepipe_orchestrator",
+    srcs = ["//api/stovepipe/orchestrator/proto:orchestrator.proto"],
+    out_dir = "api_stovepipe_orchestrator",
 )
 
 filegroup(
     name = "generated",
     srcs = [
-        ":stovepipe_gateway",
-        ":stovepipe_orchestrator",
-        ":submitqueue_gateway",
-        ":submitqueue_orchestrator",
+        ":api_stovepipe_gateway",
+        ":api_stovepipe_orchestrator",
+        ":api_submitqueue_gateway",
+        ":api_submitqueue_orchestrator",
     ],
 )

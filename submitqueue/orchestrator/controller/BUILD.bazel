@@ -6,8 +6,8 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/orchestrator/controller",
     visibility = ["//visibility:public"],
     deps = [
+        "//api/submitqueue/orchestrator/protopb",
         "//platform/metrics",
-        "//submitqueue/orchestrator/protopb",
         "@com_github_uber_go_tally//:tally",
         "@org_uber_go_zap//:zap",
     ],
@@ -18,7 +18,7 @@ go_test(
     srcs = ["ping_test.go"],
     embed = [":controller"],
     deps = [
-        "//submitqueue/orchestrator/protopb",
+        "//api/submitqueue/orchestrator/protopb",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_uber_go_tally//:tally",

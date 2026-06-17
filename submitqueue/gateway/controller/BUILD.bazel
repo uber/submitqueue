@@ -11,6 +11,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/gateway/controller",
     visibility = ["//visibility:public"],
     deps = [
+        "//api/submitqueue/gateway/protopb",
         "//platform/base/change",
         "//platform/base/mergestrategy",
         "//platform/base/messagequeue",
@@ -23,7 +24,6 @@ go_library(
         "//submitqueue/entity",
         "//submitqueue/extension/queueconfig",
         "//submitqueue/extension/storage",
-        "//submitqueue/gateway/protopb",
         "@com_github_uber_go_tally//:tally",
         "@org_uber_go_zap//:zap",
     ],
@@ -39,6 +39,7 @@ go_test(
     ],
     embed = [":controller"],
     deps = [
+        "//api/submitqueue/gateway/protopb",
         "//platform/base/mergestrategy",
         "//platform/base/messagequeue",
         "//platform/consumer",
@@ -51,7 +52,6 @@ go_test(
         "//submitqueue/extension/queueconfig/mock",
         "//submitqueue/extension/storage",
         "//submitqueue/extension/storage/mock",
-        "//submitqueue/gateway/protopb",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_uber_go_tally//:tally",

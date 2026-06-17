@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/example/submitqueue/orchestrator/client",
     visibility = ["//visibility:private"],
     deps = [
-        "//submitqueue/orchestrator/protopb",
+        "//api/submitqueue/orchestrator/protopb",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//credentials/insecure",
     ],

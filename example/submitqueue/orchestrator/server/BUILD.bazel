@@ -11,6 +11,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/example/submitqueue/orchestrator/server",
     visibility = ["//visibility:private"],
     deps = [
+        "//api/submitqueue/orchestrator/protopb",
         "//platform/consumer",
         "//platform/errs",
         "//platform/errs/generic",
@@ -57,7 +58,6 @@ go_library(
         "//submitqueue/orchestrator/controller/speculate",
         "//submitqueue/orchestrator/controller/start",
         "//submitqueue/orchestrator/controller/validate",
-        "//submitqueue/orchestrator/protopb",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_uber_go_tally//:tally",
         "@org_golang_google_grpc//:grpc",

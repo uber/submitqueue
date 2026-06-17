@@ -6,8 +6,8 @@ go_library(
     importpath = "github.com/uber/submitqueue/stovepipe/orchestrator/controller",
     visibility = ["//visibility:public"],
     deps = [
+        "//api/stovepipe/orchestrator/protopb",
         "//platform/metrics",
-        "//stovepipe/orchestrator/protopb",
         "@com_github_uber_go_tally//:tally",
         "@org_uber_go_zap//:zap",
     ],
@@ -18,7 +18,7 @@ go_test(
     srcs = ["ping_test.go"],
     embed = [":controller"],
     deps = [
-        "//stovepipe/orchestrator/protopb",
+        "//api/stovepipe/orchestrator/protopb",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_uber_go_tally//:tally",

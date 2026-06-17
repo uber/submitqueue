@@ -11,8 +11,8 @@ go_library(
     importpath = "github.com/uber/submitqueue/example/stovepipe/gateway/server",
     visibility = ["//visibility:private"],
     deps = [
+        "//api/stovepipe/gateway/protopb",
         "//stovepipe/gateway/controller",
-        "//stovepipe/gateway/protopb",
         "@com_github_uber_go_tally//:tally",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//reflection",

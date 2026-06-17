@@ -14,7 +14,7 @@ go_test(
         "integration",
     ],
     deps = [
-        "//stovepipe/gateway/protopb",
+        "//api/stovepipe/gateway/protopb",
         "//test/testutil",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

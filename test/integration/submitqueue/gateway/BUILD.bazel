@@ -16,12 +16,12 @@ go_test(
         "integration",
     ],
     deps = [
+        "//api/submitqueue/gateway/protopb",
         "//platform/consumer",
         "//platform/extension/messagequeue/mysql",
         "//submitqueue/core/request",
         "//submitqueue/core/topickey",
         "//submitqueue/entity",
-        "//submitqueue/gateway/protopb",
         "//test/testutil",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
