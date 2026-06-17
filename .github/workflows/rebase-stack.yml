@@ -34,6 +34,17 @@
 #     2. rebase --onto <new-branch2-sha> <old-branch2-sha> branch3  (replays C3)
 #     3. Delete branch1
 #   Result: main -> PR2(branch2, C2') -> PR3(branch3, C3')
+#
+# REPO SETTING REQUIREMENT — "Automatically delete head branches" MUST be OFF:
+#   This workflow is the sole owner of head-branch deletion. If GitHub
+#   auto-deletes the merged head branch, it ALSO auto-retargets every child
+#   PR's base from the merged head branch to the merged base (e.g. main)
+#   BEFORE this workflow runs. The `gh pr list --base <merged-head>` lookup
+#   below would then find no children, and the stack would be silently left
+#   un-rebased (the job still goes green). With the setting OFF, GitHub leaves
+#   the branch and the child bases untouched, so this job can find the
+#   children, rebase them, retarget their bases, and finally delete the merged
+#   branch itself — for both stacked and non-stacked PRs.
 
 name: Rebase Stacked PRs
 
@@ -127,6 +138,7 @@ jobs:
               --jq '.[] | "\(.number) \(.headRefName)"')
 
             if [ -z "$prs" ]; then
+              echo "No open child PRs based on '${lookup_base}' — nothing to rebase."
               return 0
             fi
 
@@ -258,15 +270,17 @@ jobs:
             "$MERGED_BASE" \
           || rebase_result=$?
 
-          # Delete the merged PR's head branch only if the rebase chain
-          # succeeded. If it failed, some child PRs may still have this
-          # branch as their base — deleting it would cause GitHub to close
-          # those child PRs.
+          # Delete the merged PR's head branch. This runs on EVERY merged PR,
+          # whether or not it had a stack of child PRs — this workflow, not
+          # GitHub, owns branch cleanup (see the REPO SETTING REQUIREMENT in
+          # the header). The single exception is a failed child rebase: some
+          # child PRs may still target this branch, and deleting it would make
+          # GitHub close them, so we keep it for manual resolution.
           echo ""
           if [ "$rebase_result" -eq 0 ]; then
             echo "Deleting merged branch: $MERGED_HEAD"
-            git push origin --delete "$MERGED_HEAD" 2>/dev/null || echo "Branch already deleted."
-            echo "=== All stacked PRs rebased successfully ==="
+            git push origin --delete "$MERGED_HEAD" 2>/dev/null || echo "Branch already deleted or never existed."
+            echo "=== Done: children (if any) rebased; merged branch deleted ==="
           else
             echo "Keeping merged branch '$MERGED_HEAD' to avoid closing child PRs whose base was not updated."
             echo "=== Rebase chain stopped due to conflicts ==="
