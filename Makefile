@@ -20,6 +20,12 @@ STOVEPIPE_STACK_COMPOSE_FILE = example/stovepipe/docker-compose.yml
 # Fixed project name for local manual testing (tests use unique random names)
 STOVEPIPE_LOCAL_PROJECT = stovepipe
 
+# Runway compose files
+RUNWAY_ORCHESTRATOR_COMPOSE_FILE = example/runway/orchestrator/server/docker-compose.yml
+
+# Fixed project name for local manual testing (tests use unique random names)
+RUNWAY_LOCAL_PROJECT = runway
+
 # yamlfmt version for YAML formatting (override with: make fmt YAMLFMT_VERSION=v0.16.0)
 YAMLFMT_VERSION ?= v0.16.0
 
@@ -31,7 +37,7 @@ GOIMPORTS_VERSION ?= v0.33.0
 # (the out_dir convention in tool/proto/BUILD.bazel) and copied back here. A
 # package may hold multiple .proto files (e.g. an RPC contract plus messagequeue
 # contracts); all generated stubs land in the same protopb/ dir.
-PROTO_PACKAGES = api/base/change api/base/mergestrategy api/base/messagequeue api/runway/messagequeue api/submitqueue/gateway api/submitqueue/orchestrator api/stovepipe/gateway api/stovepipe/orchestrator
+PROTO_PACKAGES = api/base/change api/base/mergestrategy api/base/messagequeue api/runway/messagequeue api/runway/orchestrator api/submitqueue/gateway api/submitqueue/orchestrator api/stovepipe/gateway api/stovepipe/orchestrator
 
 # Set REPO_ROOT for docker-compose
 export REPO_ROOT := $(shell pwd)
@@ -47,7 +53,7 @@ define assert_clean
 	fi
 endef
 
-.PHONY: build build-all-linux build-submitqueue-gateway-linux build-submitqueue-orchestrator-linux build-stovepipe-gateway-linux build-stovepipe-orchestrator-linux check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator license-fix lint lint-fmt lint-license local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-init-stovepipe-queue-schema local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-gateway-start local-stovepipe-orchestrator-start local-stovepipe-start mocks proto query-deps query-targets run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe-gateway run-client-stovepipe-orchestrator run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
+.PHONY: build build-all-linux build-runway-orchestrator-linux build-submitqueue-gateway-linux build-submitqueue-orchestrator-linux build-stovepipe-gateway-linux build-stovepipe-orchestrator-linux check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator license-fix lint lint-fmt lint-license local-init-runway-queue-schema local-runway-orchestrator-start local-runway-orchestrator-stop local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-init-stovepipe-queue-schema local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-gateway-start local-stovepipe-orchestrator-start local-stovepipe-start mocks proto query-deps query-targets run-client-runway-orchestrator run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe-gateway run-client-stovepipe-orchestrator run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
 
 
 build: ## Build all services and examples
@@ -56,8 +62,16 @@ build: ## Build all services and examples
 	@echo "Build complete!"
 
 # Build Linux binaries required for Docker containers
-build-all-linux: build-submitqueue-gateway-linux build-submitqueue-orchestrator-linux build-stovepipe-gateway-linux build-stovepipe-orchestrator-linux ## Build all Linux binaries for Docker
+build-all-linux: build-submitqueue-gateway-linux build-submitqueue-orchestrator-linux build-stovepipe-gateway-linux build-stovepipe-orchestrator-linux build-runway-orchestrator-linux ## Build all Linux binaries for Docker
 	@echo "All Linux binaries ready for Docker"
+
+build-runway-orchestrator-linux: ## Build Runway orchestrator Linux binary for Docker
+	@echo "Building Runway orchestrator Linux binary for Docker..."
+	@$(BAZEL) build --platforms=@rules_go//go/toolchain:linux_amd64 //example/runway/orchestrator/server:orchestrator
+	@mkdir -p .docker-bin
+	@cp -f bazel-bin/example/runway/orchestrator/server/orchestrator_/orchestrator .docker-bin/runway-orchestrator 2>/dev/null || \
+	 cp -f bazel-bin/example/runway/orchestrator/server/orchestrator .docker-bin/runway-orchestrator
+	@echo "Runway orchestrator Linux binary ready at .docker-bin/runway-orchestrator"
 
 build-submitqueue-gateway-linux: ## Build Gateway Linux binary for Docker
 	@echo "Building Gateway Linux binary for Docker..."
@@ -217,6 +231,32 @@ local-init-stovepipe-queue-schema: ## Apply queue schema only (mysql-queue) for 
 	done
 	@echo "✅ Stovepipe queue schema applied successfully"
 
+local-init-runway-queue-schema: ## Apply queue schema only (mysql-queue) for Runway compose stacks
+	@echo "Applying queue schema to mysql-queue (Runway; consumes the merge queues)..."
+	@for file in platform/extension/messagequeue/mysql/schema/*.sql; do \
+		echo "  - Applying $$(basename $$file)..."; \
+		docker exec -i $(RUNWAY_LOCAL_PROJECT)-mysql-queue-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
+	done
+	@echo "✅ Runway queue schema applied successfully"
+
+local-runway-orchestrator-start: build-runway-orchestrator-linux ## Start Runway orchestrator locally (orchestrator + MySQL queue)
+	@echo "Starting Runway orchestrator with compose..."
+	@$(COMPOSE) -f $(RUNWAY_ORCHESTRATOR_COMPOSE_FILE) -p $(RUNWAY_LOCAL_PROJECT) up -d --build --wait
+	@echo "Applying queue schema to mysql-queue (no Runway app schema)..."
+	@$(MAKE) -s local-init-runway-queue-schema
+	@echo ""
+	@echo "✅ Runway orchestrator is running!"
+	@echo ""
+	@$(COMPOSE) -f $(RUNWAY_ORCHESTRATOR_COMPOSE_FILE) -p $(RUNWAY_LOCAL_PROJECT) ps
+	@echo ""
+	@echo "Runway orchestrator gRPC port: $$(docker port $(RUNWAY_LOCAL_PROJECT)-orchestrator-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'unknown')"
+	@echo "MySQL Queue port:              $$(docker port $(RUNWAY_LOCAL_PROJECT)-mysql-queue-1 3306 2>/dev/null | cut -d: -f2 || echo 'unknown')"
+
+local-runway-orchestrator-stop: ## Stop Runway orchestrator service
+	@echo "Stopping Runway orchestrator services..."
+	@$(COMPOSE) -f $(RUNWAY_ORCHESTRATOR_COMPOSE_FILE) -p $(RUNWAY_LOCAL_PROJECT) down
+	@echo "Runway orchestrator services stopped."
+
 local-submitqueue-logs: ## View logs from all running services
 	@$(COMPOSE) -f $(COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) logs -f
 
@@ -282,6 +322,7 @@ local-stop: ## Stop all services (keep data)
 	@echo "Stopping all services..."
 	@$(COMPOSE) -f $(COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
 	@$(COMPOSE) -f $(STOVEPIPE_STACK_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) down
+	@$(COMPOSE) -f $(RUNWAY_ORCHESTRATOR_COMPOSE_FILE) -p $(RUNWAY_LOCAL_PROJECT) down
 	@echo "Services stopped. Data volumes preserved."
 
 local-stovepipe-logs: ## View logs from all running Stovepipe services
@@ -377,6 +418,10 @@ run-client-stovepipe-gateway:
 # Run stovepipe orchestrator client (connects to any running stovepipe orchestrator service)
 run-client-stovepipe-orchestrator:
 	@$(BAZEL) run //example/stovepipe/orchestrator/client:orchestrator -- -addr $(or $(SERVER_ADDR),localhost:8084) -message "$(or $(MESSAGE),ping)"
+
+# Run runway orchestrator client (connects to any running runway orchestrator service)
+run-client-runway-orchestrator:
+	@$(BAZEL) run //example/runway/orchestrator/client:orchestrator -- -addr $(or $(SERVER_ADDR),localhost:8086) -message "$(or $(MESSAGE),ping)"
 
 run-queue-admin: ## Run queue-admin CLI (use ARGS to pass arguments, e.g. make run-queue-admin ARGS="list-topics")
 	@$(BAZEL) run //platform/extension/messagequeue/mysql/ctl -- $(ARGS)
