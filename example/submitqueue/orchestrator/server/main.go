@@ -30,6 +30,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/uber-go/tally"
+	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	pb "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
@@ -53,9 +54,6 @@ import (
 	conflictfake "github.com/uber/submitqueue/submitqueue/extension/conflict/fake"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/fileoverlap"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/none"
-	"github.com/uber/submitqueue/submitqueue/extension/mergechecker"
-	mcfake "github.com/uber/submitqueue/submitqueue/extension/mergechecker/fake"
-	githubchecker "github.com/uber/submitqueue/submitqueue/extension/mergechecker/github"
 	"github.com/uber/submitqueue/submitqueue/extension/pusher"
 	pushfake "github.com/uber/submitqueue/submitqueue/extension/pusher/fake"
 	gitpusher "github.com/uber/submitqueue/submitqueue/extension/pusher/git"
@@ -73,6 +71,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/conclude"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/dlq"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/merge"
+	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/mergeconflictsignal"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/score"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/speculate"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/start"
@@ -239,7 +238,6 @@ func run() error {
 	}
 
 	// Per-extension factories all resolve against the registry by queue name.
-	mcf := mergeCheckerFactory{queues}
 	cpf := changeProviderFactory{queues}
 	pshf := pusherFactory{queues}
 	brf := buildRunnerFactory{queues}
@@ -247,7 +245,7 @@ func run() error {
 	cof := analyzerFactory{queues}
 
 	// Register controllers
-	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, registry, mcf, cpf, pshf, brf, scf, cof, cnt, store)
+	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, registry, cpf, pshf, brf, scf, cof, cnt, store)
 	if err != nil {
 		return err
 	}
@@ -377,6 +375,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 		{topickey.TopicKeyStart, "start", "orchestrator-start"},
 		{topickey.TopicKeyCancel, "cancel", "orchestrator-cancel"},
 		{topickey.TopicKeyValidate, "validate", "orchestrator-validate"},
+		{runwaymq.TopicKeyMergeConflictCheckSignal, "merge-conflict-check-signal", "orchestrator-mergeconflictsignal"},
 		{topickey.TopicKeyBatch, "batch", "orchestrator-batch"},
 		{topickey.TopicKeyScore, "score", "orchestrator-score"},
 		{topickey.TopicKeySpeculate, "speculate", "orchestrator-speculate"},
@@ -430,17 +429,35 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 		Queue: q,
 	})
 
+	// Publish-only: the orchestrator hands merge-conflict check requests to
+	// runway via the runway-owned merge-conflict-check queue. Runway is the
+	// sole consumer, so the orchestrator registers no consuming subscription
+	// (and no DLQ) here — the inbound result arrives on the separate
+	// merge-conflict-check-signal queue, which is a consumed primary topic
+	// above.
+	configs = append(configs, consumer.TopicConfig{
+		Key:   runwaymq.TopicKeyMergeConflictCheck,
+		Name:  "merge-conflict-check",
+		Queue: q,
+	})
+
 	return consumer.NewTopicRegistry(configs)
 }
 
 // registerPrimaryControllers creates all pipeline controllers and registers
 // them with the primary consumer. Pipeline:
 //
-//	request → validate → batch → score → speculate → build → buildsignal ─┐
-//	                                     ↑     ↘             ↻ poll       │
-//	                                     │      merge → conclude          │
-//	                                     │        │                       │
-//	                                     └────────┴───────────────────────┘
+//	request → validate ⇢ (runway) ⇢ mergeconflictsignal → batch → score → speculate → build → buildsignal ─┐
+//	                                                              ↑     ↘             ↻ poll       │
+//	                                                              │      merge → conclude          │
+//	                                                              │        │                       │
+//	                                                              └────────┴───────────────────────┘
+//
+// The merge-conflict check is asynchronous and crosses a service boundary:
+// validate publishes the full check request to the runway-owned
+// merge-conflict-check queue (⇢); runway performs the merge attempt and
+// publishes the result to merge-conflict-check-signal, which mergeconflictsignal
+// consumes before fanning the request out to batch.
 
 // TODO(wiring abstraction): queueExtensions + queueRegistry currently live here
 // as example-local wiring. Evaluate promoting them into a defined abstraction in
@@ -459,7 +476,6 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 // read as "for this queue, here are its scorer, analyzer, pusher, …", and lets
 // a queue profile start from a baseline and override only what differs.
 type queueExtensions struct {
-	mergeChecker   mergechecker.MergeChecker
 	changeProvider changeprovider.ChangeProvider
 	pusher         pusher.Pusher
 	buildRunner    buildrunner.BuildRunner
@@ -486,12 +502,6 @@ func (r queueRegistry) get(queue string) queueExtensions {
 // The per-extension factories below are thin adapters: each satisfies its
 // extension's Factory contract by resolving the queue's profile from the
 // registry. All routing logic lives here in the wiring layer.
-type mergeCheckerFactory struct{ reg queueRegistry }
-
-func (f mergeCheckerFactory) For(cfg mergechecker.Config) (mergechecker.MergeChecker, error) {
-	return f.reg.get(cfg.QueueName).mergeChecker, nil
-}
-
 type changeProviderFactory struct{ reg queueRegistry }
 
 func (f changeProviderFactory) For(cfg changeprovider.Config) (changeprovider.ChangeProvider, error) {
@@ -522,7 +532,7 @@ func (f analyzerFactory) For(cfg conflict.Config) (conflict.Analyzer, error) {
 	return f.reg.get(cfg.QueueName).analyzer, nil
 }
 
-func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, mcf mergechecker.Factory, cpf changeprovider.Factory, pshf pusher.Factory, brf buildrunner.Factory, scf scorer.Factory, cof conflict.Factory, cnt counter.Counter, store storage.Storage) (int, error) {
+func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, cpf changeprovider.Factory, pshf pusher.Factory, brf buildrunner.Factory, scf scorer.Factory, cof conflict.Factory, cnt counter.Counter, store storage.Storage) (int, error) {
 	var count int
 	requestController := start.NewController(
 		logger,
@@ -555,13 +565,26 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		scope,
 		store,
 		registry,
-		mcf,
 		cpf,
+		runwaymq.TopicKeyMergeConflictCheck,
 		topickey.TopicKeyValidate,
 		"orchestrator-validate",
 	)
 	if err := c.Register(validateController); err != nil {
 		return count, fmt.Errorf("failed to register validate controller: %w", err)
+	}
+	count++
+
+	mergeconflictsignalController := mergeconflictsignal.NewController(
+		logger,
+		scope,
+		store,
+		registry,
+		runwaymq.TopicKeyMergeConflictCheckSignal,
+		"orchestrator-mergeconflictsignal",
+	)
+	if err := c.Register(mergeconflictsignalController); err != nil {
+		return count, fmt.Errorf("failed to register mergeconflictsignal controller: %w", err)
 	}
 	count++
 
@@ -678,6 +701,7 @@ func registerDLQControllers(c consumer.Consumer, logger *zap.SugaredLogger, scop
 		{"start_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeLandRequestID, dlq.TopicKey(topickey.TopicKeyStart), "orchestrator-start-dlq")},
 		{"cancel_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeCancelRequestID, dlq.TopicKey(topickey.TopicKeyCancel), "orchestrator-cancel-dlq")},
 		{"validate_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeRequestID, dlq.TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")},
+		{"mergeconflictsignal_dlq", dlq.NewDLQMergeConflictSignalController(logger, dlqScope, store, dlq.TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-mergeconflictsignal-dlq")},
 		{"batch_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeRequestID, dlq.TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")},
 		{"score_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyScore), "orchestrator-score-dlq")},
 		{"speculate_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeySpeculate), "orchestrator-speculate-dlq")},
@@ -715,34 +739,6 @@ func parseTimeout(envVal string, defaultVal time.Duration) time.Duration {
 		return d
 	}
 	return defaultVal
-}
-
-// newMergeChecker creates a MergeChecker for GitHub (github.com), configured via
-// GITHUB_BASE_URL, GITHUB_TOKEN, and GITHUB_TIMEOUT. When GITHUB_TOKEN is unset
-// it returns the fake merge checker (every change mergeable unless a URI carries
-// a failure marker, see mergechecker/fake), keeping the example runnable without
-// GitHub and letting e2e tests drive unmergeable scenarios via request payloads.
-func newMergeChecker(logger *zap.Logger, scope tally.Scope) (mergechecker.MergeChecker, error) {
-	if os.Getenv("GITHUB_TOKEN") == "" {
-		logger.Warn("GITHUB_TOKEN not set; using fake merge checker (every change mergeable unless URI-marked)")
-		return mcfake.New(), nil
-	}
-
-	client, err := http.NewClient(getEnv("GITHUB_BASE_URL", "https://api.github.com"))
-	if err != nil {
-		return nil, fmt.Errorf("failed to build GitHub HTTP client: %w", err)
-	}
-
-	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: os.Getenv("GITHUB_TOKEN")})
-	client.Transport = &oauth2.Transport{Source: ts, Base: client.Transport}
-
-	client.Timeout = parseTimeout(os.Getenv("GITHUB_TIMEOUT"), 30*time.Second)
-
-	return githubchecker.NewMergeChecker(githubchecker.Params{
-		HTTPClient:   client,
-		Logger:       logger.Sugar(),
-		MetricsScope: scope.SubScope("mergechecker"),
-	}), nil
 }
 
 // newChangeProvider creates a ChangeProvider for GitHub (github.com), configured
@@ -801,10 +797,6 @@ func newPusher(logger *zap.Logger, scope tally.Scope, resolver changeset.Resolve
 // baseline. This is the one place queue topology lives; extension packages stay
 // queue-agnostic.
 func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.Resolver) (queueRegistry, error) {
-	mc, err := newMergeChecker(logger, scope)
-	if err != nil {
-		return queueRegistry{}, fmt.Errorf("failed to create merge checker: %w", err)
-	}
 	cp, err := newChangeProvider(logger, scope)
 	if err != nil {
 		return queueRegistry{}, fmt.Errorf("failed to create change provider: %w", err)
@@ -833,7 +825,6 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.
 	// on a queue to exercise the analyzer error path, as e2e-conflict-error-queue
 	// below does.
 	base := queueExtensions{
-		mergeChecker:   mc,
 		changeProvider: cp,
 		pusher:         psh,
 		buildRunner:    buildfake.New(resolver),

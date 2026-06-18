@@ -109,6 +109,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 Controllers receive `consumer.Delivery` (subset interface without Ack/Nack) to enforce separation of business logic from infrastructure.
 
+**Queue payloads: IDs within a boundary, full payloads across one.** When producer and consumer share a store (same service — e.g. `build`→`buildsignal`, `validate`→`mergeconflict`), put only the entity **ID** on the queue and reload from storage (the store is the source of truth, messages stay small, redelivery is idempotent). When a queue **crosses a service boundary** (the consumer cannot read the producer's store — e.g. orchestrator→runway), publish the **full payload** the consumer needs, and have the **client own the correlation ID** so it can match the async result back to the work it is tracking. The queue's **owner defines the wire contract and topic keys** (in its own domain package); the other side imports them.
+
 ### Entities
 
 Domain objects live under each domain's `entity/` tree, or under `platform/base/` when shared across domains. Guidelines:
