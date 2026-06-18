@@ -90,6 +90,17 @@ func runProcess(t *testing.T, ctrl *gomock.Controller, controller *Controller, b
 	return controller.Process(context.Background(), delivery)
 }
 
+func expectBatchStateTransition(ctrl *gomock.Controller, store *storagemock.MockStorage, batch entity.Batch, newState entity.BatchState) {
+	membershipStore := storagemock.NewMockBatchStateMembershipStore(ctrl)
+	if !newState.IsTerminal() {
+		membershipStore.EXPECT().Add(gomock.Any(), batch.Queue, newState, batch.ID).Return(nil).AnyTimes()
+	}
+	if !batch.State.IsTerminal() && batch.State != newState {
+		membershipStore.EXPECT().Remove(gomock.Any(), batch.Queue, batch.State, batch.ID).Return(nil).AnyTimes()
+	}
+	store.EXPECT().GetBatchStateMembershipStore().Return(membershipStore).AnyTimes()
+}
+
 func TestNewController(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
@@ -123,6 +134,7 @@ func TestController_Process_StartSpeculation(t *testing.T) {
 
 			store := storagemock.NewMockStorage(ctrl)
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+			expectBatchStateTransition(ctrl, store, batch, entity.BatchStateSpeculating)
 
 			controller := newTestController(t, ctrl, store, nil)
 			require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
@@ -141,6 +153,7 @@ func TestController_Process_FinalizeNoDeps(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	expectBatchStateTransition(ctrl, store, batch, entity.BatchStateMerging)
 
 	controller := newTestController(t, ctrl, store, nil)
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
@@ -161,6 +174,7 @@ func TestController_Process_FinalizeAllDepsSucceeded(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	expectBatchStateTransition(ctrl, store, batch, entity.BatchStateMerging)
 
 	controller := newTestController(t, ctrl, store, nil)
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
@@ -199,6 +213,7 @@ func TestController_Process_FailedDepFailsBatch(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	expectBatchStateTransition(ctrl, store, batch, entity.BatchStateFailed)
 
 	controller := newTestController(t, ctrl, store, nil)
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
@@ -221,6 +236,7 @@ func TestController_Process_CancelledDepSkipped(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	expectBatchStateTransition(ctrl, store, batch, entity.BatchStateMerging)
 
 	controller := newTestController(t, ctrl, store, nil)
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
@@ -375,6 +391,7 @@ func TestController_Process_CancellingTerminalFlow(t *testing.T) {
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
 	store.EXPECT().GetBatchDependentStore().Return(depStore).AnyTimes()
+	expectBatchStateTransition(ctrl, store, batch, entity.BatchStateCancelled)
 
 	type pubRec struct {
 		topic string
@@ -438,6 +455,7 @@ func TestController_Process_CancellingBuildAlreadyTerminal(t *testing.T) {
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
 	store.EXPECT().GetBatchDependentStore().Return(depStore).AnyTimes()
+	expectBatchStateTransition(ctrl, store, batch, entity.BatchStateCancelled)
 
 	controller := newTestController(t, ctrl, store, nil)
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
@@ -467,6 +485,7 @@ func TestController_Process_CancellingNoBuildYet(t *testing.T) {
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
 	store.EXPECT().GetBatchDependentStore().Return(depStore).AnyTimes()
+	expectBatchStateTransition(ctrl, store, batch, entity.BatchStateCancelled)
 
 	controller := newTestController(t, ctrl, store, nil)
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
@@ -494,6 +513,7 @@ func TestController_Process_CancellingNoDependents(t *testing.T) {
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
 	store.EXPECT().GetBatchDependentStore().Return(depStore).AnyTimes()
+	expectBatchStateTransition(ctrl, store, batch, entity.BatchStateCancelled)
 
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), "conclude", gomock.Any()).Return(nil).Times(1)
@@ -534,6 +554,7 @@ func TestController_Process_CancellingTerminalCASVersionMismatch(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
+	expectBatchStateTransition(ctrl, store, batch, entity.BatchStateCancelled)
 	// BatchDependentStore must NOT be touched — terminal CAS failed before fan-out.
 
 	// No publish expected (terminal CAS failed before fan-out).

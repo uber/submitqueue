@@ -183,6 +183,12 @@ func TestFailRequest_GenericGetErrorIsNonRetryable(t *testing.T) {
 
 // failBatch
 
+func expectBatchFailedTransition(ctrl *gomock.Controller, store *storagemock.MockStorage, batchID, queue string, oldState entity.BatchState) {
+	membershipStore := storagemock.NewMockBatchStateMembershipStore(ctrl)
+	membershipStore.EXPECT().Remove(gomock.Any(), queue, oldState, batchID).Return(nil).AnyTimes()
+	store.EXPECT().GetBatchStateMembershipStore().Return(membershipStore).AnyTimes()
+}
+
 func TestFailBatch_TransitionsAndFansOut(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
@@ -208,6 +214,7 @@ func TestFailBatch_TransitionsAndFansOut(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	expectBatchFailedTransition(ctrl, store, "q/batch/1", "q", entity.BatchStateMerging)
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 
@@ -239,6 +246,7 @@ func TestFailBatch_AlreadyTerminalFansOutOnly(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	expectBatchFailedTransition(ctrl, store, "q/batch/1", "q", entity.BatchStateCancelling)
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 
@@ -273,6 +281,7 @@ func TestFailBatch_CancellingTransitionsToFailed(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	expectBatchFailedTransition(ctrl, store, "q/batch/1", "q", entity.BatchStateCancelling)
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 

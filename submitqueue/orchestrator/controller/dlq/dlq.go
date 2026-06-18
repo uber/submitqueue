@@ -41,6 +41,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/batchstate"
 	"go.uber.org/zap"
 )
 
@@ -158,7 +159,7 @@ func failBatch(ctx context.Context, store storage.Storage, logger *zap.SugaredLo
 		)
 	} else {
 		newVersion := batch.Version + 1
-		if err := store.GetBatchStore().UpdateState(ctx, batchID, batch.Version, newVersion, entity.BatchStateFailed); err != nil {
+		if err := batchstate.UpdateState(ctx, store, batch, newVersion, entity.BatchStateFailed); err != nil {
 			return fmt.Errorf("failed to update batch %s state to failed: %w", batchID, err)
 		}
 		logger.Infow("dlq reconcile: batch marked failed",

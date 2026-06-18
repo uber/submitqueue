@@ -65,6 +65,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/batchstate"
 	"go.uber.org/zap"
 )
 
@@ -184,21 +185,11 @@ func (c *Controller) markCancelling(ctx context.Context, request entity.Request)
 // findActiveBatch scans all active batches in the request's queue for one whose
 // Contains list includes the request. Returns (batch, true, nil) on a hit,
 // (zero, false, nil) when the request is not yet batched, and any storage
-// error otherwise.
-//
-// BatchStateCancelling is included in the active-state list so an idempotent
-// redelivery of the cancel message (the prior pass wrote the intent but the
-// speculate hand-off publish failed) still resolves the batch and re-attempts
-// the publish.
+// error otherwise. NonTerminalStates includes Cancelling batches, so redelivery
+// of a cancel whose speculate hand-off publish failed still resolves and retries.
 func (c *Controller) findActiveBatch(ctx context.Context, request entity.Request) (entity.Batch, bool, error) {
 	// TODO: Scans all the batches in flight - make it more efficient?
-	active, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, []entity.BatchState{
-		entity.BatchStateCreated,
-		entity.BatchStateScored,
-		entity.BatchStateSpeculating,
-		entity.BatchStateMerging,
-		entity.BatchStateCancelling,
-	})
+	active, err := batchstate.List(ctx, c.store, request.Queue, batchstate.NonTerminalStates...)
 	if err != nil {
 		c.metricsScope.Counter("batch_store_errors").Inc(1)
 		return entity.Batch{}, false, fmt.Errorf("failed to get active batches for queue=%s: %w", request.Queue, err)
@@ -271,7 +262,7 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 
 	if batch.State != entity.BatchStateCancelling {
 		newVersion := batch.Version + 1
-		if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateCancelling); err != nil {
+		if err := batchstate.UpdateState(ctx, c.store, batch, newVersion, entity.BatchStateCancelling); err != nil {
 			c.metricsScope.Counter("batch_update_errors").Inc(1)
 			// storage.ErrVersionMismatch here means the batch advanced concurrently
 			// (e.g. speculate / merge progressed). Returned as-is for the base

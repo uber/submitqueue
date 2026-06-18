@@ -4,6 +4,7 @@ go_library(
     name = "mock",
     srcs = [
         "batch_dependent_store_mock.go",
+        "batch_state_membership_store_mock.go",
         "batch_store_mock.go",
         "build_store_mock.go",
         "change_store_mock.go",

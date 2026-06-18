@@ -67,6 +67,7 @@ func TestDLQBuildSignalController_Process_FansOutToBatch(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	expectBatchFailedTransition(ctrl, store, "q/batch/2", "q", entity.BatchStateSpeculating)
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 

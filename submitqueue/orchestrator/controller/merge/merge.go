@@ -29,6 +29,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/pusher"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/batchstate"
 )
 
 // Controller handles merge queue messages. It loads every request in a batch,
@@ -153,7 +154,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	newVersion := batch.Version + 1
-	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, newState); err != nil {
+	if err := batchstate.UpdateState(ctx, c.store, batch, newVersion, newState); err != nil {
 		coremetrics.NamedCounter(c.metricsScope, "process", "state_update_errors", 1)
 		return fmt.Errorf("failed to transition batch %s to %s: %w", batch.ID, newState, err)
 	}

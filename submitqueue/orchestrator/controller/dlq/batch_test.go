@@ -60,6 +60,7 @@ func TestDLQBatchController_Process_FailsAndFansOut(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	expectBatchFailedTransition(ctrl, store, "q/batch/9", "q", entity.BatchStateMerging)
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 

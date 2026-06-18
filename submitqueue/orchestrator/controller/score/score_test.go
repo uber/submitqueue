@@ -87,6 +87,13 @@ func mockChangeStore(ctrl *gomock.Controller, requests ...entity.Request) *stora
 	return cs
 }
 
+func expectScoreMembership(ctrl *gomock.Controller, store *storagemock.MockStorage, batch entity.Batch) {
+	membershipStore := storagemock.NewMockBatchStateMembershipStore(ctrl)
+	membershipStore.EXPECT().Add(gomock.Any(), batch.Queue, entity.BatchStateScored, batch.ID).Return(nil).AnyTimes()
+	membershipStore.EXPECT().Remove(gomock.Any(), batch.Queue, batch.State, batch.ID).Return(nil).AnyTimes()
+	store.EXPECT().GetBatchStateMembershipStore().Return(membershipStore).AnyTimes()
+}
+
 // newMockStorage creates a MockStorage with a MockBatchStore, MockRequestStore, and MockChangeStore.
 func newMockStorage(ctrl *gomock.Controller, batch entity.Batch, request entity.Request) *storagemock.MockStorage {
 	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
@@ -98,6 +105,7 @@ func newMockStorage(ctrl *gomock.Controller, batch entity.Batch, request entity.
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	expectScoreMembership(ctrl, store, batch)
 	store.EXPECT().GetRequestStore().Return(mockRequestStore).AnyTimes()
 	store.EXPECT().GetChangeStore().Return(mockChangeStore(ctrl, request)).AnyTimes()
 	return store
@@ -190,6 +198,7 @@ func TestController_Process_BatchLevelScore(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	expectScoreMembership(ctrl, store, batch)
 
 	// The controller passes the batch identity to the scorer and persists its score.
 	mockScorer := scorermock.NewMockScorer(ctrl)
@@ -246,6 +255,7 @@ func TestController_Process_ScorerFailure(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	expectScoreMembership(ctrl, store, batch)
 	store.EXPECT().GetRequestStore().Return(mockRequestStore).AnyTimes()
 	store.EXPECT().GetChangeStore().Return(mockChangeStore(ctrl, request)).AnyTimes()
 
@@ -278,6 +288,7 @@ func TestController_Process_UpdateScoreFailure(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	expectScoreMembership(ctrl, store, batch)
 	store.EXPECT().GetRequestStore().Return(mockRequestStore).AnyTimes()
 	store.EXPECT().GetChangeStore().Return(mockChangeStore(ctrl, request)).AnyTimes()
 

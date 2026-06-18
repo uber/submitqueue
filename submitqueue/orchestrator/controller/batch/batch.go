@@ -28,6 +28,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/batchstate"
 	"go.uber.org/zap"
 )
 
@@ -134,14 +135,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		Version:  1,
 	}
 
-	// Get active batches for this queue and ask the conflict analyzer which
-	// of them the new batch must serialize behind. The dependency set drives
-	// the speculation graph downstream.
-	activeBatches, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, []entity.BatchState{
-		entity.BatchStateCreated,
-		entity.BatchStateSpeculating,
-		entity.BatchStateMerging,
-	})
+	// Ask the conflict analyzer which active batches the new batch must serialize
+	// behind. Membership rows are hints; batchstate.List resolves authoritative
+	// batch rows and returns only the current states requested here.
+	activeBatches, err := batchstate.List(ctx, c.store, request.Queue, batchstate.ConflictStates...)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
 		return fmt.Errorf("failed to get active batches for queue=%s: %w", request.Queue, err)
@@ -279,7 +276,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// Persist batch to storage.
 	// This is the final operation that concludes the batch creation process. If it fails, BatchDependents will be pointing to a batch id that does not exist.
 	// We do not reuse batch ids, a retry of this operation will create a new batch with a new ID. The downstream logic that operates on BatchDependent should be able to handle stale entries.
-	if err := c.store.GetBatchStore().Create(ctx, batch); err != nil {
+	if err := batchstate.Create(ctx, c.store, batch); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
 		return fmt.Errorf("failed to create batch in batch store: %w", err)
 	}

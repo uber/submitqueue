@@ -76,6 +76,12 @@ func newPusherFactory(ctrl *gomock.Controller, p pusher.Pusher) pusher.Factory {
 	return f
 }
 
+func expectTerminalBatchTransition(ctrl *gomock.Controller, store *storagemock.MockStorage, batch entity.Batch) {
+	membershipStore := storagemock.NewMockBatchStateMembershipStore(ctrl)
+	membershipStore.EXPECT().Remove(gomock.Any(), batch.Queue, batch.State, batch.ID).Return(nil).AnyTimes()
+	store.EXPECT().GetBatchStateMembershipStore().Return(membershipStore).AnyTimes()
+}
+
 func TestNewController(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
@@ -117,6 +123,7 @@ func TestController_Process_SuccessfulMerge(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	expectTerminalBatchTransition(ctrl, store, batch)
 
 	mockPusher := pushermock.NewMockPusher(ctrl)
 	mockPusher.EXPECT().Push(gomock.Any(), gomock.Any()).DoAndReturn(
@@ -172,6 +179,7 @@ func TestController_Process_ForwardsBatchToPusher(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	expectTerminalBatchTransition(ctrl, store, batch)
 
 	mockPusher := pushermock.NewMockPusher(ctrl)
 	mockPusher.EXPECT().Push(gomock.Any(), gomock.Any()).DoAndReturn(
@@ -216,6 +224,7 @@ func TestController_Process_PushConflictMarksBatchFailed(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	expectTerminalBatchTransition(ctrl, store, batch)
 
 	mockPusher := pushermock.NewMockPusher(ctrl)
 	mockPusher.EXPECT().Push(gomock.Any(), gomock.Any()).Return(
@@ -256,6 +265,7 @@ func TestController_Process_PushInfraFailureReturnsError(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	expectTerminalBatchTransition(ctrl, store, batch)
 
 	mockPusher := pushermock.NewMockPusher(ctrl)
 	mockPusher.EXPECT().Push(gomock.Any(), gomock.Any()).Return(
@@ -414,6 +424,7 @@ func TestController_Process_PublishFailureSurfaces(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	expectTerminalBatchTransition(ctrl, store, batch)
 
 	mockPusher := pushermock.NewMockPusher(ctrl)
 	mockPusher.EXPECT().Push(gomock.Any(), gomock.Any()).Return(

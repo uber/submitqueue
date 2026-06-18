@@ -1,0 +1,12 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "batchstate",
+    srcs = ["batchstate.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/orchestrator/controller/batchstate",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//submitqueue/entity",
+        "//submitqueue/extension/storage",
+    ],
+)

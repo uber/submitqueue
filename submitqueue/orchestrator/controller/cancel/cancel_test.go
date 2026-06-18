@@ -71,6 +71,34 @@ func newDelivery(t *testing.T, ctrl *gomock.Controller, payload []byte, partitio
 	return d
 }
 
+func expectNonTerminalMembership(
+	membershipStore *storagemock.MockBatchStateMembershipStore,
+	batchStore *storagemock.MockBatchStore,
+	queue string,
+	batches []entity.Batch,
+) {
+	states := []entity.BatchState{
+		entity.BatchStateCreated,
+		entity.BatchStateScored,
+		entity.BatchStateSpeculating,
+		entity.BatchStateMerging,
+		entity.BatchStateCancelling,
+	}
+	byState := make(map[entity.BatchState][]string, len(states))
+	byID := make(map[string]entity.Batch, len(batches))
+	for _, b := range batches {
+		byState[b.State] = append(byState[b.State], b.ID)
+		byID[b.ID] = b
+	}
+	for _, state := range states {
+		ids := byState[state]
+		membershipStore.EXPECT().ListIDs(gomock.Any(), queue, state).Return(ids, nil)
+		for _, id := range ids {
+			batchStore.EXPECT().Get(gomock.Any(), id).Return(byID[id], nil)
+		}
+	}
+}
+
 func TestNewController(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	registry, pub := newRegistry(t, ctrl)
@@ -144,11 +172,13 @@ func TestProcess_CancelsUnbatchedRequest(t *testing.T) {
 	)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "q", gomock.Any()).Return(nil, nil)
+	membershipStore := storagemock.NewMockBatchStateMembershipStore(ctrl)
+	expectNonTerminalMembership(membershipStore, batchStore, "q", nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetBatchStateMembershipStore().Return(membershipStore).AnyTimes()
 
 	controller := newController(t, store, registry)
 	err := controller.Process(context.Background(), newDelivery(t, ctrl, cancelPayload(t, "q/1", "user changed mind"), "q/1"))
@@ -175,11 +205,13 @@ func TestProcess_AlreadyCancelling_SkipsMarkCancelling(t *testing.T) {
 	reqStore.EXPECT().UpdateState(gomock.Any(), "q/1", int32(3), int32(4), entity.RequestStateCancelled).Return(nil)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "q", gomock.Any()).Return(nil, nil)
+	membershipStore := storagemock.NewMockBatchStateMembershipStore(ctrl)
+	expectNonTerminalMembership(membershipStore, batchStore, "q", nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetBatchStateMembershipStore().Return(membershipStore).AnyTimes()
 
 	controller := newController(t, store, registry)
 	err := controller.Process(context.Background(), newDelivery(t, ctrl, cancelPayload(t, "q/1", ""), "q/1"))
@@ -228,11 +260,13 @@ func TestProcess_UnbatchedVersionMismatch_Retryable(t *testing.T) {
 	)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "q", gomock.Any()).Return(nil, nil)
+	membershipStore := storagemock.NewMockBatchStateMembershipStore(ctrl)
+	expectNonTerminalMembership(membershipStore, batchStore, "q", nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetBatchStateMembershipStore().Return(membershipStore).AnyTimes()
 
 	controller := newController(t, store, registry)
 	err := controller.Process(context.Background(), newDelivery(t, ctrl, cancelPayload(t, "q/1", ""), "q/1"))
@@ -276,13 +310,17 @@ func TestProcess_BatchPath_HandsOffToSpeculate(t *testing.T) {
 	reqStore.EXPECT().UpdateState(gomock.Any(), "q/1", int32(2), int32(3), entity.RequestStateCancelling).Return(nil)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "q", gomock.Any()).Return([]entity.Batch{batch}, nil)
+	membershipStore := storagemock.NewMockBatchStateMembershipStore(ctrl)
+	expectNonTerminalMembership(membershipStore, batchStore, "q", []entity.Batch{batch})
+	membershipStore.EXPECT().Add(gomock.Any(), "q", entity.BatchStateCancelling, batch.ID).Return(nil)
 	// Single batch CAS: intent only. No terminal CAS.
 	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(3), int32(4), entity.BatchStateCancelling).Return(nil)
+	membershipStore.EXPECT().Remove(gomock.Any(), "q", entity.BatchStateSpeculating, batch.ID).Return(nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetBatchStateMembershipStore().Return(membershipStore).AnyTimes()
 	// BatchDependentStore and BuildStore must NOT be touched — speculate owns those now.
 
 	controller := newController(t, store, registry)
@@ -325,12 +363,14 @@ func TestProcess_BatchAlreadyCancelling_RepublishesToSpeculate(t *testing.T) {
 	// No request UpdateState — already in Cancelling.
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "q", gomock.Any()).Return([]entity.Batch{batch}, nil)
+	membershipStore := storagemock.NewMockBatchStateMembershipStore(ctrl)
+	expectNonTerminalMembership(membershipStore, batchStore, "q", []entity.Batch{batch})
 	// No batch UpdateState — already in Cancelling.
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetBatchStateMembershipStore().Return(membershipStore).AnyTimes()
 
 	controller := newController(t, store, registry)
 	err := controller.Process(context.Background(), newDelivery(t, ctrl, cancelPayload(t, "q/1", ""), "q/1"))
@@ -356,13 +396,16 @@ func TestProcess_BatchIntentVersionMismatch_Retryable(t *testing.T) {
 	reqStore.EXPECT().UpdateState(gomock.Any(), "q/1", int32(2), int32(3), entity.RequestStateCancelling).Return(nil)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "q", gomock.Any()).Return([]entity.Batch{batch}, nil)
+	membershipStore := storagemock.NewMockBatchStateMembershipStore(ctrl)
+	expectNonTerminalMembership(membershipStore, batchStore, "q", []entity.Batch{batch})
+	membershipStore.EXPECT().Add(gomock.Any(), "q", entity.BatchStateCancelling, batch.ID).Return(nil)
 	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelling).
 		Return(storage.ErrVersionMismatch)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetBatchStateMembershipStore().Return(membershipStore).AnyTimes()
 
 	controller := newController(t, store, registry)
 	err := controller.Process(context.Background(), newDelivery(t, ctrl, cancelPayload(t, "q/1", ""), "q/1"))

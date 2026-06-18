@@ -27,6 +27,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/scorer"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/batchstate"
 	"go.uber.org/zap"
 )
 
@@ -140,11 +141,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	// Atomically update score and state to "scored" in the database
 	newVersion := batch.Version + 1
-	if err := c.store.GetBatchStore().UpdateScoreAndState(ctx, batch.ID, batch.Version, newVersion, batchScore, entity.BatchStateScored); err != nil {
+	if err := batchstate.UpdateScoreAndState(ctx, c.store, batch, newVersion, batchScore, entity.BatchStateScored); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to update score for batch %s: %w", batch.ID, err)
 	}
 	batch.Version = newVersion
+	batch.State = entity.BatchStateScored
 
 	c.logger.Infow("scored batch",
 		"batch_id", batch.ID,

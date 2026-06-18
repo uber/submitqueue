@@ -24,27 +24,29 @@ import (
 )
 
 type mysqlStorage struct {
-	db                   *sql.DB
-	requestStore         storage.RequestStore
-	changeStore          storage.ChangeStore
-	batchStore           storage.BatchStore
-	batchDependentStore  storage.BatchDependentStore
-	buildStore           storage.BuildStore
-	speculationTreeStore storage.SpeculationTreeStore
-	requestLogStore      storage.RequestLogStore
+	db                        *sql.DB
+	requestStore              storage.RequestStore
+	changeStore               storage.ChangeStore
+	batchStore                storage.BatchStore
+	batchStateMembershipStore storage.BatchStateMembershipStore
+	batchDependentStore       storage.BatchDependentStore
+	buildStore                storage.BuildStore
+	speculationTreeStore      storage.SpeculationTreeStore
+	requestLogStore           storage.RequestLogStore
 }
 
 // NewStorage creates a new MySQL storage.
 func NewStorage(db *sql.DB, scope tally.Scope) (storage.Storage, error) {
 	return &mysqlStorage{
-		db:                   db,
-		requestStore:         NewRequestStore(db, scope.SubScope("request_store")),
-		changeStore:          NewChangeStore(db, scope.SubScope("change_store")),
-		batchStore:           NewBatchStore(db, scope.SubScope("batch_store")),
-		batchDependentStore:  NewBatchDependentStore(db, scope.SubScope("batch_dependent_store")),
-		buildStore:           NewBuildStore(db, scope.SubScope("build_store")),
-		speculationTreeStore: NewSpeculationTreeStore(db, scope.SubScope("speculation_tree_store")),
-		requestLogStore:      NewRequestLogStore(db, scope.SubScope("request_log_store")),
+		db:                        db,
+		requestStore:              NewRequestStore(db, scope.SubScope("request_store")),
+		changeStore:               NewChangeStore(db, scope.SubScope("change_store")),
+		batchStore:                NewBatchStore(db, scope.SubScope("batch_store")),
+		batchStateMembershipStore: NewBatchStateMembershipStore(db, scope.SubScope("batch_state_membership_store")),
+		batchDependentStore:       NewBatchDependentStore(db, scope.SubScope("batch_dependent_store")),
+		buildStore:                NewBuildStore(db, scope.SubScope("build_store")),
+		speculationTreeStore:      NewSpeculationTreeStore(db, scope.SubScope("speculation_tree_store")),
+		requestLogStore:           NewRequestLogStore(db, scope.SubScope("request_log_store")),
 	}, nil
 }
 
@@ -61,6 +63,11 @@ func (f *mysqlStorage) GetChangeStore() storage.ChangeStore {
 // GetBatchStore returns the MySQL-backed BatchStore.
 func (f *mysqlStorage) GetBatchStore() storage.BatchStore {
 	return f.batchStore
+}
+
+// GetBatchStateMembershipStore returns the MySQL-backed BatchStateMembershipStore.
+func (f *mysqlStorage) GetBatchStateMembershipStore() storage.BatchStateMembershipStore {
+	return f.batchStateMembershipStore
 }
 
 // GetBatchDependentStore returns the MySQL-backed BatchDependentStore.

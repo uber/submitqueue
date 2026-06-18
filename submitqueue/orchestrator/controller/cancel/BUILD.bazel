@@ -12,6 +12,7 @@ go_library(
         "//submitqueue/core/topickey",
         "//submitqueue/entity",
         "//submitqueue/extension/storage",
+        "//submitqueue/orchestrator/controller/batchstate",
         "@com_github_uber_go_tally//:tally",
         "@org_uber_go_zap//:zap",
     ],

@@ -48,6 +48,12 @@ func (s *StorageContractSuite) SetStorage(store storage.Storage) {
 	s.storage = store
 }
 
+// GetStorage returns the storage instance under test, for implementation-specific
+// suites that need to assert backend-internal behavior alongside the contract tests.
+func (s *StorageContractSuite) GetStorage() storage.Storage {
+	return s.storage
+}
+
 // SetLogger sets the logger for tests
 func (s *StorageContractSuite) SetLogger(log *testutil.TestLogger) {
 	s.log = log
@@ -380,4 +386,93 @@ func (s *StorageContractSuite) TestStorage_ChangeCreate_EmptyDetails() {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, entity.ChangeDetails{}, got[0].Details)
+}
+
+// membershipIDs returns sorted batch IDs for stable comparison.
+func (s *StorageContractSuite) membershipIDs(queue string, state entity.BatchState) []string {
+	t := s.T()
+	ids, err := s.storage.GetBatchStateMembershipStore().ListIDs(s.ctx, queue, state)
+	require.NoError(t, err)
+	sort.Strings(ids)
+	return ids
+}
+
+// TestStorage_BatchStateMembership_AddAndList verifies membership rows are
+// listed by their queue/state key.
+func (s *StorageContractSuite) TestStorage_BatchStateMembership_AddAndList() {
+	t := s.T()
+	ctx := s.ctx
+	const queue = "bsm-list"
+
+	store := s.storage.GetBatchStateMembershipStore()
+	require.NoError(t, store.Add(ctx, queue, entity.BatchStateCreated, queue+"/batch/1"))
+	require.NoError(t, store.Add(ctx, queue, entity.BatchStateCreated, queue+"/batch/2"))
+
+	assert.Equal(t, []string{queue + "/batch/1", queue + "/batch/2"}, s.membershipIDs(queue, entity.BatchStateCreated))
+}
+
+// TestStorage_BatchStateMembership_AddIdempotent verifies repeated Add calls do
+// not duplicate rows.
+func (s *StorageContractSuite) TestStorage_BatchStateMembership_AddIdempotent() {
+	t := s.T()
+	ctx := s.ctx
+	const queue = "bsm-idempotent"
+
+	store := s.storage.GetBatchStateMembershipStore()
+	require.NoError(t, store.Add(ctx, queue, entity.BatchStateCreated, queue+"/batch/1"))
+	require.NoError(t, store.Add(ctx, queue, entity.BatchStateCreated, queue+"/batch/1"))
+
+	assert.Equal(t, []string{queue + "/batch/1"}, s.membershipIDs(queue, entity.BatchStateCreated))
+}
+
+// TestStorage_BatchStateMembership_Remove verifies Remove is idempotent and
+// deletes only the specified row.
+func (s *StorageContractSuite) TestStorage_BatchStateMembership_Remove() {
+	t := s.T()
+	ctx := s.ctx
+	const queue = "bsm-remove"
+
+	store := s.storage.GetBatchStateMembershipStore()
+	require.NoError(t, store.Add(ctx, queue, entity.BatchStateCreated, queue+"/batch/1"))
+	require.NoError(t, store.Add(ctx, queue, entity.BatchStateCreated, queue+"/batch/2"))
+	require.NoError(t, store.Remove(ctx, queue, entity.BatchStateCreated, queue+"/batch/1"))
+	require.NoError(t, store.Remove(ctx, queue, entity.BatchStateCreated, queue+"/batch/1"))
+
+	assert.Equal(t, []string{queue + "/batch/2"}, s.membershipIDs(queue, entity.BatchStateCreated))
+}
+
+// TestStorage_BatchStateMembership_QueueScoped verifies ListIDs never returns
+// rows from another queue.
+func (s *StorageContractSuite) TestStorage_BatchStateMembership_QueueScoped() {
+	t := s.T()
+	ctx := s.ctx
+	const queueA = "bsm-scoped-a"
+	const queueB = "bsm-scoped-b"
+
+	store := s.storage.GetBatchStateMembershipStore()
+	require.NoError(t, store.Add(ctx, queueA, entity.BatchStateCreated, queueA+"/batch/1"))
+	require.NoError(t, store.Add(ctx, queueB, entity.BatchStateCreated, queueB+"/batch/1"))
+	require.NoError(t, store.Add(ctx, queueB, entity.BatchStateCreated, queueB+"/batch/2"))
+
+	assert.Equal(t, []string{queueA + "/batch/1"}, s.membershipIDs(queueA, entity.BatchStateCreated))
+	assert.Equal(t, []string{queueB + "/batch/1", queueB + "/batch/2"}, s.membershipIDs(queueB, entity.BatchStateCreated))
+}
+
+// TestStorage_BatchStateMembership_StateScoped verifies ListIDs is scoped by state.
+func (s *StorageContractSuite) TestStorage_BatchStateMembership_StateScoped() {
+	t := s.T()
+	ctx := s.ctx
+	const queue = "bsm-state-scoped"
+
+	store := s.storage.GetBatchStateMembershipStore()
+	require.NoError(t, store.Add(ctx, queue, entity.BatchStateCreated, queue+"/batch/1"))
+	require.NoError(t, store.Add(ctx, queue, entity.BatchStateSpeculating, queue+"/batch/2"))
+
+	assert.Equal(t, []string{queue + "/batch/1"}, s.membershipIDs(queue, entity.BatchStateCreated))
+	assert.Equal(t, []string{queue + "/batch/2"}, s.membershipIDs(queue, entity.BatchStateSpeculating))
+}
+
+// TestStorage_BatchStateMembership_UnknownKey returns an empty set for a key with no rows.
+func (s *StorageContractSuite) TestStorage_BatchStateMembership_UnknownKey() {
+	assert.Empty(s.T(), s.membershipIDs("bsm-does-not-exist", entity.BatchStateCreated))
 }
