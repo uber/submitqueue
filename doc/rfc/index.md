@@ -20,4 +20,4 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 
 ## Runway
 
-- [Runway Workflow](runway/workflow.md) - Landing service: check request mergeability, land scored batches, publish results back to SubmitQueue
+- [Runway Workflow](runway/workflow.md) - Landing service: merge-conflict checking and merging on behalf of SubmitQueue
