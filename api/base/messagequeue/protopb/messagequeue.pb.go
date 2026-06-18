@@ -41,37 +41,40 @@ var file_messagequeue_proto_extTypes = []protoimpl.ExtensionInfo{
 		ExtendedType:  (*descriptorpb.MessageOptions)(nil),
 		ExtensionType: ([]string)(nil),
 		Field:         50001,
-		Name:          "uber.base.messagequeue.topics",
-		Tag:           "bytes,50001,rep,name=topics",
+		Name:          "uber.base.messagequeue.topic_keys",
+		Tag:           "bytes,50001,rep,name=topic_keys",
 		Filename:      "messagequeue.proto",
 	},
 }
 
 // Extension fields to descriptorpb.MessageOptions.
 var (
-	// topics are the canonical wire topic names that carry this message. The
-	// reverse index (topic -> message) is derivable; this is the single source
-	// of truth. The strings match the consumer.TopicKey values used in Go
-	// wiring. Extension field 50001 is in the 50000-99999 range reserved for
+	// topic_keys are the stable logical topic keys that carry this message — not
+	// concrete wire names. Each implementer maps a key to whatever topic name its
+	// broker/queue requires (subject to that backend's naming constraints); our
+	// Go wiring maps it via consumer.TopicRegistry. The reverse index
+	// (key -> message) is derivable; this is the single source of truth.
+	// Extension field 50001 is in the 50000-99999 range reserved for
 	// organization-internal use.
 	//
-	// repeated string topics = 50001;
-	E_Topics = &file_messagequeue_proto_extTypes[0]
+	// repeated string topic_keys = 50001;
+	E_TopicKeys = &file_messagequeue_proto_extTypes[0]
 )
 
 var File_messagequeue_proto protoreflect.FileDescriptor
 
 const file_messagequeue_proto_rawDesc = "" +
 	"\n" +
-	"\x12messagequeue.proto\x12\x16uber.base.messagequeue\x1a google/protobuf/descriptor.proto:9\n" +
-	"\x06topics\x12\x1f.google.protobuf.MessageOptions\x18ц\x03 \x03(\tR\x06topicsBx\n" +
+	"\x12messagequeue.proto\x12\x16uber.base.messagequeue\x1a google/protobuf/descriptor.proto:@\n" +
+	"\n" +
+	"topic_keys\x12\x1f.google.protobuf.MessageOptions\x18ц\x03 \x03(\tR\ttopicKeysBx\n" +
 	"&com.uber.submitqueue.base.messagequeueB\x11MessageQueueProtoP\x01Z9github.com/uber/submitqueue/api/base/messagequeue/protopbb\x06proto3"
 
 var file_messagequeue_proto_goTypes = []any{
 	(*descriptorpb.MessageOptions)(nil), // 0: google.protobuf.MessageOptions
 }
 var file_messagequeue_proto_depIdxs = []int32{
-	0, // 0: uber.base.messagequeue.topics:extendee -> google.protobuf.MessageOptions
+	0, // 0: uber.base.messagequeue.topic_keys:extendee -> google.protobuf.MessageOptions
 	1, // [1:1] is the sub-list for method output_type
 	1, // [1:1] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
