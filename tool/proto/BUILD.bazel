@@ -40,6 +40,12 @@ go_proto_generated_files(
 )
 
 go_proto_generated_files(
+    name = "api_runway_orchestrator",
+    srcs = ["//api/runway/orchestrator/proto:orchestrator.proto"],
+    out_dir = "api_runway_orchestrator",
+)
+
+go_proto_generated_files(
     name = "api_stovepipe_gateway",
     srcs = ["//api/stovepipe/gateway/proto:gateway.proto"],
     imports = ["//api/base/change/proto:change.proto"],
@@ -58,6 +64,7 @@ filegroup(
         ":api_base_change",
         ":api_base_mergestrategy",
         ":api_base_messagequeue",
+        ":api_runway_orchestrator",
         ":api_stovepipe_gateway",
         ":api_stovepipe_orchestrator",
         ":api_submitqueue_gateway",

@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"sync"
@@ -27,6 +28,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
+	pb "github.com/uber/submitqueue/api/runway/orchestrator/protopb"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
@@ -36,10 +38,24 @@ import (
 	"github.com/uber/submitqueue/runway/core/topickey"
 	"github.com/uber/submitqueue/runway/extension/vcs"
 	"github.com/uber/submitqueue/runway/extension/vcs/noop"
+	"github.com/uber/submitqueue/runway/orchestrator/controller"
 	"github.com/uber/submitqueue/runway/orchestrator/controller/merge"
 	"github.com/uber/submitqueue/runway/orchestrator/controller/mergeconflictcheck"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 )
+
+// OrchestratorServer wraps the controller and implements the gRPC service interface.
+type OrchestratorServer struct {
+	pb.UnimplementedRunwayOrchestratorServer
+	pingController *controller.PingController
+}
+
+// Ping delegates to the controller.
+func (s *OrchestratorServer) Ping(ctx context.Context, req *pb.PingRequest) (*pb.PingResponse, error) {
+	return s.pingController.Ping(ctx, req)
+}
 
 // noopVCSFactory adapts the noop VCS into the vcs.Factory interface.
 type noopVCSFactory struct {
@@ -175,18 +191,63 @@ func run() error {
 		return fmt.Errorf("failed to start primary consumer: %w", err)
 	}
 
-	fmt.Println("Runway orchestrator server is running (consumer-only, no gRPC)")
+	fmt.Println("Runway orchestrator server is running (consumer + gRPC)")
 	fmt.Println("Press Ctrl+C to stop, or send a SIGTERM.")
 
-	<-ctx.Done()
-	fmt.Println("Shutting down runway orchestrator server due to interruption signal...")
+	grpcServer := grpc.NewServer()
 
-	stopErr := primaryConsumer.Stop(30000)
-	if stopErr != nil {
-		return fmt.Errorf("failed to stop consumer: %w", stopErr)
+	pingController := controller.NewPingController(logger, scope)
+	srv := &OrchestratorServer{
+		pingController: pingController,
+	}
+	pb.RegisterRunwayOrchestratorServer(grpcServer, srv)
+
+	reflection.Register(grpcServer)
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = ":8085"
+	}
+	listener, err := net.Listen("tcp", port)
+	if err != nil {
+		return fmt.Errorf("failed to listen on port %s: %w", port, err)
 	}
 
-	return ctx.Err()
+	fmt.Printf("Runway orchestrator gRPC server is running on %s\n", port)
+
+	serverErrCh := make(chan error, 1)
+	go func() {
+		serverErrCh <- grpcServer.Serve(listener)
+	}()
+
+	var serverErr error
+	select {
+	case <-ctx.Done():
+		fmt.Println("Shutting down runway orchestrator server due to interruption signal...")
+
+		err = ctx.Err()
+
+		grpcServer.GracefulStop()
+		serverErr = <-serverErrCh
+	case serverErr = <-serverErrCh:
+		fmt.Println("Shutting down runway orchestrator server due to critical gRPC server error...")
+		cancel()
+	}
+
+	if serverErr != nil {
+		serverErr = fmt.Errorf("gRPC server exited with error: %w", serverErr)
+	}
+
+	primaryStopErr := primaryConsumer.Stop(30000)
+	if primaryStopErr != nil {
+		primaryStopErr = fmt.Errorf("failed to stop consumer: %w", primaryStopErr)
+	}
+
+	if primaryStopErr != nil || serverErr != nil {
+		err = errors.Join(primaryStopErr, serverErr)
+	}
+
+	return err
 }
 
 func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRegistry, error) {

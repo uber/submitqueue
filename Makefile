@@ -37,7 +37,7 @@ GOIMPORTS_VERSION ?= v0.33.0
 # (the out_dir convention in tool/proto/BUILD.bazel) and copied back here. A
 # package may hold multiple .proto files (e.g. an RPC contract plus messagequeue
 # contracts); all generated stubs land in the same protopb/ dir.
-PROTO_PACKAGES = api/base/change api/base/mergestrategy api/base/messagequeue api/submitqueue/gateway api/submitqueue/orchestrator api/stovepipe/gateway api/stovepipe/orchestrator
+PROTO_PACKAGES = api/base/change api/base/mergestrategy api/base/messagequeue api/runway/orchestrator api/submitqueue/gateway api/submitqueue/orchestrator api/stovepipe/gateway api/stovepipe/orchestrator
 
 # Set REPO_ROOT for docker-compose
 export REPO_ROOT := $(shell pwd)

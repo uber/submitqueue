@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/example/runway/orchestrator/server",
     visibility = ["//visibility:private"],
     deps = [
+        "//api/runway/orchestrator/protopb",
         "//platform/consumer",
         "//platform/errs",
         "//platform/errs/generic",
@@ -15,10 +16,13 @@ go_library(
         "//runway/core/topickey",
         "//runway/extension/vcs",
         "//runway/extension/vcs/noop",
+        "//runway/orchestrator/controller",
         "//runway/orchestrator/controller/merge",
         "//runway/orchestrator/controller/mergeconflictcheck",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_uber_go_tally//:tally",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//reflection",
         "@org_uber_go_zap//:zap",
     ],
 )
