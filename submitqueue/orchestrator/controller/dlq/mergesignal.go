@@ -1,0 +1,108 @@
+// Copyright (c) 2025 Uber Technologies, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package dlq
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/uber-go/tally"
+	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	"go.uber.org/zap"
+)
+
+// mergeSignalController is the DLQ reconciler for the mergesignal topic. Its
+// payload carries a runway MergeResult whose id is the batch id echoed back, so
+// reconciliation fails that batch directly via failBatch (which also fans out
+// to the member requests).
+type mergeSignalController struct {
+	logger        *zap.SugaredLogger
+	metricsScope  tally.Scope
+	store         storage.Storage
+	topicKey      consumer.TopicKey
+	consumerGroup string
+}
+
+// Verify mergeSignalController implements consumer.Controller at compile time.
+var _ consumer.Controller = (*mergeSignalController)(nil)
+
+// NewDLQMergeSignalController builds a DLQ controller for the mergesignal topic.
+func NewDLQMergeSignalController(
+	logger *zap.SugaredLogger,
+	scope tally.Scope,
+	store storage.Storage,
+	topicKey consumer.TopicKey,
+	consumerGroup string,
+) consumer.Controller {
+	name := string(topicKey) + "_controller"
+	return &mergeSignalController{
+		logger:        logger.Named(name),
+		metricsScope:  scope.SubScope(name),
+		store:         store,
+		topicKey:      topicKey,
+		consumerGroup: consumerGroup,
+	}
+}
+
+// Process reconciles a single DLQ delivery for the mergesignal topic.
+func (c *mergeSignalController) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+	const opName = "process"
+
+	op := metrics.Begin(c.metricsScope, opName)
+	defer func() { op.Complete(retErr) }()
+
+	msg := delivery.Message()
+
+	result := &runwaymq.MergeResult{}
+	if err := runwaymq.Unmarshal(msg.Payload, result); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
+		return fmt.Errorf("failed to decode merge result from dlq payload: %w", err)
+	}
+
+	dmeta := delivery.Metadata()
+	c.logger.Warnw("dlq message received",
+		"batch_id", result.Id,
+		"attempt", delivery.Attempt(),
+		"dlq_original_topic", dmeta["dlq.original_topic"],
+		"dlq_failure_count", dmeta["dlq.failure_count"],
+		"dlq_last_error", dmeta["dlq.last_error"],
+	)
+
+	if err := failBatch(ctx, c.store, c.logger, result.Id); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
+		return err
+	}
+
+	metrics.NamedCounter(c.metricsScope, opName, "reconciled", 1)
+	return nil
+}
+
+// Name returns the controller name for logging and metrics.
+func (c *mergeSignalController) Name() string {
+	return string(c.topicKey)
+}
+
+// TopicKey returns the topic key this controller subscribes to.
+func (c *mergeSignalController) TopicKey() consumer.TopicKey {
+	return c.topicKey
+}
+
+// ConsumerGroup returns the consumer group for offset tracking.
+func (c *mergeSignalController) ConsumerGroup() string {
+	return c.consumerGroup
+}

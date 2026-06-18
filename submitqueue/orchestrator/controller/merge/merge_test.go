@@ -25,15 +25,16 @@ import (
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 
+	strategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	"github.com/uber/submitqueue/platform/base/change"
+	"github.com/uber/submitqueue/platform/base/mergestrategy"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/pusher"
-	pushermock "github.com/uber/submitqueue/submitqueue/extension/pusher/mock"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 )
 
@@ -52,42 +53,28 @@ func newDelivery(t *testing.T, ctrl *gomock.Controller, batchID, partitionKey st
 	return delivery
 }
 
-// newRegistry returns a registry where conclude and speculate accept any publish.
-func newRegistry(t *testing.T, ctrl *gomock.Controller, publishErr error) consumer.TopicRegistry {
-	mockPub := queuemock.NewMockPublisher(ctrl)
-	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ string, _ entityqueue.Message) error { return publishErr },
-	).AnyTimes()
-	mockQ := queuemock.NewMockQueue(ctrl)
-	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
-
-	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
-		{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: mockQ},
-		{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
-	})
-	require.NoError(t, err)
-	return registry
-}
-
-// newPusherFactory wraps a Pusher in a factory that returns it for any entityqueue.
-func newPusherFactory(ctrl *gomock.Controller, p pusher.Pusher) pusher.Factory {
-	f := pushermock.NewMockFactory(ctrl)
-	f.EXPECT().For(gomock.Any()).Return(p, nil).AnyTimes()
-	return f
+func newController(t *testing.T, store *storagemock.MockStorage, registry consumer.TopicRegistry) *Controller {
+	return NewController(
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+		store,
+		registry,
+		runwaymq.TopicKeyMerge,
+		topickey.TopicKeyMerge,
+		"orchestrator-merge",
+	)
 }
 
 func TestNewController(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
-	c := NewController(
-		zaptest.NewLogger(t).Sugar(),
-		tally.NoopScope,
-		store,
-		newRegistry(t, ctrl, nil),
-		newPusherFactory(ctrl, pushermock.NewMockPusher(ctrl)),
-		topickey.TopicKeyMerge,
-		"orchestrator-merge",
+	q := queuemock.NewMockQueue(ctrl)
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "merge", Queue: q}},
 	)
+	require.NoError(t, err)
+
+	c := newController(t, store, registry)
 
 	require.NotNil(t, c)
 	assert.Equal(t, topickey.TopicKeyMerge, c.TopicKey())
@@ -96,282 +83,148 @@ func TestNewController(t *testing.T) {
 	var _ consumer.Controller = c
 }
 
-func TestController_Process_SuccessfulMerge(t *testing.T) {
+func TestProcess_PublishesFullPayloadToRunway(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	const reqID = "test-queue/1"
 	const batchID = "test-queue/batch/1"
-
+	req1 := entity.Request{
+		ID:           "test-queue/1",
+		Queue:        "test-queue",
+		Change:       change.Change{URIs: []string{"github://uber/repo/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+		LandStrategy: mergestrategy.MergeStrategySquashRebase,
+	}
+	req2 := entity.Request{
+		ID:           "test-queue/2",
+		Queue:        "test-queue",
+		Change:       change.Change{URIs: []string{"github://uber/repo/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},
+		LandStrategy: mergestrategy.MergeStrategyRebase,
+	}
 	batch := entity.Batch{
 		ID:       batchID,
 		Queue:    "test-queue",
-		Contains: []string{reqID},
+		Contains: []string{req1.ID, req2.ID},
 		State:    entity.BatchStateMerging,
 		Version:  4,
 	}
-	change := change.Change{URIs: []string{"github://o/r/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batchID).Return(batch, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batchID, int32(4), int32(5), entity.BatchStateSucceeded).Return(nil)
+	reqStore := storagemock.NewMockRequestStore(ctrl)
+	reqStore.EXPECT().Get(gomock.Any(), req1.ID).Return(req1, nil)
+	reqStore.EXPECT().Get(gomock.Any(), req2.ID).Return(req2, nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 
-	mockPusher := pushermock.NewMockPusher(ctrl)
-	mockPusher.EXPECT().Push(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, batches []entity.Batch) (entity.PushResult, error) {
-			require.Len(t, batches, 1)
-			assert.Equal(t, batch.ID, batches[0].ID)
-			return entity.PushResult{Batches: []entity.BatchOutcome{{
-				BatchID: batch.ID,
-				Outcomes: []entity.ChangeOutcome{{
-					Change:     change,
-					Status:     entity.OutcomeStatusCommitted,
-					CommitSHAs: []string{"deadbeef"},
-				}},
-			}}}, nil
+	var gotTopic string
+	var gotPayload []byte
+	pub := queuemock.NewMockPublisher(ctrl)
+	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, topic string, msg entityqueue.Message) error {
+			gotTopic = topic
+			gotPayload = msg.Payload
+			return nil
 		},
 	)
-
-	c := NewController(
-		zaptest.NewLogger(t).Sugar(),
-		tally.NoopScope,
-		store,
-		newRegistry(t, ctrl, nil),
-		newPusherFactory(ctrl, mockPusher),
-		topickey.TopicKeyMerge,
-		"orchestrator-merge",
+	q := queuemock.NewMockQueue(ctrl)
+	q.EXPECT().Publisher().Return(pub).AnyTimes()
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "merge", Queue: q}},
 	)
-
-	err := c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue))
 	require.NoError(t, err)
+
+	c := newController(t, store, registry)
+	require.NoError(t, c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue)))
+
+	// Full payload published to runway, keyed by the batch id (the correlation id).
+	assert.Equal(t, "merge", gotTopic)
+	got := &runwaymq.MergeRequest{}
+	require.NoError(t, runwaymq.Unmarshal(gotPayload, got))
+	assert.Equal(t, batch.ID, got.Id)
+	assert.Equal(t, batch.Queue, got.QueueName)
+	require.Len(t, got.Steps, 2)
+	// One step per member request, in Contains order, attributed by request id.
+	assert.Equal(t, req1.ID, got.Steps[0].StepId)
+	require.Len(t, got.Steps[0].Changes, 1)
+	assert.Equal(t, req1.Change.URIs, got.Steps[0].Changes[0].Uris)
+	assert.Equal(t, strategypb.Strategy_SQUASH_REBASE, got.Steps[0].Strategy)
+	assert.Equal(t, req2.ID, got.Steps[1].StepId)
+	require.Len(t, got.Steps[1].Changes, 1)
+	assert.Equal(t, req2.Change.URIs, got.Steps[1].Changes[0].Uris)
+	assert.Equal(t, strategypb.Strategy_REBASE, got.Steps[1].Strategy)
 }
 
-// TestController_Process_ForwardsBatchToPusher verifies the controller forwards
-// the batch identity (with its full Contains, in order) to the pusher, which
-// resolves the changes itself. Change resolution order is the pusher's concern,
-// covered by the git pusher tests.
-func TestController_Process_ForwardsBatchToPusher(t *testing.T) {
-	ctrl := gomock.NewController(t)
-
-	const batchID = "test-queue/batch/multi"
-	requestIDs := []string{"test-queue/1", "test-queue/2", "test-queue/3"}
-
-	batch := entity.Batch{
-		ID:       batchID,
-		Queue:    "test-queue",
-		Contains: requestIDs,
-		State:    entity.BatchStateMerging,
-		Version:  1,
-	}
-
-	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().Get(gomock.Any(), batchID).Return(batch, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batchID, int32(1), int32(2), entity.BatchStateSucceeded).Return(nil)
-
-	store := storagemock.NewMockStorage(ctrl)
-	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
-
-	mockPusher := pushermock.NewMockPusher(ctrl)
-	mockPusher.EXPECT().Push(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, batches []entity.Batch) (entity.PushResult, error) {
-			require.Len(t, batches, 1)
-			assert.Equal(t, requestIDs, batches[0].Contains, "batch forwarded with Contains in order")
-			return entity.PushResult{Batches: []entity.BatchOutcome{{BatchID: batchID}}}, nil
-		},
-	)
-
-	c := NewController(
-		zaptest.NewLogger(t).Sugar(),
-		tally.NoopScope,
-		store,
-		newRegistry(t, ctrl, nil),
-		newPusherFactory(ctrl, mockPusher),
-		topickey.TopicKeyMerge,
-		"orchestrator-merge",
-	)
-
-	err := c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue))
-	require.NoError(t, err)
-}
-
-func TestController_Process_PushConflictMarksBatchFailed(t *testing.T) {
-	ctrl := gomock.NewController(t)
-
-	const reqID = "test-queue/2"
-	const batchID = "test-queue/batch/2"
-
-	batch := entity.Batch{
-		ID:       batchID,
-		Queue:    "test-queue",
-		Contains: []string{reqID},
-		State:    entity.BatchStateMerging,
-		Version:  3,
-	}
-
-	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().Get(gomock.Any(), batchID).Return(batch, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batchID, int32(3), int32(4), entity.BatchStateFailed).Return(nil)
-
-	store := storagemock.NewMockStorage(ctrl)
-	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
-
-	mockPusher := pushermock.NewMockPusher(ctrl)
-	mockPusher.EXPECT().Push(gomock.Any(), gomock.Any()).Return(
-		entity.PushResult{},
-		fmt.Errorf("apply: %w", pusher.ErrConflict),
-	)
-
-	c := NewController(
-		zaptest.NewLogger(t).Sugar(),
-		tally.NoopScope,
-		store,
-		newRegistry(t, ctrl, nil),
-		newPusherFactory(ctrl, mockPusher),
-		topickey.TopicKeyMerge,
-		"orchestrator-merge",
-	)
-
-	err := c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue))
-	require.NoError(t, err, "conflict ack-s the message; failure is recorded on the batch")
-}
-
-func TestController_Process_PushInfraFailureReturnsError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-
-	const reqID = "test-queue/3"
-	const batchID = "test-queue/batch/3"
-
-	batch := entity.Batch{
-		ID:       batchID,
-		Queue:    "test-queue",
-		Contains: []string{reqID},
-		State:    entity.BatchStateMerging,
-		Version:  1,
-	}
-
-	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().Get(gomock.Any(), batchID).Return(batch, nil)
-
-	store := storagemock.NewMockStorage(ctrl)
-	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
-
-	mockPusher := pushermock.NewMockPusher(ctrl)
-	mockPusher.EXPECT().Push(gomock.Any(), gomock.Any()).Return(
-		entity.PushResult{},
-		fmt.Errorf("ssh: connection refused"),
-	)
-
-	c := NewController(
-		zaptest.NewLogger(t).Sugar(),
-		tally.NoopScope,
-		store,
-		newRegistry(t, ctrl, nil),
-		newPusherFactory(ctrl, mockPusher),
-		topickey.TopicKeyMerge,
-		"orchestrator-merge",
-	)
-
-	err := c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue))
-	require.Error(t, err)
-}
-
-func TestController_Process_TerminalBatchSkipsPushButFansOut(t *testing.T) {
+func TestProcess_HaltedBatchSkips(t *testing.T) {
 	for _, state := range []entity.BatchState{
 		entity.BatchStateSucceeded,
 		entity.BatchStateFailed,
 		entity.BatchStateCancelled,
+		entity.BatchStateCancelling,
 	} {
 		t.Run(string(state), func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 
-			const batchID = "test-queue/batch/4"
-
-			batch := entity.Batch{
-				ID:      batchID,
-				Queue:   "test-queue",
-				State:   state,
-				Version: 7,
-			}
+			const batchID = "test-queue/batch/halted"
+			batch := entity.Batch{ID: batchID, Queue: "test-queue", State: state, Version: 7}
 
 			batchStore := storagemock.NewMockBatchStore(ctrl)
 			batchStore.EXPECT().Get(gomock.Any(), batchID).Return(batch, nil)
 
+			// No request-store reads and no publish for a halted batch: gomock
+			// fails if GetRequestStore or Publish is touched.
 			store := storagemock.NewMockStorage(ctrl)
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
-			// Push must NOT be called for an already-terminal batch.
-			mockPusher := pushermock.NewMockPusher(ctrl)
-
-			c := NewController(
-				zaptest.NewLogger(t).Sugar(),
-				tally.NoopScope,
-				store,
-				newRegistry(t, ctrl, nil),
-				newPusherFactory(ctrl, mockPusher),
-				topickey.TopicKeyMerge,
-				"orchestrator-merge",
+			pub := queuemock.NewMockPublisher(ctrl)
+			q := queuemock.NewMockQueue(ctrl)
+			q.EXPECT().Publisher().Return(pub).AnyTimes()
+			registry, err := consumer.NewTopicRegistry(
+				[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "merge", Queue: q}},
 			)
-
-			err := c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue))
 			require.NoError(t, err)
+
+			c := newController(t, store, registry)
+			require.NoError(t, c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue)))
 		})
 	}
 }
 
-// BatchStateCancelling must be silently acked: no push, and crucially no
-// fan-out (no publish to conclude or speculate). The cancel controller owns
-// the terminal write and the downstream publishes; conclude would error on
-// a non-terminal Cancelling batch.
-func TestController_Process_CancellingShortCircuit(t *testing.T) {
+func TestProcess_PublishFailureIsRetryable(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	const batchID = "test-queue/batch/4c"
-
-	batch := entity.Batch{
-		ID:      batchID,
-		Queue:   "test-queue",
-		State:   entity.BatchStateCancelling,
-		Version: 7,
-	}
+	const batchID = "test-queue/batch/2"
+	req := entity.Request{ID: "test-queue/1", Queue: "test-queue", LandStrategy: mergestrategy.MergeStrategyRebase}
+	batch := entity.Batch{ID: batchID, Queue: "test-queue", Contains: []string{req.ID}, State: entity.BatchStateMerging, Version: 1}
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batchID).Return(batch, nil)
+	reqStore := storagemock.NewMockRequestStore(ctrl)
+	reqStore.EXPECT().Get(gomock.Any(), req.ID).Return(req, nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 
-	// Pusher and publisher with no EXPECTs — neither must be called.
-	mockPusher := pushermock.NewMockPusher(ctrl)
-	mockPub := queuemock.NewMockPublisher(ctrl)
-	mockQ := queuemock.NewMockQueue(ctrl)
-	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
-
-	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
-		{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: mockQ},
-		{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
-	})
-	require.NoError(t, err)
-
-	c := NewController(
-		zaptest.NewLogger(t).Sugar(),
-		tally.NoopScope,
-		store,
-		registry,
-		newPusherFactory(ctrl, mockPusher),
-		topickey.TopicKeyMerge,
-		"orchestrator-merge",
+	pub := queuemock.NewMockPublisher(ctrl)
+	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("enqueue failed"))
+	q := queuemock.NewMockQueue(ctrl)
+	q.EXPECT().Publisher().Return(pub).AnyTimes()
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "merge", Queue: q}},
 	)
-
-	err = c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue))
 	require.NoError(t, err)
+
+	c := newController(t, store, registry)
+	err = c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue))
+	require.Error(t, err)
+	assert.True(t, errs.IsRetryable(err))
 }
 
-func TestController_Process_BatchStoreGetFailureNotRetryable(t *testing.T) {
+func TestProcess_BatchStoreGetFailureNotRetryable(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	const batchID = "test-queue/batch/5"
+	const batchID = "test-queue/batch/3"
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batchID).Return(entity.Batch{}, fmt.Errorf("db connection lost"))
@@ -379,62 +232,14 @@ func TestController_Process_BatchStoreGetFailureNotRetryable(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
-	c := NewController(
-		zaptest.NewLogger(t).Sugar(),
-		tally.NoopScope,
-		store,
-		newRegistry(t, ctrl, nil),
-		newPusherFactory(ctrl, pushermock.NewMockPusher(ctrl)),
-		topickey.TopicKeyMerge,
-		"orchestrator-merge",
+	q := queuemock.NewMockQueue(ctrl)
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "merge", Queue: q}},
 	)
+	require.NoError(t, err)
 
-	err := c.Process(context.Background(), newDelivery(t, ctrl, batchID, "test-queue"))
+	c := newController(t, store, registry)
+	err = c.Process(context.Background(), newDelivery(t, ctrl, batchID, "test-queue"))
 	require.Error(t, err)
 	assert.False(t, errs.IsRetryable(err))
-}
-
-func TestController_Process_PublishFailureSurfaces(t *testing.T) {
-	ctrl := gomock.NewController(t)
-
-	const reqID = "test-queue/7"
-	const batchID = "test-queue/batch/7"
-
-	batch := entity.Batch{
-		ID:       batchID,
-		Queue:    "test-queue",
-		Contains: []string{reqID},
-		State:    entity.BatchStateMerging,
-		Version:  2,
-	}
-
-	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().Get(gomock.Any(), batchID).Return(batch, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batchID, int32(2), int32(3), entity.BatchStateSucceeded).Return(nil)
-
-	store := storagemock.NewMockStorage(ctrl)
-	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
-
-	mockPusher := pushermock.NewMockPusher(ctrl)
-	mockPusher.EXPECT().Push(gomock.Any(), gomock.Any()).Return(
-		entity.PushResult{Batches: []entity.BatchOutcome{{
-			BatchID: batchID,
-			Outcomes: []entity.ChangeOutcome{{
-				Status: entity.OutcomeStatusCommitted, CommitSHAs: []string{"abc"},
-			}},
-		}}}, nil,
-	)
-
-	c := NewController(
-		zaptest.NewLogger(t).Sugar(),
-		tally.NoopScope,
-		store,
-		newRegistry(t, ctrl, fmt.Errorf("queue down")),
-		newPusherFactory(ctrl, mockPusher),
-		topickey.TopicKeyMerge,
-		"orchestrator-merge",
-	)
-
-	err := c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue))
-	require.Error(t, err)
 }
