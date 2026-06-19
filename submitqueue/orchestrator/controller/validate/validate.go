@@ -21,29 +21,32 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
+	changepb "github.com/uber/submitqueue/api/base/change/protopb"
+	strategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
+	"github.com/uber/submitqueue/platform/base/mergestrategy"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	coremetrics "github.com/uber/submitqueue/platform/metrics"
-	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
-	"github.com/uber/submitqueue/submitqueue/extension/mergechecker"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
 
 // Controller handles validate queue messages.
-// It consumes requests, performs validation checks (duplicate detection via the change store,
-// merge conflicts, change metadata fetch), and publishes to the batch stage. Validation logic
-// is extensible to support additional checks. Implements consumer.Controller.
+// It consumes requests, performs local validation checks (duplicate detection via the change store
+// and change metadata fetch), then kicks off the asynchronous merge-conflict check by publishing the
+// full check request to runway's merge-conflict-check queue. Validation logic is extensible to
+// support additional checks. Implements consumer.Controller.
 type Controller struct {
 	logger          *zap.SugaredLogger
 	metricsScope    tally.Scope
 	store           storage.Storage
 	registry        consumer.TopicRegistry
-	mergeCheckers   mergechecker.Factory
 	changeProviders changeprovider.Factory
+	runwayTopicKey  consumer.TopicKey
 	topicKey        consumer.TopicKey
 	consumerGroup   string
 }
@@ -52,13 +55,15 @@ type Controller struct {
 var _ consumer.Controller = (*Controller)(nil)
 
 // NewController creates a new validate controller for the orchestrator.
+// runwayTopicKey is the runway-owned topic the merge-conflict check request is
+// published to (TopicKeyMergeConflictCheck).
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	store storage.Storage,
 	registry consumer.TopicRegistry,
-	mergeCheckers mergechecker.Factory,
 	changeProviders changeprovider.Factory,
+	runwayTopicKey consumer.TopicKey,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
@@ -67,15 +72,16 @@ func NewController(
 		metricsScope:    scope.SubScope("validate_controller"),
 		store:           store,
 		registry:        registry,
-		mergeCheckers:   mergeCheckers,
 		changeProviders: changeProviders,
+		runwayTopicKey:  runwayTopicKey,
 		topicKey:        topicKey,
 		consumerGroup:   consumerGroup,
 	}
 }
 
 // Process processes a validate delivery from the queue.
-// Runs duplicate detection, merge-conflict check, change metadata fetch, then publishes to batch.
+// Runs duplicate detection, change metadata fetch, and change claiming, then kicks off the
+// asynchronous merge-conflict check by publishing the full check request to runway.
 // Returns nil to ack (success or non-retryable rejection), error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
 	op := coremetrics.Begin(c.metricsScope, "process")
@@ -135,27 +141,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return errs.NewUserError(fmt.Errorf("request %s is a duplicate of in-flight request %s", request.ID, dupID))
 	}
 
-	// Merge conflict check
-	mergeChecker, err := c.mergeCheckers.For(mergechecker.Config{QueueName: request.Queue})
-	if err != nil {
-		coremetrics.NamedCounter(c.metricsScope, "process", "merge_check_errors", 1)
-		return fmt.Errorf("failed to build merge checker for queue %s: %w", request.Queue, err)
-	}
-	mergeResult, err := mergeChecker.Check(ctx, request)
-	if err != nil {
-		coremetrics.NamedCounter(c.metricsScope, "process", "merge_check_errors", 1)
-		return fmt.Errorf("merge check failed: %w", err)
-	}
-	if !mergeResult.Mergeable {
-		c.logger.Infow("request not mergeable",
-			"request_id", request.ID,
-			"queue", request.Queue,
-			"reason", mergeResult.Reason,
-		)
-		coremetrics.NamedCounter(c.metricsScope, "process", "not_mergeable", 1)
-		return errs.NewUserError(fmt.Errorf("request %s is not mergeable: %s", request.ID, mergeResult.Reason))
-	}
-
 	// Fetch change metadata
 	changeProvider, err := c.changeProviders.For(changeprovider.Config{QueueName: request.Queue})
 	if err != nil {
@@ -184,15 +169,31 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("failed to claim change records for request %s: %w", request.ID, err)
 	}
 
-	// Publish to batch topic
-	if err := c.publish(ctx, topickey.TopicKeyBatch, request.ID, request.Queue); err != nil {
+	// Kick off the asynchronous merge-conflict check: hand the full check request
+	// to runway via its merge-conflict-check queue, keyed by the request id (the
+	// client-owned correlation id) so a redelivery republishes the same id and the
+	// result correlates straight back. At validate time the check is a single step
+	// (candidate vs target branch).
+	req := &runwaymq.MergeRequest{
+		Id:        request.ID,
+		QueueName: request.Queue,
+		Steps: []*runwaymq.MergeStep{
+			{
+				StepId:   request.ID,
+				Changes:  []*changepb.Change{{Uris: request.Change.URIs}},
+				Strategy: toProtoStrategy(request.LandStrategy),
+			},
+		},
+	}
+	if err := c.publishMergeCheck(ctx, req); err != nil {
 		coremetrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1)
-		return fmt.Errorf("failed to publish to batch: %w", err)
+		// Retryable: the hand-off to runway is what keeps this check alive.
+		return errs.NewRetryableError(fmt.Errorf("failed to publish to runway merge-conflict-check: %w", err))
 	}
 
-	c.logger.Infow("published request to batch",
+	c.logger.Infow("published merge conflict check to runway",
 		"request_id", request.ID,
-		"topic_key", topickey.TopicKeyBatch,
+		"topic_key", c.runwayTopicKey,
 	)
 
 	return nil // Success - message will be acked
@@ -241,24 +242,24 @@ func (c *Controller) checkDuplicate(ctx context.Context, request entity.Request)
 	return "", nil
 }
 
-// publish publishes a request ID to the specified topic key.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, requestID string, partitionKey string) error {
-	rid := entity.RequestID{ID: requestID}
-	payload, err := rid.ToBytes()
+// publishMergeCheck serializes the runway check request and publishes it to the
+// runway merge-conflict-check topic, partitioned by queue.
+func (c *Controller) publishMergeCheck(ctx context.Context, req *runwaymq.MergeRequest) error {
+	payload, err := runwaymq.Marshal(req)
 	if err != nil {
-		return fmt.Errorf("failed to serialize request ID: %w", err)
+		return fmt.Errorf("failed to serialize merge conflict check request: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(requestID, payload, partitionKey, nil)
+	msg := entityqueue.NewMessage(req.Id, payload, req.QueueName, nil)
 
-	q, ok := c.registry.Queue(key)
+	q, ok := c.registry.Queue(c.runwayTopicKey)
 	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", key)
+		return fmt.Errorf("no queue registered for topic key %s", c.runwayTopicKey)
 	}
 
-	topicName, ok := c.registry.TopicName(key)
+	topicName, ok := c.registry.TopicName(c.runwayTopicKey)
 	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", key)
+		return fmt.Errorf("no topic name registered for topic key %s", c.runwayTopicKey)
 	}
 
 	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
@@ -266,6 +267,22 @@ func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, request
 	}
 
 	return nil
+}
+
+// toProtoStrategy maps the shared mergestrategy.MergeStrategy entity to the proto
+// Strategy enum carried on the wire. An unknown strategy maps to DEFAULT, letting
+// runway apply the queue's configured default.
+func toProtoStrategy(s mergestrategy.MergeStrategy) strategypb.Strategy {
+	switch s {
+	case mergestrategy.MergeStrategyRebase:
+		return strategypb.Strategy_REBASE
+	case mergestrategy.MergeStrategySquashRebase:
+		return strategypb.Strategy_SQUASH_REBASE
+	case mergestrategy.MergeStrategyMerge:
+		return strategypb.Strategy_MERGE
+	default:
+		return strategypb.Strategy_DEFAULT
+	}
 }
 
 // claimChanges persists one ChangeRecord per fetched ChangeInfo, capturing the

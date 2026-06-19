@@ -1,22 +1,18 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "dlq",
-    srcs = [
-        "batch.go",
-        "buildsignal.go",
-        "dlq.go",
-        "log.go",
-        "mergeconflictsignal.go",
-        "mergesignal.go",
-        "request.go",
-    ],
-    importpath = "github.com/uber/submitqueue/submitqueue/orchestrator/controller/dlq",
+    name = "mergeconflictsignal",
+    srcs = ["mergeconflictsignal.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/orchestrator/controller/mergeconflictsignal",
     visibility = ["//visibility:public"],
     deps = [
         "//api/runway/messagequeue",
+        "//api/runway/messagequeue/protopb",  # keep
+        "//platform/base/messagequeue",
         "//platform/consumer",
         "//platform/metrics",
+        "//submitqueue/core/request",
+        "//submitqueue/core/topickey",
         "//submitqueue/entity",
         "//submitqueue/extension/storage",
         "@com_github_uber_go_tally//:tally",
@@ -25,27 +21,17 @@ go_library(
 )
 
 go_test(
-    name = "dlq_test",
-    srcs = [
-        "batch_test.go",
-        "buildsignal_test.go",
-        "dlq_test.go",
-        "log_test.go",
-        "mergeconflictsignal_test.go",
-        "mergesignal_test.go",
-        "request_test.go",
-    ],
-    embed = [":dlq"],
+    name = "mergeconflictsignal_test",
+    srcs = ["mergeconflictsignal_test.go"],
+    embed = [":mergeconflictsignal"],
     deps = [
         "//api/runway/messagequeue",
         "//api/runway/messagequeue/protopb",  # keep
         "//platform/base/messagequeue",
         "//platform/consumer",
-        "//platform/errs",
         "//platform/extension/messagequeue/mock",
         "//submitqueue/core/topickey",
         "//submitqueue/entity",
-        "//submitqueue/extension/storage",
         "//submitqueue/extension/storage/mock",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

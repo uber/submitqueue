@@ -24,6 +24,18 @@ go_proto_generated_files(
 )
 
 go_proto_generated_files(
+    name = "api_runway_messagequeue",
+    srcs = ["//api/runway/messagequeue/proto:merge.proto"],
+    gen_services = False,
+    imports = [
+        "//api/base/change/proto:change.proto",
+        "//api/base/mergestrategy/proto:mergestrategy.proto",
+        "//api/base/messagequeue/proto:messagequeue.proto",
+    ],
+    out_dir = "api_runway_messagequeue",
+)
+
+go_proto_generated_files(
     name = "api_submitqueue_gateway",
     srcs = ["//api/submitqueue/gateway/proto:gateway.proto"],
     imports = [
@@ -58,6 +70,7 @@ filegroup(
         ":api_base_change",
         ":api_base_mergestrategy",
         ":api_base_messagequeue",
+        ":api_runway_messagequeue",
         ":api_stovepipe_gateway",
         ":api_stovepipe_orchestrator",
         ":api_submitqueue_gateway",
