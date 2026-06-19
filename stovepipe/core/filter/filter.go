@@ -15,19 +15,14 @@
 // Package filter implements a filter for commit events.
 package filter
 
-import (
-	"strings"
+import "strings"
 
-	"github.com/uber/submitqueue/stovepipe/entity"
-)
-
-// Config controls which VCS URIs are watched.
-// WatchedURIPrefixes is a list of URI prefixes to match against ChangeEvent.URI.
-// Example: "git://github.com/uber/go-code/refs/heads/main"
-// watches all commits on the main branch of uber/go-code.
-func ShouldProcess(event entity.ChangeEvent, watchedPrefixes []string) bool {
+// ShouldProcess reports whether a commit URI should be processed by the pipeline.
+// watchedPrefixes is a list of URI prefixes to match against the commit URI.
+// Example prefix: "git://github.com/uber/go-code/refs/heads/main"
+func ShouldProcess(uri string, watchedPrefixes []string) bool {
 	for _, prefix := range watchedPrefixes {
-		if strings.HasPrefix(event.URI, prefix) {
+		if strings.HasPrefix(uri, prefix) {
 			return true
 		}
 	}

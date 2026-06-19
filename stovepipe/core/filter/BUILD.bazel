@@ -5,5 +5,4 @@ go_library(
     srcs = ["filter.go"],
     importpath = "github.com/uber/submitqueue/stovepipe/core/filter",
     visibility = ["//visibility:public"],
-    deps = ["//stovepipe/entity"],
 )

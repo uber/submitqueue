@@ -5,5 +5,4 @@ go_library(
     srcs = ["extension.go"],
     importpath = "github.com/uber/submitqueue/stovepipe/extension",
     visibility = ["//visibility:public"],
-    deps = ["//stovepipe/entity"],
 )
