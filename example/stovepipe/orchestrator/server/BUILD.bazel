@@ -21,6 +21,7 @@ go_library(
         "//stovepipe/core/topickey",
         "//stovepipe/orchestrator/controller",
         "//stovepipe/orchestrator/controller/start",
+        "//stovepipe/orchestrator/controller/validate",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_uber_go_tally//:tally",
         "@org_golang_google_grpc//:grpc",
