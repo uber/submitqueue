@@ -1,0 +1,8 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "filter",
+    srcs = ["filter.go"],
+    importpath = "github.com/uber/submitqueue/stovepipe/core/filter",
+    visibility = ["//visibility:public"],
+)

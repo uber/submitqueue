@@ -12,5 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package entity holds Stovepipe-specific domain types (distinct from shared repo entity/).
-package entity
+// Package filter implements a filter for commit events.
+package filter
+
+import "strings"
+
+// ShouldProcess reports whether a commit URI should be processed by the pipeline.
+// watchedPrefixes is a list of URI prefixes to match against the commit URI.
+// Example prefix: "git://github.com/uber/go-code/refs/heads/main"
+func ShouldProcess(uri string, watchedPrefixes []string) bool {
+	for _, prefix := range watchedPrefixes {
+		if strings.HasPrefix(uri, prefix) {
+			return true
+		}
+	}
+	return false
+}
