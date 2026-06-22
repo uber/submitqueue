@@ -24,6 +24,7 @@ go_test(
     deps = [
         "//api/base/change/protopb",
         "//api/base/mergestrategy/protopb",
+        "//api/runway/messagequeue/protopb",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@org_golang_google_protobuf//proto",
