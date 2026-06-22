@@ -1,7 +1,7 @@
 load("@rules_go//go:def.bzl", "go_binary", "go_library")
 
 go_library(
-    name = "client_lib",
+    name = "orchestrator_lib",
     srcs = ["main.go"],
     importpath = "github.com/uber/submitqueue/example/runway/orchestrator/client",
     visibility = ["//visibility:private"],
@@ -13,7 +13,7 @@ go_library(
 )
 
 go_binary(
-    name = "client",
-    embed = [":client_lib"],
+    name = "orchestrator",
+    embed = [":orchestrator_lib"],
     visibility = ["//visibility:public"],
 )
