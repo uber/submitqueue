@@ -10,6 +10,8 @@ The two queues operate at different granularities:
 
 - **merge** is batch-level. A merge request carries the same payload but Runway commits the result and reports the revisions it produced (per-step output IDs).
 
+A third operation — **promote** — pushes a commit to a ref as-is (`--ff-only`). The primary use case is forwarding a landed SHA from `main` to `verified/main` without creating a new merge commit. Promote reuses the merge queue with the `PROMOTE` merge strategy; Runway fast-forwards the target ref and reports the same SHA back as the output ID.
+
 These are independent input-output flows. A merge-conflict check can run without a merge ever running, and a merge does not depend on a prior check.
 
 ## Branch serialization
