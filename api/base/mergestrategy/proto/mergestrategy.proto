@@ -36,4 +36,8 @@ enum Strategy {
     SQUASH_REBASE = 2;
     // Merge commits into the target branch by creating a separate merge commit, preserving commit history along with hashes.
     MERGE = 3;
+    // Integrate the exact revision as-is, with no content transform — advance the target branch to an already-existing
+    // commit rather than producing new revisions. The implementer maps it to its backend: git fast-forward, Mercurial
+    // bookmark advance, Subversion/Perforce copy. Used to promote an already-landed/verified commit onto another branch.
+    PROMOTE = 4;
 }

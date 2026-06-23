@@ -53,6 +53,10 @@ const (
 	Strategy_SQUASH_REBASE Strategy = 2
 	// Merge commits into the target branch by creating a separate merge commit, preserving commit history along with hashes.
 	Strategy_MERGE Strategy = 3
+	// Integrate the exact revision as-is, with no content transform — advance the target branch to an already-existing
+	// commit rather than producing new revisions. The implementer maps it to its backend: git fast-forward, Mercurial
+	// bookmark advance, Subversion/Perforce copy. Used to promote an already-landed/verified commit onto another branch.
+	Strategy_PROMOTE Strategy = 4
 )
 
 // Enum value maps for Strategy.
@@ -62,12 +66,14 @@ var (
 		1: "REBASE",
 		2: "SQUASH_REBASE",
 		3: "MERGE",
+		4: "PROMOTE",
 	}
 	Strategy_value = map[string]int32{
 		"DEFAULT":       0,
 		"REBASE":        1,
 		"SQUASH_REBASE": 2,
 		"MERGE":         3,
+		"PROMOTE":       4,
 	}
 )
 
@@ -102,13 +108,14 @@ var File_mergestrategy_proto protoreflect.FileDescriptor
 
 const file_mergestrategy_proto_rawDesc = "" +
 	"\n" +
-	"\x13mergestrategy.proto\x12\x17uber.base.mergestrategy*A\n" +
+	"\x13mergestrategy.proto\x12\x17uber.base.mergestrategy*N\n" +
 	"\bStrategy\x12\v\n" +
 	"\aDEFAULT\x10\x00\x12\n" +
 	"\n" +
 	"\x06REBASE\x10\x01\x12\x11\n" +
 	"\rSQUASH_REBASE\x10\x02\x12\t\n" +
-	"\x05MERGE\x10\x03B{\n" +
+	"\x05MERGE\x10\x03\x12\v\n" +
+	"\aPROMOTE\x10\x04B{\n" +
 	"'com.uber.submitqueue.base.mergestrategyB\x12MergeStrategyProtoP\x01Z:github.com/uber/submitqueue/api/base/mergestrategy/protopbb\x06proto3"
 
 var (

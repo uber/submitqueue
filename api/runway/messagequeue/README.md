@@ -6,6 +6,10 @@ Payloads are defined as proto3 messages in [`proto/merge.proto`](proto/merge.pro
 
 The shared field types `Change` and `MergeStrategy` come from `api/base/change` and `api/base/mergestrategy`, imported by the contract.
 
+## Merge strategy
+
+Each `MergeStep` carries a `Strategy` (from `api/base/mergestrategy`) naming how that step is integrated into the target branch. `REBASE`, `SQUASH_REBASE`, and `MERGE` *transform* the change onto the branch tip and produce new revisions. `PROMOTE` is different: it integrates the exact revision **as-is**, advancing the target branch to an already-existing commit with no content transform and no new revision. Each backend realizes `PROMOTE` natively — git fast-forward, Mercurial bookmark advance, Subversion/Perforce copy — so for `PROMOTE` a step's `StepOutput.id` is the same revision the request named rather than a freshly created one. It is the strategy a post-merge verifier (e.g. Stovepipe) uses to advance a verified branch like `verified/main` to an already-landed, already-verified commit. `DEFAULT` lets the server pick per queue configuration.
+
 ## Topic keys
 
 The binding between a topic key and its payload lives in each message's `topic_keys` option (defined in `api/base/messagequeue`); `TopicKeys` reads it back by reflection. A topic key is a stable logical name, not a concrete wire topic — each implementer maps the key to whatever topic name its broker/queue requires. Our Go wiring maps it via `consumer.TopicRegistry`.

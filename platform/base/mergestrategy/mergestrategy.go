@@ -14,7 +14,8 @@
 
 // Package mergestrategy holds the shared source-control integration strategy
 // used across SubmitQueue, runway, and other repo-local domains. It names how a
-// change is integrated into the target branch (rebase, squash-rebase, merge).
+// change is integrated into the target branch (rebase, squash-rebase, merge,
+// promote).
 package mergestrategy
 
 // MergeStrategy defines the possible source control integration methods.
@@ -29,4 +30,6 @@ const (
 	MergeStrategySquashRebase MergeStrategy = "squash_rebase"
 	// MergeStrategyMerge merges commits into the target branch by creating a separate merge commit, preserving the commit history along with hashes.
 	MergeStrategyMerge MergeStrategy = "merge"
+	// MergeStrategyPromote integrates the exact revision as-is, with no content transform — it advances the target branch to an already-existing commit rather than producing new revisions. The implementer maps it to its backend (git fast-forward, Mercurial bookmark advance, Subversion/Perforce copy). Used to promote an already-landed/verified commit onto another branch.
+	MergeStrategyPromote MergeStrategy = "promote"
 )
