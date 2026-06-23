@@ -8,7 +8,7 @@ The two queues operate at different granularities:
 
 - **merge-conflict-check** is request-level. A merge request carries an ordered sequence of steps (changes + merge strategy). Runway performs a read-only trial merge and publishes per-step mergeability results back.
 
-- **merge** is batch-level. A merge request carries the same payload but Runway commits the result and reports the revisions it produced (per-step output IDs).
+- **merge** is batch-level. A merge request carries the same payload but Runway commits the result and reports the revisions it produced (per-step output IDs). The merge strategy on each step determines the VCS operation: `REBASE`, `SQUASH_REBASE`, and `MERGE` transform changes onto the target branch; `PROMOTE` fast-forwards the target ref to an already-existing commit as-is (e.g. pushing a landed SHA from `main` to `verified/main`).
 
 These are independent input-output flows. A merge-conflict check can run without a merge ever running, and a merge does not depend on a prior check.
 
