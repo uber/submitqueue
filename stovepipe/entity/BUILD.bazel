@@ -2,7 +2,11 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "entity",
-    srcs = ["ingest_request.go"],
+    srcs = [
+        "ingest_request.go",
+        "request.go",
+        "request_log.go",
+    ],
     importpath = "github.com/uber/submitqueue/stovepipe/entity",
     visibility = ["//visibility:public"],
     deps = ["//platform/base/change"],
@@ -10,7 +14,11 @@ go_library(
 
 go_test(
     name = "entity_test",
-    srcs = ["ingest_request_test.go"],
+    srcs = [
+        "ingest_request_test.go",
+        "request_log_test.go",
+        "request_test.go",
+    ],
     embed = [":entity"],
     deps = [
         "//platform/base/change",

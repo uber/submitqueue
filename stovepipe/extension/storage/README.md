@@ -1,0 +1,29 @@
+# Storage
+
+Pluggable persistence interfaces for Stovepipe entities. Implementations live under `extension/storage/<impl>/`.
+
+Stovepipe mirrors SubmitQueue's two-store split by service ownership. The orchestrator owns the `RequestStore` — the working pipeline state machine for in-flight commits — and is the only service that writes it. The gateway owns the `RequestLogStore` — the append-only, customer-facing status log — and is the only service that reads or writes it. The orchestrator never touches the request log; it only publishes log events that the gateway persists.
+
+## Optimistic locking contract
+
+Entities that support concurrent mutation carry an `int32 Version` field. Updates are conditional on the version: the write only succeeds if the persisted version matches the caller's expected version. On mismatch, the implementation returns `storage.ErrVersionMismatch`.
+
+**Version arithmetic is owned by the controller, not the store.** Update methods take both `oldVersion` (the where-clause guard) and `newVersion` (the value to write):
+
+```go
+UpdateState(ctx, id, oldVersion, newVersion int32, newState entity.RequestState) error
+```
+
+The store performs a pure conditional write — it does not compute `oldVersion + 1` internally. This keeps the in-memory entity and the persisted row in sync without the storage layer mutating values the caller didn't supply.
+
+### Caller pattern
+
+```go
+newVersion := request.Version + 1
+if err := store.UpdateState(ctx, request.ID, request.Version, newVersion, newState); err != nil {
+    return err // request.Version unchanged on failure — safe to retry
+}
+request.Version = newVersion // only after the write succeeded
+```
+
+The post-success assignment matters whenever the entity is read again later in the same flow. Pre-incrementing in memory before the call is a bug pattern: if the call fails and the caller swallows the error, the in-memory version is now ahead of the database and subsequent updates will fail with `ErrVersionMismatch` for non-obvious reasons.

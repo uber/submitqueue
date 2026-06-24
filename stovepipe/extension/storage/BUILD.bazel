@@ -1,0 +1,13 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "storage",
+    srcs = [
+        "request_log_store.go",
+        "request_store.go",
+        "storage.go",
+    ],
+    importpath = "github.com/uber/submitqueue/stovepipe/extension/storage",
+    visibility = ["//visibility:public"],
+    deps = ["//stovepipe/entity"],
+)
