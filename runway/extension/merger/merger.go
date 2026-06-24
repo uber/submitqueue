@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package vcs defines the pluggable interface for version-control operations
-// that Runway performs on behalf of its callers. Implementations resolve change
-// URIs, apply changes to a target branch, and (for a committing merge) push the
-// result and finalize the change lifecycle (e.g. close PRs).
-package vcs
+// Package merger defines the pluggable interface for version-control merge
+// operations that Runway performs on behalf of its callers. Implementations
+// resolve change URIs, apply changes to a target branch, and (for a committing
+// merge) push the result and finalize the change lifecycle (e.g. close PRs).
+package merger
 
-//go:generate mockgen -source=vcs.go -destination=mock/vcs_mock.go -package=mock
+//go:generate mockgen -source=merger.go -destination=mock/merger_mock.go -package=mock
 
 import (
 	"context"

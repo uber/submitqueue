@@ -3,12 +3,12 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "noop",
     srcs = ["noop.go"],
-    importpath = "github.com/uber/submitqueue/runway/extension/vcs/noop",
+    importpath = "github.com/uber/submitqueue/runway/extension/merger/noop",
     visibility = ["//visibility:public"],
     deps = [
         "//api/runway/messagequeue",
         "//api/runway/messagequeue/protopb",
-        "//runway/extension/vcs",
+        "//runway/extension/merger",
     ],
 )
 

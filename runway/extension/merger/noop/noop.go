@@ -24,10 +24,10 @@ import (
 
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
-	"github.com/uber/submitqueue/runway/extension/vcs"
+	"github.com/uber/submitqueue/runway/extension/merger"
 )
 
-var _ vcs.Merger = (*Merger)(nil)
+var _ merger.Merger = (*Merger)(nil)
 
 // Merger is a no-op implementation that always succeeds.
 type Merger struct {
