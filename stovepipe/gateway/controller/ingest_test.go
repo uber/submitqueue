@@ -30,9 +30,19 @@ import (
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/stovepipe/core/topickey"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 )
+
+// noopLogStore returns a mock RequestLogStore whose Insert silently succeeds. It is used by
+// tests that are not exercising the request-log write path (AnyTimes tolerates zero calls for
+// requests that fail validation before the log is written).
+func noopLogStore(ctrl *gomock.Controller) *storagemock.MockRequestLogStore {
+	store := storagemock.NewMockRequestLogStore(ctrl)
+	store.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	return store
+}
 
 const (
 	testGitURI    = "git://git.example.com/uber/monorepo/refs%2Fheads%2Fmain/abcdef0123456789abcdef0123456789abcdef01"
@@ -66,7 +76,7 @@ func newIngestTestRegistryWithNoopPublisher(t *testing.T, ctrl *gomock.Controlle
 func TestNewIngestController(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	cnt := countermock.NewMockCounter(ctrl)
-	c := NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, cnt, newIngestTestRegistryWithNoopPublisher(t, ctrl))
+	c := NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopLogStore(ctrl), newIngestTestRegistryWithNoopPublisher(t, ctrl))
 	require.NotNil(t, c)
 }
 
@@ -75,7 +85,7 @@ func TestIngest_ReturnsSPID(t *testing.T) {
 	cnt := countermock.NewMockCounter(ctrl)
 	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(1), nil)
 
-	c := NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, cnt, newIngestTestRegistryWithNoopPublisher(t, ctrl))
+	c := NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopLogStore(ctrl), newIngestTestRegistryWithNoopPublisher(t, ctrl))
 	resp, err := c.Ingest(context.Background(), &pb.IngestRequest{
 		Queue:  testQueueName,
 		Change: &changepb.Change{Uris: []string{testGitURI}},
@@ -96,7 +106,7 @@ func TestIngest_CounterDomainIncludesQueue(t *testing.T) {
 		},
 	)
 
-	c := NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, cnt, newIngestTestRegistryWithNoopPublisher(t, ctrl))
+	c := NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopLogStore(ctrl), newIngestTestRegistryWithNoopPublisher(t, ctrl))
 	_, err := c.Ingest(context.Background(), &pb.IngestRequest{
 		Queue:  testQueueName,
 		Change: &changepb.Change{Uris: []string{testGitURI}},
@@ -111,7 +121,7 @@ func TestIngest_ReturnsErrorOnCounterFailure(t *testing.T) {
 	cnt := countermock.NewMockCounter(ctrl)
 	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(0), fmt.Errorf("counter unavailable"))
 
-	c := NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, cnt, newIngestTestRegistryWithNoopPublisher(t, ctrl))
+	c := NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopLogStore(ctrl), newIngestTestRegistryWithNoopPublisher(t, ctrl))
 	_, err := c.Ingest(context.Background(), &pb.IngestRequest{
 		Queue:  testQueueName,
 		Change: &changepb.Change{Uris: []string{testGitURI}},
@@ -124,7 +134,7 @@ func TestIngest_ReturnsErrorOnEmptyQueue(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	cnt := countermock.NewMockCounter(ctrl)
 
-	c := NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, cnt, newIngestTestRegistryWithNoopPublisher(t, ctrl))
+	c := NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopLogStore(ctrl), newIngestTestRegistryWithNoopPublisher(t, ctrl))
 	_, err := c.Ingest(context.Background(), &pb.IngestRequest{
 		Queue:  "",
 		Change: &changepb.Change{Uris: []string{testGitURI}},
@@ -138,7 +148,7 @@ func TestIngest_ReturnsErrorOnNilChange(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	cnt := countermock.NewMockCounter(ctrl)
 
-	c := NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, cnt, newIngestTestRegistryWithNoopPublisher(t, ctrl))
+	c := NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopLogStore(ctrl), newIngestTestRegistryWithNoopPublisher(t, ctrl))
 	_, err := c.Ingest(context.Background(), &pb.IngestRequest{
 		Queue:  testQueueName,
 		Change: nil,
@@ -152,7 +162,7 @@ func TestIngest_ReturnsErrorOnEmptyChangeURIs(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	cnt := countermock.NewMockCounter(ctrl)
 
-	c := NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, cnt, newIngestTestRegistryWithNoopPublisher(t, ctrl))
+	c := NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopLogStore(ctrl), newIngestTestRegistryWithNoopPublisher(t, ctrl))
 	_, err := c.Ingest(context.Background(), &pb.IngestRequest{
 		Queue:  testQueueName,
 		Change: &changepb.Change{Uris: []string{}},
@@ -179,7 +189,7 @@ func TestIngest_PublishesToQueue(t *testing.T) {
 		},
 	)
 
-	c := NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, cnt, registry)
+	c := NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopLogStore(ctrl), registry)
 	resp, err := c.Ingest(context.Background(), &pb.IngestRequest{
 		Queue:  testQueueName,
 		Change: &changepb.Change{Uris: []string{testGitURI}},
@@ -206,7 +216,56 @@ func TestIngest_ReturnsErrorOnPublishFailure(t *testing.T) {
 	registry, publisher := newIngestTestRegistry(t, ctrl)
 	publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("queue unavailable"))
 
-	c := NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, cnt, registry)
+	c := NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopLogStore(ctrl), registry)
+	_, err := c.Ingest(context.Background(), &pb.IngestRequest{
+		Queue:  testQueueName,
+		Change: &changepb.Change{Uris: []string{testGitURI}},
+	})
+
+	require.Error(t, err)
+}
+
+func TestIngest_RecordsAcceptedLog(t *testing.T) {
+	var captured entity.RequestLog
+
+	ctrl := gomock.NewController(t)
+	cnt := countermock.NewMockCounter(ctrl)
+	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(7), nil)
+
+	logStore := storagemock.NewMockRequestLogStore(ctrl)
+	logStore.EXPECT().Insert(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, log entity.RequestLog) error {
+			captured = log
+			return nil
+		},
+	)
+
+	c := NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, cnt, logStore, newIngestTestRegistryWithNoopPublisher(t, ctrl))
+	resp, err := c.Ingest(context.Background(), &pb.IngestRequest{
+		Queue:  testQueueName,
+		Change: &changepb.Change{Uris: []string{testGitURI}},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "stovepipe-monorepo/7", resp.Spid)
+	assert.Equal(t, "stovepipe-monorepo/7", captured.RequestID)
+	assert.Equal(t, entity.RequestStatusAccepted, captured.Status)
+}
+
+func TestIngest_ReturnsErrorOnLogInsertFailure(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	cnt := countermock.NewMockCounter(ctrl)
+	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(1), nil)
+
+	logStore := storagemock.NewMockRequestLogStore(ctrl)
+	logStore.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(fmt.Errorf("database unavailable"))
+
+	// The request log write happens before publishing, so a log failure must abort
+	// before anything is published to the queue.
+	registry, publisher := newIngestTestRegistry(t, ctrl)
+	publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+
+	c := NewIngestController(zap.NewNop().Sugar(), tally.NoopScope, cnt, logStore, registry)
 	_, err := c.Ingest(context.Background(), &pb.IngestRequest{
 		Queue:  testQueueName,
 		Change: &changepb.Change{Uris: []string{testGitURI}},

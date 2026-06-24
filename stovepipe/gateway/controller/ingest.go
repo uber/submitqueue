@@ -29,6 +29,7 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/core/topickey"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -43,21 +44,23 @@ func IsInvalidRequest(err error) bool {
 
 // IngestController handles ingest business logic for the stovepipe gateway.
 type IngestController struct {
-	logger       *zap.SugaredLogger
-	metricsScope tally.Scope
-	counter      counter.Counter
-	registry     consumer.TopicRegistry
+	logger          *zap.SugaredLogger
+	metricsScope    tally.Scope
+	counter         counter.Counter
+	requestLogStore storage.RequestLogStore
+	registry        consumer.TopicRegistry
 }
 
 // NewIngestController creates a new instance of the stovepipe ingest controller.
-// The controller publishes ingest requests to the topic registered under
-// topickey.TopicKeyStart in the registry.
-func NewIngestController(logger *zap.SugaredLogger, scope tally.Scope, counter counter.Counter, registry consumer.TopicRegistry) *IngestController {
+// The controller records an accepted entry in the request log before publishing
+// ingest requests to the topic registered under topickey.TopicKeyStart in the registry.
+func NewIngestController(logger *zap.SugaredLogger, scope tally.Scope, counter counter.Counter, requestLogStore storage.RequestLogStore, registry consumer.TopicRegistry) *IngestController {
 	return &IngestController{
-		logger:       logger,
-		metricsScope: scope.SubScope("ingest_controller"),
-		counter:      counter,
-		registry:     registry,
+		logger:          logger,
+		metricsScope:    scope.SubScope("ingest_controller"),
+		counter:         counter,
+		requestLogStore: requestLogStore,
+		registry:        registry,
 	}
 }
 
@@ -94,6 +97,15 @@ func (c *IngestController) Ingest(ctx context.Context, req *pb.IngestRequest) (r
 		"spid", ingestRequest.ID,
 		"change_uris", ingestRequest.Change.URIs,
 	)
+
+	// Record the accepted status in the request log for reconciliation before publishing to the
+	// queue for processing. The gateway is the sole owner of the request log and must record the
+	// status synchronously (written straight to storage, not via the queue) so it stays consistent
+	// with what callers observe the moment Ingest returns.
+	logEntry := entity.NewRequestLog(ingestRequest.ID, entity.RequestStatusAccepted, 0, "", nil)
+	if err := c.requestLogStore.Insert(ctx, logEntry); err != nil {
+		return nil, fmt.Errorf("IngestController failed to insert request log for spid=%s: %w", ingestRequest.ID, err)
+	}
 
 	if err := c.publishToQueue(ctx, ingestRequest); err != nil {
 		return nil, fmt.Errorf("IngestController failed to publish request to queue: %w", err)

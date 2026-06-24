@@ -53,7 +53,7 @@ define assert_clean
 	fi
 endef
 
-.PHONY: build build-all-linux build-runway-orchestrator-linux build-submitqueue-gateway-linux build-submitqueue-orchestrator-linux build-stovepipe-gateway-linux build-stovepipe-orchestrator-linux check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator license-fix lint lint-fmt lint-license local-init-runway-queue-schema local-runway-orchestrator-start local-runway-orchestrator-stop local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-init-stovepipe-queue-schema local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-gateway-start local-stovepipe-orchestrator-start local-stovepipe-start mocks proto query-deps query-targets run-client-runway-orchestrator run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe-gateway run-client-stovepipe-orchestrator run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
+.PHONY: build build-all-linux build-runway-orchestrator-linux build-submitqueue-gateway-linux build-submitqueue-orchestrator-linux build-stovepipe-gateway-linux build-stovepipe-orchestrator-linux check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator license-fix lint lint-fmt lint-license local-init-runway-queue-schema local-runway-orchestrator-start local-runway-orchestrator-stop local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-init-stovepipe-queue-schema local-init-stovepipe-schemas local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-gateway-start local-stovepipe-orchestrator-start local-stovepipe-start mocks proto query-deps query-targets run-client-runway-orchestrator run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe-gateway run-client-stovepipe-orchestrator run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
 
 
 build: ## Build all services and examples
@@ -224,12 +224,30 @@ local-init-submitqueue-schemas: ## Manually apply all database schemas
 	@echo "✅ All schemas applied successfully"
 
 local-init-stovepipe-queue-schema: ## Apply queue schema only (mysql-queue) for Stovepipe compose stacks
-	@echo "Applying queue schema to mysql-queue (Stovepipe; no app storage/counter schema yet)..."
+	@echo "Applying queue schema to mysql-queue (Stovepipe; orchestrator example does not use app storage yet)..."
 	@for file in platform/extension/messagequeue/mysql/schema/*.sql; do \
 		echo "  - Applying $$(basename $$file)..."; \
 		docker exec -i $(STOVEPIPE_LOCAL_PROJECT)-mysql-queue-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
 	done
 	@echo "✅ Stovepipe queue schema applied successfully"
+
+local-init-stovepipe-schemas: ## Apply all Stovepipe database schemas (storage + counter to mysql-app, queue to mysql-queue)
+	@echo "Applying storage schema to mysql-app..."
+	@for file in stovepipe/extension/storage/mysql/schema/*.sql; do \
+		echo "  - Applying $$(basename $$file)..."; \
+		docker exec -i $(STOVEPIPE_LOCAL_PROJECT)-mysql-app-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
+	done
+	@echo "Applying counter schema to mysql-app..."
+	@for file in platform/extension/counter/mysql/schema/*.sql; do \
+		echo "  - Applying $$(basename $$file)..."; \
+		docker exec -i $(STOVEPIPE_LOCAL_PROJECT)-mysql-app-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
+	done
+	@echo "Applying queue schema to mysql-queue..."
+	@for file in platform/extension/messagequeue/mysql/schema/*.sql; do \
+		echo "  - Applying $$(basename $$file)..."; \
+		docker exec -i $(STOVEPIPE_LOCAL_PROJECT)-mysql-queue-1 mysql -uroot -proot submitqueue < $$file 2>&1 | grep -v "Using a password" || true; \
+	done
+	@echo "✅ All Stovepipe schemas applied successfully"
 
 local-init-runway-queue-schema: ## Apply queue schema only (mysql-queue) for Runway compose stacks
 	@echo "Applying queue schema to mysql-queue (Runway; consumes the merge queues)..."
@@ -331,8 +349,8 @@ local-stovepipe-logs: ## View logs from all running Stovepipe services
 local-stovepipe-start: build-stovepipe-gateway-linux build-stovepipe-orchestrator-linux ## Start full Stovepipe stack (gateway + orchestrator + MySQL)
 	@echo "Starting full Stovepipe stack with compose..."
 	@$(COMPOSE) -f $(STOVEPIPE_STACK_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) up -d --build --wait
-	@echo "Applying queue schema to mysql-queue (no Stovepipe app schema yet)..."
-	@$(MAKE) -s local-init-stovepipe-queue-schema
+	@echo "Applying database schemas..."
+	@$(MAKE) -s local-init-stovepipe-schemas
 	@echo ""
 	@echo "✅ Full Stovepipe stack is running!"
 	@echo ""
@@ -366,8 +384,8 @@ local-stovepipe-orchestrator-start: build-stovepipe-orchestrator-linux ## Start 
 local-stovepipe-gateway-start: build-stovepipe-gateway-linux ## Start Stovepipe gateway locally (gateway + 2 MySQL databases)
 	@echo "Starting Stovepipe gateway with compose..."
 	@$(COMPOSE) -f $(STOVEPIPE_GATEWAY_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) up -d --build --wait
-	@echo "Applying queue schema to mysql-queue (no Stovepipe app schema yet)..."
-	@$(MAKE) -s local-init-stovepipe-queue-schema
+	@echo "Applying database schemas..."
+	@$(MAKE) -s local-init-stovepipe-schemas
 	@echo ""
 	@echo "✅ Stovepipe gateway is running!"
 	@echo ""

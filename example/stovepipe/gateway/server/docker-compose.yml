@@ -1,8 +1,8 @@
 # Docker Compose for Stovepipe gateway manual testing
 #
 # Mirrors example/submitqueue/gateway/server/docker-compose.yml: same MySQL pair, healthchecks,
-# env wiring, and startup ordering. The Stovepipe gateway binary is Ping-only today
-# and does not open MySQL yet; variables are set so future work matches SubmitQueue.
+# env wiring, and startup ordering. The gateway opens the app DB for the request log and SPID
+# counter, and the queue DB to publish ingest requests and consume the log topic.
 #
 # IMPORTANT: Before running compose, build the Linux binary:
 #   make build-stovepipe-gateway-linux
@@ -12,7 +12,8 @@
 # Quick start:
 #   make local-stovepipe-gateway-start
 #
-# After `up`, only the queue schema is applied (`local-init-stovepipe-queue-schema`).
+# After `up`, all schemas are applied (`local-init-stovepipe-schemas`): storage + counter to
+# mysql-app and the queue schema to mysql-queue.
 
 services:
   # Application Database - Stores business data (requests, counters, etc.)

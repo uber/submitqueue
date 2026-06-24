@@ -28,4 +28,7 @@ const (
 	// TopicKeyBatch is the pipeline stage where validated commits are aggregated, since the last
 	// known green, into a contiguous validation batch.
 	TopicKeyBatch TopicKey = "batch"
+	// TopicKeyLog is the gateway-owned sink topic for append-only request log events. The
+	// orchestrator publishes log entries here; the gateway is the sole consumer that persists them.
+	TopicKeyLog TopicKey = "log"
 )
