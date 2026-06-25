@@ -20,18 +20,18 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
-	pb "github.com/uber/submitqueue/api/runway/orchestrator/protopb"
+	pb "github.com/uber/submitqueue/api/runway/protopb"
 	"github.com/uber/submitqueue/platform/metrics"
 	"go.uber.org/zap"
 )
 
-// PingController handles ping business logic for the Runway orchestrator.
+// PingController handles ping business logic for the Runway service.
 type PingController struct {
 	logger       *zap.Logger
 	metricsScope tally.Scope
 }
 
-// NewPingController creates a new instance of the Runway orchestrator ping controller.
+// NewPingController creates a new instance of the Runway ping controller.
 func NewPingController(logger *zap.Logger, scope tally.Scope) *PingController {
 	return &PingController{
 		logger:       logger,
@@ -64,7 +64,7 @@ func (c *PingController) Ping(ctx context.Context, req *pb.PingRequest) (resp *p
 
 	return &pb.PingResponse{
 		Message:     message,
-		ServiceName: "runway-orchestrator",
+		ServiceName: "runway",
 		Timestamp:   time.Now().Unix(),
 		Hostname:    hostname,
 	}, nil

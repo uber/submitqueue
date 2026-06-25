@@ -16,7 +16,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v5.29.3
-// source: orchestrator.proto
+// source: runway.proto
 
 package protopb
 
@@ -34,109 +34,109 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	RunwayOrchestrator_Ping_FullMethodName = "/uber.runway.orchestrator.RunwayOrchestrator/Ping"
+	Runway_Ping_FullMethodName = "/uber.runway.Runway/Ping"
 )
 
-// RunwayOrchestratorClient is the client API for RunwayOrchestrator service.
+// RunwayClient is the client API for Runway service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// RunwayOrchestrator provides the Runway orchestrator API.
-type RunwayOrchestratorClient interface {
+// Runway provides the Runway service API.
+type RunwayClient interface {
 	// Ping returns a response indicating the service is alive
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
 }
 
-type runwayOrchestratorClient struct {
+type runwayClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewRunwayOrchestratorClient(cc grpc.ClientConnInterface) RunwayOrchestratorClient {
-	return &runwayOrchestratorClient{cc}
+func NewRunwayClient(cc grpc.ClientConnInterface) RunwayClient {
+	return &runwayClient{cc}
 }
 
-func (c *runwayOrchestratorClient) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
+func (c *runwayClient) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PingResponse)
-	err := c.cc.Invoke(ctx, RunwayOrchestrator_Ping_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Runway_Ping_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// RunwayOrchestratorServer is the server API for RunwayOrchestrator service.
-// All implementations must embed UnimplementedRunwayOrchestratorServer
+// RunwayServer is the server API for Runway service.
+// All implementations must embed UnimplementedRunwayServer
 // for forward compatibility.
 //
-// RunwayOrchestrator provides the Runway orchestrator API.
-type RunwayOrchestratorServer interface {
+// Runway provides the Runway service API.
+type RunwayServer interface {
 	// Ping returns a response indicating the service is alive
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
-	mustEmbedUnimplementedRunwayOrchestratorServer()
+	mustEmbedUnimplementedRunwayServer()
 }
 
-// UnimplementedRunwayOrchestratorServer must be embedded to have
+// UnimplementedRunwayServer must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedRunwayOrchestratorServer struct{}
+type UnimplementedRunwayServer struct{}
 
-func (UnimplementedRunwayOrchestratorServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
+func (UnimplementedRunwayServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Ping not implemented")
 }
-func (UnimplementedRunwayOrchestratorServer) mustEmbedUnimplementedRunwayOrchestratorServer() {}
-func (UnimplementedRunwayOrchestratorServer) testEmbeddedByValue()                            {}
+func (UnimplementedRunwayServer) mustEmbedUnimplementedRunwayServer() {}
+func (UnimplementedRunwayServer) testEmbeddedByValue()                {}
 
-// UnsafeRunwayOrchestratorServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to RunwayOrchestratorServer will
+// UnsafeRunwayServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to RunwayServer will
 // result in compilation errors.
-type UnsafeRunwayOrchestratorServer interface {
-	mustEmbedUnimplementedRunwayOrchestratorServer()
+type UnsafeRunwayServer interface {
+	mustEmbedUnimplementedRunwayServer()
 }
 
-func RegisterRunwayOrchestratorServer(s grpc.ServiceRegistrar, srv RunwayOrchestratorServer) {
-	// If the following call pancis, it indicates UnimplementedRunwayOrchestratorServer was
+func RegisterRunwayServer(s grpc.ServiceRegistrar, srv RunwayServer) {
+	// If the following call pancis, it indicates UnimplementedRunwayServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&RunwayOrchestrator_ServiceDesc, srv)
+	s.RegisterService(&Runway_ServiceDesc, srv)
 }
 
-func _RunwayOrchestrator_Ping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Runway_Ping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PingRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RunwayOrchestratorServer).Ping(ctx, in)
+		return srv.(RunwayServer).Ping(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: RunwayOrchestrator_Ping_FullMethodName,
+		FullMethod: Runway_Ping_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RunwayOrchestratorServer).Ping(ctx, req.(*PingRequest))
+		return srv.(RunwayServer).Ping(ctx, req.(*PingRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// RunwayOrchestrator_ServiceDesc is the grpc.ServiceDesc for RunwayOrchestrator service.
+// Runway_ServiceDesc is the grpc.ServiceDesc for Runway service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var RunwayOrchestrator_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "uber.runway.orchestrator.RunwayOrchestrator",
-	HandlerType: (*RunwayOrchestratorServer)(nil),
+var Runway_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "uber.runway.Runway",
+	HandlerType: (*RunwayServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "Ping",
-			Handler:    _RunwayOrchestrator_Ping_Handler,
+			Handler:    _Runway_Ping_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "orchestrator.proto",
+	Metadata: "runway.proto",
 }

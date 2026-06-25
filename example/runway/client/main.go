@@ -21,13 +21,13 @@ import (
 	"os"
 	"time"
 
-	pb "github.com/uber/submitqueue/api/runway/orchestrator/protopb"
+	pb "github.com/uber/submitqueue/api/runway/protopb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
-	addr := flag.String("addr", "localhost:8086", "orchestrator server address")
+	addr := flag.String("addr", "localhost:8086", "runway server address")
 	message := flag.String("message", "", "message to send in ping request")
 	timeout := flag.Duration("timeout", 5*time.Second, "request timeout")
 	flag.Parse()
@@ -50,7 +50,7 @@ func run(addr, message string, timeout time.Duration) error {
 	defer conn.Close()
 
 	// Create a client
-	client := pb.NewRunwayOrchestratorClient(conn)
+	client := pb.NewRunwayClient(conn)
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -61,7 +61,7 @@ func run(addr, message string, timeout time.Duration) error {
 		Message: message,
 	}
 
-	fmt.Printf("Sending ping to orchestrator at %s...\n", addr)
+	fmt.Printf("Sending ping to runway at %s...\n", addr)
 	resp, err := client.Ping(ctx, req)
 	if err != nil {
 		return fmt.Errorf("ping failed: %w", err)

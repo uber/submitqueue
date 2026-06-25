@@ -1,9 +1,9 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "merge",
-    srcs = ["merge.go"],
-    importpath = "github.com/uber/submitqueue/runway/orchestrator/controller/merge",
+    name = "mergeconflictcheck",
+    srcs = ["mergeconflictcheck.go"],
+    importpath = "github.com/uber/submitqueue/runway/controller/mergeconflictcheck",
     visibility = ["//visibility:public"],
     deps = [
         "//api/runway/messagequeue",
@@ -15,9 +15,9 @@ go_library(
 )
 
 go_test(
-    name = "merge_test",
-    srcs = ["merge_test.go"],
-    embed = [":merge"],
+    name = "mergeconflictcheck_test",
+    srcs = ["mergeconflictcheck_test.go"],
+    embed = [":mergeconflictcheck"],
     deps = [
         "//api/runway/messagequeue",
         "//platform/base/messagequeue",

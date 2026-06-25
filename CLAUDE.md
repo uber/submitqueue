@@ -39,6 +39,7 @@ submitqueue/                        # repo root (Go module github.com/uber/submi
 ├── api/                            # Published wire contracts (cross-domain/external)
 │   ├── submitqueue/{gateway,orchestrator}/{proto,protopb}/   # RPC (proto)
 │   ├── stovepipe/{proto,protopb}/  # single-service RPC (proto) — no service segment yet
+│   ├── runway/{proto,protopb}/     # RPC (proto) — single-service domain, no service segment
 │   └── runway/messagequeue/        # external queue contracts (proto + protojson)
 ├── platform/                       # SHARED cross-domain packages — no domain deps
 │   ├── errs/, metrics/, consumer/, http/
@@ -52,10 +53,13 @@ submitqueue/                        # repo root (Go module github.com/uber/submi
 │   └── core/                       # SubmitQueue-internal shared infra (consumer wiring, request, topickey, …)
 ├── stovepipe/                      # Stovepipe domain (single Ping-only service for now)
 │   └── controller/                 # Business logic (currently just Ping); entity/extension/core added as it grows
+├── runway/                         # Runway domain (single service — the domain *is* the service)
+│   └── controller/                 # Runway service controllers (consumes the merge queues; no gateway/orchestrator split)
 ├── tool/                           # Development and CI tooling
 ├── example/
 │   ├── submitqueue/                # Runnable SubmitQueue servers/clients + Docker Compose
-│   └── stovepipe/                  # Runnable Stovepipe servers/clients
+│   ├── stovepipe/                  # Runnable Stovepipe servers/clients
+│   └── runway/                     # Runnable Runway server/client + Docker Compose
 ├── test/
 │   ├── e2e/submitqueue/            # End-to-end tests (full stack)
 │   ├── integration/                # Integration tests (platform/, submitqueue/, stovepipe/, …)
@@ -63,9 +67,9 @@ submitqueue/                        # repo root (Go module github.com/uber/submi
 └── doc/                            # Documentation
 ```
 
-The `platform/` tree holds code reused across domains (infrastructure, shared entities, shared extension contracts). Each **domain** (`submitqueue/`, `stovepipe/`, …) grows into the same internal layout (`gateway/`, `orchestrator/`, `entity/`, `extension/`, `core/`); a domain's own `core/` (e.g. `submitqueue/core/`) holds infra shared only between that domain's services. A domain may start smaller — Stovepipe is currently a single Ping-only service with just `controller/` (and a service-segment-free `api/stovepipe/`), adding the other layers as it gains real behavior.
+The `platform/` tree holds code reused across domains (infrastructure, shared entities, shared extension contracts). A multi-service **domain** (e.g. `submitqueue/`) keeps the same internal layout (`gateway/`, `orchestrator/`, `entity/`, `extension/`, `core/`); a domain's own `core/` (e.g. `submitqueue/core/`) holds infra shared only between that domain's services. A **single-service domain** collapses that split — the domain *is* the service, so its controllers live directly under the domain root (e.g. `runway/controller/`, `stovepipe/controller/`) with no `gateway/`/`orchestrator/` segment, and its wire contract is service-segment-free (`api/{domain}/`). `runway` is a consumer-only landing service with no gateway; `stovepipe` is currently a single Ping-only service that can grow the other layers (`entity/`, `extension/`, `core/`) as it gains real behavior.
 
-The `api/` tree holds **published** wire contracts — those depended on from outside the owning domain. RPC contracts live at `api/{domain}/{service}/` (`proto/` for `.proto` sources, `protopb/` for committed generated Go); a service package may hold multiple `.proto` files, all generating into the same `protopb/`. External message-queue contracts live at `api/{domain}/messagequeue/` (see Message Queue Contracts below). Internal queue contracts do **not** go here — they live under `{domain}/core/messagequeue/`.
+The `api/` tree holds **published** wire contracts — those depended on from outside the owning domain. RPC contracts live at `api/{domain}/{service}/` (`proto/` for `.proto` sources, `protopb/` for committed generated Go); for a single-service domain the service segment is dropped, so the contract lives directly at `api/{domain}/` (e.g. `api/runway/{proto,protopb}/`). A service package may hold multiple `.proto` files, all generating into the same `protopb/`. External message-queue contracts live at `api/{domain}/messagequeue/` (see Message Queue Contracts below). Internal queue contracts do **not** go here — they live under `{domain}/core/messagequeue/`.
 
 ### Platform notes
 
@@ -86,7 +90,7 @@ Each service follows the same layout:
         └── {step}_test.go
 ```
 
-Wire contracts for a service live separately under `api/{domain}/{service}/` (see Project Layout): `proto/` holds `.proto` sources and `protopb/` holds the committed generated stubs.
+Wire contracts for a service live separately under `api/{domain}/{service}/` (see Project Layout): `proto/` holds `.proto` sources and `protopb/` holds the committed generated stubs. For a single-service domain the service root *is* the domain root (e.g. `runway/controller/`), and its wire contract lives at `api/{domain}/` (e.g. `api/runway/`) with no service segment.
 
 ### Controllers
 
@@ -152,9 +156,9 @@ When in doubt, ask: *"If the next implementation were DynamoDB / Kafka / Bigtabl
 
 Paths follow the directory layout: shared packages live under `platform/` at the repo root; domain code nests under `submitqueue/`, `stovepipe/`, and other domain folders.
 
-- RPC Controllers: `github.com/uber/submitqueue/{domain}/{service}/controller` (e.g. `.../submitqueue/gateway/controller`)
-- Queue Controllers: `github.com/uber/submitqueue/{domain}/{service}/controller/{step}`
-- Proto (generated): `github.com/uber/submitqueue/api/{domain}/{service}/protopb`
+- RPC Controllers: `github.com/uber/submitqueue/{domain}/{service}/controller` (e.g. `.../submitqueue/gateway/controller`; single-service domains drop the `{service}` segment, e.g. `.../runway/controller`)
+- Queue Controllers: `github.com/uber/submitqueue/{domain}/{service}/controller/{step}` (single-service: `.../runway/controller/{step}`, e.g. `.../runway/controller/merge`)
+- Proto (generated): `github.com/uber/submitqueue/api/{domain}/{service}/protopb` (single-service: `.../api/{domain}/protopb`, e.g. `.../api/runway/protopb`)
 - Queue contracts: external `github.com/uber/submitqueue/api/{domain}/messagequeue`; internal `github.com/uber/submitqueue/{domain}/core/messagequeue`
 - Domain entities: `github.com/uber/submitqueue/{domain}/entity` (e.g. `.../submitqueue/entity`)
 - Domain extensions: `github.com/uber/submitqueue/{domain}/extension/{ext}[/{impl}]` (e.g. `.../submitqueue/extension/storage/mysql`)

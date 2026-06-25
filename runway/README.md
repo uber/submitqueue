@@ -5,6 +5,11 @@ Runway owns the merge queues defined by the external contract in
 requests, performs the work, and (eventually) publishes the result to the corresponding signal queue.
 SubmitQueue is a client of these queues.
 
-Runway service layout:
+Runway is a single service (the domain *is* the service); its controllers live directly under
+[`controller/`](controller). It consumes Runway's merge queues:
 
-- `orchestrator/` — Orchestrator service: consumes the merge-conflict-check and merge queues.
+- `merge-conflict-check` — dry-run check that an ordered sequence of merge steps applies cleanly, without committing.
+- `merge` — committing merge: apply and commit the ordered steps.
+
+Both controllers currently deserialize the `MergeRequest` off the queue and log it; performing the
+merge and publishing a `MergeResult` to the corresponding signal queue is not wired yet.

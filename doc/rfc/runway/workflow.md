@@ -1,6 +1,6 @@
 # Runway Workflow
 
-Runway is the landing service: it owns VCS operations — mergeability checking and landing — on behalf of SubmitQueue. The orchestrator subscribes to two inbound topics (`merge-conflict-checker`, `merger`) and publishes results to two outbound topics (`merge-conflict-checker-signal`, `merger-signal`). It is a consumer-only service with no gateway; work arrives via topic queues and results leave via topic queues.
+Runway is the landing service: it owns VCS operations — mergeability checking and landing — on behalf of SubmitQueue. Runway is a single service (the domain *is* the service): it subscribes to two inbound topics (`merge-conflict-checker`, `merger`) and publishes results to two outbound topics (`merge-conflict-checker-signal`, `merger-signal`). It is a consumer-only service with no gateway; work arrives via topic queues and results leave via topic queues.
 
 ## Merge-conflict check and merge
 
@@ -67,9 +67,9 @@ Runway has no persistent state — no request store, no job store, no database. 
 
 ## Ownership by service
 
-### Orchestrator
+### Runway
 
-The orchestrator is the only service. It subscribes to two inbound topics (`merge-conflict-checker`, `merger`), performs VCS operations through a pluggable extension, and publishes results to two outbound topics (`merge-conflict-checker-signal`, `merger-signal`). It owns no persistent data.
+Runway is a single service. It subscribes to two inbound topics (`merge-conflict-checker`, `merger`), performs VCS operations through a pluggable extension, and publishes results to two outbound topics (`merge-conflict-checker-signal`, `merger-signal`). It owns no persistent data.
 
 ### Shared: the messaging queue
 

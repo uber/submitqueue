@@ -52,7 +52,7 @@ type Params struct {
 	Logger *zap.SugaredLogger
 }
 
-// NewController creates a new merge-conflict-check controller for the orchestrator.
+// NewController creates a new merge-conflict-check controller for the runway service.
 func NewController(p Params) *Controller {
 	return &Controller{
 		logger:        p.Logger.Named("mergeconflictcheck_controller"),

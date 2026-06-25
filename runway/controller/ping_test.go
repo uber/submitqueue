@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
-	pb "github.com/uber/submitqueue/api/runway/orchestrator/protopb"
+	pb "github.com/uber/submitqueue/api/runway/protopb"
 	"go.uber.org/zap"
 )
 
@@ -50,7 +50,7 @@ func TestPing_ServiceName(t *testing.T) {
 	resp, err := ctrl.Ping(ctx, req)
 
 	require.NoError(t, err)
-	assert.Equal(t, "runway-orchestrator", resp.ServiceName)
+	assert.Equal(t, "runway", resp.ServiceName)
 }
 
 func TestPing_Timestamp(t *testing.T) {

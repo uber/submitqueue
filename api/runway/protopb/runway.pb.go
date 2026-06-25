@@ -16,7 +16,7 @@
 // versions:
 // 	protoc-gen-go v1.36.10
 // 	protoc        v5.29.3
-// source: orchestrator.proto
+// source: runway.proto
 
 package protopb
 
@@ -47,7 +47,7 @@ type PingRequest struct {
 
 func (x *PingRequest) Reset() {
 	*x = PingRequest{}
-	mi := &file_orchestrator_proto_msgTypes[0]
+	mi := &file_runway_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -59,7 +59,7 @@ func (x *PingRequest) String() string {
 func (*PingRequest) ProtoMessage() {}
 
 func (x *PingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[0]
+	mi := &file_runway_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -72,7 +72,7 @@ func (x *PingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PingRequest.ProtoReflect.Descriptor instead.
 func (*PingRequest) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{0}
+	return file_runway_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *PingRequest) GetMessage() string {
@@ -99,7 +99,7 @@ type PingResponse struct {
 
 func (x *PingResponse) Reset() {
 	*x = PingResponse{}
-	mi := &file_orchestrator_proto_msgTypes[1]
+	mi := &file_runway_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -111,7 +111,7 @@ func (x *PingResponse) String() string {
 func (*PingResponse) ProtoMessage() {}
 
 func (x *PingResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[1]
+	mi := &file_runway_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -124,7 +124,7 @@ func (x *PingResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PingResponse.ProtoReflect.Descriptor instead.
 func (*PingResponse) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{1}
+	return file_runway_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *PingResponse) GetMessage() string {
@@ -155,42 +155,42 @@ func (x *PingResponse) GetHostname() string {
 	return ""
 }
 
-var File_orchestrator_proto protoreflect.FileDescriptor
+var File_runway_proto protoreflect.FileDescriptor
 
-const file_orchestrator_proto_rawDesc = "" +
+const file_runway_proto_rawDesc = "" +
 	"\n" +
-	"\x12orchestrator.proto\x12\x18uber.runway.orchestrator\"'\n" +
+	"\frunway.proto\x12\vuber.runway\"'\n" +
 	"\vPingRequest\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"\x85\x01\n" +
 	"\fPingResponse\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12!\n" +
 	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12\x1c\n" +
 	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x1a\n" +
-	"\bhostname\x18\x04 \x01(\tR\bhostname2m\n" +
-	"\x12RunwayOrchestrator\x12W\n" +
-	"\x04Ping\x12%.uber.runway.orchestrator.PingRequest\x1a&.uber.runway.orchestrator.PingResponse\"\x00B|\n" +
-	"(com.uber.submitqueue.runway.orchestratorB\x11OrchestratorProtoP\x01Z;github.com/uber/submitqueue/api/runway/orchestrator/protopbb\x06proto3"
+	"\bhostname\x18\x04 \x01(\tR\bhostname2G\n" +
+	"\x06Runway\x12=\n" +
+	"\x04Ping\x12\x18.uber.runway.PingRequest\x1a\x19.uber.runway.PingResponse\"\x00B\\\n" +
+	"\x1bcom.uber.submitqueue.runwayB\vRunwayProtoP\x01Z.github.com/uber/submitqueue/api/runway/protopbb\x06proto3"
 
 var (
-	file_orchestrator_proto_rawDescOnce sync.Once
-	file_orchestrator_proto_rawDescData []byte
+	file_runway_proto_rawDescOnce sync.Once
+	file_runway_proto_rawDescData []byte
 )
 
-func file_orchestrator_proto_rawDescGZIP() []byte {
-	file_orchestrator_proto_rawDescOnce.Do(func() {
-		file_orchestrator_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_orchestrator_proto_rawDesc), len(file_orchestrator_proto_rawDesc)))
+func file_runway_proto_rawDescGZIP() []byte {
+	file_runway_proto_rawDescOnce.Do(func() {
+		file_runway_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_runway_proto_rawDesc), len(file_runway_proto_rawDesc)))
 	})
-	return file_orchestrator_proto_rawDescData
+	return file_runway_proto_rawDescData
 }
 
-var file_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
-var file_orchestrator_proto_goTypes = []any{
-	(*PingRequest)(nil),  // 0: uber.runway.orchestrator.PingRequest
-	(*PingResponse)(nil), // 1: uber.runway.orchestrator.PingResponse
+var file_runway_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_runway_proto_goTypes = []any{
+	(*PingRequest)(nil),  // 0: uber.runway.PingRequest
+	(*PingResponse)(nil), // 1: uber.runway.PingResponse
 }
-var file_orchestrator_proto_depIdxs = []int32{
-	0, // 0: uber.runway.orchestrator.RunwayOrchestrator.Ping:input_type -> uber.runway.orchestrator.PingRequest
-	1, // 1: uber.runway.orchestrator.RunwayOrchestrator.Ping:output_type -> uber.runway.orchestrator.PingResponse
+var file_runway_proto_depIdxs = []int32{
+	0, // 0: uber.runway.Runway.Ping:input_type -> uber.runway.PingRequest
+	1, // 1: uber.runway.Runway.Ping:output_type -> uber.runway.PingResponse
 	1, // [1:2] is the sub-list for method output_type
 	0, // [0:1] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
@@ -198,26 +198,26 @@ var file_orchestrator_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for field type_name
 }
 
-func init() { file_orchestrator_proto_init() }
-func file_orchestrator_proto_init() {
-	if File_orchestrator_proto != nil {
+func init() { file_runway_proto_init() }
+func file_runway_proto_init() {
+	if File_runway_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orchestrator_proto_rawDesc), len(file_orchestrator_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_runway_proto_rawDesc), len(file_runway_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_orchestrator_proto_goTypes,
-		DependencyIndexes: file_orchestrator_proto_depIdxs,
-		MessageInfos:      file_orchestrator_proto_msgTypes,
+		GoTypes:           file_runway_proto_goTypes,
+		DependencyIndexes: file_runway_proto_depIdxs,
+		MessageInfos:      file_runway_proto_msgTypes,
 	}.Build()
-	File_orchestrator_proto = out.File
-	file_orchestrator_proto_goTypes = nil
-	file_orchestrator_proto_depIdxs = nil
+	File_runway_proto = out.File
+	file_runway_proto_goTypes = nil
+	file_runway_proto_depIdxs = nil
 }

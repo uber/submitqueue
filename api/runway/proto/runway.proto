@@ -14,12 +14,12 @@
 
 syntax = "proto3";
 
-package uber.runway.orchestrator;
+package uber.runway;
 
-option go_package = "github.com/uber/submitqueue/api/runway/orchestrator/protopb";
+option go_package = "github.com/uber/submitqueue/api/runway/protopb";
 option java_multiple_files = true;
-option java_outer_classname = "OrchestratorProto";
-option java_package = "com.uber.submitqueue.runway.orchestrator";
+option java_outer_classname = "RunwayProto";
+option java_package = "com.uber.submitqueue.runway";
 
 // PingRequest is the request for the Ping method
 message PingRequest {
@@ -39,8 +39,8 @@ message PingResponse {
     string hostname = 4;
 }
 
-// RunwayOrchestrator provides the Runway orchestrator API.
-service RunwayOrchestrator {
+// Runway provides the Runway service API.
+service Runway {
     // Ping returns a response indicating the service is alive
     rpc Ping(PingRequest) returns (PingResponse) {}
 }
