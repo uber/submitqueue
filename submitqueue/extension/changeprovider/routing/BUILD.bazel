@@ -1,0 +1,30 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "routing",
+    srcs = ["provider.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/extension/changeprovider/routing",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//platform/base/change/git",
+        "//platform/base/change/github",
+        "//platform/base/change/phabricator",
+        "//submitqueue/entity",
+        "//submitqueue/extension/changeprovider",
+    ],
+)
+
+go_test(
+    name = "routing_test",
+    srcs = ["provider_test.go"],
+    embed = [":routing"],
+    deps = [
+        "//platform/base/change",
+        "//submitqueue/entity",
+        "//submitqueue/extension/changeprovider",
+        "//submitqueue/extension/changeprovider/mock",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_mock//gomock",
+    ],
+)

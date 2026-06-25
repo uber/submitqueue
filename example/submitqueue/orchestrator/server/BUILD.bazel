@@ -30,6 +30,8 @@ go_library(
         "//submitqueue/extension/changeprovider",
         "//submitqueue/extension/changeprovider/fake",
         "//submitqueue/extension/changeprovider/github",
+        "//submitqueue/extension/changeprovider/phabricator",
+        "//submitqueue/extension/changeprovider/routing",
         "//submitqueue/extension/conflict",
         "//submitqueue/extension/conflict/all",
         "//submitqueue/extension/conflict/fake",
