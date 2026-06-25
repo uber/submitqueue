@@ -1,0 +1,27 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "noop",
+    srcs = ["noop.go"],
+    importpath = "github.com/uber/submitqueue/runway/extension/merger/noop",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api/runway/messagequeue",
+        "//api/runway/messagequeue/protopb",
+        "//runway/extension/merger",
+    ],
+)
+
+go_test(
+    name = "noop_test",
+    srcs = ["noop_test.go"],
+    embed = [":noop"],
+    deps = [
+        "//api/base/change/protopb",
+        "//api/base/mergestrategy/protopb",
+        "//api/runway/messagequeue",
+        "//api/runway/messagequeue/protopb",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

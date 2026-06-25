@@ -1,0 +1,13 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mock",
+    srcs = ["merger_mock.go"],
+    importpath = "github.com/uber/submitqueue/runway/extension/merger/mock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api/runway/messagequeue",
+        "//runway/extension/merger",
+        "@org_uber_go_mock//gomock",
+    ],
+)
