@@ -36,9 +36,9 @@ go_proto_generated_files(
 )
 
 go_proto_generated_files(
-    name = "api_runway_orchestrator",
-    srcs = ["//api/runway/orchestrator/proto:orchestrator.proto"],
-    out_dir = "api_runway_orchestrator",
+    name = "api_runway",
+    srcs = ["//api/runway/proto:runway.proto"],
+    out_dir = "api_runway",
 )
 
 go_proto_generated_files(
@@ -58,16 +58,9 @@ go_proto_generated_files(
 )
 
 go_proto_generated_files(
-    name = "api_stovepipe_gateway",
-    srcs = ["//api/stovepipe/gateway/proto:gateway.proto"],
-    imports = ["//api/base/change/proto:change.proto"],
-    out_dir = "api_stovepipe_gateway",
-)
-
-go_proto_generated_files(
-    name = "api_stovepipe_orchestrator",
-    srcs = ["//api/stovepipe/orchestrator/proto:orchestrator.proto"],
-    out_dir = "api_stovepipe_orchestrator",
+    name = "api_stovepipe",
+    srcs = ["//api/stovepipe/proto:stovepipe.proto"],
+    out_dir = "api_stovepipe",
 )
 
 filegroup(
@@ -76,10 +69,9 @@ filegroup(
         ":api_base_change",
         ":api_base_mergestrategy",
         ":api_base_messagequeue",
+        ":api_runway",
         ":api_runway_messagequeue",
-        ":api_runway_orchestrator",
-        ":api_stovepipe_gateway",
-        ":api_stovepipe_orchestrator",
+        ":api_stovepipe",
         ":api_submitqueue_gateway",
         ":api_submitqueue_orchestrator",
     ],

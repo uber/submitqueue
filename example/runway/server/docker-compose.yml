@@ -1,0 +1,46 @@
+# Docker Compose for Runway manual testing
+#
+#
+# IMPORTANT: Before running compose, build the Linux binary:
+#   make build-runway-linux
+#   OR
+#   bazel build --platforms=@rules_go//go/toolchain:linux_amd64 //example/runway/server:runway
+#
+# Quick start:
+#   make local-runway-start
+#
+# After `up`, only the queue schema is applied (`local-init-runway-queue-schema`).
+
+services:
+  # Queue Database - Messaging infrastructure (messages, offsets, partition leases).
+  # Runway consumes the merge-conflict-check and merge queues from here.
+  mysql-queue:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: submitqueue
+    ports:
+      - "3306" # Random ephemeral port to avoid conflicts
+    healthcheck:
+      # Use 127.0.0.1 (TCP) instead of localhost (Unix socket). MySQL treats
+      # "localhost" as a socket connection, which can be ready before the TCP
+      # listener — causing dependent services that connect over TCP to fail.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  runway-service:
+    build:
+      context: ${REPO_ROOT}
+      dockerfile: example/runway/server/Dockerfile
+    ports:
+      - "8080" # Random ephemeral port to avoid conflicts
+    environment:
+      - PORT=:8080
+      # Queue infrastructure connection
+      - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
+      - HOSTNAME=runway-dev
+    depends_on:
+      mysql-queue:
+        condition: service_healthy

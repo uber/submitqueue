@@ -1,0 +1,23 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "stovepipe_test",
+    srcs = ["suite_test.go"],
+    data = [
+        "//:MODULE.bazel",
+        "//:go.mod",
+        "//example/stovepipe:docker-compose.yml",
+    ],
+    tags = [
+        "external",
+        "integration",
+    ],
+    deps = [
+        "//api/stovepipe/protopb",
+        "//test/testutil",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_stretchr_testify//suite",
+        "@org_golang_google_grpc//:grpc",
+    ],
+)

@@ -1,8 +1,7 @@
 # Stovepipe
 
-Stovepipe service layout:
+Stovepipe is currently a single Ping-only service. Its layout:
 
-- `gateway/` — Gateway service to check commit validation status and handle API interactions.
-- `orchestrator/` — Orchestrator service to process validation workflows
-- `extension/` — Stovepipe-specific extension implementations
-- `entity/` — Stovepipe-specific domain entities
+- `controller/` — business logic (transport-agnostic). Currently exposes the `Ping` RPC.
+
+The wire contract lives under `api/stovepipe/` (`proto/` for the `.proto` source, `protopb/` for the committed generated stubs). Entities, extensions, and the orchestration pipeline will be added back as the service grows.

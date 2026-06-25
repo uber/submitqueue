@@ -10,7 +10,7 @@ Designed for large monorepos and fast-moving teams where concurrent changes can 
 
 ## Repository layout
 
-Cross-domain Go code (errors, metrics, consumer framework, HTTP helpers, shared entities, shared extension contracts) lives under [`platform/`](platform/README.md). Each product domain has its own tree (`submitqueue/`, `stovepipe/`, …) with `gateway/`, `orchestrator/`, `entity/`, `extension/`, and domain-local `core/`. See [CLAUDE.md](CLAUDE.md) for conventions and import paths.
+Cross-domain Go code (errors, metrics, consumer framework, HTTP helpers, shared entities, shared extension contracts) lives under [`platform/`](platform/README.md). Each product domain has its own tree (`submitqueue/`, `stovepipe/`, …) and grows into `gateway/`, `orchestrator/`, `entity/`, `extension/`, and domain-local `core/` — though a domain may start smaller (Stovepipe is currently a single Ping-only service with just `controller/`). See [CLAUDE.md](CLAUDE.md) for conventions and import paths.
 
 ## Quick Start
 
