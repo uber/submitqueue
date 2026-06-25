@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	nethttp "net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -49,6 +50,8 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	cpfake "github.com/uber/submitqueue/submitqueue/extension/changeprovider/fake"
 	githubprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/github"
+	phabprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/phabricator"
+	routingprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/routing"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/all"
 	conflictfake "github.com/uber/submitqueue/submitqueue/extension/conflict/fake"
@@ -757,14 +760,40 @@ func parseTimeout(envVal string, defaultVal time.Duration) time.Duration {
 	return defaultVal
 }
 
-// newChangeProvider creates a ChangeProvider for GitHub (github.com), configured
-// via GITHUB_BASE_URL, GITHUB_TOKEN, and GITHUB_TIMEOUT. When GITHUB_TOKEN is
-// unset it returns the fake change provider (one empty ChangeInfo per URI unless
-// a URI carries a failure marker, see changeprovider/fake).
+// newChangeProvider creates a routing ChangeProvider containing GitHub and Phab ChangeProviders.
+// When neither GITHUB_TOKEN nor PHAB_API_TOKEN is set, falls back to the fake change provider.
 func newChangeProvider(logger *zap.Logger, scope tally.Scope) (changeprovider.ChangeProvider, error) {
-	if os.Getenv("GITHUB_TOKEN") == "" {
-		logger.Warn("GITHUB_TOKEN not set; using fake change provider (empty change info unless URI-marked)")
+	ghProvider, err := newGitHubChangeProvider(logger, scope)
+	if err != nil {
+		return nil, err
+	}
+
+	phabProvider, err := newPhabChangeProvider(logger, scope)
+	if err != nil {
+		return nil, err
+	}
+
+	if ghProvider == nil && phabProvider == nil {
+		logger.Warn("no change provider tokens set; using fake change provider (empty change info unless URI-marked)")
 		return cpfake.New(), nil
+	}
+
+	routingProvider, err := routingprovider.NewProvider(routingprovider.Params{
+		GitHub:      ghProvider,
+		Phabricator: phabProvider,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create routing change provider: %w", err)
+	}
+	return routingProvider, nil
+}
+
+// newGitHubChangeProvider creates a GitHub ChangeProvider configured via
+// GITHUB_BASE_URL, GITHUB_TOKEN, and GITHUB_TIMEOUT. Returns nil when
+// GITHUB_TOKEN is unset.
+func newGitHubChangeProvider(logger *zap.Logger, scope tally.Scope) (changeprovider.ChangeProvider, error) {
+	if os.Getenv("GITHUB_TOKEN") == "" {
+		return nil, nil
 	}
 
 	client, err := http.NewClient(getEnv("GITHUB_BASE_URL", "https://api.github.com"))
@@ -774,13 +803,57 @@ func newChangeProvider(logger *zap.Logger, scope tally.Scope) (changeprovider.Ch
 
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: os.Getenv("GITHUB_TOKEN")})
 	client.Transport = &oauth2.Transport{Source: ts, Base: client.Transport}
-
 	client.Timeout = parseTimeout(os.Getenv("GITHUB_TIMEOUT"), 30*time.Second)
 
 	return githubprovider.NewProvider(githubprovider.Params{
 		HTTPClient:   client,
 		Logger:       logger.Sugar(),
-		MetricsScope: scope.SubScope("changeprovider"),
+		MetricsScope: scope.SubScope("changeprovider.github"),
+	}), nil
+}
+
+// apiTokenTransport injects a Phabricator API token as a query parameter in each request.
+type apiTokenTransport struct {
+	token string
+	next  nethttp.RoundTripper
+}
+
+func (t *apiTokenTransport) RoundTrip(req *nethttp.Request) (*nethttp.Response, error) {
+	r := req.Clone(req.Context())
+	q := r.URL.Query()
+	q.Set("api.token", t.token)
+	r.URL.RawQuery = q.Encode()
+	return t.next.RoundTrip(r)
+}
+
+// newPhabChangeProvider creates a Phabricator ChangeProvider configured via PHAB_API_ENDPOINT and PHAB_API_TOKEN.
+// Returns nil when PHAB_API_TOKEN or PHAB_API_ENDPOINT are unset.
+func newPhabChangeProvider(logger *zap.Logger, scope tally.Scope) (changeprovider.ChangeProvider, error) {
+	token := os.Getenv("PHAB_API_TOKEN")
+	if token == "" {
+		return nil, nil
+	}
+
+	endpoint := os.Getenv("PHAB_API_ENDPOINT")
+	if endpoint == "" {
+		return nil, nil
+	}
+
+	client, err := http.NewClient(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build Phabricator HTTP client: %w", err)
+	}
+
+	baseTransport := client.Transport.(*http.BaseURLTransport)
+	baseTransport.Next = &apiTokenTransport{
+		token: token,
+		next:  baseTransport.Next,
+	}
+
+	return phabprovider.NewProvider(phabprovider.Params{
+		HTTPClient:   client,
+		Logger:       logger.Sugar(),
+		MetricsScope: scope.SubScope("changeprovider.phabricator"),
 	}), nil
 }
 
