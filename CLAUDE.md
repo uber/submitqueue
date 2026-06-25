@@ -38,7 +38,7 @@ request.Version = newVersion
 submitqueue/                        # repo root (Go module github.com/uber/submitqueue)
 ├── api/                            # Published wire contracts (cross-domain/external)
 │   ├── submitqueue/{gateway,orchestrator}/{proto,protopb}/   # RPC (proto)
-│   ├── stovepipe/{gateway,orchestrator}/{proto,protopb}/
+│   ├── stovepipe/{proto,protopb}/  # single-service RPC (proto) — no service segment yet
 │   └── runway/messagequeue/        # external queue contracts (proto + protojson)
 ├── platform/                       # SHARED cross-domain packages — no domain deps
 │   ├── errs/, metrics/, consumer/, http/
@@ -50,12 +50,8 @@ submitqueue/                        # repo root (Go module github.com/uber/submi
 │   ├── entity/                     # SubmitQueue-specific domain entities
 │   ├── extension/                  # SubmitQueue-specific extension impls (storage, counter, mergechecker, …)
 │   └── core/                       # SubmitQueue-internal shared infra (consumer wiring, request, topickey, …)
-├── stovepipe/                      # Stovepipe domain
-│   ├── gateway/                    # Gateway service: commit deployment verification entry point
-│   ├── orchestrator/               # Orchestrator service: commit verification pipeline
-│   ├── entity/                     # Stovepipe-specific domain entities
-│   ├── extension/                  # Stovepipe-specific extension impls
-│   └── core/                       # Stovepipe-internal shared infra (placeholder; mirrors submitqueue/core)
+├── stovepipe/                      # Stovepipe domain (single Ping-only service for now)
+│   └── controller/                 # Business logic (currently just Ping); entity/extension/core added as it grows
 ├── tool/                           # Development and CI tooling
 ├── example/
 │   ├── submitqueue/                # Runnable SubmitQueue servers/clients + Docker Compose
@@ -67,7 +63,7 @@ submitqueue/                        # repo root (Go module github.com/uber/submi
 └── doc/                            # Documentation
 ```
 
-The `platform/` tree holds code reused across domains (infrastructure, shared entities, shared extension contracts). Each **domain** (`submitqueue/`, `stovepipe/`, …) keeps the same internal layout (`gateway/`, `orchestrator/`, `entity/`, `extension/`, `core/`); a domain's own `core/` (e.g. `submitqueue/core/`) holds infra shared only between that domain's services.
+The `platform/` tree holds code reused across domains (infrastructure, shared entities, shared extension contracts). Each **domain** (`submitqueue/`, `stovepipe/`, …) grows into the same internal layout (`gateway/`, `orchestrator/`, `entity/`, `extension/`, `core/`); a domain's own `core/` (e.g. `submitqueue/core/`) holds infra shared only between that domain's services. A domain may start smaller — Stovepipe is currently a single Ping-only service with just `controller/` (and a service-segment-free `api/stovepipe/`), adding the other layers as it gains real behavior.
 
 The `api/` tree holds **published** wire contracts — those depended on from outside the owning domain. RPC contracts live at `api/{domain}/{service}/` (`proto/` for `.proto` sources, `protopb/` for committed generated Go); a service package may hold multiple `.proto` files, all generating into the same `protopb/`. External message-queue contracts live at `api/{domain}/messagequeue/` (see Message Queue Contracts below). Internal queue contracts do **not** go here — they live under `{domain}/core/messagequeue/`.
 
