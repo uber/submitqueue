@@ -1,0 +1,13 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "protopb",
+    srcs = ["process.pb.go"],
+    importpath = "github.com/uber/submitqueue/stovepipe/core/messagequeue/protopb",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api/base/messagequeue/protopb",  # keep
+        "@org_golang_google_protobuf//reflect/protoreflect",
+        "@org_golang_google_protobuf//runtime/protoimpl",
+    ],
+)

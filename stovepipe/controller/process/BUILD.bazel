@@ -1,23 +1,15 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "controller",
-    srcs = [
-        "ingest.go",
-        "ping.go",
-    ],
-    importpath = "github.com/uber/submitqueue/stovepipe/controller",
+    name = "process",
+    srcs = ["process.go"],
+    importpath = "github.com/uber/submitqueue/stovepipe/controller/process",
     visibility = ["//visibility:public"],
     deps = [
-        "//api/stovepipe/protopb",
-        "//platform/base/messagequeue",
         "//platform/consumer",
         "//platform/errs",
-        "//platform/extension/counter",
         "//platform/metrics",
         "//stovepipe/core/messagequeue",
-        "//stovepipe/entity",
-        "//stovepipe/extension/sourcecontrol",
         "//stovepipe/extension/storage",
         "@com_github_uber_go_tally//:tally",
         "@org_uber_go_zap//:zap",
@@ -25,21 +17,16 @@ go_library(
 )
 
 go_test(
-    name = "controller_test",
-    srcs = [
-        "ingest_test.go",
-        "ping_test.go",
-    ],
-    embed = [":controller"],
+    name = "process_test",
+    srcs = ["process_test.go"],
+    embed = [":process"],
     deps = [
-        "//api/stovepipe/protopb",
+        "//platform/base/messagequeue",
         "//platform/consumer",
-        "//platform/extension/counter/mock",
+        "//platform/errs",
         "//platform/extension/messagequeue/mock",
         "//stovepipe/core/messagequeue",
         "//stovepipe/entity",
-        "//stovepipe/extension/sourcecontrol",
-        "//stovepipe/extension/sourcecontrol/mock",
         "//stovepipe/extension/storage",
         "//stovepipe/extension/storage/mock",
         "@com_github_stretchr_testify//assert",
