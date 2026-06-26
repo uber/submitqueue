@@ -1,0 +1,29 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "messagequeue",
+    srcs = [
+        "messagequeue.go",
+        "topics.go",
+    ],
+    importpath = "github.com/uber/submitqueue/stovepipe/core/messagequeue",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api/base/messagequeue/protopb",  # keep
+        "//platform/consumer",
+        "//stovepipe/core/messagequeue/protopb",  # keep
+        "@org_golang_google_protobuf//encoding/protojson",
+        "@org_golang_google_protobuf//proto",
+    ],
+)
+
+go_test(
+    name = "messagequeue_test",
+    srcs = ["process_test.go"],
+    embed = [":messagequeue"],
+    deps = [
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_protobuf//proto",
+    ],
+)

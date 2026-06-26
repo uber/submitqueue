@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net"
@@ -25,9 +26,21 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
 	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
+	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
+	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
+	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
+	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/stovepipe/controller"
+	"github.com/uber/submitqueue/stovepipe/controller/process"
+	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
+	sourcecontrolfake "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/fake"
+	storageMySQL "github.com/uber/submitqueue/stovepipe/extension/storage/mysql"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -68,6 +81,15 @@ func (c *inMemoryCounter) Next(_ context.Context, domain string) (int64, error) 
 	defer c.mu.Unlock()
 	c.values[domain]++
 	return c.values[domain], nil
+}
+
+// fakeSourceControlFactory is the example SourceControl factory. It seeds each queue with a
+// deterministic single-commit history so ingest resolves a stable head URI (and re-ingesting
+// the same queue exercises the dedup path). A real deployment supplies a VCS-backed factory.
+type fakeSourceControlFactory struct{}
+
+func (fakeSourceControlFactory) For(cfg sourcecontrol.Config) (sourcecontrol.SourceControl, error) {
+	return sourcecontrolfake.New([]string{fmt.Sprintf("git://%s/HEAD", cfg.QueueName)}), nil
 }
 
 func main() {
@@ -131,12 +153,85 @@ func run() error {
 		metricsWgDone.Wait()
 	}()
 
+	// Storage database (request + request_uri tables).
+	storageDSN := os.Getenv("STORAGE_MYSQL_DSN")
+	if storageDSN == "" {
+		return fmt.Errorf("STORAGE_MYSQL_DSN environment variable is required")
+	}
+	storageDB, err := sql.Open("mysql", storageDSN)
+	if err != nil {
+		return fmt.Errorf("failed to open storage database: %w", err)
+	}
+	defer storageDB.Close()
+
+	store, err := storageMySQL.NewStorage(storageDB, scope.SubScope("storage"))
+	if err != nil {
+		return fmt.Errorf("failed to create storage: %w", err)
+	}
+	defer store.Close()
+
+	// Queue database (messaging infrastructure for the process stage).
+	queueDSN := os.Getenv("QUEUE_MYSQL_DSN")
+	if queueDSN == "" {
+		return fmt.Errorf("QUEUE_MYSQL_DSN environment variable is required")
+	}
+	queueDB, err := sql.Open("mysql", queueDSN)
+	if err != nil {
+		return fmt.Errorf("failed to open queue database: %w", err)
+	}
+	defer queueDB.Close()
+
+	mysqlQueue, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB:           queueDB,
+		Logger:       logger,
+		MetricsScope: scope.SubScope("queue"),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create queue: %w", err)
+	}
+	defer mysqlQueue.Close()
+
+	subscriberName := os.Getenv("HOSTNAME")
+	if subscriberName == "" {
+		subscriberName = fmt.Sprintf("stovepipe-%d", time.Now().Unix())
+	}
+
+	registry, err := newTopicRegistry(mysqlQueue, subscriberName)
+	if err != nil {
+		return fmt.Errorf("failed to create topic registry: %w", err)
+	}
+
+	// Consumer running the process stage.
+	primaryConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
+		errs.NewClassifierProcessor(
+			genericerrs.Classifier,
+			mysqlerrs.Classifier,
+		),
+	)
+
+	processController := process.NewController(logger.Sugar(), scope, store, stovepipemq.TopicKeyProcess, "stovepipe-process")
+	if err := primaryConsumer.Register(processController); err != nil {
+		return fmt.Errorf("failed to register process controller: %w", err)
+	}
+
+	if err := primaryConsumer.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start consumer: %w", err)
+	}
+	logger.Info("consumer started")
+
 	// Create gRPC server
 	grpcServer := grpc.NewServer()
 
 	// Create controllers and wrap them for gRPC
 	pingController := controller.NewPingController(logger, scope)
-	ingestController := controller.NewIngestController(logger.Sugar(), scope, newInMemoryCounter())
+	ingestController := controller.NewIngestController(
+		logger.Sugar(),
+		scope,
+		newInMemoryCounter(),
+		fakeSourceControlFactory{},
+		store,
+		registry,
+	)
 	srv := &StovepipeServer{
 		pingController:   pingController,
 		ingestController: ingestController,
@@ -166,16 +261,13 @@ func run() error {
 	}()
 
 	// Wait for interrupt signal or server critical error
-	// If interruption is signaled, gracefully stop the server
-	// If an error happens during shutdown, return the actual error, not the context cancellation error
 	var serverErr error
 	select {
 	case <-ctx.Done():
 		fmt.Println("Shutting down stovepipe server due to interruption signal...")
 
 		// Set the error to the context cancellation error to be surfaced as a desired exit code by the main function
-		// to indicate that the server was stopped as intended
-		// It may be overridden by the server error if any
+		// to indicate that the server was stopped as intended. It may be overridden by the server error if any.
 		err = ctx.Err()
 
 		// stop GRPC server and wait for it to exit
@@ -183,11 +275,36 @@ func run() error {
 		serverErr = <-serverErrCh
 	case serverErr = <-serverErrCh:
 		fmt.Println("Shutting down stovepipe server due to critical GRPC server error...")
+		cancel()
 	}
 
 	if serverErr != nil {
-		err = fmt.Errorf("GRPC server exited with error: %w", serverErr)
+		serverErr = fmt.Errorf("GRPC server exited with error: %w", serverErr)
+	}
+
+	consumerStopErr := primaryConsumer.Stop(30000)
+	if consumerStopErr != nil {
+		consumerStopErr = fmt.Errorf("failed to stop consumer: %w", consumerStopErr)
+	}
+
+	if consumerStopErr != nil || serverErr != nil {
+		err = errors.Join(err, consumerStopErr, serverErr)
 	}
 
 	return err
+}
+
+// newTopicRegistry builds the TopicRegistry for Stovepipe's internal pipeline queues. ingest
+// publishes to the process topic and the process consumer subscribes to it.
+func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRegistry, error) {
+	return consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{
+			Key:   stovepipemq.TopicKeyProcess,
+			Name:  "process",
+			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "stovepipe-process",
+			),
+		},
+	})
 }
