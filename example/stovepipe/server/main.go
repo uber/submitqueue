@@ -33,15 +33,41 @@ import (
 	"google.golang.org/grpc/reflection"
 )
 
-// StovepipeServer wraps the controller and implements the gRPC service interface.
+// StovepipeServer wraps the controllers and implements the gRPC service interface.
 type StovepipeServer struct {
 	pb.UnimplementedStovepipeServer
-	pingController *controller.PingController
+	pingController   *controller.PingController
+	ingestController *controller.IngestController
 }
 
 // Ping delegates to the controller.
 func (s *StovepipeServer) Ping(ctx context.Context, req *pb.PingRequest) (*pb.PingResponse, error) {
 	return s.pingController.Ping(ctx, req)
+}
+
+// Ingest delegates to the controller.
+func (s *StovepipeServer) Ingest(ctx context.Context, req *pb.IngestRequest) (*pb.IngestResponse, error) {
+	return s.ingestController.Ingest(ctx, req)
+}
+
+// inMemoryCounter is a minimal, process-local counter.Counter used to wire the example
+// server. It is not durable; a real deployment supplies a persistent implementation
+// (e.g. platform/extension/counter/mysql).
+type inMemoryCounter struct {
+	mu     sync.Mutex
+	values map[string]int64
+}
+
+func newInMemoryCounter() *inMemoryCounter {
+	return &inMemoryCounter{values: make(map[string]int64)}
+}
+
+// Next returns the next value in the sequence for the given domain, starting at 1.
+func (c *inMemoryCounter) Next(_ context.Context, domain string) (int64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.values[domain]++
+	return c.values[domain], nil
 }
 
 func main() {
@@ -108,10 +134,12 @@ func run() error {
 	// Create gRPC server
 	grpcServer := grpc.NewServer()
 
-	// Create ping controller and wrap it for gRPC
+	// Create controllers and wrap them for gRPC
 	pingController := controller.NewPingController(logger, scope)
+	ingestController := controller.NewIngestController(logger.Sugar(), scope, newInMemoryCounter())
 	srv := &StovepipeServer{
-		pingController: pingController,
+		pingController:   pingController,
+		ingestController: ingestController,
 	}
 	pb.RegisterStovepipeServer(grpcServer, srv)
 
