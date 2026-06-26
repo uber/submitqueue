@@ -39,8 +39,26 @@ message PingResponse {
     string hostname = 4;
 }
 
+// IngestRequest is the request for the Ingest method. The poller reports that a queue
+// (a named repo+ref) has a new commit to validate.
+message IngestRequest {
+    // Logical queue name to validate (e.g. "monorepo/main"). It namespaces the minted
+    // request ID and is the stable handle for the repo+ref being validated.
+    string queue = 1;
+}
+
+// IngestResponse is the response for the Ingest method.
+message IngestResponse {
+    // The minted request ID, namespaced by queue. Format: "request/<queue>/<counter>"
+    // (e.g. "request/monorepo/main/42").
+    string id = 1;
+}
+
 // Stovepipe provides the Stovepipe API.
 service Stovepipe {
     // Ping returns a response indicating the service is alive
     rpc Ping(PingRequest) returns (PingResponse) {}
+    // Ingest admits a queue's newly observed commit into the validation pipeline and returns
+    // the minted request ID. The caller hands off asynchronously; validation happens later.
+    rpc Ingest(IngestRequest) returns (IngestResponse) {}
 }

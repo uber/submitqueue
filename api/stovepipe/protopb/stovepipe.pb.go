@@ -155,6 +155,101 @@ func (x *PingResponse) GetHostname() string {
 	return ""
 }
 
+// IngestRequest is the request for the Ingest method. The poller reports that a queue
+// (a named repo+ref) has a new commit to validate.
+type IngestRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Logical queue name to validate (e.g. "monorepo/main"). It namespaces the minted
+	// request ID and is the stable handle for the repo+ref being validated.
+	Queue         string `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IngestRequest) Reset() {
+	*x = IngestRequest{}
+	mi := &file_stovepipe_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IngestRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IngestRequest) ProtoMessage() {}
+
+func (x *IngestRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IngestRequest.ProtoReflect.Descriptor instead.
+func (*IngestRequest) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *IngestRequest) GetQueue() string {
+	if x != nil {
+		return x.Queue
+	}
+	return ""
+}
+
+// IngestResponse is the response for the Ingest method.
+type IngestResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The minted request ID, namespaced by queue. Format: "request/<queue>/<counter>"
+	// (e.g. "request/monorepo/main/42").
+	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IngestResponse) Reset() {
+	*x = IngestResponse{}
+	mi := &file_stovepipe_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IngestResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IngestResponse) ProtoMessage() {}
+
+func (x *IngestResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IngestResponse.ProtoReflect.Descriptor instead.
+func (*IngestResponse) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *IngestResponse) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
 var File_stovepipe_proto protoreflect.FileDescriptor
 
 const file_stovepipe_proto_rawDesc = "" +
@@ -166,9 +261,14 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12!\n" +
 	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12\x1c\n" +
 	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x1a\n" +
-	"\bhostname\x18\x04 \x01(\tR\bhostname2h\n" +
+	"\bhostname\x18\x04 \x01(\tR\bhostname\"%\n" +
+	"\rIngestRequest\x12\x14\n" +
+	"\x05queue\x18\x01 \x01(\tR\x05queue\" \n" +
+	"\x0eIngestResponse\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id2\xcb\x01\n" +
 	"\tStovepipe\x12[\n" +
-	"\x04Ping\x12'.uber.submitqueue.stovepipe.PingRequest\x1a(.uber.submitqueue.stovepipe.PingResponse\"\x00Be\n" +
+	"\x04Ping\x12'.uber.submitqueue.stovepipe.PingRequest\x1a(.uber.submitqueue.stovepipe.PingResponse\"\x00\x12a\n" +
+	"\x06Ingest\x12).uber.submitqueue.stovepipe.IngestRequest\x1a*.uber.submitqueue.stovepipe.IngestResponse\"\x00Be\n" +
 	"\x1ecom.uber.submitqueue.stovepipeB\x0eStovepipeProtoP\x01Z1github.com/uber/submitqueue/api/stovepipe/protopbb\x06proto3"
 
 var (
@@ -183,16 +283,20 @@ func file_stovepipe_proto_rawDescGZIP() []byte {
 	return file_stovepipe_proto_rawDescData
 }
 
-var file_stovepipe_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_stovepipe_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_stovepipe_proto_goTypes = []any{
-	(*PingRequest)(nil),  // 0: uber.submitqueue.stovepipe.PingRequest
-	(*PingResponse)(nil), // 1: uber.submitqueue.stovepipe.PingResponse
+	(*PingRequest)(nil),    // 0: uber.submitqueue.stovepipe.PingRequest
+	(*PingResponse)(nil),   // 1: uber.submitqueue.stovepipe.PingResponse
+	(*IngestRequest)(nil),  // 2: uber.submitqueue.stovepipe.IngestRequest
+	(*IngestResponse)(nil), // 3: uber.submitqueue.stovepipe.IngestResponse
 }
 var file_stovepipe_proto_depIdxs = []int32{
 	0, // 0: uber.submitqueue.stovepipe.Stovepipe.Ping:input_type -> uber.submitqueue.stovepipe.PingRequest
-	1, // 1: uber.submitqueue.stovepipe.Stovepipe.Ping:output_type -> uber.submitqueue.stovepipe.PingResponse
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
+	2, // 1: uber.submitqueue.stovepipe.Stovepipe.Ingest:input_type -> uber.submitqueue.stovepipe.IngestRequest
+	1, // 2: uber.submitqueue.stovepipe.Stovepipe.Ping:output_type -> uber.submitqueue.stovepipe.PingResponse
+	3, // 3: uber.submitqueue.stovepipe.Stovepipe.Ingest:output_type -> uber.submitqueue.stovepipe.IngestResponse
+	2, // [2:4] is the sub-list for method output_type
+	0, // [0:2] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -209,7 +313,7 @@ func file_stovepipe_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_stovepipe_proto_rawDesc), len(file_stovepipe_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

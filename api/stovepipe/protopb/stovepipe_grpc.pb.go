@@ -34,7 +34,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Stovepipe_Ping_FullMethodName = "/uber.submitqueue.stovepipe.Stovepipe/Ping"
+	Stovepipe_Ping_FullMethodName   = "/uber.submitqueue.stovepipe.Stovepipe/Ping"
+	Stovepipe_Ingest_FullMethodName = "/uber.submitqueue.stovepipe.Stovepipe/Ingest"
 )
 
 // StovepipeClient is the client API for Stovepipe service.
@@ -45,6 +46,9 @@ const (
 type StovepipeClient interface {
 	// Ping returns a response indicating the service is alive
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
+	// Ingest admits a queue's newly observed commit into the validation pipeline and returns
+	// the minted request ID. The caller hands off asynchronously; validation happens later.
+	Ingest(ctx context.Context, in *IngestRequest, opts ...grpc.CallOption) (*IngestResponse, error)
 }
 
 type stovepipeClient struct {
@@ -65,6 +69,16 @@ func (c *stovepipeClient) Ping(ctx context.Context, in *PingRequest, opts ...grp
 	return out, nil
 }
 
+func (c *stovepipeClient) Ingest(ctx context.Context, in *IngestRequest, opts ...grpc.CallOption) (*IngestResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(IngestResponse)
+	err := c.cc.Invoke(ctx, Stovepipe_Ingest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StovepipeServer is the server API for Stovepipe service.
 // All implementations must embed UnimplementedStovepipeServer
 // for forward compatibility.
@@ -73,6 +87,9 @@ func (c *stovepipeClient) Ping(ctx context.Context, in *PingRequest, opts ...grp
 type StovepipeServer interface {
 	// Ping returns a response indicating the service is alive
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
+	// Ingest admits a queue's newly observed commit into the validation pipeline and returns
+	// the minted request ID. The caller hands off asynchronously; validation happens later.
+	Ingest(context.Context, *IngestRequest) (*IngestResponse, error)
 	mustEmbedUnimplementedStovepipeServer()
 }
 
@@ -85,6 +102,9 @@ type UnimplementedStovepipeServer struct{}
 
 func (UnimplementedStovepipeServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Ping not implemented")
+}
+func (UnimplementedStovepipeServer) Ingest(context.Context, *IngestRequest) (*IngestResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Ingest not implemented")
 }
 func (UnimplementedStovepipeServer) mustEmbedUnimplementedStovepipeServer() {}
 func (UnimplementedStovepipeServer) testEmbeddedByValue()                   {}
@@ -125,6 +145,24 @@ func _Stovepipe_Ping_Handler(srv interface{}, ctx context.Context, dec func(inte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Stovepipe_Ingest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IngestRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StovepipeServer).Ingest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Stovepipe_Ingest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StovepipeServer).Ingest(ctx, req.(*IngestRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Stovepipe_ServiceDesc is the grpc.ServiceDesc for Stovepipe service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -135,6 +173,10 @@ var Stovepipe_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Ping",
 			Handler:    _Stovepipe_Ping_Handler,
+		},
+		{
+			MethodName: "Ingest",
+			Handler:    _Stovepipe_Ingest_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
