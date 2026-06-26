@@ -1,0 +1,13 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mock",
+    srcs = ["sourcecontrol_mock.go"],
+    importpath = "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/mock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//platform/base/page",
+        "//stovepipe/extension/sourcecontrol",
+        "@org_uber_go_mock//gomock",
+    ],
+)
