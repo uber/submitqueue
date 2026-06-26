@@ -187,8 +187,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 	if err := c.publishMergeCheck(ctx, req); err != nil {
 		coremetrics.NamedCounter(c.metricsScope, "process", "publish_errors", 1)
-		// Retryable: the hand-off to runway is what keeps this check alive.
-		return errs.NewRetryableError(fmt.Errorf("failed to publish to runway merge-conflict-check: %w", err))
+		return fmt.Errorf("failed to publish to runway merge-conflict-check: %w", err)
 	}
 
 	c.logger.Infow("published merge conflict check to runway",

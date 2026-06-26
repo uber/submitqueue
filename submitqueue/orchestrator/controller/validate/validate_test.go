@@ -310,11 +310,8 @@ func TestController_Process_PublishFailure(t *testing.T) {
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
-	// The hand-off to runway is retryable: a transient enqueue blip should replay
-	// rather than strand the request.
 	err := controller.Process(context.Background(), delivery)
 	require.Error(t, err)
-	assert.True(t, errs.IsRetryable(err))
 }
 
 func TestController_InterfaceImplementation(t *testing.T) {

@@ -12,7 +12,6 @@ go_library(
         "//platform/base/mergestrategy",
         "//platform/base/messagequeue",
         "//platform/consumer",
-        "//platform/errs",
         "//platform/metrics",
         "//submitqueue/entity",
         "//submitqueue/extension/storage",

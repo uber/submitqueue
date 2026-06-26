@@ -34,7 +34,6 @@ import (
 	"github.com/uber/submitqueue/platform/base/mergestrategy"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
-	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -145,8 +144,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	if err := c.publish(ctx, c.runwayTopicKey, req, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
-		// Retryable: the hand-off to runway is what keeps this merge alive.
-		return errs.NewRetryableError(fmt.Errorf("failed to publish to runway merge: %w", err))
+		return fmt.Errorf("failed to publish to runway merge: %w", err)
 	}
 
 	c.logger.Infow("published merge to runway",

@@ -29,7 +29,6 @@ import (
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
-	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -194,10 +193,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	metrics.NamedCounter(c.metricsScope, opName, "rescheduled", 1, metrics.NewTag("status", string(status)))
 	if err := c.publishBuild(ctx, c.topicKey, build, delayMs); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
-		// Retryable: this is the poll loop's heartbeat. A transient enqueue
-		// failure should nack and replay rather than DLQ the only message
-		// keeping this build's status loop alive.
-		return errs.NewRetryableError(fmt.Errorf("failed to re-publish to buildsignal: %w", err))
+		return fmt.Errorf("failed to re-publish to buildsignal: %w", err)
 	}
 
 	c.logger.Debugw("rescheduled build status poll",
