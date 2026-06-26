@@ -129,6 +129,12 @@ Two practical rules fall out of the short-circuit semantics:
 - **Wrap with a framework constructor as soon as the controller knows the right verdict.** Any wrap added later in the chain still wins, but wrapping early keeps the intent close to the decision.
 - **A wrap anywhere in the chain blocks all classifiers — including for nodes deeper than the wrap.** If you want a classifier to still get a look at the cause, do not wrap above it. (In practice this is rare: controllers wrap because they have the final answer.)
 
+### When *not* to classify in a controller
+
+The controller-override path is for the rare case where the controller has certain knowledge a classifier cannot derive from the error value alone — typically a sentinel (`storage.ErrNotFound`) that means "the user asked for something missing" *in this specific call site*. The default and overwhelmingly common case is the opposite: the controller returns the raw error (`return fmt.Errorf("...: %w", err)`) and lets the consumer's `ErrorProcessor` classify it.
+
+In particular, **do not reach for `NewRetryableError` just because replaying the message would be convenient.** A failed queue publish, a failed enqueue, a "the hand-off that keeps this alive" step — these are *not* a license to mark the error retryable. Whether such a failure is transient is exactly what a classifier exists to decide: a transport-level classifier wraps genuine connection/timeout blips as retryable, while a malformed-request or permission failure stays non-retryable and dead-letters instead of replaying forever. Blanket `NewRetryableError` on a publish path defeats that and turns every permanent failure into an infinite retry loop.
+
 ## Extensions Return Plain Go Errors
 
 Extension interfaces (`MergeChecker`, `Storage`, `Publisher`) return standard `error` values. They may define their own domain-specific sentinel errors (e.g. `storage.ErrNotFound`, `storage.ErrVersionMismatch`) but they do **not** classify errors as user or infra — that is the controller's (and the consumer's `ErrorProcessor`'s) job.

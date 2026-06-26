@@ -233,9 +233,8 @@ func TestController_Process_UpdateStatusError(t *testing.T) {
 }
 
 // TestController_Process_RepublishError verifies that a failure to re-publish
-// the delayed poll message is retryable: the re-schedule is the loop's
-// heartbeat, so it should nack and replay rather than reject straight to DLQ.
-// The preceding status/persist/speculate steps all succeed.
+// the delayed poll message surfaces an error. The preceding
+// status/persist/speculate steps all succeed.
 func TestController_Process_RepublishError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	h := newTestHarness(t, ctrl)
@@ -253,7 +252,6 @@ func TestController_Process_RepublishError(t *testing.T) {
 
 	err := h.controller.Process(context.Background(), buildDelivery(t, ctrl, build))
 	require.Error(t, err)
-	assert.True(t, errs.IsRetryable(err))
 }
 
 // TestController_Process_GetError verifies that a failure to load the Build

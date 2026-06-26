@@ -190,7 +190,7 @@ func TestProcess_HaltedBatchSkips(t *testing.T) {
 	}
 }
 
-func TestProcess_PublishFailureIsRetryable(t *testing.T) {
+func TestProcess_PublishFailureReturnsError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	const batchID = "test-queue/batch/2"
@@ -218,7 +218,6 @@ func TestProcess_PublishFailureIsRetryable(t *testing.T) {
 	c := newController(t, store, registry)
 	err = c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue))
 	require.Error(t, err)
-	assert.True(t, errs.IsRetryable(err))
 }
 
 func TestProcess_BatchStoreGetFailureNotRetryable(t *testing.T) {
