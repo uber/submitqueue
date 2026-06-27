@@ -270,7 +270,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 			)
 			return nil
 		}
-		c.metricsScope.Counter("request_claim_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, opName, "request_claim_errors", 1)
 		return fmt.Errorf("failed to claim request %s for batch %s: %w", request.ID, batch.ID, err)
 	}
 	request.Version = newRequestVersion
