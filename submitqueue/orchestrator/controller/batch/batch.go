@@ -137,11 +137,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// Get active batches for this queue and ask the conflict analyzer which
 	// of them the new batch must serialize behind. The dependency set drives
 	// the speculation graph downstream.
-	activeBatches, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, []entity.BatchState{
-		entity.BatchStateCreated,
-		entity.BatchStateSpeculating,
-		entity.BatchStateMerging,
-	})
+	activeBatches, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, entity.DependencyBatchStates())
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
 		return fmt.Errorf("failed to get active batches for queue=%s: %w", request.Queue, err)

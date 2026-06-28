@@ -192,13 +192,7 @@ func (c *Controller) markCancelling(ctx context.Context, request entity.Request)
 // the publish.
 func (c *Controller) findActiveBatch(ctx context.Context, request entity.Request) (entity.Batch, bool, error) {
 	// TODO: Scans all the batches in flight - make it more efficient?
-	active, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, []entity.BatchState{
-		entity.BatchStateCreated,
-		entity.BatchStateScored,
-		entity.BatchStateSpeculating,
-		entity.BatchStateMerging,
-		entity.BatchStateCancelling,
-	})
+	active, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, entity.ActiveBatchStates())
 	if err != nil {
 		c.metricsScope.Counter("batch_store_errors").Inc(1)
 		return entity.Batch{}, false, fmt.Errorf("failed to get active batches for queue=%s: %w", request.Queue, err)
