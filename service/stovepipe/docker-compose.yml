@@ -1,15 +1,23 @@
-# Docker Compose for Gateway Manual Testing
+# Docker Compose for the Stovepipe service.
 #
-# IMPORTANT: Before running docker-compose, build the Linux binary:
-#   make build-gateway-linux
+# Stovepipe ingests a queue's head commit, persists the Request, and publishes it
+# to the process stage over a messaging queue; the process consumer reloads the
+# Request. The stack therefore runs the service plus two MySQL databases: one for
+# storage (request, request_uri) and one for the messaging queue.
+#
+# IMPORTANT: Before running compose, build the Linux binary:
+#   make build-stovepipe-linux
 #   OR
-#   bazel build --platforms=@rules_go//go/toolchain:linux_amd64 //example/submitqueue/gateway/server
+#   bazel build --platforms=@rules_go//go/toolchain:linux_amd64 \
+#     //service/stovepipe/server:stovepipe
 #
 # Quick start:
-#   make docker-gateway  (builds binary + starts compose)
+#   make local-stovepipe-start
+#
+# After `up`, the storage and queue schemas are applied (local-init-stovepipe-schemas).
 
 services:
-  # Application Database - Stores business data (requests, counters, etc.)
+  # Storage database - Stovepipe's request and request_uri tables.
   mysql-app:
     image: mysql:8.0
     environment:
@@ -26,8 +34,7 @@ services:
       timeout: 5s
       retries: 10
 
-  # Queue Database - Messaging infrastructure (messages, offsets, partition leases)
-  # Separate from app DB to demonstrate queue is pluggable infrastructure
+  # Queue database - messaging infrastructure (messages, offsets, partition leases).
   mysql-queue:
     image: mysql:8.0
     environment:
@@ -41,22 +48,17 @@ services:
       timeout: 5s
       retries: 10
 
-  gateway-service:
+  stovepipe-service:
     build:
       context: ${REPO_ROOT}
-      dockerfile: example/submitqueue/gateway/server/Dockerfile
+      dockerfile: service/stovepipe/server/Dockerfile
     ports:
       - "8080" # Random ephemeral port to avoid conflicts
     environment:
       - PORT=:8080
-      # Application database connection
-      - MYSQL_DSN=root:root@tcp(mysql-app:3306)/submitqueue?parseTime=true
-      # Queue infrastructure connection (separate database)
+      - STORAGE_MYSQL_DSN=root:root@tcp(mysql-app:3306)/submitqueue?parseTime=true
       - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
-      # Path to YAML queue configuration baked into the image
-      - QUEUE_CONFIG_PATH=/root/queues.yaml
-      # Stable subscriber name for the request-log consumer
-      - HOSTNAME=gateway-dev
+      - HOSTNAME=stovepipe-dev
     depends_on:
       mysql-app:
         condition: service_healthy

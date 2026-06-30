@@ -9,7 +9,7 @@ COPY .docker-bin/gateway ./gateway
 
 # Sample queue configuration; the gateway reads it on startup via
 # QUEUE_CONFIG_PATH (set in docker-compose.yml).
-COPY example/submitqueue/gateway/server/queues.yaml ./queues.yaml
+COPY service/submitqueue/gateway/server/queues.yaml ./queues.yaml
 
 EXPOSE 8080
 

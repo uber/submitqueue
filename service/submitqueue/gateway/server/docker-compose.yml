@@ -1,12 +1,12 @@
-# Docker Compose for Full Stack (Gateway + Orchestrator + MySQL)
+# Docker Compose for Gateway Manual Testing
 #
-# IMPORTANT: Before running docker-compose, build the Linux binaries:
-#   make build-gateway-linux build-orchestrator-linux
+# IMPORTANT: Before running docker-compose, build the Linux binary:
+#   make build-gateway-linux
 #   OR
-#   bazel build --platforms=@rules_go//go/toolchain:linux_amd64 //example/submitqueue/gateway/server //example/submitqueue/orchestrator/server
+#   bazel build --platforms=@rules_go//go/toolchain:linux_amd64 //service/submitqueue/gateway/server
 #
 # Quick start:
-#   make e2e-test
+#   make docker-gateway  (builds binary + starts compose)
 
 services:
   # Application Database - Stores business data (requests, counters, etc.)
@@ -44,7 +44,7 @@ services:
   gateway-service:
     build:
       context: ${REPO_ROOT}
-      dockerfile: example/submitqueue/gateway/server/Dockerfile
+      dockerfile: service/submitqueue/gateway/server/Dockerfile
     ports:
       - "8080" # Random ephemeral port to avoid conflicts
     environment:
@@ -57,25 +57,6 @@ services:
       - QUEUE_CONFIG_PATH=/root/queues.yaml
       # Stable subscriber name for the request-log consumer
       - HOSTNAME=gateway-dev
-    depends_on:
-      mysql-app:
-        condition: service_healthy
-      mysql-queue:
-        condition: service_healthy
-
-  orchestrator-service:
-    build:
-      context: ${REPO_ROOT}
-      dockerfile: example/submitqueue/orchestrator/server/Dockerfile
-    ports:
-      - "8080" # Random ephemeral port to avoid conflicts
-    environment:
-      - PORT=:8080
-      # Application database connection (for request state, batches, etc.)
-      - MYSQL_DSN=root:root@tcp(mysql-app:3306)/submitqueue?parseTime=true
-      # Queue infrastructure connection (separate database)
-      - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
-      - HOSTNAME=orchestrator-dev
     depends_on:
       mysql-app:
         condition: service_healthy

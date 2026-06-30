@@ -33,7 +33,7 @@ grpcurl -plaintext -d '{"message": "hello"}' localhost:8081 uber.submitqueue.gat
 make local-stop
 ```
 
-See [example/README.md](example/README.md) for more examples including running individual services and clients.
+See [service/README.md](service/README.md) for more examples including running individual services and clients.
 
 ## Documentation
 
@@ -43,7 +43,7 @@ See [example/README.md](example/README.md) for more examples including running i
 | [Contributing](CONTRIBUTING.md) | How to contribute, workflow, guidelines |
 | [Testing Guide](doc/howto/TESTING.md) | Unit, integration, and E2E testing patterns |
 | [Architecture Guide](CLAUDE.md) | Project layout, patterns, conventions |
-| [Examples](example/README.md) | Running services, clients, API reference |
+| [Examples](service/README.md) | Running services, clients, API reference |
 | [RFCs](doc/rfc/index.md) | Design documents and proposals |
 
 ## Project Status

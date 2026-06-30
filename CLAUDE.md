@@ -56,9 +56,9 @@ submitqueue/                        # repo root (Go module github.com/uber/submi
 ├── runway/                         # Runway domain (single service — the domain *is* the service)
 │   └── controller/                 # Runway service controllers (consumes the merge queues; no gateway/orchestrator split)
 ├── tool/                           # Development and CI tooling
-├── example/
+├── service/                        # Runnable server/client wiring (entry points + Docker Compose)
 │   ├── submitqueue/                # Runnable SubmitQueue servers/clients + Docker Compose
-│   ├── stovepipe/                  # Runnable Stovepipe servers/clients
+│   ├── stovepipe/                  # Runnable Stovepipe server/client + Docker Compose
 │   └── runway/                     # Runnable Runway server/client + Docker Compose
 ├── test/
 │   ├── e2e/submitqueue/            # End-to-end tests (full stack)
@@ -132,7 +132,7 @@ Vendor-agnostic, pluggable interfaces with implementations in subdirectories:
 
 A `{domain}/extension/{ext}` or `platform/extension/{ext}` package contains the behavioral interface, its `Config`, the `Factory` *interface*, and impl constructors `New(...)` that return the interface. It must **not** contain `Factory` *implementations* (`NewFactory()` constructors or factory structs) or any queue-selection logic.
 
-Why: an impl package (e.g. `scorer/heuristic`) can't know the queue topology or the other impls, so a "which impl for which queue" decision doesn't belong there. Per-queue routing — and the small adapters that wrap a `New(...)` impl in the `Factory` interface — live in the wiring layer (e.g. `example/{domain}/{service}/server/main.go`), the one place that knows the full queue set. That's where you route on `Config.QueueName`.
+Why: an impl package (e.g. `scorer/heuristic`) can't know the queue topology or the other impls, so a "which impl for which queue" decision doesn't belong there. Per-queue routing — and the small adapters that wrap a `New(...)` impl in the `Factory` interface — live in the wiring layer (e.g. `service/{domain}/{service}/server/main.go`), the one place that knows the full queue set. That's where you route on `Config.QueueName`.
 
 Rule of thumb: if you're about to add a `NewFactory()` or a `map[queue]impl` under `{domain}/extension/` or `platform/extension/`, it belongs in the wiring layer instead.
 
@@ -239,11 +239,11 @@ make clean              # Clean Bazel cache
 **Add new RPC method:**
 1. Edit `api/{domain}/{service}/proto/*.proto` → `make proto`
 2. Add controller in `{domain}/{service}/controller/`
-3. Wire up in `example/{domain}/{service}/server/main.go`
+3. Wire up in `service/{domain}/{service}/server/main.go`
 
 **Add new queue message controller:**
 1. Create `{domain}/{service}/controller/{step}/` implementing `consumer.Controller`
-2. Wire up in `example/{domain}/{service}/server/main.go`
+2. Wire up in `service/{domain}/{service}/server/main.go`
 
 **Add new extension:**
 1. Create the extension under `{domain}/extension/{ext}/{impl}/` (domain-specific, e.g. `submitqueue/extension/...`) or `platform/extension/{ext}/{impl}/` (shared across domains) with factory and interfaces

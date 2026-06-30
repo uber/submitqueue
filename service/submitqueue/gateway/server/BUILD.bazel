@@ -8,7 +8,7 @@ exports_files(
 go_library(
     name = "gateway_lib",
     srcs = ["main.go"],
-    importpath = "github.com/uber/submitqueue/example/submitqueue/gateway/server",
+    importpath = "github.com/uber/submitqueue/service/submitqueue/gateway/server",
     visibility = ["//visibility:private"],
     deps = [
         "//api/submitqueue/gateway/protopb",

@@ -16,7 +16,7 @@ package e2e_test
 
 // E2E Integration Tests
 //
-// These tests use docker-compose from example/submitqueue/docker-compose.yml
+// These tests use docker-compose from service/submitqueue/docker-compose.yml
 // which requires pre-built Linux binaries.
 //
 // Run with make target (builds binaries + runs test):
@@ -80,9 +80,9 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 	repoRoot := testutil.FindRepoRoot(t)
 	t.Setenv("REPO_ROOT", repoRoot)
 
-	// Use docker-compose from example/submitqueue (full stack)
+	// Use docker-compose from service/submitqueue (full stack)
 	// NOTE: Assumes Linux binaries are pre-built via make target
-	composeFile := filepath.Join(repoRoot, "example/submitqueue/docker-compose.yml")
+	composeFile := filepath.Join(repoRoot, "service/submitqueue/docker-compose.yml")
 	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "e2e-submitqueue")
 
 	// Start the compose stack (Gateway + Orchestrator + 2 MySQL DBs)

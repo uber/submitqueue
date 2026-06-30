@@ -16,7 +16,7 @@ package gateway
 
 // Gateway Integration Tests
 //
-// These tests use docker-compose from example/submitqueue/gateway/server/docker-compose.yml
+// These tests use docker-compose from service/submitqueue/gateway/server/docker-compose.yml
 // which requires pre-built Linux binaries.
 //
 // Run with make target (builds binary + runs test):
@@ -85,9 +85,9 @@ func (s *GatewayIntegrationSuite) SetupSuite() {
 	repoRoot := testutil.FindRepoRoot(t)
 	t.Setenv("REPO_ROOT", repoRoot)
 
-	// Use docker-compose from example/submitqueue/gateway/server
+	// Use docker-compose from service/submitqueue/gateway/server
 	// NOTE: Assumes Linux binary is pre-built via make target
-	composeFile := filepath.Join(repoRoot, "example/submitqueue/gateway/server/docker-compose.yml")
+	composeFile := filepath.Join(repoRoot, "service/submitqueue/gateway/server/docker-compose.yml")
 	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "svc-submitqueue-gateway")
 
 	// Start the compose stack (Gateway + 2 MySQL DBs)

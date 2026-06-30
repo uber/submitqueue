@@ -5,21 +5,21 @@ BAZEL = ./tool/bazel
 COMPOSE = docker-compose
 
 # SubmitQueue compose files
-COMPOSE_FILE = example/submitqueue/docker-compose.yml
-GATEWAY_COMPOSE_FILE = example/submitqueue/gateway/server/docker-compose.yml
-ORCHESTRATOR_COMPOSE_FILE = example/submitqueue/orchestrator/server/docker-compose.yml
+COMPOSE_FILE = service/submitqueue/docker-compose.yml
+GATEWAY_COMPOSE_FILE = service/submitqueue/gateway/server/docker-compose.yml
+ORCHESTRATOR_COMPOSE_FILE = service/submitqueue/orchestrator/server/docker-compose.yml
 
 # Fixed project name for local manual testing (tests use unique random names)
 SUBMITQUEUE_LOCAL_PROJECT = submitqueue
 
 # Stovepipe compose file (single Ping-only service)
-STOVEPIPE_COMPOSE_FILE = example/stovepipe/docker-compose.yml
+STOVEPIPE_COMPOSE_FILE = service/stovepipe/docker-compose.yml
 
 # Fixed project name for local manual testing (tests use unique random names)
 STOVEPIPE_LOCAL_PROJECT = stovepipe
 
 # Runway compose files
-RUNWAY_COMPOSE_FILE = example/runway/server/docker-compose.yml
+RUNWAY_COMPOSE_FILE = service/runway/server/docker-compose.yml
 
 # Fixed project name for local manual testing (tests use unique random names)
 RUNWAY_LOCAL_PROJECT = runway
@@ -65,34 +65,34 @@ build-all-linux: build-submitqueue-gateway-linux build-submitqueue-orchestrator-
 
 build-runway-linux: ## Build Runway Linux binary for Docker
 	@echo "Building Runway Linux binary for Docker..."
-	@$(BAZEL) build --platforms=@rules_go//go/toolchain:linux_amd64 //example/runway/server:runway
+	@$(BAZEL) build --platforms=@rules_go//go/toolchain:linux_amd64 //service/runway/server:runway
 	@mkdir -p .docker-bin
-	@cp -f bazel-bin/example/runway/server/runway_/runway .docker-bin/runway 2>/dev/null || \
-	 cp -f bazel-bin/example/runway/server/runway .docker-bin/runway
+	@cp -f bazel-bin/service/runway/server/runway_/runway .docker-bin/runway 2>/dev/null || \
+	 cp -f bazel-bin/service/runway/server/runway .docker-bin/runway
 	@echo "Runway Linux binary ready at .docker-bin/runway"
 
 build-submitqueue-gateway-linux: ## Build Gateway Linux binary for Docker
 	@echo "Building Gateway Linux binary for Docker..."
-	@$(BAZEL) build --platforms=@rules_go//go/toolchain:linux_amd64 //example/submitqueue/gateway/server:gateway
+	@$(BAZEL) build --platforms=@rules_go//go/toolchain:linux_amd64 //service/submitqueue/gateway/server:gateway
 	@mkdir -p .docker-bin
-	@cp -f bazel-bin/example/submitqueue/gateway/server/gateway_/gateway .docker-bin/gateway 2>/dev/null || \
-	 cp -f bazel-bin/example/submitqueue/gateway/server/gateway .docker-bin/gateway
+	@cp -f bazel-bin/service/submitqueue/gateway/server/gateway_/gateway .docker-bin/gateway 2>/dev/null || \
+	 cp -f bazel-bin/service/submitqueue/gateway/server/gateway .docker-bin/gateway
 	@echo "Gateway Linux binary ready at .docker-bin/gateway"
 
 build-submitqueue-orchestrator-linux: ## Build Orchestrator Linux binary for Docker
 	@echo "Building Orchestrator Linux binary for Docker..."
-	@$(BAZEL) build --platforms=@rules_go//go/toolchain:linux_amd64 //example/submitqueue/orchestrator/server:orchestrator
+	@$(BAZEL) build --platforms=@rules_go//go/toolchain:linux_amd64 //service/submitqueue/orchestrator/server:orchestrator
 	@mkdir -p .docker-bin
-	@cp -f bazel-bin/example/submitqueue/orchestrator/server/orchestrator_/orchestrator .docker-bin/orchestrator 2>/dev/null || \
-	 cp -f bazel-bin/example/submitqueue/orchestrator/server/orchestrator .docker-bin/orchestrator
+	@cp -f bazel-bin/service/submitqueue/orchestrator/server/orchestrator_/orchestrator .docker-bin/orchestrator 2>/dev/null || \
+	 cp -f bazel-bin/service/submitqueue/orchestrator/server/orchestrator .docker-bin/orchestrator
 	@echo "Orchestrator Linux binary ready at .docker-bin/orchestrator"
 
 build-stovepipe-linux: ## Build Stovepipe Linux binary for Docker
 	@echo "Building Stovepipe Linux binary for Docker..."
-	@$(BAZEL) build --platforms=@rules_go//go/toolchain:linux_amd64 //example/stovepipe/server:stovepipe
+	@$(BAZEL) build --platforms=@rules_go//go/toolchain:linux_amd64 //service/stovepipe/server:stovepipe
 	@mkdir -p .docker-bin
-	@cp -f bazel-bin/example/stovepipe/server/stovepipe_/stovepipe .docker-bin/stovepipe 2>/dev/null || \
-	 cp -f bazel-bin/example/stovepipe/server/stovepipe .docker-bin/stovepipe
+	@cp -f bazel-bin/service/stovepipe/server/stovepipe_/stovepipe .docker-bin/stovepipe 2>/dev/null || \
+	 cp -f bazel-bin/service/stovepipe/server/stovepipe .docker-bin/stovepipe
 	@echo "Stovepipe Linux binary ready at .docker-bin/stovepipe"
 
 check-gazelle: ## Check BUILD.bazel files are up to date
@@ -361,26 +361,26 @@ proto: ## Generate protobuf files from .proto definitions
 
 # Bazel query helpers
 query-deps:
-	@$(BAZEL) query 'deps(//example/submitqueue/gateway/server:gateway)'
+	@$(BAZEL) query 'deps(//service/submitqueue/gateway/server:gateway)'
 
 query-targets:
 	@$(BAZEL) query //...
 
 # Run gateway client (connects to any running gateway service)
 run-client-submitqueue-gateway:
-	@$(BAZEL) run //example/submitqueue/gateway/client:gateway -- -addr $(or $(SERVER_ADDR),localhost:8081) -message "$(or $(MESSAGE),ping)"
+	@$(BAZEL) run //service/submitqueue/gateway/client:gateway -- -addr $(or $(SERVER_ADDR),localhost:8081) -message "$(or $(MESSAGE),ping)"
 
 # Run orchestrator client (connects to any running orchestrator service)
 run-client-submitqueue-orchestrator:
-	@$(BAZEL) run //example/submitqueue/orchestrator/client:orchestrator -- -addr $(or $(SERVER_ADDR),localhost:8082) -message "$(or $(MESSAGE),ping)"
+	@$(BAZEL) run //service/submitqueue/orchestrator/client:orchestrator -- -addr $(or $(SERVER_ADDR),localhost:8082) -message "$(or $(MESSAGE),ping)"
 
 # Run stovepipe client (connects to any running stovepipe service)
 run-client-stovepipe:
-	@$(BAZEL) run //example/stovepipe/client:stovepipe -- -addr $(or $(SERVER_ADDR),localhost:8083) -message "$(or $(MESSAGE),ping)"
+	@$(BAZEL) run //service/stovepipe/client:stovepipe -- -addr $(or $(SERVER_ADDR),localhost:8083) -message "$(or $(MESSAGE),ping)"
 
 # Run runway client (connects to any running runway service)
 run-client-runway:
-	@$(BAZEL) run //example/runway/client:runway -- -addr $(or $(SERVER_ADDR),localhost:8086) -message "$(or $(MESSAGE),ping)"
+	@$(BAZEL) run //service/runway/client:runway -- -addr $(or $(SERVER_ADDR),localhost:8086) -message "$(or $(MESSAGE),ping)"
 
 run-queue-admin: ## Run queue-admin CLI (use ARGS to pass arguments, e.g. make run-queue-admin ARGS="list-topics")
 	@$(BAZEL) run //platform/extension/messagequeue/mysql/ctl -- $(ARGS)

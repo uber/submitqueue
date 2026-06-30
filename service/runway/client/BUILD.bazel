@@ -1,19 +1,19 @@
 load("@rules_go//go:def.bzl", "go_binary", "go_library")
 
 go_library(
-    name = "gateway_lib",
+    name = "client_lib",
     srcs = ["main.go"],
-    importpath = "github.com/uber/submitqueue/example/submitqueue/gateway/client",
+    importpath = "github.com/uber/submitqueue/service/runway/client",
     visibility = ["//visibility:private"],
     deps = [
-        "//api/submitqueue/gateway/protopb",
+        "//api/runway/protopb",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//credentials/insecure",
     ],
 )
 
 go_binary(
-    name = "gateway",
-    embed = [":gateway_lib"],
+    name = "runway",
+    embed = [":client_lib"],
     visibility = ["//visibility:public"],
 )
