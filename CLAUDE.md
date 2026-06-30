@@ -319,6 +319,10 @@ CI runs on every PR and enforces all checks via a `required-checks` gate. **Befo
 3. `make check-tidy` — ensure `go.mod` and `MODULE.bazel` are tidy
 4. `make check-gazelle` — ensure `BUILD.bazel` files are up to date
 
+### Commit Style
+
+1. Use conventional commits specification
+
 ### Code Style
 
 1. **Structured logging** — `zap.SugaredLogger` with `Debugw`/`Infow`/`Errorw(msg, key, val, ...)`. Never unstructured methods.
