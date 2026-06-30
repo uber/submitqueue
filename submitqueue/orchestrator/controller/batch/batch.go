@@ -24,6 +24,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
+	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
@@ -286,6 +287,20 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"queue", request.Queue,
 		"dependency_count", len(batch.Dependencies),
 	)
+
+	// Record the "batched" status in the request log. This status corresponds to
+	// the RequestStateBatched transition CAS'd above, so it carries the request
+	// version for reconciliation (unlike the batch-level "scored" status). The
+	// message ID is scoped to (requestID, status), so a redelivery that creates a
+	// fresh batch re-emits "batched" with a different batch_id but is deduped to
+	// the first entry — acceptable, the request is batched either way.
+	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusBatched, request.Version, "", map[string]string{
+		"batch_id": batch.ID,
+	})
+	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
+		return fmt.Errorf("failed to publish request log for request %s: %w", request.ID, err)
+	}
 
 	// Publish to score topic for further processing.
 	// If it fails and the controller retries, a new batch will be created with the new batch ID but the same request ID.
