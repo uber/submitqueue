@@ -171,6 +171,8 @@ func run() error {
 	mergeController := merge.NewController(merge.Params{
 		Logger:        logger.Sugar(),
 		Scope:         scope,
+		MergerFactory: mergerFactory,
+		Registry:      registry,
 		TopicKey:      runwaymq.TopicKeyMerge,
 		ConsumerGroup: "runway-merge",
 	})
@@ -278,6 +280,11 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Subscription: extqueue.DefaultSubscriptionConfig(
 				subscriberName, "runway-merge",
 			),
+		},
+		{
+			Key:   runwaymq.TopicKeyMergeSignal,
+			Name:  "merge-signal",
+			Queue: q,
 		},
 	})
 }
