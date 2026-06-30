@@ -3,7 +3,7 @@ load("@rules_go//go:def.bzl", "go_binary", "go_library")
 go_library(
     name = "client_lib",
     srcs = ["main.go"],
-    importpath = "github.com/uber/submitqueue/example/stovepipe/client",
+    importpath = "github.com/uber/submitqueue/service/stovepipe/client",
     visibility = ["//visibility:private"],
     deps = [
         "//api/stovepipe/protopb",

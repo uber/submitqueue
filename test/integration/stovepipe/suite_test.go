@@ -16,7 +16,7 @@ package stovepipe
 
 // Stovepipe integration tests
 //
-// These tests use compose from example/stovepipe/docker-compose.yml and require
+// These tests use compose from service/stovepipe/docker-compose.yml and require
 // a pre-built Linux binary (make integration-test runs //test/integration/...
 // and builds all Linux binaries via build-all-linux). The stack runs the
 // Stovepipe gRPC service plus a storage MySQL (request, request_uri) and a queue
@@ -66,7 +66,7 @@ func (s *StovepipeIntegrationSuite) SetupSuite() {
 	repoRoot := testutil.FindRepoRoot(t)
 	t.Setenv("REPO_ROOT", repoRoot)
 
-	composeFile := filepath.Join(repoRoot, "example/stovepipe/docker-compose.yml")
+	composeFile := filepath.Join(repoRoot, "service/stovepipe/docker-compose.yml")
 	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "svc-stovepipe")
 
 	err := s.stack.Up()

@@ -1,6 +1,6 @@
 # DLQ Reconciliation Controllers
 
-This package contains the controllers that drain each primary pipeline topic's `{topic}_dlq` companion and reconcile the affected request or batch into a terminal failed state. They are wired alongside the primary controllers in `example/submitqueue/orchestrator/server/main.go`.
+This package contains the controllers that drain each primary pipeline topic's `{topic}_dlq` companion and reconcile the affected request or batch into a terminal failed state. They are wired alongside the primary controllers in `service/submitqueue/orchestrator/server/main.go`.
 
 ## Design principles
 

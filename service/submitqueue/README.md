@@ -1,6 +1,6 @@
-# Example Servers
+# SubmitQueue Services
 
-Reference implementations of the Gateway and Orchestrator services, wired with MySQL-backed extensions and runnable via Docker Compose.
+Runnable wiring for the **SubmitQueue** domain's two services — the Gateway (entry point for land requests) and the Orchestrator (coordinates the pipeline) — wired with MySQL-backed extensions and runnable via Docker Compose.
 
 ## Starting
 
@@ -30,10 +30,10 @@ export MYSQL_DSN='root:root@tcp(127.0.0.1:3306)/submitqueue?parseTime=true'
 export QUEUE_MYSQL_DSN='root:root@tcp(127.0.0.1:3307)/submitqueue?parseTime=true'
 
 # Start gateway (default :8081)
-go run ./example/submitqueue/gateway/server
+go run ./service/submitqueue/gateway/server
 
 # Start orchestrator (default :8082)
-go run ./example/submitqueue/orchestrator/server
+go run ./service/submitqueue/orchestrator/server
 ```
 
 ## Stopping

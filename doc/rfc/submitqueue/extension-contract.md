@@ -52,7 +52,7 @@ Non-obvious points:
 
 ## Mechanism
 
-Dependencies are injected per-extension at the existing `Factory.For` (wiring: `example/submitqueue/orchestrator/server/main.go`) — only the handles a contract justifies, never the whole storage aggregator. The repeated batch→changes walk becomes one shared resolver (today's duplicated `collectChanges`, consolidated, and preserving the batch boundaries build's copy flattens). Controllers shrink to passing the identity entity they already load.
+Dependencies are injected per-extension at the existing `Factory.For` (wiring: `service/submitqueue/orchestrator/server/main.go`) — only the handles a contract justifies, never the whole storage aggregator. The repeated batch→changes walk becomes one shared resolver (today's duplicated `collectChanges`, consolidated, and preserving the batch boundaries build's copy flattens). Controllers shrink to passing the identity entity they already load.
 
 `entity.BatchChanges` is kept, not removed — it becomes the shared resolver's *detailed output* (URIs + provider details for a batch, what the scorer consumes) rather than a value the score controller assembles and passes in. Its line/file helpers move with it; only its producer changes.
 

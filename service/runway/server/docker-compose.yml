@@ -4,7 +4,7 @@
 # IMPORTANT: Before running compose, build the Linux binary:
 #   make build-runway-linux
 #   OR
-#   bazel build --platforms=@rules_go//go/toolchain:linux_amd64 //example/runway/server:runway
+#   bazel build --platforms=@rules_go//go/toolchain:linux_amd64 //service/runway/server:runway
 #
 # Quick start:
 #   make local-runway-start
@@ -33,7 +33,7 @@ services:
   runway-service:
     build:
       context: ${REPO_ROOT}
-      dockerfile: example/runway/server/Dockerfile
+      dockerfile: service/runway/server/Dockerfile
     ports:
       - "8080" # Random ephemeral port to avoid conflicts
     environment:

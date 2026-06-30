@@ -8,7 +8,7 @@ exports_files(
 go_library(
     name = "orchestrator_lib",
     srcs = ["main.go"],
-    importpath = "github.com/uber/submitqueue/example/submitqueue/orchestrator/server",
+    importpath = "github.com/uber/submitqueue/service/submitqueue/orchestrator/server",
     visibility = ["//visibility:private"],
     deps = [
         "//api/runway/messagequeue",

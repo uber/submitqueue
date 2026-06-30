@@ -388,6 +388,6 @@ assert.Equal(s.T(), "expected", resp.Value)
 ## See Also
 
 - [CLAUDE.md](../../CLAUDE.md) - Development guidelines and project structure
-- [example/submitqueue/docker-compose.yml](../../example/submitqueue/docker-compose.yml) - Full stack service definitions
-- [example/submitqueue/gateway/server/docker-compose.yml](../../example/submitqueue/gateway/server/docker-compose.yml) - Gateway isolation
-- [example/submitqueue/orchestrator/server/docker-compose.yml](../../example/submitqueue/orchestrator/server/docker-compose.yml) - Orchestrator isolation
+- [service/submitqueue/docker-compose.yml](../../service/submitqueue/docker-compose.yml) - Full stack service definitions
+- [service/submitqueue/gateway/server/docker-compose.yml](../../service/submitqueue/gateway/server/docker-compose.yml) - Gateway isolation
+- [service/submitqueue/orchestrator/server/docker-compose.yml](../../service/submitqueue/orchestrator/server/docker-compose.yml) - Orchestrator isolation

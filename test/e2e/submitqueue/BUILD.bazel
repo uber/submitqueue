@@ -6,9 +6,9 @@ go_test(
     data = [
         "//:MODULE.bazel",
         "//:go.mod",
-        "//example/submitqueue:docker-compose.yml",
         "//platform/extension/counter/mysql/schema",
         "//platform/extension/messagequeue/mysql/schema",
+        "//service/submitqueue:docker-compose.yml",
         "//submitqueue/extension/storage/mysql/schema",
     ],
     tags = [
