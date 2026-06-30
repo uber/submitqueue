@@ -16,6 +16,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 - [Extension Contract](submitqueue/extension-contract.md) - When extensions take orchestrator identity (request/batch) and resolve granular content themselves vs. take controller-resolved data; revises the BuildRunner base/head contract
 - [Gateway Status and List APIs](submitqueue/status-list-api.md) - Gateway-owned request context, materialized current status, sqid or change-URI status lookup, and queue admission listing
 - [Speculation](submitqueue/speculation.md) - Why SubmitQueue speculates, the path/tree model, and the two pluggable seams: speculation-tree enumeration and path selection
+- [Modular Queue Wiring](submitqueue/modular-queue-wiring.md) - Extract per-queue extension profiles, topic-registry builder, and controller registration into reusable domain packages; add data-driven profile hints to QueueConfig
 
 ## Stovepipe
 
