@@ -8,7 +8,7 @@ The shared field types `Change` and `MergeStrategy` come from `api/base/change` 
 
 ## Merge strategy
 
-Each `MergeStep` carries a `Strategy` (from `api/base/mergestrategy`) naming how that step is integrated into the target branch. `REBASE`, `SQUASH_REBASE`, and `MERGE` *transform* the change onto the branch tip and produce new revisions. `PROMOTE` is different: it integrates the exact revision **as-is**, advancing the target branch to an already-existing commit with no content transform and no new revision. Each backend realizes `PROMOTE` natively — git fast-forward, Mercurial bookmark advance, Subversion/Perforce copy — so for `PROMOTE` a step's `StepOutput.id` is the same revision the request named rather than a freshly created one. It is the strategy a post-merge verifier (e.g. Stovepipe) uses to advance a verified branch like `verified/main` to an already-landed, already-verified commit. `DEFAULT` lets the server pick per queue configuration.
+Each `MergeStep` carries a `Strategy` (from `api/base/mergestrategy`) naming how that step is integrated into the merge target. `REBASE`, `SQUASH_REBASE`, and `MERGE` *transform* the change onto the branch tip and produce new revisions. `PROMOTE` is different: it integrates the exact revision **as-is**, advancing the merge target to an already-existing commit with no content transform and no new revision. Each backend realizes `PROMOTE` natively — git fast-forward, Mercurial bookmark advance, Subversion/Perforce copy — so for `PROMOTE` a step's `StepOutput.id` is the same revision the request named rather than a freshly created one. It is the strategy a post-merge verifier (e.g. Stovepipe) uses to advance a verified branch like `verified/main` to an already-landed, already-verified commit. `DEFAULT` lets the server pick per queue configuration.
 
 ## Topic keys
 
@@ -19,11 +19,11 @@ The binding between a topic key and its payload lives in each message's `topic_k
 | `MergeRequest` | client → Runway | `merge-conflict-check`, `merge` |
 | `MergeResult` | Runway → client | `merge-conflict-check-signal`, `merge-signal` |
 
-One message serves a queue pair because a merge-conflict check is a dry run of a merge: Runway applies the same ordered steps onto the same target branch, and the topic key the request arrives on decides whether it commits the result and reports the produced revisions. A request on `merge-conflict-check` is a dry run; a request on `merge` commits.
+One message serves a queue pair because a merge-conflict check is a dry run of a merge: Runway applies the same ordered steps onto the same merge target, and the topic key the request arrives on decides whether it commits the result and reports the produced revisions. A request on `merge-conflict-check` is a dry run; a request on `merge` commits.
 
 ## Result shape
 
-`MergeResult.outcome` is an `Outcome` enum (`OUTCOME_UNSPECIFIED`/`SUCCEEDED`/`FAILED`): `SUCCEEDED` means mergeable (check) or merged (commit), `FAILED` a conflict or a failed apply; `reason` carries the explanation when `FAILED`. Per-step detail is in `steps` (request order): each `StepResult.outputs` is the list of `StepOutput`s the step produced on the target branch, **in application order** (the order they were created). A committing merge populates `outputs`; a dry-run check, an already-present change, or a failed step leaves them empty. `StepOutput.id` is the VCS-neutral revision identifier (git SHA, Mercurial hash, Subversion revision, Perforce changelist, …), with room to grow (author, timestamp, …).
+`MergeResult.outcome` is an `Outcome` enum (`OUTCOME_UNSPECIFIED`/`SUCCEEDED`/`FAILED`): `SUCCEEDED` means mergeable (check) or merged (commit), `FAILED` a conflict or a failed apply; `reason` carries the explanation when `FAILED`. Per-step detail is in `steps` (request order): each `StepResult.outputs` is the list of `StepOutput`s the step produced on the merge target, **in application order** (the order they were created). A committing merge populates `outputs`; a dry-run check, an already-present change, or a failed step leaves them empty. `StepOutput.id` is the VCS-neutral revision identifier (git SHA, Mercurial hash, Subversion revision, Perforce changelist, …), with room to grow (author, timestamp, …).
 
 ## Evolution
 

@@ -14,7 +14,7 @@
 
 // Package merger defines the pluggable interface for version-control merge
 // operations that Runway performs on behalf of its callers. Implementations
-// resolve change URIs, apply changes to a target branch, and (for a committing
+// resolve change URIs, apply changes to a merge target, and (for a committing
 // merge) push the result and finalize the change lifecycle (e.g. close PRs).
 package merger
 
@@ -32,7 +32,7 @@ import (
 // result), not an infrastructure error.
 var ErrConflict = errors.New("merge conflict")
 
-// Merger performs version-control operations against a single landing target.
+// Merger performs version-control operations against a single merge target.
 // Both methods accept the same MergeRequest payload; the behavioral difference
 // is whether the result is committed to the remote.
 type Merger interface {
@@ -44,15 +44,15 @@ type Merger interface {
 	Merge(ctx context.Context, req *runwaymq.MergeRequest) (*runwaymq.MergeResult, error)
 }
 
-// Config identifies the landing target a Merger instance operates on. The factory
+// Config identifies the merge target a Merger instance operates on. The factory
 // resolves deployment-specific details (remote URL, credentials) from this.
 type Config struct {
 	// QueueName is the caller-provided queue name from the MergeRequest.
 	QueueName string
 }
 
-// Factory creates Merger instances bound to a landing target.
+// Factory creates Merger instances bound to a merge target.
 type Factory interface {
-	// For returns a Merger instance configured for the given landing target.
+	// For returns a Merger instance configured for the given merge target.
 	For(cfg Config) (Merger, error)
 }

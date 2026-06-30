@@ -56,7 +56,7 @@ type (
 	MergeResult = protopb.MergeResult
 	// StepResult reports what happened to a single MergeStep.
 	StepResult = protopb.StepResult
-	// StepOutput is a single revision a merge step produced on the target branch.
+	// StepOutput is a single revision a merge step produced on the merge target.
 	StepOutput = protopb.StepOutput
 )
 
