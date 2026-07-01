@@ -10,6 +10,7 @@ go_library(
         "//platform/consumer",
         "//platform/extension/counter",
         "//platform/metrics",
+        "//submitqueue/core/request",
         "//submitqueue/core/topickey",
         "//submitqueue/entity",
         "//submitqueue/extension/conflict",
