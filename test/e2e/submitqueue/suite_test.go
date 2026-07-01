@@ -67,6 +67,7 @@ func TestE2EIntegration(t *testing.T) {
 const (
 	persistTimeout      = 30 * time.Second
 	persistPollInterval = 500 * time.Millisecond
+	workflowTimeout     = 60 * time.Second
 )
 
 func (s *E2EIntegrationSuite) SetupSuite() {
@@ -135,6 +136,7 @@ func (s *E2EIntegrationSuite) TearDownSuite() {
 
 	gatewayStopErr := s.stack.StopService("gateway-service", stopTimeoutSec)
 	orchestratorStopErr := s.stack.StopService("orchestrator-service", stopTimeoutSec)
+	runwayStopErr := s.stack.StopService("runway-service", stopTimeoutSec)
 
 	if assert.NoError(t, gatewayStopErr, "failed to stop gateway service") {
 		exitCode, err := s.stack.ServiceExitCode("gateway-service")
@@ -149,6 +151,14 @@ func (s *E2EIntegrationSuite) TearDownSuite() {
 		if assert.NoError(t, err, "failed to get orchestrator exit code") {
 			assert.Equal(t, wantExitCode, exitCode,
 				"orchestrator should exit with 128+SIGTERM (%d) on graceful shutdown", wantExitCode)
+		}
+	}
+
+	if assert.NoError(t, runwayStopErr, "failed to stop runway service") {
+		exitCode, err := s.stack.ServiceExitCode("runway-service")
+		if assert.NoError(t, err, "failed to get runway exit code") {
+			assert.Equal(t, wantExitCode, exitCode,
+				"runway should exit with 128+SIGTERM (%d) on graceful shutdown", wantExitCode)
 		}
 	}
 
@@ -183,18 +193,18 @@ func (s *E2EIntegrationSuite) TestLandRequest_SinglePR() {
 	s.log.Logf("Land request (single PR) succeeded: sqid=%s", resp.Sqid)
 }
 
-// TestLandRequest_PersistsStartedLogViaGatewayConsumer verifies the request-log
+// TestLandRequest_AdvancesBeyondAcceptedViaGatewayConsumer verifies the request-log
 // ownership invariant end-to-end: the orchestrator only *publishes* request log
 // entries to the log topic (it never writes the request log itself), and the
 // gateway's log consumer drains that topic and persists them to storage.
 //
 // We observe this through the gateway Status RPC: immediately after Land the
 // status is "accepted" (the gateway's synchronous direct write), and once the
-// orchestrator's start controller publishes "started" to the log topic, the
-// gateway consumer persists it and Status advances to "started". Seeing
-// "started" therefore proves the publish→consume→persist path works across both
-// services.
-func (s *E2EIntegrationSuite) TestLandRequest_PersistsStartedLogViaGatewayConsumer() {
+// orchestrator publishes downstream statuses to the log topic, the gateway
+// consumer persists them and Status advances beyond "accepted". Because the full
+// local workflow can now advance quickly, the latest visible status may already
+// be later than "started" by the time this poll observes it.
+func (s *E2EIntegrationSuite) TestLandRequest_AdvancesBeyondAcceptedViaGatewayConsumer() {
 	t := s.T()
 
 	landResp, err := s.gatewayClient.Land(s.ctx, &gatewaypb.LandRequest{
@@ -205,7 +215,7 @@ func (s *E2EIntegrationSuite) TestLandRequest_PersistsStartedLogViaGatewayConsum
 	require.NoError(t, err, "Land request failed")
 	require.NotEmpty(t, landResp.Sqid, "SQID should not be empty")
 	sqid := landResp.Sqid
-	s.log.Logf("Land succeeded: sqid=%s; waiting for gateway consumer to persist 'started'", sqid)
+	s.log.Logf("Land succeeded: sqid=%s; waiting for gateway consumer to persist downstream status", sqid)
 
 	require.Eventually(t, func() bool {
 		resp, statusErr := s.gatewayClient.Status(s.ctx, &gatewaypb.StatusRequest{Sqid: sqid})
@@ -214,11 +224,36 @@ func (s *E2EIntegrationSuite) TestLandRequest_PersistsStartedLogViaGatewayConsum
 			return false
 		}
 		s.log.Logf("Status(%s) = %q", sqid, resp.Status)
-		return resp.Status == string(entity.RequestStatusStarted)
+		return resp.Status != "" && resp.Status != string(entity.RequestStatusAccepted)
 	}, persistTimeout, persistPollInterval,
-		"request %s should reach status %q via the gateway log consumer", sqid, entity.RequestStatusStarted)
+		"request %s should advance beyond %q via the gateway log consumer", sqid, entity.RequestStatusAccepted)
 
-	s.log.Logf("Gateway consumer persisted orchestrator-published 'started' log for sqid=%s", sqid)
+	s.log.Logf("Gateway consumer persisted downstream status for sqid=%s", sqid)
+}
+
+func (s *E2EIntegrationSuite) TestLandRequest_ReachesLandedStatus() {
+	t := s.T()
+
+	landResp, err := s.gatewayClient.Land(s.ctx, &gatewaypb.LandRequest{
+		Queue:    "e2e-test-queue",
+		Change:   &changepb.Change{Uris: []string{"github://uber/e2e-landed/pull/777/abcdef0123456789abcdef0123456789abcdef01"}},
+		Strategy: mergestrategypb.Strategy_REBASE,
+	})
+	require.NoError(t, err, "Land request failed")
+	require.NotEmpty(t, landResp.Sqid, "SQID should not be empty")
+	sqid := landResp.Sqid
+	s.log.Logf("Land succeeded: sqid=%s; waiting for terminal landed status", sqid)
+
+	require.Eventually(t, func() bool {
+		resp, statusErr := s.gatewayClient.Status(s.ctx, &gatewaypb.StatusRequest{Sqid: sqid})
+		if statusErr != nil {
+			s.log.Logf("Status(%s) not ready yet: %v", sqid, statusErr)
+			return false
+		}
+		s.log.Logf("Status(%s) = %q", sqid, resp.Status)
+		return resp.Status == string(entity.RequestStatusLanded)
+	}, workflowTimeout, persistPollInterval,
+		"request %s should reach terminal status %q", sqid, entity.RequestStatusLanded)
 }
 
 // TestCancelRequest_InvalidSqid verifies the gateway rejects an empty sqid

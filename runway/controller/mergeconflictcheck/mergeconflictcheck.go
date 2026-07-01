@@ -16,19 +16,23 @@
 // Runway's merge-conflict-check queue. A request asks whether an ordered sequence
 // of merge steps applies cleanly onto the target branch without committing.
 //
-// Currently a parse-and-log stub: it deserializes the MergeRequest off the queue
-// and logs it. The real check (attempt the merge without committing and publish a
-// MergeResult to the merge-conflict-check-signal queue) is not wired yet.
+// It deserializes the MergeRequest off the queue, checks mergeability through
+// the configured merger, and publishes a MergeResult to the
+// merge-conflict-check-signal queue.
 package mergeconflictcheck
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/uber-go/tally"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
+	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/runway/controller/internal/signal"
+	"github.com/uber/submitqueue/runway/extension/merger"
 	"go.uber.org/zap"
 )
 
@@ -37,16 +41,22 @@ var _ consumer.Controller = (*Controller)(nil)
 
 // Controller handles merge-conflict-check queue messages.
 type Controller struct {
-	logger        *zap.SugaredLogger
-	metricsScope  tally.Scope
-	topicKey      consumer.TopicKey
-	consumerGroup string
+	logger         *zap.SugaredLogger
+	metricsScope   tally.Scope
+	merger         merger.Merger
+	registry       consumer.TopicRegistry
+	topicKey       consumer.TopicKey
+	signalTopicKey consumer.TopicKey
+	consumerGroup  string
 }
 
 // Params are the parameters for creating a new merge-conflict-check controller.
 type Params struct {
-	TopicKey      consumer.TopicKey
-	ConsumerGroup string
+	TopicKey       consumer.TopicKey
+	SignalTopicKey consumer.TopicKey
+	ConsumerGroup  string
+	Merger         merger.Merger
+	Registry       consumer.TopicRegistry
 
 	Scope  tally.Scope
 	Logger *zap.SugaredLogger
@@ -55,10 +65,13 @@ type Params struct {
 // NewController creates a new merge-conflict-check controller for the runway service.
 func NewController(p Params) *Controller {
 	return &Controller{
-		logger:        p.Logger.Named("mergeconflictcheck_controller"),
-		metricsScope:  p.Scope.SubScope("mergeconflictcheck_controller"),
-		topicKey:      p.TopicKey,
-		consumerGroup: p.ConsumerGroup,
+		logger:         p.Logger.Named("mergeconflictcheck_controller"),
+		metricsScope:   p.Scope.SubScope("mergeconflictcheck_controller"),
+		merger:         p.Merger,
+		registry:       p.Registry,
+		topicKey:       p.TopicKey,
+		signalTopicKey: p.SignalTopicKey,
+		consumerGroup:  p.ConsumerGroup,
 	}
 }
 
@@ -79,9 +92,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("failed to deserialize merge request: %w", err)
 	}
 
-	// TODO: attempt the ordered merge steps without committing and publish a
-	// MergeResult to the merge-conflict-check-signal queue. For now the request
-	// is only logged after parsing.
 	c.logger.Infow("received merge-conflict-check request",
 		"id", request.Id,
 		"queue_name", request.QueueName,
@@ -89,6 +99,27 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"attempt", delivery.Attempt(),
 		"partition_key", msg.PartitionKey,
 	)
+
+	if c.merger == nil {
+		return fmt.Errorf("merger is required")
+	}
+
+	result, err := c.merger.CheckMergeability(ctx, request)
+	if errors.Is(err, merger.ErrConflict) {
+		result = &runwaymq.MergeResult{
+			Id:      request.Id,
+			Outcome: runwaypb.Outcome_FAILED,
+			Reason:  err.Error(),
+		}
+	} else if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "merger_errors", 1)
+		return fmt.Errorf("failed to check mergeability: %w", err)
+	}
+
+	if err := signal.PublishMergeResult(ctx, c.registry, c.signalTopicKey, result, msg.PartitionKey); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+		return fmt.Errorf("failed to publish merge-conflict-check result: %w", err)
+	}
 
 	return nil
 }

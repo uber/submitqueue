@@ -39,6 +39,7 @@ import (
 	"github.com/uber/submitqueue/runway/controller"
 	"github.com/uber/submitqueue/runway/controller/merge"
 	"github.com/uber/submitqueue/runway/controller/mergeconflictcheck"
+	"github.com/uber/submitqueue/runway/extension/merger/noop"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -152,21 +153,29 @@ func run() error {
 		),
 	)
 
+	noOpMerger := noop.New()
+
 	mergeConflictCheckController := mergeconflictcheck.NewController(mergeconflictcheck.Params{
-		Logger:        logger.Sugar(),
-		Scope:         scope,
-		TopicKey:      runwaymq.TopicKeyMergeConflictCheck,
-		ConsumerGroup: "runway-mergeconflictcheck",
+		Logger:         logger.Sugar(),
+		Scope:          scope,
+		TopicKey:       runwaymq.TopicKeyMergeConflictCheck,
+		SignalTopicKey: runwaymq.TopicKeyMergeConflictCheckSignal,
+		ConsumerGroup:  "runway-mergeconflictcheck",
+		Merger:         noOpMerger,
+		Registry:       registry,
 	})
 	if err := primaryConsumer.Register(mergeConflictCheckController); err != nil {
 		return fmt.Errorf("failed to register merge-conflict-check controller: %w", err)
 	}
 
 	mergeController := merge.NewController(merge.Params{
-		Logger:        logger.Sugar(),
-		Scope:         scope,
-		TopicKey:      runwaymq.TopicKeyMerge,
-		ConsumerGroup: "runway-merge",
+		Logger:         logger.Sugar(),
+		Scope:          scope,
+		TopicKey:       runwaymq.TopicKeyMerge,
+		SignalTopicKey: runwaymq.TopicKeyMergeSignal,
+		ConsumerGroup:  "runway-merge",
+		Merger:         noOpMerger,
+		Registry:       registry,
 	})
 	if err := primaryConsumer.Register(mergeController); err != nil {
 		return fmt.Errorf("failed to register merge controller: %w", err)
@@ -235,10 +244,9 @@ func run() error {
 	return err
 }
 
-// newTopicRegistry builds the TopicRegistry for Runway's consumed merge queues.
-// Runway is the consumer of the merge-conflict-check and merge queues; each is
-// registered with a consuming subscription. The corresponding signal queues
-// (where results are published) are not wired yet.
+// newTopicRegistry builds the TopicRegistry for Runway's merge queues. Runway
+// consumes the merge-conflict-check and merge queues and publishes results to
+// the corresponding signal queues.
 func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRegistry, error) {
 	return consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{
@@ -256,6 +264,16 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Subscription: extqueue.DefaultSubscriptionConfig(
 				subscriberName, "runway-merge",
 			),
+		},
+		{
+			Key:   runwaymq.TopicKeyMergeConflictCheckSignal,
+			Name:  "merge-conflict-check-signal",
+			Queue: q,
+		},
+		{
+			Key:   runwaymq.TopicKeyMergeSignal,
+			Name:  "merge-signal",
+			Queue: q,
 		},
 	})
 }

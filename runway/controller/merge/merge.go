@@ -16,20 +16,22 @@
 // request asks Runway to apply an ordered sequence of merge steps onto the target
 // branch and commit the result.
 //
-// Currently a parse-and-log stub: it deserializes the MergeRequest off the queue
-// and logs it. The real merge (apply and commit the steps, then publish a
-// MergeResult with the produced revisions to the merge-signal queue) is not wired
-// yet.
+// It deserializes the MergeRequest off the queue, runs the configured merger,
+// and publishes a MergeResult with produced revisions to the merge-signal queue.
 package merge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/uber-go/tally"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
+	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/runway/controller/internal/signal"
+	"github.com/uber/submitqueue/runway/extension/merger"
 	"go.uber.org/zap"
 )
 
@@ -38,16 +40,22 @@ var _ consumer.Controller = (*Controller)(nil)
 
 // Controller handles merge queue messages.
 type Controller struct {
-	logger        *zap.SugaredLogger
-	metricsScope  tally.Scope
-	topicKey      consumer.TopicKey
-	consumerGroup string
+	logger         *zap.SugaredLogger
+	metricsScope   tally.Scope
+	merger         merger.Merger
+	registry       consumer.TopicRegistry
+	topicKey       consumer.TopicKey
+	signalTopicKey consumer.TopicKey
+	consumerGroup  string
 }
 
 // Params are the parameters for creating a new merge controller.
 type Params struct {
-	TopicKey      consumer.TopicKey
-	ConsumerGroup string
+	TopicKey       consumer.TopicKey
+	SignalTopicKey consumer.TopicKey
+	ConsumerGroup  string
+	Merger         merger.Merger
+	Registry       consumer.TopicRegistry
 
 	Scope  tally.Scope
 	Logger *zap.SugaredLogger
@@ -56,10 +64,13 @@ type Params struct {
 // NewController creates a new merge controller for the runway service.
 func NewController(p Params) *Controller {
 	return &Controller{
-		logger:        p.Logger.Named("merge_controller"),
-		metricsScope:  p.Scope.SubScope("merge_controller"),
-		topicKey:      p.TopicKey,
-		consumerGroup: p.ConsumerGroup,
+		logger:         p.Logger.Named("merge_controller"),
+		metricsScope:   p.Scope.SubScope("merge_controller"),
+		merger:         p.Merger,
+		registry:       p.Registry,
+		topicKey:       p.TopicKey,
+		signalTopicKey: p.SignalTopicKey,
+		consumerGroup:  p.ConsumerGroup,
 	}
 }
 
@@ -80,9 +91,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("failed to deserialize merge request: %w", err)
 	}
 
-	// TODO: apply and commit the ordered merge steps and publish a MergeResult
-	// with the produced revisions to the merge-signal queue. For now the request
-	// is only logged after parsing.
 	c.logger.Infow("received merge request",
 		"id", request.Id,
 		"queue_name", request.QueueName,
@@ -90,6 +98,27 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"attempt", delivery.Attempt(),
 		"partition_key", msg.PartitionKey,
 	)
+
+	if c.merger == nil {
+		return fmt.Errorf("merger is required")
+	}
+
+	result, err := c.merger.Merge(ctx, request)
+	if errors.Is(err, merger.ErrConflict) {
+		result = &runwaymq.MergeResult{
+			Id:      request.Id,
+			Outcome: runwaypb.Outcome_FAILED,
+			Reason:  err.Error(),
+		}
+	} else if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "merger_errors", 1)
+		return fmt.Errorf("failed to merge request: %w", err)
+	}
+
+	if err := signal.PublishMergeResult(ctx, c.registry, c.signalTopicKey, result, msg.PartitionKey); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+		return fmt.Errorf("failed to publish merge result: %w", err)
+	}
 
 	return nil
 }

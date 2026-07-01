@@ -17,6 +17,7 @@ go_library(
         "//runway/controller",
         "//runway/controller/merge",
         "//runway/controller/mergeconflictcheck",
+        "//runway/extension/merger/noop",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_uber_go_tally//:tally",
         "@org_golang_google_grpc//:grpc",
