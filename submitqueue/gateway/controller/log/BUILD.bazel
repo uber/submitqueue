@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//platform/consumer",
         "//platform/metrics",
+        "//submitqueue/core/request",
         "//submitqueue/entity",
         "//submitqueue/extension/storage",
         "@com_github_uber_go_tally//:tally",

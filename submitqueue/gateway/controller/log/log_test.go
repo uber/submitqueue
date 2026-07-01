@@ -54,8 +54,11 @@ func TestController_Process(t *testing.T) {
 			setupStore: func(ctrl *gomock.Controller) *storagemock.MockStorage {
 				mockLogStore := storagemock.NewMockRequestLogStore(ctrl)
 				mockLogStore.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(nil)
+				mockSummaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
+				mockSummaryStore.EXPECT().UpsertFromLog(gomock.Any(), gomock.Any()).Return(nil)
 				store := storagemock.NewMockStorage(ctrl)
 				store.EXPECT().GetRequestLogStore().Return(mockLogStore).AnyTimes()
+				store.EXPECT().GetRequestSummaryStore().Return(mockSummaryStore).AnyTimes()
 				return store
 			},
 			wantErr: false,
@@ -76,8 +79,10 @@ func TestController_Process(t *testing.T) {
 			setupStore: func(ctrl *gomock.Controller) *storagemock.MockStorage {
 				mockLogStore := storagemock.NewMockRequestLogStore(ctrl)
 				mockLogStore.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(fmt.Errorf("database connection failed"))
+				mockSummaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
 				store := storagemock.NewMockStorage(ctrl)
 				store.EXPECT().GetRequestLogStore().Return(mockLogStore).AnyTimes()
+				store.EXPECT().GetRequestSummaryStore().Return(mockSummaryStore).AnyTimes()
 				return store
 			},
 			wantErr: true,

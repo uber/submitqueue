@@ -29,6 +29,7 @@ import (
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/queueconfig"
@@ -136,9 +137,9 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (resp *p
 	// Record the accepted status in the request log for reconciliation. Once the request materializes as a Request entity, the status might be updated to "new".
 	// It is important to record the status before publishing to the queue for processing. It is important to publish straight to the database and not via a entityqueue.
 	// Gateway has to stay consistent with the request log.
-	logEntry := entity.NewRequestLog(landRequest.ID, entity.RequestStatusAccepted, 0, "", nil)
-	if err := c.store.GetRequestLogStore().Insert(ctx, logEntry); err != nil {
-		return nil, fmt.Errorf("LandController failed to insert request log for sqid=%s: %w", landRequest.ID, err)
+	logEntry := entity.NewRequestLogWithDetails(landRequest.ID, queue, change.URIs, entity.RequestStatusAccepted, 0, "", nil)
+	if err := request.PersistLog(ctx, c.store, logEntry); err != nil {
+		return nil, fmt.Errorf("LandController failed to persist request log for sqid=%s: %w", landRequest.ID, err)
 	}
 
 	c.logger.Debugw("land request created",

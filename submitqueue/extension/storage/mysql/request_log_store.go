@@ -46,6 +46,18 @@ func (r *requestLogStore) Insert(ctx context.Context, log entity.RequestLog) (re
 	op := metrics.Begin(r.scope, "insert")
 	defer func() { op.Complete(retErr) }()
 
+	if log.Queue == "" {
+		log.Queue = entity.QueueFromRequestID(log.RequestID)
+	}
+	if log.ChangeURIs == nil {
+		log.ChangeURIs = []string{}
+	}
+
+	changeURIsJSON, err := json.Marshal(log.ChangeURIs)
+	if err != nil {
+		return fmt.Errorf("failed to marshal change URIs for request log request_id=%s: %w", log.RequestID, err)
+	}
+
 	metadataJSON, err := json.Marshal(log.Metadata)
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata for request log request_id=%s: %w", log.RequestID, err)
@@ -57,8 +69,8 @@ func (r *requestLogStore) Insert(ctx context.Context, log entity.RequestLog) (re
 	salt := rand.Int64()
 
 	_, err = r.db.ExecContext(ctx,
-		"INSERT INTO request_log (request_id, timestamp_ms, salt, status, request_version, last_error, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		log.RequestID, log.TimestampMs, salt, log.Status, log.RequestVersion, log.LastError, metadataJSON,
+		"INSERT INTO request_log (request_id, queue, change_uri, timestamp_ms, salt, status, request_version, last_error, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		log.RequestID, log.Queue, changeURIsJSON, log.TimestampMs, salt, log.Status, log.RequestVersion, log.LastError, metadataJSON,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert request log for request_id=%s timestamp_ms=%d: %w", log.RequestID, log.TimestampMs, err)
@@ -75,7 +87,7 @@ func (r *requestLogStore) List(ctx context.Context, requestID string) (ret []ent
 	defer func() { op.Complete(retErr) }()
 
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT request_id, timestamp_ms, status, request_version, last_error, metadata FROM request_log WHERE request_id = ? ORDER BY timestamp_ms ASC, salt ASC",
+		"SELECT request_id, queue, change_uri, timestamp_ms, status, request_version, last_error, metadata FROM request_log WHERE request_id = ? ORDER BY timestamp_ms ASC, salt ASC",
 		requestID,
 	)
 	if err != nil {
@@ -86,11 +98,16 @@ func (r *requestLogStore) List(ctx context.Context, requestID string) (ret []ent
 	var logs []entity.RequestLog
 	for rows.Next() {
 		var log entity.RequestLog
+		var changeURIsJSON []byte
 		var metadataJSON []byte
 
-		err := rows.Scan(&log.RequestID, &log.TimestampMs, &log.Status, &log.RequestVersion, &log.LastError, &metadataJSON)
+		err := rows.Scan(&log.RequestID, &log.Queue, &changeURIsJSON, &log.TimestampMs, &log.Status, &log.RequestVersion, &log.LastError, &metadataJSON)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan request log row for request_id=%s: %w", requestID, err)
+		}
+
+		if err := json.Unmarshal(changeURIsJSON, &log.ChangeURIs); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal change URIs for request log request_id=%s: %w", requestID, err)
 		}
 
 		if err := json.Unmarshal(metadataJSON, &log.Metadata); err != nil {

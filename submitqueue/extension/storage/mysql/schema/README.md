@@ -22,3 +22,13 @@ As the `batch` table grows, the secondary index will grow with it, increasing st
 
 The `change` table records per-URI claims by in-flight requests. `request_id` is part of the primary key so that concurrent claims on the same URI by different requests coexist as distinct rows — a same-request retry collides on the PK and is a no-op (`INSERT IGNORE`), while a different-request claim is a new row that `GetByURI` surfaces for overlap detection. `queue` leads the key so queue-scoped lookups are primary-key-prefix scans and the table is shardable by queue.
 
+## request_summary table
+
+### Composite primary key: `(queue, request_id)`
+
+`request_summary` intentionally avoids secondary indexes. `queue` leads the
+primary key so `List` can scan only one queue's retained summary rows, then apply
+the lifecycle window, status filter, sort order, and cursor in the query. This is
+less selective than a secondary index on `(queue, started_at_ms, request_id)`,
+but it preserves the current storage constraint while keeping point upserts
+bounded by `(queue, request_id)`.
