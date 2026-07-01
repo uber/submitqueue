@@ -6,14 +6,13 @@ load("@gazelle//:def.bzl", "gazelle")
 # index them as duplicate rule definitions and corrupt the canonical BUILD files.
 # gazelle:exclude .claude
 
-# Resolve protobuf import ambiguities - use the actual protopb packages, not the proto aliases
-# gazelle:resolve go github.com/uber/submitqueue/api/base/change/protopb //api/base/change/protopb
-# gazelle:resolve go github.com/uber/submitqueue/api/base/mergestrategy/protopb //api/base/mergestrategy/protopb
-# gazelle:resolve go github.com/uber/submitqueue/api/runway/messagequeue/protopb //api/runway/messagequeue/protopb
-# gazelle:resolve go github.com/uber/submitqueue/api/runway/protopb //api/runway/protopb
-# gazelle:resolve go github.com/uber/submitqueue/api/submitqueue/gateway/protopb //api/submitqueue/gateway/protopb
-# gazelle:resolve go github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb //api/submitqueue/orchestrator/protopb
-# gazelle:resolve go github.com/uber/submitqueue/api/stovepipe/protopb //api/stovepipe/protopb
+# Disable Gazelle proto rule generation globally. We rely on the checked-in
+# .pb.go files in protopb/ dirs (plain go_library) rather than Bazel proto
+# compilation. This avoids proto_library → @protobuf// transitive loads that
+# break in consumers using newer Bazel versions (e.g. go-code's Bazel 8.5.1
+# removed native.java_proto_library), and eliminates the duplicate-importpath
+# aliases that required gazelle:resolve workarounds.
+# gazelle:proto disable_global
 
 # Export marker files for test data dependencies (used by FindRepoRoot in tests)
 exports_files(

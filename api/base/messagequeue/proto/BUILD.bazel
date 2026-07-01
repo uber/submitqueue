@@ -14,7 +14,6 @@ proto_library(
     deps = ["@protobuf//:descriptor_proto"],
 )
 
-# keep
 go_proto_library(
     name = "messagequeuepb_go_proto",
     compilers = [

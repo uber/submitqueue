@@ -16,7 +16,6 @@ proto_library(
     ],
 )
 
-# keep
 go_proto_library(
     name = "processpb_go_proto",
     compilers = [
@@ -26,7 +25,6 @@ go_proto_library(
     importpath = "github.com/uber/submitqueue/stovepipe/core/messagequeue/proto",
     proto = ":processpb_proto",
     visibility = ["//visibility:public"],
-    # keep
     deps = [
         "//api/base/messagequeue/proto:messagequeuepb_go_proto",
     ],

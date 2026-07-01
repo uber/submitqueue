@@ -17,7 +17,6 @@ proto_library(
     ],
 )
 
-# keep
 go_proto_library(
     name = "gatewaypb_go_proto",
     compilers = [
@@ -27,7 +26,6 @@ go_proto_library(
     importpath = "github.com/uber/submitqueue/api/submitqueue/gateway/proto",
     proto = ":gatewaypb_proto",
     visibility = ["//visibility:public"],
-    # keep
     deps = [
         "//api/base/change/proto:changepb_go_proto",
         "//api/base/mergestrategy/proto:mergestrategypb_go_proto",
