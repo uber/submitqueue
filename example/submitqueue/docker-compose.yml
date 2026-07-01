@@ -81,3 +81,18 @@ services:
         condition: service_healthy
       mysql-queue:
         condition: service_healthy
+
+  runway-service:
+    build:
+      context: ${REPO_ROOT}
+      dockerfile: example/runway/server/Dockerfile
+    ports:
+      - "8080" # Random ephemeral port to avoid conflicts
+    environment:
+      - PORT=:8080
+      # Queue infrastructure connection shared with SubmitQueue services.
+      - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
+      - HOSTNAME=runway-dev
+    depends_on:
+      mysql-queue:
+        condition: service_healthy
