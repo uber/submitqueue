@@ -1,19 +1,19 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "git",
+    name = "go_default_library",
     srcs = ["change_id.go"],
     importpath = "github.com/uber/submitqueue/platform/base/change/git",
     visibility = ["//visibility:public"],
-    deps = ["//platform/base/change/changeutil"],
+    deps = ["//platform/base/change/changeutil:go_default_library"],
 )
 
 go_test(
-    name = "git_test",
+    name = "go_default_test",
     srcs = ["change_id_test.go"],
-    embed = [":git"],
+    embed = [":go_default_library"],
     deps = [
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
     ],
 )

@@ -1,7 +1,7 @@
 load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "page",
+    name = "go_default_library",
     srcs = ["page.go"],
     importpath = "github.com/uber/submitqueue/platform/base/page",
     visibility = ["//visibility:public"],

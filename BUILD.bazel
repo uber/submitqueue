@@ -2,6 +2,8 @@ load("@gazelle//:def.bzl", "gazelle")
 
 # gazelle:prefix github.com/uber/submitqueue
 
+# gazelle:go_naming_convention go_default_library
+
 # Exclude nested worktrees (created under .claude/worktrees) so gazelle does not
 # index them as duplicate rule definitions and corrupt the canonical BUILD files.
 # gazelle:exclude .claude

@@ -1,7 +1,7 @@
 load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "change",
+    name = "go_default_library",
     srcs = ["change.go"],
     importpath = "github.com/uber/submitqueue/platform/base/change",
     visibility = ["//visibility:public"],
