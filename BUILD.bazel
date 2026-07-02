@@ -6,14 +6,20 @@ load("@gazelle//:def.bzl", "gazelle")
 # index them as duplicate rule definitions and corrupt the canonical BUILD files.
 # gazelle:exclude .claude
 
-# Resolve protobuf import ambiguities - use the actual protopb packages, not the proto aliases
-# gazelle:resolve go github.com/uber/submitqueue/api/base/change/protopb //api/base/change/protopb
-# gazelle:resolve go github.com/uber/submitqueue/api/base/mergestrategy/protopb //api/base/mergestrategy/protopb
-# gazelle:resolve go github.com/uber/submitqueue/api/runway/messagequeue/protopb //api/runway/messagequeue/protopb
-# gazelle:resolve go github.com/uber/submitqueue/api/runway/protopb //api/runway/protopb
-# gazelle:resolve go github.com/uber/submitqueue/api/submitqueue/gateway/protopb //api/submitqueue/gateway/protopb
-# gazelle:resolve go github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb //api/submitqueue/orchestrator/protopb
-# gazelle:resolve go github.com/uber/submitqueue/api/stovepipe/protopb //api/stovepipe/protopb
+# Disable Gazelle proto rule generation globally. We rely on the checked-in
+# .pb.go files in protopb/ dirs (plain go_library) rather than Bazel proto
+# compilation. Rationale:
+#   - The checked-in .pb.go is the single source of truth. Generating proto
+#     via Bazel duplicates the same types under the same importpath, causing
+#     duplicate-importpath ambiguity that required gazelle:resolve workarounds.
+#   - Non-Bazel consumers (plain go build/go get, including OSS users) can only
+#     use the checked-in .pb.go, so that path must work regardless. The Bazel
+#     proto rules are a redundant second path that serves no one the checked-in
+#     files don't already serve.
+#   - proto_library forces a transitive load of @protobuf//, which breaks in
+#     consumers on newer Bazel versions (e.g. go-code's Bazel 8.5.1 removed
+#     native.java_proto_library).
+# gazelle:proto disable_global
 
 # Export marker files for test data dependencies (used by FindRepoRoot in tests)
 exports_files(
