@@ -97,7 +97,7 @@ func (Outcome) EnumDescriptor() ([]byte, []int) {
 
 // MergeStep is one step of an ordered merge: a single set of change(s) applied
 // with a strategy. Runway applies the steps of a request in order on top of the
-// target branch; the ordering encodes the base-layering (earlier steps are the
+// merge target; the ordering encodes the base-layering (earlier steps are the
 // in-flight base, the last step is the candidate).
 type MergeStep struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -108,7 +108,7 @@ type MergeStep struct {
 	StepId string `protobuf:"bytes,1,opt,name=step_id,json=stepId,proto3" json:"step_id,omitempty"`
 	// changes are the code change(s) to apply for this step.
 	Changes []*protopb.Change `protobuf:"bytes,2,rep,name=changes,proto3" json:"changes,omitempty"`
-	// strategy is how this step's changes are integrated into the target branch.
+	// strategy is how this step's changes are integrated into the merge target.
 	Strategy      protopb1.Strategy `protobuf:"varint,3,opt,name=strategy,proto3,enum=uber.base.mergestrategy.Strategy" json:"strategy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -176,12 +176,12 @@ type MergeRequest struct {
 	// Runway echoes it back on the result unchanged.
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// queue_name is the caller-provided queue name the request belongs to.
-	// Runway resolves the target branch and provider config per-queue from this
+	// Runway resolves the merge target and provider config per-queue from this
 	// name; no target ref is passed.
 	QueueName string `protobuf:"bytes,2,opt,name=queue_name,json=queueName,proto3" json:"queue_name,omitempty"`
 	// steps is the ordered application sequence: in-flight steps first, the
-	// candidate last. A single-element list expresses "candidate vs target
-	// branch".
+	// candidate last. A single-element list expresses "candidate vs merge
+	// target".
 	Steps         []*MergeStep `protobuf:"bytes,3,rep,name=steps,proto3" json:"steps,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -238,7 +238,7 @@ func (x *MergeRequest) GetSteps() []*MergeStep {
 	return nil
 }
 
-// StepOutput is a single output a merge step produced on the target branch.
+// StepOutput is a single output a merge step produced on the merge target.
 type StepOutput struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// id is the VCS-neutral revision identifier -- a git commit SHA, a Mercurial
@@ -292,7 +292,7 @@ type StepResult struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// step_id echoes the step_id of the step this result is for.
 	StepId string `protobuf:"bytes,1,opt,name=step_id,json=stepId,proto3" json:"step_id,omitempty"`
-	// outputs are the revisions this step produced on the target branch, in
+	// outputs are the revisions this step produced on the merge target, in
 	// application order (the order the step created them on the target). Empty
 	// for a dry-run check, for a change already present on the target, or for a
 	// step that failed to apply.
