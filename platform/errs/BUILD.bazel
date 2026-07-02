@@ -1,7 +1,7 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "errs",
+    name = "go_default_library",
     srcs = [
         "errs.go",
         "processor.go",
@@ -11,14 +11,14 @@ go_library(
 )
 
 go_test(
-    name = "errs_test",
+    name = "go_default_test",
     srcs = [
         "errs_test.go",
         "processor_test.go",
     ],
-    embed = [":errs"],
+    embed = [":go_default_library"],
     deps = [
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
     ],
 )

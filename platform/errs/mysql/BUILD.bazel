@@ -1,23 +1,23 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "mysql",
+    name = "go_default_library",
     srcs = ["mysql.go"],
     importpath = "github.com/uber/submitqueue/platform/errs/mysql",
     visibility = ["//visibility:public"],
     deps = [
-        "//platform/errs",
-        "@com_github_go_sql_driver_mysql//:mysql",
+        "//platform/errs:go_default_library",
+        "@com_github_go_sql_driver_mysql//:go_default_library",
     ],
 )
 
 go_test(
-    name = "mysql_test",
+    name = "go_default_test",
     srcs = ["mysql_test.go"],
-    embed = [":mysql"],
+    embed = [":go_default_library"],
     deps = [
-        "//platform/errs",
-        "@com_github_go_sql_driver_mysql//:mysql",
-        "@com_github_stretchr_testify//assert",
+        "//platform/errs:go_default_library",
+        "@com_github_go_sql_driver_mysql//:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
     ],
 )

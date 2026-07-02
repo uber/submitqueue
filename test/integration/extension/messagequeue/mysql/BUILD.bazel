@@ -1,7 +1,7 @@
 load("@rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "mysql_test",
+    name = "go_default_test",
     srcs = ["queue_test.go"],
     data = [
         "docker-compose.yml",
@@ -12,16 +12,16 @@ go_test(
         "integration",
     ],
     deps = [
-        "//platform/base/messagequeue",
-        "//platform/extension/messagequeue",
-        "//platform/extension/messagequeue/mysql",
-        "//platform/extension/messagequeue/mysql/ctl/lib",
-        "//test/testutil",
-        "@com_github_go_sql_driver_mysql//:mysql",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-        "@com_github_stretchr_testify//suite",
-        "@com_github_uber_go_tally//:tally",
-        "@org_uber_go_zap//zaptest",
+        "//platform/base/messagequeue:go_default_library",
+        "//platform/extension/messagequeue:go_default_library",
+        "//platform/extension/messagequeue/mysql:go_default_library",
+        "//platform/extension/messagequeue/mysql/ctl/lib:go_default_library",
+        "//test/testutil:go_default_library",
+        "@com_github_go_sql_driver_mysql//:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_stretchr_testify//suite:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_uber_go_zap//zaptest:go_default_library",
     ],
 )

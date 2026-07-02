@@ -1,9 +1,9 @@
 load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "merger",
+    name = "go_default_library",
     srcs = ["merger.go"],
     importpath = "github.com/uber/submitqueue/runway/extension/merger",
     visibility = ["//visibility:public"],
-    deps = ["//api/runway/messagequeue"],
+    deps = ["//api/runway/messagequeue:go_default_library"],
 )

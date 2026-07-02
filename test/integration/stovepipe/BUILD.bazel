@@ -1,7 +1,7 @@
 load("@rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "stovepipe_test",
+    name = "go_default_test",
     srcs = ["suite_test.go"],
     data = [
         "//:MODULE.bazel",
@@ -15,12 +15,12 @@ go_test(
         "integration",
     ],
     deps = [
-        "//api/stovepipe/protopb",
-        "//test/testutil",
-        "@com_github_go_sql_driver_mysql//:mysql",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-        "@com_github_stretchr_testify//suite",
-        "@org_golang_google_grpc//:grpc",
+        "//api/stovepipe/protopb:go_default_library",
+        "//test/testutil:go_default_library",
+        "@com_github_go_sql_driver_mysql//:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_stretchr_testify//suite:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
     ],
 )

@@ -1,7 +1,7 @@
 load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "extension",
+    name = "go_default_library",
     srcs = ["extension.go"],
     importpath = "github.com/uber/submitqueue/runway/extension",
     visibility = ["//visibility:public"],
