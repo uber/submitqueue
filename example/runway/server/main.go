@@ -39,6 +39,8 @@ import (
 	"github.com/uber/submitqueue/runway/controller"
 	"github.com/uber/submitqueue/runway/controller/merge"
 	"github.com/uber/submitqueue/runway/controller/mergeconflictcheck"
+	"github.com/uber/submitqueue/runway/extension/merger"
+	"github.com/uber/submitqueue/runway/extension/merger/noop"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -152,9 +154,13 @@ func run() error {
 		),
 	)
 
+	mergerFactory := newMergerFactory()
+
 	mergeConflictCheckController := mergeconflictcheck.NewController(mergeconflictcheck.Params{
 		Logger:        logger.Sugar(),
 		Scope:         scope,
+		MergerFactory: mergerFactory,
+		Registry:      registry,
 		TopicKey:      runwaymq.TopicKeyMergeConflictCheck,
 		ConsumerGroup: "runway-mergeconflictcheck",
 	})
@@ -235,10 +241,21 @@ func run() error {
 	return err
 }
 
-// newTopicRegistry builds the TopicRegistry for Runway's consumed merge queues.
-// Runway is the consumer of the merge-conflict-check and merge queues; each is
-// registered with a consuming subscription. The corresponding signal queues
-// (where results are published) are not wired yet.
+// newMergerFactory returns a merger.Factory for the example server. The noop
+// implementation always succeeds; a real deployment wires a VCS-backed factory.
+func newMergerFactory() merger.Factory {
+	return &noopMergerFactory{}
+}
+
+type noopMergerFactory struct{}
+
+func (f *noopMergerFactory) For(_ merger.Config) (merger.Merger, error) {
+	return noop.New(), nil
+}
+
+// newTopicRegistry builds the TopicRegistry for Runway's merge queues. Inbound
+// topics (merge-conflict-check, merge) have subscriptions; outbound signal topics
+// are publish-only.
 func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRegistry, error) {
 	return consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{
@@ -248,6 +265,11 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Subscription: extqueue.DefaultSubscriptionConfig(
 				subscriberName, "runway-mergeconflictcheck",
 			),
+		},
+		{
+			Key:   runwaymq.TopicKeyMergeConflictCheckSignal,
+			Name:  "merge-conflict-check-signal",
+			Queue: q,
 		},
 		{
 			Key:   runwaymq.TopicKeyMerge,
