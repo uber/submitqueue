@@ -35,6 +35,8 @@ import (
 	changeprovidermock "github.com/uber/submitqueue/submitqueue/extension/changeprovider/mock"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
+	"github.com/uber/submitqueue/submitqueue/extension/validator"
+	validatormock "github.com/uber/submitqueue/submitqueue/extension/validator/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
@@ -119,7 +121,7 @@ func newTestController(
 	cpFactory := changeprovidermock.NewMockFactory(ctrl)
 	cpFactory.EXPECT().For(gomock.Any()).Return(cp, nil).AnyTimes()
 
-	return NewController(logger, scope, store, registry, cpFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
+	return NewController(logger, scope, store, registry, cpFactory, nil, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
 }
 
 func TestNewController(t *testing.T) {
@@ -201,7 +203,7 @@ func TestController_Process_PublishesCheckToRunway(t *testing.T) {
 	cpFactory := changeprovidermock.NewMockFactory(ctrl)
 	cpFactory.EXPECT().For(gomock.Any()).Return(&mockChangeProvider{}, nil).AnyTimes()
 
-	controller := NewController(logger, tally.NoopScope, store, registry, cpFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
+	controller := NewController(logger, tally.NoopScope, store, registry, cpFactory, nil, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -562,4 +564,98 @@ func TestController_Process_TerminalShortCircuit(t *testing.T) {
 			require.NoError(t, controller.Process(context.Background(), delivery))
 		})
 	}
+}
+
+func TestController_Process_CustomValidatorPasses(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	request := entity.Request{
+		ID:           "test-queue/123",
+		Queue:        "test-queue",
+		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
+		LandStrategy: mergestrategy.MergeStrategyRebase,
+		State:        entity.RequestStateStarted,
+		Version:      1,
+	}
+	store, _ := newMockStorage(ctrl, request)
+	store.EXPECT().GetChangeStore().Return(newMockChangeStore(ctrl)).AnyTimes()
+
+	logger := zaptest.NewLogger(t).Sugar()
+
+	mockPub := queuemock.NewMockPublisher(ctrl)
+	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ}},
+	)
+	require.NoError(t, err)
+
+	cpFactory := changeprovidermock.NewMockFactory(ctrl)
+	cpFactory.EXPECT().For(gomock.Any()).Return(&mockChangeProvider{}, nil).AnyTimes()
+
+	mockValidator := validatormock.NewMockValidator(ctrl)
+	// mockValidator returns nil - validation succeeded
+	mockValidator.EXPECT().Validate(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	mockValidatorFactory := validatormock.NewMockFactory(ctrl)
+	mockValidatorFactory.EXPECT().For(validator.Config{
+		QueueName: request.Queue,
+		Change:    request.Change,
+	}).Return(mockValidator, nil)
+
+	controller := NewController(logger, tally.NoopScope, store, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
+
+	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	require.NoError(t, controller.Process(context.Background(), delivery))
+}
+
+func TestController_Process_CustomValidatorFails(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	request := entity.Request{
+		ID:           "test-queue/123",
+		Queue:        "test-queue",
+		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
+		LandStrategy: mergestrategy.MergeStrategyRebase,
+		State:        entity.RequestStateStarted,
+		Version:      1,
+	}
+	store, _ := newMockStorage(ctrl, request)
+	store.EXPECT().GetChangeStore().Return(newMockChangeStore(ctrl)).AnyTimes()
+
+	logger := zaptest.NewLogger(t).Sugar()
+
+	mockPub := queuemock.NewMockPublisher(ctrl)
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ}},
+	)
+	require.NoError(t, err)
+
+	cpFactory := changeprovidermock.NewMockFactory(ctrl)
+	cpFactory.EXPECT().For(gomock.Any()).Return(&mockChangeProvider{}, nil).AnyTimes()
+
+	mockValidator := validatormock.NewMockValidator(ctrl)
+	// mockValidator returns an error - validation failed
+	mockValidator.EXPECT().Validate(gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("some validation error"))
+	mockValidatorFactory := validatormock.NewMockFactory(ctrl)
+	mockValidatorFactory.EXPECT().For(validator.Config{
+		QueueName: request.Queue,
+		Change:    request.Change,
+	}).Return(mockValidator, nil)
+
+	controller := NewController(logger, tally.NoopScope, store, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
+
+	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	err = controller.Process(context.Background(), delivery)
+	require.ErrorContains(t, err, "some validation error")
 }

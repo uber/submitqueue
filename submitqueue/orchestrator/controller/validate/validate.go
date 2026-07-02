@@ -32,6 +32,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	"github.com/uber/submitqueue/submitqueue/extension/validator"
 	"go.uber.org/zap"
 )
 
@@ -46,6 +47,7 @@ type Controller struct {
 	store           storage.Storage
 	registry        consumer.TopicRegistry
 	changeProviders changeprovider.Factory
+	validators      validator.Factory
 	runwayTopicKey  consumer.TopicKey
 	topicKey        consumer.TopicKey
 	consumerGroup   string
@@ -57,12 +59,14 @@ var _ consumer.Controller = (*Controller)(nil)
 // NewController creates a new validate controller for the orchestrator.
 // runwayTopicKey is the runway-owned topic the merge-conflict check request is
 // published to (TopicKeyMergeConflictCheck).
+// validators is an optional factory for custom validation checks; pass nil to skip.
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	store storage.Storage,
 	registry consumer.TopicRegistry,
 	changeProviders changeprovider.Factory,
+	validators validator.Factory,
 	runwayTopicKey consumer.TopicKey,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -73,6 +77,7 @@ func NewController(
 		store:           store,
 		registry:        registry,
 		changeProviders: changeProviders,
+		validators:      validators,
 		runwayTopicKey:  runwayTopicKey,
 		topicKey:        topicKey,
 		consumerGroup:   consumerGroup,
@@ -158,6 +163,25 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"change_count", len(changeInfos),
 		"total_files", totalFiles(changeInfos),
 	)
+
+	// Run custom validation checks if a validator factory was provided.
+	if c.validators != nil {
+		cfg := validator.Config{
+			QueueName: request.Queue,
+			Change:    request.Change,
+		}
+		v, err := c.validators.For(cfg)
+		if err != nil {
+			coremetrics.NamedCounter(c.metricsScope, "process", "validator_errors", 1)
+			return fmt.Errorf("failed to build validator for request %s: %w", request.ID, err)
+		}
+		if v != nil {
+			if err := v.Validate(ctx, request, changeInfos); err != nil {
+				coremetrics.NamedCounter(c.metricsScope, "process", "custom_validation_failures", 1)
+				return fmt.Errorf("custom validation failed for request %s: %w", request.ID, err)
+			}
+		}
+	}
 
 	// Claim each URI in the change store with its provider details. The claim is
 	// created here — after duplicate detection and the merge/provider checks — so a
