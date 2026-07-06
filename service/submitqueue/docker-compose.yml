@@ -81,3 +81,23 @@ services:
         condition: service_healthy
       mysql-queue:
         condition: service_healthy
+
+  # Runway performs the merge-conflict check and the committing merge. The
+  # orchestrator hands work to it on runway-owned topics and blocks on the
+  # signal topics, so without runway a request stalls at "started". It only
+  # needs the queue DB (shared with the orchestrator over mysql-queue); it has
+  # no application database of its own.
+  runway-service:
+    build:
+      context: ${REPO_ROOT}
+      dockerfile: service/runway/server/Dockerfile
+    ports:
+      - "8080" # Random ephemeral port to avoid conflicts
+    environment:
+      - PORT=:8080
+      # Queue infrastructure connection (shared with the orchestrator)
+      - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
+      - HOSTNAME=runway-dev
+    depends_on:
+      mysql-queue:
+        condition: service_healthy
