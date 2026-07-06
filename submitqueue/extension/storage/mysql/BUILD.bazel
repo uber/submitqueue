@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "mysql",
@@ -9,6 +9,7 @@ go_library(
         "change_store.go",
         "request_log_store.go",
         "request_store.go",
+        "request_summary_store.go",
         "speculation_tree_store.go",
         "storage.go",
     ],
@@ -20,5 +21,17 @@ go_library(
         "//submitqueue/extension/storage",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_uber_go_tally//:tally",
+    ],
+)
+
+go_test(
+    name = "mysql_test",
+    srcs = ["request_summary_store_test.go"],
+    embed = [":mysql"],
+    deps = [
+        "//submitqueue/entity",
+        "//submitqueue/extension/storage",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
     ],
 )
