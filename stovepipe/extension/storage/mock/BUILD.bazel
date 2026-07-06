@@ -1,7 +1,7 @@
 load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "mock",
+    name = "go_default_library",
     srcs = [
         "request_store_mock.go",
         "request_uri_store_mock.go",
@@ -10,8 +10,8 @@ go_library(
     importpath = "github.com/uber/submitqueue/stovepipe/extension/storage/mock",
     visibility = ["//visibility:public"],
     deps = [
-        "//stovepipe/entity",
-        "//stovepipe/extension/storage",
-        "@org_uber_go_mock//gomock",
+        "//stovepipe/entity:go_default_library",
+        "//stovepipe/extension/storage:go_default_library",
+        "@org_uber_go_mock//gomock:go_default_library",
     ],
 )

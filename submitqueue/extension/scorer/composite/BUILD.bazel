@@ -1,27 +1,27 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "composite",
+    name = "go_default_library",
     srcs = ["scorer.go"],
     importpath = "github.com/uber/submitqueue/submitqueue/extension/scorer/composite",
     visibility = ["//visibility:public"],
     deps = [
-        "//platform/metrics",
-        "//submitqueue/entity",
-        "//submitqueue/extension/scorer",
-        "@com_github_uber_go_tally//:tally",
+        "//platform/metrics:go_default_library",
+        "//submitqueue/entity:go_default_library",
+        "//submitqueue/extension/scorer:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
     ],
 )
 
 go_test(
-    name = "composite_test",
+    name = "go_default_test",
     srcs = ["scorer_test.go"],
-    embed = [":composite"],
+    embed = [":go_default_library"],
     deps = [
-        "//submitqueue/entity",
-        "//submitqueue/extension/scorer",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-        "@com_github_uber_go_tally//:tally",
+        "//submitqueue/entity:go_default_library",
+        "//submitqueue/extension/scorer:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
     ],
 )

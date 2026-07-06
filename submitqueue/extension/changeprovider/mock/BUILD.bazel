@@ -1,13 +1,13 @@
 load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "mock",
+    name = "go_default_library",
     srcs = ["change_provider_mock.go"],
     importpath = "github.com/uber/submitqueue/submitqueue/extension/changeprovider/mock",
     visibility = ["//visibility:public"],
     deps = [
-        "//submitqueue/entity",
-        "//submitqueue/extension/changeprovider",
-        "@org_uber_go_mock//gomock",
+        "//submitqueue/entity:go_default_library",
+        "//submitqueue/extension/changeprovider:go_default_library",
+        "@org_uber_go_mock//gomock:go_default_library",
     ],
 )

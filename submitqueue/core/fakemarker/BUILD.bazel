@@ -1,19 +1,19 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "fakemarker",
+    name = "go_default_library",
     srcs = ["fakemarker.go"],
     importpath = "github.com/uber/submitqueue/submitqueue/core/fakemarker",
     visibility = ["//visibility:public"],
-    deps = ["//platform/base/change"],
+    deps = ["//platform/base/change:go_default_library"],
 )
 
 go_test(
-    name = "fakemarker_test",
+    name = "go_default_test",
     srcs = ["fakemarker_test.go"],
-    embed = [":fakemarker"],
+    embed = [":go_default_library"],
     deps = [
-        "//platform/base/change",
-        "@com_github_stretchr_testify//assert",
+        "//platform/base/change:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
     ],
 )

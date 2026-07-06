@@ -1,34 +1,34 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "git",
+    name = "go_default_library",
     srcs = ["git_pusher.go"],
     importpath = "github.com/uber/submitqueue/submitqueue/extension/pusher/git",
     visibility = ["//visibility:public"],
     deps = [
-        "//platform/base/change",
-        "//platform/base/change/github",
-        "//platform/metrics",
-        "//submitqueue/core/changeset",
-        "//submitqueue/entity",
-        "//submitqueue/extension/pusher",
-        "@com_github_uber_go_tally//:tally",
-        "@org_uber_go_zap//:zap",
+        "//platform/base/change:go_default_library",
+        "//platform/base/change/github:go_default_library",
+        "//platform/metrics:go_default_library",
+        "//submitqueue/core/changeset:go_default_library",
+        "//submitqueue/entity:go_default_library",
+        "//submitqueue/extension/pusher:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
     ],
 )
 
 go_test(
-    name = "git_test",
+    name = "go_default_test",
     srcs = ["git_pusher_test.go"],
-    embed = [":git"],
+    embed = [":go_default_library"],
     deps = [
-        "//platform/base/change",
-        "//submitqueue/core/changeset/fake",
-        "//submitqueue/entity",
-        "//submitqueue/extension/pusher",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-        "@com_github_uber_go_tally//:tally",
-        "@org_uber_go_zap//zaptest",
+        "//platform/base/change:go_default_library",
+        "//submitqueue/core/changeset/fake:go_default_library",
+        "//submitqueue/entity:go_default_library",
+        "//submitqueue/extension/pusher:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_uber_go_zap//zaptest:go_default_library",
     ],
 )
