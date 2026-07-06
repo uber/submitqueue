@@ -104,14 +104,17 @@ func newMockStorage(ctrl *gomock.Controller, batch entity.Batch, request entity.
 }
 
 // newTestController creates a controller with test dependencies.
-func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock.MockStorage, scorer *scorermock.MockScorer, publishErr error) *Controller {
+func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock.MockStorage, scorer *scorermock.MockScorer, speculatePublishErr error) *Controller {
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
 
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, topic string, msg entityqueue.Message) error {
-			return publishErr
+			if topic == "speculate" {
+				return speculatePublishErr
+			}
+			return nil
 		},
 	).AnyTimes()
 
@@ -209,6 +212,67 @@ func TestController_Process_BatchLevelScore(t *testing.T) {
 
 	err := controller.Process(context.Background(), delivery)
 	require.NoError(t, err)
+}
+
+func TestController_Process_PublishesScoringAndScoredLogs(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	batch := testBatch()
+	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+	mockBatchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+	mockBatchStore.EXPECT().UpdateScoreAndState(gomock.Any(), batch.ID, batch.Version, batch.Version+1, 0.7, entity.BatchStateScored).Return(nil)
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+
+	mockScorer := scorermock.NewMockScorer(ctrl)
+	mockScorer.EXPECT().Score(gomock.Any(), gomock.Any()).Return(0.7, nil)
+
+	var logMsgs []entityqueue.Message
+	mockPub := queuemock.NewMockPublisher(ctrl)
+	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, topic string, msg entityqueue.Message) error {
+			if topic == "log" {
+				logMsgs = append(logMsgs, msg)
+			}
+			return nil
+		},
+	).AnyTimes()
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{
+			{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
+		},
+	)
+	require.NoError(t, err)
+
+	scorerFactory := scorermock.NewMockFactory(ctrl)
+	scorerFactory.EXPECT().For(gomock.Any()).Return(mockScorer, nil).AnyTimes()
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, scorerFactory, registry, topickey.TopicKeyScore, "orchestrator-score")
+
+	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	require.NoError(t, controller.Process(context.Background(), delivery))
+	require.Len(t, logMsgs, 2)
+
+	scoringLog, err := entity.RequestLogFromBytes(logMsgs[0].Payload)
+	require.NoError(t, err)
+	assert.Equal(t, batch.Contains[0], scoringLog.RequestID)
+	assert.Equal(t, entity.RequestStatusScoring, scoringLog.Status)
+	assert.Equal(t, batch.ID, scoringLog.Metadata["batch_id"])
+
+	scoredLog, err := entity.RequestLogFromBytes(logMsgs[1].Payload)
+	require.NoError(t, err)
+	assert.Equal(t, batch.Contains[0], scoredLog.RequestID)
+	assert.Equal(t, entity.RequestStatusScored, scoredLog.Status)
+	assert.Equal(t, batch.ID, scoredLog.Metadata["batch_id"])
+	assert.Equal(t, "0.7000", scoredLog.Metadata["score"])
 }
 
 func TestController_Process_StorageFailure(t *testing.T) {

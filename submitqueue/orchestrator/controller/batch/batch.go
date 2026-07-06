@@ -118,6 +118,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return nil
 	}
 
+	batchingLog := entity.NewRequestLog(request.ID, entity.RequestStatusBatching, 0, "", nil)
+	if err := corerequest.PublishLog(ctx, c.registry, batchingLog, request.ID); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
+		return fmt.Errorf("failed to publish batching request log for request %s: %w", request.ID, err)
+	}
+
 	// TODO: if capacity is full, wait here for other requests to accumulate to batch them together, or include a request into an existing batch if it's not too late.
 
 	// Generate a globally unique batch ID.

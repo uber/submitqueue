@@ -48,6 +48,18 @@ func requestIDPayload(t *testing.T, id string) []byte {
 	return payload
 }
 
+func requestLogsFromMessages(t *testing.T, msgs []entityqueue.Message) []entity.RequestLog {
+	t.Helper()
+
+	logs := make([]entity.RequestLog, 0, len(msgs))
+	for _, msg := range msgs {
+		logEntry, err := entity.RequestLogFromBytes(msg.Payload)
+		require.NoError(t, err)
+		logs = append(logs, logEntry)
+	}
+	return logs
+}
+
 // newSequentialCounter returns a mock counter that returns incrementing values starting at 1.
 func newSequentialCounter(ctrl *gomock.Controller) *countermock.MockCounter {
 	var seq int64
@@ -157,10 +169,10 @@ func TestController_Process_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestController_Process_PublishesBatchedLog asserts the controller emits a
-// "batched" request log carrying the request ID, the post-CAS request version,
-// and the batch ID it was placed into.
-func TestController_Process_PublishesBatchedLog(t *testing.T) {
+// TestController_Process_PublishesBatchingAndBatchedLogs asserts the controller
+// emits a progress log when active batching starts, then the versioned "batched"
+// log once the request has been claimed into a persisted batch.
+func TestController_Process_PublishesBatchingAndBatchedLogs(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	request := testRequest()
@@ -217,13 +229,24 @@ func TestController_Process_PublishesBatchedLog(t *testing.T) {
 
 	require.NoError(t, controller.Process(context.Background(), delivery))
 
-	require.Len(t, logMsgs, 1)
-	logEntry, err := entity.RequestLogFromBytes(logMsgs[0].Payload)
-	require.NoError(t, err)
-	assert.Equal(t, request.ID, logEntry.RequestID)
-	assert.Equal(t, entity.RequestStatusBatched, logEntry.Status)
-	assert.Equal(t, request.Version+1, logEntry.RequestVersion)
-	assert.Equal(t, "test-queue/batch/1", logEntry.Metadata["batch_id"])
+	require.Len(t, logMsgs, 2)
+	logs := requestLogsFromMessages(t, logMsgs)
+	for i, want := range []struct {
+		status         entity.RequestStatus
+		requestVersion int32
+		batchID        string
+	}{
+		{status: entity.RequestStatusBatching},
+		{status: entity.RequestStatusBatched, requestVersion: request.Version + 1, batchID: "test-queue/batch/1"},
+	} {
+		logEntry := logs[i]
+		assert.Equal(t, request.ID, logEntry.RequestID)
+		assert.Equal(t, want.status, logEntry.Status)
+		assert.Equal(t, want.requestVersion, logEntry.RequestVersion)
+		if want.batchID != "" {
+			assert.Equal(t, want.batchID, logEntry.Metadata["batch_id"])
+		}
+	}
 }
 
 func TestController_Process_StorageFailure(t *testing.T) {
@@ -510,13 +533,23 @@ func TestController_Process_CASLostToCancel(t *testing.T) {
 	mockStorage.EXPECT().GetBatchDependentStore().Return(mockBatchDependentStore).AnyTimes()
 	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
-	// Publisher with no EXPECTs — must not be called.
+	// Allow only the early batching log publish; score must not be called.
+	var logMsg entityqueue.Message
 	mockPub := queuemock.NewMockPublisher(ctrl)
+	mockPub.EXPECT().Publish(gomock.Any(), "log", gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, msg entityqueue.Message) error {
+			logMsg = msg
+			return nil
+		},
+	)
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: topickey.TopicKeyScore, Name: "score", Queue: mockQ}},
+		[]consumer.TopicConfig{
+			{Key: topickey.TopicKeyScore, Name: "score", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
+		},
 	)
 	require.NoError(t, err)
 
@@ -533,6 +566,10 @@ func TestController_Process_CASLostToCancel(t *testing.T) {
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
 	require.NoError(t, controller.Process(context.Background(), delivery))
+	logEntry, err := entity.RequestLogFromBytes(logMsg.Payload)
+	require.NoError(t, err)
+	assert.Equal(t, request.ID, logEntry.RequestID)
+	assert.Equal(t, entity.RequestStatusBatching, logEntry.Status)
 }
 
 // Race-unexpected-error: any CAS failure other than ErrVersionMismatch (e.g.

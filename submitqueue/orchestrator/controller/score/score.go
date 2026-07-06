@@ -131,6 +131,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return nil
 	}
 
+	if err := corerequest.PublishBatchLogs(ctx, c.registry, batch.Contains, entity.RequestStatusScoring, map[string]string{
+		"batch_id": batch.ID,
+	}); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
+		return fmt.Errorf("failed to publish scoring request logs for batch %s: %w", batch.ID, err)
+	}
+
 	// Score the batch. The scorer resolves the batch's changes itself.
 	batchScore, err := c.scoreBatch(ctx, batch)
 	if err != nil {

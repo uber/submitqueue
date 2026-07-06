@@ -49,6 +49,9 @@ const (
 	// RequestStatusBatched indicates that the request has been included in a new batch and will be sent to speculation.
 	RequestStatusBatched RequestStatus = "batched"
 
+	// RequestStatusScoring indicates that the batch containing the request is being scored for build success probability.
+	RequestStatusScoring RequestStatus = "scoring"
+
 	// RequestStatusScored indicates that the batch containing the request has been scored for build success probability.
 	RequestStatusScored RequestStatus = "scored"
 
