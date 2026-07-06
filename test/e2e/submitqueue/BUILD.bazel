@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "submitqueue_test",
-    srcs = ["suite_test.go"],
+    srcs = [
+        "harness_test.go",
+        "suite_test.go",
+    ],
     data = [
         "//:MODULE.bazel",
         "//:go.mod",
@@ -22,10 +25,13 @@ go_test(
         "//api/submitqueue/gateway/protopb",
         "//api/submitqueue/orchestrator/protopb",
         "//submitqueue/entity",
+        "//submitqueue/extension/storage",
+        "//submitqueue/extension/storage/mysql",
         "//test/testutil",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",
+        "@com_github_uber_go_tally//:tally",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
