@@ -16,7 +16,8 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 
 ## Stovepipe
 
-- [Stovepipe Workflow](stovepipe/workflow.md) - Post-merge trunk-validation pipeline: ingest trunk push events (webhook + fallback poll), batch since last green, build to validate, record per-commit health, bisect to the offending commit, hand off to a remediation extension
+- [Stovepipe Workflow](stovepipe/workflow.md) - Post-merge validation pipeline overview: ingest, process, build, record greenness, analyze projects, notify downstream
+- [Process stage](stovepipe/steps/process.md) - Build-strategy decision, per-queue concurrency gate, backlog coalescing, entity model, platform prerequisites
 
 ## Runway
 
