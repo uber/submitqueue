@@ -16,6 +16,7 @@ go_library(
         "push_result.go",
         "queue_config.go",
         "request.go",
+        "request_context.go",
         "request_log.go",
         "speculation_tree.go",
     ],

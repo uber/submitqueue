@@ -22,3 +22,10 @@ As the `batch` table grows, the secondary index will grow with it, increasing st
 
 The `change` table records per-URI claims by in-flight requests. `request_id` is part of the primary key so that concurrent claims on the same URI by different requests coexist as distinct rows — a same-request retry collides on the PK and is a no-op (`INSERT IGNORE`), while a different-request claim is a new row that `GetByURI` surfaces for overlap detection. `queue` leads the key so queue-scoped lookups are primary-key-prefix scans and the table is shardable by queue.
 
+## request_context table
+
+`request_context` stores immutable gateway-owned admission data. It is created once by `Land` and supplies queue, original change URIs, and admission time to the List read model. The `(queue, admitted_at_ms, request_id)` index supports queue-scoped admission-order scans and future context backfills.
+
+## request_log table
+
+`request_log` stores immutable request status records.
