@@ -1,0 +1,66 @@
+# Docker Compose for the Stovepipe service.
+#
+# Stovepipe ingests a queue's head commit, persists the Request, and publishes it
+# to the process stage over a messaging queue; the process consumer reloads the
+# Request. The stack therefore runs the service plus two MySQL databases: one for
+# storage (request, request_uri) and one for the messaging queue.
+#
+# IMPORTANT: Before running compose, build the Linux binary:
+#   make build-stovepipe-linux
+#   OR
+#   bazel build --platforms=@rules_go//go/toolchain:linux_amd64 \
+#     //service/stovepipe/server:stovepipe
+#
+# Quick start:
+#   make local-stovepipe-start
+#
+# After `up`, the storage and queue schemas are applied (local-init-stovepipe-schemas).
+
+services:
+  # Storage database - Stovepipe's request and request_uri tables.
+  mysql-app:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: submitqueue
+    ports:
+      - "3306" # Random ephemeral port to avoid conflicts
+    healthcheck:
+      # Use 127.0.0.1 (TCP) instead of localhost (Unix socket). MySQL treats
+      # "localhost" as a socket connection, which can be ready before the TCP
+      # listener — causing dependent services that connect over TCP to fail.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Queue database - messaging infrastructure (messages, offsets, partition leases).
+  mysql-queue:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: submitqueue
+    ports:
+      - "3306" # Random ephemeral port to avoid conflicts
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  stovepipe-service:
+    build:
+      context: ${REPO_ROOT}
+      dockerfile: service/stovepipe/server/Dockerfile
+    ports:
+      - "8080" # Random ephemeral port to avoid conflicts
+    environment:
+      - PORT=:8080
+      - STORAGE_MYSQL_DSN=root:root@tcp(mysql-app:3306)/submitqueue?parseTime=true
+      - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
+      - HOSTNAME=stovepipe-dev
+    depends_on:
+      mysql-app:
+        condition: service_healthy
+      mysql-queue:
+        condition: service_healthy

@@ -13,6 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
+	"github.com/uber/submitqueue/platform/base/change"
 	entity "github.com/uber/submitqueue/submitqueue/entity"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -42,10 +43,10 @@ func (m *MockResolver) EXPECT() *MockResolverMockRecorder {
 }
 
 // ChangesForBatch mocks base method.
-func (m *MockResolver) ChangesForBatch(ctx context.Context, batch entity.Batch) ([]entity.Change, error) {
+func (m *MockResolver) ChangesForBatch(ctx context.Context, batch entity.Batch) ([]change.Change, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ChangesForBatch", ctx, batch)
-	ret0, _ := ret[0].([]entity.Change)
+	ret0, _ := ret[0].([]change.Change)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

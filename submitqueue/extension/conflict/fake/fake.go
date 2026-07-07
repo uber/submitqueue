@@ -54,7 +54,7 @@ func New(delegate conflict.Analyzer, failOn FailOn) conflict.Analyzer {
 
 // Analyze returns an error when failOn reports true; otherwise it delegates to
 // the wrapped analyzer.
-func (a analyzerFake) Analyze(ctx context.Context, batch entity.Batch, inFlight []entity.Batch) ([]conflict.Conflict, error) {
+func (a analyzerFake) Analyze(ctx context.Context, batch entity.Batch, inFlight []entity.Batch) ([]entity.Conflict, error) {
 	if a.failOn != nil && a.failOn(batch, inFlight) {
 		return nil, fmt.Errorf("fake: injected analyze error for batch %q", batch.ID)
 	}

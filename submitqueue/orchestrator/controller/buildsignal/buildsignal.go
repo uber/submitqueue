@@ -27,10 +27,10 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/core/errs"
-	"github.com/uber/submitqueue/core/metrics"
-	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -174,7 +174,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	// Re-evaluate the batch state machine with the latest build status.
-	if err := c.publishBatchID(ctx, consumer.TopicKeySpeculate, build.BatchID, msg.PartitionKey); err != nil {
+	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, build.BatchID, msg.PartitionKey); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}
@@ -193,10 +193,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	metrics.NamedCounter(c.metricsScope, opName, "rescheduled", 1, metrics.NewTag("status", string(status)))
 	if err := c.publishBuild(ctx, c.topicKey, build, delayMs); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
-		// Retryable: this is the poll loop's heartbeat. A transient enqueue
-		// failure should nack and replay rather than DLQ the only message
-		// keeping this build's status loop alive.
-		return errs.NewRetryableError(fmt.Errorf("failed to re-publish to buildsignal: %w", err))
+		return fmt.Errorf("failed to re-publish to buildsignal: %w", err)
 	}
 
 	c.logger.Debugw("rescheduled build status poll",

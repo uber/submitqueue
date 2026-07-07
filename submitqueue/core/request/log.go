@@ -18,8 +18,9 @@ import (
 	"context"
 	"fmt"
 
-	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 )
 
@@ -40,14 +41,14 @@ func PublishLog(ctx context.Context, registry consumer.TopicRegistry, logEntry e
 	msgID := fmt.Sprintf("%s/%s", logEntry.RequestID, logEntry.Status)
 	msg := entityqueue.NewMessage(msgID, payload, partitionKey, nil)
 
-	q, ok := registry.Queue(consumer.TopicKeyLog)
+	q, ok := registry.Queue(topickey.TopicKeyLog)
 	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", consumer.TopicKeyLog)
+		return fmt.Errorf("no queue registered for topic key %s", topickey.TopicKeyLog)
 	}
 
-	topicName, ok := registry.TopicName(consumer.TopicKeyLog)
+	topicName, ok := registry.TopicName(topickey.TopicKeyLog)
 	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", consumer.TopicKeyLog)
+		return fmt.Errorf("no topic name registered for topic key %s", topickey.TopicKeyLog)
 	}
 
 	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {

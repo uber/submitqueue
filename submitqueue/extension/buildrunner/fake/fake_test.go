@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber/submitqueue/platform/base/change"
 	changesetfake "github.com/uber/submitqueue/submitqueue/core/changeset/fake"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
@@ -30,7 +31,7 @@ const headBatchID = "head-batch"
 // newFake returns a fake runner whose head batch resolves to a single change
 // carrying the given URIs.
 func newFake(uris ...string) buildrunner.BuildRunner {
-	return New(changesetfake.New().Set(headBatchID, entity.Change{URIs: uris}))
+	return New(changesetfake.New().Set(headBatchID, change.Change{URIs: uris}))
 }
 
 func TestNew_ImplementsInterface(t *testing.T) {

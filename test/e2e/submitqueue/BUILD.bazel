@@ -1,14 +1,17 @@
 load("@rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "submitqueue_test",
-    srcs = ["suite_test.go"],
+    name = "go_default_test",
+    srcs = [
+        "harness_test.go",
+        "suite_test.go",
+    ],
     data = [
         "//:MODULE.bazel",
         "//:go.mod",
-        "//example/submitqueue:docker-compose.yml",
-        "//extension/counter/mysql/schema",
-        "//extension/messagequeue/mysql/schema",
+        "//platform/extension/counter/mysql/schema",
+        "//platform/extension/messagequeue/mysql/schema",
+        "//service/submitqueue:docker-compose.yml",
         "//submitqueue/extension/storage/mysql/schema",
     ],
     tags = [
@@ -17,15 +20,20 @@ go_test(
         "integration",
     ],
     deps = [
-        "//submitqueue/entity",
-        "//submitqueue/gateway/protopb",
-        "//submitqueue/orchestrator/protopb",
-        "//test/testutil",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-        "@com_github_stretchr_testify//suite",
-        "@org_golang_google_grpc//:grpc",
-        "@org_golang_google_grpc//codes",
-        "@org_golang_google_grpc//status",
+        "//api/base/change/protopb:go_default_library",
+        "//api/base/mergestrategy/protopb:go_default_library",
+        "//api/submitqueue/gateway/protopb:go_default_library",
+        "//api/submitqueue/orchestrator/protopb:go_default_library",
+        "//submitqueue/entity:go_default_library",
+        "//submitqueue/extension/storage:go_default_library",
+        "//submitqueue/extension/storage/mysql:go_default_library",
+        "//test/testutil:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_stretchr_testify//suite:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_grpc//codes:go_default_library",
+        "@org_golang_google_grpc//status:go_default_library",
     ],
 )

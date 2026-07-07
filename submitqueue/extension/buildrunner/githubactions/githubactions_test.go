@@ -28,7 +28,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	"github.com/uber/submitqueue/core/httpclient"
+	"github.com/uber/submitqueue/platform/base/change"
+	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	changesetfake "github.com/uber/submitqueue/submitqueue/core/changeset/fake"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -40,7 +41,7 @@ func newTestRunner(t *testing.T, handler http.Handler, resolver ...changeset.Res
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
-	c, err := httpclient.NewClient(srv.URL)
+	c, err := phttp.NewClient(srv.URL)
 	require.NoError(t, err)
 
 	r := changeset.Resolver(changesetfake.New())
@@ -93,8 +94,8 @@ func TestTrigger_DispatchesWorkflowAndReturnsRunID(t *testing.T) {
 	var capturedBody []byte
 
 	resolver := changesetfake.New().
-		Set("base-batch", entity.Change{URIs: []string{"github://org/repo/pull/1/aaa111"}}).
-		Set("head-batch", entity.Change{URIs: []string{"github://org/repo/pull/2/bbb222"}})
+		Set("base-batch", change.Change{URIs: []string{"github://org/repo/pull/1/aaa111"}}).
+		Set("head-batch", change.Change{URIs: []string{"github://org/repo/pull/2/bbb222"}})
 
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		capturedMethod = req.Method
@@ -133,7 +134,7 @@ func TestTrigger_DispatchesWorkflowAndReturnsRunID(t *testing.T) {
 
 func TestTrigger_EmptyBaseProducesJSONArray(t *testing.T) {
 	var capturedBody []byte
-	resolver := changesetfake.New().Set("head-batch", entity.Change{URIs: []string{"u"}})
+	resolver := changesetfake.New().Set("head-batch", change.Change{URIs: []string{"u"}})
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		capturedBody, _ = io.ReadAll(req.Body)
 		_ = json.NewEncoder(w).Encode(dispatchWorkflowResponse{WorkflowRunID: 7})

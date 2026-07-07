@@ -23,7 +23,7 @@ package fakemarker
 import (
 	"strings"
 
-	"github.com/uber/submitqueue/submitqueue/entity"
+	"github.com/uber/submitqueue/platform/base/change"
 )
 
 // Prefix introduces a marker token in a change URI: "sq-fake=<token>".
@@ -48,7 +48,7 @@ func Token(uris []string) string {
 
 // TokenInChanges returns the first marker token found across all changes' URIs,
 // or "" if none carry one.
-func TokenInChanges(changes []entity.Change) string {
+func TokenInChanges(changes []change.Change) string {
 	for _, c := range changes {
 		if tok := Token(c.URIs); tok != "" {
 			return tok

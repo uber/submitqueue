@@ -1,0 +1,34 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["main.go"],
+    importpath = "github.com/uber/submitqueue/service/stovepipe/server",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//api/stovepipe/protopb:go_default_library",
+        "//platform/consumer:go_default_library",
+        "//platform/errs:go_default_library",
+        "//platform/errs/generic:go_default_library",
+        "//platform/errs/mysql:go_default_library",
+        "//platform/extension/messagequeue:go_default_library",
+        "//platform/extension/messagequeue/mysql:go_default_library",
+        "//stovepipe/controller:go_default_library",
+        "//stovepipe/controller/process:go_default_library",
+        "//stovepipe/core/messagequeue:go_default_library",
+        "//stovepipe/extension/sourcecontrol:go_default_library",
+        "//stovepipe/extension/sourcecontrol/fake:go_default_library",
+        "//stovepipe/extension/storage/mysql:go_default_library",
+        "@com_github_go_sql_driver_mysql//:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_grpc//reflection:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
+    ],
+)
+
+go_binary(
+    name = "stovepipe",
+    embed = [":go_default_library"],
+    visibility = ["//visibility:public"],
+)

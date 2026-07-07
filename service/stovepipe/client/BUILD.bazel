@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["main.go"],
+    importpath = "github.com/uber/submitqueue/service/stovepipe/client",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//api/stovepipe/protopb:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_grpc//credentials/insecure:go_default_library",
+    ],
+)
+
+go_binary(
+    name = "stovepipe",
+    embed = [":go_default_library"],
+    visibility = ["//visibility:public"],
+)

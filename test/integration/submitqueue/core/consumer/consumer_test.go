@@ -14,11 +14,11 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap/zaptest"
 
-	"github.com/uber/submitqueue/core/errs"
-	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	extqueue "github.com/uber/submitqueue/extension/messagequeue"
-	queueMySQL "github.com/uber/submitqueue/extension/messagequeue/mysql"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
+	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
+	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/test/testutil"
 )
 
@@ -86,7 +86,7 @@ func (s *ConsumerIntegrationSuite) SetupSuite() {
 	s.db, err = s.stack.ConnectMySQLService("mysql")
 	require.NoError(t, err, "failed to connect to MySQL")
 
-	schemaDir := testutil.SchemaDir("extension/messagequeue/mysql/schema")
+	schemaDir := testutil.SchemaDir("platform/extension/messagequeue/mysql/schema")
 	testutil.ApplySchema(t, s.log, s.db, schemaDir)
 
 	t.Cleanup(func() {

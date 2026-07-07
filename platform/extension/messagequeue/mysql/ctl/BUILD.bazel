@@ -1,0 +1,22 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "commands.go",
+        "main.go",
+    ],
+    importpath = "github.com/uber/submitqueue/platform/extension/messagequeue/mysql/ctl",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//platform/extension/messagequeue/mysql/ctl/lib:go_default_library",
+        "@com_github_go_sql_driver_mysql//:go_default_library",
+        "@com_github_spf13_cobra//:go_default_library",
+    ],
+)
+
+go_binary(
+    name = "ctl",
+    embed = [":go_default_library"],
+    visibility = ["//visibility:public"],
+)

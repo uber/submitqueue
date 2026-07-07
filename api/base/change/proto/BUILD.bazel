@@ -1,0 +1,4 @@
+exports_files(
+    ["change.proto"],
+    visibility = ["//tool/proto:__pkg__"],
+)

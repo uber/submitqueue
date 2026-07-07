@@ -20,9 +20,10 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/core/metrics"
-	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -154,7 +155,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// Hand off to the buildsignal poll loop; it calls Status, updates the
 	// persisted Build, publishes to speculate, and re-publishes itself via
 	// PublishAfter until terminal.
-	if err := c.publish(ctx, consumer.TopicKeyBuildSignal, build); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeyBuildSignal, build); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to buildsignal: %w", err)
 	}
@@ -163,7 +164,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"batch_id", batch.ID,
 		"build_id", build.ID,
 		"status", string(build.Status),
-		"topic_key", consumer.TopicKeyBuildSignal,
+		"topic_key", topickey.TopicKeyBuildSignal,
 	)
 
 	return nil // Success - message will be acked

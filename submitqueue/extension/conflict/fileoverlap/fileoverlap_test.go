@@ -24,7 +24,6 @@ import (
 
 	changesetfake "github.com/uber/submitqueue/submitqueue/core/changeset/fake"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 )
 
 // detailed builds a BatchChanges whose single change touches the given files.
@@ -101,7 +100,7 @@ func TestAnalyze(t *testing.T) {
 
 			var ids []string
 			for _, c := range got {
-				assert.Equal(t, conflict.ConflictTypeTargetOverlap, c.Type)
+				assert.Equal(t, entity.ConflictTypeTargetOverlap, c.Type)
 				ids = append(ids, c.BatchID)
 			}
 			assert.Equal(t, tt.wantBatches, ids)

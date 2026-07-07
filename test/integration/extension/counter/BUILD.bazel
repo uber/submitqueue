@@ -1,15 +1,15 @@
 load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "counter",
+    name = "go_default_library",
     srcs = ["suite.go"],
     importpath = "github.com/uber/submitqueue/test/integration/extension/counter",
     visibility = ["//visibility:public"],
     deps = [
-        "//extension/counter",
-        "//test/testutil",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-        "@com_github_stretchr_testify//suite",
+        "//platform/extension/counter:go_default_library",
+        "//test/testutil:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_stretchr_testify//suite:go_default_library",
     ],
 )

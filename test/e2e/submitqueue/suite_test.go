@@ -16,7 +16,7 @@ package e2e_test
 
 // E2E Integration Tests
 //
-// These tests use docker-compose from example/submitqueue/docker-compose.yml
+// These tests use docker-compose from service/submitqueue/docker-compose.yml
 // which requires pre-built Linux binaries.
 //
 // Run with make target (builds binaries + runs test):
@@ -32,9 +32,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"github.com/uber-go/tally"
+	gatewaypb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
+	orchestratorpb "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	gatewaypb "github.com/uber/submitqueue/submitqueue/gateway/protopb"
-	orchestratorpb "github.com/uber/submitqueue/submitqueue/orchestrator/protopb"
+	"github.com/uber/submitqueue/submitqueue/extension/storage"
+	storagemysql "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/test/testutil"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -48,8 +51,10 @@ type E2EIntegrationSuite struct {
 	stack              *testutil.ComposeStack
 	gatewayClient      gatewaypb.SubmitQueueGatewayClient
 	orchestratorClient orchestratorpb.SubmitQueueOrchestratorClient
-	db                 *sql.DB // App database
-	queueDB            *sql.DB // Queue database
+	db                 *sql.DB                 // App database
+	queueDB            *sql.DB                 // Queue database
+	requestLog         storage.RequestLogStore // White-box view of the request_log status timeline (app DB)
+	requestStore       storage.RequestStore    // White-box view of the internal RequestState (app DB)
 }
 
 func TestE2EIntegration(t *testing.T) {
@@ -78,9 +83,9 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 	repoRoot := testutil.FindRepoRoot(t)
 	t.Setenv("REPO_ROOT", repoRoot)
 
-	// Use docker-compose from example/submitqueue (full stack)
+	// Use docker-compose from service/submitqueue (full stack)
 	// NOTE: Assumes Linux binaries are pre-built via make target
-	composeFile := filepath.Join(repoRoot, "example/submitqueue/docker-compose.yml")
+	composeFile := filepath.Join(repoRoot, "service/submitqueue/docker-compose.yml")
 	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "e2e-submitqueue")
 
 	// Start the compose stack (Gateway + Orchestrator + 2 MySQL DBs)
@@ -99,12 +104,17 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 
 	// Apply schemas programmatically to application database
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("submitqueue/extension/storage/mysql/schema"))
-	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("extension/counter/mysql/schema"))
+	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("platform/extension/counter/mysql/schema"))
 
 	// Apply schemas programmatically to queue database
-	testutil.ApplySchema(t, s.log, s.queueDB, testutil.SchemaDir("extension/messagequeue/mysql/schema"))
+	testutil.ApplySchema(t, s.log, s.queueDB, testutil.SchemaDir("platform/extension/messagequeue/mysql/schema"))
 
 	s.log.Logf("Schemas applied successfully")
+
+	// White-box handles on the app DB: the request_log audit trail (ordered
+	// status history) and the operating store (point-in-time RequestState).
+	s.requestLog = storagemysql.NewRequestLogStore(s.db, tally.NoopScope)
+	s.requestStore = storagemysql.NewRequestStore(s.db, tally.NoopScope)
 
 	// Connect to Gateway gRPC service
 	var gatewayConn *grpc.ClientConn
@@ -167,56 +177,45 @@ func (s *E2EIntegrationSuite) TestPingOrchestrator() {
 	s.log.Logf("Orchestrator ping: %s", resp.Message)
 }
 
-func (s *E2EIntegrationSuite) TestLandRequest_SinglePR() {
-	req := &gatewaypb.LandRequest{
-		Queue:    "e2e-test-queue",
-		Change:   &gatewaypb.Change{Uris: []string{"github://uber/e2e-service/pull/123/abcdef0123456789abcdef0123456789abcdef01"}},
-		Strategy: gatewaypb.Strategy_REBASE,
-	}
-
-	s.log.Logf("Sending Land request (single PR) for queue=%s", req.Queue)
-	resp, err := s.gatewayClient.Land(s.ctx, req)
-	require.NoError(s.T(), err, "Land request failed")
-	require.NotEmpty(s.T(), resp.Sqid, "SQID should not be empty")
-	s.log.Logf("Land request (single PR) succeeded: sqid=%s", resp.Sqid)
-}
-
-// TestLandRequest_PersistsStartedLogViaGatewayConsumer verifies the request-log
-// ownership invariant end-to-end: the orchestrator only *publishes* request log
-// entries to the log topic (it never writes the request log itself), and the
-// gateway's log consumer drains that topic and persists them to storage.
+// TestLand_HappyPath_ReachesLanded drives a single request through the whole
+// pipeline to terminal success on the fully-hermetic e2e-test-queue (no
+// conflicts, fake build succeeds, noop runway signals SUCCEEDED for both the
+// merge-conflict check and the merge). It asserts three views: the black-box
+// terminal Status, the ordered request_log status history, and the internal
+// RequestState in the operating store.
 //
-// We observe this through the gateway Status RPC: immediately after Land the
-// status is "accepted" (the gateway's synchronous direct write), and once the
-// orchestrator's start controller publishes "started" to the log topic, the
-// gateway consumer persists it and Status advances to "started". Seeing
-// "started" therefore proves the publish→consume→persist path works across both
-// services.
-func (s *E2EIntegrationSuite) TestLandRequest_PersistsStartedLogViaGatewayConsumer() {
-	t := s.T()
+// This also exercises the request-log ownership invariant end-to-end: the
+// orchestrator only *publishes* log entries to the log topic (it never writes
+// the request log itself), and the gateway's log consumer drains that topic and
+// persists them. Every status below except the synchronous "accepted" reaches
+// storage only via that cross-service publish→consume→persist path, so its
+// presence in the timeline proves the path works.
+func (s *E2EIntegrationSuite) TestLand_HappyPath_ReachesLanded() {
+	sqid := s.land("e2e-test-queue", "github://uber/e2e-service/pull/123/abcdef0123456789abcdef0123456789abcdef01")
+	s.log.Logf("Land (happy path) succeeded: sqid=%s; waiting for landed", sqid)
 
-	landResp, err := s.gatewayClient.Land(s.ctx, &gatewaypb.LandRequest{
-		Queue:    "e2e-test-queue",
-		Change:   &gatewaypb.Change{Uris: []string{"github://uber/e2e-startlog/pull/4242/abcdef0123456789abcdef0123456789abcdef01"}},
-		Strategy: gatewaypb.Strategy_REBASE,
-	})
-	require.NoError(t, err, "Land request failed")
-	require.NotEmpty(t, landResp.Sqid, "SQID should not be empty")
-	sqid := landResp.Sqid
-	s.log.Logf("Land succeeded: sqid=%s; waiting for gateway consumer to persist 'started'", sqid)
+	// Black-box: the customer-facing status reaches landed.
+	s.awaitStatus(sqid, entity.RequestStatusLanded)
 
-	require.Eventually(t, func() bool {
-		resp, statusErr := s.gatewayClient.Status(s.ctx, &gatewaypb.StatusRequest{Sqid: sqid})
-		if statusErr != nil {
-			s.log.Logf("Status(%s) not ready yet: %v", sqid, statusErr)
-			return false
-		}
-		s.log.Logf("Status(%s) = %q", sqid, resp.Status)
-		return resp.Status == string(entity.RequestStatusStarted)
-	}, persistTimeout, persistPollInterval,
-		"request %s should reach status %q via the gateway log consumer", sqid, entity.RequestStatusStarted)
+	// White-box (status history): the request_log is the only ordered trail. All
+	// status entries for a request share its request_id partition on the log
+	// topic (ordered delivery) and the terminal "landed" is published last, so
+	// once "landed" is observed the earlier statuses are already persisted. This
+	// is a tolerant ordered-subsequence match — display statuses the pipeline
+	// does not emit (e.g. validating, speculating, building) are omitted.
+	s.assertStatusesInOrder(sqid,
+		entity.RequestStatusAccepted,
+		entity.RequestStatusStarted,
+		entity.RequestStatusBatched,
+		entity.RequestStatusScored,
+		entity.RequestStatusLanded,
+	)
 
-	s.log.Logf("Gateway consumer persisted orchestrator-published 'started' log for sqid=%s", sqid)
+	// White-box (internal state): the operating store's authoritative
+	// RequestState settled on landed. RequestState is point-in-time, so this is a
+	// terminal check, not a sequence.
+	assert.Equal(s.T(), entity.RequestStateLanded, s.terminalState(sqid),
+		"operating store should show request %s in terminal state landed", sqid)
 }
 
 // TestCancelRequest_InvalidSqid verifies the gateway rejects an empty sqid
@@ -231,30 +230,33 @@ func (s *E2EIntegrationSuite) TestCancelRequest_InvalidSqid() {
 		"empty sqid should map to InvalidArgument; got %s", st.Code())
 }
 
-// TestCancelRequest_BeforeBatch is intentionally a thin smoke test of the
-// Land + Cancel RPC envelope: Land to mint a sqid, then Cancel that sqid, and
-// assert both calls return OK. It does not poll for terminal state, log
-// entries, or any orchestrator-side progression.
+// TestCancel_RecordsIntent verifies the deterministic half of the cancel flow:
+// Cancel returns OK and the gateway synchronously records a "cancelling" intent
+// entry in the request_log (written directly to the app DB before the RPC
+// returns, right after the Land "accepted" entry).
 //
-// TODO(e2e): harden this test once the e2e fixture story is in better shape.
-// Add async assertions that the request reaches RequestStateCancelled, that
-// request_log contains both `cancelling` and `cancelled` entries, and that a
-// second Cancel is idempotent.
-func (s *E2EIntegrationSuite) TestCancelRequest_BeforeBatch() {
+// It deliberately does NOT assert the terminal "cancelled" outcome. Cancellation
+// is best-effort and races the pipeline: on the hermetic stack the happy path
+// reaches "landed" in ~2s, and a cancel published before the orchestrator's
+// start controller has created the request is rejected to the DLQ and reconciled
+// to "error". Asserting a terminal "cancelled" deterministically needs a
+// pipeline-pause lever (e.g. a runway "park" marker that withholds the
+// merge-conflict-check signal so the request is caught pre-batch) — that is the
+// next incremental, per-stage addition on top of this harness.
+func (s *E2EIntegrationSuite) TestCancel_RecordsIntent() {
 	t := s.T()
 
-	landReq := &gatewaypb.LandRequest{
-		Queue:    "e2e-cancel-queue",
-		Change:   &gatewaypb.Change{Uris: []string{"github://uber/e2e-nonexistent/pull/9999/deadbeef"}},
-		Strategy: gatewaypb.Strategy_REBASE,
-	}
-	landResp, err := s.gatewayClient.Land(s.ctx, landReq)
-	require.NoError(t, err, "Land failed")
-	require.NotEmpty(t, landResp.Sqid)
+	sqid := s.land("e2e-cancel-queue", "github://uber/e2e-cancel/pull/9999/abcdef0123456789abcdef0123456789abcdef01")
+	s.log.Logf("Land (cancel path) succeeded: sqid=%s; cancelling", sqid)
 
-	_, err = s.gatewayClient.Cancel(s.ctx, &gatewaypb.CancelRequest{
-		Sqid:   landResp.Sqid,
-		Reason: "e2e cancel smoke test",
-	})
+	_, err := s.gatewayClient.Cancel(s.ctx, &gatewaypb.CancelRequest{Sqid: sqid, Reason: "e2e cancel test"})
 	require.NoError(t, err, "Cancel failed")
+
+	// The gateway writes "accepted" (on Land) and "cancelling" (on Cancel)
+	// synchronously to the same store, so both are present the moment Cancel
+	// returns — no polling needed.
+	s.assertStatusesInOrder(sqid,
+		entity.RequestStatusAccepted,
+		entity.RequestStatusCancelling,
+	)
 }

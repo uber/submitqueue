@@ -1,0 +1,27 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["noop.go"],
+    importpath = "github.com/uber/submitqueue/runway/extension/merger/noop",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api/runway/messagequeue:go_default_library",
+        "//api/runway/messagequeue/protopb:go_default_library",
+        "//runway/extension/merger:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["noop_test.go"],
+    embed = [":go_default_library"],
+    deps = [
+        "//api/base/change/protopb:go_default_library",
+        "//api/base/mergestrategy/protopb:go_default_library",
+        "//api/runway/messagequeue:go_default_library",
+        "//api/runway/messagequeue/protopb:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+    ],
+)

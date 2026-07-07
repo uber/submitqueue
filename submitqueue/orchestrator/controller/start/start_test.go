@@ -22,10 +22,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/core/errs"
-	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/platform/base/change"
+	"github.com/uber/submitqueue/platform/base/mergestrategy"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
+	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
@@ -55,13 +58,13 @@ func newTestController(
 
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Key: consumer.TopicKeyValidate, Name: "validate", Queue: mockQ},
-			{Key: consumer.TopicKeyLog, Name: "log", Queue: mockQ},
+			{Key: topickey.TopicKeyValidate, Name: "validate", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
 		},
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, store, registry, consumer.TopicKeyStart, "orchestrator-start")
+	return NewController(logger, scope, store, registry, topickey.TopicKeyStart, "orchestrator-start")
 }
 
 // newMockStorage creates a MockStorage with a MockRequestStore that succeeds on Create.
@@ -91,7 +94,7 @@ func TestNewController(t *testing.T) {
 	controller := newTestController(t, ctrl, newMockStorage(ctrl), nil)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicKeyStart, controller.TopicKey())
+	assert.Equal(t, topickey.TopicKeyStart, controller.TopicKey())
 	assert.Equal(t, "orchestrator-start", controller.ConsumerGroup())
 	assert.Equal(t, "start", controller.Name())
 }
@@ -103,8 +106,8 @@ func TestController_Process_Success(t *testing.T) {
 	delivery := makeDelivery(t, ctrl, entity.LandRequest{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
-		LandStrategy: entity.RequestLandStrategyRebase,
+		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
+		LandStrategy: mergestrategy.MergeStrategyRebase,
 	})
 
 	require.NoError(t, controller.Process(context.Background(), delivery))
@@ -144,8 +147,8 @@ func TestController_Process_ConstructsRequestWithStateAndVersion(t *testing.T) {
 	landRequest := entity.LandRequest{
 		ID:           "test-queue/42",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/abcdef0123456789abcdef0123456789abcdef01"}},
-		LandStrategy: entity.RequestLandStrategySquashRebase,
+		Change:       change.Change{URIs: []string{"github://uber/service/pull/1/abcdef0123456789abcdef0123456789abcdef01"}},
+		LandStrategy: mergestrategy.MergeStrategySquashRebase,
 	}
 	delivery := makeDelivery(t, ctrl, landRequest)
 	require.NoError(t, controller.Process(context.Background(), delivery))
@@ -161,11 +164,11 @@ func TestController_Process_ConstructsRequestWithStateAndVersion(t *testing.T) {
 func TestController_Process_AllStrategies(t *testing.T) {
 	tests := []struct {
 		name     string
-		strategy entity.RequestLandStrategy
+		strategy mergestrategy.MergeStrategy
 	}{
-		{"rebase", entity.RequestLandStrategyRebase},
-		{"squash rebase", entity.RequestLandStrategySquashRebase},
-		{"merge", entity.RequestLandStrategyMerge},
+		{"rebase", mergestrategy.MergeStrategyRebase},
+		{"squash rebase", mergestrategy.MergeStrategySquashRebase},
+		{"merge", mergestrategy.MergeStrategyMerge},
 	}
 
 	for _, tt := range tests {
@@ -176,7 +179,7 @@ func TestController_Process_AllStrategies(t *testing.T) {
 			delivery := makeDelivery(t, ctrl, entity.LandRequest{
 				ID:           fmt.Sprintf("queue/%s", tt.strategy),
 				Queue:        "test-queue",
-				Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/aaa111bbbaaa111bbbaaa111bbbaaa111bbbaaa1"}},
+				Change:       change.Change{URIs: []string{"github://uber/service/pull/1/aaa111bbbaaa111bbbaaa111bbbaaa111bbbaaa1"}},
 				LandStrategy: tt.strategy,
 			})
 
@@ -192,8 +195,8 @@ func TestController_Process_PublishFailure(t *testing.T) {
 	delivery := makeDelivery(t, ctrl, entity.LandRequest{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
-		LandStrategy: entity.RequestLandStrategyRebase,
+		Change:       change.Change{URIs: []string{"github://uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
+		LandStrategy: mergestrategy.MergeStrategyRebase,
 	})
 
 	assert.Error(t, controller.Process(context.Background(), delivery))
@@ -212,8 +215,8 @@ func TestController_Process_StorageFailure(t *testing.T) {
 	delivery := makeDelivery(t, ctrl, entity.LandRequest{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
-		LandStrategy: entity.RequestLandStrategyRebase,
+		Change:       change.Change{URIs: []string{"github://uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
+		LandStrategy: mergestrategy.MergeStrategyRebase,
 	})
 
 	err := controller.Process(context.Background(), delivery)
@@ -234,8 +237,8 @@ func TestController_Process_AlreadyExistsSucceeds(t *testing.T) {
 	delivery := makeDelivery(t, ctrl, entity.LandRequest{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
-		LandStrategy: entity.RequestLandStrategyRebase,
+		Change:       change.Change{URIs: []string{"github://uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
+		LandStrategy: mergestrategy.MergeStrategyRebase,
 	})
 
 	require.NoError(t, controller.Process(context.Background(), delivery))

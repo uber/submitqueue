@@ -1,0 +1,4 @@
+exports_files(
+    ["messagequeue.proto"],
+    visibility = ["//tool/proto:__pkg__"],
+)

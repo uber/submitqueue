@@ -1,0 +1,32 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "merge.go",
+        "topics.go",
+    ],
+    importpath = "github.com/uber/submitqueue/api/runway/messagequeue",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api/base/messagequeue/protopb:go_default_library",
+        "//api/runway/messagequeue/protopb:go_default_library",
+        "//platform/consumer:go_default_library",
+        "@org_golang_google_protobuf//encoding/protojson:go_default_library",
+        "@org_golang_google_protobuf//proto:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["merge_test.go"],
+    embed = [":go_default_library"],
+    deps = [
+        "//api/base/change/protopb:go_default_library",
+        "//api/base/mergestrategy/protopb:go_default_library",
+        "//api/runway/messagequeue/protopb:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@org_golang_google_protobuf//proto:go_default_library",
+    ],
+)

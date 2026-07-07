@@ -1,0 +1,4 @@
+exports_files(
+    ["merge.proto"],
+    visibility = ["//tool/proto:__pkg__"],
+)

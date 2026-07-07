@@ -8,6 +8,10 @@ SubmitQueue is a high-performance speculative merge queue that keeps your trunk 
 
 Designed for large monorepos and fast-moving teams where concurrent changes can introduce subtle conflicts and destabilize builds.
 
+## Repository layout
+
+Cross-domain Go code (errors, metrics, consumer framework, HTTP helpers, shared entities, shared extension contracts) lives under [`platform/`](platform/README.md). Each product domain has its own tree (`submitqueue/`, `stovepipe/`, …) and grows into `gateway/`, `orchestrator/`, `entity/`, `extension/`, and domain-local `core/` — though a domain may start smaller (Stovepipe is currently a single Ping-only service with just `controller/`). See [CLAUDE.md](CLAUDE.md) for conventions and import paths.
+
 ## Quick Start
 
 Requires Docker and Docker Compose. See [Development Setup](doc/howto/DEVELOPMENT.md) for full prerequisites.
@@ -29,7 +33,7 @@ grpcurl -plaintext -d '{"message": "hello"}' localhost:8081 uber.submitqueue.gat
 make local-stop
 ```
 
-See [example/README.md](example/README.md) for more examples including running individual services and clients.
+See [service/README.md](service/README.md) for more examples including running individual services and clients.
 
 ## Documentation
 
@@ -39,7 +43,7 @@ See [example/README.md](example/README.md) for more examples including running i
 | [Contributing](CONTRIBUTING.md) | How to contribute, workflow, guidelines |
 | [Testing Guide](doc/howto/TESTING.md) | Unit, integration, and E2E testing patterns |
 | [Architecture Guide](CLAUDE.md) | Project layout, patterns, conventions |
-| [Examples](example/README.md) | Running services, clients, API reference |
+| [Examples](service/README.md) | Running services, clients, API reference |
 | [RFCs](doc/rfc/index.md) | Design documents and proposals |
 
 ## Project Status

@@ -1,16 +1,18 @@
 load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "storage",
+    name = "go_default_library",
     srcs = ["suite.go"],
     importpath = "github.com/uber/submitqueue/test/integration/submitqueue/extension/storage",
     visibility = ["//visibility:public"],
     deps = [
-        "//submitqueue/entity",
-        "//submitqueue/extension/storage",
-        "//test/testutil",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-        "@com_github_stretchr_testify//suite",
+        "//platform/base/change:go_default_library",
+        "//platform/base/mergestrategy:go_default_library",
+        "//submitqueue/entity:go_default_library",
+        "//submitqueue/extension/storage:go_default_library",
+        "//test/testutil:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_stretchr_testify//suite:go_default_library",
     ],
 )

@@ -18,7 +18,7 @@
 // only batch identity and resolves each batch's changed files itself through an
 // injected changeset resolver, rather than depending on the controller to
 // pre-compute them. A shared file is the concrete notion of target overlap, so
-// it reports conflict.ConflictTypeTargetOverlap.
+// it reports entity.ConflictTypeTargetOverlap.
 package fileoverlap
 
 import (
@@ -46,7 +46,7 @@ func New(resolver changeset.Resolver) conflict.Analyzer {
 // Analyze returns one ConflictTypeTargetOverlap Conflict per in-flight batch
 // that shares a changed file with batch, preserving the in-flight order. A batch
 // that changes no files conflicts with nothing.
-func (a analyzer) Analyze(ctx context.Context, batch entity.Batch, inFlight []entity.Batch) ([]conflict.Conflict, error) {
+func (a analyzer) Analyze(ctx context.Context, batch entity.Batch, inFlight []entity.Batch) ([]entity.Conflict, error) {
 	if len(inFlight) == 0 {
 		return nil, nil
 	}
@@ -59,16 +59,16 @@ func (a analyzer) Analyze(ctx context.Context, batch entity.Batch, inFlight []en
 		return nil, nil
 	}
 
-	var conflicts []conflict.Conflict
+	var conflicts []entity.Conflict
 	for _, other := range inFlight {
 		files, err := a.files(ctx, other)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve files for batch %s: %w", other.ID, err)
 		}
 		if intersects(candidate, files) {
-			conflicts = append(conflicts, conflict.Conflict{
+			conflicts = append(conflicts, entity.Conflict{
 				BatchID: other.ID,
-				Type:    conflict.ConflictTypeTargetOverlap,
+				Type:    entity.ConflictTypeTargetOverlap,
 			})
 		}
 	}

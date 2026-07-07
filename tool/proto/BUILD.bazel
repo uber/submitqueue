@@ -1,35 +1,90 @@
 load("//tool/proto:proto_codegen.bzl", "go_proto_generated_files")
 
+# Shared api/base contracts. Message-only (no RPC service), so the gRPC/YARPC
+# generators are disabled. Other packages import these instead of redefining them.
 go_proto_generated_files(
-    name = "submitqueue_gateway",
-    src = "//submitqueue/gateway/proto:gateway.proto",
-    out_dir = "submitqueue_gateway",
+    name = "api_base_change",
+    srcs = ["//api/base/change/proto:change.proto"],
+    gen_services = False,
+    out_dir = "api_base_change",
 )
 
 go_proto_generated_files(
-    name = "submitqueue_orchestrator",
-    src = "//submitqueue/orchestrator/proto:orchestrator.proto",
-    out_dir = "submitqueue_orchestrator",
+    name = "api_base_mergestrategy",
+    srcs = ["//api/base/mergestrategy/proto:mergestrategy.proto"],
+    gen_services = False,
+    out_dir = "api_base_mergestrategy",
 )
 
 go_proto_generated_files(
-    name = "stovepipe_gateway",
-    src = "//stovepipe/gateway/proto:gateway.proto",
-    out_dir = "stovepipe_gateway",
+    name = "api_base_messagequeue",
+    srcs = ["//api/base/messagequeue/proto:messagequeue.proto"],
+    gen_services = False,
+    out_dir = "api_base_messagequeue",
 )
 
 go_proto_generated_files(
-    name = "stovepipe_orchestrator",
-    src = "//stovepipe/orchestrator/proto:orchestrator.proto",
-    out_dir = "stovepipe_orchestrator",
+    name = "api_runway_messagequeue",
+    srcs = ["//api/runway/messagequeue/proto:merge.proto"],
+    gen_services = False,
+    imports = [
+        "//api/base/change/proto:change.proto",
+        "//api/base/mergestrategy/proto:mergestrategy.proto",
+        "//api/base/messagequeue/proto:messagequeue.proto",
+    ],
+    out_dir = "api_runway_messagequeue",
+)
+
+go_proto_generated_files(
+    name = "api_runway",
+    srcs = ["//api/runway/proto:runway.proto"],
+    out_dir = "api_runway",
+)
+
+go_proto_generated_files(
+    name = "api_submitqueue_gateway",
+    srcs = ["//api/submitqueue/gateway/proto:gateway.proto"],
+    imports = [
+        "//api/base/change/proto:change.proto",
+        "//api/base/mergestrategy/proto:mergestrategy.proto",
+    ],
+    out_dir = "api_submitqueue_gateway",
+)
+
+go_proto_generated_files(
+    name = "api_submitqueue_orchestrator",
+    srcs = ["//api/submitqueue/orchestrator/proto:orchestrator.proto"],
+    out_dir = "api_submitqueue_orchestrator",
+)
+
+go_proto_generated_files(
+    name = "api_stovepipe",
+    srcs = ["//api/stovepipe/proto:stovepipe.proto"],
+    out_dir = "api_stovepipe",
+)
+
+# Stovepipe internal queue contract (message-only, no RPC service).
+go_proto_generated_files(
+    name = "stovepipe_core_messagequeue",
+    srcs = ["//stovepipe/core/messagequeue/proto:process.proto"],
+    gen_services = False,
+    imports = [
+        "//api/base/messagequeue/proto:messagequeue.proto",
+    ],
+    out_dir = "stovepipe_core_messagequeue",
 )
 
 filegroup(
     name = "generated",
     srcs = [
-        ":stovepipe_gateway",
-        ":stovepipe_orchestrator",
-        ":submitqueue_gateway",
-        ":submitqueue_orchestrator",
+        ":api_base_change",
+        ":api_base_mergestrategy",
+        ":api_base_messagequeue",
+        ":api_runway",
+        ":api_runway_messagequeue",
+        ":api_stovepipe",
+        ":api_submitqueue_gateway",
+        ":api_submitqueue_orchestrator",
+        ":stovepipe_core_messagequeue",
     ],
 )

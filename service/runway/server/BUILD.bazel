@@ -1,0 +1,34 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["main.go"],
+    importpath = "github.com/uber/submitqueue/service/runway/server",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//api/runway/messagequeue:go_default_library",
+        "//api/runway/protopb:go_default_library",
+        "//platform/consumer:go_default_library",
+        "//platform/errs:go_default_library",
+        "//platform/errs/generic:go_default_library",
+        "//platform/errs/mysql:go_default_library",
+        "//platform/extension/messagequeue:go_default_library",
+        "//platform/extension/messagequeue/mysql:go_default_library",
+        "//runway/controller:go_default_library",
+        "//runway/controller/merge:go_default_library",
+        "//runway/controller/mergeconflictcheck:go_default_library",
+        "//runway/extension/merger:go_default_library",
+        "//runway/extension/merger/noop:go_default_library",
+        "@com_github_go_sql_driver_mysql//:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_grpc//reflection:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
+    ],
+)
+
+go_binary(
+    name = "runway",
+    embed = [":go_default_library"],
+    visibility = ["//visibility:public"],
+)

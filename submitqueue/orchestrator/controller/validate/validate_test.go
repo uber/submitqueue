@@ -22,14 +22,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/core/errs"
-	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	strategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
+	"github.com/uber/submitqueue/platform/base/change"
+	"github.com/uber/submitqueue/platform/base/mergestrategy"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
+	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	changeprovidermock "github.com/uber/submitqueue/submitqueue/extension/changeprovider/mock"
-	"github.com/uber/submitqueue/submitqueue/extension/mergechecker"
-	mergecheckermock "github.com/uber/submitqueue/submitqueue/extension/mergechecker/mock"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -63,13 +66,6 @@ func (m *mockChangeProvider) Get(ctx context.Context, request entity.Request) ([
 	}, nil
 }
 
-// newMergeableMock returns a mock MergeChecker that always returns mergeable.
-func newMergeableMock(ctrl *gomock.Controller) *mergecheckermock.MockMergeChecker {
-	mc := mergecheckermock.NewMockMergeChecker(ctrl)
-	mc.EXPECT().Check(gomock.Any(), gomock.Any()).Return(mergechecker.Result{Mergeable: true}, nil).AnyTimes()
-	return mc
-}
-
 // newMockStorage creates a MockStorage with a MockRequestStore that returns the given request on Get.
 // The returned MockRequestStore is exposed so individual tests can layer additional Get expectations.
 func newMockStorage(ctrl *gomock.Controller, request entity.Request) (*storagemock.MockStorage, *storagemock.MockRequestStore) {
@@ -97,7 +93,6 @@ func newTestController(
 	ctrl *gomock.Controller,
 	store *storagemock.MockStorage,
 	cs *storagemock.MockChangeStore,
-	mc mergechecker.MergeChecker,
 	publishErr error,
 ) *Controller {
 	logger := zaptest.NewLogger(t).Sugar()
@@ -116,54 +111,49 @@ func newTestController(
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeyBatch, Name: "batch", Queue: mockQ}},
+		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ}},
 	)
 	require.NoError(t, err)
 
 	cp := &mockChangeProvider{}
-
-	mcFactory := mergecheckermock.NewMockFactory(ctrl)
-	mcFactory.EXPECT().For(gomock.Any()).Return(mc, nil).AnyTimes()
 	cpFactory := changeprovidermock.NewMockFactory(ctrl)
 	cpFactory.EXPECT().For(gomock.Any()).Return(cp, nil).AnyTimes()
 
-	return NewController(logger, scope, store, registry, mcFactory, cpFactory, consumer.TopicKeyValidate, "orchestrator-validate")
+	return NewController(logger, scope, store, registry, cpFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
 }
 
 func TestNewController(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	mc := newMergeableMock(ctrl)
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
-		LandStrategy: entity.RequestLandStrategyRebase,
+		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
+		LandStrategy: mergestrategy.MergeStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
 	store, _ := newMockStorage(ctrl, request)
-	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), mc, nil)
+	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), nil)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicKeyValidate, controller.TopicKey())
+	assert.Equal(t, topickey.TopicKeyValidate, controller.TopicKey())
 	assert.Equal(t, "orchestrator-validate", controller.ConsumerGroup())
 	assert.Equal(t, "validate", controller.Name())
 }
 
 func TestController_Process_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	mc := newMergeableMock(ctrl)
 
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
-		LandStrategy: entity.RequestLandStrategyRebase,
+		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
+		LandStrategy: mergestrategy.MergeStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
 	store, _ := newMockStorage(ctrl, request)
-	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), mc, nil)
+	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), nil)
 
 	msg := entityqueue.NewMessage("test-queue/123", requestIDPayload(t, request.ID), "test-queue", nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -173,12 +163,71 @@ func TestController_Process_Success(t *testing.T) {
 	require.NoError(t, controller.Process(context.Background(), delivery))
 }
 
+// TestController_Process_PublishesCheckToRunway verifies the full merge-conflict
+// check request is published to runway's merge-conflict-check queue (keyed by
+// the request id, the client-owned correlation id) on the happy path.
+func TestController_Process_PublishesCheckToRunway(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	request := entity.Request{
+		ID:           "test-queue/123",
+		Queue:        "test-queue",
+		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
+		LandStrategy: mergestrategy.MergeStrategyRebase,
+		State:        entity.RequestStateStarted,
+		Version:      1,
+	}
+	store, _ := newMockStorage(ctrl, request)
+	store.EXPECT().GetChangeStore().Return(newMockChangeStore(ctrl)).AnyTimes()
+
+	logger := zaptest.NewLogger(t).Sugar()
+
+	var gotTopic string
+	var gotPayload []byte
+	mockPub := queuemock.NewMockPublisher(ctrl)
+	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, topic string, msg entityqueue.Message) error {
+			gotTopic = topic
+			gotPayload = msg.Payload
+			return nil
+		},
+	)
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ}},
+	)
+	require.NoError(t, err)
+	cpFactory := changeprovidermock.NewMockFactory(ctrl)
+	cpFactory.EXPECT().For(gomock.Any()).Return(&mockChangeProvider{}, nil).AnyTimes()
+
+	controller := NewController(logger, tally.NoopScope, store, registry, cpFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
+
+	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	require.NoError(t, controller.Process(context.Background(), delivery))
+
+	// Full payload published to runway, keyed by the request id (the correlation id).
+	assert.Equal(t, "merge-conflict-check", gotTopic)
+	got := &runwaymq.MergeRequest{}
+	require.NoError(t, runwaymq.Unmarshal(gotPayload, got))
+	assert.Equal(t, request.ID, got.Id)
+	assert.Equal(t, request.Queue, got.QueueName)
+	require.Len(t, got.Steps, 1)
+	assert.Equal(t, request.ID, got.Steps[0].StepId)
+	require.Len(t, got.Steps[0].Changes, 1)
+	assert.Equal(t, request.Change.URIs, got.Steps[0].Changes[0].Uris)
+	assert.Equal(t, strategypb.Strategy_REBASE, got.Steps[0].Strategy)
+}
+
 // TestController_Process_ClaimsChangeRecordsWithDetails verifies that, on the happy
 // path, validate creates a change record per fetched change, capturing the provider
 // details in a single immutable Create.
 func TestController_Process_ClaimsChangeRecordsWithDetails(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	mc := newMergeableMock(ctrl)
 
 	// The request's URI matches the URI the mock change provider returns, so the
 	// claim carries that change's details.
@@ -186,8 +235,8 @@ func TestController_Process_ClaimsChangeRecordsWithDetails(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{uri}},
-		LandStrategy: entity.RequestLandStrategyRebase,
+		Change:       change.Change{URIs: []string{uri}},
+		LandStrategy: mergestrategy.MergeStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
@@ -211,7 +260,7 @@ func TestController_Process_ClaimsChangeRecordsWithDetails(t *testing.T) {
 		},
 	)
 
-	controller := newTestController(t, ctrl, store, cs, mc, nil)
+	controller := newTestController(t, ctrl, store, cs, nil)
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -223,14 +272,13 @@ func TestController_Process_ClaimsChangeRecordsWithDetails(t *testing.T) {
 
 func TestController_Process_StorageFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	mc := newMergeableMock(ctrl)
 
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
 	mockReqStore.EXPECT().Get(gomock.Any(), "test-queue/123").Return(entity.Request{}, fmt.Errorf("db connection lost"))
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
-	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), mc, nil)
+	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), nil)
 
 	msg := entityqueue.NewMessage("test-queue/123", requestIDPayload(t, "test-queue/123"), "test-queue", nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -244,90 +292,35 @@ func TestController_Process_StorageFailure(t *testing.T) {
 
 func TestController_Process_PublishFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	mc := newMergeableMock(ctrl)
 
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
-		LandStrategy: entity.RequestLandStrategyRebase,
+		Change:       change.Change{URIs: []string{"github://uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
+		LandStrategy: mergestrategy.MergeStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
 	store, _ := newMockStorage(ctrl, request)
 
-	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), mc, fmt.Errorf("publish failed"))
+	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), fmt.Errorf("publish failed"))
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
-	assert.Error(t, controller.Process(context.Background(), delivery))
+	err := controller.Process(context.Background(), delivery)
+	require.Error(t, err)
 }
 
 func TestController_InterfaceImplementation(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	mc := newMergeableMock(ctrl)
 	request := entity.Request{ID: "test-queue/123", Queue: "test-queue"}
 	store, _ := newMockStorage(ctrl, request)
-	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), mc, nil)
+	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), nil)
 
 	var _ consumer.Controller = controller
-}
-
-func TestController_Process_NotMergeable(t *testing.T) {
-	ctrl := gomock.NewController(t)
-
-	mc := mergecheckermock.NewMockMergeChecker(ctrl)
-	mc.EXPECT().Check(gomock.Any(), gomock.Any()).Return(mergechecker.Result{Mergeable: false}, nil)
-
-	request := entity.Request{
-		ID:           "test-queue/123",
-		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/repo/pull/1/abcdef0123456789abcdef0123456789abcdef01"}},
-		LandStrategy: entity.RequestLandStrategyRebase,
-		State:        entity.RequestStateStarted,
-		Version:      1,
-	}
-	store, _ := newMockStorage(ctrl, request)
-	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), mc, nil)
-
-	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
-	delivery := queuemock.NewMockDelivery(ctrl)
-	delivery.EXPECT().Message().Return(msg).AnyTimes()
-	delivery.EXPECT().Attempt().Return(1).AnyTimes()
-
-	err := controller.Process(context.Background(), delivery)
-	require.Error(t, err)
-	assert.True(t, errs.IsUserError(err))
-}
-
-func TestController_Process_MergeCheckError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-
-	mc := mergecheckermock.NewMockMergeChecker(ctrl)
-	mc.EXPECT().Check(gomock.Any(), gomock.Any()).Return(mergechecker.Result{}, fmt.Errorf("merge check failed"))
-
-	request := entity.Request{
-		ID:           "test-queue/123",
-		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/repo/pull/1/abcdef0123456789abcdef0123456789abcdef01"}},
-		LandStrategy: entity.RequestLandStrategyRebase,
-		State:        entity.RequestStateStarted,
-		Version:      1,
-	}
-	store, _ := newMockStorage(ctrl, request)
-	controller := newTestController(t, ctrl, store, newMockChangeStore(ctrl), mc, nil)
-
-	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
-	delivery := queuemock.NewMockDelivery(ctrl)
-	delivery.EXPECT().Message().Return(msg).AnyTimes()
-	delivery.EXPECT().Attempt().Return(1).AnyTimes()
-
-	err := controller.Process(context.Background(), delivery)
-	require.Error(t, err)
-	assert.False(t, errs.IsRetryable(err))
 }
 
 func TestController_Process_DuplicateDetection(t *testing.T) {
@@ -353,7 +346,7 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 		wantUnexpected bool
 	}{
 		{
-			name:  "no overlap proceeds to merge check",
+			name:  "no overlap proceeds",
 			byURI: map[string][]entity.ChangeRecord{uriA: nil},
 		},
 		{
@@ -442,7 +435,6 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
-			mc := newMergeableMock(ctrl)
 
 			uris := tt.requestURIs
 			if uris == nil {
@@ -452,8 +444,8 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			request := entity.Request{
 				ID:           newRequestID,
 				Queue:        queueName,
-				Change:       entity.Change{URIs: uris},
-				LandStrategy: entity.RequestLandStrategyRebase,
+				Change:       change.Change{URIs: uris},
+				LandStrategy: mergestrategy.MergeStrategyRebase,
 				State:        entity.RequestStateStarted,
 				Version:      1,
 			}
@@ -482,7 +474,7 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			// and claims each fetched change via Create. Accept any Create.
 			cs.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
-			controller := newTestController(t, ctrl, store, cs, mc, nil)
+			controller := newTestController(t, ctrl, store, cs, nil)
 
 			msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 			delivery := queuemock.NewMockDelivery(ctrl)
@@ -507,13 +499,12 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 
 func TestController_Process_ChangeStoreQueryFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	mc := newMergeableMock(ctrl)
 
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
-		LandStrategy: entity.RequestLandStrategyRebase,
+		Change:       change.Change{URIs: []string{"github://uber/service/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+		LandStrategy: mergestrategy.MergeStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
@@ -522,7 +513,7 @@ func TestController_Process_ChangeStoreQueryFailure(t *testing.T) {
 	cs := storagemock.NewMockChangeStore(ctrl)
 	cs.EXPECT().GetByURI(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("change store down"))
 
-	controller := newTestController(t, ctrl, store, cs, mc, nil)
+	controller := newTestController(t, ctrl, store, cs, nil)
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := queuemock.NewMockDelivery(ctrl)
@@ -537,8 +528,8 @@ func TestController_Process_ChangeStoreQueryFailure(t *testing.T) {
 // A request already in a terminal state (e.g. cancelled while the validate
 // message was in flight) must be short-circuited before any extension is
 // touched and before any publish happens. We verify this by registering a
-// merge checker and change store with NO expectations — gomock fails the test
-// if either is called — and a publisher that returns an error if invoked.
+// change store with NO expectations — gomock fails the test if it is called —
+// and a publisher that returns an error if invoked.
 func TestController_Process_TerminalShortCircuit(t *testing.T) {
 	for _, state := range []entity.RequestState{
 		entity.RequestStateCancelled,
@@ -556,13 +547,12 @@ func TestController_Process_TerminalShortCircuit(t *testing.T) {
 			}
 			store, _ := newMockStorage(ctrl, request)
 
-			// No EXPECTs on merge checker or change store: gomock will fail if either is called.
-			mc := mergecheckermock.NewMockMergeChecker(ctrl)
+			// No EXPECTs on change store: gomock will fail if it is called.
 			cs := storagemock.NewMockChangeStore(ctrl)
 
 			// Sentinel publish error: if Process publishes, it returns a non-nil err,
 			// which the require.NoError below will catch.
-			controller := newTestController(t, ctrl, store, cs, mc, fmt.Errorf("should not publish"))
+			controller := newTestController(t, ctrl, store, cs, fmt.Errorf("should not publish"))
 
 			msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 			delivery := queuemock.NewMockDelivery(ctrl)

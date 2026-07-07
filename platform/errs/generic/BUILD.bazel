@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["generic.go"],
+    importpath = "github.com/uber/submitqueue/platform/errs/generic",
+    visibility = ["//visibility:public"],
+    deps = ["//platform/errs:go_default_library"],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["generic_test.go"],
+    embed = [":go_default_library"],
+    deps = [
+        "//platform/errs:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+    ],
+)

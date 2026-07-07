@@ -26,6 +26,7 @@ package changeset
 import (
 	"context"
 
+	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/submitqueue/entity"
 )
 
@@ -39,7 +40,7 @@ type Resolver interface {
 	// changes (URIs only; no change-store read), in batch.Contains order. A batch
 	// with no requests yields an empty slice. Used by the build (base/head) and
 	// merge stages.
-	ChangesForBatch(ctx context.Context, batch entity.Batch) ([]entity.Change, error)
+	ChangesForBatch(ctx context.Context, batch entity.Batch) ([]change.Change, error)
 
 	// DetailedForBatch resolves a batch into its normalized, batch-level view:
 	// one entity.ChangeInfo per claimed URI (URI plus the provider details read

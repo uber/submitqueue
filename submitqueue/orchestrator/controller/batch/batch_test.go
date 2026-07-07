@@ -24,10 +24,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
-	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	countermock "github.com/uber/submitqueue/extension/counter/mock"
-	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/platform/base/change"
+	"github.com/uber/submitqueue/platform/base/mergestrategy"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
+	countermock "github.com/uber/submitqueue/platform/extension/counter/mock"
+	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/all"
@@ -62,8 +65,8 @@ func testRequest() entity.Request {
 	return entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
-		LandStrategy: entity.RequestLandStrategyRebase,
+		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
+		LandStrategy: mergestrategy.MergeStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
@@ -72,7 +75,10 @@ func testRequest() entity.Request {
 // newTestController creates a controller with test dependencies.
 // If mockStorage is nil, a default MockStorage with an empty batch store is created.
 // If analyzer is nil, the "all" conflict analyzer is used (every active batch becomes a dependency).
-func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.MockCounter, mockStorage *storagemock.MockStorage, analyzer conflict.Analyzer, publishErr error) *Controller {
+// scorePublishErr, if non-nil, is returned only for publishes to the "score" topic; the
+// log publish (which the controller emits first) always succeeds, so callers exercising the
+// score publish-failure path are not short-circuited on the earlier log publish.
+func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.MockCounter, mockStorage *storagemock.MockStorage, analyzer conflict.Analyzer, scorePublishErr error) *Controller {
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
 
@@ -102,7 +108,10 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, topic string, msg entityqueue.Message) error {
-			return publishErr
+			if topic == "score" {
+				return scorePublishErr
+			}
+			return nil
 		},
 	).AnyTimes()
 
@@ -110,14 +119,17 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeyScore, Name: "score", Queue: mockQ}},
+		[]consumer.TopicConfig{
+			{Key: topickey.TopicKeyScore, Name: "score", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
+		},
 	)
 	require.NoError(t, err)
 
 	analyzerFactory := conflictmock.NewMockFactory(ctrl)
 	analyzerFactory.EXPECT().For(gomock.Any()).Return(analyzer, nil).AnyTimes()
 
-	return NewController(logger, scope, registry, cnt, mockStorage, analyzerFactory, consumer.TopicKeyBatch, "orchestrator-batch")
+	return NewController(logger, scope, registry, cnt, mockStorage, analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch")
 }
 
 func TestNewController(t *testing.T) {
@@ -125,7 +137,7 @@ func TestNewController(t *testing.T) {
 	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), nil, nil, nil)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicKeyBatch, controller.TopicKey())
+	assert.Equal(t, topickey.TopicKeyBatch, controller.TopicKey())
 	assert.Equal(t, "orchestrator-batch", controller.ConsumerGroup())
 	assert.Equal(t, "batch", controller.Name())
 }
@@ -143,6 +155,75 @@ func TestController_Process_Success(t *testing.T) {
 
 	err := controller.Process(context.Background(), delivery)
 	require.NoError(t, err)
+}
+
+// TestController_Process_PublishesBatchedLog asserts the controller emits a
+// "batched" request log carrying the request ID, the post-CAS request version,
+// and the batch ID it was placed into.
+func TestController_Process_PublishesBatchedLog(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	request := testRequest()
+
+	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+	mockBatchStore.EXPECT().GetByQueueAndStates(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	mockBatchStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+
+	mockReqStore := storagemock.NewMockRequestStore(ctrl)
+	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+	mockReqStore.EXPECT().UpdateState(gomock.Any(), request.ID, request.Version, request.Version+1, entity.RequestStateBatched).Return(nil)
+
+	mockBatchDependentStore := storagemock.NewMockBatchDependentStore(ctrl)
+	mockBatchDependentStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+
+	mockStorage := storagemock.NewMockStorage(ctrl)
+	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	mockStorage.EXPECT().GetBatchDependentStore().Return(mockBatchDependentStore).AnyTimes()
+	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
+
+	// Capture messages published to the log topic.
+	var logMsgs []entityqueue.Message
+	mockPub := queuemock.NewMockPublisher(ctrl)
+	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, topic string, msg entityqueue.Message) error {
+			if topic == "log" {
+				logMsgs = append(logMsgs, msg)
+			}
+			return nil
+		},
+	).AnyTimes()
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{
+			{Key: topickey.TopicKeyScore, Name: "score", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
+		},
+	)
+	require.NoError(t, err)
+
+	analyzerFactory := conflictmock.NewMockFactory(ctrl)
+	analyzerFactory.EXPECT().For(gomock.Any()).Return(all.New(), nil).AnyTimes()
+	controller := NewController(
+		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, newSequentialCounter(ctrl),
+		mockStorage, analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch",
+	)
+
+	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	require.NoError(t, controller.Process(context.Background(), delivery))
+
+	require.Len(t, logMsgs, 1)
+	logEntry, err := entity.RequestLogFromBytes(logMsgs[0].Payload)
+	require.NoError(t, err)
+	assert.Equal(t, request.ID, logEntry.RequestID)
+	assert.Equal(t, entity.RequestStatusBatched, logEntry.Status)
+	assert.Equal(t, request.Version+1, logEntry.RequestVersion)
+	assert.Equal(t, "test-queue/batch/1", logEntry.Metadata["batch_id"])
 }
 
 func TestController_Process_StorageFailure(t *testing.T) {
@@ -203,8 +284,8 @@ func TestController_Process_WithDependencies(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/456",
 		Queue:        "test-queue",
-		Change:       entity.Change{URIs: []string{"github://uber/service/pull/789/789abc1234567890abcdef1234567890abcdef12"}},
-		LandStrategy: entity.RequestLandStrategyRebase,
+		Change:       change.Change{URIs: []string{"github://uber/service/pull/789/789abc1234567890abcdef1234567890abcdef12"}},
+		LandStrategy: mergestrategy.MergeStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
@@ -292,9 +373,9 @@ func TestController_Process_AnalyzerSelectsSubset(t *testing.T) {
 	// Analyzer returns duplicate Conflict entries for the same batch (different
 	// conflict types) to prove the controller dedupes by BatchID.
 	analyzer := conflictmock.NewMockAnalyzer(ctrl)
-	analyzer.EXPECT().Analyze(gomock.Any(), gomock.Any(), gomock.Any()).Return([]conflict.Conflict{
-		{BatchID: "test-queue/batch/2", Type: conflict.ConflictTypeConservative},
-		{BatchID: "test-queue/batch/2", Type: conflict.ConflictTypeTargetOverlap},
+	analyzer.EXPECT().Analyze(gomock.Any(), gomock.Any(), gomock.Any()).Return([]entity.Conflict{
+		{BatchID: "test-queue/batch/2", Type: entity.ConflictTypeConservative},
+		{BatchID: "test-queue/batch/2", Type: entity.ConflictTypeTargetOverlap},
 	}, nil)
 
 	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), mockStorage, analyzer, nil)
@@ -435,7 +516,7 @@ func TestController_Process_CASLostToCancel(t *testing.T) {
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: consumer.TopicKeyScore, Name: "score", Queue: mockQ}},
+		[]consumer.TopicConfig{{Key: topickey.TopicKeyScore, Name: "score", Queue: mockQ}},
 	)
 	require.NoError(t, err)
 
@@ -443,7 +524,7 @@ func TestController_Process_CASLostToCancel(t *testing.T) {
 	analyzerFactory.EXPECT().For(gomock.Any()).Return(all.New(), nil).AnyTimes()
 	controller := NewController(
 		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, newSequentialCounter(ctrl),
-		mockStorage, analyzerFactory, consumer.TopicKeyBatch, "orchestrator-batch",
+		mockStorage, analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch",
 	)
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)

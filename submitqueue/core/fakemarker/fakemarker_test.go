@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/uber/submitqueue/submitqueue/entity"
+	"github.com/uber/submitqueue/platform/base/change"
 )
 
 func TestToken(t *testing.T) {
@@ -79,7 +79,7 @@ func TestToken(t *testing.T) {
 func TestTokenInChanges(t *testing.T) {
 	tests := []struct {
 		name    string
-		changes []entity.Change
+		changes []change.Change
 		want    string
 	}{
 		{
@@ -89,17 +89,17 @@ func TestTokenInChanges(t *testing.T) {
 		},
 		{
 			name:    "no marker",
-			changes: []entity.Change{{URIs: []string{"github://o/r/pull/1/a"}}},
+			changes: []change.Change{{URIs: []string{"github://o/r/pull/1/a"}}},
 			want:    "",
 		},
 		{
 			name:    "marker on first change",
-			changes: []entity.Change{{URIs: []string{"github://o/r/pull/1/a?sq-fake=build-fail&attempt=2"}}},
+			changes: []change.Change{{URIs: []string{"github://o/r/pull/1/a?sq-fake=build-fail&attempt=2"}}},
 			want:    "build-fail",
 		},
 		{
 			name: "marker on later change",
-			changes: []entity.Change{
+			changes: []change.Change{
 				{URIs: []string{"github://o/r/pull/1/a"}},
 				{URIs: []string{"github://o/r/pull/2/b?sq-fake=push-error"}},
 			},

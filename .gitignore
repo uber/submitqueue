@@ -2,7 +2,8 @@
 /bazel-*
 MODULE.bazel.lock
 /pkg/**
-.vscode/
+.vscode/*
+!.vscode/launch.json
 .idea/
 .claude/
 .mcp.json

@@ -1,0 +1,13 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["counter.go"],
+    importpath = "github.com/uber/submitqueue/platform/extension/counter/mysql",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//platform/extension/counter:go_default_library",
+        "//platform/metrics:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+    ],
+)

@@ -19,17 +19,19 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber/submitqueue/platform/base/change"
+	"github.com/uber/submitqueue/platform/base/mergestrategy"
 )
 
 func TestLandRequest_ToBytes(t *testing.T) {
 	req := LandRequest{
 		ID:    "test-queue/123",
 		Queue: "test-queue",
-		Change: Change{URIs: []string{
+		Change: change.Change{URIs: []string{
 			"github://uber/submitqueue/pull/456/abcdef0123456789abcdef0123456789abcdef01",
 			"github://uber/submitqueue/pull/789/0123456789abcdef0123456789abcdef01234567",
 		}},
-		LandStrategy: RequestLandStrategyRebase,
+		LandStrategy: mergestrategy.MergeStrategyRebase,
 	}
 
 	data, err := req.ToBytes()
@@ -47,8 +49,8 @@ func TestLandRequestFromBytes(t *testing.T) {
 	original := LandRequest{
 		ID:           "my-queue/999",
 		Queue:        "my-queue",
-		Change:       Change{URIs: []string{"code.uber.internal.com/D111"}},
-		LandStrategy: RequestLandStrategyMerge,
+		Change:       change.Change{URIs: []string{"code.uber.internal.com/D111"}},
+		LandStrategy: mergestrategy.MergeStrategyMerge,
 	}
 
 	// Serialize
@@ -82,7 +84,7 @@ func TestLandRequestFromBytes_EmptyData(t *testing.T) {
 	// Empty JSON should deserialize with zero values
 	assert.Empty(t, req.ID)
 	assert.Empty(t, req.Queue)
-	assert.Equal(t, RequestLandStrategyUnknown, req.LandStrategy)
+	assert.Equal(t, mergestrategy.MergeStrategyUnknown, req.LandStrategy)
 }
 
 func TestLandRequest_SerializationRoundTrip(t *testing.T) {
@@ -95,12 +97,12 @@ func TestLandRequest_SerializationRoundTrip(t *testing.T) {
 			req: LandRequest{
 				ID:    "queue1/100",
 				Queue: "queue1",
-				Change: Change{URIs: []string{
+				Change: change.Change{URIs: []string{
 					"github://uber/repo-a/pull/101/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 					"github://uber/repo-a/pull/102/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 					"github://uber/repo-a/pull/103/cccccccccccccccccccccccccccccccccccccccc",
 				}},
-				LandStrategy: RequestLandStrategySquashRebase,
+				LandStrategy: mergestrategy.MergeStrategySquashRebase,
 			},
 		},
 		{
@@ -108,8 +110,8 @@ func TestLandRequest_SerializationRoundTrip(t *testing.T) {
 			req: LandRequest{
 				ID:           "queue2/200",
 				Queue:        "queue2",
-				Change:       Change{URIs: []string{"code.uber.internal.com/D12345"}},
-				LandStrategy: RequestLandStrategyRebase,
+				Change:       change.Change{URIs: []string{"code.uber.internal.com/D12345"}},
+				LandStrategy: mergestrategy.MergeStrategyRebase,
 			},
 		},
 		{
@@ -117,8 +119,8 @@ func TestLandRequest_SerializationRoundTrip(t *testing.T) {
 			req: LandRequest{
 				ID:           "queue3/300",
 				Queue:        "queue3",
-				Change:       Change{URIs: []string{"github.uber.com/internal/service/999/deadbeef12"}},
-				LandStrategy: RequestLandStrategyMerge,
+				Change:       change.Change{URIs: []string{"github.uber.com/internal/service/999/deadbeef12"}},
+				LandStrategy: mergestrategy.MergeStrategyMerge,
 			},
 		},
 	}

@@ -5,6 +5,12 @@ bazel_dep(name = "rules_go", version = "0.57.0")
 bazel_dep(name = "gazelle", version = "0.45.0")
 bazel_dep(name = "rules_proto", version = "7.1.0")
 
+# Direct dep so the well-known type proto_library targets (e.g.
+# @protobuf//:descriptor_proto, needed by the message queue topics option that
+# extends google.protobuf.MessageOptions) are visible by apparent name.
+# Toolchain resolution is unaffected: toolchains_protoc is registered first.
+bazel_dep(name = "protobuf", version = "29.1")
+
 # Use a prebuilt protoc binary instead of compiling protoc (and its abseil/upb
 # dependencies) from source on every cold build. Requires
 # --incompatible_enable_proto_toolchain_resolution (set in .bazelrc).
@@ -20,23 +26,17 @@ GO_VERSION = "1.24.5"
 
 go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
 
-# Download an SDK for the host OS & architecture as well as common remote execution
-# platforms, using the version given from the `go.mod` file.
+# Download a hermetic Go SDK for the host OS/arch and common remote execution
+# platforms using the version pinned in `go.mod`. No host Go install is required.
 go_sdk.from_file(go_mod = "//:go.mod")
 
-# Download an SDK for the host OS & architecture as well as common remote execution
-# platforms, with a specific version.
-go_sdk.download(version = GO_VERSION)
-
-# Alternatively, download an SDK for a fixed OS/architecture.
+# Also download a linux/amd64 SDK so the Docker images can be cross-compiled
+# (see the `build-*-linux` Make targets) from any host.
 go_sdk.download(
     goarch = "amd64",
     goos = "linux",
     version = GO_VERSION,
 )
-
-# Another alternative is to register the Go SDK installed on the host (see the nota bene below).
-go_sdk.host()
 
 go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
 go_deps.from_file(go_mod = "//:go.mod")

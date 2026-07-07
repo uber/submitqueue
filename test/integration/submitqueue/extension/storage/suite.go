@@ -21,6 +21,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"github.com/uber/submitqueue/platform/base/change"
+	"github.com/uber/submitqueue/platform/base/mergestrategy"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"github.com/uber/submitqueue/test/testutil"
@@ -60,10 +62,10 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet() {
 		ID:    "test/create-get",
 		Queue: "test-queue",
 		State: entity.RequestStateStarted,
-		Change: entity.Change{
+		Change: change.Change{
 			URIs: []string{"github://uber/storage-test/pull/123/abcdef0123456789abcdef0123456789abcdef01"},
 		},
-		LandStrategy: entity.RequestLandStrategyMerge,
+		LandStrategy: mergestrategy.MergeStrategyMerge,
 		Version:      1,
 	}
 
@@ -103,10 +105,10 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet_StackedPRs() {
 		ID:    "test/stacked-prs",
 		Queue: "test-queue",
 		State: entity.RequestStateStarted,
-		Change: entity.Change{
+		Change: change.Change{
 			URIs: stackedURIs,
 		},
-		LandStrategy: entity.RequestLandStrategySquashRebase,
+		LandStrategy: mergestrategy.MergeStrategySquashRebase,
 		Version:      1,
 	}
 
@@ -135,7 +137,7 @@ func (s *StorageContractSuite) TestStorage_UpdateState() {
 		ID:           "test/update",
 		Queue:        "test-queue",
 		State:        entity.RequestStateStarted,
-		LandStrategy: entity.RequestLandStrategyMerge,
+		LandStrategy: mergestrategy.MergeStrategyMerge,
 		Version:      1,
 	}
 
@@ -165,7 +167,7 @@ func (s *StorageContractSuite) TestStorage_OptimisticLocking() {
 		ID:           "test/optimistic-lock",
 		Queue:        "test-queue",
 		State:        entity.RequestStateStarted,
-		LandStrategy: entity.RequestLandStrategyMerge,
+		LandStrategy: mergestrategy.MergeStrategyMerge,
 		Version:      1,
 	}
 
@@ -213,7 +215,7 @@ func (s *StorageContractSuite) TestStorage_CreateDuplicate() {
 		ID:           "test/duplicate",
 		Queue:        "test-queue",
 		State:        entity.RequestStateStarted,
-		LandStrategy: entity.RequestLandStrategyMerge,
+		LandStrategy: mergestrategy.MergeStrategyMerge,
 		Version:      1,
 	}
 

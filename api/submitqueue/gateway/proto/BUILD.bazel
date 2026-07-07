@@ -1,0 +1,4 @@
+exports_files(
+    ["gateway.proto"],
+    visibility = ["//tool/proto:__pkg__"],
+)

@@ -20,15 +20,19 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/core/errs"
-	"github.com/uber/submitqueue/core/metrics"
-	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	"github.com/uber/submitqueue/extension/counter"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
+	"github.com/uber/submitqueue/platform/base/change"
+	"github.com/uber/submitqueue/platform/base/mergestrategy"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
+	"github.com/uber/submitqueue/platform/extension/counter"
+	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/queueconfig"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
-	pb "github.com/uber/submitqueue/submitqueue/gateway/protopb"
 	"go.uber.org/zap"
 )
 
@@ -71,7 +75,7 @@ type LandController struct {
 
 // NewLandController creates a new instance of the gateway land controller.
 // The controller publishes land requests to the topic registered under
-// consumer.TopicKeyStart in the registry.
+// topickey.TopicKeyStart in the registry.
 func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter counter.Counter, store storage.Storage, queueConfigs queueconfig.Store, registry consumer.TopicRegistry) *LandController {
 	return &LandController{
 		logger:       logger,
@@ -98,7 +102,7 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (resp *p
 		return nil, fmt.Errorf("LandController requires the request to have at least one change URI specified: %w", ErrInvalidRequest)
 	}
 
-	change := entity.Change{
+	change := change.Change{
 		URIs: req.Change.GetUris(),
 	}
 
@@ -111,7 +115,7 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (resp *p
 	}
 
 	// TODO: pass default queue land strategy to resolver function to process a default.
-	strategy, err := resolveRequestLandStrategy(req.Strategy)
+	strategy, err := resolveMergeStrategy(req.Strategy)
 	if err != nil {
 		return nil, fmt.Errorf("LandController failed to map strategy for queue=%s: %w", req.Queue, err)
 	}
@@ -153,7 +157,7 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (resp *p
 	c.logger.Infow("request published to queue",
 		"queue", req.Queue,
 		"sqid", landRequest.ID,
-		"topic_key", consumer.TopicKeyStart,
+		"topic_key", topickey.TopicKeyStart,
 	)
 	metrics.NamedCounter(c.metricsScope, opName, "publish_success", 1)
 
@@ -176,14 +180,14 @@ func (c *LandController) publishToQueue(ctx context.Context, landRequest entity.
 	// - Partition key: landRequest.Queue (ensures ordering per queue)
 	msg := entityqueue.NewMessage(landRequest.ID, payload, landRequest.Queue, nil)
 
-	q, ok := c.registry.Queue(consumer.TopicKeyStart)
+	q, ok := c.registry.Queue(topickey.TopicKeyStart)
 	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", consumer.TopicKeyStart)
+		return fmt.Errorf("no queue registered for topic key %s", topickey.TopicKeyStart)
 	}
 
-	topicName, ok := c.registry.TopicName(consumer.TopicKeyStart)
+	topicName, ok := c.registry.TopicName(topickey.TopicKeyStart)
 	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", consumer.TopicKeyStart)
+		return fmt.Errorf("no topic name registered for topic key %s", topickey.TopicKeyStart)
 	}
 
 	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
@@ -193,19 +197,19 @@ func (c *LandController) publishToQueue(ctx context.Context, landRequest entity.
 	return nil
 }
 
-// protoStrategyToEntity maps a proto Strategy enum to the entity RequestLandStrategy.
-func resolveRequestLandStrategy(s pb.Strategy) (entity.RequestLandStrategy, error) {
+// resolveMergeStrategy maps a proto Strategy enum to the shared mergestrategy.MergeStrategy.
+func resolveMergeStrategy(s mergestrategypb.Strategy) (mergestrategy.MergeStrategy, error) {
 	switch s {
-	case pb.Strategy_DEFAULT:
+	case mergestrategypb.Strategy_DEFAULT:
 		// TODO: resolve default strategy based on queue configuration
-		return entity.RequestLandStrategyRebase, nil
-	case pb.Strategy_REBASE:
-		return entity.RequestLandStrategyRebase, nil
-	case pb.Strategy_SQUASH_REBASE:
-		return entity.RequestLandStrategySquashRebase, nil
-	case pb.Strategy_MERGE:
-		return entity.RequestLandStrategyMerge, nil
+		return mergestrategy.MergeStrategyRebase, nil
+	case mergestrategypb.Strategy_REBASE:
+		return mergestrategy.MergeStrategyRebase, nil
+	case mergestrategypb.Strategy_SQUASH_REBASE:
+		return mergestrategy.MergeStrategySquashRebase, nil
+	case mergestrategypb.Strategy_MERGE:
+		return mergestrategy.MergeStrategyMerge, nil
 	default:
-		return entity.RequestLandStrategyUnknown, fmt.Errorf("unknown land strategy in proto message: %v", s)
+		return mergestrategy.MergeStrategyUnknown, fmt.Errorf("unknown land strategy in proto message: %v", s)
 	}
 }

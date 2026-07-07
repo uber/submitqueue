@@ -29,6 +29,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
@@ -55,7 +56,7 @@ type Params struct {
 	// Config holds the per-queue identity for this BuildRunner.
 	Config buildrunner.Config
 	// HTTPClient is a pre-configured GitHub API client. The caller is responsible
-	// for base URL resolution (e.g. via httpclient.BaseURLTransport) and auth.
+	// for base URL resolution (e.g. via platform/http.BaseURLTransport) and auth.
 	// The token needs actions:write to dispatch/cancel workflows and actions:read
 	// to poll status.
 	HTTPClient *http.Client
@@ -188,7 +189,7 @@ func (r *runner) Trigger(ctx context.Context, base []entity.Batch, head entity.B
 	return entity.BuildID{ID: strconv.FormatInt(resp.WorkflowRunID, 10)}, nil
 }
 
-func (r *runner) dispatchInputs(base, head []entity.Change, metadata entity.BuildMetadata) (map[string]string, error) {
+func (r *runner) dispatchInputs(base, head []change.Change, metadata entity.BuildMetadata) (map[string]string, error) {
 	baseJSON, err := json.Marshal(flattenURIs(base))
 	if err != nil {
 		return nil, fmt.Errorf("marshal base URIs: %w", err)
@@ -287,7 +288,7 @@ func mapRunStatus(status, conclusion string) entity.BuildStatus {
 	}
 }
 
-func flattenURIs(changes []entity.Change) []string {
+func flattenURIs(changes []change.Change) []string {
 	uris := make([]string, 0, len(changes))
 	for _, c := range changes {
 		uris = append(uris, c.URIs...)

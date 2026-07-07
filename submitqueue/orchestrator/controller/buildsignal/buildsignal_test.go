@@ -22,10 +22,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/core/errs"
-	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
+	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	buildrunnermock "github.com/uber/submitqueue/submitqueue/extension/buildrunner/mock"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
@@ -59,8 +60,8 @@ func newTestHarness(t *testing.T, ctrl *gomock.Controller) *testHarness {
 	speculateQ.EXPECT().Publisher().Return(speculatePub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
-		{Key: consumer.TopicKeyBuildSignal, Name: "buildsignal", Queue: signalQ},
-		{Key: consumer.TopicKeySpeculate, Name: "speculate", Queue: speculateQ},
+		{Key: topickey.TopicKeyBuildSignal, Name: "buildsignal", Queue: signalQ},
+		{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: speculateQ},
 	})
 	require.NoError(t, err)
 
@@ -76,7 +77,7 @@ func newTestHarness(t *testing.T, ctrl *gomock.Controller) *testHarness {
 		store,
 		brFactory,
 		registry,
-		consumer.TopicKeyBuildSignal,
+		topickey.TopicKeyBuildSignal,
 		"orchestrator-buildsignal",
 	)
 	return &testHarness{
@@ -108,7 +109,7 @@ func TestController_Identity(t *testing.T) {
 	h := newTestHarness(t, ctrl)
 
 	assert.Equal(t, "buildsignal", h.controller.Name())
-	assert.Equal(t, consumer.TopicKeyBuildSignal, h.controller.TopicKey())
+	assert.Equal(t, topickey.TopicKeyBuildSignal, h.controller.TopicKey())
 	assert.Equal(t, "orchestrator-buildsignal", h.controller.ConsumerGroup())
 
 	var _ consumer.Controller = h.controller
@@ -232,9 +233,8 @@ func TestController_Process_UpdateStatusError(t *testing.T) {
 }
 
 // TestController_Process_RepublishError verifies that a failure to re-publish
-// the delayed poll message is retryable: the re-schedule is the loop's
-// heartbeat, so it should nack and replay rather than reject straight to DLQ.
-// The preceding status/persist/speculate steps all succeed.
+// the delayed poll message surfaces an error. The preceding
+// status/persist/speculate steps all succeed.
 func TestController_Process_RepublishError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	h := newTestHarness(t, ctrl)
@@ -252,7 +252,6 @@ func TestController_Process_RepublishError(t *testing.T) {
 
 	err := h.controller.Process(context.Background(), buildDelivery(t, ctrl, build))
 	require.Error(t, err)
-	assert.True(t, errs.IsRetryable(err))
 }
 
 // TestController_Process_GetError verifies that a failure to load the Build

@@ -1,0 +1,43 @@
+// Copyright (c) 2025 Uber Technologies, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package uber.base.mergestrategy;
+
+option go_package = "github.com/uber/submitqueue/api/base/mergestrategy/protopb";
+option java_multiple_files = true;
+option java_outer_classname = "MergeStrategyProto";
+option java_package = "com.uber.submitqueue.base.mergestrategy";
+
+// Strategy defines the possible source control integration methods — how a change
+// is integrated into the target branch.
+//
+// This is the shared wire contract for merge strategy, reused across SubmitQueue
+// and other repo-local domains — the proto-level analog of the
+// platform/base/mergestrategy Go entity. Domains import it rather than redefining their own.
+enum Strategy {
+    // Default strategy (let the server decide based on configuration).
+    DEFAULT = 0;
+    // Rebase commits onto the target branch before landing.
+    REBASE = 1;
+    // Same as REBASE but squash commits into a single commit before rebase.
+    SQUASH_REBASE = 2;
+    // Merge commits into the target branch by creating a separate merge commit, preserving commit history along with hashes.
+    MERGE = 3;
+    // Integrate the exact revision as-is, with no content transform — advance the target branch to an already-existing
+    // commit rather than producing new revisions. The implementer maps it to its backend: git fast-forward, Mercurial
+    // bookmark advance, Subversion/Perforce copy. Used to promote an already-landed/verified commit onto another branch.
+    PROMOTE = 4;
+}

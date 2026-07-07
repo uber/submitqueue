@@ -1,169 +1,166 @@
 # Stovepipe Workflow
 
-Stovepipe is the post-merge trunk-validation service: it consumes a stream of commits pushed to the trunk (`main`), validates them in batches *after* they land, and records a per-commit health state that downstream systems gate on. It exists because SubmitQueue (SQ) can no longer afford to prove every change green *before* merge at the throughput the monorepo now sees — so SQ merges directly to a `main` that may be temporarily broken, and Stovepipe is the system that finds the breakages, names the offending commit, and drives recovery.
+Stovepipe answers one question for the rest of the company: **at which commit is this thing green?** It continuously polls a repository branch for its latest commit, validates that commit, works out which projects (if any) are broken at it, records the result, and notifies downstream systems so they can gate deployments on a known-good commit. It is a post-merge service: code lands first, Stovepipe finds out whether it was good.
 
-Like SQ, the orchestrator is a queue-driven pipeline of small, single-purpose controllers. Each controller consumes one topic, advances a commit or batch, and publishes to the next topic. Most hops carry only an ID — the controller fetches the entity from storage — while the entry point carries the full payload because there is no row to fetch yet. The pipeline has two cycles: `speculate → build → buildsignal → bisect → speculate` (the build / bisection loop that narrows a failure to a single offending commit) and `conclude → batch` (advance to the next range once a green is established). `conclude` is the only stage that assigns a commit its terminal status. `status` and `log` are two gateway-owned sinks the orchestrator publishes to and the gateway consumes: `status` carries commit-health transitions into the commit-status store, and `log` is an append-only event log of what happened to each commit — the direct analogue of SQ's request-log sink.
+The pipeline is a queue-driven chain of small, single-purpose controllers, in the same style as SubmitQueue (SQ). Each controller consumes one topic, advances one entity, and publishes to the next topic. Most hops carry only an **ID** and the controller reloads the entity from storage; the entry hop carries the caller's input because there is no row to load yet. The high-level shape is:
 
-## Commit states
+> **poll for a new head → ingest → process the build strategy → build → record greenness → analyze projects → record per-project greenness → notify downstream.**
 
-Every trunk commit Stovepipe tracks is in one of three states. Callers — deployment systems and developer tooling — read this state to decide whether a commit is safe to act on.
+## What Stovepipe is agnostic about
 
-- **`unknown`** — the commit has landed on `main` but has not yet been validated. This is the default the moment a commit is ingested. Most commits between two validated points sit here, because validation is batched rather than per-commit.
-- **`succeeded`** (green) — the relevant targets build and test successfully at this commit.
-- **`failed`** (not green) — a target is broken at this commit.
+Two deliberate abstractions keep Stovepipe from being a git tool or a Bazel tool:
 
-"Green" is ultimately *subjective per target/project*: a commit can be green for one team's targets and broken for another's. Stovepipe starts with a binary repo-level state and evolves toward per-target/per-project granularity; the state machine and the caller contract are the same either way.
+- **The VCS is behind a `SourceControl` extension.** Stovepipe never shells out to git. Every commit, ref, and branch head is an opaque **URI** that a `SourceControl` implementation produces and interprets. A ref is `git://remote/repo/ref/…`; a specific commit is `git://remote/repo/ref/…/<sha>`. The `git://` scheme is just the reference implementation — a Mercurial or Perforce backend would mint its own scheme behind the same contract. Nothing downstream of `SourceControl` parses a URI; it is a token you hand back to `SourceControl` to ask questions ("is A an ancestor of B?", "what is the head of this ref?").
+- **The build system is behind a build-runner extension** (see [build-runner.md](../submitqueue/build-runner.md)), which returns a pass/fail and a **target graph** that the project-analysis stage maps to projects.
 
-## Identity and tracking
+Designing to these contracts — not to git and Bazel specifically — is the whole point: the same pipeline should validate any branch in any VCS built by any build system.
 
-Identity is established at the gateway on ingest, but Stovepipe does not mint a synthetic per-event request ID: the **commit SHA** (scoped by repository and branch) is the identity and the dedup key. Keying on the SHA is what makes ingestion idempotent — a commit announced by both a webhook and a poll backfill resolves to the same record and is processed once.
+## Core concepts
 
-A validation attempt over a contiguous range of commits is a **Batch**, identified by a BatchID. The batch is the unit that carries a build and, through it, a pass/fail result.
+### URI — the unit of identity for "where"
 
-Bisection needs no separate tracking machinery: when a batch's build fails, `bisect` splits the range into smaller sub-ranges, each of which is just another Batch driven through the same `speculate → build → buildsignal` loop. The state of the search lives in those ordinary batch results, and `bisect` — not `buildsignal` — owns the decision of when the search is over:
+Everything Stovepipe records greenness *about* is a URI: a specific commit on a specific branch. The last-known-good commit is a URI; a build is run against a URI; a project's greenness is recorded against a URI. Because the URI is opaque, Stovepipe can compare, store, and key on it without knowing it is a git SHA.
 
-- A probe that builds **green** does *not* end the search and does *not* advance the trunk; it only proves its commits good and shrinks the suspect range, so the result returns to `bisect` for the next probe.
-- A probe that builds **red** narrows the suspect range to its lower half.
-- When the suspect range is a **single commit** — including the trivial case where the failing range was one commit to begin with, so there is nothing left to split — that commit is the offender. `bisect` routes it to `conclude`, which marks it `failed` and hands it to `remediate`.
+### Queue — the unit of identity for "what we validate"
 
-The commits proven good along the way are marked `succeeded`, letting the green pointer advance to the last good one; the commits after the offender stay `unknown` until a fix lands and re-validation reaches them.
+Stovepipe reuses SQ's **Queue** concept for the same two reasons SQ does — to **namespace the generated IDs** and to give callers a **stable handle for the repo+ref being validated** — plus a third that is specific to a post-merge validator: a Queue **owns the last-known-good URI** and the greenness history for its branch.
 
-## Ingestion and completeness
+A Queue is named by a **stable logical string** (e.g. `monorepo/main`), and that name is what the ingest API takes — *not* a raw URI. SourceControl/config resolves the Queue name to a concrete VCS URI base. This keeps callers (and the external poller) free of VCS detail: they say "the `monorepo/main` Queue has moved", and Stovepipe resolves what that means.
 
-Trunk push events arrive as **external webhook events**, modeled as messages on the queue: when SQ merges a commit to `main`, a webhook notifies Stovepipe, which records the commit (`unknown`) and hands it into the pipeline. Webhooks give low-latency ingestion in the common case.
+A Queue is *not* tied to trunk specifically — any branch can be a Queue. "Queue" here is the **validation namespace**; it is distinct from the **messaging queue** the pipeline runs on. Where the two could be confused, this doc says "messaging queue" for the transport and "Queue" for the namespace entity.
 
-Webhooks are a latency *optimization*, not a completeness *guarantee*. They can be delayed for hours, arrive out of order, or be dropped entirely — and a missed commit means a hole in trunk coverage that no one notices until something gates on an `unknown` that should have been validated. So ingestion does not depend on webhook reliability. A **fallback reconciliation poller** periodically diffs the last-ingested trunk SHA against the actual `main` HEAD and backfills any gap, publishing the missing commits into the same entry path. With the poller running on a fixed cadence, no landed commit is missed even if webhooks are fully down.
+### Request — one validation of one head
 
-The two producers — webhook and poller — converge through the SHA-keyed idempotency described above, so nothing downstream assumes a commit is seen only once. Commits are processed in trunk order (committer-timestamp / topological), and a batch is a contiguous range of commits since the last known green. Because the green pointer and per-commit state are persisted, the system must be resilient to history rewrites — a previously validated commit that is no longer present on the branch — and converge rather than wedge when that happens.
+When the poller reports that a Queue has a new head, Stovepipe mints a **Request** (an ID namespaced by the Queue, exactly as the SQ gateway mints a request ID) representing "validate this Queue at this head URI". The Request, not the URI, is the thing that flows through the pipeline and accumulates state (the chosen build strategy, the build outcome, the recorded greenness).
+
+Identity for the *head* is the `(Queue, head URI)` pair, and that pair is the **dedup key**: if the poller reports the same head twice, or a future webhook producer races the poller, both resolve to the same Request and the work happens once. The minted Request ID is the routing handle; the dedup key is what makes ingestion idempotent.
+
+### Greenness — a degree, not a boolean
+
+Greenness is recorded as a **health degree** where **`0` means green** and **higher means more broken**, with **`1` meaning fully broken**. Stovepipe starts with only the two endpoints — `0` (green) and `1` (broken) — at the whole-repo level. The space between exists so that, once project-level analysis lands, "broken to some extent" (a fraction of projects failing) has somewhere to live without changing the contract or the state machine. A commit that has been ingested but not yet validated has *no* recorded greenness for the relevant scope — absence is distinct from `0`, and callers must treat "not yet recorded" as not-green for gating.
+
+### Project — greenness at a finer grain
+
+A **project** is a caller-defined slice of the repository. Whole-repo greenness answers "is the branch green at this URI"; project greenness answers the question deployments actually need — **"is *this project* green at this URI"**, and its dual, "what is the latest URI at which this project is green". Projects are derived from the build's **target graph**: analysis sees which targets broke and maps them to projects. How targets map to projects is implementer-specific (directory ownership, build metadata, an external service) and lives behind the project-analysis stage, not in the core pipeline.
+
+## Extensions
+
+| Extension | Responsibility |
+|---|---|
+| **SourceControl** | Resolve a Queue name to its current head URI; answer ancestry/comparison questions between two URIs (is the new head a fast-forward descendant of the last green, or was history rewritten?); enumerate commits in a range. The sole owner of URI semantics. |
+| **build-runner** | Build a scope at a URI (optionally relative to a baseline URI), returning pass/fail and the target graph. See [build-runner.md](../submitqueue/build-runner.md). |
+| **Hooks** | Publish Stovepipe's greenness events to downstream systems — "this URI / this project is now green (or not green)". Fire-and-forget notification, decoupled so Stovepipe does not know or care who consumes the event. |
+| **Storage** | Persist Queues (incl. last-green URI), Requests, build records, and per-URI / per-project greenness. Key/value-shaped per the extension-design rules in [CLAUDE.md](../../../CLAUDE.md). |
+
+The **Hooks** extension is the notification boundary. Whenever a greenness fact is recorded — whole-repo green/not-green, or later a project green/not-green — `record` fires the relevant hook so deployment systems, dashboards, and developer tooling learn about it without polling Stovepipe's store. Hooks are pluggable so each environment can route events to its own downstream (a deploy gate, a Slack notifier, an event bus) without changing the pipeline.
 
 ## Workflow
 
+The pipeline runs in two phases against the same Request. **Phase 1** establishes whole-repo greenness. **Phase 2** refines it to per-project greenness. Both phases reuse the same `build` → `buildsignal` → `record` machinery; `record` is re-entrant and fans out, which is why it is not a terminal stage.
+
 ```
-   push events ─┐                                     ┌──────────────────────┐
-   (webhook)    │   ┌─────────────────────────────┐   │ gateway: status      │
-                ├──►│ gateway: webhook + poll     │┌─►│ Commit-status store  │ ◄─ GetStatus (RPC):
-   main HEAD  ──┘   │ Ingest pushes; fallback     ││  └──────────────────────┘    deployment & dev
-   (poll)           │ poll backfills missed SHAs  ││  ┌──────────────────────┐    tooling query it
-                    └──────────────┬──────────────┘│  │ gateway: log         │
-                                   │ PushEvent     ├─►│ Append-only event log│
-                                   ▼               │  └──────────────────────┘
-                    ┌─ orchestrator ──────────────┐│
-                    │ start                       ├┘  orchestrator publishes status
-                    │ Record Commit (unknown) by  │   + log events (any stage)
-                    │ SHA; emit status + log      │
-                    └──────────────┬──────────────┘
-                                   │ SHA
-                                   ▼
-                    ┌─────────────────────────────┐
-                    │ validate                    │
-                    │ Resolve commit metadata     │
-                    │ for ordering & batching     │
-                    └──────────────┬──────────────┘
-                                   │ SHA
-        ┌─────────────────────────►▼
-        │ BatchID  ┌─────────────────────────────┐
-        │(advance) │ batch                       │
-        │          │ Aggregate commits since green│
-        │          └──────────────┬──────────────┘
-        │                         │ BatchID
-        │             ┌───────────►▼
-        │             │ ┌──────────────────────────┐
-        │        next │ │ speculate  (stub)        │
-        │       probe │ │ Prepare (sub-)range build│
-        │             │ └────────────┬─────────────┘
-        │             │              │ BatchID
-        │             │              ▼
-        │             │ ┌──────────────────────────┐
-        │             │ │ build                    │
-        │             │ │ Build changed targets    │
-        │             │ └────────────┬─────────────┘
-        │             │       Build  │
-        │             │              ▼
-        │             │ ┌──────────────────────────┐
-        │             │ │ buildsignal              │
-        │             │ │ Record build result      │
-        │             │ └───┬──────────────────┬───┘
-        │             │fail/│                  │ full-range
-        │             │probe│                  │ pass
-        │             │     ▼                  │
-        │             │ ┌──────────────────┐   │
-        │             └─┤ bisect  (stub)   │   │
-        │               │ Narrow to the    │   │
-        │               │ offender         │   │
-        │               └────────┬─────────┘   │
-        │           isolated fail│              │
-        │                        ▼              ▼
-        │               ┌────────────────────────┐
-        │      advance  │ conclude               │
-        └───────────────┤ pass → succeeded,      │
-                        │   advance next batch    │
-                        │ fail → failed,          │
-                        │   then remediate        │
-                        └───────────┬────────────┘
-                                    │ SHA (offender)
-                                    ▼
-                         ┌─────────────────────────┐
-                         │ remediate               │┄┄► remediation
-                         │ Invoke remediation      │   extension →
-                         │ extension for the commit│   external fix /
-                         └─────────────────────────┘   revert → SQ
+ external poller ──(Queue name)──► ┌──────────────────────────────┐
+ "Queue moved"  (outside OSS)      │ ingest                       │
+                                   │ Resolve head URI via         │
+                                   │ SourceControl; mint Request; │
+                                   │ persist (greenness: none);   │
+                                   │ dedup on (Queue, head URI)   │
+                                   └───────────────┬──────────────┘
+                                                   │ RequestID
+                                                   ▼
+                                   ┌──────────────────────────────┐
+                                   │ process                      │
+                                   │ Ask SourceControl: is head a │
+                                   │ descendant of last-green?    │
+                                   │  → incremental since green   │
+                                   │ else (history rewrite)       │
+                                   │  → full monorepo             │
+                                   └───────────────┬──────────────┘
+              ┌────────────────────────────────────┤ RequestID (+ strategy, baseline URI)
+              │ PHASE 1: whole-repo greenness       ▼
+              │                    ┌──────────────────────────────┐
+              │                    │ build                        │
+              │                    │ Run build-runner for the     │
+              │                    │ chosen scope; baseline =     │
+              │                    │ last-green URI iff incremental│
+              │                    └───────────────┬──────────────┘
+              │                                    │ BuildID
+              │                                    ▼
+              │                    ┌──────────────────────────────┐
+              │                    │ buildsignal                  │
+              │                    │ Await/record build status +  │
+              │                    │ target graph                 │
+              │                    └───────────────┬──────────────┘
+              │                                    │ RequestID
+              │                                    ▼
+              │                    ┌──────────────────────────────┐   Hooks
+              │                    │ record                       │┄┄┄┄┄►  "URI green /
+              │                    │ Write whole-repo greenness    │      not green"
+              │                    │ for URI; if green advance     │
+              │                    │ Queue's last-green URI; Hooks │
+              │                    └───────────────┬──────────────┘
+              │ PHASE 2: project greenness         │ RequestID
+              │                                    ▼
+              │                    ┌──────────────────────────────┐
+              │                    │ analyze                      │
+              │                    │ Map broken/at-risk targets   │
+              │                    │ → projects (impl-specific);  │
+              │                    │ decide project-scoped builds │
+              │                    └───────────────┬──────────────┘
+              │                                    │ BuildID(s)
+              │                                    ▼
+              │                    ┌──────────────────────────────┐
+              │                    │ build → buildsignal          │
+              │                    │ CI job runs; artifacts stored │
+              │                    │ in blob store; status read    │
+              │                    └───────────────┬──────────────┘
+              │                                    │ RequestID
+              │                                    ▼
+              │                    ┌──────────────────────────────┐   Hooks
+              └───────────────────►│ record                       │┄┄┄┄┄►  "project P
+                                   │ Capture per-project greenness │      green / not
+                                   │ for the URI; fire Hooks       │      green at URI"
+                                   └──────────────────────────────┘
 ```
 
-Any orchestrator controller can also publish a `log` event (via a `PublishLog` helper) recording what it did; the gateway is the sole consumer that persists those events to the event log. The `status` and `log` sinks are drawn once at the top right to keep the pipeline readable, but they receive events from across the pipeline, not only from `start`.
+### Phase 1 — whole-repo greenness
+
+1. **ingest** — invoked by the external poller with a **Queue name**. It asks `SourceControl` for that Queue's current head URI, mints a Request namespaced by the Queue, persists it with no recorded greenness yet, and dedups on `(Queue, head URI)` so a re-reported head is processed once. It publishes the RequestID onward.
+2. **process** — decides the validation strategy. It asks `SourceControl` how the new head relates to the Queue's last-green URI: if the head is a descendant (normal fast-forward), only the delta **since the last green** needs validating; if history was rewritten (the last green is no longer an ancestor), the safe choice is a **full-monorepo** build. The decision and the baseline URI are persisted on the Request. The name is intentionally broad: `process` is the stage where future strategy concerns (flake awareness, partial re-validation, prioritization) will attach.
+3. **build** — runs the build-runner for the chosen scope. A flag derived from `process` decides whether to build relative to the last-green **baseline URI** (incremental) or from scratch (full). It records a build and publishes the BuildID.
+4. **buildsignal** — records the build's status and target graph when the build completes, then publishes the RequestID to `record`.
+5. **record** — writes the whole-repo greenness for the head URI (`0` green / `1` broken to start). On green it advances the Queue's **last-green URI** so the next `process` can build incrementally from here. It fires the **Hooks** extension with the green/not-green event, then fans out into Phase 2.
+
+### Phase 2 — project greenness
+
+6. **analyze** (project-analysis) — takes the build's target graph and maps the relevant targets to **projects**, using whatever implementer-specific mapping is configured. It decides which project-scoped builds / CI jobs are needed to attribute breakage to specific projects, and publishes those builds.
+7. **build → buildsignal** — the project-scoped CI job runs; its artifacts are stored in a blob store (e.g. TerraBlob), and `buildsignal` reads back the status. This is the same machinery as Phase 1, reused at project granularity.
+8. **record** — captures **per-project greenness for the URI** — for each project, green or not at this commit — and fires **Hooks** per project. This is what lets a caller ask "is project P green at URI U?" and "what is the latest URI where project P is green?".
+
+`record` appearing twice is intentional: it is one re-entrant stage that records greenness at whatever granularity the current phase produced and notifies downstream. The Request is *complete* when every planned granularity has been recorded, not at a single terminal hop.
 
 ## Per-controller summary
 
 | Controller | In | Out | One-line role |
 |---|---|---|---|
-| **gateway/webhook** | push event (RPC/HTTP) | start | Receive a trunk push event, publish to the start topic, hand off async |
-| **gateway/poll** | (timer) | start | Fallback reconciler: diff last-ingested SHA vs `main` HEAD, backfill any gap |
-| **gateway/GetStatus** | RPC | — | Read path: callers query a commit's status (optionally scoped to a target/project) |
-| **start** | PushEvent | validate, status, log | Record the Commit as `unknown` keyed by SHA (dedup), emit Recorded status |
-| **validate** | SHA | batch | Resolve the commit metadata (parent, committer time) that ordering and batching need |
-| **batch** | SHA | speculate | Aggregate commits since the last known green into a validation Batch (commit range) |
-| **speculate** (stub) | BatchID | build | Decide the validation strategy and prepare the build for the full range or the next bisection sub-range |
-| **build** | BatchID | buildsignal | Build the batch's changed targets (target analysis happens here) |
-| **buildsignal** | Build | conclude, bisect | Record the build result; a clean full-range build → conclude (green), any failure or bisection probe → bisect |
-| **bisect** (stub) | BatchID | speculate, conclude | Narrow a failing range via sub-batch probes; when the failure is isolated to a single commit, conclude it `failed`, otherwise probe the next sub-range |
-| **conclude** | BatchID | batch, remediate, status, log | Green: mark commits `succeeded` and advance the next batch. Failure: mark the offending commit `failed` and hand off to remediate |
-| **remediate** | SHA | — (extension) | Invoke the remediation extension for the offending commit; an external fix/revert lands via SQ |
-| **status** | StatusEvent | — | Gateway-owned sink: persist the authoritative commit-status store |
-| **log** | LogEvent | — | Gateway-owned sink: persist the append-only event log (audit trail) |
+| **ingest** | Queue name (from poller) | process | Resolve head URI via SourceControl, mint Request, persist (no greenness), dedup on `(Queue, head URI)` |
+| **process** | RequestID | build | Decide incremental-since-green vs full-monorepo by asking SourceControl about ancestry; persist strategy + baseline URI |
+| **build** | RequestID | buildsignal | Run the build-runner for the chosen scope; baseline = last-green URI iff incremental |
+| **buildsignal** | BuildID | record (P1), record (P2) | Record build status + target graph; signal completion |
+| **record** | RequestID | analyze (P1→P2), Hooks | Write greenness for the URI at the current granularity; advance last-green URI on whole-repo green; fire Hooks |
+| **analyze** | RequestID | build | Map broken/at-risk targets → projects; decide project-scoped builds |
 
-Any controller may publish to `log` (the append-only event log) via a `PublishLog` helper, exactly as in SQ; the table lists it only on the stages that most clearly emit it. There is deliberately no changed-target stage and no scoring stage. Target analysis belongs to `build`, which already needs the changed-target set to know what to compile and test, so a separate stage would only pre-compute what `build` must derive anyway. And commits are validated in trunk order rather than reordered by priority, so there is nothing to score; bisection may eventually use a suspicion-weighted heuristic to place its probes (build the commits most likely to be the culprit first), but that is an optional input to `bisect`, not a stage of its own.
+## Dedup, idempotency, and history rewrites
 
-## Remediation handoff
+Ingestion is idempotent on `(Queue, head URI)`, so duplicate poller reports — and any future webhook producer racing the poller — converge on one Request. The pipeline persists the Queue's last-green URI and per-URI greenness, so it must tolerate a **history rewrite**: when `SourceControl` reports that the last-green URI is no longer an ancestor of the current head, `process` falls back to a full-monorepo build rather than trusting a baseline that no longer exists on the branch. The system converges to a correct greenness rather than wedging on a stale pointer.
 
-When `bisect` isolates the offending commit, `conclude` marks it `failed` and publishes its SHA to the `remediate` topic — the same decoupled publish-then-consume hop the rest of the pipeline uses, not an inline call. The `remediate` controller consumes that topic and invokes a **remediation extension**: a vendor-agnostic, pluggable interface that is Stovepipe's integration boundary with whatever external system produces the fix. The extension hands the offending commit to that system, which generates a revert or fix and lands it through SQ like any other change.
+## Fail-closed on unprocessable work
 
-Stovepipe's responsibility ends at invoking the extension. It does not author or land the fix, and it does not block waiting for one — there is no synchronous "wait for green" stage. The fix lands on `main` as an ordinary commit and re-enters Stovepipe through the normal ingest-and-validate path, where it is validated like anything else and the trunk returns to green. This keeps the pipeline non-blocking and the external remediation system fully decoupled behind the extension.
+Callers gate deployments on greenness, so the dangerous failure is a Request that can never finish and silently leaves a URI with no recorded greenness — indistinguishable, to a naive caller, from "not yet validated". Following SQ's DLQ-reconciliation posture, a Request whose validation can never complete must be driven to a **conservative not-green outcome** rather than left non-terminal: gating stays safe (never falsely green), and the pipeline moves on. State writes use optimistic-locking CAS, so a late successful update wins cleanly over the conservative one. See [submitqueue/orchestrator/controller/dlq/README.md](../../../submitqueue/orchestrator/controller/dlq/README.md) for the shared reconcile-only design.
 
-## DLQ reconciliation
+## Open questions
 
-Every *consumed* primary pipeline topic above is paired with a `{topic}_dlq` subscription consumed by a dedicated DLQ controller. The `status` and `log` topics are the exception: the orchestrator only publishes to them (the gateway is the sole consumer that persists commit status and the event log), so they have no orchestrator-side subscription and therefore no DLQ. The consumer framework moves a message to its DLQ once the primary controller returns a non-retryable error or exhausts retries on a retryable one.
-
-The stovepipe-specific risk a DLQ must close: a validation that can never complete must not leave a commit stuck non-terminal. A commit wedged at `unknown` forever is not a neutral outcome — callers gate on status, and an unvalidatable commit that silently stays `unknown` blocks the trunk's green pointer from advancing past it. So the DLQ controllers do not re-attempt the failed work; they decode the payload to recover the affected commit SHA or `BatchID` and drive the entity to a **conservative, not-green terminal state**, so gating stays safe (fail closed, never falsely green) and the pipeline can move on. State writes use the same optimistic-locking CAS as the primary pipeline, so a late primary-pipeline update wins cleanly and a version mismatch is asked back for redelivery.
-
-DLQ consumers are wired with `errs.AlwaysRetryableProcessor` and a very high `Retry.MaxAttempts`, with their own DLQ disabled — the same effectively-non-droppable posture SQ uses. The trade-off is identical: a genuinely unprocessable DLQ message (typically a malformed payload) must be removed by an operator. See `submitqueue/orchestrator/controller/dlq/README.md` for the shared design constraints (simplest possible implementation, reconcile-only, no recovery).
-
-## Ownership by service
-
-Each service owns its own data; the gateway and orchestrator never touch each other's, and the only thing they share is the messaging queue.
-
-### Gateway
-
-The gateway is the boundary of the system and the owner of the commit-status store and the event log. It ingests trunk push events — both from external webhooks and from the fallback poller — and hands them to the orchestrator over the queue. It serves the status query RPC that downstream systems call. And it owns the record of each commit's health and history: it is the only service that reads or writes the commit-status store and the log, writing them both directly as commits are ingested and by consuming the status and log events the orchestrator emits.
-
-### Orchestrator
-
-The orchestrator runs the pipeline that takes a landed commit from `unknown` to a terminal state. It owns the working state of that pipeline — in-flight commits, batches, builds, and bisection bookkeeping — and is the only service that writes it. It drives a batch through validation, re-entering speculation as build results arrive and as bisection narrows a failing range, advances to the next range once a green is established, and hands an isolated offending commit off through the remediation extension. It never persists commit status or log entries itself; it only emits status and log events for the gateway to record.
-
-### Shared: the messaging queue
-
-The two services communicate only through the messaging queue. It is pluggable infrastructure kept in its own database, separate from either service's application data: it carries external push events in, the internal pipeline topics between orchestrator stages, and the status and log events the orchestrator publishes for the gateway to consume.
-
-## Status and log ownership invariant
-
-The commit-status store and the event log have exactly one owner: the **gateway**. The orchestrator only emits status and log events onto the queue; it never persists them. The gateway is the sole consumer of those events and the only writer of both the commit-status store and the log.
-
-This keeps all status and log writes in one service: the orchestrator stays a pure pipeline that emits events, and the gateway owns the records — the health state callers query and the history of what happened — end to end. It is the direct analogue of SQ's request-log ownership invariant.
+- **Greenness degree semantics.** The endpoints (`0` green, `1` fully broken) are fixed; the meaning of intermediate values once projects exist (fraction of projects broken? weighted severity?) is deferred until project analysis is concrete.
+- **Poller vs. webhook ingestion.** Only the external poller is in scope now. The dedup key is designed so a webhook producer can be added later without changing identity, but that producer is out of scope for this RFC.
+- **Project mapping contract.** The exact shape of the target-graph→project mapping behind `analyze` (and whether it is a Stovepipe extension or an external service) is left to the project-analysis design.
+</content>

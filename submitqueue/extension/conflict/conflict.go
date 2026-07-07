@@ -22,36 +22,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 )
 
-// ConflictType classifies why two batches are considered to conflict.
-// New values may be added as more sophisticated analyzers are introduced.
-type ConflictType string
-
-const (
-	// ConflictTypeUnknown is the unreachable zero value, set by default when
-	// the structure is initialized. It should never be seen in the system.
-	ConflictTypeUnknown ConflictType = ""
-	// ConflictTypeConservative means the analyzer treated the batches as
-	// conflicting because it could not prove otherwise, without identifying a
-	// specific reason. Used by conservative analyzers that serialize
-	// everything by default.
-	ConflictTypeConservative ConflictType = "conservative"
-	// ConflictTypeTargetOverlap means the two batches modify one or more of
-	// the same build targets and may therefore interfere with each other.
-	ConflictTypeTargetOverlap ConflictType = "target_overlap"
-)
-
-// Conflict reports a single conflict between the analyzed batch and one of
-// the in-flight batches.
-type Conflict struct {
-	// BatchID is the ID of the in-flight batch that conflicts with the
-	// analyzed batch.
-	BatchID string
-	// Type classifies the conflict. A single (analyzed, in-flight) pair may
-	// be reported with multiple Conflict entries when different conflict
-	// types apply.
-	Type ConflictType
-}
-
 // Analyzer detects conflicts between a candidate batch and the batches
 // already in flight, so the speculation layer can decide which batches can
 // safely advance in parallel.
@@ -64,7 +34,7 @@ type Analyzer interface {
 	// should be filtered out before calling. A non-nil error indicates the
 	// analysis itself failed (infrastructure issue) and should be treated as
 	// retryable by the caller.
-	Analyze(ctx context.Context, batch entity.Batch, inFlight []entity.Batch) ([]Conflict, error)
+	Analyze(ctx context.Context, batch entity.Batch, inFlight []entity.Batch) ([]entity.Conflict, error)
 }
 
 // Config carries the per-queue identity handed to a Factory. The system knows

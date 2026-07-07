@@ -22,14 +22,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/core/errs"
-	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
+	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
-	pb "github.com/uber/submitqueue/submitqueue/gateway/protopb"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 )
@@ -43,7 +44,7 @@ func newCancelTestRegistry(t *testing.T, ctrl *gomock.Controller) (consumer.Topi
 	q.EXPECT().Publisher().Return(pub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
-		{Key: consumer.TopicKeyCancel, Name: "cancel", Queue: q},
+		{Key: topickey.TopicKeyCancel, Name: "cancel", Queue: q},
 	})
 	require.NoError(t, err)
 	return registry, pub

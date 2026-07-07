@@ -24,13 +24,14 @@ package fake
 import (
 	"context"
 
+	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/entity"
 )
 
 // Resolver is a programmable in-memory changeset.Resolver.
 type Resolver struct {
-	changes  map[string][]entity.Change
+	changes  map[string][]change.Change
 	detailed map[string]entity.BatchChanges
 	err      error
 }
@@ -38,13 +39,13 @@ type Resolver struct {
 // New returns an empty fake Resolver. Seed it with Set / SetDetailed.
 func New() *Resolver {
 	return &Resolver{
-		changes:  map[string][]entity.Change{},
+		changes:  map[string][]change.Change{},
 		detailed: map[string]entity.BatchChanges{},
 	}
 }
 
 // Set seeds the raw changes returned by Changes for the given batch ID.
-func (r *Resolver) Set(batchID string, changes ...entity.Change) *Resolver {
+func (r *Resolver) Set(batchID string, changes ...change.Change) *Resolver {
 	r.changes[batchID] = changes
 	return r
 }
@@ -63,7 +64,7 @@ func (r *Resolver) FailWith(err error) *Resolver {
 
 // ChangesForBatch returns the seeded raw changes for the batch, in seeded order.
 // An unseeded batch resolves to a nil slice.
-func (r *Resolver) ChangesForBatch(_ context.Context, batch entity.Batch) ([]entity.Change, error) {
+func (r *Resolver) ChangesForBatch(_ context.Context, batch entity.Batch) ([]change.Change, error) {
 	if r.err != nil {
 		return nil, r.err
 	}

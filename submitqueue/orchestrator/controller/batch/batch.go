@@ -20,10 +20,12 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/core/metrics"
-	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	"github.com/uber/submitqueue/extension/counter"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/extension/counter"
+	"github.com/uber/submitqueue/platform/metrics"
+	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -136,11 +138,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// Get active batches for this queue and ask the conflict analyzer which
 	// of them the new batch must serialize behind. The dependency set drives
 	// the speculation graph downstream.
-	activeBatches, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, []entity.BatchState{
-		entity.BatchStateCreated,
-		entity.BatchStateSpeculating,
-		entity.BatchStateMerging,
-	})
+	activeBatches, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, entity.DependencyBatchStates())
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
 		return fmt.Errorf("failed to get active batches for queue=%s: %w", request.Queue, err)
@@ -290,17 +288,31 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"dependency_count", len(batch.Dependencies),
 	)
 
+	// Record the "batched" status in the request log. This status corresponds to
+	// the RequestStateBatched transition CAS'd above, so it carries the request
+	// version for reconciliation (unlike the batch-level "scored" status). The
+	// message ID is scoped to (requestID, status), so a redelivery that creates a
+	// fresh batch re-emits "batched" with a different batch_id but is deduped to
+	// the first entry — acceptable, the request is batched either way.
+	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusBatched, request.Version, "", map[string]string{
+		"batch_id": batch.ID,
+	})
+	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
+		return fmt.Errorf("failed to publish request log for request %s: %w", request.ID, err)
+	}
+
 	// Publish to score topic for further processing.
 	// If it fails and the controller retries, a new batch will be created with the new batch ID but the same request ID.
 	// The downstream logic should be able to handle stale entries by looking at the state of the batch.
-	if err := c.publish(ctx, consumer.TopicKeyScore, batch.ID, batch.Queue); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeyScore, batch.ID, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish batch ID to score topic: %w", err)
 	}
 
 	c.logger.Infow("published batch to score topic",
 		"batch_id", batch.ID,
-		"topic_key", consumer.TopicKeyScore,
+		"topic_key", topickey.TopicKeyScore,
 	)
 
 	return nil // Success - message will be acked

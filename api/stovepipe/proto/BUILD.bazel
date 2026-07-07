@@ -1,0 +1,4 @@
+exports_files(
+    ["stovepipe.proto"],
+    visibility = ["//tool/proto:__pkg__"],
+)

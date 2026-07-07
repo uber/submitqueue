@@ -59,9 +59,10 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
@@ -191,13 +192,7 @@ func (c *Controller) markCancelling(ctx context.Context, request entity.Request)
 // the publish.
 func (c *Controller) findActiveBatch(ctx context.Context, request entity.Request) (entity.Batch, bool, error) {
 	// TODO: Scans all the batches in flight - make it more efficient?
-	active, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, []entity.BatchState{
-		entity.BatchStateCreated,
-		entity.BatchStateScored,
-		entity.BatchStateSpeculating,
-		entity.BatchStateMerging,
-		entity.BatchStateCancelling,
-	})
+	active, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, entity.ActiveBatchStates())
 	if err != nil {
 		c.metricsScope.Counter("batch_store_errors").Inc(1)
 		return entity.Batch{}, false, fmt.Errorf("failed to get active batches for queue=%s: %w", request.Queue, err)
@@ -286,7 +281,7 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 		c.metricsScope.Counter("batch_already_cancelling").Inc(1)
 	}
 
-	if err := c.publishBatchID(ctx, consumer.TopicKeySpeculate, batch.ID, batch.Queue); err != nil {
+	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, batch.ID, batch.Queue); err != nil {
 		c.metricsScope.Counter("publish_errors").Inc(1)
 		return fmt.Errorf("failed to hand off cancelled batch %s to speculate: %w", batch.ID, err)
 	}

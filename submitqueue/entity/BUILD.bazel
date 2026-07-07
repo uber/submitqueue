@@ -1,7 +1,7 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "entity",
+    name = "go_default_library",
     srcs = [
         "batch.go",
         "batch_changes.go",
@@ -10,7 +10,10 @@ go_library(
         "cancel_request.go",
         "change_provider.go",
         "change_record.go",
+        "conflict.go",
         "land_request.go",
+        "merge_result.go",
+        "push_result.go",
         "queue_config.go",
         "request.go",
         "request_log.go",
@@ -18,10 +21,14 @@ go_library(
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/entity",
     visibility = ["//visibility:public"],
+    deps = [
+        "//platform/base/change:go_default_library",
+        "//platform/base/mergestrategy:go_default_library",
+    ],
 )
 
 go_test(
-    name = "entity_test",
+    name = "go_default_test",
     srcs = [
         "batch_test.go",
         "build_test.go",
@@ -30,9 +37,11 @@ go_test(
         "request_log_test.go",
         "request_test.go",
     ],
-    embed = [":entity"],
+    embed = [":go_default_library"],
     deps = [
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
+        "//platform/base/change:go_default_library",
+        "//platform/base/mergestrategy:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
     ],
 )

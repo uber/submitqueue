@@ -1,0 +1,4 @@
+exports_files(
+    ["runway.proto"],
+    visibility = ["//tool/proto:__pkg__"],
+)

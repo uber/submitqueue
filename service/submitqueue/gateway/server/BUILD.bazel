@@ -1,0 +1,41 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+exports_files(
+    ["docker-compose.yml"],
+    visibility = ["//visibility:public"],
+)
+
+go_library(
+    name = "gateway_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/uber/submitqueue/service/submitqueue/gateway/server",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//api/submitqueue/gateway/protopb:go_default_library",
+        "//platform/consumer:go_default_library",
+        "//platform/errs:go_default_library",
+        "//platform/errs/generic:go_default_library",
+        "//platform/errs/mysql:go_default_library",
+        "//platform/extension/counter/mysql:go_default_library",
+        "//platform/extension/messagequeue:go_default_library",
+        "//platform/extension/messagequeue/mysql:go_default_library",
+        "//submitqueue/core/topickey:go_default_library",
+        "//submitqueue/extension/queueconfig/yaml:go_default_library",
+        "//submitqueue/extension/storage/mysql:go_default_library",
+        "//submitqueue/gateway/controller:go_default_library",
+        "//submitqueue/gateway/controller/log:go_default_library",
+        "@com_github_go_sql_driver_mysql//:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_grpc//codes:go_default_library",
+        "@org_golang_google_grpc//reflection:go_default_library",
+        "@org_golang_google_grpc//status:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
+    ],
+)
+
+go_binary(
+    name = "gateway",
+    embed = [":gateway_lib"],
+    visibility = ["//visibility:public"],
+)

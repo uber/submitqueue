@@ -22,17 +22,21 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/core/errs"
-	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	countermock "github.com/uber/submitqueue/extension/counter/mock"
-	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	changepb "github.com/uber/submitqueue/api/base/change/protopb"
+	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
+	"github.com/uber/submitqueue/platform/base/mergestrategy"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
+	countermock "github.com/uber/submitqueue/platform/extension/counter/mock"
+	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/queueconfig"
 	qcmock "github.com/uber/submitqueue/submitqueue/extension/queueconfig/mock"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
-	pb "github.com/uber/submitqueue/submitqueue/gateway/protopb"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 )
@@ -47,7 +51,7 @@ func newTestRegistry(t *testing.T, ctrl *gomock.Controller) (consumer.TopicRegis
 	q.EXPECT().Publisher().Return(pub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
-		{Key: consumer.TopicKeyStart, Name: "start", Queue: q},
+		{Key: topickey.TopicKeyStart, Name: "start", Queue: q},
 	})
 	require.NoError(t, err)
 	return registry, pub
@@ -98,7 +102,7 @@ func TestLand_ReturnsSqid(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
+		Change: &changepb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
 	}
 	resp, err := controller.Land(ctx, req)
 
@@ -116,7 +120,7 @@ func TestLand_ReturnsErrorOnCounterFailure(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
+		Change: &changepb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -140,7 +144,7 @@ func TestLand_CounterDomainIncludesQueue(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "my-queue",
-		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
+		Change: &changepb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -157,7 +161,7 @@ func TestLand_ReturnsErrorOnEmptyQueue(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "",
-		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
+		Change: &changepb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -174,7 +178,7 @@ func TestLand_ReturnsErrorOnEmptyChangeUri(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &pb.Change{Uris: []string{}},
+		Change: &changepb.Change{Uris: []string{}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -211,7 +215,7 @@ func TestLand_ReturnsUnrecognizedQueueWhenStoreReportsNotFound(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "missing-queue",
-		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
+		Change: &changepb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -237,7 +241,7 @@ func TestLand_PropagatesQueueConfigStoreError(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &pb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
+		Change: &changepb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -269,8 +273,8 @@ func TestLand_PublishesToQueue(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:    "test-queue",
-		Change:   &pb.Change{Uris: []string{"github://uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"}},
-		Strategy: pb.Strategy_REBASE,
+		Change:   &changepb.Change{Uris: []string{"github://uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"}},
+		Strategy: mergestrategypb.Strategy_REBASE,
 	}
 	resp, err := controller.Land(ctx, req)
 
@@ -288,7 +292,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	assert.Equal(t, "test-queue/123", deserializedReq.ID)
 	assert.Equal(t, "test-queue", deserializedReq.Queue)
 	assert.Equal(t, []string{"github://uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"}, deserializedReq.Change.URIs)
-	assert.Equal(t, entity.RequestLandStrategyRebase, deserializedReq.LandStrategy)
+	assert.Equal(t, mergestrategy.MergeStrategyRebase, deserializedReq.LandStrategy)
 }
 
 func TestLand_ContinuesWhenPublishFails(t *testing.T) {
@@ -305,7 +309,7 @@ func TestLand_ContinuesWhenPublishFails(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &pb.Change{Uris: []string{"github://uber/service/pull/1/c3a4d5e6f7890123456789abcdef0123456789ab"}},
+		Change: &changepb.Change{Uris: []string{"github://uber/service/pull/1/c3a4d5e6f7890123456789abcdef0123456789ab"}},
 	}
 	_, err := controller.Land(ctx, req)
 

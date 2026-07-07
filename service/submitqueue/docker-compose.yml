@@ -1,0 +1,103 @@
+# Docker Compose for Full Stack (Gateway + Orchestrator + MySQL)
+#
+# IMPORTANT: Before running docker-compose, build the Linux binaries:
+#   make build-gateway-linux build-orchestrator-linux
+#   OR
+#   bazel build --platforms=@rules_go//go/toolchain:linux_amd64 //service/submitqueue/gateway/server //service/submitqueue/orchestrator/server
+#
+# Quick start:
+#   make e2e-test
+
+services:
+  # Application Database - Stores business data (requests, counters, etc.)
+  mysql-app:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: submitqueue
+    ports:
+      - "3306" # Random ephemeral port to avoid conflicts
+    healthcheck:
+      # Use 127.0.0.1 (TCP) instead of localhost (Unix socket). MySQL treats
+      # "localhost" as a socket connection, which can be ready before the TCP
+      # listener — causing dependent services that connect over TCP to fail.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Queue Database - Messaging infrastructure (messages, offsets, partition leases)
+  # Separate from app DB to demonstrate queue is pluggable infrastructure
+  mysql-queue:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: submitqueue
+    ports:
+      - "3306" # Random ephemeral port to avoid conflicts
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  gateway-service:
+    build:
+      context: ${REPO_ROOT}
+      dockerfile: service/submitqueue/gateway/server/Dockerfile
+    ports:
+      - "8080" # Random ephemeral port to avoid conflicts
+    environment:
+      - PORT=:8080
+      # Application database connection
+      - MYSQL_DSN=root:root@tcp(mysql-app:3306)/submitqueue?parseTime=true
+      # Queue infrastructure connection (separate database)
+      - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
+      # Path to YAML queue configuration baked into the image
+      - QUEUE_CONFIG_PATH=/root/queues.yaml
+      # Stable subscriber name for the request-log consumer
+      - HOSTNAME=gateway-dev
+    depends_on:
+      mysql-app:
+        condition: service_healthy
+      mysql-queue:
+        condition: service_healthy
+
+  orchestrator-service:
+    build:
+      context: ${REPO_ROOT}
+      dockerfile: service/submitqueue/orchestrator/server/Dockerfile
+    ports:
+      - "8080" # Random ephemeral port to avoid conflicts
+    environment:
+      - PORT=:8080
+      # Application database connection (for request state, batches, etc.)
+      - MYSQL_DSN=root:root@tcp(mysql-app:3306)/submitqueue?parseTime=true
+      # Queue infrastructure connection (separate database)
+      - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
+      - HOSTNAME=orchestrator-dev
+    depends_on:
+      mysql-app:
+        condition: service_healthy
+      mysql-queue:
+        condition: service_healthy
+
+  # Runway performs the merge-conflict check and the committing merge. The
+  # orchestrator hands work to it on runway-owned topics and blocks on the
+  # signal topics, so without runway a request stalls at "started". It only
+  # needs the queue DB (shared with the orchestrator over mysql-queue); it has
+  # no application database of its own.
+  runway-service:
+    build:
+      context: ${REPO_ROOT}
+      dockerfile: service/runway/server/Dockerfile
+    ports:
+      - "8080" # Random ephemeral port to avoid conflicts
+    environment:
+      - PORT=:8080
+      # Queue infrastructure connection (shared with the orchestrator)
+      - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
+      - HOSTNAME=runway-dev
+    depends_on:
+      mysql-queue:
+        condition: service_healthy

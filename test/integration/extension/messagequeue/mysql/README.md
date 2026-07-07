@@ -8,7 +8,7 @@ Tests run against a real MySQL 8.0 instance via Docker Compose (`docker-compose.
 
 1. Starts MySQL on a random ephemeral port
 2. Waits for the health check to pass
-3. Connects and applies schemas from `extension/queue/mysql/schema/`
+3. Connects and applies schemas from `platform/extension/messagequeue/mysql/schema/`
 4. Tears down on test completion
 
 All tests share a single MySQL instance within the suite (`SetupSuite` / `TearDownSuite`). Each test uses unique topic names to avoid cross-test interference.
@@ -17,7 +17,7 @@ All tests share a single MySQL instance within the suite (`SetupSuite` / `TearDo
 
 ```bash
 make integration-test                     # all integration tests
-bazel test //test/integration/extension/queue/mysql:mysql_test --test_output=streamed
+bazel test //test/integration/extension/messagequeue/mysql:mysql_test --test_output=streamed
 ```
 
 Requires Docker.

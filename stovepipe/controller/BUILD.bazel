@@ -1,0 +1,51 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "ingest.go",
+        "ping.go",
+    ],
+    importpath = "github.com/uber/submitqueue/stovepipe/controller",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api/stovepipe/protopb:go_default_library",
+        "//platform/base/messagequeue:go_default_library",
+        "//platform/consumer:go_default_library",
+        "//platform/errs:go_default_library",
+        "//platform/extension/counter:go_default_library",
+        "//platform/metrics:go_default_library",
+        "//stovepipe/core/messagequeue:go_default_library",
+        "//stovepipe/entity:go_default_library",
+        "//stovepipe/extension/sourcecontrol:go_default_library",
+        "//stovepipe/extension/storage:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = [
+        "ingest_test.go",
+        "ping_test.go",
+    ],
+    embed = [":go_default_library"],
+    deps = [
+        "//api/stovepipe/protopb:go_default_library",
+        "//platform/consumer:go_default_library",
+        "//platform/extension/counter/mock:go_default_library",
+        "//platform/extension/messagequeue/mock:go_default_library",
+        "//stovepipe/core/messagequeue:go_default_library",
+        "//stovepipe/entity:go_default_library",
+        "//stovepipe/extension/sourcecontrol:go_default_library",
+        "//stovepipe/extension/sourcecontrol/mock:go_default_library",
+        "//stovepipe/extension/storage:go_default_library",
+        "//stovepipe/extension/storage/mock:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_uber_go_mock//gomock:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
+    ],
+)

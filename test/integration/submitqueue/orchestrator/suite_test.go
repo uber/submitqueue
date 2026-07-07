@@ -16,7 +16,7 @@ package orchestrator
 
 // Orchestrator Integration Tests
 //
-// These tests use docker-compose from example/submitqueue/orchestrator/server/docker-compose.yml
+// These tests use docker-compose from service/submitqueue/orchestrator/server/docker-compose.yml
 // which requires pre-built Linux binaries.
 //
 // Run with make target (builds binary + runs test):
@@ -34,7 +34,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	pb "github.com/uber/submitqueue/submitqueue/orchestrator/protopb"
+	pb "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb"
 	"github.com/uber/submitqueue/test/testutil"
 	"google.golang.org/grpc"
 )
@@ -64,9 +64,9 @@ func (s *OrchestratorIntegrationSuite) SetupSuite() {
 	repoRoot := testutil.FindRepoRoot(t)
 	t.Setenv("REPO_ROOT", repoRoot)
 
-	// Use docker-compose from example/submitqueue/orchestrator/server
+	// Use docker-compose from service/submitqueue/orchestrator/server
 	// NOTE: Assumes Linux binary is pre-built via make target
-	composeFile := filepath.Join(repoRoot, "example/submitqueue/orchestrator/server/docker-compose.yml")
+	composeFile := filepath.Join(repoRoot, "service/submitqueue/orchestrator/server/docker-compose.yml")
 	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "svc-submitqueue-orchestrator")
 
 	// Start the compose stack (Orchestrator + 2 MySQL DBs)
@@ -85,10 +85,10 @@ func (s *OrchestratorIntegrationSuite) SetupSuite() {
 
 	// Apply schemas programmatically to application database
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("submitqueue/extension/storage/mysql/schema"))
-	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("extension/counter/mysql/schema"))
+	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("platform/extension/counter/mysql/schema"))
 
 	// Apply schemas programmatically to queue database
-	testutil.ApplySchema(t, s.log, s.queueDB, testutil.SchemaDir("extension/messagequeue/mysql/schema"))
+	testutil.ApplySchema(t, s.log, s.queueDB, testutil.SchemaDir("platform/extension/messagequeue/mysql/schema"))
 
 	s.log.Logf("Schemas applied successfully")
 

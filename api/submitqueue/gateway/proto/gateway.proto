@@ -1,0 +1,158 @@
+// Copyright (c) 2025 Uber Technologies, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package uber.submitqueue.gateway;
+
+option go_package = "github.com/uber/submitqueue/api/submitqueue/gateway/protopb";
+option java_multiple_files = true;
+option java_outer_classname = "GatewayProto";
+option java_package = "com.uber.submitqueue.gateway";
+
+import "api/base/change/proto/change.proto";
+import "api/base/mergestrategy/proto/mergestrategy.proto";
+
+// ***************
+// API domain definitions.
+// ***************
+
+// PingRequest is the request for the Ping method
+message PingRequest {
+    // Optional message to include in the ping
+    string message = 1;
+}
+
+// PingResponse is the response for the Ping method
+message PingResponse {
+    // The response message
+    string message = 1;
+    // The service name that handled the request
+    string service_name = 2;
+    // Timestamp of when the ping was received
+    int64 timestamp = 3;
+    // Hostname of the server that handled the request
+    string hostname = 4;
+}
+
+// LandRequest defines a request to land (merge into target branch of the source control repository) a set of code changes.
+//
+// SubmitQueue guarantees changes are landed in order with no other changes in between.
+// SubmitQueue does not guarantee each change is individually valid, but produces a validity marker on such changes.
+// The user is responsible for including all changes in a stack in order, starting from the earliest change.
+message LandRequest {
+    // Name of the queue processing the land request. The queue should be defined in the configuration, otherwise an error is returned.
+    string queue = 1;
+    // Change (such as a pull request) to land into the target branch. Target branch is defined by the queue configuration.
+    uber.base.change.Change change = 2;
+    // Source control integration strategy to use for this land operation. If not specified, the default queue strategy is used.
+    uber.base.mergestrategy.Strategy strategy = 4;
+}
+
+// LandResponse defines the response to a land request.
+message LandResponse {
+    // Globally unique identifier for the land request. Used to track the land request lifecycle.
+    string sqid = 1;
+}
+
+// CancelRequest defines a request to cancel an in-flight land request. If the request is part of a batch, the entire batch is cancelled.
+message CancelRequest {
+    // Globally unique identifier of the land request to cancel, returned by a prior Land call.
+    string sqid = 1;
+    // Optional human-readable reason for the cancellation. Recorded for observability.
+    string reason = 2;
+}
+
+// CancelResponse defines the response to a cancel request. Empty on success.
+//
+// A successful response indicates only that the cancellation intent was accepted and enqueued — it does NOT confirm
+// that the request was actually cancelled. The terminal outcome may still be "landed" or "error" if a race was lost.
+// Errors are returned as standard status codes (e.g. InvalidArgument for an empty sqid).
+message CancelResponse {
+}
+
+// StatusRequest defines a request to look up the current status of a previously submitted request.
+message StatusRequest {
+    // Globally unique identifier for the request, as returned by Land in the LandResponse.
+    string sqid = 1;
+}
+
+// StatusResponse defines the response to a status request.
+// The status is eventually consistent with the request store; it might take some time to converge, typically no more than a few seconds.
+message StatusResponse {
+    // Current customer-friendly status of the request (e.g. "accepted", "validating", "landed", "error").
+    // Status is a free-form string because the system may introduce new statuses without breaking existing clients.
+    string status = 1;
+    // Last error message associated with the current status. Empty string if there is no error.
+    string last_error = 2;
+    // Free-form key-value metadata associated with the current status, for display or debugging purposes. Empty if none.
+    map<string, string> metadata = 3;
+}
+
+// ***************
+// Error messages, returned as `google.rpc.Status` messages.
+// ***************
+
+// Generic error with metadata. Each custom error type should extend this message.
+message Error {
+    // Free text error message describing the error.
+    string message = 1;
+}
+
+// UnrecognizedQueueError is returned when a queue name is not recognized. Typically this indicates a typo in the queue name or server misconfiguration.
+message UnrecognizedQueueError {
+    // Free text error message describing the error.
+    Error error = 1;
+    // Name of the queue that was not recognized.
+    string queue = 2;
+}
+
+// RequestNotFoundError is returned when no request is found for the given sqid. Typically this indicates a typo in the sqid or that the request has not been accepted yet.
+message RequestNotFoundError {
+    // Free text error message describing the error.
+    Error error = 1;
+    // The sqid that was not found.
+    string sqid = 2;
+}
+
+// ***************
+// Service definitions.
+// ***************
+
+// SubmitQueueGateway provides the gateway API
+service SubmitQueueGateway {
+    // Ping returns a response indicating the service is alive
+    rpc Ping(PingRequest) returns (PingResponse) {}
+
+    // Land lands a set of code changes into a target branch, performing the necessary validations across all other changes in the queue.
+    // The processing is asynchronous and returns a LandResponse immediately. The land request is processed in the background.
+    rpc Land(LandRequest) returns (LandResponse) {}
+
+    // Cancel cancels an in-flight land request identified by its sqid. If the request has already been included in a batch,
+    // the entire batch is cancelled. Cancel is idempotent — calling it for an already-terminal request is a no-op.
+    //
+    // Cancellation is ASYNCHRONOUS: Cancel returns as soon as the cancellation intent has been accepted; the actual
+    // state transition is performed in the background by the orchestrator and may not have completed by the time the
+    // caller receives a response.
+    //
+    // Cancellation is NOT GUARANTEED: a request that has already merged, or that races to completion before the cancel
+    // signal propagates through the pipeline, may still land (or end in an error). Callers must NOT assume that a
+    // successful Cancel response means the request was cancelled — the actual terminal outcome (cancelled, landed, or
+    // error) must be checked through the separate status / request-log API.
+    rpc Cancel(CancelRequest) returns (CancelResponse) {}
+
+    // Status returns the current status of a previously submitted request, identified by its sqid.
+    // The status is eventually consistent with the request store and reconciled from the append-only request log.
+    rpc Status(StatusRequest) returns (StatusResponse) {}
+}

@@ -21,7 +21,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 )
 
 func TestAnalyze(t *testing.T) {
@@ -30,7 +29,7 @@ func TestAnalyze(t *testing.T) {
 	tests := []struct {
 		name     string
 		inFlight []entity.Batch
-		want     []conflict.Conflict
+		want     []entity.Conflict
 	}{
 		{
 			name:     "no in-flight batches yields no conflicts",
@@ -49,10 +48,10 @@ func TestAnalyze(t *testing.T) {
 				{ID: "queueA/batch/2"},
 				{ID: "queueA/batch/3"},
 			},
-			want: []conflict.Conflict{
-				{BatchID: "queueA/batch/1", Type: conflict.ConflictTypeConservative},
-				{BatchID: "queueA/batch/2", Type: conflict.ConflictTypeConservative},
-				{BatchID: "queueA/batch/3", Type: conflict.ConflictTypeConservative},
+			want: []entity.Conflict{
+				{BatchID: "queueA/batch/1", Type: entity.ConflictTypeConservative},
+				{BatchID: "queueA/batch/2", Type: entity.ConflictTypeConservative},
+				{BatchID: "queueA/batch/3", Type: entity.ConflictTypeConservative},
 			},
 		},
 	}

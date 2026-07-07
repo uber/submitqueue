@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
-	pb "github.com/uber/submitqueue/submitqueue/orchestrator/protopb"
+	pb "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb"
 	"go.uber.org/zap"
 )
 

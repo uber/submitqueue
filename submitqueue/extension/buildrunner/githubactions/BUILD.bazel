@@ -1,7 +1,7 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "githubactions",
+    name = "go_default_library",
     srcs = [
         "client.go",
         "githubactions.go",
@@ -9,25 +9,27 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/extension/buildrunner/githubactions",
     visibility = ["//visibility:public"],
     deps = [
-        "//submitqueue/core/changeset",
-        "//submitqueue/entity",
-        "//submitqueue/extension/buildrunner",
-        "@org_uber_go_zap//:zap",
+        "//platform/base/change:go_default_library",
+        "//submitqueue/core/changeset:go_default_library",
+        "//submitqueue/entity:go_default_library",
+        "//submitqueue/extension/buildrunner:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
     ],
 )
 
 go_test(
-    name = "githubactions_test",
+    name = "go_default_test",
     srcs = ["githubactions_test.go"],
-    embed = [":githubactions"],
+    embed = [":go_default_library"],
     deps = [
-        "//core/httpclient",
-        "//submitqueue/core/changeset",
-        "//submitqueue/core/changeset/fake",
-        "//submitqueue/entity",
-        "//submitqueue/extension/buildrunner",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_zap//:zap",
+        "//platform/base/change:go_default_library",
+        "//platform/http:go_default_library",
+        "//submitqueue/core/changeset:go_default_library",
+        "//submitqueue/core/changeset/fake:go_default_library",
+        "//submitqueue/entity:go_default_library",
+        "//submitqueue/extension/buildrunner:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
     ],
 )

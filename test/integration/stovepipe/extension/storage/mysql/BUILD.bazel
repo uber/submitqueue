@@ -1,0 +1,24 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "go_default_test",
+    srcs = ["storage_test.go"],
+    data = [
+        "docker-compose.yml",
+        "//stovepipe/extension/storage/mysql/schema",
+    ],
+    tags = [
+        "external",
+        "integration",
+    ],
+    deps = [
+        "//stovepipe/entity:go_default_library",
+        "//stovepipe/extension/storage:go_default_library",
+        "//stovepipe/extension/storage/mysql:go_default_library",
+        "//test/testutil:go_default_library",
+        "@com_github_go_sql_driver_mysql//:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_stretchr_testify//suite:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+    ],
+)

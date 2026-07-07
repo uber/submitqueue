@@ -1,0 +1,18 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "delivery_mock.go",
+        "publisher_mock.go",
+        "queue_mock.go",
+        "subscriber_mock.go",
+    ],
+    importpath = "github.com/uber/submitqueue/platform/extension/messagequeue/mock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//platform/base/messagequeue:go_default_library",
+        "//platform/extension/messagequeue:go_default_library",
+        "@org_uber_go_mock//gomock:go_default_library",
+    ],
+)

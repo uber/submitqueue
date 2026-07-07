@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
-	pb "github.com/uber/submitqueue/submitqueue/gateway/protopb"
+	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	"go.uber.org/zap"
 )
 

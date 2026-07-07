@@ -16,7 +16,7 @@ package gateway
 
 // Gateway Integration Tests
 //
-// These tests use docker-compose from example/submitqueue/gateway/server/docker-compose.yml
+// These tests use docker-compose from service/submitqueue/gateway/server/docker-compose.yml
 // which requires pre-built Linux binaries.
 //
 // Run with make target (builds binary + runs test):
@@ -36,11 +36,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
-	queueMySQL "github.com/uber/submitqueue/extension/messagequeue/mysql"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	changepb "github.com/uber/submitqueue/api/base/change/protopb"
+	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
+	"github.com/uber/submitqueue/platform/consumer"
+	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	pb "github.com/uber/submitqueue/submitqueue/gateway/protopb"
 	"github.com/uber/submitqueue/test/testutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -82,9 +85,9 @@ func (s *GatewayIntegrationSuite) SetupSuite() {
 	repoRoot := testutil.FindRepoRoot(t)
 	t.Setenv("REPO_ROOT", repoRoot)
 
-	// Use docker-compose from example/submitqueue/gateway/server
+	// Use docker-compose from service/submitqueue/gateway/server
 	// NOTE: Assumes Linux binary is pre-built via make target
-	composeFile := filepath.Join(repoRoot, "example/submitqueue/gateway/server/docker-compose.yml")
+	composeFile := filepath.Join(repoRoot, "service/submitqueue/gateway/server/docker-compose.yml")
 	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "svc-submitqueue-gateway")
 
 	// Start the compose stack (Gateway + 2 MySQL DBs)
@@ -103,10 +106,10 @@ func (s *GatewayIntegrationSuite) SetupSuite() {
 
 	// Apply schemas programmatically to application database
 	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("submitqueue/extension/storage/mysql/schema"))
-	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("extension/counter/mysql/schema"))
+	testutil.ApplySchema(t, s.log, s.db, testutil.SchemaDir("platform/extension/counter/mysql/schema"))
 
 	// Apply schemas programmatically to queue database
-	testutil.ApplySchema(t, s.log, s.queueDB, testutil.SchemaDir("extension/messagequeue/mysql/schema"))
+	testutil.ApplySchema(t, s.log, s.queueDB, testutil.SchemaDir("platform/extension/messagequeue/mysql/schema"))
 
 	s.log.Logf("Schemas applied successfully")
 
@@ -143,8 +146,8 @@ func (s *GatewayIntegrationSuite) TestLandAPI() {
 
 	req := &pb.LandRequest{
 		Queue:    "test-queue",
-		Change:   &pb.Change{Uris: []string{"github://uber/integration-test/pull/123/abcdef0123456789abcdef0123456789abcdef01"}},
-		Strategy: pb.Strategy_REBASE,
+		Change:   &changepb.Change{Uris: []string{"github://uber/integration-test/pull/123/abcdef0123456789abcdef0123456789abcdef01"}},
+		Strategy: mergestrategypb.Strategy_REBASE,
 	}
 
 	s.log.Logf("Sending Land request for queue=%s", req.Queue)
@@ -184,7 +187,7 @@ func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 	defer queue.Close()
 
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
-		{Key: consumer.TopicKeyLog, Name: "log", Queue: queue},
+		{Key: topickey.TopicKeyLog, Name: "log", Queue: queue},
 	})
 	require.NoError(t, err, "failed to create topic registry")
 

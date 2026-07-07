@@ -4,7 +4,7 @@ Design notes for what SubmitQueue's pluggable extensions accept: orchestrator **
 
 ## Problem
 
-Extension input granularity is inconsistent across the pipeline stages (see [workflow.md](workflow.md)). `conflict.Analyzer` takes identity (`entity.Batch`); `scorer`, `mergechecker`, `changeprovider`, `buildrunner`, `pusher` take controller-resolved `entity.Change`. The split caps what an extension can do:
+Extension input granularity is inconsistent across the pipeline stages (see [workflow.md](workflow.md)). `conflict.Analyzer` takes identity (`entity.Batch`); `scorer`, `changeprovider`, `buildrunner`, `pusher` take controller-resolved `entity.Change`. The split caps what an extension can do:
 
 - `ConflictType` already names `target_overlap`, but a real target-overlap analyzer **cannot be written** — the batch controller hands it identity-level batches (no changed targets) and the contract has nowhere to put them.
 - `scorer` gets a URIs-only `Change`, so a heuristic scorer **cannot see** lines-changed / file-count.
@@ -21,7 +21,7 @@ Both unblock with the shape `conflict` already uses: accept identity, resolve in
 
 | Stage | Loads | Resolves for the extension | Hands to the extension |
 |---|---|---|---|
-| `validate` | `entity.Request` | nothing — `request.Change` is already in hand (the change-store reads here serve duplicate detection) | `request.Change` → `mergechecker`, `changeprovider` |
+| `validate` | `entity.Request` | nothing — `request.Change` is already in hand (the change-store reads here serve duplicate detection) | `request.Change` → `changeprovider` |
 | `batch` | `entity.Request` + active `[]entity.Batch` | **nothing** — builds a batch whose `Contains` is `[requestID]` | `entity.Batch`, `[]entity.Batch` → `conflict` |
 | `score` | `entity.Batch`, then each `entity.Request` | batch → requests | `request.Change` per request, then multiplies the scores → `scorer` |
 | `build` | `entity.Batch`, then `collectChanges` | batch → requests → changes, **flattening batch boundaries** | base `[]Change`, head `[]Change` → `buildrunner` |
@@ -35,13 +35,14 @@ Two facts this grounds: `conflict` already resolves nothing (the baseline), and 
 |---|---|---|---|---|---|
 | `conflict.Analyzer` | batch | identity (`Batch`, `[]Batch`) | unchanged — **the baseline** | conflicting in-flight batches (`[]Conflict`, `BatchID`-tagged) — unchanged | request store + change provider |
 | `scorer.Scorer` | score | flat `Change`, per request | `entity.Batch` — resolve + reduce internally | one batch score (`float64`) — unchanged | request store + change provider |
-| `mergechecker.MergeChecker` | validate | `Change` | `entity.Request` | mergeability (`Result`) — unchanged | none |
 | `changeprovider.ChangeProvider` | validate | `Change` | `entity.Request` | per-URI change info (`[]ChangeInfo`, `URI`-tagged) — unchanged | none — it *is* the resolver |
 | `buildrunner.BuildRunner` | build | base/head `[]Change` | base `[]entity.Batch` + head `entity.Batch` | build id, then status/cancel (`BuildID`, `BuildStatus`) — unchanged | request store + change provider |
-| `pusher.Pusher` | merge | `[]Change` | ordered `[]entity.Batch` | **per-batch** outcomes (`Result` grouped by `BatchID`) — **changed** | request store + change provider |
+| `pusher.Pusher` *(removed)* | merge | — | **moved out-of-process to runway** (`merge` / `merge-signal`); see the note below the table | — | — |
 | `storage`, `changestore`, `queueconfig` | — | keys + entities | unchanged — resolution targets | entities | — |
 
-**Outputs are unchanged except `pusher`.** This RFC moves the *input* toward identity; five of the six return contracts — conflicts, score, mergeability, change info, build id/status — are exactly what they are today. `pusher` is the lone exception: because its input becomes a *list* of independently-landed batches, its result regroups per batch (`BatchID`-tagged, per-change commit detail kept underneath) so each batch's outcome stays correlatable — the "output mirrors the input unit" principle above. No other output shape changes.
+**Outputs are unchanged.** This RFC moves the *input* toward identity; the four live return contracts — conflicts, score, change info, build id/status — are exactly what they are today. (The `pusher` row is not an in-process extension: merge runs out-of-process in runway, so its output is not part of this catalog — see the note below.) No other output shape changes.
+
+The validate-time mergeability **check** and the **merge** itself both run **asynchronously and out-of-process** in runway rather than as in-process extensions, over the one shared `MergeRequest`/`MergeResult` contract — a check is a dry run of a merge. `validate` hands off directly to runway (→ `merge-conflict-check`, result back via `mergeconflictsignal`); `merge` hands the batch to runway (→ `merge`, result back via `mergesignal`) rather than calling an in-process `pusher`. See [workflow.md](workflow.md). The in-process `mergechecker` and `pusher` packages are unused on the pipeline path.
 
 Non-obvious points:
 
@@ -51,7 +52,7 @@ Non-obvious points:
 
 ## Mechanism
 
-Dependencies are injected per-extension at the existing `Factory.For` (wiring: `example/submitqueue/orchestrator/server/main.go`) — only the handles a contract justifies, never the whole storage aggregator. The repeated batch→changes walk becomes one shared resolver (today's duplicated `collectChanges`, consolidated, and preserving the batch boundaries build's copy flattens). Controllers shrink to passing the identity entity they already load.
+Dependencies are injected per-extension at the existing `Factory.For` (wiring: `service/submitqueue/orchestrator/server/main.go`) — only the handles a contract justifies, never the whole storage aggregator. The repeated batch→changes walk becomes one shared resolver (today's duplicated `collectChanges`, consolidated, and preserving the batch boundaries build's copy flattens). Controllers shrink to passing the identity entity they already load.
 
 `entity.BatchChanges` is kept, not removed — it becomes the shared resolver's *detailed output* (URIs + provider details for a batch, what the scorer consumes) rather than a value the score controller assembles and passes in. Its line/file helpers move with it; only its producer changes.
 

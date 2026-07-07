@@ -12,84 +12,101 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package merge implements the trigger stage for the asynchronous merge. It
+// consumes a batch ready to land, builds the full merge request from the
+// batch's member requests (one step per request, in Contains order), and
+// publishes it to runway's merge queue using the batch id as the client-owned
+// correlation id. Runway performs the merge out of process and publishes the
+// result to the merge-signal queue, which the mergesignal stage consumes and
+// correlates back to the batch by that id.
 package merge
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/uber-go/tally"
 	"go.uber.org/zap"
 
-	coremetrics "github.com/uber/submitqueue/core/metrics"
-	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	changepb "github.com/uber/submitqueue/api/base/change/protopb"
+	strategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
+	"github.com/uber/submitqueue/platform/base/mergestrategy"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/pusher"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
 
-// Controller handles merge queue messages. It loads every request in a batch,
-// hands the resulting list of Changes to the configured Pusher, and
-// transitions the batch to a terminal state based on the Pusher's outcome.
-// After updating state it forwards the batch to conclude (so requests pick
-// up the outcome) and to speculate (so downstream batches can re-plan).
+// Controller handles merge queue messages. Implements consumer.Controller.
 //
-// Conflicts are user-caused: the batch goes to BatchStateFailed and the
-// queue message is acked. Any other Pusher error is treated as transient
-// infra: the batch is left in place and the message is nacked.
+// It loads the batch and its member requests, assembles the full merge request
+// (one step per member request, in Contains order, each carrying that request's
+// change and land strategy), and publishes it to runway's merge queue. Runway
+// performs the merge out of process and returns the result on the merge-signal
+// queue; the mergesignal stage consumes it and transitions the batch. This
+// controller therefore performs no state transition itself.
 type Controller struct {
-	logger        *zap.SugaredLogger
-	metricsScope  tally.Scope
-	store         storage.Storage
-	registry      consumer.TopicRegistry
-	pushers       pusher.Factory
-	topicKey      consumer.TopicKey
-	consumerGroup string
+	logger         *zap.SugaredLogger
+	metricsScope   tally.Scope
+	store          storage.Storage
+	registry       consumer.TopicRegistry
+	runwayTopicKey consumer.TopicKey
+	topicKey       consumer.TopicKey
+	consumerGroup  string
 }
 
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
 
 // NewController creates a new merge controller for the orchestrator.
+// runwayTopicKey is the runway-owned topic this controller publishes merge
+// requests to (TopicKeyMerge).
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	store storage.Storage,
 	registry consumer.TopicRegistry,
-	pushers pusher.Factory,
+	runwayTopicKey consumer.TopicKey,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
-		logger:        logger.Named("merge_controller"),
-		metricsScope:  scope.SubScope("merge_controller"),
-		store:         store,
-		registry:      registry,
-		pushers:       pushers,
-		topicKey:      topicKey,
-		consumerGroup: consumerGroup,
+		logger:         logger.Named("merge_controller"),
+		metricsScope:   scope.SubScope("merge_controller"),
+		store:          store,
+		registry:       registry,
+		runwayTopicKey: runwayTopicKey,
+		topicKey:       topicKey,
+		consumerGroup:  consumerGroup,
 	}
 }
 
-// Process performs the merge for a batch and forwards it to conclude/speculate.
-// Returns nil to ack (success), or error to nack (retry).
+// Process publishes the full merge request to runway. Returns nil to ack
+// (success), or error to nack/reject.
+//
+// Error classification: deserialize and storage failures are non-retryable
+// (reject to DLQ). The publish to runway is retryable — it is the hand-off that
+// keeps the merge alive, so a transient enqueue blip should replay rather than
+// strand the batch.
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := coremetrics.Begin(c.metricsScope, "process")
+	const opName = "process"
+
+	op := metrics.Begin(c.metricsScope, opName)
 	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
 	bid, err := entity.BatchIDFromBytes(msg.Payload)
 	if err != nil {
-		coremetrics.NamedCounter(c.metricsScope, "process", "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		return fmt.Errorf("failed to deserialize batch ID: %w", err)
 	}
 
 	batch, err := c.store.GetBatchStore().Get(ctx, bid.ID)
 	if err != nil {
-		coremetrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
 	}
 
@@ -102,89 +119,91 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"partition_key", msg.PartitionKey,
 	)
 
-	// Cancelling intent: the cancel controller marked this batch as not landing
-	// and handed it off to speculate. Silently ack — do not push (the inherent
-	// push-already-committed race is acknowledged elsewhere) and do not fan out
-	// (speculate owns the terminal write to Cancelled and the downstream
-	// dependent / conclude publishes).
-	if batch.State == entity.BatchStateCancelling {
-		coremetrics.NamedCounter(c.metricsScope, "process", "skipped_cancelling", 1)
+	// Short-circuit halted batches (terminal or cancelling): no merge should be
+	// kicked off for a batch that will not proceed. Unlike the old synchronous
+	// merge there is no terminal re-fan-out here — the mergesignal stage owns the
+	// state transition and fan-out once runway's result returns, so a redelivery
+	// at this stage simply acks.
+	if entity.IsBatchStateHalted(batch.State) {
+		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1)
+		c.logger.Infow("skipping merge for halted batch",
+			"batch_id", batch.ID,
+			"state", string(batch.State),
+		)
 		return nil
 	}
 
-	// Idempotency: if the batch is already in a terminal state, a previous
-	// attempt has already merged (or failed) — just re-fan-out the events
-	// in case downstream stages missed them.
-	if batch.State.IsTerminal() {
-		coremetrics.NamedCounter(c.metricsScope, "process", "skipped_terminal", 1)
-		return c.fanout(ctx, batch.ID, batch.Queue)
-	}
-
-	push, err := c.pushers.For(pusher.Config{QueueName: batch.Queue})
+	// Build the full payload runway needs to perform the merge. The batch id is
+	// the client-owned correlation id, so a redelivery republishes the same id
+	// and runway dedupes on it; the result is matched straight back to the batch.
+	req, err := c.buildMergeRequest(ctx, batch)
 	if err != nil {
-		coremetrics.NamedCounter(c.metricsScope, "process", "push_errors", 1)
-		return fmt.Errorf("failed to build pusher for batch %s: %w", batch.ID, err)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return fmt.Errorf("failed to build merge request for batch %s: %w", batch.ID, err)
 	}
 
-	// Push a single batch today; the pusher resolves its changes itself. The
-	// list parameter designs for a future merge-train.
-	pushRes, pushErr := push.Push(ctx, []entity.Batch{batch})
+	if err := c.publish(ctx, c.runwayTopicKey, req, batch.Queue); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+		return fmt.Errorf("failed to publish to runway merge: %w", err)
+	}
 
-	var newState entity.BatchState
-	switch {
-	case pushErr == nil:
-		newState = entity.BatchStateSucceeded
-		c.logger.Infow("merged batch",
-			"batch_id", batch.ID,
-			"outcomes", pushRes.Batches,
-		)
-	case errors.Is(pushErr, pusher.ErrConflict):
-		coremetrics.NamedCounter(c.metricsScope, "process", "push_conflicts", 1)
-		newState = entity.BatchStateFailed
-		c.logger.Warnw("batch merge failed",
-			"batch_id", batch.ID,
-			"state", string(newState),
-			"error", pushErr,
-		)
+	c.logger.Infow("published merge to runway",
+		"batch_id", batch.ID,
+		"steps", len(req.Steps),
+		"topic_key", c.runwayTopicKey,
+	)
+
+	return nil // Success - message will be acked
+}
+
+// buildMergeRequest loads the batch's member requests and assembles the runway
+// merge request: one MergeStep per request, in Contains order, attributed by
+// request id and carrying that request's change and land strategy.
+func (c *Controller) buildMergeRequest(ctx context.Context, batch entity.Batch) (*runwaymq.MergeRequest, error) {
+	steps := make([]*runwaymq.MergeStep, 0, len(batch.Contains))
+	for _, requestID := range batch.Contains {
+		request, err := c.store.GetRequestStore().Get(ctx, requestID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get request %s: %w", requestID, err)
+		}
+		steps = append(steps, &runwaymq.MergeStep{
+			StepId:   request.ID,
+			Changes:  []*changepb.Change{{Uris: request.Change.URIs}},
+			Strategy: toProtoStrategy(request.LandStrategy),
+		})
+	}
+	return &runwaymq.MergeRequest{
+		Id:        batch.ID,
+		QueueName: batch.Queue,
+		Steps:     steps,
+	}, nil
+}
+
+// toProtoStrategy maps the shared mergestrategy.MergeStrategy entity to the
+// proto Strategy enum carried on the wire. An unknown strategy maps to DEFAULT,
+// letting runway apply the queue's configured default.
+func toProtoStrategy(s mergestrategy.MergeStrategy) strategypb.Strategy {
+	switch s {
+	case mergestrategy.MergeStrategyRebase:
+		return strategypb.Strategy_REBASE
+	case mergestrategy.MergeStrategySquashRebase:
+		return strategypb.Strategy_SQUASH_REBASE
+	case mergestrategy.MergeStrategyMerge:
+		return strategypb.Strategy_MERGE
 	default:
-		coremetrics.NamedCounter(c.metricsScope, "process", "push_errors", 1)
-		return fmt.Errorf("push failed for batch %s: %w", batch.ID, pushErr)
+		return strategypb.Strategy_DEFAULT
 	}
-
-	newVersion := batch.Version + 1
-	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, newState); err != nil {
-		coremetrics.NamedCounter(c.metricsScope, "process", "state_update_errors", 1)
-		return fmt.Errorf("failed to transition batch %s to %s: %w", batch.ID, newState, err)
-	}
-	batch.Version = newVersion
-	batch.State = newState
-
-	return c.fanout(ctx, batch.ID, batch.Queue)
 }
 
-// fanout publishes the batch ID to conclude (so requests are updated) and
-// to speculate (so dependents can re-evaluate now that this batch is done).
-func (c *Controller) fanout(ctx context.Context, batchID, partitionKey string) error {
-	if err := c.publish(ctx, consumer.TopicKeyConclude, batchID, partitionKey); err != nil {
-		coremetrics.NamedCounter(c.metricsScope, "process", "publish_conclude_errors", 1)
-		return fmt.Errorf("failed to publish to conclude: %w", err)
-	}
-	if err := c.publish(ctx, consumer.TopicKeySpeculate, batchID, partitionKey); err != nil {
-		coremetrics.NamedCounter(c.metricsScope, "process", "publish_speculate_errors", 1)
-		return fmt.Errorf("failed to publish to speculate: %w", err)
-	}
-	return nil
-}
-
-// publish publishes a batch ID to the specified topic key.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID string, partitionKey string) error {
-	bid := entity.BatchID{ID: batchID}
-	payload, err := bid.ToBytes()
+// publish serializes the runway merge request and publishes it to the given
+// topic key, partitioned by queue.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, req *runwaymq.MergeRequest, partitionKey string) error {
+	payload, err := runwaymq.Marshal(req)
 	if err != nil {
-		return fmt.Errorf("failed to serialize batch ID: %w", err)
+		return fmt.Errorf("failed to serialize merge request: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(batchID, payload, partitionKey, nil)
+	msg := entityqueue.NewMessage(req.Id, payload, partitionKey, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

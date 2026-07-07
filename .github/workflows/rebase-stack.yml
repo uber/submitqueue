@@ -18,9 +18,12 @@
 #      rebase silently altered code, it refuses to force-push.
 #   5. If a rebase hits conflicts, it leaves a comment with manual fix
 #      instructions and stops processing that chain.
-#   6. Deletes the merged PR's head branch after all child PRs have been
-#      retargeted and rebased. If the chain failed, the branch is kept
-#      to avoid closing child PRs whose base was not yet updated.
+#   6. Sweeps merged head branches and deletes any that no open PR still
+#      references (as base or head). This deletes the just-merged branch once
+#      its children are retargeted, keeps it when an immediate child rebase
+#      failed (that child still bases on it), and — because the sweep runs on
+#      every merge — also reaps branches stranded by an earlier conflicted run
+#      after their children were manually rebased and retargeted.
 #
 # Why "rebase --onto" instead of "--fork-point":
 #   GitHub Actions runs on a fresh clone with no reflog, so --fork-point
@@ -34,6 +37,17 @@
 #     2. rebase --onto <new-branch2-sha> <old-branch2-sha> branch3  (replays C3)
 #     3. Delete branch1
 #   Result: main -> PR2(branch2, C2') -> PR3(branch3, C3')
+#
+# REPO SETTING REQUIREMENT — "Automatically delete head branches" MUST be OFF:
+#   This workflow is the sole owner of head-branch deletion. If GitHub
+#   auto-deletes the merged head branch, it ALSO auto-retargets every child
+#   PR's base from the merged head branch to the merged base (e.g. main)
+#   BEFORE this workflow runs. The `gh pr list --base <merged-head>` lookup
+#   below would then find no children, and the stack would be silently left
+#   un-rebased (the job still goes green). With the setting OFF, GitHub leaves
+#   the branch and the child bases untouched, so this job can find the
+#   children, rebase them, retarget their bases, and finally delete the merged
+#   branch itself — for both stacked and non-stacked PRs.
 
 name: Rebase Stacked PRs
 
@@ -127,6 +141,7 @@ jobs:
               --jq '.[] | "\(.number) \(.headRefName)"')
 
             if [ -z "$prs" ]; then
+              echo "No open child PRs based on '${lookup_base}' — nothing to rebase."
               return 0
             fi
 
@@ -240,6 +255,70 @@ jobs:
             return 0
           }
 
+          # cleanup_orphaned_merged_branches enforces the branch-lifecycle
+          # invariant: a head branch is deleted once its PR is merged AND no
+          # open PR still references it (as a base — a child waiting to be
+          # rebased — or as a head). It runs on every invocation, so besides
+          # cleaning up the branch just merged, it also reaps branches left
+          # behind by an EARLIER conflicted run: when this job cannot auto-
+          # rebase a child it intentionally keeps the merged branch (the child
+          # still bases on it); that run never fires again, so nothing would
+          # otherwise delete the branch after the author manually rebases the
+          # child and retargets it off. This sweep closes that gap on the next
+          # merge.
+          cleanup_orphaned_merged_branches() {
+            echo ""
+            echo "Sweeping for merged head branches with no open dependents..."
+
+            # One network round-trip for the set of branches that still exist.
+            local existing
+            existing=$(git ls-remote --heads origin | sed 's#.*refs/heads/##')
+
+            local merged
+            merged=$(gh pr list \
+              --state merged \
+              --limit 100 \
+              --json number,headRefName \
+              --jq '.[] | "\(.number) \(.headRefName)"')
+
+            if [ -z "$merged" ]; then
+              echo "  No merged PRs to consider."
+              return 0
+            fi
+
+            # A branch may back several merged PRs over time; only consider it
+            # once.
+            local seen=""
+            while IFS=' ' read -r num branch; do
+              [ -n "$branch" ] || continue
+              case " $seen " in *" $branch "*) continue ;; esac
+              seen="$seen $branch"
+
+              # Skip branches already gone, and never touch the merged base
+              # (e.g. main) even if it somehow shows up as a head ref.
+              grep -qxF "$branch" <<< "$existing" || continue
+              [ "$branch" = "$MERGED_BASE" ] && continue
+
+              # Keep the branch while any OPEN PR still uses it as a base (a
+              # child waiting to be rebased) or as a head (the branch was reused
+              # for a new open PR). Deleting a base branch out from under an
+              # open child is exactly the breakage this workflow exists to
+              # prevent.
+              local base_deps head_uses
+              base_deps=$(gh pr list --base "$branch" --state open --json number --jq 'length')
+              head_uses=$(gh pr list --head "$branch" --state open --json number --jq 'length')
+
+              if [ "$base_deps" = "0" ] && [ "$head_uses" = "0" ]; then
+                echo "  Deleting orphaned merged branch '$branch' (PR #$num) — no open dependents."
+                git push origin --delete "$branch" 2>/dev/null || echo "    (already gone)"
+              else
+                echo "  Keeping '$branch' (open base deps=$base_deps, open head uses=$head_uses)."
+              fi
+            done <<< "$merged"
+
+            return 0
+          }
+
           echo "Merged PR: ${MERGED_HEAD} -> ${MERGED_BASE}"
           echo "Merged head SHA: ${MERGED_HEAD_SHA}"
 
@@ -248,8 +327,8 @@ jobs:
           # Kick off the recursive rebase. Immediate children of the merged PR
           # get rebased onto MERGED_BASE, using MERGED_HEAD_SHA as the old
           # fork point (the tip of the now-merged branch before it was deleted).
-          # "|| rebase_result=$?" prevents set -e from aborting — we always
-          # want to clean up the merged branch regardless of rebase outcome.
+          # "|| rebase_result=$?" prevents set -e from aborting — we always run
+          # the cleanup sweep regardless of rebase outcome.
           rebase_result=0
           rebase_chain \
             "$MERGED_HEAD" \
@@ -258,16 +337,16 @@ jobs:
             "$MERGED_BASE" \
           || rebase_result=$?
 
-          # Delete the merged PR's head branch only if the rebase chain
-          # succeeded. If it failed, some child PRs may still have this
-          # branch as their base — deleting it would cause GitHub to close
-          # those child PRs.
           echo ""
           if [ "$rebase_result" -eq 0 ]; then
-            echo "Deleting merged branch: $MERGED_HEAD"
-            git push origin --delete "$MERGED_HEAD" 2>/dev/null || echo "Branch already deleted."
-            echo "=== All stacked PRs rebased successfully ==="
+            echo "=== Stack rebase complete ==="
           else
-            echo "Keeping merged branch '$MERGED_HEAD' to avoid closing child PRs whose base was not updated."
-            echo "=== Rebase chain stopped due to conflicts ==="
+            echo "::warning::Rebase chain stopped due to conflicts; see the PR comment for manual steps."
+            echo "=== Stack rebase incomplete ==="
           fi
+
+          # Reap merged head branches that nothing depends on anymore. This
+          # deletes MERGED_HEAD on a clean run, KEEPS it when an immediate child
+          # rebase failed (that child still bases on it), and cleans up branches
+          # stranded by earlier conflicted runs once their children were fixed.
+          cleanup_orphaned_merged_branches

@@ -5,6 +5,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 ## Shared
 
 - [SQL-Based Distributed Queue](sql-queue-rfc.md) - MySQL-based distributed message queue with partition leasing and at-least-once delivery (used by SubmitQueue, Stovepipe, and other repo-local services)
+- [Message Queue Contract](messagequeue-contract.md) - How queue payloads are defined (Protobuf, serialized as protobuf JSON), located by audience (external in `api/{domain}/messagequeue/`, internal in `{domain}/core/messagequeue/`), bound to topics (the `topics` proto option), and enforced by Bazel visibility
 
 ## SubmitQueue
 
@@ -17,3 +18,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 ## Stovepipe
 
 - [Stovepipe Workflow](stovepipe/workflow.md) - Post-merge trunk-validation pipeline: ingest trunk push events (webhook + fallback poll), batch since last green, build to validate, record per-commit health, bisect to the offending commit, hand off to a remediation extension
+
+## Runway
+
+- [Runway Workflow](runway/workflow.md) - Landing service: merge-conflict checking and merging on behalf of SubmitQueue

@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber/submitqueue/platform/base/change"
 	changesetfake "github.com/uber/submitqueue/submitqueue/core/changeset/fake"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/pusher"
@@ -31,7 +32,7 @@ func TestNew_ImplementsInterface(t *testing.T) {
 }
 
 func TestPusher_Push_Committed(t *testing.T) {
-	changes := []entity.Change{
+	changes := []change.Change{
 		{URIs: []string{"github://owner/repo/pull/1/abc"}},
 		{URIs: []string{"github://owner/repo/pull/2/def"}},
 	}
@@ -45,7 +46,7 @@ func TestPusher_Push_Committed(t *testing.T) {
 	seen := map[string]bool{}
 	for i, out := range res.Batches[0].Outcomes {
 		assert.Equal(t, changes[i], out.Change)
-		assert.Equal(t, pusher.OutcomeStatusCommitted, out.Status)
+		assert.Equal(t, entity.OutcomeStatusCommitted, out.Status)
 		require.Len(t, out.CommitSHAs, 1)
 		assert.False(t, seen[out.CommitSHAs[0]], "commit SHAs must be unique")
 		seen[out.CommitSHAs[0]] = true
@@ -53,13 +54,13 @@ func TestPusher_Push_Committed(t *testing.T) {
 }
 
 func TestPusher_Push_ConflictMarker(t *testing.T) {
-	p := New(changesetfake.New().Set("b", entity.Change{URIs: []string{"github://owner/repo/pull/1/abc?sq-fake=conflict"}}))
+	p := New(changesetfake.New().Set("b", change.Change{URIs: []string{"github://owner/repo/pull/1/abc?sq-fake=conflict"}}))
 	_, err := p.Push(context.Background(), []entity.Batch{{ID: "b"}})
 	assert.True(t, errors.Is(err, pusher.ErrConflict))
 }
 
 func TestPusher_Push_ErrorMarker(t *testing.T) {
-	p := New(changesetfake.New().Set("b", entity.Change{URIs: []string{"github://owner/repo/pull/1/abc?sq-fake=push-error"}}))
+	p := New(changesetfake.New().Set("b", change.Change{URIs: []string{"github://owner/repo/pull/1/abc?sq-fake=push-error"}}))
 	res, err := p.Push(context.Background(), []entity.Batch{{ID: "b"}})
 	require.Error(t, err)
 	// Atomicity: on error no outcomes are reported.

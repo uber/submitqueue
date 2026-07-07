@@ -12,7 +12,8 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap/zaptest"
 
-	"github.com/uber/submitqueue/core/httpclient"
+	"github.com/uber/submitqueue/platform/base/change"
+	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 )
@@ -28,7 +29,7 @@ const (
 
 func newTestProvider(t *testing.T, serverURL string) changeprovider.ChangeProvider {
 	t.Helper()
-	client, err := httpclient.NewClient(serverURL)
+	client, err := phttp.NewClient(serverURL)
 	require.NoError(t, err)
 	return NewProvider(Params{
 		HTTPClient:   client,
@@ -106,7 +107,7 @@ func TestProvider_Get(t *testing.T) {
 			}
 
 			p := newTestProvider(t, serverURL)
-			infos, err := p.Get(context.Background(), entity.Request{Change: entity.Change{URIs: tt.uris}})
+			infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{URIs: tt.uris}})
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -147,7 +148,7 @@ func TestProvider_Get_Pagination(t *testing.T) {
 	defer server.Close()
 
 	p := newTestProvider(t, server.URL)
-	infos, err := p.Get(context.Background(), entity.Request{Change: entity.Change{
+	infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{
 		URIs: []string{"github://uber/submitqueue/pull/456/" + shaXYZ},
 	}})
 
@@ -170,7 +171,7 @@ func TestProvider_Get_MultiplePRs(t *testing.T) {
 	defer server.Close()
 
 	p := newTestProvider(t, server.URL)
-	infos, err := p.Get(context.Background(), entity.Request{Change: entity.Change{
+	infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{
 		URIs: []string{
 			"github://uber/submitqueue/pull/123/" + shaA,
 			"github://uber/submitqueue/pull/456/" + shaB,
@@ -202,7 +203,7 @@ func TestProvider_Get_FetchError_StopsOnFirstFailure(t *testing.T) {
 	defer server.Close()
 
 	p := newTestProvider(t, server.URL)
-	_, err := p.Get(context.Background(), entity.Request{Change: entity.Change{
+	_, err := p.Get(context.Background(), entity.Request{Change: change.Change{
 		URIs: []string{
 			"github://uber/submitqueue/pull/123/" + shaA,
 			"github://uber/submitqueue/pull/456/" + shaB,

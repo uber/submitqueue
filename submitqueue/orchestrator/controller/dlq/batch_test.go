@@ -20,7 +20,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -31,7 +32,7 @@ func TestDLQBatchController_InterfaceAndAccessors(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
 
-	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), store, TopicKey(consumer.TopicKeyMerge), "orchestrator-merge-dlq")
+	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), store, TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")
 
 	assert.Equal(t, "merge_dlq", c.Name())
 	assert.Equal(t, consumer.TopicKey("merge_dlq"), c.TopicKey())
@@ -62,7 +63,7 @@ func TestDLQBatchController_Process_FailsAndFansOut(t *testing.T) {
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 
-	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), store, TopicKey(consumer.TopicKeyMerge), "orchestrator-merge-dlq")
+	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), store, TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")
 
 	payload, err := entity.BatchID{ID: "q/batch/9"}.ToBytes()
 	require.NoError(t, err)
@@ -75,7 +76,7 @@ func TestDLQBatchController_Process_MalformedPayloadFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	store := storagemock.NewMockStorage(ctrl)
-	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), store, TopicKey(consumer.TopicKeyMerge), "orchestrator-merge-dlq")
+	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), store, TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")
 
 	delivery := newMockDelivery(ctrl, []byte("garbage"))
 	err := c.Process(context.Background(), delivery)
@@ -86,7 +87,7 @@ func TestDLQBatchController_Process_EmptyIDFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	store := storagemock.NewMockStorage(ctrl)
-	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), store, TopicKey(consumer.TopicKeyMerge), "orchestrator-merge-dlq")
+	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), store, TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")
 
 	payload, err := entity.BatchID{ID: ""}.ToBytes()
 	require.NoError(t, err)

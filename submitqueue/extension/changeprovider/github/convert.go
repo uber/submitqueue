@@ -1,8 +1,8 @@
 package github
 
 import (
+	entitygithub "github.com/uber/submitqueue/platform/base/change/github"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	entitygithub "github.com/uber/submitqueue/submitqueue/entity/github"
 )
 
 // convertToChangeInfo converts GitHub PR data to an entity.ChangeInfo.

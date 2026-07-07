@@ -23,9 +23,9 @@ import (
 	"net/http"
 
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/core/metrics"
+	entitygithub "github.com/uber/submitqueue/platform/base/change/github"
+	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	entitygithub "github.com/uber/submitqueue/submitqueue/entity/github"
 	"github.com/uber/submitqueue/submitqueue/extension/mergechecker"
 	"go.uber.org/zap"
 )
@@ -61,7 +61,7 @@ func NewMergeChecker(params Params) mergechecker.MergeChecker {
 }
 
 // Check assesses whether a request's change can merge cleanly using the GitHub GraphQL API.
-func (c *mergeChecker) Check(ctx context.Context, request entity.Request) (result mergechecker.Result, retErr error) {
+func (c *mergeChecker) Check(ctx context.Context, request entity.Request) (result entity.MergeResult, retErr error) {
 	const opName = "check"
 
 	op := metrics.Begin(c.metricsScope, opName)

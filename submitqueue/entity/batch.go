@@ -69,6 +69,38 @@ func IsBatchStateHalted(s BatchState) bool {
 	return s.IsTerminal() || s == BatchStateCancelling
 }
 
+// ActiveBatchStates returns every non-terminal batch state that must be considered in-flight.
+// Use this when callers need to find batches that still own a request, including Cancelling
+// batches that cancel redelivery must be able to resolve.
+func ActiveBatchStates() []BatchState {
+	return []BatchState{
+		BatchStateCreated,
+		BatchStateScored,
+		BatchStateSpeculating,
+		BatchStateMerging,
+		BatchStateCancelling,
+	}
+}
+
+// DependencyBatchStates returns the batch states that make an in-flight batch eligible
+// to be a dependency of a newly created batch. When a batch is created, the conflict
+// analyzer picks the existing batches it conflicts with as its dependencies; the new
+// batch then speculates on top of them — it "bases" its speculative changes on the
+// changes those batches are expected to land, so it must serialize behind them in the
+// speculation graph.
+//
+// Only batches still expected to land qualify. BatchStateCancelling is excluded (unlike
+// ActiveBatchStates): a cancelling batch may never land, so basing new speculation on its
+// changes would build on top of changes that can disappear.
+func DependencyBatchStates() []BatchState {
+	return []BatchState{
+		BatchStateCreated,
+		BatchStateScored,
+		BatchStateSpeculating,
+		BatchStateMerging,
+	}
+}
+
 // Batch represents a group of requests to land (merge into target branch of the source control repository).
 type Batch struct {
 	// ID is the globally unique identifier for the batch. Format: "<queue>/batch/<counter_value>".

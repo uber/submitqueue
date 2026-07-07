@@ -1,6 +1,6 @@
 # DLQ Reconciliation Controllers
 
-This package contains the controllers that drain each primary pipeline topic's `{topic}_dlq` companion and reconcile the affected request or batch into a terminal failed state. They are wired alongside the primary controllers in `example/submitqueue/orchestrator/server/main.go`.
+This package contains the controllers that drain each primary pipeline topic's `{topic}_dlq` companion and reconcile the affected request or batch into a terminal failed state. They are wired alongside the primary controllers in `service/submitqueue/orchestrator/server/main.go`.
 
 ## Design principles
 
@@ -47,5 +47,5 @@ Reconciliation is safe to run more than once for the same message:
 ## See also
 
 - `core/errs/README.md` — the error-processing framework, including `AlwaysRetryableProcessor` and the choice of processor for primary vs. DLQ consumers.
-- `submitqueue/core/consumer/README.md` — how the consumer applies the processor to controller errors and decides ack/nack/reject.
+- `core/consumer/README.md` — how the consumer applies the processor to controller errors and decides ack/nack/reject.
 - `doc/rfc/submitqueue/workflow.md` — the per-stage primary pipeline that the DLQ companions mirror.

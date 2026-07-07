@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "request_store.go",
+        "request_uri_store.go",
+        "storage.go",
+    ],
+    importpath = "github.com/uber/submitqueue/stovepipe/extension/storage/mysql",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//platform/metrics:go_default_library",
+        "//stovepipe/entity:go_default_library",
+        "//stovepipe/extension/storage:go_default_library",
+        "@com_github_go_sql_driver_mysql//:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+    ],
+)

@@ -22,10 +22,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
-	"github.com/uber/submitqueue/core/errs"
-	entityqueue "github.com/uber/submitqueue/entity/messagequeue"
-	queuemock "github.com/uber/submitqueue/extension/messagequeue/mock"
-	"github.com/uber/submitqueue/submitqueue/core/consumer"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
+	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
@@ -65,12 +66,12 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, mockStorage *stora
 
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Key: consumer.TopicKeyLog, Name: "log", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
 		},
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, mockStorage, registry, consumer.TopicKeyConclude, "orchestrator-conclude"), mockPub
+	return NewController(logger, scope, mockStorage, registry, topickey.TopicKeyConclude, "orchestrator-conclude"), mockPub
 }
 
 func TestNewController(t *testing.T) {
@@ -78,7 +79,7 @@ func TestNewController(t *testing.T) {
 	controller, _ := newTestController(t, ctrl, nil, false)
 
 	require.NotNil(t, controller)
-	assert.Equal(t, consumer.TopicKeyConclude, controller.TopicKey())
+	assert.Equal(t, topickey.TopicKeyConclude, controller.TopicKey())
 	assert.Equal(t, "orchestrator-conclude", controller.ConsumerGroup())
 	assert.Equal(t, "conclude", controller.Name())
 }

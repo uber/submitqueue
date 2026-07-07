@@ -43,10 +43,10 @@ func (m *MockPusher) EXPECT() *MockPusherMockRecorder {
 }
 
 // Push mocks base method.
-func (m *MockPusher) Push(ctx context.Context, batches []entity.Batch) (pusher.Result, error) {
+func (m *MockPusher) Push(ctx context.Context, batches []entity.Batch) (entity.PushResult, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Push", ctx, batches)
-	ret0, _ := ret[0].(pusher.Result)
+	ret0, _ := ret[0].(entity.PushResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

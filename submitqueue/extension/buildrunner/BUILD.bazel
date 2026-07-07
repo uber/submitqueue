@@ -1,7 +1,7 @@
 load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "buildrunner",
+    name = "go_default_library",
     srcs = [
         "build_runner.go",
         "resolve.go",
@@ -9,7 +9,8 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/extension/buildrunner",
     visibility = ["//visibility:public"],
     deps = [
-        "//submitqueue/core/changeset",
-        "//submitqueue/entity",
+        "//platform/base/change:go_default_library",
+        "//submitqueue/core/changeset:go_default_library",
+        "//submitqueue/entity:go_default_library",
     ],
 )

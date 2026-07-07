@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 )
@@ -47,7 +48,7 @@ func TestProvider_Get_OnePerURI(t *testing.T) {
 	p := New()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			infos, err := p.Get(context.Background(), entity.Request{Change: entity.Change{URIs: tt.uris}})
+			infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{URIs: tt.uris}})
 			require.NoError(t, err)
 			require.Len(t, infos, len(tt.uris))
 			for i, uri := range tt.uris {
@@ -59,7 +60,7 @@ func TestProvider_Get_OnePerURI(t *testing.T) {
 
 func TestProvider_Get_ErrorMarker(t *testing.T) {
 	p := New()
-	_, err := p.Get(context.Background(), entity.Request{Change: entity.Change{
+	_, err := p.Get(context.Background(), entity.Request{Change: change.Change{
 		URIs: []string{"github://owner/repo/pull/1/abc?sq-fake=provider-error"},
 	}})
 	require.Error(t, err)

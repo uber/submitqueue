@@ -23,13 +23,13 @@ SubmitQueue uses **two separate databases** to demonstrate proper architectural 
 
 ### 1. Application Database
 - **Purpose**: Business data (requests, counters, batches)
-- **Schema**: `submitqueue/extension/storage/mysql/schema`, `extension/counter/mysql/schema`
+- **Schema**: `submitqueue/extension/storage/mysql/schema`, `platform/extension/counter/mysql/schema`
 - **Used by**: Gateway (stores requests), Orchestrator (reads/updates request state)
 - **Connection**: `MYSQL_DSN`
 
 ### 2. Queue Database
 - **Purpose**: Messaging infrastructure (queue messages, offsets, partition leases)
-- **Schema**: `extension/messagequeue/mysql/schema`
+- **Schema**: `platform/extension/messagequeue/mysql/schema`
 - **Used by**: Gateway (publishes), Orchestrator (consumes)
 - **Connection**: `QUEUE_MYSQL_DSN`
 
@@ -118,7 +118,7 @@ sq-test-{context}-{shortid}
 
 ### Context naming convention
 
-The `{context}` passed to `NewComposeStack` is **domain-qualified** so that the same kind of suite in different domains (SubmitQueue and Stovepipe both have a gateway and an orchestrator) yields distinct, self-describing names:
+The `{context}` passed to `NewComposeStack` is **domain-qualified** so that the same kind of suite in different domains yields distinct, self-describing names:
 
 ```
 {category}-{domain}-{name}
@@ -136,7 +136,7 @@ Shared (cross-domain) suites carry no domain segment — e.g. the shared queue e
 |-------|---------|-------------------|
 | SubmitQueue gateway | `svc-submitqueue-gateway` | `sq-test-svc-submitqueue-gateway-abc123-gateway-service-1` |
 | SubmitQueue orchestrator | `svc-submitqueue-orchestrator` | `sq-test-svc-submitqueue-orchestrator-xyz789-orchestrator-service-1` |
-| Stovepipe gateway | `svc-stovepipe-gateway` | `sq-test-svc-stovepipe-gateway-abc123-gateway-service-1` |
+| Stovepipe | `svc-stovepipe` | `sq-test-svc-stovepipe-abc123-stovepipe-service-1` |
 | SubmitQueue storage extension | `ext-submitqueue-storage-mysql` | `sq-test-ext-submitqueue-storage-mysql-2ce1d0-mysql-1` |
 | Counter extension (shared) | `ext-counter-mysql` | `sq-test-ext-counter-mysql-…-mysql-1` |
 | SubmitQueue changestore extension | `ext-submitqueue-changestore-mysql` | `sq-test-ext-submitqueue-changestore-mysql-…-mysql-1` |
@@ -388,6 +388,6 @@ assert.Equal(s.T(), "expected", resp.Value)
 ## See Also
 
 - [CLAUDE.md](../../CLAUDE.md) - Development guidelines and project structure
-- [example/submitqueue/docker-compose.yml](../../example/submitqueue/docker-compose.yml) - Full stack service definitions
-- [example/submitqueue/gateway/server/docker-compose.yml](../../example/submitqueue/gateway/server/docker-compose.yml) - Gateway isolation
-- [example/submitqueue/orchestrator/server/docker-compose.yml](../../example/submitqueue/orchestrator/server/docker-compose.yml) - Orchestrator isolation
+- [service/submitqueue/docker-compose.yml](../../service/submitqueue/docker-compose.yml) - Full stack service definitions
+- [service/submitqueue/gateway/server/docker-compose.yml](../../service/submitqueue/gateway/server/docker-compose.yml) - Gateway isolation
+- [service/submitqueue/orchestrator/server/docker-compose.yml](../../service/submitqueue/orchestrator/server/docker-compose.yml) - Orchestrator isolation

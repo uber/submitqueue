@@ -61,10 +61,11 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap"
 
-	coremetrics "github.com/uber/submitqueue/core/metrics"
+	"github.com/uber/submitqueue/platform/base/change"
+	entitygithub "github.com/uber/submitqueue/platform/base/change/github"
+	coremetrics "github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	entitygithub "github.com/uber/submitqueue/submitqueue/entity/github"
 	"github.com/uber/submitqueue/submitqueue/extension/pusher"
 )
 
@@ -133,18 +134,18 @@ func NewPusher(params Params) pusher.Pusher {
 }
 
 // Push fulfils the pusher.Pusher contract.
-func (p *gitPusher) Push(ctx context.Context, batches []entity.Batch) (ret pusher.Result, retErr error) {
+func (p *gitPusher) Push(ctx context.Context, batches []entity.Batch) (ret entity.PushResult, retErr error) {
 	op := coremetrics.Begin(p.metricsScope, "push")
 	defer func() { op.Complete(retErr) }()
 
 	// Resolve each batch's changes, keeping per-batch counts so the flat
 	// outcomes can be regrouped per batch on success.
-	perBatch := make([][]entity.Change, len(batches))
-	var changes []entity.Change
+	perBatch := make([][]change.Change, len(batches))
+	var changes []change.Change
 	for i, b := range batches {
 		cs, err := p.resolver.ChangesForBatch(ctx, b)
 		if err != nil {
-			return pusher.Result{}, fmt.Errorf("resolve batch %s: %w", b.ID, err)
+			return entity.PushResult{}, fmt.Errorf("resolve batch %s: %w", b.ID, err)
 		}
 		perBatch[i] = cs
 		changes = append(changes, cs...)
@@ -155,7 +156,7 @@ func (p *gitPusher) Push(ctx context.Context, batches []entity.Batch) (ret pushe
 
 	if len(changes) == 0 {
 		coremetrics.NamedCounter(p.metricsScope, "push", "empty_changes", 1)
-		return pusher.Result{}, fmt.Errorf("push called with no changes")
+		return entity.PushResult{}, fmt.Errorf("push called with no changes")
 	}
 
 	p.logger.Debugw("starting push",
@@ -172,7 +173,7 @@ func (p *gitPusher) Push(ctx context.Context, batches []entity.Batch) (ret pushe
 				"target", p.target,
 				"outcomes", outcomes,
 			)
-			return pusher.Result{Batches: groupByBatch(batches, perBatch, outcomes)}, nil
+			return entity.PushResult{Batches: groupByBatch(batches, perBatch, outcomes)}, nil
 		}
 
 		// Was the failure caused by the remote tip moving under us between
@@ -183,14 +184,14 @@ func (p *gitPusher) Push(ctx context.Context, batches []entity.Batch) (ret pushe
 		// git error message formats. baseSHA is empty when the failure
 		// happened before reset captured a base; treat those as fatal too.
 		if baseSHA == "" {
-			return pusher.Result{}, err
+			return entity.PushResult{}, err
 		}
 		currentSHA, refetchErr := p.refetchTipSHA(ctx)
 		if refetchErr != nil {
-			return pusher.Result{}, fmt.Errorf("refetch after push failure failed: %v (original push error: %w)", refetchErr, err)
+			return entity.PushResult{}, fmt.Errorf("refetch after push failure failed: %v (original push error: %w)", refetchErr, err)
 		}
 		if currentSHA == baseSHA {
-			return pusher.Result{}, err
+			return entity.PushResult{}, err
 		}
 
 		coremetrics.NamedCounter(p.metricsScope, "push", "stale_base_retries", 1)
@@ -205,17 +206,17 @@ func (p *gitPusher) Push(ctx context.Context, batches []entity.Batch) (ret pushe
 	}
 
 	coremetrics.NamedCounter(p.metricsScope, "push", "stale_base_giveup", 1)
-	return pusher.Result{}, fmt.Errorf("exceeded %d push attempts due to remote contention: %w", p.maxPushAttempts, lastErr)
+	return entity.PushResult{}, fmt.Errorf("exceeded %d push attempts due to remote contention: %w", p.maxPushAttempts, lastErr)
 }
 
 // groupByBatch splits the flat, apply-ordered outcomes back into one
 // BatchOutcome per input batch, using each batch's resolved change count.
-func groupByBatch(batches []entity.Batch, perBatch [][]entity.Change, outcomes []pusher.ChangeOutcome) []pusher.BatchOutcome {
-	result := make([]pusher.BatchOutcome, len(batches))
+func groupByBatch(batches []entity.Batch, perBatch [][]change.Change, outcomes []entity.ChangeOutcome) []entity.BatchOutcome {
+	result := make([]entity.BatchOutcome, len(batches))
 	pos := 0
 	for i, b := range batches {
 		n := len(perBatch[i])
-		result[i] = pusher.BatchOutcome{BatchID: b.ID, Outcomes: outcomes[pos : pos+n]}
+		result[i] = entity.BatchOutcome{BatchID: b.ID, Outcomes: outcomes[pos : pos+n]}
 		pos += n
 	}
 	return result
@@ -226,7 +227,7 @@ func groupByBatch(batches []entity.Batch, perBatch [][]entity.Change, outcomes [
 // so the caller can distinguish concurrent-push contention from other push
 // failures. baseSHA is empty when the failure happened before reset
 // produced a base.
-func (p *gitPusher) tryPush(ctx context.Context, changes []entity.Change) (string, []pusher.ChangeOutcome, error) {
+func (p *gitPusher) tryPush(ctx context.Context, changes []change.Change) (string, []entity.ChangeOutcome, error) {
 	if err := p.resetToRemote(ctx); err != nil {
 		coremetrics.NamedCounter(p.metricsScope, "push", "reset_errors", 1)
 		return "", nil, err
@@ -295,18 +296,18 @@ func (p *gitPusher) resetToRemote(ctx context.Context) error {
 
 // cherryPickAll walks the changes in order, cherry-picking every URI's head
 // SHA, and returns one ChangeOutcome per Change in the same order.
-func (p *gitPusher) cherryPickAll(ctx context.Context, changes []entity.Change) ([]pusher.ChangeOutcome, error) {
-	outcomes := make([]pusher.ChangeOutcome, 0, len(changes))
+func (p *gitPusher) cherryPickAll(ctx context.Context, changes []change.Change) ([]entity.ChangeOutcome, error) {
+	outcomes := make([]entity.ChangeOutcome, 0, len(changes))
 	for _, change := range changes {
 		commits, err := p.cherryPickChange(ctx, change)
 		if err != nil {
 			return nil, err
 		}
-		status := pusher.OutcomeStatusCommitted
+		status := entity.OutcomeStatusCommitted
 		if len(commits) == 0 {
-			status = pusher.OutcomeStatusAlreadyExisted
+			status = entity.OutcomeStatusAlreadyExisted
 		}
-		outcomes = append(outcomes, pusher.ChangeOutcome{
+		outcomes = append(outcomes, entity.ChangeOutcome{
 			Change:     change,
 			Status:     status,
 			CommitSHAs: commits,
@@ -319,7 +320,7 @@ func (p *gitPusher) cherryPickAll(ctx context.Context, changes []entity.Change) 
 // SHA, and cherry-picks it. It returns the list of new commit SHAs
 // produced for this change (empty if every pick was a no-op because the
 // content was already on the target branch).
-func (p *gitPusher) cherryPickChange(ctx context.Context, change entity.Change) ([]string, error) {
+func (p *gitPusher) cherryPickChange(ctx context.Context, change change.Change) ([]string, error) {
 	var commits []string
 	for _, uri := range change.URIs {
 		cid, err := entitygithub.ParseChangeID(uri)

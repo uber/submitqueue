@@ -17,6 +17,7 @@ package buildrunner
 import (
 	"context"
 
+	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/entity"
 )
@@ -25,8 +26,8 @@ import (
 // concatenates them in order. It is shared by BuildRunner implementations that
 // need a flat change list (e.g. the base, assembled from several dependency
 // batches) so the per-batch resolution loop is not duplicated per backend.
-func ResolveBatches(ctx context.Context, resolver changeset.Resolver, batches []entity.Batch) ([]entity.Change, error) {
-	var changes []entity.Change
+func ResolveBatches(ctx context.Context, resolver changeset.Resolver, batches []entity.Batch) ([]change.Change, error) {
+	var changes []change.Change
 	for _, b := range batches {
 		cs, err := resolver.ChangesForBatch(ctx, b)
 		if err != nil {
