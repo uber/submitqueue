@@ -941,6 +941,7 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.
 		byQueue: map[string]queueExtensions{
 			"test-queue":               testQueue,
 			"e2e-test-queue":           e2eQueue,
+			"e2e-list-queue":           e2eQueue,
 			"e2e-conflict-error-queue": conflictErrQueue,
 			"file-overlap-queue":       fileOverlapQueue,
 		},

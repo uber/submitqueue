@@ -218,6 +218,129 @@ func (s *E2EIntegrationSuite) TestLand_HappyPath_ReachesLanded() {
 		"operating store should show request %s in terminal state landed", sqid)
 }
 
+// TestList_ReturnsFilteredPagedSummaries verifies the customer-facing List RPC
+// against the full stack. Land writes the initial summary through the gateway,
+// later status updates arrive through the request-log topic, and List reads the
+// gateway-owned summary read model through the public RPC surface.
+func (s *E2EIntegrationSuite) TestList_ReturnsFilteredPagedSummaries() {
+	t := s.T()
+
+	beforeWindow := s.land("e2e-list-queue", "github://uber/e2e-list/pull/100/abcdef0123456789abcdef0123456789abcdef00")
+	startTimeMs := time.Now().UnixMilli() + 1
+	windowTimer := time.NewTimer(time.Until(time.UnixMilli(startTimeMs)))
+	<-windowTimer.C
+	firstURI := "github://uber/e2e-list/pull/101/abcdef0123456789abcdef0123456789abcdef01"
+	secondURI := "github://uber/e2e-list/pull/102/abcdef0123456789abcdef0123456789abcdef02"
+	thirdURI := "github://uber/e2e-list/pull/103/abcdef0123456789abcdef0123456789abcdef03"
+	otherURI := "github://uber/e2e-list-other/pull/201/abcdef0123456789abcdef0123456789abcdef03"
+
+	first := s.land("e2e-list-queue", firstURI)
+	second := s.land("e2e-list-queue", secondURI)
+	third := s.land("e2e-list-queue", thirdURI)
+	otherQueue := s.land("e2e-cancel-queue", otherURI)
+	endTimeMs := time.Now().Add(time.Minute).UnixMilli()
+
+	resp := s.awaitListContains(&gatewaypb.ListRequest{
+		Queue:       "e2e-list-queue",
+		StartTimeMs: startTimeMs,
+		EndTimeMs:   endTimeMs,
+		PageSize:    10,
+	}, first, second, third)
+
+	assert.NotContains(t, summarySQIDs(resp.Requests), otherQueue,
+		"List should not return requests from a different queue")
+	assert.NotContains(t, summarySQIDs(resp.Requests), beforeWindow,
+		"List should not return requests admitted before the time window")
+
+	bySQID := make(map[string]*gatewaypb.RequestSummary, len(resp.Requests))
+	for _, summary := range resp.Requests {
+		bySQID[summary.Sqid] = summary
+	}
+
+	firstSummary := bySQID[first]
+	require.NotNil(t, firstSummary, "List response should include %s", first)
+	assert.Equal(t, "e2e-list-queue", firstSummary.Queue)
+	assert.Equal(t, []string{firstURI}, firstSummary.ChangeUris)
+	assert.NotEmpty(t, firstSummary.Status)
+	assert.GreaterOrEqual(t, firstSummary.StartedAtMs, startTimeMs)
+	assert.Less(t, firstSummary.StartedAtMs, endTimeMs)
+	assert.GreaterOrEqual(t, firstSummary.UpdatedAtMs, firstSummary.StartedAtMs)
+
+	s.awaitStatus(first, entity.RequestStatusLanded)
+	s.awaitStatus(second, entity.RequestStatusLanded)
+	s.awaitStatus(third, entity.RequestStatusLanded)
+
+	landedResp := s.awaitListContains(&gatewaypb.ListRequest{
+		Queue:       "e2e-list-queue",
+		StartTimeMs: startTimeMs,
+		EndTimeMs:   endTimeMs,
+		Statuses:    []string{string(entity.RequestStatusLanded)},
+		PageSize:    10,
+	}, first, second, third)
+	for _, summary := range landedResp.Requests {
+		if summary.Sqid != first && summary.Sqid != second && summary.Sqid != third {
+			continue
+		}
+		assert.Equal(t, string(entity.RequestStatusLanded), summary.Status, "landed summary %s should report landed", summary.Sqid)
+		assert.Greater(t, summary.CompletedAtMs, int64(0), "landed summary %s should have completion time", summary.Sqid)
+	}
+
+	var pagedSQIDs []string
+	var pageToken string
+	for {
+		page := s.list(&gatewaypb.ListRequest{
+			Queue:       "e2e-list-queue",
+			StartTimeMs: startTimeMs,
+			EndTimeMs:   endTimeMs,
+			PageSize:    1,
+			PageToken:   pageToken,
+			Sort:        gatewaypb.ListSort_ADMITTED_DESC,
+		})
+		require.LessOrEqual(t, len(page.Requests), 1)
+		if len(page.Requests) == 1 {
+			pagedSQIDs = append(pagedSQIDs, page.Requests[0].Sqid)
+		}
+		if page.NextPageToken == "" {
+			break
+		}
+		pageToken = page.NextPageToken
+	}
+	assert.ElementsMatch(t, []string{first, second, third}, pagedSQIDs)
+	assert.Len(t, mapFromStrings(pagedSQIDs), len(pagedSQIDs), "descending pagination should not return duplicates")
+}
+
+// TestList_ShowsCancelIntent verifies the List summary read model observes the
+// gateway-synchronous cancelling log written by Cancel. Terminal cancellation is
+// intentionally not asserted here because the e2e stack does not yet have a
+// deterministic pipeline pause; the terminal outcome can race with landing.
+func (s *E2EIntegrationSuite) TestList_ShowsCancelIntent() {
+	t := s.T()
+
+	startTimeMs := time.Now().Add(-time.Second).UnixMilli()
+	sqid := s.land("e2e-cancel-queue", "github://uber/e2e-list-cancel/pull/301/abcdef0123456789abcdef0123456789abcdef04")
+	endTimeMs := time.Now().Add(time.Minute).UnixMilli()
+
+	_, err := s.gatewayClient.Cancel(s.ctx, &gatewaypb.CancelRequest{Sqid: sqid, Reason: "e2e list cancel test"})
+	require.NoError(t, err, "Cancel failed")
+
+	resp := s.list(&gatewaypb.ListRequest{
+		Queue:       "e2e-cancel-queue",
+		StartTimeMs: startTimeMs,
+		EndTimeMs:   endTimeMs,
+		Statuses:    []string{string(entity.RequestStatusCancelling)},
+		PageSize:    10,
+	})
+	var summary *gatewaypb.RequestSummary
+	for _, candidate := range resp.Requests {
+		if candidate.Sqid == sqid {
+			summary = candidate
+			break
+		}
+	}
+	require.NotNil(t, summary, "List should include %s with cancelling status immediately after Cancel", sqid)
+	assert.Equal(t, string(entity.RequestStatusCancelling), summary.Status)
+}
+
 // TestCancelRequest_InvalidSqid verifies the gateway rejects an empty sqid
 // synchronously before publishing anything to the cancel queue.
 func (s *E2EIntegrationSuite) TestCancelRequest_InvalidSqid() {

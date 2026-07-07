@@ -51,6 +51,65 @@ func (s *E2EIntegrationSuite) land(queue string, uris ...string) string {
 	return resp.Sqid
 }
 
+// list calls the gateway List RPC and fails the test on unexpected errors.
+func (s *E2EIntegrationSuite) list(req *gatewaypb.ListRequest) *gatewaypb.ListResponse {
+	t := s.T()
+	resp, err := s.gatewayClient.List(s.ctx, req)
+	require.NoError(t, err, "List failed for queue %s", req.Queue)
+	return resp
+}
+
+// awaitListContains polls List until all expected sqids are visible in one
+// response page. The gateway updates request summaries synchronously for Land
+// and asynchronously from the log topic for later statuses, so callers use the
+// same bounded polling style as Status.
+func (s *E2EIntegrationSuite) awaitListContains(req *gatewaypb.ListRequest, want ...string) *gatewaypb.ListResponse {
+	t := s.T()
+	var resp *gatewaypb.ListResponse
+	require.Eventually(t, func() bool {
+		var err error
+		resp, err = s.gatewayClient.List(s.ctx, req)
+		if err != nil {
+			s.log.Logf("List(%s) not ready yet: %v", req.Queue, err)
+			return false
+		}
+		got := summarySQIDs(resp.Requests)
+		s.log.Logf("List(%s) = %v (want %v)", req.Queue, got, want)
+		return containsAll(got, want)
+	}, persistTimeout, persistPollInterval,
+		"List(%s) should contain sqids %v", req.Queue, want)
+	return resp
+}
+
+func summarySQIDs(summaries []*gatewaypb.RequestSummary) []string {
+	out := make([]string, len(summaries))
+	for i, summary := range summaries {
+		out[i] = summary.Sqid
+	}
+	return out
+}
+
+func containsAll(got []string, want []string) bool {
+	seen := make(map[string]struct{}, len(got))
+	for _, sqid := range got {
+		seen[sqid] = struct{}{}
+	}
+	for _, sqid := range want {
+		if _, ok := seen[sqid]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func mapFromStrings(values []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		out[value] = struct{}{}
+	}
+	return out
+}
+
 // currentStatus reads the request's current customer-facing status via the
 // Status RPC. A transport error is returned so callers can keep polling.
 func (s *E2EIntegrationSuite) currentStatus(sqid string) (entity.RequestStatus, error) {
