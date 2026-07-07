@@ -1,30 +1,30 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "fake",
+    name = "go_default_library",
     srcs = ["fake.go"],
     importpath = "github.com/uber/submitqueue/submitqueue/extension/scorer/fake",
     visibility = ["//visibility:public"],
     deps = [
-        "//submitqueue/core/changeset",
-        "//submitqueue/core/fakemarker",
-        "//submitqueue/entity",
-        "//submitqueue/extension/scorer",
+        "//submitqueue/core/changeset:go_default_library",
+        "//submitqueue/core/fakemarker:go_default_library",
+        "//submitqueue/entity:go_default_library",
+        "//submitqueue/extension/scorer:go_default_library",
     ],
 )
 
 go_test(
-    name = "fake_test",
+    name = "go_default_test",
     srcs = ["fake_test.go"],
-    embed = [":fake"],
+    embed = [":go_default_library"],
     deps = [
-        "//submitqueue/core/changeset",
-        "//submitqueue/core/changeset/fake",
-        "//submitqueue/entity",
-        "//submitqueue/extension/scorer",
-        "//submitqueue/extension/scorer/heuristic",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-        "@com_github_uber_go_tally//:tally",
+        "//submitqueue/core/changeset:go_default_library",
+        "//submitqueue/core/changeset/fake:go_default_library",
+        "//submitqueue/entity:go_default_library",
+        "//submitqueue/extension/scorer:go_default_library",
+        "//submitqueue/extension/scorer/heuristic:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
     ],
 )

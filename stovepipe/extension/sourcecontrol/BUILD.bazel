@@ -1,9 +1,9 @@
 load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "sourcecontrol",
+    name = "go_default_library",
     srcs = ["sourcecontrol.go"],
     importpath = "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol",
     visibility = ["//visibility:public"],
-    deps = ["//platform/base/page"],
+    deps = ["//platform/base/page:go_default_library"],
 )

@@ -1,7 +1,7 @@
 load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "core",
+    name = "go_default_library",
     srcs = ["core.go"],
     importpath = "github.com/uber/submitqueue/submitqueue/core",
     visibility = ["//visibility:public"],

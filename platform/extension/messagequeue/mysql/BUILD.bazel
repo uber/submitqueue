@@ -1,7 +1,7 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "mysql",
+    name = "go_default_library",
     srcs = [
         "constants.go",
         "delivery_state_store.go",
@@ -19,17 +19,17 @@ go_library(
     importpath = "github.com/uber/submitqueue/platform/extension/messagequeue/mysql",
     visibility = ["//visibility:public"],
     deps = [
-        "//platform/base/messagequeue",
-        "//platform/extension/messagequeue",
-        "//platform/metrics",
-        "@com_github_uber_go_tally//:tally",
-        "@org_uber_go_mock//gomock",
-        "@org_uber_go_zap//:zap",
+        "//platform/base/messagequeue:go_default_library",
+        "//platform/extension/messagequeue:go_default_library",
+        "//platform/metrics:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_uber_go_mock//gomock:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
     ],
 )
 
 go_test(
-    name = "mysql_test",
+    name = "go_default_test",
     srcs = [
         "delivery_state_store_test.go",
         "message_store_test.go",
@@ -40,15 +40,15 @@ go_test(
         "subscriber_heartbeat_store_test.go",
         "subscriber_test.go",
     ],
-    embed = [":mysql"],
+    embed = [":go_default_library"],
     deps = [
-        "//platform/base/messagequeue",
-        "//platform/extension/messagequeue",
-        "@com_github_data_dog_go_sqlmock//:go-sqlmock",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-        "@com_github_uber_go_tally//:tally",
-        "@org_uber_go_mock//gomock",
-        "@org_uber_go_zap//zaptest",
+        "//platform/base/messagequeue:go_default_library",
+        "//platform/extension/messagequeue:go_default_library",
+        "@com_github_data_dog_go_sqlmock//:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_uber_go_mock//gomock:go_default_library",
+        "@org_uber_go_zap//zaptest:go_default_library",
     ],
 )

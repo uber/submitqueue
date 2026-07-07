@@ -144,7 +144,7 @@ integration-test: build-all-linux ## Run all integration tests (auto-builds bina
 
 integration-test-submitqueue-consumer: ## Run Consumer integration tests
 	@echo "Running Consumer integration tests..."
-	@$(BAZEL) test //test/integration/submitqueue/core/consumer:consumer_test --test_output=streamed
+	@$(BAZEL) test //test/integration/submitqueue/core/consumer:go_default_test --test_output=streamed
 
 integration-test-extensions: ## Run extension integration tests (runs in parallel)
 	@echo "Running extension integration tests (parallel)..."
@@ -152,11 +152,11 @@ integration-test-extensions: ## Run extension integration tests (runs in paralle
 
 integration-test-submitqueue-gateway: build-submitqueue-gateway-linux ## Run Gateway integration tests (auto-builds binary)
 	@echo "Running Gateway integration tests..."
-	@$(BAZEL) test //test/integration/submitqueue/gateway:gateway_test --test_output=streamed
+	@$(BAZEL) test //test/integration/submitqueue/gateway:go_default_test --test_output=streamed
 
 integration-test-submitqueue-orchestrator: build-submitqueue-orchestrator-linux ## Run Orchestrator integration tests (auto-builds binary)
 	@echo "Running Orchestrator integration tests..."
-	@$(BAZEL) test //test/integration/submitqueue/orchestrator:orchestrator_test --test_output=streamed
+	@$(BAZEL) test //test/integration/submitqueue/orchestrator:go_default_test --test_output=streamed
 
 license-fix: ## Add missing license headers to source files
 	@$(BAZEL) run //tool/linter/licenseheader -- --fix
