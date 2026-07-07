@@ -54,8 +54,15 @@ func TestController_Process(t *testing.T) {
 			setupStore: func(ctrl *gomock.Controller) *storagemock.MockStorage {
 				mockLogStore := storagemock.NewMockRequestLogStore(ctrl)
 				mockLogStore.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(nil)
+				mockSummaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
+				mockContextStore := storagemock.NewMockRequestContextStore(ctrl)
+				mockContextStore.EXPECT().Get(gomock.Any(), gomock.Any()).Return(entity.RequestContext{Queue: "test-queue"}, nil)
+				mockSummaryStore.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).Return(entity.RequestSummary{Version: 1}, nil)
+				mockSummaryStore.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 				store := storagemock.NewMockStorage(ctrl)
 				store.EXPECT().GetRequestLogStore().Return(mockLogStore).AnyTimes()
+				store.EXPECT().GetRequestSummaryStore().Return(mockSummaryStore).AnyTimes()
+				store.EXPECT().GetRequestContextStore().Return(mockContextStore).AnyTimes()
 				return store
 			},
 			wantErr: false,

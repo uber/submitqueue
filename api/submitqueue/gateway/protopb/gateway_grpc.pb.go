@@ -38,6 +38,7 @@ const (
 	SubmitQueueGateway_Land_FullMethodName   = "/uber.submitqueue.gateway.SubmitQueueGateway/Land"
 	SubmitQueueGateway_Cancel_FullMethodName = "/uber.submitqueue.gateway.SubmitQueueGateway/Cancel"
 	SubmitQueueGateway_Status_FullMethodName = "/uber.submitqueue.gateway.SubmitQueueGateway/Status"
+	SubmitQueueGateway_List_FullMethodName   = "/uber.submitqueue.gateway.SubmitQueueGateway/List"
 )
 
 // SubmitQueueGatewayClient is the client API for SubmitQueueGateway service.
@@ -66,6 +67,8 @@ type SubmitQueueGatewayClient interface {
 	// Status returns the current status of a previously submitted request, identified by its sqid.
 	// The status is eventually consistent with the request store and reconciled from the append-only request log.
 	Status(ctx context.Context, in *StatusRequest, opts ...grpc.CallOption) (*StatusResponse, error)
+	// List returns request summaries for one queue admitted during a time window.
+	List(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (*ListResponse, error)
 }
 
 type submitQueueGatewayClient struct {
@@ -116,6 +119,16 @@ func (c *submitQueueGatewayClient) Status(ctx context.Context, in *StatusRequest
 	return out, nil
 }
 
+func (c *submitQueueGatewayClient) List(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (*ListResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListResponse)
+	err := c.cc.Invoke(ctx, SubmitQueueGateway_List_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SubmitQueueGatewayServer is the server API for SubmitQueueGateway service.
 // All implementations must embed UnimplementedSubmitQueueGatewayServer
 // for forward compatibility.
@@ -142,6 +155,8 @@ type SubmitQueueGatewayServer interface {
 	// Status returns the current status of a previously submitted request, identified by its sqid.
 	// The status is eventually consistent with the request store and reconciled from the append-only request log.
 	Status(context.Context, *StatusRequest) (*StatusResponse, error)
+	// List returns request summaries for one queue admitted during a time window.
+	List(context.Context, *ListRequest) (*ListResponse, error)
 	mustEmbedUnimplementedSubmitQueueGatewayServer()
 }
 
@@ -163,6 +178,9 @@ func (UnimplementedSubmitQueueGatewayServer) Cancel(context.Context, *CancelRequ
 }
 func (UnimplementedSubmitQueueGatewayServer) Status(context.Context, *StatusRequest) (*StatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Status not implemented")
+}
+func (UnimplementedSubmitQueueGatewayServer) List(context.Context, *ListRequest) (*ListResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method List not implemented")
 }
 func (UnimplementedSubmitQueueGatewayServer) mustEmbedUnimplementedSubmitQueueGatewayServer() {}
 func (UnimplementedSubmitQueueGatewayServer) testEmbeddedByValue()                            {}
@@ -257,6 +275,24 @@ func _SubmitQueueGateway_Status_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SubmitQueueGateway_List_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SubmitQueueGatewayServer).List(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SubmitQueueGateway_List_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SubmitQueueGatewayServer).List(ctx, req.(*ListRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SubmitQueueGateway_ServiceDesc is the grpc.ServiceDesc for SubmitQueueGateway service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -279,6 +315,10 @@ var SubmitQueueGateway_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Status",
 			Handler:    _SubmitQueueGateway_Status_Handler,
+		},
+		{
+			MethodName: "List",
+			Handler:    _SubmitQueueGateway_List_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

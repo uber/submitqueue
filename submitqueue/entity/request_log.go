@@ -148,3 +148,30 @@ func RequestLogFromBytes(data []byte) (RequestLog, error) {
 	}
 	return log, nil
 }
+
+// IsKnownRequestStatus reports whether status is a public status emitted by SubmitQueue.
+func IsKnownRequestStatus(status RequestStatus) bool {
+	switch status {
+	case RequestStatusAccepted,
+		RequestStatusStarted,
+		RequestStatusValidating,
+		RequestStatusValidated,
+		RequestStatusBatching,
+		RequestStatusBatched,
+		RequestStatusScored,
+		RequestStatusSpeculating,
+		RequestStatusSpeculated,
+		RequestStatusBuilding,
+		RequestStatusBuilt,
+		RequestStatusWaitingPath,
+		RequestStatusLanding,
+		RequestStatusProcessing,
+		RequestStatusLanded,
+		RequestStatusError,
+		RequestStatusCancelling,
+		RequestStatusCancelled:
+		return true
+	default:
+		return false
+	}
+}

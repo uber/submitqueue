@@ -29,6 +29,7 @@ import (
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/queueconfig"
@@ -137,8 +138,16 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (resp *p
 	// It is important to record the status before publishing to the queue for processing. It is important to publish straight to the database and not via a entityqueue.
 	// Gateway has to stay consistent with the request log.
 	logEntry := entity.NewRequestLog(landRequest.ID, entity.RequestStatusAccepted, 0, "", nil)
-	if err := c.store.GetRequestLogStore().Insert(ctx, logEntry); err != nil {
-		return nil, fmt.Errorf("LandController failed to insert request log for sqid=%s: %w", landRequest.ID, err)
+	if err := request.CreateContext(ctx, c.store, entity.RequestContext{
+		RequestID:    landRequest.ID,
+		Queue:        queue,
+		ChangeURIs:   append([]string(nil), change.URIs...),
+		AdmittedAtMs: logEntry.TimestampMs,
+	}); err != nil {
+		return nil, fmt.Errorf("LandController failed to create request context for sqid=%s: %w", landRequest.ID, err)
+	}
+	if err := request.PersistLog(ctx, c.store, logEntry); err != nil {
+		return nil, fmt.Errorf("LandController failed to persist request log for sqid=%s: %w", landRequest.ID, err)
 	}
 
 	c.logger.Debugw("land request created",

@@ -71,8 +71,17 @@ func newTestRegistryWithNoopPublisher(t *testing.T, ctrl *gomock.Controller) con
 func noopStorage(ctrl *gomock.Controller) storage.Storage {
 	logStore := storagemock.NewMockRequestLogStore(ctrl)
 	logStore.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
+	contextStore := storagemock.NewMockRequestContextStore(ctrl)
+	contextStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	contextStore.EXPECT().Get(gomock.Any(), gomock.Any()).Return(entity.RequestContext{Queue: "test-queue"}, nil).AnyTimes()
+	summaryStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	summaryStore.EXPECT().Get(gomock.Any(), gomock.Any(), gomock.Any()).Return(entity.RequestSummary{Version: 1}, nil).AnyTimes()
+	summaryStore.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
+	store.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
+	store.EXPECT().GetRequestContextStore().Return(contextStore).AnyTimes()
 	return store
 }
 
