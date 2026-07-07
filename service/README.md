@@ -12,12 +12,16 @@ Each domain has its own subdirectory with a dedicated README:
 
 | Service | Port | Domain | RPCs | Backing stores |
 |---------|------|--------|------|----------------|
-| **SubmitQueue Gateway** | 8081 | `submitqueue` | `Ping`, `Land` | MySQL app + queue |
+| **SubmitQueue Gateway** | 8081 | `submitqueue` | `Ping`, `Land`, `Cancel`, `Status`, `List` | MySQL app + queue |
 | **SubmitQueue Orchestrator** | 8082 | `submitqueue` | `Ping` (+ consumes 9 pipeline topics) | MySQL app + queue |
 | **Stovepipe** | 8083 | `stovepipe` | `Ping`, `Ingest` (+ consumes the process topic) | MySQL storage + queue |
 | **Runway** | 8086 | `runway` | `Ping` (+ consumes merge-conflict-check & merge topics) | MySQL queue |
 
 Ports above are the `go run` defaults; under Docker Compose each server listens on `:8080` inside its container and is published on a random ephemeral host port (use `make local-*-ps` / `docker port` to discover it).
+
+### Gateway List Read Model
+
+`Land` persists immutable gateway-owned request context (`request_id`, queue, original change URIs, and admission time) before publishing downstream work. Gateway log consumption then persists status events and retryably projects them into the current request summary. `List` reads that queue-scoped summary view with admission-time filtering and admission-order cursor pagination; it does not query orchestrator working tables or replay every request log on the read path.
 
 ## Directory Structure
 
@@ -129,6 +133,9 @@ grpcurl -plaintext -d '{"message": "hello"}' localhost:8082 uber.submitqueue.orc
 grpcurl -plaintext -d '{"message": "hello"}' localhost:8083 uber.submitqueue.stovepipe.Stovepipe/Ping
 grpcurl -plaintext -d '{"message": "hello"}' localhost:8086 uber.runway.Runway/Ping
 
+# List recent SubmitQueue requests for one queue
+grpcurl -plaintext -d '{"queue":"test-queue","start_time_ms":1,"end_time_ms":9999999999999,"page_size":10}' localhost:8081 uber.submitqueue.gateway.SubmitQueueGateway/List
+
 # List / describe services (reflection is registered on every server)
 grpcurl -plaintext localhost:8081 list
 grpcurl -plaintext localhost:8081 describe uber.submitqueue.gateway.SubmitQueueGateway
@@ -145,6 +152,9 @@ grpcurl -plaintext localhost:8081 describe uber.submitqueue.gateway.SubmitQueueG
 |--------|-------------|
 | `Ping` | Health check, returns service name and timestamp |
 | `Land` | Submit a land request for code changes |
+| `Cancel` | Request cancellation of a submitted land request |
+| `Status` | Read the current status of a submitted request |
+| `List` | List request summaries for one queue and time window |
 
 ### Orchestrator Service
 
