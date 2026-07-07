@@ -29,3 +29,7 @@ The `change` table records per-URI claims by in-flight requests. `request_id` is
 ## request_log table
 
 `request_log` stores immutable request status records.
+
+## request_summary table
+
+`request_summary` stores the current gateway-owned List projection. Its primary key supports point reads and conditional updates. The `(queue, started_at_ms, request_id)` index supports the bounded admission-time range and admitted-order keyset scans used by List; any additional status index must be justified with representative `EXPLAIN` plans.

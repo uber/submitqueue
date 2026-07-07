@@ -33,6 +33,7 @@ type mysqlStorage struct {
 	speculationTreeStore storage.SpeculationTreeStore
 	requestLogStore      storage.RequestLogStore
 	requestContextStore  storage.RequestContextStore
+	requestSummaryStore  storage.RequestSummaryStore
 }
 
 // NewStorage creates a new MySQL storage.
@@ -47,6 +48,7 @@ func NewStorage(db *sql.DB, scope tally.Scope) (storage.Storage, error) {
 		speculationTreeStore: NewSpeculationTreeStore(db, scope.SubScope("speculation_tree_store")),
 		requestLogStore:      NewRequestLogStore(db, scope.SubScope("request_log_store")),
 		requestContextStore:  NewRequestContextStore(db, scope.SubScope("request_context_store")),
+		requestSummaryStore:  NewRequestSummaryStore(db, scope.SubScope("request_summary_store")),
 	}, nil
 }
 
@@ -88,6 +90,11 @@ func (f *mysqlStorage) GetRequestLogStore() storage.RequestLogStore {
 // GetRequestContextStore returns the MySQL-backed RequestContextStore.
 func (f *mysqlStorage) GetRequestContextStore() storage.RequestContextStore {
 	return f.requestContextStore
+}
+
+// GetRequestSummaryStore returns the MySQL-backed RequestSummaryStore.
+func (f *mysqlStorage) GetRequestSummaryStore() storage.RequestSummaryStore {
+	return f.requestSummaryStore
 }
 
 // Close closes the underlying database connection.

@@ -68,6 +68,9 @@ type Storage interface {
 	// GetRequestContextStore returns the RequestContextStore instance.
 	GetRequestContextStore() RequestContextStore
 
+	// GetRequestSummaryStore returns the RequestSummaryStore instance.
+	GetRequestSummaryStore() RequestSummaryStore
+
 	// Close closes the storage and all underlying connections. Should only be called once at the end of the program.
 	Close() error
 }

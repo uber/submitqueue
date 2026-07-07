@@ -10,6 +10,7 @@ go_library(
         "request_context_store_mock.go",
         "request_log_store_mock.go",
         "request_store_mock.go",
+        "request_summary_store_mock.go",
         "speculation_tree_store_mock.go",
         "storage_mock.go",
     ],

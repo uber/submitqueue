@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "log.go",
         "request.go",
+        "store.go",
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/core/request",
     visibility = ["//visibility:public"],
@@ -22,6 +23,7 @@ go_test(
     srcs = [
         "log_test.go",
         "request_test.go",
+        "store_test.go",
     ],
     embed = [":request"],
     deps = [
