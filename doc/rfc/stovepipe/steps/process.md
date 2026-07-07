@@ -183,7 +183,6 @@ On a crash between admit and `record`, the Request stays non-terminal; visibilit
 | `Sequence` | The per-Queue counter value `n` behind the id; the coalescing order key |
 | `BuildStrategy` | `incremental_since_green` \| `full_monorepo`; immutable once set by `process` |
 | `BaselineURI` | Last-green URI used as the incremental baseline; empty for full builds |
-| `CreatedAt` / `UpdatedAt` | `int64` ms timestamps, per entity conventions |
 
 **States** (extending today's `accepted`-only machine):
 
