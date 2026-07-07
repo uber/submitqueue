@@ -50,6 +50,9 @@ type Storage interface {
 	// GetRequestURIStore returns the RequestURIStore instance.
 	GetRequestURIStore() RequestURIStore
 
+	// GetQueueStore returns the QueueStore instance.
+	GetQueueStore() QueueStore
+
 	// Close closes the storage and all underlying connections. Should only be called once at the end of the program.
 	Close() error
 }

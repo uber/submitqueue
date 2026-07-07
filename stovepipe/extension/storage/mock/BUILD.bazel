@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library")
 go_library(
     name = "go_default_library",
     srcs = [
+        "queue_store_mock.go",
         "request_store_mock.go",
         "request_uri_store_mock.go",
         "storage_mock.go",
