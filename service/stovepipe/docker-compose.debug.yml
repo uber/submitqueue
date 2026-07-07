@@ -1,0 +1,7 @@
+# Debug override for make local-stovepipe-debug-start — delve on :2345.
+services:
+  stovepipe-service:
+    build:
+      dockerfile: service/stovepipe/server/Dockerfile.debug
+    ports:
+      - "2345:2345"

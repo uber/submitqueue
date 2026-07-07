@@ -14,6 +14,7 @@ SUBMITQUEUE_LOCAL_PROJECT = submitqueue
 
 # Stovepipe compose file (single Ping-only service)
 STOVEPIPE_COMPOSE_FILE = service/stovepipe/docker-compose.yml
+STOVEPIPE_DEBUG_COMPOSE_FILE = service/stovepipe/docker-compose.debug.yml
 
 # Fixed project name for local manual testing (tests use unique random names)
 STOVEPIPE_LOCAL_PROJECT = stovepipe
@@ -51,7 +52,7 @@ define assert_clean
 	fi
 endef
 
-.PHONY: build build-all-linux build-runway-linux build-submitqueue-gateway-linux build-submitqueue-orchestrator-linux build-stovepipe-linux check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator license-fix lint lint-fmt lint-license local-init-runway-queue-schema local-init-stovepipe-schemas local-runway-start local-runway-stop local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-logs local-stovepipe-start local-stovepipe-stop mocks proto query-deps query-targets run-client-runway run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
+.PHONY: build build-all-linux build-runway-linux build-submitqueue-gateway-linux build-submitqueue-orchestrator-linux build-stovepipe-linux build-stovepipe-linux-debug check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator license-fix lint lint-fmt lint-license local-init-runway-queue-schema local-init-stovepipe-schemas local-runway-start local-runway-stop local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-debug-start local-stovepipe-logs local-stovepipe-start local-stovepipe-stop mocks proto query-deps query-targets run-client-runway run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
 
 
 build: ## Build all services and examples
@@ -94,6 +95,14 @@ build-stovepipe-linux: ## Build Stovepipe Linux binary for Docker
 	@cp -f bazel-bin/service/stovepipe/server/stovepipe_/stovepipe .docker-bin/stovepipe 2>/dev/null || \
 	 cp -f bazel-bin/service/stovepipe/server/stovepipe .docker-bin/stovepipe
 	@echo "Stovepipe Linux binary ready at .docker-bin/stovepipe"
+
+build-stovepipe-linux-debug: ## Build Stovepipe Linux debug binary for Docker/delve (symbols, no optimizations)
+	@echo "Building Stovepipe Linux debug binary for Docker..."
+	@$(BAZEL) build --compilation_mode=dbg --platforms=@rules_go//go/toolchain:linux_amd64 //service/stovepipe/server:stovepipe
+	@mkdir -p .docker-bin
+	@cp -f bazel-bin/service/stovepipe/server/stovepipe_/stovepipe .docker-bin/stovepipe-debug 2>/dev/null || \
+	 cp -f bazel-bin/service/stovepipe/server/stovepipe .docker-bin/stovepipe-debug
+	@echo "Stovepipe Linux debug binary ready at .docker-bin/stovepipe-debug"
 
 check-gazelle: ## Check BUILD.bazel files are up to date
 	@echo "Running Gazelle to check BUILD files..."
@@ -319,6 +328,19 @@ local-stop: ## Stop all services (keep data)
 	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) down
 	@$(COMPOSE) -f $(RUNWAY_COMPOSE_FILE) -p $(RUNWAY_LOCAL_PROJECT) down
 	@echo "Services stopped. Data volumes preserved."
+
+local-stovepipe-debug-start: build-stovepipe-linux-debug ## Start Stovepipe under delve in Docker (attach IDE to :2345)
+	@echo "Starting Stovepipe service with compose (debug)..."
+	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -f $(STOVEPIPE_DEBUG_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) up -d --build --wait
+	@echo "Applying storage and queue schemas..."
+	@$(MAKE) -s local-init-stovepipe-schemas
+	@echo ""
+	@echo "✅ Stovepipe debug is running (delve :2345)!"
+	@echo ""
+	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -f $(STOVEPIPE_DEBUG_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) ps
+	@echo ""
+	@echo "Stovepipe gRPC port: $$(docker port $(STOVEPIPE_LOCAL_PROJECT)-stovepipe-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'unknown')"
+	@echo "Delve: 127.0.0.1:2345 — run launch config \"Debug: attach (dlv in docker)\""
 
 local-stovepipe-logs: ## View logs from the running Stovepipe service
 	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) logs -f

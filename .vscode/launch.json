@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug: attach (dlv in docker)",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "cwd": "${workspaceFolder}",
+      "host": "127.0.0.1",
+      "port": 2345,
+      "showLog": true
+    }
+  ]
+}
