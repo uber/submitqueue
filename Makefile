@@ -364,7 +364,7 @@ local-stovepipe-stop: ## Stop the Stovepipe service
 
 mocks: ## Generate mock files using mockgen
 	@echo "Generating mocks..."
-	@$(BAZEL) run @rules_go//go -- generate ./submitqueue/extension/storage/... ./submitqueue/extension/buildrunner/... ./submitqueue/extension/changeprovider/... ./platform/extension/counter/... ./platform/extension/messagequeue/... ./submitqueue/extension/queueconfig/... ./submitqueue/extension/mergechecker/... ./submitqueue/extension/pusher/... ./submitqueue/extension/scorer/... ./submitqueue/extension/conflict/... ./submitqueue/extension/speculation/enumerator/... ./submitqueue/extension/speculation/dependencylimit/... ./platform/consumer/... ./submitqueue/core/changeset/... ./stovepipe/extension/storage/... ./stovepipe/extension/sourcecontrol/...
+	@$(BAZEL) run @rules_go//go -- generate ./submitqueue/extension/storage/... ./submitqueue/extension/buildrunner/... ./submitqueue/extension/changeprovider/... ./platform/extension/counter/... ./platform/extension/messagequeue/... ./submitqueue/extension/queueconfig/... ./submitqueue/extension/mergechecker/... ./submitqueue/extension/pusher/... ./submitqueue/extension/scorer/... ./submitqueue/extension/conflict/... ./submitqueue/extension/speculation/enumerator/... ./submitqueue/extension/speculation/dependencylimit/... ./submitqueue/extension/speculation/scorer/... ./platform/consumer/... ./submitqueue/core/changeset/... ./stovepipe/extension/storage/... ./stovepipe/extension/sourcecontrol/...
 	@echo "Mocks generated successfully!"
 
 proto: ## Generate protobuf files from .proto definitions
