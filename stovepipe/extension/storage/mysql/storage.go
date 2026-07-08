@@ -19,7 +19,6 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
-
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
 

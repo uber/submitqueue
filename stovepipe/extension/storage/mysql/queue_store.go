@@ -21,7 +21,6 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
