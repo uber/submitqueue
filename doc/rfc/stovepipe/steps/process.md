@@ -26,7 +26,7 @@ For a delivery carrying request id `R`:
 5. Coalesce: if R.Sequence < Q.latest_request_seq:
    - a newer head exists -> mark R superseded, ack, return. (No slot consumed.)
 6. R is the latest head. Gate: if Q.in_flight_count >= Q.max_concurrent:
-   - park the delivery (extend visibility, no ack/nack, no state change) -> re-check until the slot frees (admit) or a newer head supersedes it. See [Waiting for a slot](#waiting-for-a-slot).
+   - defer (Option 1 or Option 2 below) -> re-check until the slot frees (admit) or a newer head supersedes it. See [Waiting for a slot](#waiting-for-a-slot).
 7. Admit R:
    a. Derive build strategy + baseline (see "Build-strategy decision").
    b. CAS the Queue row: in_flight_count += 1.
@@ -100,7 +100,7 @@ Why not `SourceControl.History`: a history walk is expensive, and after a rewrit
 
 Ordering caveat: `counter.Next` doesn't guarantee assignment order, so under concurrent same-Queue ingest (rare — one serial poller) "highest sequence" may not equal "most recently reported". They agree in practice, and a rare inversion self-corrects next poll. Acceptable for MVP.
 
-**The pointer prevents deadlock.** Under `BatchSize = 1` a parked delivery blocks its partition, so `process` can't learn of newer heads *from the stream*. But ingest writes `latest_request_seq` independently of the partition, so a parked head's re-check (or an intermediate delivery) sees the newer head at step 5 and supersedes the stale one. Without it, `process` could wait on a stale head forever behind the blocked partition.
+**The pointer prevents deadlock.** Under `BatchSize = 1`, Option 1 blocks its partition while waiting, so `process` can't learn of newer heads *from the stream* during that wait. Option 2 unblocks the partition, so newer ingest deliveries can arrive immediately. Both options read `latest_request_seq` from the Queue row on every wake-up (step 5), so a stale waiter — blocked or delayed — still supersedes correctly. Ingest stamps the pointer independently of the partition (see [Backlog coalescing](#backlog-coalescing)).
 
 **Progress (no starvation).** Superseding is always forward motion toward the newest head, and the newest head is never superseded (nothing is newer). So as long as `process` supersedes faster than ingest adds heads — it does, since superseding is a CAS + ack with no build, far cheaper than the poll cadence — a build always starts; a high commit rate just coalesces more intermediates away.
 
@@ -113,19 +113,19 @@ The gate is **not** tied to `process` returning; a slot taken at admit is held u
 **Rules**
 
 1. **One slot per in-flight validation** (MVP: one per Queue). `process` increments `in_flight_count` on admit; `record` decrements on terminal.
-2. **No skip-ahead while in-flight.** The latest head parks until the running validation completes; it never preempts.
+2. **No skip-ahead while in-flight.** The latest head waits for a slot until the running validation completes; it never preempts.
 3. **Intermediates are superseded on sight**, gate open or closed — no slot consumed (step 5).
-4. **Coalesce-to-latest on gate open.** When a slot frees, the parked latest head is admitted.
+4. **Coalesce-to-latest on gate open.** When a slot frees, the waiting latest head is admitted.
 5. **The cycle repeats** for whatever accumulated during the previous validation.
 
 **Worked example** — Queue `monorepo/main`, `max_concurrent = 1`, poller reporting heads A→F:
 
 1. **A** admitted (`in_flight_count = 1`), published to `build`.
 2. While A runs, **B**, **C**, **D** are ingested (`latest_request_seq = D.seq`).
-3. B: `B.seq < D.seq` → **superseded** (acked), though A is still in flight. Same for **C**. D is latest but the gate is closed → **D parked**.
+3. B: `B.seq < D.seq` → **superseded** (acked), though A is still in flight. Same for **C**. D is latest but the gate is closed → **waits for slot** (Option 1 or 2).
 4. A's build finishes → `record` records A's greenness, `in_flight_count → 0`.
 5. D's re-check → gate open, D still latest → **D admitted**, published to `build`.
-6. While D runs, **E**, **F** ingested (`latest_request_seq = F.seq`). E superseded on sight; F parked.
+6. While D runs, **E**, **F** ingested (`latest_request_seq = F.seq`). E superseded on sight; F waits for slot.
 7. D completes → slot frees → **F admitted**.
 
 A, D, F each get a full cycle; B, C, E end `superseded`. No intermediate is validated individually — intentional for MVP.
@@ -134,7 +134,7 @@ A, D, F each get a full cycle; B, C, E end `superseded`. No intermediate is vali
 
 - `process` returning does **not** free a slot — only `record` (or DLQ reconciliation) does.
 - A newer head does **not** preempt an in-flight validation.
-- Parked messages are **not** failed or dead-lettered — they wait for the gate (see [Waiting for a slot](#waiting-for-a-slot)).
+- Deferred messages are **not** failed or dead-lettered — they wait for the gate (see [Waiting for a slot](#waiting-for-a-slot)).
 
 ## Idempotency and at-least-once delivery
 
@@ -143,7 +143,7 @@ Every branch is safe under redelivery:
 - **accepted, no strategy** → full admit path. On a crash after incrementing `in_flight_count` but before persisting `processing`, redelivery re-reads `accepted` and re-runs; the increment re-applies only if the count CAS hasn't already moved (see integrity below).
 - **processing** → re-publish to `build` and ack. The `build` consumer is keyed on the request id and idempotent, so a duplicate publish is harmless.
 - **terminal** (superseded / recorded) → ack, no-op.
-- **parked** → no state or count change; pure deferral (re-parks on redelivery).
+- **deferred (waiting for slot)** → no state or count change; pure deferral (re-enters on renewal or reschedule).
 
 The window to handle is "count incremented, state not yet `processing`". Admit does the increment and the state transition as two ordered CAS writes, and the decrement is tied to the state transition, not a side counter (see integrity below).
 
@@ -159,7 +159,7 @@ On a crash between admit and `record`, the Request stays non-terminal; visibilit
 ## Edge cases
 
 - **Re-ingest of a superseded URI.** Ingest dedups on `(Queue, URI)` and returns the existing (now terminal `superseded`) id; `process` acks it as a no-op (step 2). Correct: a URI is only superseded for a *strictly newer* head, so re-validating it is never wanted.
-- **Gate closed, no newer head.** The single latest head parks until the in-flight validation completes — the steady state, not an error.
+- **Gate closed, no newer head.** The single latest head waits for a slot until the in-flight validation completes — the steady state, not an error.
 - **Head equals last-green.** `IsAncestor(lastGreen, R.URI)` with `R.URI == lastGreen` is degenerate; treat as already-green, or (simpler) run an incremental build with an empty delta. Left to `build`.
 - **Queue row missing.** First head for a Queue: ingest get-or-creates the row with defaults (`in_flight_count = 0`, empty `last_green_uri`, `max_concurrent` from config). `process` treats a missing row as retryable (ingest write not yet visible).
 
@@ -207,19 +207,83 @@ No "list requests by queue/state" query is introduced; coalescing uses the singl
 
 ## Waiting for a slot
 
-When the gate is closed, `process` defers the latest head by **parking the delivery** — no new platform primitive required. It keeps the in-flight message alive with periodic `ExtendVisibilityTimeout` calls (already exposed to controllers for long-running work) and re-checks the Queue row on an interval, re-running the algorithm's **coalesce-then-gate** order (steps 5 → 6) in this priority:
+When the gate is closed, `process` must defer the latest head without admitting it (no `in_flight_count` increment, no publish to `build`). Two options fit; pick one at implementation time. Both re-run the same **coalesce-then-gate** checks on every wake-up (steps 5 → 6):
 
-1. **Stale? (checked first.)** If a newer head arrived (`R.Sequence < latest_request_seq`), `R` is no longer latest → supersede it (ack); the newer head is admitted by its own delivery. Checking this first guarantees a freed slot never admits a stale parked head.
-2. **Slot free?** Otherwise, if `in_flight_count < max_concurrent`, `R` is still latest → admit it.
+1. **Stale? (checked first.)** If `R.Sequence < latest_request_seq`, `R` is no longer latest → supersede it (ack). A newer head is admitted by its own delivery when its slot attempt runs.
+2. **Slot free?** If `in_flight_count < max_concurrent` and `R` is still latest → admit (step 7).
 
-Otherwise keep waiting. The delivery is never acked or nacked while parked, and `ExtendVisibilityTimeout` renews the lease **without** incrementing `retry_count`, so a head can wait through an arbitrarily long build without being dead-lettered. The loop must honor context cancellation — on shutdown it returns promptly and the head resumes on redelivery.
+Neither option admits to `build` until the gate opens.
 
-**Why a missed renewal is safe.** If the worker stalls and the visibility window lapses, another worker may pick up the same head and run concurrently. Harmless: admission is CAS-guarded (`accepted → processing` plus the count increment), so only one admit wins and publishes; the loser sees `processing` (step 3) and no-ops. A missed renewal costs redundant work, never correctness.
+### Option 1: park and extend visibility
 
-**Alternative (high level): Hold.** At high Queue counts, one parked goroutine per waiting head is a real cost. A `Hold` primitive would instead *release* the message during the wait and lean on the queue's timer to redeliver it — the controller returns a `consumer.ErrHold` flow signal, the consumer skips ack/nack, and re-evaluation happens on redelivery rather than in a loop. It trades a small `platform/consumer` addition (plus care that a held redelivery not count toward `MaxAttempts`) for not holding a goroutine per waiting head. Deferred until parked-goroutine cost is shown to matter.
+**Mechanism.** Keep the in-flight delivery alive. Loop: call `ExtendVisibilityTimeout` on an interval (renews the lease **without** incrementing `retry_count`), reload the Queue row, run coalesce-then-gate. Never ack or nack while waiting. Honor context cancellation — on shutdown return promptly; the head resumes on redelivery.
+
+**Partition behavior.** Under `BatchSize = 1`, the delivery stays in-flight and **blocks the partition** until it admits or supersedes. Newer ingest messages queue behind it in the log; coalescing for the waiting head relies on `latest_request_seq` from the Queue row, not on newer deliveries arriving while blocked.
+
+**Walkthrough** — Queue `monorepo/main`, `max_concurrent = 1`, heads A→F, Option 1 chosen:
+
+1. **A** admitted, published to `build` (`in_flight_count = 1`). `process` returns (acks); A continues through `build → buildsignal → record`.
+2. **B**, **C** ingested. Their deliveries run behind A's in-flight validation (not behind a gate wait yet) → superseded on sight (step 5), acked.
+3. **D** ingested (`latest_request_seq = D.seq`). D's delivery: latest, gate closed → **park** (extend loop begins; partition blocked).
+4. While D waits, **E**, **F** ingested (`latest_request_seq = F.seq`). Their process messages sit in the log behind D's blocked delivery — they do not run yet.
+5. D's renew loop re-reads the Queue row → `D.seq < F.seq` → **supersede D**, ack (partition unblocks).
+6. **E**'s delivery runs → superseded. **F**'s delivery runs → latest, gate still closed → **park**.
+7. A completes at `record` → `in_flight_count → 0`. F's renew loop sees gate open → **admit F**, publish to `build`, ack.
+
+**Supersede reasoning.** Simple while blocked: the waiter periodically re-checks `latest_request_seq` and supersedes itself when a newer head appears. Intermediates (B, C, E) only run once the partition unblocks enough to reach their offsets.
+
+**Tradeoffs.**
+
+| Pros | Cons |
+|---|---|
+| Delivery API only — no publisher in `process` | Goroutine blocked in renew loop per waiting head |
+| One delivery, minimal log churn | Partition blocked — newer heads wait in the log |
+| `ExtendVisibility` does not increment `retry_count` | Lease lapses (missed renewal) increment `retry_count` → `MaxAttempts` risk |
+| Strict in-partition serialization while waiting | Tune renewal interval inside `VisibilityTimeoutMs` |
+
+**Safety.** If renewal lapses, another worker may redeliver the same head concurrently. Harmless: admission is CAS-guarded; one admit wins, the other sees `processing` (step 3) and no-ops.
+
+### Option 2: ack and `PublishAfter`
+
+**Mechanism.** On gate closed and still latest: **ack** the current delivery, then **`PublishAfter`** the same `ProcessRequest` to the process topic (same partition key = queue name) after a short delay. Each wake-up is a **fresh** message (`retry_count` starts at 0). Run coalesce-then-gate at the top of every wake-up; if still latest and gate still closed, ack and `PublishAfter` again. Only reschedule when both conditions hold — otherwise supersede or admit immediately.
+
+**Partition behavior.** Acks free the partition. Newer ingest deliveries (E, F, …) are processed and superseded while the latest head waits on a timer. Deferred rows use `visible_after` and are skipped until due — the same non-blocking property as a nacked message — so a reschedule at offset 11 can run *after* a newer ingest message at offset 12. Delivery order reshuffles relative to strict log order; coalescing keys off `latest_request_seq`, not offset.
+
+**Walkthrough** — same scenario, Option 2 chosen:
+
+1. **A** admitted, published to `build` (`in_flight_count = 1`).
+2. **B**, **C** ingested → delivered and **superseded** on sight.
+3. **D** ingested (`latest_request_seq = D.seq`). D's delivery: latest, gate closed → **ack + `PublishAfter(D, delay)`**. Partition free.
+4. **E**, **F** ingested (`latest_request_seq = F.seq`). **E** delivered → superseded. **F** delivered → latest, gate closed → **ack + `PublishAfter(F, delay)`**. D's pending reschedule is now redundant.
+5. D's timer fires → `D.seq < F.seq` → **supersede D**, ack (cheap no-op).
+6. A completes at `record` → `in_flight_count → 0`. F's timer fires → gate open, still latest → **admit F**, publish to `build`, ack.
+
+**Supersede reasoning.** Straightforward: every wake-up (immediate or delayed) runs step 5 first. Stale delayed messages (D) supersede on sight. Only the current latest (F) should schedule the next wait. Older delayed rows are expected no-ops, not errors.
+
+**Tradeoffs.**
+
+| Pros | Cons |
+|---|---|
+| No `MaxAttempts` burn while waiting (each cycle acks; reschedule is fresh) | Ack + new log row per poll cycle while gate is closed |
+| Partition stays hot — intermediates supersede immediately | `process` needs publisher + topic registry |
+| Worker returns between waits — no blocked goroutine | Delivery order ≠ ingest order (correctness unaffected) |
+| Stale delayed waiters self-clean via step 5 | Redundant delayed rows if multiple heads reschedule before timers fire |
+
+### Comparison
+
+| | **Option 1: park + extend** | **Option 2: ack + `PublishAfter`** |
+|---|---|---|
+| **`MaxAttempts`** | Safe when renewals keep up; lease lapses increment `retry_count` | Safe — waiting never increments `retry_count` |
+| **Partition (`BatchSize = 1`)** | Blocks until admit or supersede | Unblocks; newer heads process immediately |
+| **Supersede** | Waiter polls `latest_request_seq` in loop | Immediate deliveries + stale timers supersede on wake-up |
+| **Churn** | One delivery, periodic extends | One new log row per wait cycle |
+| **Wiring** | `ExtendVisibilityTimeout` on `Delivery` | Publisher + topic registry in controller |
+| **Worker** | Goroutine in renew loop | Returns; timer brings work back |
+
+Implementation picks one option and wires step 6 to it. A future `consumer.ErrHold` primitive would resemble Option 2 (release + redeliver) without self-republish; neither option is chosen here yet.
 
 ## Batch consume
 
-The MVP coalesces one delivery at a time via the sequence pointer. The only churn is intermediate heads, each delivered once and superseded; the parked latest head adds none (it waits in place).
+Coalescing uses the sequence pointer one delivery at a time. Intermediates are each delivered once and superseded. The latest head adds no extra rows under Option 1 (it waits in place); under Option 2 it adds one reschedule row per wait cycle while the gate is closed.
 
 If that churn matters at scale, an optional `BatchController` (receiving `[]Delivery` per poll) would let `process` supersede all intermediates in a single tick — an optimization over the single-delivery path that can land later without changing the state machine or storage contract.
