@@ -1,0 +1,9 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["pathscorer.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/extension/speculation/pathscorer",
+    visibility = ["//visibility:public"],
+    deps = ["//submitqueue/entity:go_default_library"],
+)
