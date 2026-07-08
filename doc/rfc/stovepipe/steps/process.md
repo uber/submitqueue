@@ -25,12 +25,12 @@ For a delivery carrying request id `R`:
 4. R.State is accepted. Load (or create) the Queue row Q.
 5. Coalesce: if R.Sequence < Q.latest_request_seq:
    - a newer head exists -> mark R superseded, ack, return. (No slot consumed.)
-6. R is the latest head. Gate: if Q.in_flight_count >= Q.max_concurrent:
+6. R is the latest head. Gate: if Q.in_flight_count >= max_concurrent (from queue config; see below):
    - defer (Option 1 or Option 2 below) -> re-check until the slot frees (admit) or a newer head supersedes it. See [Waiting for a slot](#waiting-for-a-slot).
 7. Admit R:
    a. Derive build strategy + baseline (see "Build-strategy decision").
    b. CAS the Queue row: in_flight_count += 1.
-   c. CAS the Request: accepted -> processing, persist build_strategy + baseline_uri.
+   c. CAS the Request: accepted -> processing, persist build_strategy + base_uri.
    d. Publish R to build.
    e. ack.
 ```
@@ -52,13 +52,15 @@ Strategy and baseline are persisted on the Request and are **immutable**: a rede
 
 ## Per-Queue concurrency gate
 
-Validation is expensive and shares a baseline, so heads arriving while an earlier one runs `build → buildsignal → record` must not all start builds at once. Gate state on the Queue row:
+Validation is expensive and shares a baseline, so heads arriving while an earlier one runs `build → buildsignal → record` must not all start builds at once.
 
-| Field | Meaning |
-|---|---|
-| `last_green_uri` | Bookmark `record` advances on whole-repo green; empty until first green. |
-| `in_flight_count` | Requests past `process` and not yet terminal. `process` increments on admit; `record` (or DLQ reconciliation) decrements on terminal. |
-| `max_concurrent` | Cap on concurrent in-flight validations. **Default 1.** |
+**Runtime state** lives on the Queue row; the **concurrency cap** does not — it is deployment configuration, resolved at gate-check time the same way SubmitQueue separates `storage` from `queueconfig` (see [submitqueue/extension/queueconfig/README.md](../../../../submitqueue/extension/queueconfig/README.md)): pipeline stages read mutable state from the store and read knobs like `max_concurrent` from a config `Store` (or a wiring default for MVP). Config is not written by ingest/process/record and does not need optimistic locking.
+
+| Source | Field | Meaning |
+|---|---|---|
+| Queue row | `last_green_uri` | Bookmark `record` advances on whole-repo green; empty until first green. |
+| Queue row | `in_flight_count` | Requests past `process` and not yet terminal. `process` increments on admit; `record` (or DLQ reconciliation) decrements on terminal. |
+| Queue config | `max_concurrent` | Cap on concurrent in-flight validations. **Default 1** (global wiring default for MVP; per-queue override when a Stovepipe `queueconfig` extension lands). |
 
 A slot is held for the **entire** Phase 1 cycle (`process → build → buildsignal → record`), not just while `process` runs. It is released when the Request reaches **any** terminal state and `in_flight_count` is decremented — `record` writing green *or* not-green, or the DLQ reconciler forcing a terminal not-green (see [integrity](#in_flight_count-integrity)). A build *failure* frees the slot just like a success; only a Request that never terminates keeps its slot.
 
@@ -83,7 +85,7 @@ Correctness rests on four rules, all with MVP primitives already in place:
 
 The only cost is speculation: a build on an older baseline re-tests deltas a concurrent build already greened past — correct but wasteful, growing with how far the baseline lags. Bounding that lag ("drain before adopting a new baseline") is a **cost governor, not a safety gate**. It inherits, but doesn't worsen, the incremental-build soundness assumption already used at N=1.
 
-So per-baseline concurrency isn't an unsolved semantics problem — it's speculative validation with a lag-bounded baseline. It's deferred only for the per-lineage bookkeeping (rules 2–4, derivable from `Request.Sequence` + `Request.BaselineURI`) and a coalesce-latest-N policy, neither of which the MVP forecloses.
+So per-baseline concurrency isn't an unsolved semantics problem — it's speculative validation with a lag-bounded baseline. It's deferred only for the per-lineage bookkeeping (rules 2–4, derivable from `Request.Sequence` + `Request.BaseURI`) and a coalesce-latest-N policy, neither of which the MVP forecloses.
 
 ## Backlog coalescing
 
@@ -161,20 +163,23 @@ On a crash between admit and `record`, the Request stays non-terminal; visibilit
 - **Re-ingest of a superseded URI.** Ingest dedups on `(Queue, URI)` and returns the existing (now terminal `superseded`) id; `process` acks it as a no-op (step 2). Correct: a URI is only superseded for a *strictly newer* head, so re-validating it is never wanted.
 - **Gate closed, no newer head.** The single latest head waits for a slot until the in-flight validation completes — the steady state, not an error.
 - **Head equals last-green.** `IsAncestor(lastGreen, R.URI)` with `R.URI == lastGreen` is degenerate; treat as already-green, or (simpler) run an incremental build with an empty delta. Left to `build`.
-- **Queue row missing.** First head for a Queue: ingest get-or-creates the row with defaults (`in_flight_count = 0`, empty `last_green_uri`, `max_concurrent` from config). `process` treats a missing row as retryable (ingest write not yet visible).
+- **Queue row missing.** First head for a Queue: ingest get-or-creates the row with defaults (`in_flight_count = 0`, empty `last_green_uri`). `process` treats a missing row as retryable (ingest write not yet visible).
 
 ## Entity model
 
 ### Queue (new persisted entity)
+
+Runtime coordination only — fields the pipeline writes under CAS:
 
 | Field | Role | Written by |
 |---|---|---|
 | `name` | Stable logical id (`monorepo/main`); the string ingest accepts | ingest (create) |
 | `last_green_uri` | Bookmark; empty until first green | record |
 | `in_flight_count` | Active Phase 1 validations | process (+1), record/DLQ (−1) |
-| `max_concurrent` | Concurrency cap (default 1) | config at create |
 | `latest_request_seq` | Highest request sequence ingested | ingest |
 | `version` | Optimistic-locking version | all writers |
+
+Per-queue knobs such as `max_concurrent` live outside this row — see [Per-Queue concurrency gate](#per-queue-concurrency-gate).
 
 ### Request (additions to the existing entity)
 
@@ -182,7 +187,7 @@ On a crash between admit and `record`, the Request stays non-terminal; visibilit
 |---|---|
 | `Sequence` | The per-Queue counter value `n` behind the id; the coalescing order key |
 | `BuildStrategy` | `incremental_since_green` \| `full_monorepo`; immutable once set by `process` |
-| `BaselineURI` | Last-green URI used as the incremental baseline; empty for full builds |
+| `BaseURI` | Last-green URI used as the incremental base; empty for full builds |
 
 **States** (extending today's `accepted`-only machine):
 
@@ -207,10 +212,15 @@ No "list requests by queue/state" query is introduced; coalescing uses the singl
 
 ## Waiting for a slot
 
-When the gate is closed, `process` must defer the latest head without admitting it (no `in_flight_count` increment, no publish to `build`). Two options fit; pick one at implementation time. Both re-run the same **coalesce-then-gate** checks on every wake-up (steps 5 → 6):
+When the gate is closed, `process` must defer the latest head without admitting it (no `in_flight_count` increment, no publish to `build`). Two options:
+
+- Park until a build slot opens, and extend visibility
+- Use PublishAfter to re-enqeue the current head if no build slot is available
+
+Both re-run the same **coalesce-then-gate** checks on every wake-up (steps 5 → 6):
 
 1. **Stale? (checked first.)** If `R.Sequence < latest_request_seq`, `R` is no longer latest → supersede it (ack). A newer head is admitted by its own delivery when its slot attempt runs.
-2. **Slot free?** If `in_flight_count < max_concurrent` and `R` is still latest → admit (step 7).
+2. **Slot free?** If `in_flight_count < max_concurrent` (from config) and `R` is still latest → admit (step 7).
 
 Neither option admits to `build` until the gate opens.
 
