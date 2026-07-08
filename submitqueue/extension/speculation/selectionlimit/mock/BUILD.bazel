@@ -1,0 +1,12 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["selectionlimit_mock.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/extension/speculation/selectionlimit/mock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//submitqueue/extension/speculation/selectionlimit:go_default_library",
+        "@org_uber_go_mock//gomock:go_default_library",
+    ],
+)
