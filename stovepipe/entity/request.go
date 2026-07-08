@@ -29,8 +29,25 @@ const (
 	RequestStateUnknown RequestState = ""
 	// RequestStateAccepted is the initial state of a request: a new commit has been observed
 	// for the queue and the request has been admitted into the pipeline, but no validation
-	// strategy has been chosen yet. Later stages (process, build, record) add their own states.
+	// strategy has been chosen yet.
 	RequestStateAccepted RequestState = "accepted"
+	// RequestStateProcessing means process admitted the request, recorded build strategy and
+	// baseline, and published to build.
+	RequestStateProcessing RequestState = "processing"
+	// RequestStateSuperseded means process skipped the request because a newer head exists.
+	RequestStateSuperseded RequestState = "superseded"
+)
+
+// BuildStrategy defines how build validates the request's commit.
+type BuildStrategy string
+
+const (
+	// BuildStrategyUnknown is the zero value before process chooses a strategy.
+	BuildStrategyUnknown BuildStrategy = ""
+	// BuildStrategyIncrementalSinceGreen validates only the delta since the pinned baseline URI.
+	BuildStrategyIncrementalSinceGreen BuildStrategy = "incremental_since_green"
+	// BuildStrategyFullMonorepo validates the whole monorepo from scratch.
+	BuildStrategyFullMonorepo BuildStrategy = "full_monorepo"
 )
 
 // Request represents a single validation of a queue at a particular commit. The queue reports
@@ -50,6 +67,8 @@ type Request struct {
 	// URI is the opaque, VCS-agnostic locator of the commit under validation, as produced by the
 	// SourceControl extension. It is empty until SourceControl resolution is wired in.
 	URI string `json:"uri"`
+	// Sequence is the per-queue counter value behind the request id; higher means a later ingest.
+	Sequence int64 `json:"sequence"`
 
 	// ****************
 	// Following fields could be changed throughout the lifecycle of the request
@@ -57,6 +76,10 @@ type Request struct {
 
 	// State is the current state of the request in the pipeline.
 	State RequestState `json:"state"`
+	// BuildStrategy is the validation scope process chose at admit time; empty until set.
+	BuildStrategy BuildStrategy `json:"build_strategy"`
+	// BaseURI is the last-green URI pinned as the incremental baseline; empty for full builds.
+	BaseURI string `json:"base_uri"`
 	// Version is the version of the object. It is used for optimistic locking.
 	// Versioning starts at 1 and is incremented for each change to the object.
 	Version int32 `json:"version"`

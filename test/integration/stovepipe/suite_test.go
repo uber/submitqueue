@@ -117,10 +117,22 @@ func (s *StovepipeIntegrationSuite) TestIngestAPI() {
 	require.NotEmpty(t, resp.Id, "minted request id should not be empty")
 	id := resp.Id
 
-	// Request persisted.
+	// Request persisted with sequence.
 	var reqCount int
 	require.NoError(t, s.db.QueryRow("SELECT COUNT(*) FROM request WHERE id = ?", id).Scan(&reqCount))
 	assert.Equal(t, 1, reqCount, "request row should be persisted")
+
+	var sequence int64
+	require.NoError(t, s.db.QueryRow("SELECT sequence FROM request WHERE id = ?", id).Scan(&sequence))
+	assert.Equal(t, int64(1), sequence, "first minted request should have sequence 1")
+
+	// Queue row created with latest_request_seq stamped.
+	var latestSeq int64
+	require.NoError(t, s.db.QueryRow(
+		"SELECT latest_request_seq FROM queue WHERE name = ?",
+		queue,
+	).Scan(&latestSeq))
+	assert.Equal(t, int64(1), latestSeq, "ingest should stamp latest_request_seq")
 
 	// (queue, URI) mapping persisted and points at the minted id.
 	var mappedID string

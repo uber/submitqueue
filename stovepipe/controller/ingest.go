@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/uber-go/tally"
 	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
@@ -114,16 +116,24 @@ func (c *IngestController) Ingest(ctx context.Context, req *pb.IngestRequest) (r
 
 	// The (queue, URI) mapping is the dedup gate and the source of truth for "does this head
 	// have a request id".
-	id, err := c.resolveID(ctx, queue, uri)
+	id, mintedSeq, err := c.resolveID(ctx, queue, uri)
 	if err != nil {
 		return nil, err
 	}
 
 	// Ensure the request row exists, healing a prior partial write where the mapping committed
 	// but the request did not.
-	request, err := c.ensureRequest(ctx, id, queue, uri)
+	request, created, err := c.ensureRequest(ctx, id, queue, uri, mintedSeq)
 	if err != nil {
 		return nil, err
+	}
+
+	// Stamp the queue's latest_request_seq only after a successful new request create so the
+	// pointer stays aligned with minted sequences (dedup and heal paths skip this).
+	if created {
+		if err := c.stampLatestRequestSeq(ctx, queue, request.Sequence); err != nil {
+			return nil, err
+		}
 	}
 
 	// Publish while the request is still pre-pipeline (Accepted). The process consumer is
@@ -147,16 +157,15 @@ func (c *IngestController) Ingest(ctx context.Context, req *pb.IngestRequest) (r
 }
 
 // resolveID returns the request id mapped to (queue, URI), minting and claiming a new one if the
-// pair is not yet mapped. Claiming the mapping is the dedup gate: a concurrent ingest that loses
-// the claim re-reads and returns the winner's id, so no orphan request row is created (only the
-// minted counter value is spent).
-func (c *IngestController) resolveID(ctx context.Context, queue, uri string) (string, error) {
+// pair is not yet mapped. mintedSeq is the counter value when this call claimed a new id; it is
+// zero when the id came from an existing mapping (dedup or create race).
+func (c *IngestController) resolveID(ctx context.Context, queue, uri string) (id string, mintedSeq int64, retErr error) {
 	uriStore := c.store.GetRequestURIStore()
 
-	if id, err := uriStore.GetIDByURI(ctx, queue, uri); err == nil {
-		return id, nil
+	if existing, err := uriStore.GetIDByURI(ctx, queue, uri); err == nil {
+		return existing, 0, nil
 	} else if !errors.Is(err, storage.ErrNotFound) {
-		return "", fmt.Errorf("IngestController failed to look up existing request for queue=%s: %w", queue, err)
+		return "", 0, fmt.Errorf("IngestController failed to look up existing request for queue=%s: %w", queue, err)
 	}
 
 	// Mint a globally unique request ID namespaced by the queue. The counter domain
@@ -164,51 +173,104 @@ func (c *IngestController) resolveID(ctx context.Context, queue, uri string) (st
 	domain := "request/" + queue
 	seq, err := c.counter.Next(ctx, domain)
 	if err != nil {
-		return "", fmt.Errorf("IngestController failed to generate request ID for queue=%s: %w", queue, err)
+		return "", 0, fmt.Errorf("IngestController failed to generate request ID for queue=%s: %w", queue, err)
 	}
-	id := fmt.Sprintf("%s/%d", domain, seq)
+	id = fmt.Sprintf("%s/%d", domain, seq)
 
 	if err := uriStore.Create(ctx, queue, uri, id); err != nil {
 		if errors.Is(err, storage.ErrAlreadyExists) {
 			existing, getErr := uriStore.GetIDByURI(ctx, queue, uri)
 			if getErr != nil {
-				return "", fmt.Errorf("IngestController failed to resolve raced request for queue=%s: %w", queue, getErr)
+				return "", 0, fmt.Errorf("IngestController failed to resolve raced request for queue=%s: %w", queue, getErr)
 			}
-			return existing, nil
+			return existing, 0, nil
 		}
-		return "", fmt.Errorf("IngestController failed to map URI for queue=%s: %w", queue, err)
+		return "", 0, fmt.Errorf("IngestController failed to map URI for queue=%s: %w", queue, err)
 	}
-	return id, nil
+	return id, seq, nil
 }
 
 // ensureRequest returns the request for id, creating it in the Accepted state if it does not yet
-// exist. A concurrent creator (ErrAlreadyExists) is resolved by re-reading the canonical row.
-func (c *IngestController) ensureRequest(ctx context.Context, id, queue, uri string) (entity.Request, error) {
+// exist. created is true only when this call inserted the row. A concurrent creator
+// (ErrAlreadyExists) is resolved by re-reading the canonical row.
+func (c *IngestController) ensureRequest(
+	ctx context.Context,
+	id, queue, uri string,
+	mintedSeq int64,
+) (entity.Request, bool, error) {
 	reqStore := c.store.GetRequestStore()
 
 	got, err := reqStore.Get(ctx, id)
 	if err == nil {
-		return got, nil
+		return got, false, nil
 	}
 	if !errors.Is(err, storage.ErrNotFound) {
-		return entity.Request{}, fmt.Errorf("IngestController failed to load request %s: %w", id, err)
+		return entity.Request{}, false, fmt.Errorf("IngestController failed to load request %s: %w", id, err)
+	}
+
+	sequence := mintedSeq
+	if sequence == 0 {
+		var parseErr error
+		sequence, parseErr = parseRequestSequence(id, queue)
+		if parseErr != nil {
+			return entity.Request{}, false, fmt.Errorf("IngestController failed to parse sequence from request %s: %w", id, parseErr)
+		}
 	}
 
 	request := entity.Request{
-		ID:      id,
-		Queue:   queue,
-		URI:     uri,
-		State:   entity.RequestStateAccepted,
-		Version: 1,
+		ID:       id,
+		Queue:    queue,
+		URI:      uri,
+		Sequence: sequence,
+		State:    entity.RequestStateAccepted,
+		Version:  1,
 	}
 	if err := reqStore.Create(ctx, request); err != nil {
 		if !errors.Is(err, storage.ErrAlreadyExists) {
-			return entity.Request{}, fmt.Errorf("IngestController failed to persist request %s: %w", id, err)
+			return entity.Request{}, false, fmt.Errorf("IngestController failed to persist request %s: %w", id, err)
 		}
 		// Raced with a concurrent creator; read the canonical row.
-		return reqStore.Get(ctx, id)
+		got, getErr := reqStore.Get(ctx, id)
+		return got, false, getErr
 	}
-	return request, nil
+	return request, true, nil
+}
+
+// stampLatestRequestSeq advances the queue row's latest_request_seq pointer after a new request
+// is created. Retries on optimistic-lock conflicts so concurrent ingests converge.
+func (c *IngestController) stampLatestRequestSeq(ctx context.Context, queueName string, seq int64) error {
+	queueStore := c.store.GetQueueStore()
+
+	for {
+		queue, err := queueStore.GetOrCreate(ctx, queueName, entity.Queue{Version: 1})
+		if err != nil {
+			return fmt.Errorf("IngestController failed to load queue %s: %w", queueName, err)
+		}
+		if seq <= queue.LatestRequestSeq {
+			return nil
+		}
+
+		updated := queue
+		updated.LatestRequestSeq = seq
+		newVersion := queue.Version + 1
+		if err := queueStore.Update(ctx, updated, queue.Version, newVersion); err != nil {
+			if errors.Is(err, storage.ErrVersionMismatch) {
+				continue
+			}
+			return fmt.Errorf("IngestController failed to stamp latest_request_seq for queue %s: %w", queueName, err)
+		}
+		return nil
+	}
+}
+
+// parseRequestSequence extracts the per-queue counter value from a request id of the form
+// request/<queue>/<n>.
+func parseRequestSequence(id, queue string) (int64, error) {
+	prefix := "request/" + queue + "/"
+	if !strings.HasPrefix(id, prefix) {
+		return 0, fmt.Errorf("id %q does not match queue %q", id, queue)
+	}
+	return strconv.ParseInt(id[len(prefix):], 10, 64)
 }
 
 // publishProcess publishes the request ID to the process stage, partitioned by queue so a
