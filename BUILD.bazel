@@ -2,6 +2,11 @@ load("@gazelle//:def.bzl", "gazelle")
 
 # gazelle:prefix github.com/uber/submitqueue
 
+# Name every Go Bazel target go_default_library / go_default_test so labels
+# match go-code's (and other Bazel consumers') expected naming convention
+# without per-import fixups.
+# gazelle:go_naming_convention go_default_library
+
 # Exclude nested worktrees (created under .claude/worktrees) so gazelle does not
 # index them as duplicate rule definitions and corrupt the canonical BUILD files.
 # gazelle:exclude .claude

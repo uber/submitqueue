@@ -52,6 +52,19 @@ make local-stovepipe-logs    # follow logs
 
 The compose service key is **`stovepipe-service`**, so under the default project **`stovepipe`** the container is **`stovepipe-stovepipe-service-1`**. Inside the container the server listens on `:8080`, published on a random ephemeral host port.
 
+### Breakpoint debugging (dlv debugger)
+
+```bash
+make local-stovepipe-debug-start
+```
+
+Attach with `.vscode/launch.json` (**Debug: attach (dlv in docker)**), then send a request using the gRPC port from the make output.
+
+```bash
+# Ingest example
+grpcurl -plaintext -d '{"queue":"monorepo/main"}' localhost:PORT uber.submitqueue.stovepipe.Stovepipe/Ingest
+```
+
 ### Bazel / Go
 
 ```bash
@@ -75,4 +88,3 @@ grpcurl -plaintext -d '{"message": "hello"}' localhost:8083 uber.submitqueue.sto
 ## Shutdown
 
 The server handles `SIGINT` / `SIGTERM` gracefully: it drains in-flight RPCs, then stops the process consumer (30s timeout). It exits `0` on clean shutdown, `143` (128 + SIGTERM) when stopped by signal, and `1` on startup/runtime errors (details on stderr). Shutdown errors override the signal exit code.
-</content>

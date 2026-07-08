@@ -1,9 +1,9 @@
 # Tags each new commit on the default branch with a Go pseudo-version so downstream
 # monorepos can pin any merged commit in go.mod:
 #
-#   require github.com/uber/submitqueue v0.0.0-20250602143045-abcdef123456
+#   require github.com/uber/submitqueue v0.3.0-20250602143045-abcdef123456
 #
-# Format matches https://go.dev/ref/mod#pseudo-versions (v0.0.0-yyyymmddhhmmss-rev, UTC).
+# Format matches https://go.dev/ref/mod#pseudo-versions (v0.3.0-yyyymmddhhmmss-rev, UTC).
 
 name: Tag Go pseudo-version
 
@@ -35,7 +35,7 @@ jobs:
           TS="$(git show -s --format=%ct "${SHA}")"
           WHEN="$(date -u -d "@${TS}" +%Y%m%d%H%M%S)"
           REV="$(git rev-parse --short=12 "${SHA}")"
-          TAG="v0.0.0-${WHEN}-${REV}"
+          TAG="v0.3.0-${WHEN}-${REV}"
 
           echo "Computed tag: ${TAG} for ${SHA}"
 

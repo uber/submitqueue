@@ -1,0 +1,17 @@
+# Debug image: delve wraps a -compilation_mode=dbg binary (make build-stovepipe-linux-debug).
+FROM golang:1.24-bookworm AS dlv
+RUN go install github.com/go-delve/delve/cmd/dlv@v1.24.2
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=dlv /go/bin/dlv /usr/local/bin/dlv
+WORKDIR /root/
+
+# Copy pre-built Linux debug binary.
+# Built via: make build-stovepipe-linux-debug
+COPY .docker-bin/stovepipe-debug ./stovepipe
+
+EXPOSE 8080 2345
+
+CMD ["dlv", "exec", "./stovepipe", "--headless", "--listen=:2345", "--api-version=2", "--accept-multiclient"]

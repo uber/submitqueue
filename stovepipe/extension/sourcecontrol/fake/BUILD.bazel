@@ -1,23 +1,23 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "fake",
+    name = "go_default_library",
     srcs = ["fake.go"],
     importpath = "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/fake",
     visibility = ["//visibility:public"],
     deps = [
-        "//platform/base/page",
-        "//stovepipe/extension/sourcecontrol",
+        "//platform/base/page:go_default_library",
+        "//stovepipe/extension/sourcecontrol:go_default_library",
     ],
 )
 
 go_test(
-    name = "fake_test",
+    name = "go_default_test",
     srcs = ["fake_test.go"],
-    embed = [":fake"],
+    embed = [":go_default_library"],
     deps = [
-        "//stovepipe/extension/sourcecontrol",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
+        "//stovepipe/extension/sourcecontrol:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
     ],
 )

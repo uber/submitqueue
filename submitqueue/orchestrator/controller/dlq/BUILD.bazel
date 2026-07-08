@@ -1,7 +1,7 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "dlq",
+    name = "go_default_library",
     srcs = [
         "batch.go",
         "buildsignal.go",
@@ -14,18 +14,18 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/orchestrator/controller/dlq",
     visibility = ["//visibility:public"],
     deps = [
-        "//api/runway/messagequeue",
-        "//platform/consumer",
-        "//platform/metrics",
-        "//submitqueue/entity",
-        "//submitqueue/extension/storage",
-        "@com_github_uber_go_tally//:tally",
-        "@org_uber_go_zap//:zap",
+        "//api/runway/messagequeue:go_default_library",
+        "//platform/consumer:go_default_library",
+        "//platform/metrics:go_default_library",
+        "//submitqueue/entity:go_default_library",
+        "//submitqueue/extension/storage:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
     ],
 )
 
 go_test(
-    name = "dlq_test",
+    name = "go_default_test",
     srcs = [
         "batch_test.go",
         "buildsignal_test.go",
@@ -35,22 +35,22 @@ go_test(
         "mergesignal_test.go",
         "request_test.go",
     ],
-    embed = [":dlq"],
+    embed = [":go_default_library"],
     deps = [
-        "//api/runway/messagequeue",
-        "//api/runway/messagequeue/protopb",  # keep
-        "//platform/base/messagequeue",
-        "//platform/consumer",
-        "//platform/errs",
-        "//platform/extension/messagequeue/mock",
-        "//submitqueue/core/topickey",
-        "//submitqueue/entity",
-        "//submitqueue/extension/storage",
-        "//submitqueue/extension/storage/mock",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-        "@com_github_uber_go_tally//:tally",
-        "@org_uber_go_mock//gomock",
-        "@org_uber_go_zap//zaptest",
+        "//api/runway/messagequeue:go_default_library",
+        "//api/runway/messagequeue/protopb:go_default_library",
+        "//platform/base/messagequeue:go_default_library",
+        "//platform/consumer:go_default_library",
+        "//platform/errs:go_default_library",
+        "//platform/extension/messagequeue/mock:go_default_library",
+        "//submitqueue/core/topickey:go_default_library",
+        "//submitqueue/entity:go_default_library",
+        "//submitqueue/extension/storage:go_default_library",
+        "//submitqueue/extension/storage/mock:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_uber_go_mock//gomock:go_default_library",
+        "@org_uber_go_zap//zaptest:go_default_library",
     ],
 )
