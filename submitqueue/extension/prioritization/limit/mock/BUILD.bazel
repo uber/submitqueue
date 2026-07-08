@@ -1,0 +1,12 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["limit_mock.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/extension/prioritization/limit/mock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//submitqueue/extension/prioritization/limit:go_default_library",
+        "@org_uber_go_mock//gomock:go_default_library",
+    ],
+)
