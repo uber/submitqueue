@@ -596,11 +596,10 @@ func TestController_Process_CustomValidatorPasses(t *testing.T) {
 
 	mockValidator := validatormock.NewMockValidator(ctrl)
 	// mockValidator returns nil - validation succeeded
-	mockValidator.EXPECT().Validate(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	mockValidator.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(nil)
 	mockValidatorFactory := validatormock.NewMockFactory(ctrl)
 	mockValidatorFactory.EXPECT().For(validator.Config{
 		QueueName: request.Queue,
-		Change:    request.Change,
 	}).Return(mockValidator, nil)
 
 	controller := NewController(logger, tally.NoopScope, store, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
@@ -642,11 +641,10 @@ func TestController_Process_CustomValidatorFails(t *testing.T) {
 
 	mockValidator := validatormock.NewMockValidator(ctrl)
 	// mockValidator returns an error - validation failed
-	mockValidator.EXPECT().Validate(gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("some validation error"))
+	mockValidator.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(fmt.Errorf("some validation error"))
 	mockValidatorFactory := validatormock.NewMockFactory(ctrl)
 	mockValidatorFactory.EXPECT().For(validator.Config{
 		QueueName: request.Queue,
-		Change:    request.Change,
 	}).Return(mockValidator, nil)
 
 	controller := NewController(logger, tally.NoopScope, store, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")

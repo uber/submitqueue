@@ -43,17 +43,17 @@ func (m *MockValidator) EXPECT() *MockValidatorMockRecorder {
 }
 
 // Validate mocks base method.
-func (m *MockValidator) Validate(ctx context.Context, request entity.Request, changes []entity.ChangeInfo) error {
+func (m *MockValidator) Validate(ctx context.Context, request entity.Request) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Validate", ctx, request, changes)
+	ret := m.ctrl.Call(m, "Validate", ctx, request)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Validate indicates an expected call of Validate.
-func (mr *MockValidatorMockRecorder) Validate(ctx, request, changes any) *gomock.Call {
+func (mr *MockValidatorMockRecorder) Validate(ctx, request any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Validate", reflect.TypeOf((*MockValidator)(nil).Validate), ctx, request, changes)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Validate", reflect.TypeOf((*MockValidator)(nil).Validate), ctx, request)
 }
 
 // MockFactory is a mock of Factory interface.

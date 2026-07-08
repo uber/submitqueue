@@ -63,7 +63,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/scorer/heuristic"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
-	"github.com/uber/submitqueue/submitqueue/extension/validator"
+	validatorfake "github.com/uber/submitqueue/submitqueue/extension/validator/fake"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/batch"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/build"
@@ -538,22 +538,6 @@ func (f analyzerFactory) For(cfg conflict.Config) (conflict.Analyzer, error) {
 	return f.reg.get(cfg.QueueName).analyzer, nil
 }
 
-// noopValidatorFactory is an example validator.Factory that always returns a no-op validator (validation passes).
-// Replace with a real implementation to enforce company-specific policies (e.g. org-policy, repo-level rules).
-type noopValidatorFactory struct{}
-
-// For returns a no-op validator (validation passes).
-// In a real implementation, it could choose which validator(s) to return, based on the specific queue or change type.
-func (noopValidatorFactory) For(validator.Config) (validator.Validator, error) {
-	return noopValidator{}, nil
-}
-
-type noopValidator struct{}
-
-func (noopValidator) Validate(context.Context, entity.Request, []entity.ChangeInfo) error {
-	return nil
-}
-
 func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, cpf changeprovider.Factory, brf buildrunner.Factory, scf scorer.Factory, cof conflict.Factory, cnt counter.Counter, store storage.Storage) (int, error) {
 	var count int
 	requestController := start.NewController(
@@ -588,7 +572,7 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		store,
 		registry,
 		cpf,
-		noopValidatorFactory{},
+		validatorfake.NewFactory(),
 		runwaymq.TopicKeyMergeConflictCheck,
 		topickey.TopicKeyValidate,
 		"orchestrator-validate",

@@ -1,28 +1,9 @@
-load("@rules_go//go:def.bzl", "go_library", "go_test")
+load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "go_default_library",
-    srcs = [
-        "compose.go",
-        "validator.go",
-    ],
+    srcs = ["validator.go"],
     importpath = "github.com/uber/submitqueue/submitqueue/extension/validator",
     visibility = ["//visibility:public"],
-    deps = [
-        "//platform/base/change:go_default_library",
-        "//submitqueue/entity:go_default_library",
-    ],
-)
-
-go_test(
-    name = "go_default_test",
-    srcs = ["compose_test.go"],
-    deps = [
-        ":go_default_library",
-        "//submitqueue/entity:go_default_library",
-        "//submitqueue/extension/validator/mock:go_default_library",
-        "@com_github_stretchr_testify//assert:go_default_library",
-        "@com_github_stretchr_testify//require:go_default_library",
-        "@org_uber_go_mock//gomock:go_default_library",
-    ],
+    deps = ["//submitqueue/entity:go_default_library"],
 )

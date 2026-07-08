@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package validator_test
+package composite_test
 
 import (
 	"context"
@@ -23,11 +23,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/validator"
+	"github.com/uber/submitqueue/submitqueue/extension/validator/composite"
 	validatormock "github.com/uber/submitqueue/submitqueue/extension/validator/mock"
 	"go.uber.org/mock/gomock"
 )
 
-func TestCompose(t *testing.T) {
+func TestNew(t *testing.T) {
 	errA := errors.New("validation A failed")
 	errB := errors.New("validation B failed")
 
@@ -43,14 +44,14 @@ func TestCompose(t *testing.T) {
 		{
 			name: "single passing validator",
 			setup: func(v1, v2 *validatormock.MockValidator) []validator.Validator {
-				v1.EXPECT().Validate(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				v1.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(nil)
 				return []validator.Validator{v1}
 			},
 		},
 		{
 			name: "single failing validator",
 			setup: func(v1, v2 *validatormock.MockValidator) []validator.Validator {
-				v1.EXPECT().Validate(gomock.Any(), gomock.Any(), gomock.Any()).Return(errA)
+				v1.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(errA)
 				return []validator.Validator{v1}
 			},
 			wantErrs: []error{errA},
@@ -58,16 +59,16 @@ func TestCompose(t *testing.T) {
 		{
 			name: "all pass",
 			setup: func(v1, v2 *validatormock.MockValidator) []validator.Validator {
-				v1.EXPECT().Validate(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-				v2.EXPECT().Validate(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				v1.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(nil)
+				v2.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(nil)
 				return []validator.Validator{v1, v2}
 			},
 		},
 		{
 			name: "some fail",
 			setup: func(v1, v2 *validatormock.MockValidator) []validator.Validator {
-				v1.EXPECT().Validate(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-				v2.EXPECT().Validate(gomock.Any(), gomock.Any(), gomock.Any()).Return(errA)
+				v1.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(nil)
+				v2.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(errA)
 				return []validator.Validator{v1, v2}
 			},
 			wantErrs: []error{errA},
@@ -75,8 +76,8 @@ func TestCompose(t *testing.T) {
 		{
 			name: "all fail",
 			setup: func(v1, v2 *validatormock.MockValidator) []validator.Validator {
-				v1.EXPECT().Validate(gomock.Any(), gomock.Any(), gomock.Any()).Return(errA)
-				v2.EXPECT().Validate(gomock.Any(), gomock.Any(), gomock.Any()).Return(errB)
+				v1.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(errA)
+				v2.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(errB)
 				return []validator.Validator{v1, v2}
 			},
 			wantErrs: []error{errA, errB},
@@ -90,9 +91,9 @@ func TestCompose(t *testing.T) {
 			v2 := validatormock.NewMockValidator(ctrl)
 			validators := tt.setup(v1, v2)
 
-			v := validator.Compose(validators)
+			v := composite.New(validators)
 
-			err := v.Validate(context.Background(), entity.Request{}, nil)
+			err := v.Validate(context.Background(), entity.Request{})
 			if len(tt.wantErrs) == 0 {
 				assert.NoError(t, err)
 				return

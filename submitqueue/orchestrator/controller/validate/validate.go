@@ -168,7 +168,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	if c.validators != nil {
 		cfg := validator.Config{
 			QueueName: request.Queue,
-			Change:    request.Change,
 		}
 		v, err := c.validators.For(cfg)
 		if err != nil {
@@ -176,7 +175,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 			return fmt.Errorf("failed to build validator for request %s: %w", request.ID, err)
 		}
 		if v != nil {
-			if err := v.Validate(ctx, request, changeInfos); err != nil {
+			if err := v.Validate(ctx, request); err != nil {
 				coremetrics.NamedCounter(c.metricsScope, "process", "custom_validation_failures", 1)
 				return fmt.Errorf("custom validation failed for request %s: %w", request.ID, err)
 			}

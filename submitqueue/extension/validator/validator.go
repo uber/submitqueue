@@ -19,28 +19,24 @@ package validator
 import (
 	"context"
 
-	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/submitqueue/entity"
 )
 
-// Validator runs custom validation checks against a request and its changes.
+// Validator runs custom validation checks against a request.
 // Implementations are provided by integrators for company-specific checks
 // (e.g. org-policy enforcement, repo-specific rules). The built-in validate
 // controller invokes this after fetching change metadata and before claiming
 // URIs in the change store.
 type Validator interface {
-	// Validate runs custom validation on the request and its fetched change metadata.
+	// Validate runs custom validation on the request.
 	// Returns nil if validation passes, error if the request should be rejected.
-	Validate(ctx context.Context, request entity.Request, changes []entity.ChangeInfo) error
+	Validate(ctx context.Context, request entity.Request) error
 }
 
 // Config carries the routing identity handed to a Factory.
 type Config struct {
 	// QueueName identifies the queue this request belongs to.
 	QueueName string
-	// Change is the code change being validated, carrying the full set of URIs.
-	// The URI scheme identifies the change provider (e.g. "github", "phabricator").
-	Change change.Change
 }
 
 // Factory builds the Validator for a given config. Implementations are provided

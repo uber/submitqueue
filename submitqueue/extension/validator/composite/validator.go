@@ -12,26 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package validator
+package composite
 
 import (
 	"context"
 	"errors"
 
 	"github.com/uber/submitqueue/submitqueue/entity"
+	"github.com/uber/submitqueue/submitqueue/extension/validator"
 )
 
-// Compose returns a Validator that runs all provided validators and joins their errors.
-func Compose(validators []Validator) Validator {
-	return compositeValidator(validators)
+// compositeValidator runs all validators and joins their errors.
+type compositeValidator struct {
+	// validators is the set of validators to run.
+	validators []validator.Validator
 }
 
-type compositeValidator []Validator
+// New creates a Validator that evaluates all child validators and joins their errors.
+func New(validators []validator.Validator) validator.Validator {
+	return &compositeValidator{validators: validators}
+}
 
-func (c compositeValidator) Validate(ctx context.Context, request entity.Request, changes []entity.ChangeInfo) error {
+func (c *compositeValidator) Validate(ctx context.Context, request entity.Request) error {
 	var errs []error
-	for _, v := range c {
-		if err := v.Validate(ctx, request, changes); err != nil {
+	for _, v := range c.validators {
+		if err := v.Validate(ctx, request); err != nil {
 			errs = append(errs, err)
 		}
 	}
