@@ -134,7 +134,7 @@ type SpeculationPathInfo struct {
 // path's identity and its freshly computed predicted-success score. It is the
 // scorer seam's only output — the controller merges scores into the tree by
 // path ID and persists them; tree structure and status never pass through the
-// scorer. Like SpeculationPathDecision, it is ephemeral and never persisted.
+// scorer. Like PathDecision, it is ephemeral and never persisted.
 type PathScore struct {
 	// PathID identifies the scored path (SpeculationPathInfo.ID) within the
 	// tree the scorer was handed.
@@ -143,14 +143,17 @@ type PathScore struct {
 	Score float32
 }
 
-// SpeculationPathDecision is a seam's decision for a single path: the action the
+// PathDecision is a seam's decision for a single path: the action the
 // controller should take for it. It is the output of both the selector (per
 // batch) and the prioritizer (queue-wide), and is not persisted. A seam returns
 // a decision only for the paths it wants to act on; omitted paths are left
-// as-is.
-type SpeculationPathDecision struct {
-	// Path identifies the speculation path the action applies to.
-	Path SpeculationPath
+// as-is. A seam must return at most one decision per path — the controller
+// treats conflicting duplicates as a policy bug, applying the first and
+// logging and skipping the rest.
+type PathDecision struct {
+	// PathID identifies the speculation path the action applies to
+	// (SpeculationPathInfo.ID), within the tree(s) the seam was handed.
+	PathID string
 	// Action is what the controller should do for the path.
 	Action SpeculationPathAction
 }
