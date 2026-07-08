@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "queue.go",
         "request.go",
+        "request_id.go",
     ],
     importpath = "github.com/uber/submitqueue/stovepipe/entity",
     visibility = ["//visibility:public"],
@@ -12,7 +13,10 @@ go_library(
 
 go_test(
     name = "go_default_test",
-    srcs = ["request_test.go"],
+    srcs = [
+        "request_id_test.go",
+        "request_test.go",
+    ],
     embed = [":go_default_library"],
     deps = [
         "@com_github_stretchr_testify//assert:go_default_library",

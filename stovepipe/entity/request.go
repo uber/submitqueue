@@ -29,8 +29,25 @@ const (
 	RequestStateUnknown RequestState = ""
 	// RequestStateAccepted is the initial state of a request: a new commit has been observed
 	// for the queue and the request has been admitted into the pipeline, but no validation
-	// strategy has been chosen yet. Later stages (process, build, record) add their own states.
+	// strategy has been chosen yet.
 	RequestStateAccepted RequestState = "accepted"
+	// RequestStateProcessing means process admitted the request, recorded build strategy and
+	// baseline, and published to build.
+	RequestStateProcessing RequestState = "processing"
+	// RequestStateSuperseded means process skipped the request because a newer head exists.
+	RequestStateSuperseded RequestState = "superseded"
+)
+
+// BuildStrategy defines how build validates the request's commit.
+type BuildStrategy string
+
+const (
+	// BuildStrategyUnknown is the zero value before process chooses a strategy.
+	BuildStrategyUnknown BuildStrategy = ""
+	// BuildStrategyIncrementalSinceGreen validates only the delta since the pinned baseline URI.
+	BuildStrategyIncrementalSinceGreen BuildStrategy = "incremental_since_green"
+	// BuildStrategyFull validates the whole repo from scratch.
+	BuildStrategyFull BuildStrategy = "full"
 )
 
 // Request represents a single validation of a queue at a particular commit. The queue reports
@@ -48,8 +65,18 @@ type Request struct {
 	// and is the stable handle the ingest caller supplies.
 	Queue string `json:"queue"`
 	// URI is the opaque, VCS-agnostic locator of the commit under validation, as produced by the
-	// SourceControl extension. It is empty until SourceControl resolution is wired in.
+	// SourceControl extension.
 	URI string `json:"uri"`
+
+	// ****************
+	// Set once at process admit — empty until accepted→processing; never overwritten after
+	// ****************
+
+	// BuildStrategy is the validation scope process chose when admitting this request.
+	BuildStrategy BuildStrategy `json:"build_strategy"`
+	// BaseURI is the base URI to be used for this request when the strategy is incremental.
+	// Empty for full builds and cold start.
+	BaseURI string `json:"base_uri"`
 
 	// ****************
 	// Following fields could be changed throughout the lifecycle of the request

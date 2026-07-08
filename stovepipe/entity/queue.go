@@ -34,9 +34,9 @@ type Queue struct {
 	// InFlightCount is the number of trunk validations admitted by process but not yet terminal.
 	InFlightCount int32 `json:"in_flight_count"`
 
-	// LatestRequestSeq is the highest request sequence accepted for this queue. Used to coalesce
-	// backlog so intermediate heads are skipped without superseding the newest head.
-	LatestRequestSeq int64 `json:"latest_request_seq"`
+	// LatestRequestID is the request id of the newest head ingest accepted for this queue.
+	// Empty until the first request is created. Coalescing compares IDs via CompareRequestID.
+	LatestRequestID string `json:"latest_request_id"`
 
 	// Version is the version of the object. It is used for optimistic locking.
 	// Versioning starts at 1 and is incremented for each change to the object.

@@ -66,9 +66,9 @@ func (s *QueueStoreContractSuite) TestQueueStore_Create() {
 	got, err := s.queueStore.Get(s.ctx, name)
 	require.NoError(t, err)
 	assert.Equal(t, entity.Queue{
-		Name:             name,
-		LatestRequestSeq: 0,
-		Version:          1,
+		Name:            name,
+		LatestRequestID: "",
+		Version:         1,
 	}, got)
 
 	s.log.Logf("Create passed: created queue %s", name)
@@ -80,10 +80,10 @@ func (s *QueueStoreContractSuite) TestQueueStore_CreateWithFields() {
 	const name = "contract/defaults"
 
 	toCreate := entity.Queue{
-		Name:             name,
-		LastGreenURI:     "git://remote/monorepo/main/green-bbbb",
-		LatestRequestSeq: 99,
-		Version:          1,
+		Name:            name,
+		LastGreenURI:    "git://remote/monorepo/main/green-bbbb",
+		LatestRequestID: "request/contract/defaults/99",
+		Version:         1,
 	}
 	require.NoError(t, s.queueStore.Create(s.ctx, toCreate))
 
@@ -99,14 +99,14 @@ func (s *QueueStoreContractSuite) TestQueueStore_CreateAlreadyExists() {
 	t := s.T()
 	const name = "contract/already-exists"
 
-	first := entity.Queue{Name: name, LatestRequestSeq: 3, Version: 1}
+	first := entity.Queue{Name: name, LatestRequestID: "request/contract/already-exists/3", Version: 1}
 	require.NoError(t, s.queueStore.Create(s.ctx, first))
 
 	err := s.queueStore.Create(s.ctx, entity.Queue{
-		Name:             name,
-		LastGreenURI:     "git://remote/monorepo/main/ignored-on-race",
-		LatestRequestSeq: 500,
-		Version:          1,
+		Name:            name,
+		LastGreenURI:    "git://remote/monorepo/main/ignored-on-race",
+		LatestRequestID: "request/contract/already-exists/500",
+		Version:         1,
 	})
 	assert.ErrorIs(t, err, storage.ErrAlreadyExists)
 
@@ -137,14 +137,14 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateCAS() {
 
 	updated := created
 	updated.LastGreenURI = "git://remote/monorepo/main/green-cccc"
-	updated.LatestRequestSeq = 42
+	updated.LatestRequestID = "request/contract/update-cas/42"
 	updated.InFlightCount = 1
 	require.NoError(t, s.queueStore.Update(s.ctx, updated, 1, 2))
 
 	got, err := s.queueStore.Get(s.ctx, name)
 	require.NoError(t, err)
 	assert.Equal(t, updated.LastGreenURI, got.LastGreenURI)
-	assert.Equal(t, int64(42), got.LatestRequestSeq)
+	assert.Equal(t, "request/contract/update-cas/42", got.LatestRequestID)
 	assert.Equal(t, int32(1), got.InFlightCount)
 	assert.Equal(t, int32(2), got.Version)
 
@@ -171,15 +171,15 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateSequentialCAS() {
 
 	require.NoError(t, s.queueStore.Create(s.ctx, entity.Queue{Name: name, Version: 1}))
 
-	v2 := entity.Queue{Name: name, LatestRequestSeq: 10, Version: 1}
+	v2 := entity.Queue{Name: name, LatestRequestID: "request/contract/sequential-cas/10", Version: 1}
 	require.NoError(t, s.queueStore.Update(s.ctx, v2, 1, 2))
 
-	v3 := entity.Queue{Name: name, LatestRequestSeq: 10, InFlightCount: 1, Version: 2}
+	v3 := entity.Queue{Name: name, LatestRequestID: "request/contract/sequential-cas/10", InFlightCount: 1, Version: 2}
 	require.NoError(t, s.queueStore.Update(s.ctx, v3, 2, 3))
 
 	got, err := s.queueStore.Get(s.ctx, name)
 	require.NoError(t, err)
-	assert.Equal(t, int64(10), got.LatestRequestSeq)
+	assert.Equal(t, "request/contract/sequential-cas/10", got.LatestRequestID)
 	assert.Equal(t, int32(1), got.InFlightCount)
 	assert.Equal(t, int32(3), got.Version)
 
@@ -201,11 +201,11 @@ func (s *QueueStoreContractSuite) TestQueueStore_QueueIsolation() {
 	require.NoError(t, err)
 
 	updatedA := entity.Queue{
-		Name:             nameA,
-		LastGreenURI:     "git://remote/monorepo/a/green",
-		LatestRequestSeq: 7,
-		InFlightCount:    2,
-		Version:          1,
+		Name:            nameA,
+		LastGreenURI:    "git://remote/monorepo/a/green",
+		LatestRequestID: "request/contract/isolation-a/7",
+		InFlightCount:   2,
+		Version:         1,
 	}
 	require.NoError(t, s.queueStore.Update(s.ctx, updatedA, 1, 2))
 
