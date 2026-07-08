@@ -27,10 +27,11 @@ type Queue struct {
 	// Following fields could be changed throughout the lifecycle of the queue
 	// ****************
 
-	// LastGreenURI is the most recent whole-repo-green commit. Empty until the first green.
+	// LastGreenURI is the queue's last-known-good commit: the most recent head at which
+	// whole-repo validation recorded green (health degree 0). Empty until the first such outcome.
 	LastGreenURI string `json:"last_green_uri"`
 
-	// InFlightCount is the number of Phase 1 validations admitted but not yet in a terminal state.
+	// InFlightCount is the number of trunk validations admitted by process but not yet terminal.
 	InFlightCount int32 `json:"in_flight_count"`
 
 	// LatestRequestSeq is the highest request sequence accepted for this queue. Used to coalesce
