@@ -69,10 +69,19 @@ func newTestRegistryWithNoopPublisher(t *testing.T, ctrl *gomock.Controller) con
 // noopStorage returns a storage.Storage whose RequestLogStore.Insert
 // succeeds silently for any entityqueue.
 func noopStorage(ctrl *gomock.Controller) storage.Storage {
-	logStore := storagemock.NewMockRequestLogStore(ctrl)
-	logStore.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	store := storagemock.NewMockStorage(ctrl)
+	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
+	uriStore := storagemock.NewMockRequestURIStore(ctrl)
+	queueStore := storagemock.NewMockRequestQueueSummaryStore(ctrl)
+	logStore := storagemock.NewMockRequestLogStore(ctrl)
+	store.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
+	store.EXPECT().GetRequestURIStore().Return(uriStore).AnyTimes()
+	store.EXPECT().GetRequestQueueSummaryStore().Return(queueStore).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
+	summaryStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	uriStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	queueStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	logStore.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	return store
 }
 
@@ -253,22 +262,63 @@ func TestLand_PropagatesQueueConfigStoreError(t *testing.T) {
 func TestLand_PublishesToQueue(t *testing.T) {
 	var publishedTopic string
 	var publishedMessage entityqueue.Message
+	var persistedSummary entity.RequestSummary
+	var persistedMapping entity.RequestURI
+	var persistedQueueSummary entity.RequestQueueSummary
+	var persistedLog entity.RequestLog
 
 	ctrl := gomock.NewController(t)
 
 	cnt := countermock.NewMockCounter(ctrl)
 	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(123), nil)
 
+	store := storagemock.NewMockStorage(ctrl)
+	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
+	uriStore := storagemock.NewMockRequestURIStore(ctrl)
+	queueStore := storagemock.NewMockRequestQueueSummaryStore(ctrl)
+	logStore := storagemock.NewMockRequestLogStore(ctrl)
+	store.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
+	store.EXPECT().GetRequestURIStore().Return(uriStore).AnyTimes()
+	store.EXPECT().GetRequestQueueSummaryStore().Return(queueStore).AnyTimes()
+	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
+
 	registry, publisher := newTestRegistry(t, ctrl)
-	publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, topic string, msg entityqueue.Message) error {
-			publishedTopic = topic
-			publishedMessage = msg
-			return nil
-		},
+
+	gomock.InOrder(
+		summaryStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(ctx context.Context, summary entity.RequestSummary) error {
+				persistedSummary = summary
+				return nil
+			},
+		),
+		uriStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(ctx context.Context, mapping entity.RequestURI) error {
+				persistedMapping = mapping
+				return nil
+			},
+		),
+		queueStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(ctx context.Context, summary entity.RequestQueueSummary) error {
+				persistedQueueSummary = summary
+				return nil
+			},
+		),
+		logStore.EXPECT().Insert(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(ctx context.Context, log entity.RequestLog) error {
+				persistedLog = log
+				return nil
+			},
+		),
+		publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+			func(ctx context.Context, topic string, msg entityqueue.Message) error {
+				publishedTopic = topic
+				publishedMessage = msg
+				return nil
+			},
+		),
 	)
 
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopStorage(ctrl), noopQueueConfigStore(ctrl), registry)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, store, noopQueueConfigStore(ctrl), registry)
 	ctx := context.Background()
 
 	req := &pb.LandRequest{
@@ -280,6 +330,38 @@ func TestLand_PublishesToQueue(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "test-queue/123", resp.Sqid)
+
+	assert.Equal(t, entity.RequestSummary{
+		RequestID:         "test-queue/123",
+		Queue:             "test-queue",
+		ChangeURIs:        []string{"github://github.example.com/uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"},
+		ReceivedAtMs:      persistedSummary.ReceivedAtMs,
+		Status:            entity.RequestStatusAccepted,
+		StatusTimestampMs: persistedSummary.ReceivedAtMs,
+		Version:           1,
+		Metadata:          map[string]string{},
+	}, persistedSummary)
+	assert.Positive(t, persistedSummary.ReceivedAtMs)
+	assert.Equal(t, entity.RequestURI{
+		ChangeURI:    "github://github.example.com/uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98",
+		ReceivedAtMs: persistedSummary.ReceivedAtMs,
+		RequestID:    "test-queue/123",
+	}, persistedMapping)
+	assert.Equal(t, entity.RequestQueueSummary{
+		RequestID:    "test-queue/123",
+		Queue:        "test-queue",
+		ChangeURIs:   []string{"github://github.example.com/uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"},
+		ReceivedAtMs: persistedSummary.ReceivedAtMs,
+		Status:       entity.RequestStatusAccepted,
+		Version:      1,
+		Metadata:     map[string]string{},
+	}, persistedQueueSummary)
+	assert.Equal(t, entity.RequestLog{
+		RequestID:   "test-queue/123",
+		TimestampMs: persistedSummary.ReceivedAtMs,
+		Status:      entity.RequestStatusAccepted,
+		Metadata:    map[string]string{},
+	}, persistedLog)
 
 	// Verify message was published to the topic registered under TopicKeyStart
 	assert.Equal(t, "start", publishedTopic)

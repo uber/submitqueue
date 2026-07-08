@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/uber-go/tally"
 	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
@@ -29,6 +30,7 @@ import (
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
+	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/queueconfig"
@@ -65,12 +67,13 @@ func IsUnrecognizedQueue(err error) bool {
 
 // LandController handles land business logic for the gateway
 type LandController struct {
-	logger       *zap.SugaredLogger
-	metricsScope tally.Scope
-	counter      counter.Counter
-	store        storage.Storage
-	queueConfigs queueconfig.Store
-	registry     consumer.TopicRegistry
+	logger          *zap.SugaredLogger
+	metricsScope    tally.Scope
+	counter         counter.Counter
+	store           storage.Storage
+	admissionWriter *requestcore.AdmissionWriter
+	queueConfigs    queueconfig.Store
+	registry        consumer.TopicRegistry
 }
 
 // NewLandController creates a new instance of the gateway land controller.
@@ -78,12 +81,13 @@ type LandController struct {
 // topickey.TopicKeyStart in the registry.
 func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter counter.Counter, store storage.Storage, queueConfigs queueconfig.Store, registry consumer.TopicRegistry) *LandController {
 	return &LandController{
-		logger:       logger,
-		metricsScope: scope.SubScope("land_controller"),
-		counter:      counter,
-		store:        store,
-		queueConfigs: queueConfigs,
-		registry:     registry,
+		logger:          logger,
+		metricsScope:    scope.SubScope("land_controller"),
+		counter:         counter,
+		store:           store,
+		admissionWriter: requestcore.NewAdmissionWriter(store),
+		queueConfigs:    queueConfigs,
+		registry:        registry,
 	}
 }
 
@@ -132,13 +136,32 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (resp *p
 		Change:       change,
 		LandStrategy: strategy,
 	}
+	receivedAtMs := time.Now().UnixMilli()
+	summary := entity.RequestSummary{
+		RequestID:         landRequest.ID,
+		Queue:             landRequest.Queue,
+		ChangeURIs:        append([]string{}, landRequest.Change.URIs...),
+		ReceivedAtMs:      receivedAtMs,
+		Status:            entity.RequestStatusAccepted,
+		StatusTimestampMs: receivedAtMs,
+		Version:           1,
+		Metadata:          map[string]string{},
+	}
+	if err := c.admissionWriter.Create(ctx, summary); err != nil {
+		return nil, fmt.Errorf("LandController failed to create request receipt sqid=%s: %w", landRequest.ID, err)
+	}
 
 	// Record the accepted status in the request log for reconciliation. Once the request materializes as a Request entity, the status might be updated to "new".
 	// It is important to record the status before publishing to the queue for processing. It is important to publish straight to the database and not via a entityqueue.
 	// Gateway has to stay consistent with the request log.
-	logEntry := entity.NewRequestLog(landRequest.ID, entity.RequestStatusAccepted, 0, "", nil)
+	logEntry := entity.RequestLog{
+		RequestID:   landRequest.ID,
+		TimestampMs: receivedAtMs,
+		Status:      entity.RequestStatusAccepted,
+		Metadata:    map[string]string{},
+	}
 	if err := c.store.GetRequestLogStore().Insert(ctx, logEntry); err != nil {
-		return nil, fmt.Errorf("LandController failed to insert request log for sqid=%s: %w", landRequest.ID, err)
+		return nil, fmt.Errorf("LandController failed to insert accepted request log for sqid=%s: %w", landRequest.ID, err)
 	}
 
 	c.logger.Debugw("land request created",
