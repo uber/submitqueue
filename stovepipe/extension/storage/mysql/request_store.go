@@ -48,8 +48,15 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) (retE
 	defer func() { op.Complete(retErr) }()
 
 	_, err := r.db.ExecContext(ctx,
-		"INSERT INTO request (id, queue, uri, state, version) VALUES (?, ?, ?, ?, ?)",
-		request.ID, request.Queue, request.URI, request.State, request.Version,
+		`INSERT INTO request (id, queue, uri, state, build_strategy, base_uri, version)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		request.ID,
+		request.Queue,
+		request.URI,
+		request.State,
+		request.BuildStrategy,
+		request.BaseURI,
+		request.Version,
 	)
 	if err != nil {
 		if isDuplicateEntry(err) {
@@ -68,9 +75,18 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 
 	var req entity.Request
 	err := r.db.QueryRowContext(ctx,
-		"SELECT id, queue, uri, state, version FROM request WHERE id = ?",
+		`SELECT id, queue, uri, state, build_strategy, base_uri, version
+		 FROM request WHERE id = ?`,
 		id,
-	).Scan(&req.ID, &req.Queue, &req.URI, &req.State, &req.Version)
+	).Scan(
+		&req.ID,
+		&req.Queue,
+		&req.URI,
+		&req.State,
+		&req.BuildStrategy,
+		&req.BaseURI,
+		&req.Version,
+	)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.Request{}, storage.WrapNotFound(err)
@@ -82,7 +98,7 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 	return req, nil
 }
 
-// Update persists the mutable fields of request (uri, state) if the stored version matches
+// Update persists the mutable fields of request (uri, state, build_strategy, base_uri) if the
 // oldVersion, writing newVersion. Returns ErrVersionMismatch if the stored version does not match
 // (including when the request does not exist). This is a pure conditional write; the caller owns
 // version arithmetic.
@@ -91,8 +107,16 @@ func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVe
 	defer func() { op.Complete(retErr) }()
 
 	result, err := r.db.ExecContext(ctx,
-		"UPDATE request SET uri = ?, state = ?, version = ? WHERE id = ? AND version = ?",
-		request.URI, request.State, newVersion, request.ID, oldVersion,
+		`UPDATE request
+		 SET uri = ?, state = ?, build_strategy = ?, base_uri = ?, version = ?
+		 WHERE id = ? AND version = ?`,
+		request.URI,
+		request.State,
+		request.BuildStrategy,
+		request.BaseURI,
+		newVersion,
+		request.ID,
+		oldVersion,
 	)
 	if err != nil {
 		return fmt.Errorf(

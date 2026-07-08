@@ -37,13 +37,15 @@ func TestRequest_SerializationRoundTrip(t *testing.T) {
 			},
 		},
 		{
-			name: "uri not yet resolved",
+			name: "processing with strategy and baseline",
 			req: Request{
-				ID:      "request/monorepo/main/101",
-				Queue:   "monorepo/main",
-				URI:     "",
-				State:   RequestStateAccepted,
-				Version: 1,
+				ID:            "request/monorepo/main/101",
+				Queue:         "monorepo/main",
+				URI:           "git://remote/monorepo/main/bbbb2222",
+				State:         RequestStateProcessing,
+				BuildStrategy: BuildStrategyIncrementalSinceGreen,
+				BaseURI:       "git://remote/monorepo/main/green-aaaa",
+				Version:       2,
 			},
 		},
 	}

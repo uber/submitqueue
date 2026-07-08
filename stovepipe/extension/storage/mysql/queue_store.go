@@ -42,12 +42,12 @@ func (q *queueStore) Create(ctx context.Context, queue entity.Queue) (retErr err
 	defer func() { op.Complete(retErr) }()
 
 	_, err := q.db.ExecContext(ctx,
-		`INSERT INTO queue (name, last_green_uri, in_flight_count, latest_request_seq, version)
+		`INSERT INTO queue (name, last_green_uri, in_flight_count, latest_request_id, version)
 		 VALUES (?, ?, ?, ?, ?)`,
 		queue.Name,
 		queue.LastGreenURI,
 		queue.InFlightCount,
-		queue.LatestRequestSeq,
+		queue.LatestRequestID,
 		queue.Version,
 	)
 	if err != nil {
@@ -66,13 +66,13 @@ func (q *queueStore) Get(ctx context.Context, name string) (ret entity.Queue, re
 
 	var queue entity.Queue
 	err := q.db.QueryRowContext(ctx,
-		"SELECT name, last_green_uri, in_flight_count, latest_request_seq, version FROM queue WHERE name = ?",
+		"SELECT name, last_green_uri, in_flight_count, latest_request_id, version FROM queue WHERE name = ?",
 		name,
 	).Scan(
 		&queue.Name,
 		&queue.LastGreenURI,
 		&queue.InFlightCount,
-		&queue.LatestRequestSeq,
+		&queue.LatestRequestID,
 		&queue.Version,
 	)
 
@@ -94,11 +94,11 @@ func (q *queueStore) Update(ctx context.Context, queue entity.Queue, oldVersion,
 
 	result, err := q.db.ExecContext(ctx,
 		`UPDATE queue
-		 SET last_green_uri = ?, in_flight_count = ?, latest_request_seq = ?, version = ?
+		 SET last_green_uri = ?, in_flight_count = ?, latest_request_id = ?, version = ?
 		 WHERE name = ? AND version = ?`,
 		queue.LastGreenURI,
 		queue.InFlightCount,
-		queue.LatestRequestSeq,
+		queue.LatestRequestID,
 		newVersion,
 		queue.Name,
 		oldVersion,

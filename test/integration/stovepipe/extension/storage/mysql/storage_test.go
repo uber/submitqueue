@@ -95,6 +95,23 @@ func (s *MySQLRequestStoreSuite) TestCreateAndGet() {
 	require.Equal(s.T(), req, got)
 }
 
+func (s *MySQLRequestStoreSuite) TestCreateAndGetWithProcessFields() {
+	req := entity.Request{
+		ID:            "request/monorepo/main/process-fields",
+		Queue:         "monorepo/main",
+		URI:           "git://remote/monorepo/main/cccc3333",
+		State:         entity.RequestStateProcessing,
+		BuildStrategy: entity.BuildStrategyIncrementalSinceGreen,
+		BaseURI:       "git://remote/monorepo/main/green-bbbb",
+		Version:       2,
+	}
+	require.NoError(s.T(), s.store.Create(s.ctx, req))
+
+	got, err := s.store.Get(s.ctx, req.ID)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), req, got)
+}
+
 func (s *MySQLRequestStoreSuite) TestGetNotFound() {
 	_, err := s.store.Get(s.ctx, "request/monorepo/main/does-not-exist")
 	require.True(s.T(), storage.IsNotFound(err))
@@ -109,14 +126,18 @@ func (s *MySQLRequestStoreSuite) TestUpdateCAS() {
 	}
 	require.NoError(s.T(), s.store.Create(s.ctx, req))
 
-	// Successful CAS: stored version (1) matches oldVersion; resolve the URI and bump to 2.
+	// Successful CAS: stored version (1) matches oldVersion; advance to processing with strategy.
 	updated := req
 	updated.URI = "git://remote/monorepo/main/resolved"
+	updated.State = entity.RequestStateProcessing
+	updated.BuildStrategy = entity.BuildStrategyFullMonorepo
 	require.NoError(s.T(), s.store.Update(s.ctx, updated, 1, 2))
 
 	got, err := s.store.Get(s.ctx, req.ID)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "git://remote/monorepo/main/resolved", got.URI)
+	require.Equal(s.T(), entity.RequestStateProcessing, got.State)
+	require.Equal(s.T(), entity.BuildStrategyFullMonorepo, got.BuildStrategy)
 	require.Equal(s.T(), int32(2), got.Version)
 
 	// Stale CAS: oldVersion 1 no longer matches the stored version (2).
