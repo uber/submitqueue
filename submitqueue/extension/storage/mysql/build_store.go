@@ -82,7 +82,7 @@ func (s *buildStore) Create(ctx context.Context, build entity.Build) (retErr err
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrDuplicateEntry {
 			return fmt.Errorf("build entity id=%s: %w", build.ID, storage.ErrAlreadyExists)
 		}
 		return fmt.Errorf("failed to insert build entity id=%s: %w", build.ID, err)

@@ -504,3 +504,82 @@ func (s *StorageContractSuite) TestStorage_SpeculationUpdateNotFound() {
 	err := s.storage.GetSpeculationTreeStore().Update(ctx, tree.BatchID, tree.Version, tree.Version+1, tree.Paths)
 	assert.ErrorIs(t, err, storage.ErrVersionMismatch, "Update for unknown batch should return ErrVersionMismatch")
 }
+func (s *StorageContractSuite) TestStorage_RequestSummaryCreateGetAndCAS() {
+	t := s.T()
+	ctx := s.ctx
+	summary := entity.RequestSummary{
+		RequestID: "summary/1", Queue: "summary-q", ChangeURIs: nil, ReceivedAtMs: 100,
+		Status: entity.RequestStatusAccepted, StatusTimestampMs: 100, Version: 1, Metadata: nil,
+	}
+
+	require.NoError(t, s.storage.GetRequestSummaryStore().Create(ctx, summary))
+	require.ErrorIs(t, s.storage.GetRequestSummaryStore().Create(ctx, summary), storage.ErrAlreadyExists)
+
+	got, err := s.storage.GetRequestSummaryStore().Get(ctx, summary.RequestID)
+	require.NoError(t, err)
+	assert.NotNil(t, got.ChangeURIs)
+	assert.NotNil(t, got.Metadata)
+
+	got.Status = entity.RequestStatusLanded
+	got.RequestVersion = 2
+	got.StatusTimestampMs = 200
+	require.NoError(t, s.storage.GetRequestSummaryStore().Update(ctx, got, 1, 2))
+	require.ErrorIs(t, s.storage.GetRequestSummaryStore().Update(ctx, got, 1, 3), storage.ErrVersionMismatch)
+
+	updated, err := s.storage.GetRequestSummaryStore().Get(ctx, summary.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), updated.Version)
+	assert.Equal(t, entity.RequestStatusLanded, updated.Status)
+}
+
+func (s *StorageContractSuite) TestStorage_RequestQueueSummaryListAndCursor() {
+	t := s.T()
+	ctx := s.ctx
+	store := s.storage.GetRequestQueueSummaryStore()
+	rows := []entity.RequestQueueSummary{
+		{RequestID: "queue-summary/1", Queue: "queue-summary", ChangeURIs: nil, ReceivedAtMs: 100, Status: entity.RequestStatusAccepted, Version: 1, Metadata: nil},
+		{RequestID: "queue-summary/2", Queue: "queue-summary", ChangeURIs: []string{"uri/2"}, ReceivedAtMs: 200, Status: entity.RequestStatusLanded, Version: 1, Metadata: map[string]string{}},
+		{RequestID: "queue-summary/3", Queue: "queue-summary", ChangeURIs: []string{"uri/3"}, ReceivedAtMs: 200, Status: entity.RequestStatusError, Version: 1, Metadata: map[string]string{}},
+	}
+	for _, row := range rows {
+		require.NoError(t, store.Create(ctx, row))
+	}
+	require.ErrorIs(t, store.Create(ctx, rows[0]), storage.ErrAlreadyExists)
+
+	firstPage, err := store.List(ctx, storage.RequestQueueSummaryQuery{
+		Queue: "queue-summary", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, Limit: 2,
+	})
+	require.NoError(t, err)
+	require.Len(t, firstPage, 2)
+	assert.Equal(t, []string{"queue-summary/3", "queue-summary/2"}, []string{firstPage[0].RequestID, firstPage[1].RequestID})
+
+	secondPage, err := store.List(ctx, storage.RequestQueueSummaryQuery{
+		Queue: "queue-summary", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, Limit: 2,
+		HasCursor: true, Cursor: storage.RequestQueueSummaryCursor{ReceivedAtMs: 200, RequestID: "queue-summary/2"},
+	})
+	require.NoError(t, err)
+	require.Len(t, secondPage, 1)
+	assert.Equal(t, "queue-summary/1", secondPage[0].RequestID)
+	assert.NotNil(t, secondPage[0].ChangeURIs)
+	assert.NotNil(t, secondPage[0].Metadata)
+}
+
+func (s *StorageContractSuite) TestStorage_RequestURIListIsBoundedAndOrdered() {
+	t := s.T()
+	ctx := s.ctx
+	store := s.storage.GetRequestURIStore()
+	rows := []entity.RequestURI{
+		{ChangeURI: "uri/shared", ReceivedAtMs: 100, RequestID: "uri/1"},
+		{ChangeURI: "uri/shared", ReceivedAtMs: 200, RequestID: "uri/2"},
+		{ChangeURI: "uri/shared", ReceivedAtMs: 200, RequestID: "uri/3"},
+	}
+	for _, row := range rows {
+		require.NoError(t, store.Create(ctx, row))
+	}
+	require.ErrorIs(t, store.Create(ctx, rows[0]), storage.ErrAlreadyExists)
+
+	got, err := store.ListByURI(ctx, "uri/shared", 2)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, []string{"uri/3", "uri/2"}, []string{got[0].RequestID, got[1].RequestID})
+}

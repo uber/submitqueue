@@ -23,6 +23,10 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
 
+// mysqlErrDuplicateEntry is MySQL error code 1062 ("Duplicate entry"), returned on a unique or primary key violation.
+// It requires a unique index on the table to be raised.
+const mysqlErrDuplicateEntry = 1062
+
 type mysqlStorage struct {
 	db                   *sql.DB
 	requestStore         storage.RequestStore
@@ -32,6 +36,9 @@ type mysqlStorage struct {
 	buildStore           storage.BuildStore
 	speculationTreeStore storage.SpeculationTreeStore
 	requestLogStore      storage.RequestLogStore
+	requestSummaryStore  storage.RequestSummaryStore
+	requestQueueStore    storage.RequestQueueSummaryStore
+	requestURIStore      storage.RequestURIStore
 }
 
 // NewStorage creates a new MySQL storage.
@@ -45,6 +52,9 @@ func NewStorage(db *sql.DB, scope tally.Scope) (storage.Storage, error) {
 		buildStore:           NewBuildStore(db, scope.SubScope("build_store")),
 		speculationTreeStore: NewSpeculationTreeStore(db, scope.SubScope("speculation_tree_store")),
 		requestLogStore:      NewRequestLogStore(db, scope.SubScope("request_log_store")),
+		requestSummaryStore:  NewRequestSummaryStore(db, scope.SubScope("request_summary_store")),
+		requestQueueStore:    NewRequestQueueSummaryStore(db, scope.SubScope("request_queue_summary_store")),
+		requestURIStore:      NewRequestURIStore(db, scope.SubScope("request_uri_store")),
 	}, nil
 }
 
@@ -81,6 +91,21 @@ func (f *mysqlStorage) GetSpeculationTreeStore() storage.SpeculationTreeStore {
 // GetRequestLogStore returns the MySQL-backed RequestLogStore.
 func (f *mysqlStorage) GetRequestLogStore() storage.RequestLogStore {
 	return f.requestLogStore
+}
+
+// GetRequestSummaryStore returns the MySQL-backed RequestSummaryStore.
+func (f *mysqlStorage) GetRequestSummaryStore() storage.RequestSummaryStore {
+	return f.requestSummaryStore
+}
+
+// GetRequestQueueSummaryStore returns the MySQL-backed RequestQueueSummaryStore.
+func (f *mysqlStorage) GetRequestQueueSummaryStore() storage.RequestQueueSummaryStore {
+	return f.requestQueueStore
+}
+
+// GetRequestURIStore returns the MySQL-backed RequestURIStore.
+func (f *mysqlStorage) GetRequestURIStore() storage.RequestURIStore {
+	return f.requestURIStore
 }
 
 // Close closes the underlying database connection.
