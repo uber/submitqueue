@@ -278,13 +278,16 @@ func TestController_Process_MergingWakesDependentsOnly(t *testing.T) {
 	require.Len(t, *h.records, 2)
 	assert.Equal(t, "submitqueue-merge", (*h.records)[0].topic)
 	assert.True(t, strings.HasPrefix((*h.records)[0].msgID, batch.ID+"/mergeheal/"))
-	assert.Equal(t, pubRec{topic: "speculate", msgID: "test-queue/batch/2"}, (*h.records)[1])
+	assert.Equal(t, pubRec{topic: "speculate", msgID: "test-queue/batch/2/dep-merging/" + batch.ID}, (*h.records)[1])
 }
 
-// Terminal states wake dependents (re-publish speculate for each) and then
-// re-publish conclude — this is both the normal dependent wake-up (every
-// terminal transition is routed back through speculate under the batch's own
-// ID) and the crash self-heal for a lost publish. State must not change (no
+// Terminal states wake dependents (re-publish speculate for each, under a
+// dep-terminal-scoped message ID) and then re-publish conclude — each
+// terminal state is a fact some dependent's tree needs to reconcile against:
+// Succeeded's re-fan is how a dependent learns a dep landed (mergesignal
+// publishes the terminal batch to speculate on success precisely so this
+// branch runs), and Failed's re-fan covers a batch failed by finalize, which
+// never passes through mergesignal's own fan-out. State must not change (no
 // UpdateState), and neither BuildStore nor SpeculationTreeStore is touched.
 func TestController_Process_TerminalSelfHeals(t *testing.T) {
 	for _, state := range []entity.BatchState{
@@ -307,8 +310,8 @@ func TestController_Process_TerminalSelfHeals(t *testing.T) {
 
 			require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
 			assert.Equal(t, []pubRec{
-				{topic: "speculate", msgID: "test-queue/batch/2"},
-				{topic: "speculate", msgID: "test-queue/batch/3"},
+				{topic: "speculate", msgID: fmt.Sprintf("test-queue/batch/2/dep-terminal/%s", batch.ID)},
+				{topic: "speculate", msgID: fmt.Sprintf("test-queue/batch/3/dep-terminal/%s", batch.ID)},
 				{topic: "conclude", msgID: batch.ID},
 			}, *h.records)
 		})
@@ -386,7 +389,7 @@ func TestController_Process_CreatedEnumeratesScoresSelects(t *testing.T) {
 	h.batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateSpeculating).Return(nil)
 
 	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
-	assert.Equal(t, []pubRec{{topic: "prioritize", msgID: batch.Queue}}, *h.records)
+	assert.Equal(t, []pubRec{{topic: "prioritize", msgID: fmt.Sprintf("%s/%s/v%d", batch.Queue, batch.ID, 2)}}, *h.records)
 }
 
 // TestController_Process_CreateTreeMintsPathIDs pins down the exact minted
@@ -416,7 +419,7 @@ func TestController_Process_CreateTreeMintsPathIDs(t *testing.T) {
 	h.batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateSpeculating).Return(nil)
 
 	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
-	assert.Equal(t, []pubRec{{topic: "prioritize", msgID: batch.Queue}}, *h.records)
+	assert.Equal(t, []pubRec{{topic: "prioritize", msgID: fmt.Sprintf("%s/%s/v1", batch.Queue, batch.ID)}}, *h.records)
 }
 
 // Create racing with a concurrent creator: ErrAlreadyExists must fall back to
@@ -451,7 +454,7 @@ func TestController_Process_CreateTreeAlreadyExistsRereads(t *testing.T) {
 	h.batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateSpeculating).Return(nil)
 
 	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
-	assert.Equal(t, []pubRec{{topic: "prioritize", msgID: batch.Queue}}, *h.records)
+	assert.Equal(t, []pubRec{{topic: "prioritize", msgID: fmt.Sprintf("%s/%s/v%d", batch.Queue, batch.ID, 1)}}, *h.records)
 }
 
 // Dependency gate: too many active dependencies for a batch with no tree yet
@@ -496,7 +499,7 @@ func TestController_Process_NoChangeSkipsTreeUpdate(t *testing.T) {
 	// No treeStore.Update, no batchStore.UpdateState expected (already Speculating).
 
 	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
-	assert.Equal(t, []pubRec{{topic: "prioritize", msgID: batch.Queue}}, *h.records)
+	assert.Equal(t, []pubRec{{topic: "prioritize", msgID: fmt.Sprintf("%s/%s/v%d", batch.Queue, batch.ID, 4)}}, *h.records)
 }
 
 // A version mismatch on the speculation tree Update must surface as an error
@@ -579,11 +582,11 @@ func TestController_Process_MergeGate(t *testing.T) {
 
 			require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
 
-			wantRecords := []pubRec{{topic: "prioritize", msgID: "test-queue"}}
+			wantRecords := []pubRec{{topic: "prioritize", msgID: fmt.Sprintf("%s/%s/v%d", batch.Queue, batch.ID, 2)}}
 			if tt.wantMerge {
 				wantRecords = append(wantRecords,
 					pubRec{topic: "submitqueue-merge", msgID: batch.ID},
-					pubRec{topic: "speculate", msgID: "test-queue/batch/9"},
+					pubRec{topic: "speculate", msgID: "test-queue/batch/9/dep-merging/" + batch.ID},
 				)
 			}
 			assert.ElementsMatch(t, wantRecords, *h.records)
@@ -619,7 +622,7 @@ func TestController_Process_CancelledBaseDepToleratedMerges(t *testing.T) {
 
 	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
 	assert.ElementsMatch(t, []pubRec{
-		{topic: "prioritize", msgID: "test-queue"},
+		{topic: "prioritize", msgID: fmt.Sprintf("%s/%s/v%d", batch.Queue, batch.ID, 1)},
 		{topic: "submitqueue-merge", msgID: batch.ID},
 	}, *h.records)
 }
@@ -673,19 +676,20 @@ func TestController_Process_MergingSupervision(t *testing.T) {
 
 			if tt.wantFail {
 				assert.Equal(t, []pubRec{
-					{topic: "speculate", msgID: "test-queue/batch/2"},
+					{topic: "speculate", msgID: "test-queue/batch/2/dep-terminal/" + batch.ID},
 					{topic: "conclude", msgID: batch.ID},
 				}, *h.records)
 				return
 			}
 			// A healthy wake re-arms the merge trigger (minted ID — never
 			// the bare batch ID, which publish dedup could swallow) before
-			// waking dependents.
+			// waking dependents; the dep-merging wake keeps its own ID space
+			// so it cannot consume the later dep-terminal wake's.
 			require.Len(t, *h.records, 2)
 			rearm := (*h.records)[0]
 			assert.Equal(t, "submitqueue-merge", rearm.topic)
 			assert.True(t, strings.HasPrefix(rearm.msgID, batch.ID+"/mergeheal/"), "re-arm must mint a fresh ID, got %q", rearm.msgID)
-			assert.Equal(t, pubRec{topic: "speculate", msgID: "test-queue/batch/2"}, (*h.records)[1])
+			assert.Equal(t, pubRec{topic: "speculate", msgID: "test-queue/batch/2/dep-merging/" + batch.ID}, (*h.records)[1])
 		})
 	}
 }
@@ -738,7 +742,7 @@ func TestController_Process_FailedBaseDepDeadsPath(t *testing.T) {
 
 			require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
 			assert.ElementsMatch(t, []pubRec{
-				{topic: "prioritize", msgID: batch.Queue},
+				{topic: "prioritize", msgID: fmt.Sprintf("%s/%s/v%d", batch.Queue, batch.ID, 3)},
 				{topic: "conclude", msgID: batch.ID},
 			}, *h.records)
 		})
@@ -781,8 +785,8 @@ func TestController_Process_OwnBuildFailedFailsBatch(t *testing.T) {
 
 	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
 	assert.ElementsMatch(t, []pubRec{
-		{topic: "prioritize", msgID: batch.Queue},
-		{topic: "speculate", msgID: "test-queue/batch/9"},
+		{topic: "prioritize", msgID: fmt.Sprintf("%s/%s/v%d", batch.Queue, batch.ID, 6)},
+		{topic: "speculate", msgID: fmt.Sprintf("test-queue/batch/9/dep-terminal/%s", batch.ID)},
 		{topic: "conclude", msgID: batch.ID},
 	}, *h.records)
 }
@@ -817,7 +821,7 @@ func TestController_Process_FinalizeDependentPublishFailure(t *testing.T) {
 	}, nil)
 
 	require.Error(t, runProcess(t, ctrl, h.controller, batch.ID))
-	assert.Equal(t, []pubRec{{topic: "prioritize", msgID: batch.Queue}}, *h.records)
+	assert.Equal(t, []pubRec{{topic: "prioritize", msgID: fmt.Sprintf("%s/%s/v%d", batch.Queue, batch.ID, 6)}}, *h.records)
 }
 
 // Hand-built two-path tree: a dependency of the head landing (Succeeded)
@@ -880,13 +884,17 @@ func TestController_Process_CancellingFlow(t *testing.T) {
 		name string
 		// wantPending is true when the pass must leave the batch in
 		// Cancelling and only publish prioritize; false when the pass
-		// completes the terminal sequence.
-		wantPending bool
-		setup       func(t *testing.T, h *testHarness, batch entity.Batch)
+		// completes the terminal sequence. roundVersion is the tree version
+		// the pending pass's prioritize round ID must carry (the post-sweep
+		// persisted version).
+		wantPending  bool
+		roundVersion int32
+		setup        func(t *testing.T, h *testHarness, batch entity.Batch)
 	}{
 		{
-			name:        "live_builds_marked_cancelling_and_waits",
-			wantPending: true,
+			name:         "live_builds_marked_cancelling_and_waits",
+			wantPending:  true,
+			roundVersion: 4,
 			setup: func(t *testing.T, h *testHarness, batch entity.Batch) {
 				pathA := entity.SpeculationPath{Head: batch.ID}
 				pathB := entity.SpeculationPath{Base: []string{"test-queue/batch/dep"}, Head: batch.ID}
@@ -922,8 +930,9 @@ func TestController_Process_CancellingFlow(t *testing.T) {
 			},
 		},
 		{
-			name:        "already_cancelling_live_build_waits_without_write",
-			wantPending: true,
+			name:         "already_cancelling_live_build_waits_without_write",
+			wantPending:  true,
+			roundVersion: 4,
 			setup: func(t *testing.T, h *testHarness, batch entity.Batch) {
 				path := entity.SpeculationPath{Head: batch.ID}
 				pathID := "test-queue/batch/1/path/0"
@@ -1012,8 +1021,9 @@ func TestController_Process_CancellingFlow(t *testing.T) {
 			// trigger). A pass about to settle must pull it back to
 			// Cancelling so the build stage enacts the stop, instead of
 			// CASing the batch terminal over a running build.
-			name:        "cancelled_path_with_live_build_reopened",
-			wantPending: true,
+			name:         "cancelled_path_with_live_build_reopened",
+			wantPending:  true,
+			roundVersion: 8,
 			setup: func(t *testing.T, h *testHarness, batch entity.Batch) {
 				path := entity.SpeculationPath{Head: batch.ID}
 				pathID := "test-queue/batch/1/path/0"
@@ -1114,13 +1124,13 @@ func TestController_Process_CancellingFlow(t *testing.T) {
 
 			if tt.wantPending {
 				assert.Equal(t, []pubRec{
-					{topic: "prioritize", msgID: "test-queue"},
+					{topic: "prioritize", msgID: fmt.Sprintf("test-queue/%s/v%d", batch.ID, tt.roundVersion)},
 				}, *h.records)
 				return
 			}
 			assert.Equal(t, []pubRec{
-				{topic: "speculate", msgID: "test-queue/batch/2"},
-				{topic: "speculate", msgID: "test-queue/batch/3"},
+				{topic: "speculate", msgID: fmt.Sprintf("test-queue/batch/2/dep-terminal/%s", batch.ID)},
+				{topic: "speculate", msgID: fmt.Sprintf("test-queue/batch/3/dep-terminal/%s", batch.ID)},
 				{topic: "conclude", msgID: batch.ID},
 			}, *h.records)
 		})

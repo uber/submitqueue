@@ -392,7 +392,15 @@ func (c *Controller) republishBuilds(ctx context.Context, queue string, trees ma
 		if !needsBuild {
 			continue
 		}
-		if err := c.publishBuild(ctx, batchID, queue); err != nil {
+		// The message ID encodes (batch, tree version): a round that changed
+		// the tree (new promotions) mints a fresh ID and is guaranteed
+		// delivery, while pure heal republishes reuse the last one and
+		// coalesce under the queue's publish idempotency on
+		// (topic, partition_key, id) — a bare batch ID would coalesce a
+		// later promotion round away against the first round's
+		// not-yet-collected row.
+		msgID := fmt.Sprintf("%s/v%d", batchID, tree.Version)
+		if err := c.publishBuild(ctx, msgID, batchID, queue); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 			return fmt.Errorf("failed to publish batch %s to build: %w", batchID, err)
 		}
@@ -404,14 +412,14 @@ func (c *Controller) republishBuilds(ctx context.Context, queue string, trees ma
 // publishBuild publishes a batch ID to the build topic. Only the identifier
 // travels on the queue; the build controller reloads the full Batch (and,
 // eventually, its speculation tree) from storage.
-func (c *Controller) publishBuild(ctx context.Context, batchID, partitionKey string) error {
+func (c *Controller) publishBuild(ctx context.Context, msgID, batchID, partitionKey string) error {
 	bid := entity.BatchID{ID: batchID}
 	payload, err := bid.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(batchID, payload, partitionKey, nil)
+	msg := entityqueue.NewMessage(msgID, payload, partitionKey, nil)
 
 	q, ok := c.registry.Queue(topickey.TopicKeyBuild)
 	if !ok {

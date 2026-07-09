@@ -200,17 +200,19 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return c.cancelBatch(ctx, batch)
 	}
 
-	// Terminal state: wake dependents and re-publish conclude. This branch is
-	// the dependent wake-up for every terminal transition — mergesignal routes
-	// merge outcomes back through speculate under the batch's own ID, the
-	// finalize pass below re-publishes a batch it fails, and re-publishing the
-	// dependents here lets each of them re-run its own dependency gate /
-	// finalize pass against the new dependency state. On redelivery the same
-	// branch doubles as the crash self-heal: both the dependent fan-out and
-	// the conclude publish are idempotent re-sends.
+	// Terminal state: wake dependents and re-publish conclude. Dependents are
+	// re-fanned for EVERY terminal state — each is a fact some dependent's
+	// tree needs to reconcile against: Succeeded rules the dep in
+	// (dead-pathing every sibling path that bet against it; mergesignal
+	// publishes the terminal batch here on success precisely so this branch
+	// runs), Failed and Cancelled rule it out. Failed additionally has no
+	// other stage covering it: a batch failed by finalize never passes
+	// through mergesignal's own fan-out. On redelivery the same branch
+	// doubles as the crash self-heal: both the dependent fan-out and the
+	// conclude publish are idempotent re-sends.
 	if batch.State.IsTerminal() {
 		metrics.NamedCounter(c.metricsScope, opName, "self_heal_terminal", 1)
-		if err := c.respeculateDependents(ctx, batch); err != nil {
+		if err := c.respeculateDependents(ctx, batch, "dep-terminal"); err != nil {
 			return err
 		}
 		return c.fanout(ctx, batch.ID, batch.Queue)
@@ -335,7 +337,14 @@ func (c *Controller) speculateBatch(ctx context.Context, batch entity.Batch) err
 	// healed by redelivery — an error or crash here nacks the message, and
 	// the next pass republishes, since this runs on every pass regardless of
 	// whether anything changed.
-	if err := c.publishQueue(ctx, topickey.TopicKeyPrioritize, batch.Queue); err != nil {
+	//
+	// The message ID encodes (batch, tree version): every persisted tree
+	// change mints a fresh ID and so is guaranteed a round, while no-change
+	// passes reuse their last ID and coalesce under the queue's publish
+	// idempotency — every prioritizer input change is some tree's version
+	// bump, so coalescing the rest loses nothing.
+	roundID := fmt.Sprintf("%s/%s/v%d", batch.Queue, batch.ID, tree.Version)
+	if err := c.publishQueue(ctx, topickey.TopicKeyPrioritize, roundID, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish queue %s to prioritize: %w", batch.Queue, err)
 	}
@@ -812,8 +821,10 @@ func (c *Controller) finalize(ctx context.Context, batch entity.Batch, tree enti
 		// their merge readiness. Fan out AFTER the CAS so a woken dependent
 		// reads this batch as Merging; a crash in between is healed by
 		// superviseMerging, which re-runs the fan-out on every later
-		// delivery.
-		return c.respeculateDependents(ctx, batch)
+		// delivery. dep-merging (not dep-terminal): this wake announces a
+		// different event than the terminal fan-out and must not consume
+		// its one-per-(dependent, dep) message ID.
+		return c.respeculateDependents(ctx, batch, "dep-merging")
 	}
 
 	anyViable := false
@@ -867,7 +878,7 @@ func (c *Controller) failBatch(ctx context.Context, batch entity.Batch) error {
 	batch.Version = newVersion
 	batch.State = entity.BatchStateFailed
 
-	if err := c.respeculateDependents(ctx, batch); err != nil {
+	if err := c.respeculateDependents(ctx, batch, "dep-terminal"); err != nil {
 		return err
 	}
 
@@ -928,7 +939,7 @@ func (c *Controller) superviseMerging(ctx context.Context, batch entity.Batch) e
 				metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 				return fmt.Errorf("failed to re-arm merge trigger for batch %s: %w", batch.ID, err)
 			}
-			return c.respeculateDependents(ctx, batch)
+			return c.respeculateDependents(ctx, batch, "dep-merging")
 		}
 	}
 
@@ -1005,7 +1016,7 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 	// collateral requests need a fresh request ID and a re-publish to TopicKeyStart so
 	// they can be re-batched without the cancelled change.
 
-	pending, err := c.cancelTree(ctx, batch)
+	pending, treeVersion, err := c.cancelTree(ctx, batch)
 	if err != nil {
 		return err
 	}
@@ -1014,13 +1025,17 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 		// Builds are still winding down. The Cancelling intents are already
 		// persisted; hand them to the build stage through the queue-wide
 		// prioritize stage and wait for the next buildsignal wake to
-		// re-evaluate.
+		// re-evaluate. The round ID follows speculateBatch's scheme — one
+		// per persisted tree state — so a sweep that changed the tree is
+		// guaranteed a prioritize round while no-change re-publishes
+		// coalesce against it.
 		metrics.NamedCounter(c.metricsScope, opName, "cancel_pending_builds", 1)
 		c.logger.Debugw("waiting for builds to quiesce before terminal cancel",
 			"batch_id", batch.ID,
 			"pending_paths", pending,
 		)
-		if err := c.publishQueue(ctx, topickey.TopicKeyPrioritize, batch.Queue); err != nil {
+		roundID := fmt.Sprintf("%s/%s/v%d", batch.Queue, batch.ID, treeVersion)
+		if err := c.publishQueue(ctx, topickey.TopicKeyPrioritize, roundID, batch.Queue); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 			return fmt.Errorf("failed to publish queue %s to prioritize: %w", batch.Queue, err)
 		}
@@ -1039,7 +1054,7 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 		"queue", batch.Queue,
 	)
 
-	if err := c.respeculateDependents(ctx, batch); err != nil {
+	if err := c.respeculateDependents(ctx, batch, "dep-terminal"); err != nil {
 		return err
 	}
 
@@ -1053,7 +1068,9 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 
 // cancelTree sweeps the batch's speculation tree toward cancellation and
 // reports how many paths remain Cancelling — that is, whose builds have not
-// yet been observed terminal. Terminal paths are settled outcomes and are
+// yet been observed terminal — together with the tree's persisted version
+// after the sweep (zero when the batch has no tree), which the caller folds
+// into its prioritize round ID. Terminal paths are settled outcomes and are
 // skipped without I/O on ordinary passes (a pass about to settle re-checks
 // Cancelled paths once — see the terminal-transition guard below). Every
 // other path is resolved through the path->build mapping keyed by its
@@ -1068,15 +1085,15 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 // sweep is persisted under the tree's version lock only when a status
 // actually moved, and costs one pass with at most two point reads per
 // unresolved path, mirroring reconcile.
-func (c *Controller) cancelTree(ctx context.Context, batch entity.Batch) (int, error) {
+func (c *Controller) cancelTree(ctx context.Context, batch entity.Batch) (int, int32, error) {
 	tree, err := c.store.GetSpeculationTreeStore().Get(ctx, batch.ID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			metrics.NamedCounter(c.metricsScope, opName, "cancel_tree_not_found", 1)
-			return 0, nil
+			return 0, 0, nil
 		}
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return 0, fmt.Errorf("failed to get speculation tree for batch %s: %w", batch.ID, err)
+		return 0, 0, fmt.Errorf("failed to get speculation tree for batch %s: %w", batch.ID, err)
 	}
 
 	paths := tree.Paths
@@ -1094,7 +1111,7 @@ func (c *Controller) cancelTree(ctx context.Context, batch entity.Batch) (int, e
 
 		status, err := c.cancelPathStatus(ctx, batch, p)
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		if status == entity.SpeculationPathStatusCancelling {
 			pending++
@@ -1124,7 +1141,7 @@ func (c *Controller) cancelTree(ctx context.Context, batch entity.Batch) (int, e
 			}
 			status, err := c.cancelPathStatus(ctx, batch, p)
 			if err != nil {
-				return 0, err
+				return 0, 0, err
 			}
 			if status != entity.SpeculationPathStatusCancelling {
 				continue
@@ -1141,16 +1158,16 @@ func (c *Controller) cancelTree(ctx context.Context, batch entity.Batch) (int, e
 	}
 
 	if !changed {
-		return pending, nil
+		return pending, tree.Version, nil
 	}
 
 	newVersion := tree.Version + 1
 	if err := c.store.GetSpeculationTreeStore().Update(ctx, batch.ID, tree.Version, newVersion, paths); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return 0, fmt.Errorf("failed to update speculation tree for batch %s: %w", batch.ID, err)
+		return 0, 0, fmt.Errorf("failed to update speculation tree for batch %s: %w", batch.ID, err)
 	}
 	metrics.NamedCounter(c.metricsScope, opName, "cancel_tree_updated", 1)
-	return pending, nil
+	return pending, newVersion, nil
 }
 
 // cancelPathStatus resolves the cancellation status for one non-terminal
@@ -1229,7 +1246,7 @@ func (c *Controller) republishMergeTrigger(ctx context.Context, batch entity.Bat
 // Failed flow, and from the terminal branch in Process — the latter on both
 // the first pass after a batch goes terminal (the normal dependent wake-up)
 // and on redelivery (self-heal).
-func (c *Controller) respeculateDependents(ctx context.Context, batch entity.Batch) error {
+func (c *Controller) respeculateDependents(ctx context.Context, batch entity.Batch, reason string) error {
 	bd, err := c.store.GetBatchDependentStore().Get(ctx, batch.ID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
@@ -1244,7 +1261,18 @@ func (c *Controller) respeculateDependents(ctx context.Context, batch entity.Bat
 		// the existing state-machine dispatch in Process all argue for the
 		// publish. Revisit if the extra message hop ever shows up as latency
 		// or cost.
-		if err := c.publish(ctx, topickey.TopicKeySpeculate, depID, batch.Queue); err != nil {
+		//
+		// The message ID marks this specific wake-up — "depID, because batch
+		// hit reason" — rather than reusing the dependent's bare batch ID,
+		// which other stages (score) have already published under: the
+		// queue's publish idempotency would coalesce the wake-up away against
+		// any such not-yet-collected row. One ID per (dependent, reason, dep)
+		// also makes the self-heal redeliveries of this fan-out coalesce
+		// among themselves, which is exactly the dedup wanted. reason keeps
+		// distinct events distinct: the optimistic dep-merging wake must not
+		// consume the ID of the later, load-bearing dep-terminal wake.
+		msgID := fmt.Sprintf("%s/%s/%s", depID, reason, batch.ID)
+		if err := c.publishAs(ctx, topickey.TopicKeySpeculate, msgID, depID, batch.Queue); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 			return fmt.Errorf("failed to publish dependent batch %s to speculate: %w", depID, err)
 		}
@@ -1281,15 +1309,29 @@ func (c *Controller) fanout(ctx context.Context, batchID, partitionKey string) e
 	return nil
 }
 
-// publish publishes a batch ID to the specified topic key.
+// publish publishes a batch ID to the specified topic key, with the batch ID
+// itself as the message ID. Appropriate for once-per-batch handoffs (merge,
+// conclude): queue publishes are idempotent on (topic, partition_key, id), so
+// reusing the batch ID makes accidental double-publishes coalesce.
 func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID string, partitionKey string) error {
+	return c.publishAs(ctx, key, batchID, batchID, partitionKey)
+}
+
+// publishAs publishes a batch ID to the specified topic key under an explicit
+// message ID. Re-trigger publishes (waking a dependent that has already been
+// woken by other stages under other IDs) must NOT reuse an ID any other
+// publisher uses for the same batch: the queue's publish idempotency on
+// (topic, partition_key, id) silently coalesces a same-key publish against any
+// row not yet garbage-collected — including already-consumed ones — so a
+// reused ID can swallow the wake-up entirely.
+func (c *Controller) publishAs(ctx context.Context, key consumer.TopicKey, msgID, batchID string, partitionKey string) error {
 	bid := entity.BatchID{ID: batchID}
 	payload, err := bid.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(batchID, payload, partitionKey, nil)
+	msg := entityqueue.NewMessage(msgID, payload, partitionKey, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {
@@ -1308,17 +1350,21 @@ func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID
 	return nil
 }
 
-// publishQueue publishes a queue name to the specified topic key. Used for
-// queue-scoped stages (prioritize) whose message payload carries no batch
-// identity at all — just the queue to re-evaluate.
-func (c *Controller) publishQueue(ctx context.Context, key consumer.TopicKey, queue string) error {
+// publishQueue publishes a queue name to the specified topic key under the
+// given message ID. Used for queue-scoped stages (prioritize) whose message
+// payload carries no batch identity at all — just the queue to re-evaluate.
+// The caller derives the message ID from what changed (see speculateBatch):
+// a fixed ID (e.g. the bare queue name) would collide with the queue's
+// publish idempotency on (topic, partition_key, id) and silently swallow
+// every round after the first until garbage collection.
+func (c *Controller) publishQueue(ctx context.Context, key consumer.TopicKey, msgID, queue string) error {
 	qid := entity.QueueID{Name: queue}
 	payload, err := qid.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize queue ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(queue, payload, queue, nil)
+	msg := entityqueue.NewMessage(msgID, payload, queue, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {
