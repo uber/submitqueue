@@ -94,7 +94,7 @@ func TestMergeChecker_Check(t *testing.T) {
 			handler: graphQLHandler(t, []PRInfo{
 				{Number: 1, Mergeable: PRMergeableStateMergeable, BaseRefName: "main", HeadRefName: "feature-1", HeadRefOid: shaAFull, State: PRStateOpen},
 			}),
-			change:        change.Change{URIs: []string{"github://uber/repo/pull/1/" + shaAFull}},
+			change:        change.Change{URIs: []string{"github://github.example.com/uber/repo/pull/1/" + shaAFull}},
 			wantMergeable: true,
 		},
 		{
@@ -102,7 +102,7 @@ func TestMergeChecker_Check(t *testing.T) {
 			handler: graphQLHandler(t, []PRInfo{
 				{Number: 1, Mergeable: PRMergeableStateConflicting, BaseRefName: "main", HeadRefName: "feature-1", HeadRefOid: shaAFull, State: PRStateOpen},
 			}),
-			change:        change.Change{URIs: []string{"github://uber/repo/pull/1/" + shaAFull}},
+			change:        change.Change{URIs: []string{"github://github.example.com/uber/repo/pull/1/" + shaAFull}},
 			wantMergeable: false,
 			wantReason:    "PR #1 has merge conflicts",
 		},
@@ -112,7 +112,7 @@ func TestMergeChecker_Check(t *testing.T) {
 				{Number: 1, Mergeable: PRMergeableStateMergeable, BaseRefName: "main", HeadRefName: "feature-1", HeadRefOid: sha1Full, State: PRStateOpen},
 				{Number: 2, Mergeable: PRMergeableStateMergeable, BaseRefName: "feature-1", HeadRefName: "feature-2", HeadRefOid: sha2Full, State: PRStateOpen},
 			}),
-			change:        change.Change{URIs: []string{"github://uber/repo/pull/1/" + sha1Full, "github://uber/repo/pull/2/" + sha2Full}},
+			change:        change.Change{URIs: []string{"github://github.example.com/uber/repo/pull/1/" + sha1Full, "github://github.example.com/uber/repo/pull/2/" + sha2Full}},
 			wantMergeable: true,
 		},
 		{
@@ -120,7 +120,7 @@ func TestMergeChecker_Check(t *testing.T) {
 			handler: graphQLHandler(t, []PRInfo{
 				{Number: 1, Mergeable: PRMergeableStateUnknown, BaseRefName: "main", HeadRefName: "feature-1", HeadRefOid: shaAFull, State: PRStateOpen},
 			}),
-			change:  change.Change{URIs: []string{"github://uber/repo/pull/1/" + shaAFull}},
+			change:  change.Change{URIs: []string{"github://github.example.com/uber/repo/pull/1/" + shaAFull}},
 			wantErr: true,
 		},
 		{
@@ -128,7 +128,7 @@ func TestMergeChecker_Check(t *testing.T) {
 			handler: graphQLHandler(t, []PRInfo{
 				{Number: 1, Mergeable: PRMergeableStateMergeable, BaseRefName: "main", HeadRefName: "feature-1", HeadRefOid: shaNewFull, State: PRStateOpen},
 			}),
-			change:        change.Change{URIs: []string{"github://uber/repo/pull/1/" + shaOldFull}},
+			change:        change.Change{URIs: []string{"github://github.example.com/uber/repo/pull/1/" + shaOldFull}},
 			wantMergeable: false,
 			wantReason:    fmt.Sprintf("PR #1 head SHA changed: expected %s, got %s", shaOldFull, shaNewFull),
 		},
@@ -146,7 +146,7 @@ func TestMergeChecker_Check(t *testing.T) {
 				w.WriteHeader(http.StatusInternalServerError)
 				_, _ = w.Write([]byte("internal server error"))
 			}),
-			change:  change.Change{URIs: []string{"github://uber/repo/pull/1/" + shaAFull}},
+			change:  change.Change{URIs: []string{"github://github.example.com/uber/repo/pull/1/" + shaAFull}},
 			wantErr: true,
 		},
 	}

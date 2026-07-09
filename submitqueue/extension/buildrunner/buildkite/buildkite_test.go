@@ -81,8 +81,8 @@ func TestTrigger_SubmitsCorrectPayloadAndReturnsBuildkiteNumber(t *testing.T) {
 	var capturedBody []byte
 
 	resolver := changesetfake.New().
-		Set("base-batch", change.Change{URIs: []string{"github://org/repo/pull/1/aaa111"}}).
-		Set("head-batch", change.Change{URIs: []string{"github://org/repo/pull/2/bbb222"}})
+		Set("base-batch", change.Change{URIs: []string{"github://github.example.com/org/repo/pull/1/aaa111"}}).
+		Set("head-batch", change.Change{URIs: []string{"github://github.example.com/org/repo/pull/2/bbb222"}})
 
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		capturedMethod = req.Method
@@ -99,8 +99,8 @@ func TestTrigger_SubmitsCorrectPayloadAndReturnsBuildkiteNumber(t *testing.T) {
 
 	var req createBuildRequest
 	require.NoError(t, json.Unmarshal(capturedBody, &req))
-	assert.Equal(t, `["github://org/repo/pull/1/aaa111"]`, req.Env[EnvKeyBaseURIs])
-	assert.Equal(t, `["github://org/repo/pull/2/bbb222"]`, req.Env[EnvKeyHeadURIs])
+	assert.Equal(t, `["github://github.example.com/org/repo/pull/1/aaa111"]`, req.Env[EnvKeyBaseURIs])
+	assert.Equal(t, `["github://github.example.com/org/repo/pull/2/bbb222"]`, req.Env[EnvKeyHeadURIs])
 	assert.Equal(t, "my-queue", req.Env[EnvKeyQueue])
 }
 
@@ -125,8 +125,8 @@ func TestTrigger_EmptyBase_ProducesJSONArray(t *testing.T) {
 func TestTrigger_MultipleChangesFlattened(t *testing.T) {
 	var capturedBody []byte
 	resolver := changesetfake.New().Set("head-batch",
-		change.Change{URIs: []string{"github://org/repo/pull/1/aaa"}},
-		change.Change{URIs: []string{"github://org/repo/pull/2/bbb", "github://org/repo/pull/3/ccc"}},
+		change.Change{URIs: []string{"github://github.example.com/org/repo/pull/1/aaa"}},
+		change.Change{URIs: []string{"github://github.example.com/org/repo/pull/2/bbb", "github://github.example.com/org/repo/pull/3/ccc"}},
 	)
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		capturedBody, _ = io.ReadAll(req.Body)
@@ -140,7 +140,7 @@ func TestTrigger_MultipleChangesFlattened(t *testing.T) {
 	var req createBuildRequest
 	require.NoError(t, json.Unmarshal(capturedBody, &req))
 	assert.Equal(t,
-		`["github://org/repo/pull/1/aaa","github://org/repo/pull/2/bbb","github://org/repo/pull/3/ccc"]`,
+		`["github://github.example.com/org/repo/pull/1/aaa","github://github.example.com/org/repo/pull/2/bbb","github://github.example.com/org/repo/pull/3/ccc"]`,
 		req.Env[EnvKeyHeadURIs],
 	)
 }

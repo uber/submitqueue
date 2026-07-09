@@ -72,6 +72,9 @@ func ParseChangeID(raw string) (ChangeID, error) {
 	if u.Host == "" {
 		return ChangeID{}, fmt.Errorf("invalid change ID %q: missing remote (expected format: %s)", raw, changeIDFormat)
 	}
+	if !changeutil.IsLowercaseASCII(u.Hostname()) {
+		return ChangeID{}, fmt.Errorf("invalid change ID %q: remote %q must be lowercase (expected format: %s)", raw, u.Hostname(), changeIDFormat)
+	}
 
 	// Split on the escaped path so the percent-encoded ref stays a single
 	// segment (url.URL.Path decodes %2F to "/", which would split it apart).

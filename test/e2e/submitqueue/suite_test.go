@@ -191,7 +191,7 @@ func (s *E2EIntegrationSuite) TestPingOrchestrator() {
 // storage only via that cross-service publish→consume→persist path, so its
 // presence in the timeline proves the path works.
 func (s *E2EIntegrationSuite) TestLand_HappyPath_ReachesLanded() {
-	sqid := s.land("e2e-test-queue", "github://uber/e2e-service/pull/123/abcdef0123456789abcdef0123456789abcdef01")
+	sqid := s.land("e2e-test-queue", "github://github.example.com/uber/e2e-service/pull/123/abcdef0123456789abcdef0123456789abcdef01")
 	s.log.Logf("Land (happy path) succeeded: sqid=%s; waiting for landed", sqid)
 
 	// Black-box: the customer-facing status reaches landed.
@@ -246,7 +246,7 @@ func (s *E2EIntegrationSuite) TestCancelRequest_InvalidSqid() {
 func (s *E2EIntegrationSuite) TestCancel_RecordsIntent() {
 	t := s.T()
 
-	sqid := s.land("e2e-cancel-queue", "github://uber/e2e-cancel/pull/9999/abcdef0123456789abcdef0123456789abcdef01")
+	sqid := s.land("e2e-cancel-queue", "github://github.example.com/uber/e2e-cancel/pull/9999/abcdef0123456789abcdef0123456789abcdef01")
 	s.log.Logf("Land (cancel path) succeeded: sqid=%s; cancelling", sqid)
 
 	_, err := s.gatewayClient.Cancel(s.ctx, &gatewaypb.CancelRequest{Sqid: sqid, Reason: "e2e cancel test"})

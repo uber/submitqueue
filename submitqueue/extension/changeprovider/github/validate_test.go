@@ -47,7 +47,7 @@ func TestValidateChangeConsistency(t *testing.T) {
 			name: "different scheme",
 			changeIDs: []entitygithub.ChangeID{
 				{Scheme: "github", Org: "uber", Repo: "submitqueue", PRNumber: 1},
-				{Scheme: "ghe", Org: "uber", Repo: "submitqueue", PRNumber: 2},
+				{Scheme: "other", Org: "uber", Repo: "submitqueue", PRNumber: 2},
 			},
 			wantErr: true,
 		},

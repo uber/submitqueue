@@ -2,14 +2,20 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "go_default_library",
-    srcs = ["hex.go"],
+    srcs = [
+        "hex.go",
+        "host.go",
+    ],
     importpath = "github.com/uber/submitqueue/platform/base/change/changeutil",
     visibility = ["//visibility:public"],
 )
 
 go_test(
     name = "go_default_test",
-    srcs = ["hex_test.go"],
+    srcs = [
+        "hex_test.go",
+        "host_test.go",
+    ],
     embed = [":go_default_library"],
     deps = ["@com_github_stretchr_testify//assert:go_default_library"],
 )

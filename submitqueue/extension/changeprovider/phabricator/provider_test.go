@@ -52,7 +52,7 @@ func TestProvider_Get(t *testing.T) {
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				serveConduit(t, w, validDiffResponse())
 			},
-			uris: []string{"phab://D200/100"},
+			uris: []string{"phab://phab.example.com/D200/100"},
 		},
 		{
 			name:    "invalid URI returns error",
@@ -64,7 +64,7 @@ func TestProvider_Get(t *testing.T) {
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
 			},
-			uris:    []string{"phab://D200/100"},
+			uris:    []string{"phab://phab.example.com/D200/100"},
 			wantErr: "Conduit API returned status 500",
 		},
 	}
@@ -90,7 +90,7 @@ func TestProvider_Get(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.Len(t, infos, 1)
-			assert.Equal(t, "phab://D200/100", infos[0].URI)
+			assert.Equal(t, "phab://phab.example.com/D200/100", infos[0].URI)
 			assert.Equal(t, "Test Author", infos[0].Details.Author.Name)
 			assert.Len(t, infos[0].Details.ChangedFiles, 2)
 		})
@@ -119,21 +119,21 @@ func TestProvider_Get_MultipleDiffs(t *testing.T) {
 	client := &http.Client{Transport: &testTransport{baseURL: server.URL}}
 	p := newTestProvider(t, client)
 	infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{
-		URIs: []string{"phab://D200/100", "phab://D201/101"},
+		URIs: []string{"phab://phab.example.com/D200/100", "phab://phab.example.com/D201/101"},
 	}})
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, callCount)
 	require.Len(t, infos, 2)
-	assert.Equal(t, "phab://D200/100", infos[0].URI)
-	assert.Equal(t, "phab://D201/101", infos[1].URI)
+	assert.Equal(t, "phab://phab.example.com/D200/100", infos[0].URI)
+	assert.Equal(t, "phab://phab.example.com/D201/101", infos[1].URI)
 }
 
 func TestProvider_Get_ConnectionError(t *testing.T) {
 	client := &http.Client{Transport: &testTransport{baseURL: "http://127.0.0.1:0"}}
 	p := newTestProvider(t, client)
 	_, err := p.Get(context.Background(), entity.Request{Change: change.Change{
-		URIs: []string{"phab://D200/100"},
+		URIs: []string{"phab://phab.example.com/D200/100"},
 	}})
 
 	require.Error(t, err)
@@ -163,7 +163,7 @@ func TestProvider_Get_FileDetails(t *testing.T) {
 	client := &http.Client{Transport: &testTransport{baseURL: server.URL}}
 	p := newTestProvider(t, client)
 	infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{
-		URIs: []string{"phab://D200/100"},
+		URIs: []string{"phab://phab.example.com/D200/100"},
 	}})
 
 	require.NoError(t, err)
@@ -209,7 +209,7 @@ func TestProvider_Get_Batching(t *testing.T) {
 	for i := range uris {
 		diffID := i + 1
 		revisionID := 1000 + i
-		uris[i] = fmt.Sprintf("phab://D%d/%d", revisionID, diffID)
+		uris[i] = fmt.Sprintf("phab://phab.example.com/D%d/%d", revisionID, diffID)
 	}
 
 	client := &http.Client{Transport: &testTransport{baseURL: server.URL}}
@@ -245,7 +245,7 @@ func TestProvider_Get_BatchingStopsOnError(t *testing.T) {
 	for i := range uris {
 		diffID := i + 1
 		revisionID := 1000 + i
-		uris[i] = fmt.Sprintf("phab://D%d/%d", revisionID, diffID)
+		uris[i] = fmt.Sprintf("phab://phab.example.com/D%d/%d", revisionID, diffID)
 	}
 
 	client := &http.Client{Transport: &testTransport{baseURL: server.URL}}

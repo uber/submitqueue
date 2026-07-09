@@ -33,12 +33,12 @@ func testRequest() *runwaymq.MergeRequest {
 		Steps: []*runwaymq.MergeStep{
 			{
 				StepId:   "queue-a/1",
-				Changes:  []*changepb.Change{{Uris: []string{"github://uber/repo/pull/1/abcdef0123456789abcdef0123456789abcdef01"}}},
+				Changes:  []*changepb.Change{{Uris: []string{"github://github.example.com/uber/repo/pull/1/abcdef0123456789abcdef0123456789abcdef01"}}},
 				Strategy: strategypb.Strategy_REBASE,
 			},
 			{
 				StepId:   "queue-a/2",
-				Changes:  []*changepb.Change{{Uris: []string{"github://uber/repo/pull/2/89abcdef0123456789abcdef0123456789abcdef"}}},
+				Changes:  []*changepb.Change{{Uris: []string{"github://github.example.com/uber/repo/pull/2/89abcdef0123456789abcdef0123456789abcdef"}}},
 				Strategy: strategypb.Strategy_MERGE,
 			},
 		},

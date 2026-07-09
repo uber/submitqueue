@@ -65,7 +65,7 @@ func testRequest() entity.Request {
 	return entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
+		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
@@ -284,7 +284,7 @@ func TestController_Process_WithDependencies(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/456",
 		Queue:        "test-queue",
-		Change:       change.Change{URIs: []string{"github://uber/service/pull/789/789abc1234567890abcdef1234567890abcdef12"}},
+		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/789/789abc1234567890abcdef1234567890abcdef12"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,

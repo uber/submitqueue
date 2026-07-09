@@ -106,7 +106,7 @@ func TestController_Process_Success(t *testing.T) {
 	delivery := makeDelivery(t, ctrl, entity.LandRequest{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
+		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
 	})
 
@@ -147,7 +147,7 @@ func TestController_Process_ConstructsRequestWithStateAndVersion(t *testing.T) {
 	landRequest := entity.LandRequest{
 		ID:           "test-queue/42",
 		Queue:        "test-queue",
-		Change:       change.Change{URIs: []string{"github://uber/service/pull/1/abcdef0123456789abcdef0123456789abcdef01"}},
+		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: mergestrategy.MergeStrategySquashRebase,
 	}
 	delivery := makeDelivery(t, ctrl, landRequest)
@@ -179,7 +179,7 @@ func TestController_Process_AllStrategies(t *testing.T) {
 			delivery := makeDelivery(t, ctrl, entity.LandRequest{
 				ID:           fmt.Sprintf("queue/%s", tt.strategy),
 				Queue:        "test-queue",
-				Change:       change.Change{URIs: []string{"github://uber/service/pull/1/aaa111bbbaaa111bbbaaa111bbbaaa111bbbaaa1"}},
+				Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/aaa111bbbaaa111bbbaaa111bbbaaa111bbbaaa1"}},
 				LandStrategy: tt.strategy,
 			})
 
@@ -195,7 +195,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 	delivery := makeDelivery(t, ctrl, entity.LandRequest{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       change.Change{URIs: []string{"github://uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
+		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
 	})
 
@@ -215,7 +215,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 	delivery := makeDelivery(t, ctrl, entity.LandRequest{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       change.Change{URIs: []string{"github://uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
+		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
 	})
 
@@ -237,7 +237,7 @@ func TestController_Process_AlreadyExistsSucceeds(t *testing.T) {
 	delivery := makeDelivery(t, ctrl, entity.LandRequest{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       change.Change{URIs: []string{"github://uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
+		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
 	})
 

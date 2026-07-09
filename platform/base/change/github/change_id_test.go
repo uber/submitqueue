@@ -38,10 +38,11 @@ func TestParseChangeID(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "valid github scheme",
-			raw:  "github://uber/submitqueue/pull/123/" + shaAFull,
+			name: "plain host",
+			raw:  "github://github.example.com/uber/submitqueue/pull/123/" + shaAFull,
 			want: ChangeID{
 				Scheme:        "github",
+				Host:          "github.example.com",
 				Org:           "uber",
 				Repo:          "submitqueue",
 				PRNumber:      123,
@@ -49,10 +50,11 @@ func TestParseChangeID(t *testing.T) {
 			},
 		},
 		{
-			name: "valid ghe scheme",
-			raw:  "ghe://uber/monorepo/pull/456/" + shaCFull,
+			name: "host with port",
+			raw:  "github://github.example.com:8443/uber/monorepo/pull/456/" + shaCFull,
 			want: ChangeID{
-				Scheme:        "ghe",
+				Scheme:        "github",
+				Host:          "github.example.com:8443",
 				Org:           "uber",
 				Repo:          "monorepo",
 				PRNumber:      456,
@@ -60,21 +62,11 @@ func TestParseChangeID(t *testing.T) {
 			},
 		},
 		{
-			name: "valid ghes scheme",
-			raw:  "ghes://org/repo/pull/1/" + sha1Full,
-			want: ChangeID{
-				Scheme:        "ghes",
-				Org:           "org",
-				Repo:          "repo",
-				PRNumber:      1,
-				HeadCommitSHA: sha1Full,
-			},
-		},
-		{
 			name: "nested org path",
-			raw:  "github://uber/frontend/webapp/pull/42/" + shaAFull,
+			raw:  "github://github.example.com/uber/frontend/webapp/pull/42/" + shaAFull,
 			want: ChangeID{
 				Scheme:        "github",
+				Host:          "github.example.com",
 				Org:           "uber/frontend",
 				Repo:          "webapp",
 				PRNumber:      42,
@@ -83,72 +75,87 @@ func TestParseChangeID(t *testing.T) {
 		},
 		{
 			name:    "missing pull segment",
-			raw:     "github://uber/submitqueue/123/" + shaAFull,
+			raw:     "github://github.example.com/uber/submitqueue/123/" + shaAFull,
 			wantErr: true,
 		},
 		{
 			name:    "wrong literal segment (issues instead of pull)",
-			raw:     "github://uber/submitqueue/issues/123/" + shaAFull,
+			raw:     "github://github.example.com/uber/submitqueue/issues/123/" + shaAFull,
 			wantErr: true,
 		},
 		{
-			name:    "missing separator",
-			raw:     "github/uber/submitqueue/pull/123/" + shaAFull,
+			name:    "missing host",
+			raw:     "github:///uber/submitqueue/pull/123/" + shaAFull,
 			wantErr: true,
 		},
 		{
-			name:    "empty scheme",
-			raw:     "://uber/submitqueue/pull/123/" + shaAFull,
+			name:    "uppercase host",
+			raw:     "github://GitHub.example.com/uber/submitqueue/pull/123/" + shaAFull,
+			wantErr: true,
+		},
+		{
+			name:    "old host-less format now parses host as owner and fails on path length",
+			raw:     "github://uber/submitqueue/pull/123/" + shaAFull,
+			wantErr: true,
+		},
+		{
+			name:    "ghe scheme rejected",
+			raw:     "ghe://github.example.com/uber/monorepo/pull/456/" + shaCFull,
+			wantErr: true,
+		},
+		{
+			name:    "ghes scheme rejected",
+			raw:     "ghes://github.example.com/org/repo/pull/1/" + sha1Full,
 			wantErr: true,
 		},
 		{
 			name:    "too few segments",
-			raw:     "github://uber/pull/123/" + shaAFull,
+			raw:     "github://github.example.com/uber/pull/123/" + shaAFull,
 			wantErr: true,
 		},
 		{
 			name:    "only one segment",
-			raw:     "github://" + shaAFull,
+			raw:     "github://github.example.com",
 			wantErr: true,
 		},
 		{
 			name:    "empty owner",
-			raw:     "github:///submitqueue/pull/123/" + shaAFull,
+			raw:     "github://github.example.com//submitqueue/pull/123/" + shaAFull,
 			wantErr: true,
 		},
 		{
 			name:    "empty repo",
-			raw:     "github://uber//pull/123/" + shaAFull,
+			raw:     "github://github.example.com/uber//pull/123/" + shaAFull,
 			wantErr: true,
 		},
 		{
 			name:    "non-numeric PR number",
-			raw:     "github://uber/submitqueue/pull/abc/" + shaAFull,
+			raw:     "github://github.example.com/uber/submitqueue/pull/abc/" + shaAFull,
 			wantErr: true,
 		},
 		{
 			name:    "empty SHA",
-			raw:     "github://uber/submitqueue/pull/123/",
+			raw:     "github://github.example.com/uber/submitqueue/pull/123/",
 			wantErr: true,
 		},
 		{
 			name:    "abbreviated SHA",
-			raw:     "github://uber/submitqueue/pull/123/abc123def",
+			raw:     "github://github.example.com/uber/submitqueue/pull/123/abc123def",
 			wantErr: true,
 		},
 		{
 			name:    "uppercase SHA",
-			raw:     "github://uber/submitqueue/pull/123/ABCDEF0123456789ABCDEF0123456789ABCDEF01",
+			raw:     "github://github.example.com/uber/submitqueue/pull/123/ABCDEF0123456789ABCDEF0123456789ABCDEF01",
 			wantErr: true,
 		},
 		{
 			name:    "non-hex SHA",
-			raw:     "github://uber/submitqueue/pull/123/zzzzzz0123456789abcdef0123456789abcdef01",
+			raw:     "github://github.example.com/uber/submitqueue/pull/123/zzzzzz0123456789abcdef0123456789abcdef01",
 			wantErr: true,
 		},
 		{
 			name:    "SHA too long",
-			raw:     "github://uber/submitqueue/pull/123/" + shaAFull + "ab",
+			raw:     "github://github.example.com/uber/submitqueue/pull/123/" + shaAFull + "ab",
 			wantErr: true,
 		},
 		{
@@ -178,37 +185,40 @@ func TestChangeID_String(t *testing.T) {
 		want string
 	}{
 		{
-			name: "github",
+			name: "plain host",
 			id: ChangeID{
 				Scheme:        "github",
+				Host:          "github.example.com",
 				Org:           "uber",
 				Repo:          "submitqueue",
 				PRNumber:      123,
 				HeadCommitSHA: shaAFull,
 			},
-			want: "github://uber/submitqueue/pull/123/" + shaAFull,
+			want: "github://github.example.com/uber/submitqueue/pull/123/" + shaAFull,
 		},
 		{
-			name: "ghe",
+			name: "host with port",
 			id: ChangeID{
-				Scheme:        "ghe",
+				Scheme:        "github",
+				Host:          "github.example.com:8443",
 				Org:           "corp",
 				Repo:          "app",
 				PRNumber:      99,
 				HeadCommitSHA: shaCFull,
 			},
-			want: "ghe://corp/app/pull/99/" + shaCFull,
+			want: "github://github.example.com:8443/corp/app/pull/99/" + shaCFull,
 		},
 		{
-			name: "ghes",
+			name: "nested org",
 			id: ChangeID{
-				Scheme:        "ghes",
-				Org:           "org",
-				Repo:          "repo",
-				PRNumber:      1,
-				HeadCommitSHA: sha1Full,
+				Scheme:        "github",
+				Host:          "github.example.com",
+				Org:           "uber/frontend",
+				Repo:          "webapp",
+				PRNumber:      42,
+				HeadCommitSHA: shaAFull,
 			},
-			want: "ghes://org/repo/pull/1/" + sha1Full,
+			want: "github://github.example.com/uber/frontend/webapp/pull/42/" + shaAFull,
 		},
 	}
 
@@ -222,6 +232,7 @@ func TestChangeID_String(t *testing.T) {
 func TestChangeID_OwnerRepo(t *testing.T) {
 	id := ChangeID{
 		Scheme:        "github",
+		Host:          "github.example.com",
 		Org:           "uber",
 		Repo:          "submitqueue",
 		PRNumber:      1,
@@ -232,10 +243,10 @@ func TestChangeID_OwnerRepo(t *testing.T) {
 
 func TestParseChangeID_RoundTrip(t *testing.T) {
 	originals := []string{
-		"github://uber/submitqueue/pull/123/" + shaAFull,
-		"ghe://corp/monorepo/pull/99/" + shaCFull,
-		"ghes://org/repo/pull/1/" + sha2Full,
-		"github://uber/frontend/webapp/pull/42/" + shaBFull,
+		"github://github.example.com/uber/submitqueue/pull/123/" + shaAFull,
+		"github://github.example.com:8443/corp/monorepo/pull/99/" + shaCFull,
+		"github://github.example.com/org/repo/pull/1/" + sha2Full,
+		"github://github.example.com/uber/frontend/webapp/pull/42/" + shaBFull,
 	}
 
 	for _, raw := range originals {

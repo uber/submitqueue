@@ -68,7 +68,7 @@ func TestProvider_Get(t *testing.T) {
 					},
 				})
 			},
-			uris: []string{"github://uber/submitqueue/pull/123/" + shaA},
+			uris: []string{"github://github.example.com/uber/submitqueue/pull/123/" + shaA},
 		},
 		{
 			name:    "invalid URI returns error",
@@ -78,8 +78,8 @@ func TestProvider_Get(t *testing.T) {
 		{
 			name: "inconsistent change set returns error",
 			uris: []string{
-				"github://uber/submitqueue/pull/123/" + shaA,
-				"github://uber/different-repo/pull/456/" + shaB,
+				"github://github.example.com/uber/submitqueue/pull/123/" + shaA,
+				"github://github.example.com/uber/different-repo/pull/456/" + shaB,
 			},
 			wantErr: true,
 		},
@@ -92,7 +92,7 @@ func TestProvider_Get(t *testing.T) {
 					Files:      filesData{Nodes: []fileNode{{Path: "main.go"}}},
 				})
 			},
-			uris:    []string{"github://uber/submitqueue/pull/123/" + shaOld},
+			uris:    []string{"github://github.example.com/uber/submitqueue/pull/123/" + shaOld},
 			wantErr: true,
 		},
 	}
@@ -149,7 +149,7 @@ func TestProvider_Get_Pagination(t *testing.T) {
 
 	p := newTestProvider(t, server.URL)
 	infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{
-		URIs: []string{"github://uber/submitqueue/pull/456/" + shaXYZ},
+		URIs: []string{"github://github.example.com/uber/submitqueue/pull/456/" + shaXYZ},
 	}})
 
 	require.NoError(t, err)
@@ -173,16 +173,16 @@ func TestProvider_Get_MultiplePRs(t *testing.T) {
 	p := newTestProvider(t, server.URL)
 	infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{
 		URIs: []string{
-			"github://uber/submitqueue/pull/123/" + shaA,
-			"github://uber/submitqueue/pull/456/" + shaB,
+			"github://github.example.com/uber/submitqueue/pull/123/" + shaA,
+			"github://github.example.com/uber/submitqueue/pull/456/" + shaB,
 		},
 	}})
 
 	require.NoError(t, err)
 	assert.Equal(t, 2, callCount)
 	require.Len(t, infos, 2)
-	assert.Equal(t, "github://uber/submitqueue/pull/123/"+shaA, infos[0].URI)
-	assert.Equal(t, "github://uber/submitqueue/pull/456/"+shaB, infos[1].URI)
+	assert.Equal(t, "github://github.example.com/uber/submitqueue/pull/123/"+shaA, infos[0].URI)
+	assert.Equal(t, "github://github.example.com/uber/submitqueue/pull/456/"+shaB, infos[1].URI)
 }
 
 func TestProvider_Get_FetchError_StopsOnFirstFailure(t *testing.T) {
@@ -205,8 +205,8 @@ func TestProvider_Get_FetchError_StopsOnFirstFailure(t *testing.T) {
 	p := newTestProvider(t, server.URL)
 	_, err := p.Get(context.Background(), entity.Request{Change: change.Change{
 		URIs: []string{
-			"github://uber/submitqueue/pull/123/" + shaA,
-			"github://uber/submitqueue/pull/456/" + shaB,
+			"github://github.example.com/uber/submitqueue/pull/123/" + shaA,
+			"github://github.example.com/uber/submitqueue/pull/456/" + shaB,
 		},
 	}})
 

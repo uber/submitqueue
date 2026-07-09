@@ -94,8 +94,8 @@ func TestTrigger_DispatchesWorkflowAndReturnsRunID(t *testing.T) {
 	var capturedBody []byte
 
 	resolver := changesetfake.New().
-		Set("base-batch", change.Change{URIs: []string{"github://org/repo/pull/1/aaa111"}}).
-		Set("head-batch", change.Change{URIs: []string{"github://org/repo/pull/2/bbb222"}})
+		Set("base-batch", change.Change{URIs: []string{"github://github.example.com/org/repo/pull/1/aaa111"}}).
+		Set("head-batch", change.Change{URIs: []string{"github://github.example.com/org/repo/pull/2/bbb222"}})
 
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		capturedMethod = req.Method
@@ -122,8 +122,8 @@ func TestTrigger_DispatchesWorkflowAndReturnsRunID(t *testing.T) {
 	assert.Equal(t, "main", req.Ref)
 	assert.True(t, req.ReturnRunDetails)
 	assert.NotContains(t, req.Inputs, "sq_build_id")
-	assert.Equal(t, `["github://org/repo/pull/1/aaa111"]`, req.Inputs[InputKeyBaseURIs])
-	assert.Equal(t, `["github://org/repo/pull/2/bbb222"]`, req.Inputs[InputKeyHeadURIs])
+	assert.Equal(t, `["github://github.example.com/org/repo/pull/1/aaa111"]`, req.Inputs[InputKeyBaseURIs])
+	assert.Equal(t, `["github://github.example.com/org/repo/pull/2/bbb222"]`, req.Inputs[InputKeyHeadURIs])
 	assert.Equal(t, "my-queue", req.Inputs[InputKeyQueue])
 	assert.Equal(t, "value", req.Inputs["custom"])
 

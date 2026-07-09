@@ -45,15 +45,16 @@ const (
 // platform/base/change Go entity. Domains import it rather than redefining their own.
 type Change struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// URIs identifying the change(s) (RFC 3986 compliant). The scheme identifies the
-	// change provider, and the path contains provider-specific resource identifiers.
+	// URIs identifying the change(s) (RFC 3986 compliant): scheme://<host[:port]>/<path>.
+	// The scheme identifies the change provider, the authority is the provider instance
+	// the change lives on, and the path contains provider-specific resource identifiers.
 	//
 	// Supported by default (other providers can be added):
 	//
-	//	GitHub PR:   "github://<org>/<repo>/pull/<pr>/<head_commit_sha>"
-	//	             ("ghe"/"ghes" schemes for GitHub Enterprise)
-	//	git commit:  "git://<remote>/<repo>/<ref>/<commit_sha>"
-	//	             (<ref> is a fully-qualified, percent-encoded git ref)
+	//	GitHub PR:          "github://<host[:port]>/<org>/<repo>/pull/<pr>/<head_commit_sha>"
+	//	Phabricator Diff:   "phab://<host[:port]>/D<revision>/<diff>"
+	//	git commit:         "git://<host[:port]>/<repo>/<ref>/<commit_sha>"
+	//	                    (<ref> is a fully-qualified, percent-encoded git ref)
 	//
 	// The commit SHA must be the full 40-character lowercase hex SHA; abbreviated
 	// SHAs are rejected because downstream staleness checks compare by strict equality.

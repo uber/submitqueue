@@ -5,6 +5,7 @@ go_library(
     srcs = ["change_id.go"],
     importpath = "github.com/uber/submitqueue/platform/base/change/phabricator",
     visibility = ["//visibility:public"],
+    deps = ["//platform/base/change/changeutil:go_default_library"],
 )
 
 go_test(

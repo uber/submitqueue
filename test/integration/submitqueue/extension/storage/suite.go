@@ -63,7 +63,7 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet() {
 		Queue: "test-queue",
 		State: entity.RequestStateStarted,
 		Change: change.Change{
-			URIs: []string{"github://uber/storage-test/pull/123/abcdef0123456789abcdef0123456789abcdef01"},
+			URIs: []string{"github://github.example.com/uber/storage-test/pull/123/abcdef0123456789abcdef0123456789abcdef01"},
 		},
 		LandStrategy: mergestrategy.MergeStrategyMerge,
 		Version:      1,
@@ -95,10 +95,10 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet_StackedPRs() {
 
 	// Stacked PRs as separate URIs
 	stackedURIs := []string{
-		"github://uber/monorepo/pull/101/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		"github://uber/monorepo/pull/102/cccccccccccccccccccccccccccccccccccccccc",
-		"github://uber/monorepo/pull/103/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-		"github://uber/monorepo/pull/104/0000000000000000000000000000000000000004",
+		"github://github.example.com/uber/monorepo/pull/101/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"github://github.example.com/uber/monorepo/pull/102/cccccccccccccccccccccccccccccccccccccccc",
+		"github://github.example.com/uber/monorepo/pull/103/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+		"github://github.example.com/uber/monorepo/pull/104/0000000000000000000000000000000000000004",
 	}
 
 	request := entity.Request{
@@ -232,7 +232,7 @@ func (s *StorageContractSuite) TestStorage_CreateDuplicate() {
 }
 
 // changeURI is a representative change URI reused across change-store contract tests.
-const changeURI = "github://uber/x/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const changeURI = "github://github.example.com/uber/x/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 // Change-store contract tests scope each case to a distinct queue so they stay
 // isolated without truncation (GetByURI is scoped by (queue, uri)).
@@ -247,7 +247,7 @@ func (s *StorageContractSuite) TestStorage_ChangeCreateAndGet_NoMatch() {
 		URI: changeURI, RequestID: queue + "/1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
-	got, err := s.storage.GetChangeStore().GetByURI(ctx, queue, "github://uber/x/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	got, err := s.storage.GetChangeStore().GetByURI(ctx, queue, "github://github.example.com/uber/x/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }

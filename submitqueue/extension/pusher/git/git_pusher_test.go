@@ -155,7 +155,7 @@ func (f gitFixture) landOnMain(t *testing.T, sha string) {
 // uri builds a github-format URI ending in `sha` so the Pusher's parser
 // resolves it to that SHA.
 func uri(sha string) string {
-	return fmt.Sprintf("github://uber/submitqueue/pull/1/%s", sha)
+	return fmt.Sprintf("github://github.example.com/uber/submitqueue/pull/1/%s", sha)
 }
 
 func (f gitFixture) newPusher(t *testing.T) pusher.Pusher {

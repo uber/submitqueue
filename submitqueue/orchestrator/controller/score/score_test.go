@@ -59,7 +59,7 @@ func testRequest() entity.Request {
 		ID:    "test-queue/1",
 		Queue: "test-queue",
 		Change: change.Change{
-			URIs: []string{"github://uber/repo/pull/1/abcdef0123456789abcdef0123456789abcdef01"},
+			URIs: []string{"github://github.example.com/uber/repo/pull/1/abcdef0123456789abcdef0123456789abcdef01"},
 		},
 		State:   entity.RequestStateStarted,
 		Version: 1,

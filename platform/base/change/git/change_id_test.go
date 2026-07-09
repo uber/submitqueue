@@ -107,6 +107,11 @@ func TestParseChangeID(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "uppercase host",
+			raw:     "git://Git.example.com/uber/monorepo/refs%2Fheads%2Fmain/" + sha,
+			wantErr: true,
+		},
+		{
 			name:    "missing commit SHA",
 			raw:     "git://git.example.com/uber/monorepo/refs%2Fheads%2Fmain",
 			wantErr: true,

@@ -10,7 +10,7 @@ import (
 )
 
 func TestConvertToChangeInfo(t *testing.T) {
-	parsed := changephab.ChangeID{Scheme: "phab", RevisionID: 12345, DiffID: 100}
+	parsed := changephab.ChangeID{Scheme: "phab", Host: "phab.example.com", RevisionID: 12345, DiffID: 100}
 	diff := &diffResult{
 		AuthorName:  "Alice",
 		AuthorEmail: "alice@example.com",
@@ -22,7 +22,7 @@ func TestConvertToChangeInfo(t *testing.T) {
 
 	info := convertToChangeInfo(parsed, diff)
 
-	assert.Equal(t, "phab://D12345/100", info.URI)
+	assert.Equal(t, "phab://phab.example.com/D12345/100", info.URI)
 	assert.Equal(t, entity.Author{Name: "Alice", Email: "alice@example.com"}, info.Details.Author)
 	assert.Len(t, info.Details.ChangedFiles, 2)
 }

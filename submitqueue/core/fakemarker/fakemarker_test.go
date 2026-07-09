@@ -34,37 +34,37 @@ func TestToken(t *testing.T) {
 		},
 		{
 			name: "no marker",
-			uris: []string{"github://o/r/pull/1/a"},
+			uris: []string{"github://github.example.com/o/r/pull/1/a"},
 			want: "",
 		},
 		{
 			name: "marker at end of uri",
-			uris: []string{"github://o/r/pull/1/a?sq-fake=build-fail"},
+			uris: []string{"github://github.example.com/o/r/pull/1/a?sq-fake=build-fail"},
 			want: "build-fail",
 		},
 		{
 			name: "marker trimmed at & delimiter",
-			uris: []string{"github://o/r/pull/1/a?sq-fake=build-fail&attempt=2"},
+			uris: []string{"github://github.example.com/o/r/pull/1/a?sq-fake=build-fail&attempt=2"},
 			want: "build-fail",
 		},
 		{
 			name: "marker trimmed at # delimiter",
-			uris: []string{"github://o/r/pull/1/a?sq-fake=build-fail#frag"},
+			uris: []string{"github://github.example.com/o/r/pull/1/a?sq-fake=build-fail#frag"},
 			want: "build-fail",
 		},
 		{
 			name: "marker before a query param it precedes",
-			uris: []string{"github://o/r/pull/1/a?sq-fake=push-error&foo=bar#frag"},
+			uris: []string{"github://github.example.com/o/r/pull/1/a?sq-fake=push-error&foo=bar#frag"},
 			want: "push-error",
 		},
 		{
 			name: "marker on a later uri",
-			uris: []string{"github://o/r/pull/1/a", "github://o/r/pull/2/b?sq-fake=conflict"},
+			uris: []string{"github://github.example.com/o/r/pull/1/a", "github://github.example.com/o/r/pull/2/b?sq-fake=conflict"},
 			want: "conflict",
 		},
 		{
 			name: "first marker wins",
-			uris: []string{"github://o/r/pull/1/a?sq-fake=first", "github://o/r/pull/2/b?sq-fake=second"},
+			uris: []string{"github://github.example.com/o/r/pull/1/a?sq-fake=first", "github://github.example.com/o/r/pull/2/b?sq-fake=second"},
 			want: "first",
 		},
 	}
@@ -89,19 +89,19 @@ func TestTokenInChanges(t *testing.T) {
 		},
 		{
 			name:    "no marker",
-			changes: []change.Change{{URIs: []string{"github://o/r/pull/1/a"}}},
+			changes: []change.Change{{URIs: []string{"github://github.example.com/o/r/pull/1/a"}}},
 			want:    "",
 		},
 		{
 			name:    "marker on first change",
-			changes: []change.Change{{URIs: []string{"github://o/r/pull/1/a?sq-fake=build-fail&attempt=2"}}},
+			changes: []change.Change{{URIs: []string{"github://github.example.com/o/r/pull/1/a?sq-fake=build-fail&attempt=2"}}},
 			want:    "build-fail",
 		},
 		{
 			name: "marker on later change",
 			changes: []change.Change{
-				{URIs: []string{"github://o/r/pull/1/a"}},
-				{URIs: []string{"github://o/r/pull/2/b?sq-fake=push-error"}},
+				{URIs: []string{"github://github.example.com/o/r/pull/1/a"}},
+				{URIs: []string{"github://github.example.com/o/r/pull/2/b?sq-fake=push-error"}},
 			},
 			want: "push-error",
 		},

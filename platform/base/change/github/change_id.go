@@ -16,14 +16,21 @@ package github
 
 import (
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/uber/submitqueue/platform/base/change/changeutil"
 )
 
+// scheme is the canonical URI scheme for GitHub change identifiers. Deployment
+// flavors (github.com, GitHub Enterprise, GitHub Enterprise Server) share this
+// one scheme; the flavor is derivable from the host in the authority, so it
+// does not get its own scheme.
+const scheme = "github"
+
 // changeIDFormat is the expected format for change IDs, included in error messages.
-const changeIDFormat = "{scheme}://{owner}/{repo}/pull/{pr_number}/{head_commit_sha}"
+const changeIDFormat = "github://{host[:port]}/{owner}/{repo}/pull/{pr_number}/{head_commit_sha}"
 
 // pullSegment is the literal segment separating the repo path from the pull
 // request number. Mirrors the path layout of an actual GitHub PR URL
@@ -38,13 +45,16 @@ const pullSegment = "pull"
 // Validate up-front to fail fast at the gateway with a clearer error.
 const shaLength = 40
 
-// ChangeID represents a parsed GitHub-family change identifier.
-// Covers GitHub.com, GitHub Enterprise (GHE), and GitHub Enterprise Server (GHES)
-// since they share the same pull request model.
-// Format: {scheme}://{owner}/{repo}/pull/{pr_number}/{head_commit_sha}
+// ChangeID represents a parsed GitHub change identifier. The authority names
+// the GitHub instance the change lives on, so github.com, GitHub Enterprise,
+// and GitHub Enterprise Server all parse under the single "github" scheme.
+// Format: github://{host[:port]}/{owner}/{repo}/pull/{pr_number}/{head_commit_sha}
 type ChangeID struct {
-	// Scheme captures the source variant (e.g., "github", "ghe", "ghes").
+	// Scheme captures the URI scheme (always "github" in current implementation).
 	Scheme string
+	// Host is the host or host:port of the GitHub instance the change lives
+	// on, e.g. "github.example.com" or "github.example.com:8443".
+	Host string
 	// Org is the organization or owner of the repository.
 	Org string
 	// Repo is the repository name.
@@ -56,29 +66,30 @@ type ChangeID struct {
 }
 
 // ParseChangeID parses a raw change ID string into a ChangeID.
-// Expected format: {scheme}://{owner}/{repo}/pull/{pr_number}/{head_commit_sha}
+// Expected format: github://{host[:port]}/{owner}/{repo}/pull/{pr_number}/{head_commit_sha}
 // The parser works from the end: SHA (last), PR number (second-to-last),
 // the literal "pull" segment (third-to-last), and everything before is the
 // repo path (split into owner and repo).
 func ParseChangeID(raw string) (ChangeID, error) {
-	// Split on "://" to get scheme and path
-	schemeSplit := strings.SplitN(raw, "://", 2)
-	if len(schemeSplit) != 2 {
-		return ChangeID{}, fmt.Errorf("invalid change ID %q: missing '://' separator (expected format: %s)", raw, changeIDFormat)
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ChangeID{}, fmt.Errorf("invalid change ID %q: %w (expected format: %s)", raw, err, changeIDFormat)
+	}
+	if u.Scheme != scheme {
+		return ChangeID{}, fmt.Errorf("invalid change ID %q: scheme must be %q, got %q (expected format: %s)", raw, scheme, u.Scheme, changeIDFormat)
+	}
+	if u.Host == "" {
+		return ChangeID{}, fmt.Errorf("invalid change ID %q: missing host (expected format: %s)", raw, changeIDFormat)
+	}
+	if !changeutil.IsLowercaseASCII(u.Hostname()) {
+		return ChangeID{}, fmt.Errorf("invalid change ID %q: host %q must be lowercase (expected format: %s)", raw, u.Hostname(), changeIDFormat)
 	}
 
-	scheme := schemeSplit[0]
-	if scheme == "" {
-		return ChangeID{}, fmt.Errorf("invalid change ID %q: empty scheme (expected format: %s)", raw, changeIDFormat)
-	}
-
-	path := schemeSplit[1]
-
-	// Split the path into segments and parse from the end.
-	segments := strings.Split(path, "/")
-	// Need at least 5 segments: {owner}/{repo}/pull/{pr_number}/{sha}
+	// Split on the escaped path so any percent-encoded segments stay intact.
+	segments := strings.Split(strings.TrimPrefix(u.EscapedPath(), "/"), "/")
+	// Need at least 5 segments: {owner}/{repo}/pull/{pr_number}/{sha}.
 	if len(segments) < 5 {
-		return ChangeID{}, fmt.Errorf("invalid change ID %q: need at least owner/repo/pull/pr/sha, got %d segments (expected format: %s)", raw, len(segments), changeIDFormat)
+		return ChangeID{}, fmt.Errorf("invalid change ID %q: need at least owner/repo/pull/pr/sha, got %d path segments (expected format: %s)", raw, len(segments), changeIDFormat)
 	}
 
 	sha := segments[len(segments)-1]
@@ -118,7 +129,8 @@ func ParseChangeID(raw string) (ChangeID, error) {
 	}
 
 	return ChangeID{
-		Scheme:        scheme,
+		Scheme:        u.Scheme,
+		Host:          u.Host,
 		Org:           org,
 		Repo:          repo,
 		PRNumber:      prNumber,
@@ -128,7 +140,7 @@ func ParseChangeID(raw string) (ChangeID, error) {
 
 // String returns the string representation of the change ID.
 func (c ChangeID) String() string {
-	return fmt.Sprintf("%s://%s/%s/%s/%d/%s", c.Scheme, c.Org, c.Repo, pullSegment, c.PRNumber, c.HeadCommitSHA)
+	return fmt.Sprintf("%s://%s/%s/%s/%s/%d/%s", c.Scheme, c.Host, c.Org, c.Repo, pullSegment, c.PRNumber, c.HeadCommitSHA)
 }
 
 // OwnerRepo returns the "{org}/{repo}" string.

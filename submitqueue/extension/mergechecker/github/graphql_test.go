@@ -46,7 +46,7 @@ func TestBuildGraphQLQuery(t *testing.T) {
 			changeIDs: []entitygithub.ChangeID{
 				{Scheme: "github", Org: "uber", Repo: "repo", PRNumber: 1, HeadCommitSHA: "sha1"},
 				{Scheme: "github", Org: "uber", Repo: "repo", PRNumber: 2, HeadCommitSHA: "sha2"},
-				{Scheme: "ghe", Org: "corp", Repo: "app", PRNumber: 99, HeadCommitSHA: "sha99"},
+				{Scheme: "github", Org: "corp", Repo: "app", PRNumber: 99, HeadCommitSHA: "sha99"},
 			},
 			wantParts: []string{
 				`pr0: repository(owner: "uber", name: "repo")`,

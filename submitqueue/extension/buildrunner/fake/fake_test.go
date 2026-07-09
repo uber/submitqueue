@@ -41,7 +41,7 @@ func TestNew_ImplementsInterface(t *testing.T) {
 func TestRunner_Trigger_UniqueIDs(t *testing.T) {
 	ctx := context.Background()
 
-	id1, err := newFake("github://o/r/pull/1/a").Trigger(ctx, nil, entity.Batch{ID: headBatchID}, nil)
+	id1, err := newFake("github://github.example.com/o/r/pull/1/a").Trigger(ctx, nil, entity.Batch{ID: headBatchID}, nil)
 	require.NoError(t, err)
 	assert.NotEmpty(t, id1.ID)
 
@@ -59,7 +59,7 @@ func TestRunner_Trigger_UniqueIDs(t *testing.T) {
 }
 
 func TestRunner_TriggerError(t *testing.T) {
-	r := newFake("github://o/r/pull/1/a?sq-fake=trigger-error")
+	r := newFake("github://github.example.com/o/r/pull/1/a?sq-fake=trigger-error")
 	_, err := r.Trigger(context.Background(), nil, entity.Batch{ID: headBatchID}, nil)
 	require.Error(t, err)
 }
@@ -75,22 +75,22 @@ func TestRunner_Status(t *testing.T) {
 	}{
 		{
 			name:       "no marker succeeds",
-			headURIs:   []string{"github://o/r/pull/1/a"},
+			headURIs:   []string{"github://github.example.com/o/r/pull/1/a"},
 			wantStatus: entity.BuildStatusSucceeded,
 		},
 		{
 			name:       "build-fail marker fails",
-			headURIs:   []string{"github://o/r/pull/1/a?sq-fake=build-fail"},
+			headURIs:   []string{"github://github.example.com/o/r/pull/1/a?sq-fake=build-fail"},
 			wantStatus: entity.BuildStatusFailed,
 		},
 		{
 			name:       "build-fail marker among other query params",
-			headURIs:   []string{"github://o/r/pull/1/a?ref=main&sq-fake=build-fail&attempt=2"},
+			headURIs:   []string{"github://github.example.com/o/r/pull/1/a?ref=main&sq-fake=build-fail&attempt=2"},
 			wantStatus: entity.BuildStatusFailed,
 		},
 		{
 			name:     "build-error marker errors",
-			headURIs: []string{"github://o/r/pull/1/a?sq-fake=build-error"},
+			headURIs: []string{"github://github.example.com/o/r/pull/1/a?sq-fake=build-error"},
 			wantErr:  true,
 		},
 	}
@@ -124,7 +124,7 @@ func TestRunner_Status_UnknownBuildSucceeds(t *testing.T) {
 // back correctly by a different runner instance.
 func TestStatus_StatelessAcrossInstances(t *testing.T) {
 	ctx := context.Background()
-	id, err := newFake("github://o/r/pull/1/a?sq-fake=build-fail").Trigger(ctx, nil, entity.Batch{ID: headBatchID}, nil)
+	id, err := newFake("github://github.example.com/o/r/pull/1/a?sq-fake=build-fail").Trigger(ctx, nil, entity.Batch{ID: headBatchID}, nil)
 	require.NoError(t, err)
 
 	status, _, err := New(changesetfake.New()).Status(ctx, id)

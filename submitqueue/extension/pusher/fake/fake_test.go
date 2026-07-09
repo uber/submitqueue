@@ -33,8 +33,8 @@ func TestNew_ImplementsInterface(t *testing.T) {
 
 func TestPusher_Push_Committed(t *testing.T) {
 	changes := []change.Change{
-		{URIs: []string{"github://owner/repo/pull/1/abc"}},
-		{URIs: []string{"github://owner/repo/pull/2/def"}},
+		{URIs: []string{"github://github.example.com/owner/repo/pull/1/abc"}},
+		{URIs: []string{"github://github.example.com/owner/repo/pull/2/def"}},
 	}
 	p := New(changesetfake.New().Set("b", changes...))
 
@@ -54,13 +54,13 @@ func TestPusher_Push_Committed(t *testing.T) {
 }
 
 func TestPusher_Push_ConflictMarker(t *testing.T) {
-	p := New(changesetfake.New().Set("b", change.Change{URIs: []string{"github://owner/repo/pull/1/abc?sq-fake=conflict"}}))
+	p := New(changesetfake.New().Set("b", change.Change{URIs: []string{"github://github.example.com/owner/repo/pull/1/abc?sq-fake=conflict"}}))
 	_, err := p.Push(context.Background(), []entity.Batch{{ID: "b"}})
 	assert.True(t, errors.Is(err, pusher.ErrConflict))
 }
 
 func TestPusher_Push_ErrorMarker(t *testing.T) {
-	p := New(changesetfake.New().Set("b", change.Change{URIs: []string{"github://owner/repo/pull/1/abc?sq-fake=push-error"}}))
+	p := New(changesetfake.New().Set("b", change.Change{URIs: []string{"github://github.example.com/owner/repo/pull/1/abc?sq-fake=push-error"}}))
 	res, err := p.Push(context.Background(), []entity.Batch{{ID: "b"}})
 	require.Error(t, err)
 	// Atomicity: on error no outcomes are reported.

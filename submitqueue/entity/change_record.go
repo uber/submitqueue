@@ -20,7 +20,7 @@ package entity
 // change provider. There is no update path.
 type ChangeRecord struct {
 	// URI identifies the change (RFC 3986). Same scheme/format as change.Change.URIs.
-	// Example: "github://uber/submitqueue/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab".
+	// Example: "github://github.example.com/uber/submitqueue/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab".
 	URI string `json:"uri"`
 
 	// RequestID is the owning land request that claimed this URI.

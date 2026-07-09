@@ -30,10 +30,10 @@ import (
 )
 
 const (
-	githubURI1 = "github://uber/repo/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	githubURI2 = "github://uber/repo/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	phabURI1   = "phab://D123/456"
-	phabURI2   = "phab://D789/101"
+	githubURI1 = "github://github.example.com/uber/repo/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	githubURI2 = "github://github.example.com/uber/repo/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	phabURI1   = "phab://phab.example.com/D123/456"
+	phabURI2   = "phab://phab.example.com/D789/101"
 	gitURI1    = "git://remote.example.com/uber/repo/refs%2Fheads%2Fmain/cccccccccccccccccccccccccccccccccccccccc"
 )
 

@@ -28,8 +28,8 @@ func TestLandRequest_ToBytes(t *testing.T) {
 		ID:    "test-queue/123",
 		Queue: "test-queue",
 		Change: change.Change{URIs: []string{
-			"github://uber/submitqueue/pull/456/abcdef0123456789abcdef0123456789abcdef01",
-			"github://uber/submitqueue/pull/789/0123456789abcdef0123456789abcdef01234567",
+			"github://github.example.com/uber/submitqueue/pull/456/abcdef0123456789abcdef0123456789abcdef01",
+			"github://github.example.com/uber/submitqueue/pull/789/0123456789abcdef0123456789abcdef01234567",
 		}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
 	}
@@ -41,7 +41,7 @@ func TestLandRequest_ToBytes(t *testing.T) {
 	// Verify JSON contains expected fields
 	jsonStr := string(data)
 	assert.Contains(t, jsonStr, "test-queue/123")
-	assert.Contains(t, jsonStr, "github://uber/submitqueue/pull/456/abcdef0123456789abcdef0123456789abcdef01")
+	assert.Contains(t, jsonStr, "github://github.example.com/uber/submitqueue/pull/456/abcdef0123456789abcdef0123456789abcdef01")
 	assert.Contains(t, jsonStr, "rebase")
 }
 
@@ -98,9 +98,9 @@ func TestLandRequest_SerializationRoundTrip(t *testing.T) {
 				ID:    "queue1/100",
 				Queue: "queue1",
 				Change: change.Change{URIs: []string{
-					"github://uber/repo-a/pull/101/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-					"github://uber/repo-a/pull/102/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-					"github://uber/repo-a/pull/103/cccccccccccccccccccccccccccccccccccccccc",
+					"github://github.example.com/uber/repo-a/pull/101/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					"github://github.example.com/uber/repo-a/pull/102/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+					"github://github.example.com/uber/repo-a/pull/103/cccccccccccccccccccccccccccccccccccccccc",
 				}},
 				LandStrategy: mergestrategy.MergeStrategySquashRebase,
 			},

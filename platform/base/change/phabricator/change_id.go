@@ -16,17 +16,21 @@ package phabricator
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/uber/submitqueue/platform/base/change/changeutil"
 )
 
 // changeIDFormat is the expected format for change IDs, included in error messages.
-const changeIDFormat = "{scheme}://D{revision_id}/{diff_id}"
+const changeIDFormat = "phab://{host[:port]}/D{revision_id}/{diff_id}"
 
 // scheme is the canonical URI scheme for Phabricator change identifiers.
-// Unlike GitHub (which has multiple variants: github / ghe / ghes), Phabricator
-// has a single scheme; the host is encoded out-of-band via queue config.
+// Phabricator has a single scheme (there is no per-flavor variant like GitHub's
+// github.com vs. GitHub Enterprise); the host in the authority names the
+// specific Phabricator instance the change lives on.
 const scheme = "phab"
 
 // revisionPrefix is the literal "D" character that prefixes Phabricator revision
@@ -45,7 +49,7 @@ var revisionPattern = regexp.MustCompile(`^D([1-9]\d*)$`)
 var diffPattern = regexp.MustCompile(`^[1-9]\d*$`)
 
 // ChangeID represents a parsed Phabricator change identifier.
-// Format: phab://D{revision_id}/{diff_id}
+// Format: phab://{host[:port]}/D{revision_id}/{diff_id}
 //
 // Revision and diff are Phabricator's two-level identifier model:
 //   - RevisionID names the logical review (stable across updates, e.g., D12345).
@@ -57,6 +61,9 @@ type ChangeID struct {
 	// the parsed form mirrors entity/change/github.ChangeID and so future variants
 	// (e.g., a separate scheme per Phabricator install) are a non-breaking add.
 	Scheme string
+	// Host is the host or host:port of the Phabricator instance the change
+	// lives on (e.g. "phabricator.example.com" or "phabricator.example.com:443").
+	Host string
 	// RevisionID is the numeric portion of the Phabricator revision identifier
 	// (the digits after the leading "D"). For example, "D12345" parses to 12345.
 	RevisionID int
@@ -66,23 +73,25 @@ type ChangeID struct {
 }
 
 // ParseChangeID parses a raw change ID string into a ChangeID.
-// Expected format: phab://D{revision_id}/{diff_id}
-// The parser splits on "://" to separate scheme from path, then the path into
-// exactly two segments: the D-prefixed revision and the diff ID.
+// Expected format: phab://{host[:port]}/D{revision_id}/{diff_id}
+// The parser requires a non-empty, lowercase host, then splits the remaining
+// path into exactly two segments: the D-prefixed revision and the diff ID.
 func ParseChangeID(raw string) (ChangeID, error) {
-	schemeSplit := strings.SplitN(raw, "://", 2)
-	if len(schemeSplit) != 2 {
-		return ChangeID{}, fmt.Errorf("invalid change ID %q: missing '://' separator (expected format: %s)", raw, changeIDFormat)
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ChangeID{}, fmt.Errorf("invalid change ID %q: %w (expected format: %s)", raw, err, changeIDFormat)
+	}
+	if u.Scheme != scheme {
+		return ChangeID{}, fmt.Errorf("invalid change ID %q: scheme must be %q, got %q (expected format: %s)", raw, scheme, u.Scheme, changeIDFormat)
+	}
+	if u.Host == "" {
+		return ChangeID{}, fmt.Errorf("invalid change ID %q: missing host (expected format: %s)", raw, changeIDFormat)
+	}
+	if !changeutil.IsLowercaseASCII(u.Hostname()) {
+		return ChangeID{}, fmt.Errorf("invalid change ID %q: host %q must be lowercase (expected format: %s)", raw, u.Hostname(), changeIDFormat)
 	}
 
-	gotScheme := schemeSplit[0]
-	if gotScheme != scheme {
-		return ChangeID{}, fmt.Errorf("invalid change ID %q: scheme must be %q, got %q (expected format: %s)", raw, scheme, gotScheme, changeIDFormat)
-	}
-
-	path := schemeSplit[1]
-
-	segments := strings.Split(path, "/")
+	segments := strings.Split(strings.TrimPrefix(u.EscapedPath(), "/"), "/")
 	if len(segments) != 2 {
 		return ChangeID{}, fmt.Errorf("invalid change ID %q: path must have exactly 2 segments (revision/diff), got %d (expected format: %s)", raw, len(segments), changeIDFormat)
 	}
@@ -108,7 +117,8 @@ func ParseChangeID(raw string) (ChangeID, error) {
 	}
 
 	return ChangeID{
-		Scheme:     gotScheme,
+		Scheme:     u.Scheme,
+		Host:       u.Host,
 		RevisionID: revisionID,
 		DiffID:     diffID,
 	}, nil
@@ -116,7 +126,7 @@ func ParseChangeID(raw string) (ChangeID, error) {
 
 // String returns the string representation of the change ID.
 func (c ChangeID) String() string {
-	return fmt.Sprintf("%s://%s%d/%d", c.Scheme, revisionPrefix, c.RevisionID, c.DiffID)
+	return fmt.Sprintf("%s://%s/%s%d/%d", c.Scheme, c.Host, revisionPrefix, c.RevisionID, c.DiffID)
 }
 
 // Revision returns the Phabricator revision identifier in its canonical

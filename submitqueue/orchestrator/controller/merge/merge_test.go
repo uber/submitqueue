@@ -90,13 +90,13 @@ func TestProcess_PublishesFullPayloadToRunway(t *testing.T) {
 	req1 := entity.Request{
 		ID:           "test-queue/1",
 		Queue:        "test-queue",
-		Change:       change.Change{URIs: []string{"github://uber/repo/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+		Change:       change.Change{URIs: []string{"github://github.example.com/uber/repo/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
 		LandStrategy: mergestrategy.MergeStrategySquashRebase,
 	}
 	req2 := entity.Request{
 		ID:           "test-queue/2",
 		Queue:        "test-queue",
-		Change:       change.Change{URIs: []string{"github://uber/repo/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},
+		Change:       change.Change{URIs: []string{"github://github.example.com/uber/repo/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
 	}
 	batch := entity.Batch{

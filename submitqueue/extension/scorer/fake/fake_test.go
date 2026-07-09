@@ -55,7 +55,7 @@ func delegate(resolver changeset.Resolver, want float64) scorer.Scorer {
 }
 
 func TestScore_DelegatesWhenUnmarked(t *testing.T) {
-	r := resolverFor("github://o/r/pull/1/a")
+	r := resolverFor("github://github.example.com/o/r/pull/1/a")
 	s := New(r, delegate(r, 0.7))
 	got, err := s.Score(context.Background(), entity.Batch{ID: batchID})
 	require.NoError(t, err)
@@ -63,7 +63,7 @@ func TestScore_DelegatesWhenUnmarked(t *testing.T) {
 }
 
 func TestScore_ErrorMarker(t *testing.T) {
-	r := resolverFor("github://o/r/pull/1/a?sq-fake=score-error")
+	r := resolverFor("github://github.example.com/o/r/pull/1/a?sq-fake=score-error")
 	s := New(r, delegate(r, 0.7))
 	_, err := s.Score(context.Background(), entity.Batch{ID: batchID})
 	require.Error(t, err)

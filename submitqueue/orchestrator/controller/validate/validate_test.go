@@ -54,7 +54,7 @@ type mockChangeProvider struct{}
 func (m *mockChangeProvider) Get(ctx context.Context, request entity.Request) ([]entity.ChangeInfo, error) {
 	return []entity.ChangeInfo{
 		{
-			URI: "github://org/repo/pull/123/abcdef0123456789abcdef0123456789abcdef01",
+			URI: "github://github.example.com/org/repo/pull/123/abcdef0123456789abcdef0123456789abcdef01",
 			Details: entity.ChangeDetails{
 				Author: entity.Author{
 					Name:  "Test User",
@@ -129,7 +129,7 @@ func TestNewController(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
+		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
@@ -149,7 +149,7 @@ func TestController_Process_Success(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
+		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
@@ -174,7 +174,7 @@ func TestController_Process_PublishesCheckToRunway(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
+		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
@@ -233,7 +233,7 @@ func TestController_Process_ClaimsChangeRecordsWithDetails(t *testing.T) {
 
 	// The request's URI matches the URI the mock change provider returns, so the
 	// claim carries that change's details.
-	const uri = "github://org/repo/pull/123/abcdef0123456789abcdef0123456789abcdef01"
+	const uri = "github://github.example.com/org/repo/pull/123/abcdef0123456789abcdef0123456789abcdef01"
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
@@ -298,7 +298,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       change.Change{URIs: []string{"github://uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
+		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
@@ -330,8 +330,8 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 		queueName     = "test-queue"
 		newRequestID  = queueName + "/123"
 		dupRequestID  = queueName + "/100"
-		uriA          = "github://uber/service/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-		uriB          = "github://uber/service/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		uriA          = "github://github.example.com/uber/service/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		uriB          = "github://github.example.com/uber/service/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 		anotherReqID  = queueName + "/050"
 		orphanReqID   = queueName + "/999"
 		terminalReqID = queueName + "/200"
@@ -505,7 +505,7 @@ func TestController_Process_ChangeStoreQueryFailure(t *testing.T) {
 	request := entity.Request{
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
-		Change:       change.Change{URIs: []string{"github://uber/service/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
 		LandStrategy: mergestrategy.MergeStrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,

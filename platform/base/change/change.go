@@ -20,13 +20,17 @@ package change
 // Change represents a code change identified by URIs from a code change provider (e.g., GitHub Pull Request, Phabricator Diff).
 // The provider is extracted from the URI scheme. The object is immutable after creation.
 type Change struct {
-	// URIs identifies the change(s) to land (RFC 3986 compliant).
-	// The scheme identifies the change provider, and the path contains provider-specific resource identifiers.
+	// URIs identifies the change(s) to land (RFC 3986 compliant): scheme://<host[:port]>/<path>.
+	// The scheme identifies the change provider, the authority is the provider instance the
+	// change lives on, and the path contains provider-specific resource identifiers.
 	//
-	// GitHub is supported by default (though other providers can be added):
-	//   Template: "<scheme>://<org>/<repo>/pull/<pr>/<head_commit_sha>"
-	//   Example:  "github://uber/submitqueue/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"
-	//   Schemes:  "github", "ghe", "ghes". Head commit SHA must be full 40-char lowercase hex.
+	// Supported formats:
+	//   GitHub PR:         "github://<host[:port]>/<org>/<repo>/pull/<pr>/<head_commit_sha>"
+	//   Phabricator Diff:  "phab://<host[:port]>/D<revision>/<diff>"
+	//   git ref/commit:    "git://<host[:port]>/<repo>/<ref>/<sha>"
+	//   Example:           "github://github.example.com/uber/submitqueue/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"
+	//
+	// Head/commit SHAs must be the full 40-char lowercase hex form.
 	//
 	URIs []string `json:"uris"`
 }

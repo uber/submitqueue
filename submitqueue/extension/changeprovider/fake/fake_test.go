@@ -35,12 +35,12 @@ func TestProvider_Get_OnePerURI(t *testing.T) {
 		uris []string
 	}{
 		{name: "nil URIs", uris: nil},
-		{name: "single URI", uris: []string{"github://owner/repo/pull/1/abc"}},
+		{name: "single URI", uris: []string{"github://github.example.com/owner/repo/pull/1/abc"}},
 		{
 			name: "multiple URIs (stack)",
 			uris: []string{
-				"github://owner/repo/pull/1/abc",
-				"github://owner/repo/pull/2/def",
+				"github://github.example.com/owner/repo/pull/1/abc",
+				"github://github.example.com/owner/repo/pull/2/def",
 			},
 		},
 	}
@@ -61,7 +61,7 @@ func TestProvider_Get_OnePerURI(t *testing.T) {
 func TestProvider_Get_ErrorMarker(t *testing.T) {
 	p := New()
 	_, err := p.Get(context.Background(), entity.Request{Change: change.Change{
-		URIs: []string{"github://owner/repo/pull/1/abc?sq-fake=provider-error"},
+		URIs: []string{"github://github.example.com/owner/repo/pull/1/abc?sq-fake=provider-error"},
 	}})
 	require.Error(t, err)
 }

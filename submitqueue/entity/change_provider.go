@@ -69,7 +69,7 @@ func (d ChangeDetails) FileCount() int {
 // returns one ChangeInfo per URI so callers can correlate results to inputs by URI.
 type ChangeInfo struct {
 	// URI is the full change URI for correlation with the input request
-	// (e.g., "github://uber/repo/pull/98/c3a4d5e6f7890123456789abcdef0123456789ab").
+	// (e.g., "github://github.example.com/uber/repo/pull/98/c3a4d5e6f7890123456789abcdef0123456789ab").
 	URI string `json:"uri"`
 	// Details is the provider-supplied facts for this URI.
 	Details ChangeDetails `json:"details"`

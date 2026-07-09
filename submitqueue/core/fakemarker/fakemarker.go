@@ -32,7 +32,7 @@ const Prefix = "sq-fake="
 // Token returns the marker token embedded in the first URI that carries one, or
 // "" if none do. The token ends at the first "&" or "#" delimiter, so a marker
 // may sit among other query parameters or a fragment (e.g.
-// "github://o/r/pull/1/a?sq-fake=build-fail&attempt=2").
+// "github://github.example.com/o/r/pull/1/a?sq-fake=build-fail&attempt=2").
 func Token(uris []string) string {
 	for _, u := range uris {
 		if i := strings.Index(u, Prefix); i >= 0 {

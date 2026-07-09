@@ -38,7 +38,7 @@ func TestChecker_Check(t *testing.T) {
 	}{
 		{
 			name:          "no marker is mergeable",
-			uris:          []string{"github://owner/repo/pull/1/abc"},
+			uris:          []string{"github://github.example.com/owner/repo/pull/1/abc"},
 			wantMergeable: true,
 		},
 		{
@@ -48,18 +48,18 @@ func TestChecker_Check(t *testing.T) {
 		},
 		{
 			name: "unmergeable marker",
-			uris: []string{"github://owner/repo/pull/1/abc?sq-fake=unmergeable"},
+			uris: []string{"github://github.example.com/owner/repo/pull/1/abc?sq-fake=unmergeable"},
 		},
 		{
 			name:    "error marker",
-			uris:    []string{"github://owner/repo/pull/1/abc?sq-fake=mergecheck-error"},
+			uris:    []string{"github://github.example.com/owner/repo/pull/1/abc?sq-fake=mergecheck-error"},
 			wantErr: true,
 		},
 		{
 			name: "marker on second uri",
 			uris: []string{
-				"github://owner/repo/pull/1/abc",
-				"github://owner/repo/pull/2/def?sq-fake=unmergeable",
+				"github://github.example.com/owner/repo/pull/1/abc",
+				"github://github.example.com/owner/repo/pull/2/def?sq-fake=unmergeable",
 			},
 		},
 	}

@@ -102,7 +102,7 @@ func TestLand_ReturnsSqid(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &changepb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
+		Change: &changepb.Change{Uris: []string{"github://github.example.com/uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
 	}
 	resp, err := controller.Land(ctx, req)
 
@@ -120,7 +120,7 @@ func TestLand_ReturnsErrorOnCounterFailure(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &changepb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
+		Change: &changepb.Change{Uris: []string{"github://github.example.com/uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -144,7 +144,7 @@ func TestLand_CounterDomainIncludesQueue(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "my-queue",
-		Change: &changepb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
+		Change: &changepb.Change{Uris: []string{"github://github.example.com/uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -161,7 +161,7 @@ func TestLand_ReturnsErrorOnEmptyQueue(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "",
-		Change: &changepb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
+		Change: &changepb.Change{Uris: []string{"github://github.example.com/uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -215,7 +215,7 @@ func TestLand_ReturnsUnrecognizedQueueWhenStoreReportsNotFound(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "missing-queue",
-		Change: &changepb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
+		Change: &changepb.Change{Uris: []string{"github://github.example.com/uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -241,7 +241,7 @@ func TestLand_PropagatesQueueConfigStoreError(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &changepb.Change{Uris: []string{"github://uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
+		Change: &changepb.Change{Uris: []string{"github://github.example.com/uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -273,7 +273,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:    "test-queue",
-		Change:   &changepb.Change{Uris: []string{"github://uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"}},
+		Change:   &changepb.Change{Uris: []string{"github://github.example.com/uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"}},
 		Strategy: mergestrategypb.Strategy_REBASE,
 	}
 	resp, err := controller.Land(ctx, req)
@@ -291,7 +291,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test-queue/123", deserializedReq.ID)
 	assert.Equal(t, "test-queue", deserializedReq.Queue)
-	assert.Equal(t, []string{"github://uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"}, deserializedReq.Change.URIs)
+	assert.Equal(t, []string{"github://github.example.com/uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"}, deserializedReq.Change.URIs)
 	assert.Equal(t, mergestrategy.MergeStrategyRebase, deserializedReq.LandStrategy)
 }
 
@@ -309,7 +309,7 @@ func TestLand_ContinuesWhenPublishFails(t *testing.T) {
 
 	req := &pb.LandRequest{
 		Queue:  "test-queue",
-		Change: &changepb.Change{Uris: []string{"github://uber/service/pull/1/c3a4d5e6f7890123456789abcdef0123456789ab"}},
+		Change: &changepb.Change{Uris: []string{"github://github.example.com/uber/service/pull/1/c3a4d5e6f7890123456789abcdef0123456789ab"}},
 	}
 	_, err := controller.Land(ctx, req)
 
