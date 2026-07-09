@@ -53,12 +53,17 @@ func (s *QueueStoreContractSuite) queueDefaults() entity.Queue {
 	return entity.Queue{Version: 1}
 }
 
-// TestQueueStore_GetOrCreateCreates verifies GetOrCreate inserts a new row with zero-value runtime fields.
-func (s *QueueStoreContractSuite) TestQueueStore_GetOrCreateCreates() {
+// TestQueueStore_Create verifies Create inserts a new row with caller-supplied fields.
+func (s *QueueStoreContractSuite) TestQueueStore_Create() {
 	t := s.T()
 	const name = "contract/create"
 
-	got, err := s.queueStore.GetOrCreate(s.ctx, name, s.queueDefaults())
+	require.NoError(t, s.queueStore.Create(s.ctx, entity.Queue{
+		Name:    name,
+		Version: 1,
+	}))
+
+	got, err := s.queueStore.Get(s.ctx, name)
 	require.NoError(t, err)
 	assert.Equal(t, entity.Queue{
 		Name:             name,
@@ -66,61 +71,50 @@ func (s *QueueStoreContractSuite) TestQueueStore_GetOrCreateCreates() {
 		Version:          1,
 	}, got)
 
-	s.log.Logf("GetOrCreateCreates passed: created queue %s", name)
+	s.log.Logf("Create passed: created queue %s", name)
 }
 
-// TestQueueStore_GetOrCreateWithDefaults verifies caller-supplied defaults are persisted on create.
-func (s *QueueStoreContractSuite) TestQueueStore_GetOrCreateWithDefaults() {
+// TestQueueStore_CreateWithFields verifies caller-supplied initial field values are persisted.
+func (s *QueueStoreContractSuite) TestQueueStore_CreateWithFields() {
 	t := s.T()
 	const name = "contract/defaults"
 
-	defaults := entity.Queue{
+	toCreate := entity.Queue{
+		Name:             name,
 		LastGreenURI:     "git://remote/monorepo/main/green-bbbb",
 		LatestRequestSeq: 99,
 		Version:          1,
 	}
+	require.NoError(t, s.queueStore.Create(s.ctx, toCreate))
 
-	got, err := s.queueStore.GetOrCreate(s.ctx, name, defaults)
+	got, err := s.queueStore.Get(s.ctx, name)
 	require.NoError(t, err)
-	assert.Equal(t, entity.Queue{
-		Name:             name,
-		LastGreenURI:     defaults.LastGreenURI,
-		LatestRequestSeq: defaults.LatestRequestSeq,
-		Version:          1,
-	}, got)
+	assert.Equal(t, toCreate, got)
 
-	s.log.Logf("GetOrCreateWithDefaults passed: persisted defaults for queue %s", name)
+	s.log.Logf("CreateWithFields passed: persisted fields for queue %s", name)
 }
 
-// TestQueueStore_GetOrCreateIdempotent verifies a second GetOrCreate returns the existing row unchanged.
-func (s *QueueStoreContractSuite) TestQueueStore_GetOrCreateIdempotent() {
+// TestQueueStore_CreateAlreadyExists verifies a duplicate Create returns ErrAlreadyExists.
+func (s *QueueStoreContractSuite) TestQueueStore_CreateAlreadyExists() {
 	t := s.T()
-	const name = "contract/idempotent"
+	const name = "contract/already-exists"
 
-	first, err := s.queueStore.GetOrCreate(s.ctx, name, s.queueDefaults())
-	require.NoError(t, err)
+	first := entity.Queue{Name: name, LatestRequestSeq: 3, Version: 1}
+	require.NoError(t, s.queueStore.Create(s.ctx, first))
 
-	second, err := s.queueStore.GetOrCreate(s.ctx, name, entity.Queue{
-		LastGreenURI:     "git://remote/monorepo/main/ignored-on-hit",
+	err := s.queueStore.Create(s.ctx, entity.Queue{
+		Name:             name,
+		LastGreenURI:     "git://remote/monorepo/main/ignored-on-race",
 		LatestRequestSeq: 500,
 		Version:          1,
 	})
+	assert.ErrorIs(t, err, storage.ErrAlreadyExists)
+
+	got, err := s.queueStore.Get(s.ctx, name)
 	require.NoError(t, err)
-	assert.Equal(t, first, second)
+	assert.Equal(t, first, got)
 
-	s.log.Logf("GetOrCreateIdempotent passed: queue %s", name)
-}
-
-// TestQueueStore_GetOrCreateDefaultVersion verifies GetOrCreate writes version=1 when defaults.Version is zero.
-func (s *QueueStoreContractSuite) TestQueueStore_GetOrCreateDefaultVersion() {
-	t := s.T()
-	const name = "contract/default-version"
-
-	got, err := s.queueStore.GetOrCreate(s.ctx, name, entity.Queue{})
-	require.NoError(t, err)
-	assert.Equal(t, int32(1), got.Version)
-
-	s.log.Logf("GetOrCreateDefaultVersion passed: queue %s", name)
+	s.log.Logf("CreateAlreadyExists passed: queue %s", name)
 }
 
 // TestQueueStore_GetNotFound verifies Get returns ErrNotFound for a missing queue.
@@ -138,8 +132,8 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateCAS() {
 	t := s.T()
 	const name = "contract/update-cas"
 
-	created, err := s.queueStore.GetOrCreate(s.ctx, name, s.queueDefaults())
-	require.NoError(t, err)
+	created := entity.Queue{Name: name, Version: 1}
+	require.NoError(t, s.queueStore.Create(s.ctx, created))
 
 	updated := created
 	updated.LastGreenURI = "git://remote/monorepo/main/green-cccc"
@@ -175,17 +169,12 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateSequentialCAS() {
 	t := s.T()
 	const name = "contract/sequential-cas"
 
-	created, err := s.queueStore.GetOrCreate(s.ctx, name, s.queueDefaults())
-	require.NoError(t, err)
-	require.Equal(t, int32(1), created.Version)
+	require.NoError(t, s.queueStore.Create(s.ctx, entity.Queue{Name: name, Version: 1}))
 
-	v2 := created
-	v2.LatestRequestSeq = 10
+	v2 := entity.Queue{Name: name, LatestRequestSeq: 10, Version: 1}
 	require.NoError(t, s.queueStore.Update(s.ctx, v2, 1, 2))
 
-	v3 := v2
-	v3.Version = 2
-	v3.InFlightCount = 1
+	v3 := entity.Queue{Name: name, LatestRequestSeq: 10, InFlightCount: 1, Version: 2}
 	require.NoError(t, s.queueStore.Update(s.ctx, v3, 2, 3))
 
 	got, err := s.queueStore.Get(s.ctx, name)
@@ -205,9 +194,10 @@ func (s *QueueStoreContractSuite) TestQueueStore_QueueIsolation() {
 		nameB = "contract/isolation-b"
 	)
 
-	_, err := s.queueStore.GetOrCreate(s.ctx, nameA, s.queueDefaults())
-	require.NoError(t, err)
-	baseline, err := s.queueStore.GetOrCreate(s.ctx, nameB, s.queueDefaults())
+	require.NoError(t, s.queueStore.Create(s.ctx, entity.Queue{Name: nameA, Version: 1}))
+	require.NoError(t, s.queueStore.Create(s.ctx, entity.Queue{Name: nameB, Version: 1}))
+
+	baseline, err := s.queueStore.Get(s.ctx, nameB)
 	require.NoError(t, err)
 
 	updatedA := entity.Queue{

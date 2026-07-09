@@ -36,32 +36,27 @@ func NewQueueStore(db *sql.DB, scope tally.Scope) storage.QueueStore {
 	return &queueStore{db: db, scope: scope}
 }
 
-// GetOrCreate returns the queue row for name, creating it with defaults if absent.
-func (q *queueStore) GetOrCreate(ctx context.Context, name string, defaults entity.Queue) (ret entity.Queue, retErr error) {
-	op := metrics.Begin(q.scope, "get_or_create")
+// Create persists a new queue row. Returns ErrAlreadyExists if the name already exists.
+func (q *queueStore) Create(ctx context.Context, queue entity.Queue) (retErr error) {
+	op := metrics.Begin(q.scope, "create")
 	defer func() { op.Complete(retErr) }()
 
-	queue, err := q.Get(ctx, name)
-	if err == nil {
-		return queue, nil
-	}
-	if !storage.IsNotFound(err) {
-		return entity.Queue{}, err
-	}
-
-	toCreate := defaults
-	toCreate.Name = name
-	if toCreate.Version == 0 {
-		toCreate.Version = 1
-	}
-
-	if err := q.create(ctx, toCreate); err != nil {
-		if errors.Is(err, storage.ErrAlreadyExists) {
-			return q.Get(ctx, name)
+	_, err := q.db.ExecContext(ctx,
+		`INSERT INTO queue (name, last_green_uri, in_flight_count, latest_request_seq, version)
+		 VALUES (?, ?, ?, ?, ?)`,
+		queue.Name,
+		queue.LastGreenURI,
+		queue.InFlightCount,
+		queue.LatestRequestSeq,
+		queue.Version,
+	)
+	if err != nil {
+		if isDuplicateEntry(err) {
+			return fmt.Errorf("queue name=%s: %w", queue.Name, storage.ErrAlreadyExists)
 		}
-		return entity.Queue{}, err
+		return fmt.Errorf("failed to insert queue name=%s: %w", queue.Name, err)
 	}
-	return toCreate, nil
+	return nil
 }
 
 // Get retrieves a queue by name. Returns ErrNotFound if the queue is not found.
@@ -130,24 +125,5 @@ func (q *queueStore) Update(ctx context.Context, queue entity.Queue, oldVersion,
 		)
 	}
 
-	return nil
-}
-
-func (q *queueStore) create(ctx context.Context, queue entity.Queue) error {
-	_, err := q.db.ExecContext(ctx,
-		`INSERT INTO queue (name, last_green_uri, in_flight_count, latest_request_seq, version)
-		 VALUES (?, ?, ?, ?, ?)`,
-		queue.Name,
-		queue.LastGreenURI,
-		queue.InFlightCount,
-		queue.LatestRequestSeq,
-		queue.Version,
-	)
-	if err != nil {
-		if isDuplicateEntry(err) {
-			return fmt.Errorf("queue name=%s: %w", queue.Name, storage.ErrAlreadyExists)
-		}
-		return fmt.Errorf("failed to insert queue name=%s: %w", queue.Name, err)
-	}
 	return nil
 }

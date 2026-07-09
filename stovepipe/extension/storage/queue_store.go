@@ -24,10 +24,9 @@ import (
 
 // QueueStore persists per-queue coordination rows, keyed by queue name.
 type QueueStore interface {
-	// GetOrCreate returns the queue row for name, creating it with defaults if absent.
-	// defaults supplies initial field values for a new row (Name is set from name).
-	// On a create race, re-reads and returns the canonical row.
-	GetOrCreate(ctx context.Context, name string, defaults entity.Queue) (entity.Queue, error)
+	// Create persists a new queue row. queue.Name must be set. Returns ErrAlreadyExists
+	// if a row with the same name already exists.
+	Create(ctx context.Context, queue entity.Queue) error
 
 	// Get retrieves a queue by name. Returns ErrNotFound if the queue is not found.
 	Get(ctx context.Context, name string) (entity.Queue, error)

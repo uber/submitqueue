@@ -205,7 +205,7 @@ Transitions use the repo's optimistic-locking pattern: compute `newVersion = old
 
 New key/value-shaped operations (single-key reads/writes, no server-side filtering or aggregation):
 
-- **`QueueStore`** (new): `GetOrCreate(ctx, name, defaults)`, `Get(ctx, name)`, and `Update(ctx, queue, oldVersion, newVersion)` (CAS). Ingest `GetOrCreate`s and CASes `latest_request_seq`; `process` CASes `in_flight_count`; `record` CASes `last_green_uri` + `in_flight_count`.
+- **`QueueStore`** (new): `Create(ctx, queue)`, `Get(ctx, name)`, and `Update(ctx, queue, oldVersion, newVersion)` (CAS). Callers orchestrate get-or-create; ingest CASes `latest_request_seq`; `process` CASes `in_flight_count`; `record` CASes `last_green_uri` + `in_flight_count`.
 - **`RequestStore`**: no new methods — the added `Request` fields ride the existing `Create`/`Update` CAS.
 
 No "list requests by queue/state" query is introduced; coalescing uses the single-row `latest_request_seq` pointer instead, keeping the contract satisfiable by a plain KV backend.
