@@ -14,6 +14,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 - [Build Runner](submitqueue/build-runner.md) - Vendor-agnostic BuildRunner interface, provider-neutral BuildStatus lifecycle, and how the orchestrator wires it into the build stage
 - [Extension Contract](submitqueue/extension-contract.md) - When extensions take orchestrator identity (request/batch) and resolve granular content themselves vs. take controller-resolved data; revises the BuildRunner base/head contract
 - [Speculation](submitqueue/speculation.md) - Why SubmitQueue speculates, the path/tree model, and the two pluggable seams: speculation-tree enumeration and path selection
+- [Host in Change ID URI](submitqueue/host-in-change-id.md) - Embed the target host in change ID URIs so change identity is self-contained across multiple GitHub/GHES/Phabricator instances
 
 ## Stovepipe
 
