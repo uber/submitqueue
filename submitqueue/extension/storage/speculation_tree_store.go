@@ -32,7 +32,10 @@ type SpeculationTreeStore interface {
 	// Returns ErrAlreadyExists if the entry already exists.
 	Create(ctx context.Context, speculationTree entity.SpeculationTree) error
 
-	// UpdateSpeculations updates the speculations of a speculation tree.
-	// Returns ErrNotFound if the speculation tree is not found.
-	UpdateSpeculations(ctx context.Context, batchID string, speculations []entity.SpeculationInfo) error
+	// Update overwrites the paths of an existing speculation tree and sets its
+	// version to newVersion if the current persisted version matches oldVersion.
+	// If versions do not match (or no tree exists for batchID), returns
+	// ErrVersionMismatch. Version arithmetic is owned by the caller; the store
+	// performs a pure conditional write.
+	Update(ctx context.Context, batchID string, oldVersion, newVersion int32, paths []entity.SpeculationPathInfo) error
 }
