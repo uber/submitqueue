@@ -55,6 +55,11 @@ type E2EIntegrationSuite struct {
 	queueDB            *sql.DB                 // Queue database
 	requestLog         storage.RequestLogStore // White-box view of the request_log status timeline (app DB)
 	requestStore       storage.RequestStore    // White-box view of the internal RequestState (app DB)
+
+	batchStore           storage.BatchStore                // White-box view of batches (app DB) — used to map a request's sqid to its batch
+	speculationTreeStore storage.SpeculationTreeStore      // White-box view of a batch's speculation tree (app DB)
+	buildStore           storage.BuildStore                // White-box view of builds triggered per batch (app DB)
+	pathBuildStore       storage.SpeculationPathBuildStore // White-box view of the path→build mapping (app DB)
 }
 
 func TestE2EIntegration(t *testing.T) {
@@ -115,6 +120,10 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 	// status history) and the operating store (point-in-time RequestState).
 	s.requestLog = storagemysql.NewRequestLogStore(s.db, tally.NoopScope)
 	s.requestStore = storagemysql.NewRequestStore(s.db, tally.NoopScope)
+	s.batchStore = storagemysql.NewBatchStore(s.db, tally.NoopScope)
+	s.speculationTreeStore = storagemysql.NewSpeculationTreeStore(s.db, tally.NoopScope)
+	s.buildStore = storagemysql.NewBuildStore(s.db, tally.NoopScope)
+	s.pathBuildStore = storagemysql.NewSpeculationPathBuildStore(s.db, tally.NoopScope)
 
 	// Connect to Gateway gRPC service
 	var gatewayConn *grpc.ClientConn
@@ -216,6 +225,45 @@ func (s *E2EIntegrationSuite) TestLand_HappyPath_ReachesLanded() {
 	// terminal check, not a sequence.
 	assert.Equal(s.T(), entity.RequestStateLanded, s.terminalState(sqid),
 		"operating store should show request %s in terminal state landed", sqid)
+
+	// White-box (speculation tree parity): the batch this request landed in went
+	// through the tree-driven speculation pipeline (speculate -> prioritize ->
+	// build -> speculate reconcile) and its persisted state proves parity with
+	// the old flow — one build per batch, driven by exactly one speculation
+	// path. By the time the request has reached "landed", speculate's reconcile
+	// step has already stamped the tree path's BuildID and flipped its Status to
+	// passed (that write strictly precedes the merge publish, and the build row
+	// precedes that), so a single synchronous read suffices — no polling needed
+	// for path/build status. The tree's Version can still legitimately creep up
+	// afterward (late buildsignal polls), so only a lower bound is asserted.
+	t := s.T()
+	batch := s.batchForRequest("e2e-test-queue", sqid)
+	tree := s.speculationTree(batch.ID)
+
+	require.Len(t, tree.Paths, 1, "batch %s should have exactly one speculation path (chain enumerator)", batch.ID)
+	path := tree.Paths[0]
+
+	assert.Equal(t, batch.ID, path.Path.Head, "path Head should be the batch itself")
+	// batch.Dependencies and path.Path.Base each round-trip through JSON
+	// independently (one via the batch table's dependencies column, the other
+	// via the speculation_tree table's paths column) and empirically end up
+	// with different nil-vs-empty-slice representations for "no dependencies"
+	// even though the batch has none either way; normalize both to non-nil
+	// before comparing so this asserts the same ordered contents, not which
+	// side happens to be nil.
+	wantBase := append([]string{}, batch.Dependencies...)
+	gotBase := append([]string{}, path.Path.Base...)
+	assert.Equal(t, wantBase, gotBase, "path Base should equal the batch's Dependencies in order")
+	assert.Equal(t, entity.SpeculationPathStatusPassed, path.Status, "the batch's single path should have passed")
+	assert.NotEmpty(t, path.BuildID, "a passed path should have a BuildID stamped by reconcile")
+	assert.Greater(t, path.Score, float32(0), "the path scorer should have produced a positive score")
+	assert.Greater(t, tree.Version, int32(1), "the tree version should have advanced past its initial Create at version 1")
+
+	builds := s.buildsForBatch(batch.ID)
+	if assert.Len(t, builds, 1, "batch %s should have exactly one build (one build per batch is parity's core claim)", batch.ID) {
+		assert.Equal(t, path.ID, builds[0].SpeculationPathID, "the build should reference the tree's single path by ID")
+		assert.Equal(t, entity.BuildStatusSucceeded, builds[0].Status, "the build should have succeeded")
+	}
 }
 
 // TestCancelRequest_InvalidSqid verifies the gateway rejects an empty sqid
@@ -243,6 +291,13 @@ func (s *E2EIntegrationSuite) TestCancelRequest_InvalidSqid() {
 // pipeline-pause lever (e.g. a runway "park" marker that withholds the
 // merge-conflict-check signal so the request is caught pre-batch) — that is the
 // next incremental, per-stage addition on top of this harness.
+//
+// Because the terminal outcome is one of three possibilities, the white-box
+// speculation-tree check appended at the end of this test is branch-tolerant
+// rather than a single fixed expectation: it only asserts per-path "cancelled"
+// status when the request actually landed on Cancelled, and otherwise asserts
+// only the invariant that holds regardless of which terminal status was
+// reached — no build is left non-terminal.
 func (s *E2EIntegrationSuite) TestCancel_RecordsIntent() {
 	t := s.T()
 
@@ -259,4 +314,39 @@ func (s *E2EIntegrationSuite) TestCancel_RecordsIntent() {
 		entity.RequestStatusAccepted,
 		entity.RequestStatusCancelling,
 	)
+
+	// White-box (speculation-tree tolerant check): cancellation here is
+	// best-effort and races the pipeline (see comment above), so the request may
+	// end up Landed, Error, or Cancelled. Whatever the outcome, no build should be
+	// left non-terminal once the request itself has reached a terminal status; if
+	// the outcome specifically was Cancelled and a tree exists, every path in it
+	// should also show Cancelled.
+	final := s.awaitTerminal(sqid)
+	s.log.Logf("Cancel race settled: sqid=%s final status=%q", sqid, final)
+
+	batch, ok := s.findBatchForRequest("e2e-cancel-queue", sqid)
+	if !ok {
+		s.log.Logf("no batch was ever created for %s (cancel raced ahead of batch creation)", sqid)
+		return
+	}
+
+	tree, ok := s.speculationTreeIfExists(batch.ID)
+	if !ok {
+		s.log.Logf("no speculation tree for batch %s (cancelled before speculation ran)", batch.ID)
+		return
+	}
+
+	if final == entity.RequestStatusCancelled {
+		s.log.Logf("request %s reached Cancelled; asserting every path in batch %s's tree is cancelled", sqid, batch.ID)
+		for _, p := range tree.Paths {
+			assert.Equal(t, entity.SpeculationPathStatusCancelled, p.Status,
+				"batch %s path %+v should be cancelled", batch.ID, p.Path)
+		}
+	} else {
+		s.log.Logf("request %s reached terminal status %q (not Cancelled); skipping the per-path cancelled check", sqid, final)
+	}
+
+	for _, b := range s.buildsForBatch(batch.ID) {
+		assert.True(t, b.Status.IsTerminal(), "build %s for batch %s should not be left non-terminal (status=%s)", b.ID, batch.ID, b.Status)
+	}
 }
