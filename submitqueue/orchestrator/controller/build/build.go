@@ -138,10 +138,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	build := entity.Build{
-		ID:              buildID.ID,
-		BatchID:         batch.ID,
-		SpeculationPath: entity.SpeculationPath{Base: append([]string{}, batch.Dependencies...), Head: batch.ID},
-		Status:          entity.BuildStatusAccepted,
+		ID:      buildID.ID,
+		BatchID: batch.ID,
+		Status:  entity.BuildStatusAccepted,
 	}
 
 	// Persist the initial Build snapshot so the buildsignal poll loop has a

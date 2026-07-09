@@ -17,7 +17,6 @@ package mysql
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -45,22 +44,17 @@ func (s *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retE
 	defer func() { op.Complete(retErr) }()
 
 	var build entity.Build
-	var speculationPathJSON []byte
 
 	err := s.db.QueryRowContext(ctx,
-		"SELECT id, batch_id, speculation_path, status FROM build WHERE id = ?",
+		"SELECT id, batch_id, status, speculation_path_id FROM build WHERE id = ?",
 		id,
-	).Scan(&build.ID, &build.BatchID, &speculationPathJSON, &build.Status)
+	).Scan(&build.ID, &build.BatchID, &build.Status, &build.SpeculationPathID)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.Build{}, storage.WrapNotFound(err)
 	}
 	if err != nil {
 		return entity.Build{}, fmt.Errorf("failed to get build entity id=%s from the database: %w", id, err)
-	}
-
-	if err := json.Unmarshal(speculationPathJSON, &build.SpeculationPath); err != nil {
-		return entity.Build{}, fmt.Errorf("failed to unmarshal speculation_path for build entity id=%s from the database: %w", id, err)
 	}
 
 	return build, nil
@@ -71,14 +65,9 @@ func (s *buildStore) Create(ctx context.Context, build entity.Build) (retErr err
 	op := metrics.Begin(s.scope, "create")
 	defer func() { op.Complete(retErr) }()
 
-	speculationPathJSON, err := json.Marshal(build.SpeculationPath)
-	if err != nil {
-		return fmt.Errorf("failed to marshal speculation_path id=%s for Create build entity: %w", build.ID, err)
-	}
-
-	_, err = s.db.ExecContext(ctx,
-		"INSERT INTO build (id, batch_id, speculation_path, status) VALUES (?, ?, ?, ?)",
-		build.ID, build.BatchID, speculationPathJSON, build.Status,
+	_, err := s.db.ExecContext(ctx,
+		"INSERT INTO build (id, batch_id, status, speculation_path_id) VALUES (?, ?, ?, ?)",
+		build.ID, build.BatchID, build.Status, build.SpeculationPathID,
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError

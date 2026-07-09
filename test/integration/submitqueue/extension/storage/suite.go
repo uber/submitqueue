@@ -504,3 +504,87 @@ func (s *StorageContractSuite) TestStorage_SpeculationUpdateNotFound() {
 	err := s.storage.GetSpeculationTreeStore().Update(ctx, tree.BatchID, tree.Version, tree.Version+1, tree.Paths)
 	assert.ErrorIs(t, err, storage.ErrVersionMismatch, "Update for unknown batch should return ErrVersionMismatch")
 }
+
+// TestStorage_BuildCreateAndGet verifies a build round-trips through the
+// store: ID is the runner-minted build identifier (assigned by the build
+// runner, not derived from the path), SpeculationPathID links the build back
+// to the speculation-tree path it verifies, and Get by ID finds the build
+// with both round-tripped intact.
+func (s *StorageContractSuite) TestStorage_BuildCreateAndGet() {
+	t := s.T()
+	ctx := s.ctx
+	const batchID = "q/batch/create-and-get"
+	const buildID = "runner/create-and-get/42"
+	const pathID = "spec/create-and-get/path-1"
+
+	build := entity.Build{
+		ID:                buildID,
+		BatchID:           batchID,
+		SpeculationPathID: pathID,
+		Status:            entity.BuildStatusRunning,
+	}
+
+	require.NoError(t, s.storage.GetBuildStore().Create(ctx, build))
+
+	got, err := s.storage.GetBuildStore().Get(ctx, buildID)
+	require.NoError(t, err, "Get by ID should find the build")
+	assert.Equal(t, build.ID, got.ID)
+	assert.Equal(t, build.BatchID, got.BatchID)
+	assert.Equal(t, build.Status, got.Status)
+	assert.Equal(t, build.SpeculationPathID, got.SpeculationPathID, "SpeculationPathID should round-trip")
+	assert.NotEqual(t, build.ID, build.SpeculationPathID, "build ID and speculation path ID are distinct identifiers")
+}
+
+// TestStorage_SpeculationPathBuildCreateAndGet verifies a path->build mapping
+// round-trips through the store unchanged.
+func (s *StorageContractSuite) TestStorage_SpeculationPathBuildCreateAndGet() {
+	t := s.T()
+	ctx := s.ctx
+
+	pb := entity.SpeculationPathBuild{
+		PathID:    "spec/path-build/create-get",
+		BuildID:   "runner/path-build/create-get/1",
+		BatchID:   "q/batch/path-build-create-get",
+		Version:   1,
+		CreatedAt: 1700000000000,
+	}
+
+	require.NoError(t, s.storage.GetSpeculationPathBuildStore().Create(ctx, pb))
+
+	got, err := s.storage.GetSpeculationPathBuildStore().Get(ctx, pb.PathID)
+	require.NoError(t, err)
+	assert.Equal(t, pb, got, "path build mapping should round-trip unchanged")
+}
+
+// TestStorage_SpeculationPathBuildCreateDuplicate verifies a repeated Create
+// for the same PathID returns ErrAlreadyExists — a path maps to at most one
+// build, and the first-written mapping wins.
+func (s *StorageContractSuite) TestStorage_SpeculationPathBuildCreateDuplicate() {
+	t := s.T()
+	ctx := s.ctx
+
+	pb := entity.SpeculationPathBuild{
+		PathID:    "spec/path-build/duplicate",
+		BuildID:   "runner/path-build/duplicate/1",
+		BatchID:   "q/batch/path-build-duplicate",
+		Version:   1,
+		CreatedAt: 1700000000000,
+	}
+
+	require.NoError(t, s.storage.GetSpeculationPathBuildStore().Create(ctx, pb))
+
+	other := pb
+	other.BuildID = "runner/path-build/duplicate/2"
+	err := s.storage.GetSpeculationPathBuildStore().Create(ctx, other)
+	assert.ErrorIs(t, err, storage.ErrAlreadyExists, "duplicate create should return ErrAlreadyExists")
+}
+
+// TestStorage_SpeculationPathBuildGetNotFound verifies Get for an unknown
+// path ID returns ErrNotFound.
+func (s *StorageContractSuite) TestStorage_SpeculationPathBuildGetNotFound() {
+	t := s.T()
+	ctx := s.ctx
+
+	_, err := s.storage.GetSpeculationPathBuildStore().Get(ctx, "spec/path-build/nonexistent")
+	assert.ErrorIs(t, err, storage.ErrNotFound, "Get for unknown path ID should return ErrNotFound")
+}

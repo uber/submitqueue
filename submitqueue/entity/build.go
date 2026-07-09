@@ -56,16 +56,18 @@ func (s BuildStatus) IsTerminal() bool {
 // Build represents a build scheduled for a batch along a specific speculation path.
 // All fields except the Status are immutable after creation.
 type Build struct {
-	// ID represents the build ID. It is the responsibility of a build management system to ensure
-	// that this is unique.
+	// ID is the identifier minted by the queue's build runner when the build
+	// is triggered; this is the primary storage key.
 	ID string
 	// BatchID is the batch for which this build is scheduled.
 	BatchID string
-	// SpeculationPath is the speculation path that represents this build. For
-	// a given batch this path is crafted from the graph that is generated from the
-	// dependencies of this batch. Its Head is the batch being verified (equal to
-	// BatchID) and its Base is the assumed-good prefix of predecessor batches.
-	SpeculationPath SpeculationPath
+	// SpeculationPathID is the ID of the speculation-tree path this build
+	// verifies (SpeculationPathInfo.ID). The path's structure (Base/Head) is
+	// not embedded here — it lives on the tree entry and is looked up via the
+	// tree (SpeculationPathInfo.Path). This field enables the reverse lookup
+	// from a build row to its path; the forward lookup (path->build) lives in
+	// the separate SpeculationPathBuild mapping (see speculation_path_build.go).
+	SpeculationPathID string
 	// Status represents the state of the build lifecycle this build is in.
 	Status BuildStatus
 }
