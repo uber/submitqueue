@@ -25,3 +25,13 @@ entity.Version = newVersion // only after the write succeeded
 ```
 
 The post-success assignment matters whenever the entity is read again later in the same flow. Pre-incrementing in memory before the call is a bug pattern: if the call fails and the caller swallows the error, the in-memory version is now ahead of the database and subsequent updates will fail with `ErrVersionMismatch` for non-obvious reasons.
+
+## Key-value contract
+
+Store interfaces are designed for the storage technology *space*, not for SQL (see the Extensions section of the repo `CLAUDE.md`): every method must be satisfiable by a plain key-value backend (DynamoDB, Bigtable, an in-memory map) as cheaply as by MySQL. Concretely, a store exposes only get/put/conditional-update **by primary key**. No lookups by other attributes, no listings filtered server-side, no joins.
+
+**The smell test is the index.** If implementing a proposed store method in MySQL requires adding a secondary index (`KEY idx_*`) to the schema, the method is a query-by-attribute in disguise and the contract has left the key-value space — a KV backend would need a global secondary index or a hand-maintained index table to fake it. Treat a new `KEY` line in a schema diff as a design review flag, not a tuning detail.
+
+**Reach for the derived-key pattern instead.** When callers need "all X belonging to Y", encode the relationship in the primary key rather than querying for it: derive the key deterministically from the composite identity the caller already holds — for example `{parentID}/{hash(child identity)}`. Every caller that wants the children can recompute the keys and issue per-key reads; creation under a deterministic key is naturally idempotent (a redelivery finds the existing row); and "at most one row per identity" holds by construction instead of by query discipline.
+
+**Domain state is often already the index.** Before adding any lookup, check whether an entity the caller already loads enumerates the children — an aggregate that references its parts by ID (e.g. a tree whose paths record their build identities) is the batch→children index, persisted and versioned as domain state. Duplicating that relationship as a database index adds a second source of truth for something the domain already owns.

@@ -141,6 +141,7 @@ Rule of thumb: if you're about to add a `NewFactory()` or a `map[queue]impl` und
 Common over-constraints to avoid:
 - **Batch atomicity** (multi-row inserts as one transaction) — many KV stores can't do this. Prefer single-record primitives + caller loops + idempotency-on-retry.
 - **Multi-key queries** (`WHERE x IN (...)`) — fine in SQL, awkward elsewhere. Prefer per-key reads.
+- **Query-by-attribute / secondary indexes** (`WHERE attr = ?`, `ListByX(attr)`) — a plain KV store cannot look up by anything but the primary key. The mechanical smell test: **if a schema change adds a `KEY idx_*` to make a store method viable, the contract has stopped being get/put-by-key.** Instead, derive the primary key from the composite identity the caller already holds (e.g. `{parentID}/{hash(child identity)}`), and remember that domain state is often already the index — an entity that references its children (a tree listing its paths) enumerates their keys for free. See [submitqueue/extension/storage/README.md](submitqueue/extension/storage/README.md#key-value-contract).
 - **Server-side filters** (joins, sub-queries, complex predicates) — push filtering and aggregation to the caller; keep the store responsible only for "get/put by key" semantics.
 - **Transactions across entities** — virtually no distributed store offers this. Use eventual consistency + idempotency.
 - **Strict ordering / exactly-once** in messaging — most queues are at-least-once with best-effort ordering. Make consumers idempotent.
