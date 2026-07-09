@@ -46,8 +46,8 @@ const (
 	BuildStrategyUnknown BuildStrategy = ""
 	// BuildStrategyIncrementalSinceGreen validates only the delta since the pinned baseline URI.
 	BuildStrategyIncrementalSinceGreen BuildStrategy = "incremental_since_green"
-	// BuildStrategyFullMonorepo validates the whole monorepo from scratch.
-	BuildStrategyFullMonorepo BuildStrategy = "full_monorepo"
+	// BuildStrategyFull validates the whole repo from scratch.
+	BuildStrategyFull BuildStrategy = "full"
 )
 
 // Request represents a single validation of a queue at a particular commit. The queue reports
@@ -75,7 +75,7 @@ type Request struct {
 	// BuildStrategy is the validation scope process chose when admitting this request.
 	BuildStrategy BuildStrategy `json:"build_strategy"`
 	// BaseURI is the base URI to be used for this request when the strategy is incremental.
-	// Empty for full-monorepo builds and cold start.
+	// Empty for full builds and cold start.
 	BaseURI string `json:"base_uri"`
 
 	// ****************
