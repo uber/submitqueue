@@ -136,6 +136,11 @@ func (s *StovepipeIntegrationSuite) TestIngestAPI() {
 	resp2, err := s.client.Ingest(s.ctx, &pb.IngestRequest{Queue: queue})
 	require.NoError(t, err, "second Ingest failed")
 	assert.Equal(t, id, resp2.Id, "re-ingest of the same head should dedup to the same id")
+
+	// latest_request_id on the queue row.
+	var latestRequestID string
+	require.NoError(t, s.db.QueryRow("SELECT latest_request_id FROM queue WHERE name = ?", queue).Scan(&latestRequestID))
+	assert.Equal(t, id, latestRequestID, "queue latest_request_id should point at the minted request")
 }
 
 // TestIngestEmptyQueue verifies the request-validation error surfaces over gRPC.

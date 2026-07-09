@@ -126,6 +126,10 @@ func (c *IngestController) Ingest(ctx context.Context, req *pb.IngestRequest) (r
 		return nil, err
 	}
 
+	if err := c.advanceQueueLatestRequestID(ctx, queue, id); err != nil {
+		return nil, err
+	}
+
 	// Publish while the request is still pre-pipeline (Accepted). The process consumer is
 	// idempotent (keyed on the request id, at-least-once), so re-publishing on a retry or a
 	// duplicate report is safe and closes the "request created but publish failed" gap. Once
@@ -209,6 +213,39 @@ func (c *IngestController) ensureRequest(ctx context.Context, id, queue, uri str
 		return reqStore.Get(ctx, id)
 	}
 	return request, nil
+}
+
+// advanceQueueLatestRequestID CAS-updates queue.latest_request_id to id when id is newer.
+// Retries on optimistic-lock conflicts so concurrent ingests converge.
+func (c *IngestController) advanceQueueLatestRequestID(ctx context.Context, queue, id string) error {
+	queueStore := c.store.GetQueueStore()
+
+	for {
+		queueRow, err := queueStore.GetOrCreate(ctx, queue, entity.Queue{Version: 1})
+		if err != nil {
+			return fmt.Errorf("IngestController failed to load queue %s: %w", queue, err)
+		}
+		if queueRow.LatestRequestID != "" {
+			cmp, err := entity.CompareRequestID(queue, id, queueRow.LatestRequestID)
+			if err != nil {
+				return fmt.Errorf("IngestController failed to compare request ids for queue %s: %w", queue, err)
+			}
+			if cmp <= 0 {
+				return nil
+			}
+		}
+
+		updated := queueRow
+		updated.LatestRequestID = id
+		newVersion := queueRow.Version + 1
+		if err := queueStore.Update(ctx, updated, queueRow.Version, newVersion); err != nil {
+			if errors.Is(err, storage.ErrVersionMismatch) {
+				continue
+			}
+			return fmt.Errorf("IngestController failed to update queue %s latest_request_id: %w", queue, err)
+		}
+		return nil
+	}
 }
 
 // publishProcess publishes the request ID to the process stage, partitioned by queue so a
