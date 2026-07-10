@@ -88,19 +88,17 @@ func expectResolve(m ingestMocks) {
 	m.sc.EXPECT().Latest(gomock.Any()).Return(testURI, nil)
 }
 
-// expectAdvanceLatestRequestID wires GetOrCreate + Update for queue.latest_request_id.
+// expectAdvanceLatestRequestID wires Get + Create + Update for queue.latest_request_id.
 func expectAdvanceLatestRequestID(m ingestMocks, queue, id string) {
-	m.queueStore.EXPECT().GetOrCreate(gomock.Any(), queue, entity.Queue{Version: 1}).Return(entity.Queue{
-		Name:    queue,
-		Version: 1,
-	}, nil)
+	m.queueStore.EXPECT().Get(gomock.Any(), queue).Return(entity.Queue{}, storage.ErrNotFound)
+	m.queueStore.EXPECT().Create(gomock.Any(), entity.Queue{Name: queue, Version: 1}).Return(nil)
 	updated := entity.Queue{Name: queue, LatestRequestID: id, Version: 1}
 	m.queueStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(nil)
 }
 
-// expectAdvanceLatestRequestIDNoOp wires GetOrCreate when latest_request_id is already at id.
+// expectAdvanceLatestRequestIDNoOp wires Get when latest_request_id is already at id.
 func expectAdvanceLatestRequestIDNoOp(m ingestMocks, queue, id string) {
-	m.queueStore.EXPECT().GetOrCreate(gomock.Any(), queue, entity.Queue{Version: 1}).Return(entity.Queue{
+	m.queueStore.EXPECT().Get(gomock.Any(), queue).Return(entity.Queue{
 		Name:            queue,
 		LatestRequestID: id,
 		Version:         1,
