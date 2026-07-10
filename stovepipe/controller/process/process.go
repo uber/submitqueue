@@ -14,8 +14,8 @@
 
 // Package process holds the process-stage queue controller. It consumes request
 // ids from ingest, reloads the Request from storage, coalesces older heads, and
-// (in later changes) gates concurrency, decides build strategy, and admits
-// winners to build.
+// admits the latest head when a build slot is open. Build queue publish lands in
+// a follow-up PR.
 package process
 
 import (
@@ -35,7 +35,8 @@ import (
 )
 
 // Controller consumes ProcessRequest messages from the process stage, reloads the
-// referenced Request from storage, and coalesces older heads. Implements consumer.Controller.
+// referenced Request from storage, coalesces older heads, and admits the latest when
+// a slot is open. Implements consumer.Controller.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
@@ -67,8 +68,8 @@ func NewController(
 	}
 }
 
-// Process reloads the request referenced by the delivery and coalesces older heads.
-// Returns nil to ack (success) or an error to nack (retry).
+// Process reloads the request referenced by the delivery, coalesces older heads,
+// and admits the latest when a slot is open. Returns nil to ack (success) or an error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
 	const opName = "process"
 
@@ -92,6 +93,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	switch request.State {
 	case entity.RequestStateSuperseded, entity.RequestStateProcessing:
+		// Processing republish to build lands in a follow-up PR.
 		return nil
 	case entity.RequestStateAccepted:
 		return c.processAccepted(ctx, request)
@@ -105,8 +107,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 }
 
-// processAccepted coalesces older heads against queue.latest_request_id, then resolves
-// per-queue config for the concurrency gate. Admit lands in a follow-up PR.
+// processAccepted coalesces older heads against queue.latest_request_id, then admits
+// the latest head when a build slot is available.
 func (c *Controller) processAccepted(ctx context.Context, request entity.Request) error {
 	queueRow, err := c.loadQueue(ctx, request.Queue)
 	if err != nil {
@@ -114,7 +116,7 @@ func (c *Controller) processAccepted(ctx context.Context, request entity.Request
 	}
 
 	if queueRow.LatestRequestID == "" {
-		c.logger.Infow("latest head awaiting admit",
+		c.logger.Infow("latest head awaiting ingest pointer",
 			"request_id", request.ID,
 			"queue", request.Queue,
 			"uri", request.URI,
@@ -152,15 +154,98 @@ func (c *Controller) processAccepted(ctx context.Context, request entity.Request
 		return nil
 	}
 
-	c.logger.Infow("latest head awaiting admit",
+	return c.admitRequest(ctx, request, queueRow, cfg.MaxConcurrent)
+}
+
+// admitRequest admits the latest head: cold-start full build, increment in_flight_count,
+// and transition accepted→processing.
+func (c *Controller) admitRequest(ctx context.Context, request entity.Request, queueRow entity.Queue, maxConcurrent int32) error {
+	if err := c.incrementInFlightCount(ctx, &queueRow, maxConcurrent); err != nil {
+		return err
+	}
+
+	strategy := entity.BuildStrategyFull
+	if err := c.transitionToProcessing(ctx, &request, strategy, ""); err != nil {
+		return err
+	}
+
+	// TODO(build-publish): publish BuildRequest to the build stage here.
+
+	c.logger.Infow("admitted request",
 		"request_id", request.ID,
 		"queue", request.Queue,
-		"uri", request.URI,
+		"build_strategy", string(strategy),
 	)
 	return nil
 }
 
-// supersedeRequest CAS-marks request accepted→superseded, retrying on version conflicts.
+// incrementInFlightCount CAS-increments queue.in_flight_count, retrying on version conflicts.
+func (c *Controller) incrementInFlightCount(ctx context.Context, queueRow *entity.Queue, maxConcurrent int32) error {
+	queueStore := c.store.GetQueueStore()
+
+	for {
+		if queueRow.InFlightCount >= maxConcurrent {
+			return fmt.Errorf("ProcessController gate closed for queue %s", queueRow.Name)
+		}
+
+		updated := *queueRow
+		updated.InFlightCount = queueRow.InFlightCount + 1
+		newVersion := queueRow.Version + 1
+		if err := queueStore.Update(ctx, updated, queueRow.Version, newVersion); err != nil {
+			if errors.Is(err, storage.ErrVersionMismatch) {
+				got, getErr := queueStore.Get(ctx, queueRow.Name)
+				if getErr != nil {
+					return fmt.Errorf("ProcessController failed to reload queue %s after version mismatch: %w", queueRow.Name, getErr)
+				}
+				*queueRow = got
+				continue
+			}
+			return fmt.Errorf("ProcessController failed to increment in_flight_count for queue %s: %w", queueRow.Name, err)
+		}
+		*queueRow = updated
+		queueRow.Version = newVersion
+		return nil
+	}
+}
+
+// transitionToProcessing CAS-marks request accepted→processing with strategy fields,
+// retrying on version conflicts.
+func (c *Controller) transitionToProcessing(
+	ctx context.Context,
+	request *entity.Request,
+	strategy entity.BuildStrategy,
+	baseURI string,
+) error {
+	reqStore := c.store.GetRequestStore()
+
+	for {
+		if request.State != entity.RequestStateAccepted {
+			return nil
+		}
+
+		updated := *request
+		updated.State = entity.RequestStateProcessing
+		updated.BuildStrategy = strategy
+		updated.BaseURI = baseURI
+		newVersion := request.Version + 1
+		if err := reqStore.Update(ctx, updated, request.Version, newVersion); err != nil {
+			if errors.Is(err, storage.ErrVersionMismatch) {
+				got, getErr := reqStore.Get(ctx, request.ID)
+				if getErr != nil {
+					return fmt.Errorf("ProcessController failed to reload request %s after version mismatch: %w", request.ID, getErr)
+				}
+				*request = got
+				continue
+			}
+			return fmt.Errorf("ProcessController failed to transition request %s to processing: %w", request.ID, err)
+		}
+		*request = updated
+		request.Version = newVersion
+		return nil
+	}
+}
+
+// supersedeRequest transitions a request from accepted to superseded, retrying on version conflicts.
 func (c *Controller) supersedeRequest(ctx context.Context, request entity.Request) error {
 	reqStore := c.store.GetRequestStore()
 
