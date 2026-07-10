@@ -13,9 +13,8 @@
 // limitations under the License.
 
 // Package process holds the process-stage queue controller. It consumes request
-// ids from ingest, reloads the Request from storage, coalesces older heads, and
-// admits the latest head when a build slot is open. Build queue publish lands in
-// a follow-up PR.
+// ids from ingest, reloads the Request from storage, coalesces older heads,
+// admits the latest head to build, and reschedules when the concurrency gate is closed.
 package process
 
 import (
@@ -36,8 +35,8 @@ import (
 )
 
 // Controller consumes ProcessRequest messages from the process stage, reloads the
-// referenced Request from storage, coalesces older heads, and admits the latest when
-// a slot is open. Implements consumer.Controller.
+// referenced Request from storage, coalesces older heads, and admits the latest to
+// build. Implements consumer.Controller.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
@@ -73,7 +72,7 @@ func NewController(
 }
 
 // Process reloads the request referenced by the delivery, coalesces older heads,
-// and admits the latest when a slot is open. Returns nil to ack (success) or an error to nack (retry).
+// and admits the latest to build. Returns nil to ack (success) or an error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
 	const opName = "process"
 
@@ -96,9 +95,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	switch request.State {
-	case entity.RequestStateSuperseded, entity.RequestStateProcessing:
-		// Processing republish to build lands in a follow-up PR.
+	case entity.RequestStateSuperseded:
 		return nil
+	case entity.RequestStateProcessing:
+		return c.republishBuild(ctx, request)
 	case entity.RequestStateAccepted:
 		return c.processAccepted(ctx, request)
 	default:
@@ -172,7 +172,7 @@ func (c *Controller) rescheduleProcess(ctx context.Context, id, queue string, de
 }
 
 // admitRequest admits the latest head: cold-start full build, increment in_flight_count,
-// and transition accepted→processing.
+// transition accepted→processing, and publish to build.
 func (c *Controller) admitRequest(ctx context.Context, request entity.Request, queueRow entity.Queue, maxConcurrent int32) error {
 	if err := c.incrementInFlightCount(ctx, &queueRow, maxConcurrent); err != nil {
 		return err
@@ -183,12 +183,26 @@ func (c *Controller) admitRequest(ctx context.Context, request entity.Request, q
 		return err
 	}
 
-	// TODO(build-publish): publish BuildRequest to the build stage here.
+	if err := c.publishBuild(ctx, request.ID, request.Queue); err != nil {
+		return err
+	}
 
-	c.logger.Infow("admitted request",
+	c.logger.Infow("admitted request to build",
 		"request_id", request.ID,
 		"queue", request.Queue,
 		"build_strategy", string(strategy),
+	)
+	return nil
+}
+
+// republishBuild re-publishes a processing request to build after a prior publish may have failed.
+func (c *Controller) republishBuild(ctx context.Context, request entity.Request) error {
+	if err := c.publishBuild(ctx, request.ID, request.Queue); err != nil {
+		return err
+	}
+	c.logger.Infow("republished processing request to build",
+		"request_id", request.ID,
+		"queue", request.Queue,
 	)
 	return nil
 }
@@ -310,6 +324,30 @@ func (c *Controller) publishProcess(ctx context.Context, id, queue string, delay
 		return publisher.PublishAfter(ctx, topicName, msg, delayMs)
 	}
 	return publisher.Publish(ctx, topicName, msg)
+}
+
+// publishBuild publishes the request ID to the build stage, partitioned by queue.
+func (c *Controller) publishBuild(ctx context.Context, id, queue string) error {
+	payload, err := stovepipemq.Marshal(&stovepipemq.BuildRequest{Id: id})
+	if err != nil {
+		return fmt.Errorf("failed to serialize build request: %w", err)
+	}
+
+	msg := entityqueue.NewMessage(id, payload, queue, nil)
+
+	q, ok := c.registry.Queue(stovepipemq.TopicKeyBuild)
+	if !ok {
+		return fmt.Errorf("no queue registered for topic key %s", stovepipemq.TopicKeyBuild)
+	}
+	topicName, ok := c.registry.TopicName(stovepipemq.TopicKeyBuild)
+	if !ok {
+		return fmt.Errorf("no topic name registered for topic key %s", stovepipemq.TopicKeyBuild)
+	}
+
+	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
+		return fmt.Errorf("failed to publish build request: %w", err)
+	}
+	return nil
 }
 
 // loadRequest returns the request for id. A not-yet-visible row is retryable.

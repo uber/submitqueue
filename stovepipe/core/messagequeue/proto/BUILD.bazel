@@ -1,4 +1,7 @@
 exports_files(
-    ["process.proto"],
+    [
+        "build.proto",
+        "process.proto",
+    ],
     visibility = ["//tool/proto:__pkg__"],
 )

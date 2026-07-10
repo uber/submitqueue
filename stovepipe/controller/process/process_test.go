@@ -65,6 +65,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, processM
 
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{Key: stovepipemq.TopicKeyProcess, Name: "process", Queue: queue},
+		{Key: stovepipemq.TopicKeyBuild, Name: "build", Queue: queue},
 	})
 	require.NoError(t, err)
 
@@ -110,6 +111,8 @@ func expectAdmit(m processMocks, id string) {
 	updatedReq.State = entity.RequestStateProcessing
 	updatedReq.BuildStrategy = entity.BuildStrategyFull
 	m.reqStore.EXPECT().Update(gomock.Any(), updatedReq, int32(1), int32(2)).Return(nil)
+
+	m.publisher.EXPECT().Publish(gomock.Any(), "build", gomock.Any()).Return(nil)
 }
 
 func TestProcess(t *testing.T) {
@@ -129,11 +132,12 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "processing is no-op until build publish lands",
+			name: "processing republishes to build",
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
 					ID: testID, Queue: testQueue, State: entity.RequestStateProcessing, Version: 2,
 				}, nil)
+				m.publisher.EXPECT().Publish(gomock.Any(), "build", gomock.Any()).Return(nil)
 			},
 		},
 		{

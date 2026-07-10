@@ -6,6 +6,7 @@ Payloads are defined in proto3 (`proto/`, generated into `protopb/`) and seriali
 
 ## Stages
 
-- **process** (`TopicKeyProcess`, `ProcessRequest`) — ingest publishes the minted request id here once it accepts a new head; the process controller reloads the `Request` from storage and decides the build strategy. Only the id travels: producer and consumer share the store, so messages stay small and redelivery is idempotent.
+- **process** (`TopicKeyProcess`, `ProcessRequest`) — ingest publishes the minted request id here once it accepts a new head; the process controller reloads the `Request` from storage, coalesces older heads, and admits the latest to build. Only the id travels: producer and consumer share the store, so messages stay small and redelivery is idempotent.
+- **build** (`TopicKeyBuild`, `BuildRequest`) — process publishes the admitted request id here once it records build strategy and increments the concurrency gate; the build controller reloads the `Request` from storage and runs validation. Same id-only pattern as process.
 
 See [doc/rfc/messagequeue-contract.md](../../../doc/rfc/messagequeue-contract.md) for the contract conventions and `api/runway/messagequeue` for the external reference example.

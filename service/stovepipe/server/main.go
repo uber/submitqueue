@@ -304,7 +304,7 @@ func run() error {
 }
 
 // newTopicRegistry builds the TopicRegistry for Stovepipe's internal pipeline queues. ingest
-// publishes to the process topic and the process consumer subscribes to it.
+// publishes to the process topic; process publishes to build and subscribes to process.
 func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRegistry, error) {
 	return consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{
@@ -314,6 +314,11 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Subscription: extqueue.DefaultSubscriptionConfig(
 				subscriberName, "stovepipe-process",
 			),
+		},
+		{
+			Key:   stovepipemq.TopicKeyBuild,
+			Name:  "build",
+			Queue: q,
 		},
 	})
 }
