@@ -25,30 +25,48 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/dependencylimit"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/enumerator"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/pathscorer"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/selector"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
 
 // Controller handles speculate queue messages.
 //
-// Naive happy-path algorithm: assume every in-flight build will pass and
-// treat batch.Dependencies + [batch.ID] as the single speculation chain.
-// Per invocation, the controller advances the batch one step in the
-// state machine:
+// Each invocation reconciles the batch's entity.SpeculationTree and advances
+// the batch one step in the state machine. Tree reconciliation is pure
+// mechanics: the controller runs the queue's configured seams — enumerator
+// (path structure), path scorer (path scores), selector (path decisions) —
+// validates their outputs, applies them to the persisted tree, and writes it
+// back under optimistic concurrency. Which paths exist, how they score, and
+// which are promoted or cancelled are the seams' decisions alone; the
+// controller never originates one. No downstream stage reads the tree yet,
+// so the forward step below is driven by the batch's own state, not the
+// tree.
 //
-//   - Created or Scored → publish to build, transition to Speculating.
-//   - Speculating       → if all deps are Succeeded, publish to merge and
-//     transition to Merging; otherwise no-op (or fail-fast if a dep is
-//     in a non-succeeding terminal state).
+// Per invocation, the controller advances the batch one step in the state
+// machine:
+//
+//   - Created, Scored, or Speculating → speculateBatch: reconcile the tree
+//     (created on the first pass the dependency gate admits), then advance
+//     the batch — publish to build and CAS to Speculating for
+//     Created/Scored, or tryFinalize for Speculating.
 //   - Cancelling        → cancel any in-flight Build entity, respeculate
 //     dependents, CAS to terminal Cancelled, publish to conclude. The
 //     cancel controller hands the batch off in this state and speculate
 //     drives it to terminal.
 //   - Merging           → no-op (owned by the merge controller).
-//   - Terminal          → re-fan-out to conclude for self-healing in case a
-//     prior publish was lost. For terminal Cancelled, also re-fan-out
-//     dependents so a crash between the terminal CAS and the dependent
-//     publish does not strand them.
+//   - Terminal          → re-publish the dependent fan-out and the conclude
+//     event. Every terminal transition is routed back through this controller
+//     (by mergesignal, or by the cancel flow), so this branch is how waiting
+//     dependents learn a dependency resolved; redelivery makes the same
+//     branch the self-heal for a lost publish.
+//
+// Cancel decisions are recorded as path status only
+// (SpeculationPathStatusCancelling on an in-flight build) — nothing in this
+// file calls a build runner.
 //
 // The controller is re-triggered on every relevant downstream event
 // (buildsignal, merge), so each call simply re-evaluates the current
@@ -57,6 +75,10 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	store         storage.Storage
+	enumerators   enumerator.Factory
+	scorers       pathscorer.Factory
+	selectors     selector.Factory
+	depLimits     dependencylimit.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -73,6 +95,10 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	store storage.Storage,
+	enumerators enumerator.Factory,
+	scorers pathscorer.Factory,
+	selectors selector.Factory,
+	depLimits dependencylimit.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -81,13 +107,18 @@ func NewController(
 		logger:        logger.Named("speculate_controller"),
 		metricsScope:  scope.SubScope("speculate_controller"),
 		store:         store,
+		enumerators:   enumerators,
+		scorers:       scorers,
+		selectors:     selectors,
+		depLimits:     depLimits,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
 }
 
-// Process advances a batch one step along the naive happy-path.
+// Process reconciles the batch's speculation tree and advances the batch one
+// step in the state machine.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
 	op := metrics.Begin(c.metricsScope, opName)
@@ -114,17 +145,17 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return c.cancelBatch(ctx, batch)
 	}
 
-	// Terminal state: re-fan-out for self-healing in case a previous publish
-	// was lost. Always re-publish to conclude (idempotent on the batch ID).
-	// For Cancelled specifically also re-publish to dependents — a crash
-	// between the terminal CAS and the dependent publish would otherwise
-	// leave them stuck waiting on a Cancelled dep.
+	// Terminal state: wake dependents and re-publish conclude. This branch is
+	// the dependent wake-up for success and failure — mergesignal routes every
+	// terminal transition back through speculate under the batch's own ID, and
+	// re-publishing the dependents here lets each of them re-run its own
+	// dependency gate / tryFinalize against the new dependency state. On
+	// redelivery the same branch doubles as the crash self-heal: both the
+	// dependent fan-out and the conclude publish are idempotent re-sends.
 	if batch.State.IsTerminal() {
 		metrics.NamedCounter(c.metricsScope, opName, "self_heal_terminal", 1)
-		if batch.State == entity.BatchStateCancelled {
-			if err := c.respeculateDependents(ctx, batch); err != nil {
-				return err
-			}
+		if err := c.respeculateDependents(ctx, batch); err != nil {
+			return err
 		}
 		return c.fanout(ctx, batch.ID, batch.Queue)
 	}
@@ -136,18 +167,343 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	switch batch.State {
-	case entity.BatchStateCreated, entity.BatchStateScored:
-		return c.startSpeculation(ctx, batch)
-	case entity.BatchStateSpeculating:
-		return c.tryFinalize(ctx, batch)
+	case entity.BatchStateCreated, entity.BatchStateScored, entity.BatchStateSpeculating:
+		return c.speculateBatch(ctx, batch)
 	default:
 		metrics.NamedCounter(c.metricsScope, opName, "unexpected_state", 1)
 		return fmt.Errorf("unexpected batch state %q for batch %s", batch.State, batch.ID)
 	}
 }
 
-// startSpeculation kicks off CI for this batch on top of the speculative head
-// (batch.Dependencies assumed to all pass), then transitions to Speculating.
+// speculateBatch is the unified entry point for Created, Scored, and
+// Speculating batches. It loads the batch's speculation tree (creating it on
+// the first pass the dependency gate admits), applies the scorer's and
+// selector's outputs, persists the tree if anything changed, and then
+// advances the batch itself: Created/Scored publish to build and CAS to
+// Speculating; Speculating runs tryFinalize.
+func (c *Controller) speculateBatch(ctx context.Context, batch entity.Batch) error {
+	deps, err := c.fetchDependencies(ctx, batch)
+	if err != nil {
+		return err
+	}
+
+	tree, err := c.store.GetSpeculationTreeStore().Get(ctx, batch.ID)
+	if err != nil {
+		if !errors.Is(err, storage.ErrNotFound) {
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return fmt.Errorf("failed to get speculation tree for batch %s: %w", batch.ID, err)
+		}
+
+		// Dependency gate: only consulted before a tree exists. Once a batch
+		// has a tree, later passes just re-score/re-select it.
+		blocked, gerr := c.dependencyGateBlocks(ctx, batch, deps)
+		if gerr != nil {
+			return gerr
+		}
+		if blocked {
+			metrics.NamedCounter(c.metricsScope, opName, "dependency_gate_blocked", 1)
+			c.logger.Debugw("active dependency count exceeds queue's dependency limit; waiting",
+				"batch_id", batch.ID,
+				"dependency_count", len(deps),
+			)
+			return nil
+		}
+
+		tree, err = c.createTree(ctx, batch, deps)
+		if err != nil {
+			return err
+		}
+	}
+
+	scr, err := c.scorers.For(pathscorer.Config{QueueName: batch.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "scorer_errors", 1)
+		return fmt.Errorf("failed to get speculation scorer for queue %s: %w", batch.Queue, err)
+	}
+	scores, err := scr.Score(ctx, tree)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "scorer_errors", 1)
+		return fmt.Errorf("failed to score speculation tree for batch %s: %w", batch.ID, err)
+	}
+	tree, scoresChanged := c.applyScores(batch, tree, scores)
+
+	sel, err := c.selectors.For(selector.Config{QueueName: batch.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "selector_errors", 1)
+		return fmt.Errorf("failed to get selector for queue %s: %w", batch.Queue, err)
+	}
+	decisions, err := sel.Select(ctx, tree)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "selector_errors", 1)
+		return fmt.Errorf("failed to select speculation decisions for batch %s: %w", batch.ID, err)
+	}
+
+	tree, selectionChanged := c.applySelection(batch, tree, decisions)
+
+	if scoresChanged || selectionChanged {
+		newVersion := tree.Version + 1
+		if err := c.store.GetSpeculationTreeStore().Update(ctx, batch.ID, tree.Version, newVersion, tree.Paths); err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return fmt.Errorf("failed to update speculation tree for batch %s: %w", batch.ID, err)
+		}
+		tree.Version = newVersion
+	}
+
+	// The tree does not influence the forward step below — no downstream
+	// stage consumes it yet.
+	switch batch.State {
+	case entity.BatchStateCreated, entity.BatchStateScored:
+		return c.startSpeculation(ctx, batch)
+	case entity.BatchStateSpeculating:
+		return c.tryFinalize(ctx, batch)
+	default:
+		return nil
+	}
+}
+
+// dependencyGateBlocks reports whether batch's count of active dependencies
+// (entity.DependencyBatchStates) exceeds the queue's current dependency
+// limit. It is consulted only before a batch's speculation tree exists.
+//
+// The gate applies the dependencylimit extension's value; the application —
+// counting active dependencies and expressing "wait" as an acked no-op — is
+// admission control on the batch's pipeline progress and deliberately stays
+// in the controller, out of the structure-only enumerator seam. A blocked
+// batch is woken by the next dependency event: every dependency terminal
+// transition re-publishes the dependents of the newly terminal batch (see
+// the terminal branch in Process), and the active count only shrinks via
+// those same transitions, so no unblocking event can be missed; a raised
+// limit takes effect at the next such event. This cannot deadlock:
+// dependencies point at strictly earlier batches (the graph is a DAG) and a
+// batch with no active dependencies is never blocked, so the head of every
+// chain keeps progressing and eventually wakes its dependents.
+func (c *Controller) dependencyGateBlocks(ctx context.Context, batch entity.Batch, deps []entity.Batch) (bool, error) {
+	active := 0
+	for _, d := range deps {
+		if isActiveDependency(d.State) {
+			active++
+		}
+	}
+
+	limiter, err := c.depLimits.For(dependencylimit.Config{QueueName: batch.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "dependency_limit_errors", 1)
+		return false, fmt.Errorf("failed to get dependency limit for queue %s: %w", batch.Queue, err)
+	}
+	limit, err := limiter.Limit(ctx)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "dependency_limit_errors", 1)
+		return false, fmt.Errorf("failed to get dependency limit value for queue %s: %w", batch.Queue, err)
+	}
+
+	return active > limit, nil
+}
+
+// isActiveDependency reports whether s is one of the states that makes an
+// in-flight batch eligible to be a dependency (entity.DependencyBatchStates).
+func isActiveDependency(s entity.BatchState) bool {
+	for _, st := range entity.DependencyBatchStates() {
+		if st == s {
+			return true
+		}
+	}
+	return false
+}
+
+// createTree enumerates and persists a batch's speculation tree the first
+// time it is seen, with every path stamped Candidate. Concurrent creation
+// (two events racing to create the same tree) is resolved by re-reading the
+// winner's tree rather than erroring: enumeration is deterministic given the
+// same (batchID, deps), so either creator's structure is equivalent and the
+// loser simply adopts what won.
+func (c *Controller) createTree(ctx context.Context, batch entity.Batch, deps []entity.Batch) (entity.SpeculationTree, error) {
+	enumFactory, err := c.enumerators.For(enumerator.Config{QueueName: batch.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "enumerator_errors", 1)
+		return entity.SpeculationTree{}, fmt.Errorf("failed to get enumerator for queue %s: %w", batch.Queue, err)
+	}
+
+	paths, err := enumFactory.Enumerate(ctx, batch, deps)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "enumerator_errors", 1)
+		return entity.SpeculationTree{}, fmt.Errorf("failed to enumerate speculation paths for batch %s: %w", batch.ID, err)
+	}
+
+	// The enumerator returns structure only; the controller owns everything
+	// else about a persisted path. Each entry is stamped Candidate and minted
+	// its ID here, once, at tree creation — immutable thereafter: it is how
+	// scores, decisions, and the path->build mapping (PathBuild.PathID) refer
+	// to the path. A structural duplicate from the enumerator is a contract
+	// violation; the first occurrence wins and the rest are skipped.
+	infos := make([]entity.SpeculationPathInfo, 0, len(paths))
+	for _, p := range paths {
+		dup := false
+		for _, existing := range infos {
+			if existing.Path.Equal(p) {
+				dup = true
+				break
+			}
+		}
+		if dup {
+			metrics.NamedCounter(c.metricsScope, opName, "duplicate_enumerated_path", 1)
+			c.logger.Warnw("enumerator returned duplicate path; skipped",
+				"batch_id", batch.ID,
+				"path", p,
+			)
+			continue
+		}
+		infos = append(infos, entity.SpeculationPathInfo{
+			ID:     fmt.Sprintf("%s/path/%d", batch.ID, len(infos)),
+			Path:   p,
+			Status: entity.SpeculationPathStatusCandidate,
+		})
+	}
+	tree := entity.SpeculationTree{BatchID: batch.ID, Paths: infos, Version: 1}
+
+	if err := c.store.GetSpeculationTreeStore().Create(ctx, tree); err != nil {
+		if errors.Is(err, storage.ErrAlreadyExists) {
+			metrics.NamedCounter(c.metricsScope, opName, "tree_create_race_lost", 1)
+			existing, gerr := c.store.GetSpeculationTreeStore().Get(ctx, batch.ID)
+			if gerr != nil {
+				metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+				return entity.SpeculationTree{}, fmt.Errorf("failed to re-get speculation tree for batch %s after concurrent create: %w", batch.ID, gerr)
+			}
+			return existing, nil
+		}
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return entity.SpeculationTree{}, fmt.Errorf("failed to create speculation tree for batch %s: %w", batch.ID, err)
+	}
+
+	metrics.NamedCounter(c.metricsScope, opName, "tree_created", 1)
+	return tree, nil
+}
+
+// applyScores merges the scorer's path-ID-keyed scores into tree, enforcing
+// the seam contract on consume: a score naming a path not in the tree is
+// logged and skipped, and a score outside [0, 1] is clamped into range with a
+// warning — a scorer bug must not corrupt ranking inputs downstream. Paths
+// the scorer omitted keep their last persisted score. The returned bool
+// reports whether any persisted score actually changed, so the caller can
+// skip the conditional write on a no-op pass.
+func (c *Controller) applyScores(batch entity.Batch, tree entity.SpeculationTree, scores []entity.PathScore) (entity.SpeculationTree, bool) {
+	changed := false
+	for _, ps := range scores {
+		idx := tree.PathIndex(ps.PathID)
+		if idx == -1 {
+			metrics.NamedCounter(c.metricsScope, opName, "illegal_score", 1)
+			c.logger.Warnw("illegal score: path not found in tree",
+				"batch_id", batch.ID,
+				"path_id", ps.PathID,
+			)
+			continue
+		}
+		score := ps.Score
+		if score < 0 || score > 1 {
+			metrics.NamedCounter(c.metricsScope, opName, "illegal_score", 1)
+			c.logger.Warnw("illegal score: outside [0, 1]; clamped",
+				"batch_id", batch.ID,
+				"path_id", ps.PathID,
+				"score", score,
+			)
+			if score < 0 {
+				score = 0
+			} else {
+				score = 1
+			}
+		}
+		if tree.Paths[idx].Score != score {
+			tree.Paths[idx].Score = score
+			changed = true
+		}
+	}
+	return tree, changed
+}
+
+// applySelection applies the selector's decisions to tree.Paths, mutating it
+// in place. The selector owns the policy (which paths to promote or cancel);
+// this function owns only the bookkeeping, mapping each decision onto the
+// path's current status. Mirrors prioritize.go's apply loop: Promote clears a
+// Candidate to Selected; Cancel is captured as intent only — a Building path
+// moves to Cancelling, and any pre-build status (Candidate, Selected, or
+// Prioritized) drops straight to Cancelled. Nothing here touches a build
+// runner — a Cancelling status records the intent for whichever stage owns
+// runner interaction to enact. A decision naming a path not in
+// the tree, a duplicate decision for the same path, or an action the path's
+// current status does not support is a policy bug in the selector: it is
+// logged as a warning and skipped rather than corrupting the tree. The
+// returned bool reports whether any path status changed, so the caller can
+// skip the conditional write on a no-op pass.
+func (c *Controller) applySelection(batch entity.Batch, tree entity.SpeculationTree, decisions []entity.PathDecision) (entity.SpeculationTree, bool) {
+	if len(decisions) == 0 {
+		return tree, false
+	}
+
+	paths := tree.Paths
+	changed := false
+	seen := make(map[string]bool, len(decisions))
+	for _, d := range decisions {
+		if seen[d.PathID] {
+			metrics.NamedCounter(c.metricsScope, opName, "illegal_decision", 1)
+			c.logger.Warnw("illegal decision: duplicate decision for path",
+				"batch_id", batch.ID,
+				"path_id", d.PathID,
+				"action", d.Action,
+			)
+			continue
+		}
+		seen[d.PathID] = true
+
+		idx := tree.PathIndex(d.PathID)
+		if idx == -1 {
+			metrics.NamedCounter(c.metricsScope, opName, "illegal_decision", 1)
+			c.logger.Warnw("illegal decision: path not found in tree",
+				"batch_id", batch.ID,
+				"path_id", d.PathID,
+				"action", d.Action,
+			)
+			continue
+		}
+
+		info := paths[idx]
+		switch {
+		case d.Action == entity.SpeculationPathActionPromote && info.Status == entity.SpeculationPathStatusCandidate:
+			info.Status = entity.SpeculationPathStatusSelected
+			changed = true
+			metrics.NamedCounter(c.metricsScope, opName, "selected", 1)
+
+		case d.Action == entity.SpeculationPathActionCancel && info.Status == entity.SpeculationPathStatusBuilding:
+			info.Status = entity.SpeculationPathStatusCancelling
+			changed = true
+			metrics.NamedCounter(c.metricsScope, opName, "cancelling", 1)
+
+		case d.Action == entity.SpeculationPathActionCancel &&
+			(info.Status == entity.SpeculationPathStatusCandidate ||
+				info.Status == entity.SpeculationPathStatusSelected ||
+				info.Status == entity.SpeculationPathStatusPrioritized):
+			info.Status = entity.SpeculationPathStatusCancelled
+			changed = true
+			metrics.NamedCounter(c.metricsScope, opName, "cancelled", 1)
+
+		default:
+			metrics.NamedCounter(c.metricsScope, opName, "illegal_decision", 1)
+			c.logger.Warnw("illegal decision: action not valid for path status",
+				"batch_id", batch.ID,
+				"path_id", d.PathID,
+				"action", d.Action,
+				"status", string(info.Status),
+			)
+			continue
+		}
+
+		paths[idx] = info
+	}
+
+	tree.Paths = paths
+	return tree, changed
+}
+
+// startSpeculation publishes the batch to the build stage, then transitions
+// it to Speculating.
 func (c *Controller) startSpeculation(ctx context.Context, batch entity.Batch) error {
 	c.logger.Infow("starting speculation",
 		"batch_id", batch.ID,
@@ -176,7 +532,8 @@ func (c *Controller) startSpeculation(ctx context.Context, batch entity.Batch) e
 // out-of-the-way: the cancelled batch will never land, so it can no longer
 // conflict — drop it from the chain and proceed. Failed deps still cascade
 // via failOnDependency. If some deps are still in flight, the call is a
-// no-op and waits for the next event.
+// no-op: each dependency's own terminal pass re-publishes this batch to
+// speculate (the terminal branch in Process), so waiting never needs a poll.
 //
 // TODO: when a dependency fails we currently fail this batch outright.
 // We will need to respeculate the failed paths — drop the failed dep
@@ -235,7 +592,10 @@ func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error 
 // dependencies has reached a non-succeeding terminal state, then publishes to
 // the conclude queue so the request store and request log get reconciled.
 // Without this transition the batch would sit in Speculating forever — no
-// downstream event ever fires for it again.
+// downstream event ever fires for it again. The batch's own dependents are
+// woken right after the terminal CAS so the failure cascades downstream
+// instead of stranding them mid-wait; a crash between the CAS and the
+// fan-out is recovered by the terminal branch in Process on redelivery.
 func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, dep entity.Batch) error {
 	metrics.NamedCounter(c.metricsScope, opName, "dependency_failed", 1)
 	c.logger.Warnw("dependency in non-succeeding terminal state; failing batch",
@@ -248,6 +608,10 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateFailed); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to update batch %s state to failed: %w", batch.ID, err)
+	}
+
+	if err := c.respeculateDependents(ctx, batch); err != nil {
+		return err
 	}
 
 	if err := c.publish(ctx, topickey.TopicKeyConclude, batch.ID, batch.Queue); err != nil {
@@ -268,9 +632,8 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 // Order matters for correctness:
 //
 //  1. Cancel the in-flight Build entity (build.ID == batch.ID; one Get + one
-//     UpdateStatus covers all builds for this batch). A future external CI
-//     integration hooks in here. Idempotent: tolerate ErrNotFound (no build
-//     was scheduled), skip if already terminal.
+//     UpdateStatus covers all builds for this batch). Idempotent: tolerate
+//     ErrNotFound (no build was scheduled), skip if already terminal.
 //
 //  2. CAS the batch to terminal Cancelled. This must happen BEFORE the
 //     dependent fan-out: tryFinalize only drops a Cancelled dep from the
@@ -331,11 +694,6 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 // covers every build scheduled for the batch. Tolerates ErrNotFound (no
 // build was ever scheduled — the batch was cancelled before speculation
 // started building) and skips already-terminal builds.
-//
-// This is the hook point for a future external CI integration: today the
-// system has no external runner, so the local state flip is the complete
-// cancellation. Once a runner exists, it must be invoked here before the
-// local UpdateStatus.
 func (c *Controller) cancelBuild(ctx context.Context, batch entity.Batch) error {
 	build, err := c.store.GetBuildStore().Get(ctx, batch.ID)
 	if err != nil {
@@ -368,8 +726,10 @@ func (c *Controller) cancelBuild(ctx context.Context, batch entity.Batch) error 
 // the message nacks and either an operator or the batch controller's own
 // crash-recovery can resolve the inconsistency.
 //
-// Called both from the cancelBatch terminal flow and from the terminal
-// self-heal branch on redelivery of an already-Cancelled batch.
+// Called from the cancelBatch terminal flow, from failOnDependency, and from
+// the terminal branch in Process — the latter both on the first pass after
+// mergesignal drives a batch terminal (the normal dependent wake-up) and on
+// redelivery (self-heal).
 func (c *Controller) respeculateDependents(ctx context.Context, batch entity.Batch) error {
 	bd, err := c.store.GetBatchDependentStore().Get(ctx, batch.ID)
 	if err != nil {

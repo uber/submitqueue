@@ -61,9 +61,17 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/scorer/composite"
 	scorerfake "github.com/uber/submitqueue/submitqueue/extension/scorer/fake"
 	"github.com/uber/submitqueue/submitqueue/extension/scorer/heuristic"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/dependencylimit"
+	dependencylimitstatic "github.com/uber/submitqueue/submitqueue/extension/speculation/dependencylimit/static"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/enumerator"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/enumerator/chain"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/pathscorer"
+	pathscorerprobability "github.com/uber/submitqueue/submitqueue/extension/speculation/pathscorer/probability"
 	prioritizationlimitstatic "github.com/uber/submitqueue/submitqueue/extension/speculation/prioritizationlimit/static"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/prioritizer"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/prioritizer/sticky"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/selector"
+	selectorall "github.com/uber/submitqueue/submitqueue/extension/speculation/selector/all"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	validatorfake "github.com/uber/submitqueue/submitqueue/extension/validator/fake"
@@ -238,7 +246,7 @@ func run() error {
 	// back to a baseline profile for queues without an explicit entry. This is
 	// the single place queue topology is known; the extension packages stay
 	// queue-agnostic.
-	queues, err := newQueueRegistry(logger, scope, changeset.New(store.GetRequestStore(), store.GetChangeStore()))
+	queues, err := newQueueRegistry(logger, scope, changeset.New(store.GetRequestStore(), store.GetChangeStore()), store.GetBatchStore())
 	if err != nil {
 		return fmt.Errorf("failed to build queue registry: %w", err)
 	}
@@ -249,9 +257,13 @@ func run() error {
 	scf := scorerFactory{queues}
 	cof := analyzerFactory{queues}
 	prf := prioritizerFactory{queues}
+	enf := enumeratorFactory{queues}
+	ssf := speculationScorerFactory{queues}
+	slf := speculationSelectorFactory{queues}
+	dlf := dependencyLimitFactory{queues}
 
 	// Register controllers
-	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, registry, cpf, brf, scf, cof, prf, cnt, store)
+	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, registry, cpf, brf, scf, cof, prf, enf, ssf, slf, dlf, cnt, store)
 	if err != nil {
 		return err
 	}
@@ -502,11 +514,15 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 // read as "for this queue, here are its scorer, analyzer, change provider, …", and lets
 // a queue profile start from a baseline and override only what differs.
 type queueExtensions struct {
-	changeProvider changeprovider.ChangeProvider
-	buildRunner    buildrunner.BuildRunner
-	scorer         scorer.Scorer
-	analyzer       conflict.Analyzer
-	prioritizer    prioritizer.Prioritizer
+	changeProvider      changeprovider.ChangeProvider
+	buildRunner         buildrunner.BuildRunner
+	scorer              scorer.Scorer
+	analyzer            conflict.Analyzer
+	prioritizer         prioritizer.Prioritizer
+	enumerator          enumerator.Enumerator
+	speculationScorer   pathscorer.Scorer
+	speculationSelector selector.Selector
+	dependencyLimit     dependencylimit.DependencyLimit
 }
 
 // queueRegistry maps a queue name to its extensions, falling back to a default
@@ -558,7 +574,31 @@ func (f prioritizerFactory) For(cfg prioritizer.Config) (prioritizer.Prioritizer
 	return f.reg.get(cfg.QueueName).prioritizer, nil
 }
 
-func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, cpf changeprovider.Factory, brf buildrunner.Factory, scf scorer.Factory, cof conflict.Factory, prf prioritizer.Factory, cnt counter.Counter, store storage.Storage) (int, error) {
+type enumeratorFactory struct{ reg queueRegistry }
+
+func (f enumeratorFactory) For(cfg enumerator.Config) (enumerator.Enumerator, error) {
+	return f.reg.get(cfg.QueueName).enumerator, nil
+}
+
+type speculationScorerFactory struct{ reg queueRegistry }
+
+func (f speculationScorerFactory) For(cfg pathscorer.Config) (pathscorer.Scorer, error) {
+	return f.reg.get(cfg.QueueName).speculationScorer, nil
+}
+
+type speculationSelectorFactory struct{ reg queueRegistry }
+
+func (f speculationSelectorFactory) For(cfg selector.Config) (selector.Selector, error) {
+	return f.reg.get(cfg.QueueName).speculationSelector, nil
+}
+
+type dependencyLimitFactory struct{ reg queueRegistry }
+
+func (f dependencyLimitFactory) For(cfg dependencylimit.Config) (dependencylimit.DependencyLimit, error) {
+	return f.reg.get(cfg.QueueName).dependencyLimit, nil
+}
+
+func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, cpf changeprovider.Factory, brf buildrunner.Factory, scf scorer.Factory, cof conflict.Factory, prf prioritizer.Factory, enf enumerator.Factory, ssf pathscorer.Factory, slf selector.Factory, dlf dependencylimit.Factory, cnt counter.Counter, store storage.Storage) (int, error) {
 	var count int
 	requestController := start.NewController(
 		logger,
@@ -648,6 +688,10 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		logger,
 		scope,
 		store,
+		enf,
+		ssf,
+		slf,
+		dlf,
 		registry,
 		topickey.TopicKeySpeculate,
 		"orchestrator-speculate",
@@ -899,6 +943,11 @@ func newPhabChangeProvider(logger *zap.Logger, scope tally.Scope) (changeprovide
 // effectively admit-all — until per-queue budgets are configured.
 const defaultPrioritizationLimit = 1000
 
+// defaultDependencyLimit is the baseline cap on active dependencies a batch
+// may speculate over. It is a parity default — effectively ungated — until
+// per-queue limits are configured.
+const defaultDependencyLimit = 1000
+
 // newQueueRegistry builds the per-queue extension profiles for the example.
 // Edge integrations (change provider) and the build
 // runner form a shared baseline; each per-queue profile starts from that
@@ -906,7 +955,7 @@ const defaultPrioritizationLimit = 1000
 // conflict analyzer. Queues without an explicit profile fall back to the
 // baseline. This is the one place queue topology lives; extension packages stay
 // queue-agnostic.
-func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.Resolver) (queueRegistry, error) {
+func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.Resolver, batchStore storage.BatchStore) (queueRegistry, error) {
 	cp, err := newChangeProvider(logger, scope)
 	if err != nil {
 		return queueRegistry{}, fmt.Errorf("failed to create change provider: %w", err)
@@ -933,6 +982,12 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.
 	// below does. The prioritizer is sticky over a static budget: it never
 	// preempts a running build and admits Selected candidates by score until
 	// defaultPrioritizationLimit concurrent builds are in flight.
+	//
+	// The speculation seams default to the single-chain parity policies:
+	// chain enumerates one path per batch (built on the full ordered
+	// dependency chain), probability scores paths from the batches'
+	// predicted-success probabilities and resolved outcomes, all promotes
+	// every candidate, and the dependency limit is effectively ungated.
 	base := queueExtensions{
 		changeProvider: cp,
 		buildRunner:    buildfake.New(resolver),
@@ -943,8 +998,12 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.
 		)),
 		// TODO: replace the delegate with a real analyzer (e.g. Tango target
 		// analysis). "all" serializes the queue conservatively.
-		analyzer:    conflictfake.New(all.New(), nil),
-		prioritizer: sticky.New(prioritizationlimitstatic.New(defaultPrioritizationLimit)),
+		analyzer:            conflictfake.New(all.New(), nil),
+		prioritizer:         sticky.New(prioritizationlimitstatic.New(defaultPrioritizationLimit)),
+		enumerator:          chain.New(),
+		speculationScorer:   pathscorerprobability.New(batchStore),
+		speculationSelector: selectorall.New(),
+		dependencyLimit:     dependencylimitstatic.New(defaultDependencyLimit),
 	}
 
 	// test-queue: bucketed heuristic scorer; conservative (serialized) conflicts
