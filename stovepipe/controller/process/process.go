@@ -24,6 +24,7 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
@@ -42,6 +43,7 @@ type Controller struct {
 	metricsScope  tally.Scope
 	store         storage.Storage
 	queueConfigs  queueconfig.Store
+	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -55,6 +57,7 @@ func NewController(
 	scope tally.Scope,
 	store storage.Storage,
 	queueConfigs queueconfig.Store,
+	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
@@ -63,6 +66,7 @@ func NewController(
 		metricsScope:  scope.SubScope("process_controller"),
 		store:         store,
 		queueConfigs:  queueConfigs,
+		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
@@ -146,15 +150,25 @@ func (c *Controller) processAccepted(ctx context.Context, request entity.Request
 	}
 
 	if queueRow.InFlightCount >= cfg.MaxConcurrent {
-		c.logger.Infow("latest head awaiting build slot",
-			"request_id", request.ID,
-			"queue", request.Queue,
-			"in_flight_count", queueRow.InFlightCount,
-		)
-		return nil
+		return c.rescheduleProcess(ctx, request.ID, request.Queue, cfg.GateWaitDelayMs)
 	}
 
 	return c.admitRequest(ctx, request, queueRow, cfg.MaxConcurrent)
+}
+
+// rescheduleProcess acks the current delivery (by returning nil after success) and
+// re-enqueues the same ProcessRequest after a short delay so the gate can be
+// re-checked without burning MaxAttempts.
+func (c *Controller) rescheduleProcess(ctx context.Context, id, queue string, delayMs int64) error {
+	if err := c.publishProcess(ctx, id, queue, delayMs); err != nil {
+		return fmt.Errorf("ProcessController failed to reschedule process request %s: %w", id, err)
+	}
+	c.logger.Infow("rescheduled latest head awaiting build slot",
+		"request_id", id,
+		"queue", queue,
+		"delay_ms", delayMs,
+	)
+	return nil
 }
 
 // admitRequest admits the latest head: cold-start full build, increment in_flight_count,
@@ -270,6 +284,32 @@ func (c *Controller) supersedeRequest(ctx context.Context, request entity.Reques
 		}
 		return nil
 	}
+}
+
+// publishProcess publishes the request ID to the process stage, partitioned by queue.
+// delayMs > 0 uses PublishAfter for gate-wait reschedules.
+func (c *Controller) publishProcess(ctx context.Context, id, queue string, delayMs int64) error {
+	payload, err := stovepipemq.Marshal(&stovepipemq.ProcessRequest{Id: id})
+	if err != nil {
+		return fmt.Errorf("failed to serialize process request: %w", err)
+	}
+
+	msg := entityqueue.NewMessage(id, payload, queue, nil)
+
+	q, ok := c.registry.Queue(c.topicKey)
+	if !ok {
+		return fmt.Errorf("no queue registered for topic key %s", c.topicKey)
+	}
+	topicName, ok := c.registry.TopicName(c.topicKey)
+	if !ok {
+		return fmt.Errorf("no topic name registered for topic key %s", c.topicKey)
+	}
+
+	publisher := q.Publisher()
+	if delayMs > 0 {
+		return publisher.PublishAfter(ctx, topicName, msg, delayMs)
+	}
+	return publisher.Publish(ctx, topicName, msg)
 }
 
 // loadRequest returns the request for id. A not-yet-visible row is retryable.

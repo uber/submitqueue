@@ -210,7 +210,15 @@ func run() error {
 		),
 	)
 
-	processController := process.NewController(logger.Sugar(), scope, store, queueconfigdefault.NewStore(), stovepipemq.TopicKeyProcess, "stovepipe-process")
+	processController := process.NewController(
+		logger.Sugar(),
+		scope,
+		store,
+		queueconfigdefault.NewStore(),
+		registry,
+		stovepipemq.TopicKeyProcess,
+		"stovepipe-process",
+	)
 	if err := primaryConsumer.Register(processController); err != nil {
 		return fmt.Errorf("failed to register process controller: %w", err)
 	}

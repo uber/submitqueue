@@ -44,6 +44,7 @@ const (
 type processMocks struct {
 	reqStore   *storagemock.MockRequestStore
 	queueStore *storagemock.MockQueueStore
+	publisher  *mqmock.MockPublisher
 }
 
 func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, processMocks) {
@@ -52,13 +53,22 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, processM
 	m := processMocks{
 		reqStore:   storagemock.NewMockRequestStore(ctrl),
 		queueStore: storagemock.NewMockQueueStore(ctrl),
+		publisher:  mqmock.NewMockPublisher(ctrl),
 	}
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
 	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 
-	c := NewController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), store, queueconfigdefault.NewStore(), stovepipemq.TopicKeyProcess, "stovepipe-process")
+	queue := mqmock.NewMockQueue(ctrl)
+	queue.EXPECT().Publisher().Return(m.publisher).AnyTimes()
+
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: stovepipemq.TopicKeyProcess, Name: "process", Queue: queue},
+	})
+	require.NoError(t, err)
+
+	c := NewController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), store, queueconfigdefault.NewStore(), registry, stovepipemq.TopicKeyProcess, "stovepipe-process")
 	return c, m
 }
 
@@ -149,7 +159,7 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "latest accepted head awaits slot when gate closed",
+			name: "latest accepted head reschedules when gate closed",
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
@@ -158,6 +168,26 @@ func TestProcess(t *testing.T) {
 					InFlightCount:   1,
 					Version:         1,
 				}, nil)
+				m.publisher.EXPECT().
+					PublishAfter(gomock.Any(), "process", gomock.Any(), int64(5000)).
+					Return(nil)
+			},
+		},
+		{
+			name:      "gate reschedule publish error surfaces",
+			wantErr:   true,
+			wantRetry: false,
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name:            testQueue,
+					LatestRequestID: testID,
+					InFlightCount:   1,
+					Version:         1,
+				}, nil)
+				m.publisher.EXPECT().
+					PublishAfter(gomock.Any(), "process", gomock.Any(), int64(5000)).
+					Return(errors.New("queue down"))
 			},
 		},
 		{
