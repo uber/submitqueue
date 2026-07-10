@@ -34,22 +34,37 @@ import (
 	"go.uber.org/zap"
 )
 
-const testID = "request/monorepo/main/7"
+const (
+	testQueue = "monorepo/main"
+	testID    = "request/monorepo/main/7"
+	testURI   = "git://repo/monorepo/main/abc123"
+)
 
-func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, *storagemock.MockRequestStore) {
-	t.Helper()
-	reqStore := storagemock.NewMockRequestStore(ctrl)
-	store := storagemock.NewMockStorage(ctrl)
-	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
-	c := NewController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), store, stovepipemq.TopicKeyProcess, "stovepipe-process")
-	return c, reqStore
+type processMocks struct {
+	reqStore   *storagemock.MockRequestStore
+	queueStore *storagemock.MockQueueStore
 }
 
-// delivery wraps raw payload bytes in a MockDelivery (which satisfies consumer.Delivery).
+func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, processMocks) {
+	t.Helper()
+
+	m := processMocks{
+		reqStore:   storagemock.NewMockRequestStore(ctrl),
+		queueStore: storagemock.NewMockQueueStore(ctrl),
+	}
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
+	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
+
+	c := NewController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), store, stovepipemq.TopicKeyProcess, "stovepipe-process")
+	return c, m
+}
+
 func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) consumer.Delivery {
 	t.Helper()
 	d := queuemock.NewMockDelivery(ctrl)
-	d.EXPECT().Message().Return(entityqueue.NewMessage(testID, payload, "monorepo/main", nil)).AnyTimes()
+	d.EXPECT().Message().Return(entityqueue.NewMessage(testID, payload, testQueue, nil)).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
 	return d
 }
@@ -61,39 +76,154 @@ func processPayload(t *testing.T, id string) []byte {
 	return b
 }
 
-func TestProcess_Success(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	c, reqStore := newController(t, ctrl)
-	reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{ID: testID, Queue: "monorepo/main", URI: "git://x", State: entity.RequestStateAccepted, Version: 1}, nil)
-
-	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, processPayload(t, testID))))
+func acceptedRequest(id string) entity.Request {
+	return entity.Request{
+		ID:      id,
+		Queue:   testQueue,
+		URI:     testURI,
+		State:   entity.RequestStateAccepted,
+		Version: 1,
+	}
 }
 
-func TestProcess_NotFoundIsRetryable(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	c, reqStore := newController(t, ctrl)
-	reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{}, storage.ErrNotFound)
+func TestProcess(t *testing.T) {
+	tests := []struct {
+		name      string
+		id        string
+		setup     func(m processMocks)
+		wantErr   bool
+		wantRetry bool
+	}{
+		{
+			name: "superseded is no-op",
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
+					ID: testID, Queue: testQueue, State: entity.RequestStateSuperseded, Version: 2,
+				}, nil)
+			},
+		},
+		{
+			name: "processing is no-op until republish lands",
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
+					ID: testID, Queue: testQueue, State: entity.RequestStateProcessing, Version: 2,
+				}, nil)
+			},
+		},
+		{
+			name: "latest accepted head awaits admit",
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name:            testQueue,
+					LatestRequestID: testID,
+					Version:         1,
+				}, nil)
+			},
+		},
+		{
+			name: "accepted with empty latest pointer awaits admit",
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name:    testQueue,
+					Version: 1,
+				}, nil)
+			},
+		},
+		{
+			name: "older accepted head is superseded",
+			id:   "request/monorepo/main/3",
+			setup: func(m processMocks) {
+				olderID := "request/monorepo/main/3"
+				m.reqStore.EXPECT().Get(gomock.Any(), olderID).Return(acceptedRequest(olderID), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name:            testQueue,
+					LatestRequestID: testID,
+					Version:         1,
+				}, nil)
+				updated := acceptedRequest(olderID)
+				updated.State = entity.RequestStateSuperseded
+				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(nil)
+			},
+		},
+		{
+			name: "supersede retries on version mismatch",
+			id:   "request/monorepo/main/3",
+			setup: func(m processMocks) {
+				olderID := "request/monorepo/main/3"
+				m.reqStore.EXPECT().Get(gomock.Any(), olderID).Return(acceptedRequest(olderID), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name:            testQueue,
+					LatestRequestID: testID,
+					Version:         1,
+				}, nil)
+				updated := acceptedRequest(olderID)
+				updated.State = entity.RequestStateSuperseded
+				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
+				m.reqStore.EXPECT().Get(gomock.Any(), olderID).Return(entity.Request{
+					ID: olderID, Queue: testQueue, State: entity.RequestStateSuperseded, Version: 2,
+				}, nil)
+			},
+		},
+		{
+			name:      "request not found is retryable",
+			wantErr:   true,
+			wantRetry: true,
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{}, storage.ErrNotFound)
+			},
+		},
+		{
+			name:      "queue not found is retryable",
+			wantErr:   true,
+			wantRetry: true,
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{}, storage.ErrNotFound)
+			},
+		},
+		{
+			name:      "request storage error is not retryable",
+			wantErr:   true,
+			wantRetry: false,
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{}, errors.New("db down"))
+			},
+		},
+		{
+			name:      "malformed payload is not retryable",
+			wantErr:   true,
+			wantRetry: false,
+			setup:     func(m processMocks) {},
+		},
+	}
 
-	err := c.Process(context.Background(), delivery(t, ctrl, processPayload(t, testID)))
-	require.Error(t, err)
-	assert.True(t, errs.IsRetryable(err), "a not-yet-visible request must be retryable")
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+			if tt.setup != nil {
+				tt.setup(m)
+			}
 
-func TestProcess_StorageErrorNotRetryable(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	c, reqStore := newController(t, ctrl)
-	reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{}, errors.New("db down"))
+			id := testID
+			if tt.id != "" {
+				id = tt.id
+			}
+			payload := processPayload(t, id)
+			if tt.name == "malformed payload is not retryable" {
+				payload = []byte("not-json")
+			}
 
-	err := c.Process(context.Background(), delivery(t, ctrl, processPayload(t, testID)))
-	require.Error(t, err)
-	assert.False(t, errs.IsRetryable(err))
-}
+			err := c.Process(context.Background(), delivery(t, ctrl, payload))
 
-func TestProcess_MalformedPayload(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	c, _ := newController(t, ctrl)
-
-	err := c.Process(context.Background(), delivery(t, ctrl, []byte("not-json")))
-	require.Error(t, err)
-	assert.False(t, errs.IsRetryable(err))
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Equal(t, tt.wantRetry, errs.IsRetryable(err))
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }
