@@ -1,0 +1,9 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["queueconfig.go"],
+    importpath = "github.com/uber/submitqueue/stovepipe/extension/queueconfig",
+    visibility = ["//visibility:public"],
+    deps = ["//stovepipe/entity:go_default_library"],
+)
