@@ -1,0 +1,11 @@
+# Probability Path Scorer
+
+The probability `pathscorer.Scorer` scores every path in a batch's speculation tree as the probability that exactly that path's assumption holds: its base dependencies all land, and every other active dependency of the head fails to land. Concretely, a path's score is the head batch's probability, multiplied by the probability of each base dependency, multiplied by one minus the probability of each of the head's dependencies not in the base.
+
+Each batch's probability is resolved from its state, so a resolved outcome overrides the prediction. A batch that has succeeded contributes certainty 1; a batch that has failed or been cancelled contributes 0; a batch still in flight contributes `entity.Batch.Score`, the per-batch success probability the score stage sets before a batch ever reaches speculation. A batch in the best-effort `cancelling` state keeps its prediction — it may still succeed. This state resolution is what redistributes score when the world changes: a dead dependency zeroes every path that built on it and boosts every path that excluded it by the full `(1 − p) = 1` factor, with no cross-path coupling needed. A worked example of this redistribution lives in the package documentation.
+
+## Scope
+
+The model is deliberately simple: it treats dependency outcomes as independent, and does not weigh how long a batch has waited, its historical pass rate, or any correlation between siblings. It scores every path in the tree regardless of status, returning one path-ID-keyed score per path — the controller merges them into the tree and overwrites `Score` wholesale on every respeculate; nothing else about a path passes through the scorer. Folding resolved outcomes into path *status* (dead-pathing, cancellation) is the controller's reconcile job, not the scorer's; the scorer only makes the scores reflect them.
+
+Batches are read one at a time through the injected `storage.BatchStore`, matching the store's key/value contract, and each batch referenced by the tree is loaded at most once per `Score` call. A store error, including a missing batch, is returned wrapped and unclassified — scorer implementations, like all extensions, leave user/infra classification to the controller's error classifier.
