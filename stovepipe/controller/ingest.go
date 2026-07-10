@@ -215,15 +215,42 @@ func (c *IngestController) ensureRequest(ctx context.Context, id, queue, uri str
 	return request, nil
 }
 
+// ensureQueue returns the queue row for name, creating it if it does not yet exist.
+// A concurrent creator (ErrAlreadyExists) is resolved by re-reading the canonical row.
+func (c *IngestController) ensureQueue(ctx context.Context, name string) (entity.Queue, error) {
+	queueStore := c.store.GetQueueStore()
+
+	got, err := queueStore.Get(ctx, name)
+	if err == nil {
+		return got, nil
+	}
+	if !errors.Is(err, storage.ErrNotFound) {
+		return entity.Queue{}, fmt.Errorf("IngestController failed to load queue %s: %w", name, err)
+	}
+
+	queue := entity.Queue{
+		Name:    name,
+		Version: 1,
+	}
+	if err := queueStore.Create(ctx, queue); err != nil {
+		if !errors.Is(err, storage.ErrAlreadyExists) {
+			return entity.Queue{}, fmt.Errorf("IngestController failed to persist queue %s: %w", name, err)
+		}
+		// Raced with a concurrent creator; read the canonical row.
+		return queueStore.Get(ctx, name)
+	}
+	return queue, nil
+}
+
 // advanceQueueLatestRequestID CAS-updates queue.latest_request_id to id when id is newer.
 // Retries on optimistic-lock conflicts so concurrent ingests converge.
 func (c *IngestController) advanceQueueLatestRequestID(ctx context.Context, queue, id string) error {
 	queueStore := c.store.GetQueueStore()
 
 	for {
-		queueRow, err := queueStore.GetOrCreate(ctx, queue, entity.Queue{Version: 1})
+		queueRow, err := c.ensureQueue(ctx, queue)
 		if err != nil {
-			return fmt.Errorf("IngestController failed to load queue %s: %w", queue, err)
+			return err
 		}
 		if queueRow.LatestRequestID != "" {
 			cmp, err := entity.CompareRequestID(queue, id, queueRow.LatestRequestID)
