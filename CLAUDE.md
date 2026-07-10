@@ -30,6 +30,13 @@ if err := store.UpdateStatus(ctx, request.ID, request.Version, newVersion, newSt
 request.Version = newVersion
 ```
 
+**Speculation paths and trees — O(paths), never 2^N:**
+
+A batch's speculation tree persists one entry per enumerated path, and every downstream pass (speculate's reconcile, prioritize rounds, the build stage's per-path loop) re-walks the whole tree. Code that touches paths or trees must respect two bounds:
+
+1. **Path count is the enumerator's contract to bound.** The enumerator implementation decides which paths — and how many — a batch gets; expect several per batch (the single chain path is a naive parity baseline, not the design target). The hard rule: a bounded frontier of assumption sets, never the 2^N power set of a batch's N dependencies. Any algorithm that wants to "consider all subsets" of the dependencies is a design smell — enumerate a bounded candidate set and push ranking/pruning into the scorer/selector/prioritizer seams.
+2. **Per-pass work stays O(paths) with point reads.** A pass over a tree may spend at most O(1) point reads per unresolved path (e.g. path->build mapping, then build), must skip settled paths (terminal statuses) without I/O, and must not fan out more than O(paths) messages. The tree is persisted as a single row, so an unbounded path set blows up the write path as well as every read.
+
 ## Architecture
 
 ### Project Layout

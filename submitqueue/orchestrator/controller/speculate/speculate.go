@@ -35,7 +35,8 @@ import (
 
 // Controller handles speculate queue messages.
 //
-// Each invocation reconciles the batch's entity.SpeculationTree, publishes
+// Each invocation reconciles the batch's entity.SpeculationTree — against
+// the build stage's outcomes and the current dependency states — publishes
 // the batch's queue to prioritize, and advances the batch one step in the
 // state machine. Tree reconciliation is pure mechanics: the controller runs
 // the queue's configured seams — enumerator (path structure), path scorer
@@ -43,17 +44,18 @@ import (
 // applies them to the persisted tree, and writes it back under optimistic
 // concurrency. Which paths exist, how they score, and which are promoted or
 // cancelled are the seams' decisions alone; the controller never originates
-// one. The batch's own merge timing is still driven by dependency states
-// (tryFinalize), pending a later change that gates it on the tree's path
-// outcomes.
+// one. Finalization is driven by the tree itself: publish to merge as soon
+// as any path is actually mergeable, or fail the batch once no path can
+// ever merge again.
 //
 // Per invocation, the controller advances the batch one step in the state
 // machine:
 //
 //   - Created, Scored, or Speculating → speculateBatch: reconcile the tree
-//     (created on the first pass the dependency gate admits), CAS to
-//     Speculating for Created/Scored, publish to prioritize every pass, and
-//     run tryFinalize once the batch has reached Speculating.
+//     (created on the first pass the dependency gate admits) against build
+//     outcomes and dead dependencies, CAS to Speculating for Created/Scored,
+//     publish to prioritize every pass, and finalize — merge a mergeable
+//     path, fail the batch if none remain viable, or wait.
 //   - Cancelling        → cancel any in-flight Build entity, respeculate
 //     dependents, CAS to terminal Cancelled, publish to conclude. The
 //     cancel controller hands the batch off in this state and speculate
@@ -147,12 +149,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	// Terminal state: wake dependents and re-publish conclude. This branch is
-	// the dependent wake-up for success and failure — mergesignal routes every
-	// terminal transition back through speculate under the batch's own ID, and
-	// re-publishing the dependents here lets each of them re-run its own
-	// dependency gate / tryFinalize against the new dependency state. On
-	// redelivery the same branch doubles as the crash self-heal: both the
-	// dependent fan-out and the conclude publish are idempotent re-sends.
+	// the dependent wake-up for every terminal transition — mergesignal routes
+	// merge outcomes back through speculate under the batch's own ID, the
+	// finalize pass below re-publishes a batch it fails, and re-publishing the
+	// dependents here lets each of them re-run its own dependency gate /
+	// finalize pass against the new dependency state. On redelivery the same
+	// branch doubles as the crash self-heal: both the dependent fan-out and
+	// the conclude publish are idempotent re-sends.
 	if batch.State.IsTerminal() {
 		metrics.NamedCounter(c.metricsScope, opName, "self_heal_terminal", 1)
 		if err := c.respeculateDependents(ctx, batch); err != nil {
@@ -178,14 +181,19 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 // speculateBatch is the unified entry point for Created, Scored, and
 // Speculating batches. It loads the batch's speculation tree (creating it on
-// the first pass the dependency gate admits), applies the scorer's and
-// selector's outputs, persists the tree if anything changed, CASes the batch
-// to Speculating on its first pass, publishes the queue to prioritize every
-// pass, and runs tryFinalize once the batch has reached Speculating.
+// the first pass the dependency gate admits), reconciles it against build
+// outcomes and dead dependencies, applies the scorer's and selector's
+// outputs, persists the tree if anything changed, CASes the batch to
+// Speculating on its first pass, publishes the queue to prioritize every
+// pass, and then finalizes the batch from the tree.
 func (c *Controller) speculateBatch(ctx context.Context, batch entity.Batch) error {
 	deps, err := c.fetchDependencies(ctx, batch)
 	if err != nil {
 		return err
+	}
+	depByID := make(map[string]entity.Batch, len(deps))
+	for _, d := range deps {
+		depByID[d.ID] = d
 	}
 
 	tree, err := c.store.GetSpeculationTreeStore().Get(ctx, batch.ID)
@@ -196,7 +204,8 @@ func (c *Controller) speculateBatch(ctx context.Context, batch entity.Batch) err
 		}
 
 		// Dependency gate: only consulted before a tree exists. Once a batch
-		// has a tree, later passes just re-score/re-select it.
+		// has a tree, the tree itself reconciles dependency outcomes on every
+		// pass, so the gate no longer applies.
 		blocked, gerr := c.dependencyGateBlocks(ctx, batch, deps)
 		if gerr != nil {
 			return gerr
@@ -214,6 +223,11 @@ func (c *Controller) speculateBatch(ctx context.Context, batch entity.Batch) err
 		if err != nil {
 			return err
 		}
+	}
+
+	tree, reconChanged, err := c.reconcile(ctx, batch, tree, depByID)
+	if err != nil {
+		return err
 	}
 
 	scr, err := c.scorers.For(pathscorer.Config{QueueName: batch.Queue})
@@ -241,7 +255,7 @@ func (c *Controller) speculateBatch(ctx context.Context, batch entity.Batch) err
 
 	tree, selectionChanged := c.applySelection(batch, tree, decisions)
 
-	if scoresChanged || selectionChanged {
+	if reconChanged || scoresChanged || selectionChanged {
 		newVersion := tree.Version + 1
 		if err := c.store.GetSpeculationTreeStore().Update(ctx, batch.ID, tree.Version, newVersion, tree.Paths); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
@@ -252,7 +266,6 @@ func (c *Controller) speculateBatch(ctx context.Context, batch entity.Batch) err
 
 	// Optimistic CAS: if the version has already advanced (concurrent
 	// speculate), the next event will see the new state and behave correctly.
-	originalState := batch.State
 	if batch.State == entity.BatchStateCreated || batch.State == entity.BatchStateScored {
 		newVersion := batch.Version + 1
 		if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateSpeculating); err != nil {
@@ -274,14 +287,7 @@ func (c *Controller) speculateBatch(ctx context.Context, batch entity.Batch) err
 		return fmt.Errorf("failed to publish queue %s to prioritize: %w", batch.Queue, err)
 	}
 
-	// Legacy forward path: tryFinalize only runs once a batch has already
-	// reached Speculating on a prior pass — merge timing is unchanged from
-	// before prioritize/build existed. This tightens in a later commit to
-	// gate on the tree's own path outcome instead of dependency states alone.
-	if originalState == entity.BatchStateSpeculating {
-		return c.tryFinalize(ctx, batch)
-	}
-	return nil
+	return c.finalize(ctx, batch, tree, depByID)
 }
 
 // dependencyGateBlocks reports whether batch's count of active dependencies
@@ -442,6 +448,195 @@ func (c *Controller) applyScores(batch entity.Batch, tree entity.SpeculationTree
 	return tree, changed
 }
 
+// reconcile folds each path's build outcome into its status, then marks any
+// non-terminal, non-Cancelling path dead if pathDead reports its assumption
+// has become invalid.
+//
+// Dead-path cancellation is captured as intent only, mirroring
+// applySelection: a Building path drops to Cancelling with no runner call —
+// nothing in this file talks to a build runner. The build stage enacts the
+// intent on a later pass, which it reliably gets: speculateBatch publishes to
+// prioritize on every pass regardless of whether anything changed, and
+// prioritize republishes to build for every batch whose tree still carries a
+// Cancelling path, not just ones it touched this round. A path with no build
+// yet drops straight to Cancelled — there is nothing running to enact.
+//
+// The returned bool reports whether any path actually changed, so the caller
+// can skip the conditional write on a no-op pass.
+//
+// Cost: one pass over the tree with at most two point reads (path->build
+// mapping, then build) per path that is still unresolved — paths already at
+// a terminal status (Passed/Failed/Cancelled) are settled and skipped
+// without touching storage. Statuses are folded into the tree's own path
+// slice in place, mirroring applyScores/applySelection — no per-pass copy.
+// The tree's path count itself is the enumerator's to decide and bound:
+// implementations are expected to return several paths per batch, but
+// always a bounded frontier — never the 2^N power set of dependency
+// subsets (see extension/speculation/enumerator) — so a reconcile pass
+// stays O(paths) in reads and CPU, allocating nothing.
+func (c *Controller) reconcile(ctx context.Context, batch entity.Batch, tree entity.SpeculationTree, depByID map[string]entity.Batch) (entity.SpeculationTree, bool, error) {
+	paths := tree.Paths
+	changed := false
+
+	for i, p := range paths {
+		if isTerminalPathStatus(p.Status) {
+			// Settled outcome: reconcileStatus never downgrades a terminal
+			// path and the dead-path sweep below skips them too, so there
+			// is nothing to read or fold for this path.
+			continue
+		}
+		pb, err := c.store.GetSpeculationPathBuildStore().Get(ctx, p.ID)
+		if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				continue
+			}
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return entity.SpeculationTree{}, false, fmt.Errorf("failed to get path->build mapping for path %s of batch %s: %w", p.ID, batch.ID, err)
+		}
+
+		b, err := c.store.GetBuildStore().Get(ctx, pb.BuildID)
+		if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				// Invariant breach: the write order in the build controller
+				// guarantees a mapping is only created once its build row
+				// exists. Treat this path like "no build yet" rather than
+				// crashing or nack-looping.
+				metrics.NamedCounter(c.metricsScope, opName, "mapping_dangling", 1)
+				c.logger.Warnw("path->build mapping points at a missing build; treating path as unbuilt",
+					"batch_id", batch.ID,
+					"path_id", p.ID,
+					"build_id", pb.BuildID,
+				)
+				continue
+			}
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return entity.SpeculationTree{}, false, fmt.Errorf("failed to get build %s for path %s of batch %s: %w", pb.BuildID, p.ID, batch.ID, err)
+		}
+		newStatus := reconcileStatus(p.Status, b.Status)
+		if p.BuildID != b.ID || p.Status != newStatus {
+			p.BuildID = b.ID
+			p.Status = newStatus
+			paths[i] = p
+			changed = true
+		}
+	}
+
+	for i, p := range paths {
+		if isTerminalPathStatus(p.Status) || p.Status == entity.SpeculationPathStatusCancelling {
+			continue
+		}
+		if !pathDead(p.Path, depByID) {
+			continue
+		}
+
+		if p.Status == entity.SpeculationPathStatusBuilding {
+			p.Status = entity.SpeculationPathStatusCancelling
+			metrics.NamedCounter(c.metricsScope, opName, "path_dead_cancelling", 1)
+		} else {
+			p.Status = entity.SpeculationPathStatusCancelled
+			metrics.NamedCounter(c.metricsScope, opName, "path_dead_cancelled", 1)
+		}
+		paths[i] = p
+		changed = true
+	}
+
+	tree.Paths = paths
+	return tree, changed, nil
+}
+
+// reconcileStatus folds a build outcome into a path's status. Pure O(1)
+// status arithmetic — no I/O; reconcile calls it once per unresolved path.
+//
+// Two rules shape it:
+//
+//   - A terminal path status (Passed/Failed/Cancelled) is a settled outcome
+//     and is never downgraded, whatever the build now reports.
+//   - Cancelling records a decision about the PATH — it was deselected, or
+//     its merge assumptions died — not a prediction about the build's
+//     outcome. Once recorded, the path can never merge; the only open
+//     question is when the runner side quiesces. So a Cancelling path holds
+//     until its build reaches ANY terminal state and then settles to
+//     Cancelled — including a build that raced to Succeeded before the
+//     cancel intent was enacted: its result is moot for a path that will
+//     never merge. (The build stage only calls runner.Cancel on builds that
+//     are still running; an already-terminal build is left untouched, and
+//     this mapping simply settles the path.)
+//
+// For a live (non-Cancelling) path, the build outcome maps directly:
+// Succeeded -> Passed, Failed -> Failed, Cancelled -> Cancelled,
+// Accepted/Running -> Building.
+func reconcileStatus(current entity.SpeculationPathStatus, build entity.BuildStatus) entity.SpeculationPathStatus {
+	if isTerminalPathStatus(current) {
+		return current
+	}
+	if current == entity.SpeculationPathStatusCancelling {
+		if build.IsTerminal() {
+			return entity.SpeculationPathStatusCancelled
+		}
+		return entity.SpeculationPathStatusCancelling
+	}
+	switch build {
+	case entity.BuildStatusSucceeded:
+		return entity.SpeculationPathStatusPassed
+	case entity.BuildStatusFailed:
+		return entity.SpeculationPathStatusFailed
+	case entity.BuildStatusCancelled:
+		return entity.SpeculationPathStatusCancelled
+	case entity.BuildStatusAccepted, entity.BuildStatusRunning:
+		return entity.SpeculationPathStatusBuilding
+	default:
+		return current
+	}
+}
+
+// isTerminalPathStatus reports whether s is a settled path outcome that must
+// never be overwritten by a later reconcile pass.
+func isTerminalPathStatus(s entity.SpeculationPathStatus) bool {
+	switch s {
+	case entity.SpeculationPathStatusPassed, entity.SpeculationPathStatusFailed, entity.SpeculationPathStatusCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+// pathDead reports whether path can never merge — its assumption set has
+// been invalidated by a dependency outcome:
+//
+//   - a base dependency reached Failed: the path built on top of changes
+//     that will never land, so its build result can never back a merge;
+//   - a dependency of the head OUTSIDE the base reached Succeeded: the path
+//     bet that batch would not land first, and it did.
+//
+// A Cancelled base dependency deliberately does NOT dead the path (Phase-A
+// leniency): the cancelled batch will never land, so it can no longer
+// conflict, and the path's build being stale against the original
+// (uncancelled) assumption set is accepted — this mirrors the pre-tree
+// chain semantics. With exactly one path per batch today (chain
+// enumerator), deading that only path on a benign cancel would fail batches
+// that currently survive. Once multi-path enumeration lands and a sibling
+// path can pick up the slack, a Cancelled base dependency should dead the
+// path like a Failed one — tracked in
+// https://github.com/uber/submitqueue/issues/369.
+func pathDead(path entity.SpeculationPath, depByID map[string]entity.Batch) bool {
+	inBase := make(map[string]bool, len(path.Base))
+	for _, id := range path.Base {
+		inBase[id] = true
+		if d, ok := depByID[id]; ok && d.State == entity.BatchStateFailed {
+			return true
+		}
+	}
+	for id, d := range depByID {
+		if inBase[id] {
+			continue
+		}
+		if d.State == entity.BatchStateSucceeded {
+			return true
+		}
+	}
+	return false
+}
+
 // applySelection applies the selector's decisions to tree.Paths, mutating it
 // in place. The selector owns the policy (which paths to promote or cancel);
 // this function owns only the bookkeeping, mapping each decision onto the
@@ -525,99 +720,138 @@ func (c *Controller) applySelection(batch entity.Batch, tree entity.SpeculationT
 	return tree, changed
 }
 
-// tryFinalize publishes to merge and transitions to Merging iff every
-// dependency batch has reached Succeeded. Cancelled deps are treated as
-// out-of-the-way: the cancelled batch will never land, so it can no longer
-// conflict — drop it from the chain and proceed. Failed deps still cascade
-// via failOnDependency. If some deps are still in flight, the call is a
-// no-op: each dependency's own terminal pass re-publishes this batch to
-// speculate (the terminal branch in Process), so waiting never needs a poll.
+// finalize settles the batch's forward step from the tree. Exactly one of
+// three outcomes applies per pass:
 //
-// TODO: when a dependency fails we currently fail this batch outright.
-// We will need to respeculate the failed paths — drop the failed dep
-// from the chain and re-issue speculation for the surviving ordering(s)
-// — instead of cascading the failure into requests that could still land.
-func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error {
-	deps, err := c.fetchDependencies(ctx, batch)
-	if err != nil {
-		return err
-	}
-
-	pending := make([]string, 0, len(deps))
-	for _, d := range deps {
-		switch d.State {
-		case entity.BatchStateSucceeded:
-			// ok
-		case entity.BatchStateCancelled:
-			// Out-of-the-way: the cancelled batch will never land, so it can
-			// no longer conflict. Drop it from the chain and continue.
-			c.metricsScope.Counter("dependency_cancelled_skipped").Inc(1)
-			c.logger.Infow("dependency cancelled; dropping from speculation chain",
-				"batch_id", batch.ID,
-				"dependency_id", d.ID,
-			)
-		case entity.BatchStateFailed:
-			return c.failOnDependency(ctx, batch, d)
-		default:
-			pending = append(pending, d.ID)
+//  1. Merge now: some path is mergeableNow (its build passed and its
+//     assumption set holds) — publish to merge and CAS the batch to
+//     Merging.
+//  2. Wait: no path is mergeable yet, but at least one is still viable —
+//     no-op; the next event (a build outcome via buildsignal, a dependency
+//     going terminal) re-runs this evaluation.
+//  3. Fail: no viable path remains — every path has Failed, been Cancelled,
+//     or gone dead with no chance of ever merging — so the batch can never
+//     merge. The !anyViable branch below CASes the batch to Failed, fans
+//     out to dependents, and publishes to conclude.
+func (c *Controller) finalize(ctx context.Context, batch entity.Batch, tree entity.SpeculationTree, depByID map[string]entity.Batch) error {
+	for _, p := range tree.Paths {
+		if !mergeableNow(p, depByID) {
+			continue
 		}
-	}
 
-	if len(pending) > 0 {
-		metrics.NamedCounter(c.metricsScope, opName, "waiting_on_deps", 1)
-		c.logger.Debugw("dependencies still in flight; waiting",
-			"batch_id", batch.ID,
-			"pending_dependency_ids", pending,
-		)
+		if err := c.publish(ctx, topickey.TopicKeyMerge, batch.ID, batch.Queue); err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+			return fmt.Errorf("failed to publish to merge: %w", err)
+		}
+
+		newVersion := batch.Version + 1
+		if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateMerging); err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return fmt.Errorf("failed to update batch %s state to merging: %w", batch.ID, err)
+		}
+		metrics.NamedCounter(c.metricsScope, opName, "merging", 1)
 		return nil
 	}
 
-	if err := c.publish(ctx, topickey.TopicKeyMerge, batch.ID, batch.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
-		return fmt.Errorf("failed to publish to merge: %w", err)
+	anyViable := false
+	failedCount, cancelledCount := 0, 0
+	for _, p := range tree.Paths {
+		if viable(p, depByID) {
+			anyViable = true
+		}
+		switch p.Status {
+		case entity.SpeculationPathStatusFailed:
+			failedCount++
+		case entity.SpeculationPathStatusCancelled, entity.SpeculationPathStatusCancelling:
+			cancelledCount++
+		}
 	}
 
-	newVersion := batch.Version + 1
-	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateMerging); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to update batch %s state to merging: %w", batch.ID, err)
+	if !anyViable {
+		c.logger.Warnw("no viable speculation path remains; failing batch",
+			"batch_id", batch.ID,
+			"failed_paths", failedCount,
+			"cancelled_paths", cancelledCount,
+		)
+		metrics.NamedCounter(c.metricsScope, opName, "no_viable_path", 1)
+
+		newVersion := batch.Version + 1
+		if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateFailed); err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return fmt.Errorf("failed to update batch %s state to failed: %w", batch.ID, err)
+		}
+		batch.Version = newVersion
+		batch.State = entity.BatchStateFailed
+
+		// Fan out to dependents BEFORE concluding, mirroring cancelBatch's
+		// ordering. The fan-out is publish-only — one speculate wake-up per
+		// dependent, each processed asynchronously on its own delivery;
+		// nothing is re-evaluated inline here. A dependent only drops this
+		// batch from its tree (dead chain path) and lets a surviving path
+		// take over once it observes the terminal Failed state. Nothing else
+		// re-notifies them — a batch failed here never reaches mergesignal,
+		// whose fan-out covers the merge-failure flow. A crash after the CAS
+		// is recovered by the terminal self-heal branch, which re-runs this
+		// fan-out for Failed.
+		if err := c.respeculateDependents(ctx, batch); err != nil {
+			return err
+		}
+
+		if err := c.publish(ctx, topickey.TopicKeyConclude, batch.ID, batch.Queue); err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+			return fmt.Errorf("failed to publish to conclude: %w", err)
+		}
+		return nil
 	}
 
+	metrics.NamedCounter(c.metricsScope, opName, "waiting_on_deps", 1)
+	c.logger.Debugw("no path mergeable yet; waiting", "batch_id", batch.ID)
 	return nil
 }
 
-// failOnDependency transitions a Speculating batch to Failed when one of its
-// dependencies has reached a non-succeeding terminal state, then publishes to
-// the conclude queue so the request store and request log get reconciled.
-// Without this transition the batch would sit in Speculating forever — no
-// downstream event ever fires for it again. The batch's own dependents are
-// woken right after the terminal CAS so the failure cascades downstream
-// instead of stranding them mid-wait; a crash between the CAS and the
-// fan-out is recovered by the terminal branch in Process on redelivery.
-func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, dep entity.Batch) error {
-	metrics.NamedCounter(c.metricsScope, opName, "dependency_failed", 1)
-	c.logger.Warnw("dependency in non-succeeding terminal state; failing batch",
-		"batch_id", batch.ID,
-		"dependency_id", dep.ID,
-		"dependency_state", string(dep.State),
-	)
-
-	newVersion := batch.Version + 1
-	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateFailed); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to update batch %s state to failed: %w", batch.ID, err)
+// mergeableNow reports whether p is ready to merge right now: its own build
+// Passed, every base dependency has either landed or been cancelled out of
+// the way, and every dependency of the head NOT in the base has been ruled
+// out (Failed or Cancelled) rather than still possibly landing. The last
+// condition is what makes this stricter than a plain "base landed" check: a
+// still in-flight non-base dependency might yet land and dead the path (see
+// pathDead), so merging must wait for it to resolve one way or the other.
+func mergeableNow(p entity.SpeculationPathInfo, depByID map[string]entity.Batch) bool {
+	if p.Status != entity.SpeculationPathStatusPassed {
+		return false
 	}
 
-	if err := c.respeculateDependents(ctx, batch); err != nil {
-		return err
+	inBase := make(map[string]bool, len(p.Path.Base))
+	for _, id := range p.Path.Base {
+		inBase[id] = true
+		d, ok := depByID[id]
+		if !ok {
+			continue
+		}
+		if d.State != entity.BatchStateSucceeded && d.State != entity.BatchStateCancelled {
+			return false
+		}
 	}
-
-	if err := c.publish(ctx, topickey.TopicKeyConclude, batch.ID, batch.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
-		return fmt.Errorf("failed to publish to conclude: %w", err)
+	for id, d := range depByID {
+		if inBase[id] {
+			continue
+		}
+		if d.State != entity.BatchStateFailed && d.State != entity.BatchStateCancelled {
+			return false
+		}
 	}
+	return true
+}
 
-	return nil
+// viable reports whether p could still merge in the future: it has not
+// reached a non-succeeding terminal or cancelling status, and it is not
+// dead. A batch with no viable path left can never merge and is failed.
+func viable(p entity.SpeculationPathInfo, depByID map[string]entity.Batch) bool {
+	switch p.Status {
+	case entity.SpeculationPathStatusFailed, entity.SpeculationPathStatusCancelled, entity.SpeculationPathStatusCancelling:
+		return false
+	}
+	return !pathDead(p.Path, depByID)
 }
 
 // cancelBatch drives a batch from BatchStateCancelling to BatchStateCancelled.
@@ -634,9 +868,9 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 //     ErrNotFound (no build was scheduled), skip if already terminal.
 //
 //  2. CAS the batch to terminal Cancelled. This must happen BEFORE the
-//     dependent fan-out: tryFinalize only drops a Cancelled dep from the
-//     chain, so dependents woken with the dep still in Cancelling would
-//     wait pending and never get pinged again.
+//     dependent fan-out: finalize only drops a Cancelled dep from the chain,
+//     so dependents woken with the dep still in Cancelling would wait
+//     pending and never get pinged again.
 //
 //  3. Re-publish each downstream dependent to speculate so they can drop
 //     this cancelled batch from their chain and advance (or finalize, if
@@ -737,11 +971,12 @@ func (c *Controller) respeculateDependents(ctx context.Context, batch entity.Bat
 
 	for _, depID := range bd.Dependents {
 		// Alternative: process each dependent inline (load batch, run the
-		// equivalent of tryFinalize) instead of publishing back to ourselves.
-		// Rejected for now: per-message retry isolation, fresh per-dependent
-		// reads, consumer-pool parallelism / backpressure, and the existing
-		// state-machine dispatch in Process all argue for the publish. Revisit
-		// if the extra message hop ever shows up as latency or cost.
+		// equivalent of speculateBatch) instead of publishing back to
+		// ourselves. Rejected for now: per-message retry isolation, fresh
+		// per-dependent reads, consumer-pool parallelism / backpressure, and
+		// the existing state-machine dispatch in Process all argue for the
+		// publish. Revisit if the extra message hop ever shows up as latency
+		// or cost.
 		if err := c.publish(ctx, topickey.TopicKeySpeculate, depID, batch.Queue); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 			return fmt.Errorf("failed to publish dependent batch %s to speculate: %w", depID, err)
