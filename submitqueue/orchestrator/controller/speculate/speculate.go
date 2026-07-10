@@ -35,24 +35,25 @@ import (
 
 // Controller handles speculate queue messages.
 //
-// Each invocation reconciles the batch's entity.SpeculationTree and advances
-// the batch one step in the state machine. Tree reconciliation is pure
-// mechanics: the controller runs the queue's configured seams — enumerator
-// (path structure), path scorer (path scores), selector (path decisions) —
-// validates their outputs, applies them to the persisted tree, and writes it
-// back under optimistic concurrency. Which paths exist, how they score, and
-// which are promoted or cancelled are the seams' decisions alone; the
-// controller never originates one. No downstream stage reads the tree yet,
-// so the forward step below is driven by the batch's own state, not the
-// tree.
+// Each invocation reconciles the batch's entity.SpeculationTree, publishes
+// the batch's queue to prioritize, and advances the batch one step in the
+// state machine. Tree reconciliation is pure mechanics: the controller runs
+// the queue's configured seams — enumerator (path structure), path scorer
+// (path scores), selector (path decisions) — validates their outputs,
+// applies them to the persisted tree, and writes it back under optimistic
+// concurrency. Which paths exist, how they score, and which are promoted or
+// cancelled are the seams' decisions alone; the controller never originates
+// one. The batch's own merge timing is still driven by dependency states
+// (tryFinalize), pending a later change that gates it on the tree's path
+// outcomes.
 //
 // Per invocation, the controller advances the batch one step in the state
 // machine:
 //
 //   - Created, Scored, or Speculating → speculateBatch: reconcile the tree
-//     (created on the first pass the dependency gate admits), then advance
-//     the batch — publish to build and CAS to Speculating for
-//     Created/Scored, or tryFinalize for Speculating.
+//     (created on the first pass the dependency gate admits), CAS to
+//     Speculating for Created/Scored, publish to prioritize every pass, and
+//     run tryFinalize once the batch has reached Speculating.
 //   - Cancelling        → cancel any in-flight Build entity, respeculate
 //     dependents, CAS to terminal Cancelled, publish to conclude. The
 //     cancel controller hands the batch off in this state and speculate
@@ -66,7 +67,7 @@ import (
 //
 // Cancel decisions are recorded as path status only
 // (SpeculationPathStatusCancelling on an in-flight build) — nothing in this
-// file calls a build runner.
+// file calls a build runner or triggers builds for admitted paths.
 //
 // The controller is re-triggered on every relevant downstream event
 // (buildsignal, merge), so each call simply re-evaluates the current
@@ -178,9 +179,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 // speculateBatch is the unified entry point for Created, Scored, and
 // Speculating batches. It loads the batch's speculation tree (creating it on
 // the first pass the dependency gate admits), applies the scorer's and
-// selector's outputs, persists the tree if anything changed, and then
-// advances the batch itself: Created/Scored publish to build and CAS to
-// Speculating; Speculating runs tryFinalize.
+// selector's outputs, persists the tree if anything changed, CASes the batch
+// to Speculating on its first pass, publishes the queue to prioritize every
+// pass, and runs tryFinalize once the batch has reached Speculating.
 func (c *Controller) speculateBatch(ctx context.Context, batch entity.Batch) error {
 	deps, err := c.fetchDependencies(ctx, batch)
 	if err != nil {
@@ -249,16 +250,38 @@ func (c *Controller) speculateBatch(ctx context.Context, batch entity.Batch) err
 		tree.Version = newVersion
 	}
 
-	// The tree does not influence the forward step below — no downstream
-	// stage consumes it yet.
-	switch batch.State {
-	case entity.BatchStateCreated, entity.BatchStateScored:
-		return c.startSpeculation(ctx, batch)
-	case entity.BatchStateSpeculating:
-		return c.tryFinalize(ctx, batch)
-	default:
-		return nil
+	// Optimistic CAS: if the version has already advanced (concurrent
+	// speculate), the next event will see the new state and behave correctly.
+	originalState := batch.State
+	if batch.State == entity.BatchStateCreated || batch.State == entity.BatchStateScored {
+		newVersion := batch.Version + 1
+		if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateSpeculating); err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return fmt.Errorf("failed to update batch %s state to speculating: %w", batch.ID, err)
+		}
+		batch.Version = newVersion
+		batch.State = entity.BatchStateSpeculating
 	}
+
+	// Publish to prioritize every pass, after the CAS: publishing before the
+	// CAS could let a concurrent prioritize round observe the batch as not
+	// yet Speculating and skip it with no later wake-up. Publishing after is
+	// healed by redelivery — an error or crash here nacks the message, and
+	// the next pass republishes, since this runs on every pass regardless of
+	// whether anything changed.
+	if err := c.publishQueue(ctx, topickey.TopicKeyPrioritize, batch.Queue); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+		return fmt.Errorf("failed to publish queue %s to prioritize: %w", batch.Queue, err)
+	}
+
+	// Legacy forward path: tryFinalize only runs once a batch has already
+	// reached Speculating on a prior pass — merge timing is unchanged from
+	// before prioritize/build existed. This tightens in a later commit to
+	// gate on the tree's own path outcome instead of dependency states alone.
+	if originalState == entity.BatchStateSpeculating {
+		return c.tryFinalize(ctx, batch)
+	}
+	return nil
 }
 
 // dependencyGateBlocks reports whether batch's count of active dependencies
@@ -500,31 +523,6 @@ func (c *Controller) applySelection(batch entity.Batch, tree entity.SpeculationT
 
 	tree.Paths = paths
 	return tree, changed
-}
-
-// startSpeculation publishes the batch to the build stage, then transitions
-// it to Speculating.
-func (c *Controller) startSpeculation(ctx context.Context, batch entity.Batch) error {
-	c.logger.Infow("starting speculation",
-		"batch_id", batch.ID,
-		"speculation_chain", append(append([]string{}, batch.Dependencies...), batch.ID),
-	)
-
-	if err := c.publish(ctx, topickey.TopicKeyBuild, batch.ID, batch.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
-		return fmt.Errorf("failed to publish to build: %w", err)
-	}
-
-	// Optimistic CAS: if the version has already advanced (concurrent speculate),
-	// the next event will see the new state and behave correctly.
-	newVersion := batch.Version + 1
-	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateSpeculating); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to update batch %s state to speculating: %w", batch.ID, err)
-	}
-
-	metrics.NamedCounter(c.metricsScope, opName, "started_speculation", 1)
-	return nil
 }
 
 // tryFinalize publishes to merge and transitions to Merging iff every
@@ -790,6 +788,35 @@ func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID
 	}
 
 	msg := entityqueue.NewMessage(batchID, payload, partitionKey, nil)
+
+	q, ok := c.registry.Queue(key)
+	if !ok {
+		return fmt.Errorf("no queue registered for topic key %s", key)
+	}
+
+	topicName, ok := c.registry.TopicName(key)
+	if !ok {
+		return fmt.Errorf("no topic name registered for topic key %s", key)
+	}
+
+	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
+		return fmt.Errorf("failed to publish message: %w", err)
+	}
+
+	return nil
+}
+
+// publishQueue publishes a queue name to the specified topic key. Used for
+// queue-scoped stages (prioritize) whose message payload carries no batch
+// identity at all — just the queue to re-evaluate.
+func (c *Controller) publishQueue(ctx context.Context, key consumer.TopicKey, queue string) error {
+	qid := entity.QueueID{Name: queue}
+	payload, err := qid.ToBytes()
+	if err != nil {
+		return fmt.Errorf("failed to serialize queue ID: %w", err)
+	}
+
+	msg := entityqueue.NewMessage(queue, payload, queue, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
@@ -31,7 +32,27 @@ import (
 )
 
 // Controller handles build queue messages.
-// It consumes batches, triggers builds, and publishes scheduled builds to the build signal stage (which processes build results).
+//
+// It loads the batch's speculation tree and, for each path, acts on the
+// path's status: a Prioritized path that has no build yet gets one triggered
+// through the queue's build runner, and a Cancelling path has its in-flight
+// build cancelled. Every other status is left untouched, and the tree is
+// never written here — path statuses are read-only inputs to this
+// controller. It is the sole caller of the build runner for path-level work,
+// which is why persisted Cancelling intents are enacted here rather than
+// where they were decided.
+//
+// Halted (terminal or Cancelling) batches are skipped before any path work:
+// batch-level cancellation has its own owner, and the skip guarantees this
+// controller never starts CI for a batch that is being torn down.
+//
+// Dedup for triggering is on the path->build mapping (PathBuildStore), not
+// on a Build row keyed by a derived key: the mapping is readable before
+// Trigger ever runs, so it is checked first. A crash between Trigger
+// succeeding and the mapping Create means redelivery re-triggers a fresh
+// build for the same path; the new mapping Create then races the
+// (never-persisted) old one and simply wins, orphaning the earlier CI
+// build. See the per-path loop below for the full crash-safety ordering.
 // Implements consumer.Controller interface for integration with the consumer.
 type Controller struct {
 	logger        *zap.SugaredLogger
@@ -45,6 +66,9 @@ type Controller struct {
 
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
+
+// opName is the metric operation name shared by every emit in this file.
+const opName = "process"
 
 // NewController creates a new build controller for the orchestrator.
 func NewController(
@@ -68,11 +92,12 @@ func NewController(
 }
 
 // Process processes a build delivery from the queue.
-// Deserializes the batch, triggers a build, and publishes a build entity to the build signal topic.
-// Returns nil to ack (success), or error to nack (retry).
+// Deserializes the batch, loads its speculation tree, and for every path
+// either triggers a build (Prioritized, no build yet) or enacts a persisted
+// cancel intent (Cancelling), publishing to the build signal topic as
+// appropriate.
+// Returns nil to ack (success), or error to nack/reject.
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	const opName = "process"
-
 	op := metrics.Begin(c.metricsScope, opName)
 	defer func() { op.Complete(retErr) }()
 
@@ -115,58 +140,316 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return nil
 	}
 
-	// Load the dependency batches (base) as identity; the build runner resolves
-	// each batch's changes itself. head is this batch.
-	base, err := c.loadBatches(ctx, batch.Dependencies)
+	// Load this batch's speculation tree. A build message is only ever
+	// published by the prioritize stage after it has read the tree, the tree
+	// is created before the batch is ever published to prioritize, and trees
+	// are never deleted — so by the time this message is readable the tree
+	// exists. A Get miss here is an invariant violation (corrupted or
+	// manually mutated state), not a transient condition: the error
+	// propagates unclassified, the message dead-letters, and the DLQ
+	// consumer fails the batch loudly instead of retrying against broken
+	// state.
+	tree, err := c.store.GetSpeculationTreeStore().Get(ctx, batch.ID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to load dependency batches for batch %s: %w", batch.ID, err)
+		return fmt.Errorf("failed to get speculation tree for batch %s: %w", batch.ID, err)
 	}
 
-	// Trigger the build with the queue's build runner. metadata is nil
-	// until a caller-supplied source materializes (e.g. requester / ticket
-	// pulled off the originating LandRequest).
-	buildRunner, err := c.buildRunners.For(buildrunner.Config{QueueName: batch.Queue})
-	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "trigger_errors", 1)
-		return fmt.Errorf("failed to build runner for batch %s: %w", batch.ID, err)
-	}
-	buildID, err := buildRunner.Trigger(ctx, base, batch, nil)
-	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "trigger_errors", 1)
-		return fmt.Errorf("failed to trigger build for batch %s: %w", batch.ID, err)
+	// Resolve the build runner lazily: every path in this message shares the
+	// same queue, so a pass whose paths need no triggering or cancelling
+	// never resolves one.
+	resolveRunner := c.runnerResolver(batch.Queue)
+
+	triggered := 0
+	for _, p := range tree.Paths {
+		if p.Status == entity.SpeculationPathStatusCancelling {
+			// A Cancelling path is a persisted cancel intent — recorded
+			// elsewhere, enacted here by the sole caller of the build runner
+			// for path-level work.
+			if err := c.enactCancel(ctx, batch, p, resolveRunner); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if p.Status != entity.SpeculationPathStatusPrioritized {
+			// Every other status is another stage's concern: Candidate and
+			// Selected haven't been admitted yet, Building/Passed/Failed
+			// already have a build in flight or resolved, and Cancelled is
+			// terminal. This controller moves admitted (Prioritized) paths
+			// forward and enacts persisted Cancelling intents (handled
+			// above) — nothing else.
+			continue
+		}
+
+		// Per-path ordering matters for crash-safety. Dedup happens BEFORE
+		// Trigger, keyed on the path->build mapping (readable up front,
+		// unlike a Build row that only exists after Trigger succeeds). Once
+		// a path needs triggering, the order is: (1) Trigger with the
+		// runner, (2) persist the Build row, (3) persist the path->build
+		// mapping. A crash between (1) and (3) is recovered by redelivery
+		// re-running this loop: the mapping is still absent, so the path is
+		// (re-)triggered and the fresh mapping Create either wins outright
+		// or loses a race to a concurrent delivery that got there first — in
+		// which case we defer to the winner instead of erroring (see below).
+		pb, err := c.store.GetSpeculationPathBuildStore().Get(ctx, p.ID)
+		if err == nil {
+			// A mapping already exists for this path: a build was already
+			// triggered, either by a previous pass or a previous delivery of
+			// this message. Load it and decide what (if anything) to do.
+			b, err := c.store.GetBuildStore().Get(ctx, pb.BuildID)
+			if err != nil {
+				if errors.Is(err, storage.ErrNotFound) {
+					// Invariant breach: the write order below guarantees a
+					// mapping is only created once its build row exists. The
+					// mapping is still authoritative even though its target
+					// is missing, so we do not trigger a duplicate build for
+					// this path — we just skip it defensively.
+					metrics.NamedCounter(c.metricsScope, opName, "mapping_dangling", 1)
+					c.logger.Warnw("path->build mapping points at a missing build; skipping path",
+						"batch_id", batch.ID,
+						"path_id", p.ID,
+						"build_id", pb.BuildID,
+					)
+					continue
+				}
+				metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+				return fmt.Errorf("failed to get build %s for path %s of batch %s: %w", pb.BuildID, p.ID, batch.ID, err)
+			}
+
+			if b.Status.IsTerminal() {
+				// The path's build already ran to completion; a later
+				// reconcile pass folds that outcome into the path's status,
+				// so triggering here would only race it. A Prioritized path
+				// pointing at a terminal build is therefore always the
+				// pre-reconcile window — never
+				// "build it again": in the current model a path is built at
+				// most once, Cancel is only ever applied to paths whose
+				// assumption is dead (or preemptively evicted), and no stage
+				// re-admits a Cancelled path. If a future preemptive policy
+				// adds cancel-then-readmit, this branch is the seam it lands
+				// in: re-trigger and conditionally re-point the mapping to
+				// the fresh build under SpeculationPathBuild.Version.
+				continue
+			}
+
+			// Non-terminal existing build: republish buildsignal to close the
+			// crash window between the original Create and the original
+			// buildsignal publish. This creates duplicate poll loops on
+			// redelivery, but that is harmless — buildsignal's self-republish
+			// reuses the message ID (build.ID), and the mysql queue publisher
+			// dedups publishes on (topic, partition, id), so redundant
+			// re-triggers of the poll loop coalesce rather than double-poll
+			// forever.
+			if err := c.publish(ctx, topickey.TopicKeyBuildSignal, b); err != nil {
+				metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+				return fmt.Errorf("failed to re-publish to buildsignal: %w", err)
+			}
+			continue
+		} else if !errors.Is(err, storage.ErrNotFound) {
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return fmt.Errorf("failed to get path->build mapping for path %s of batch %s: %w", p.ID, batch.ID, err)
+		}
+
+		// No mapping yet: load the path's base (assumed-good predecessor
+		// batches) as identity; the build runner resolves each batch's
+		// changes itself. head is this batch.
+		base, err := c.loadBatches(ctx, p.Path.Base)
+		if err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return fmt.Errorf("failed to load base batches for path (head=%s, base=%v) of batch %s: %w", p.Path.Head, p.Path.Base, batch.ID, err)
+		}
+
+		// Trigger the build with the queue's build runner. metadata is nil
+		// until a caller-supplied source materializes (e.g. requester /
+		// ticket pulled off the originating LandRequest).
+		runner, err := resolveRunner()
+		if err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "trigger_errors", 1)
+			return fmt.Errorf("failed to get build runner for batch %s: %w", batch.ID, err)
+		}
+		runnerID, err := runner.Trigger(ctx, base, batch, nil)
+		if err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "trigger_errors", 1)
+			return fmt.Errorf("failed to trigger build for batch %s: %w", batch.ID, err)
+		}
+
+		build := entity.Build{
+			ID:                runnerID.ID,
+			BatchID:           batch.ID,
+			SpeculationPathID: p.ID,
+			Status:            entity.BuildStatusAccepted,
+		}
+
+		// Persist the initial Build snapshot so the buildsignal poll loop has
+		// a row to UpdateStatus against. ErrAlreadyExists is benign — a
+		// redelivery of this message after a previous successful Create for
+		// this specific path. This tolerance is not the dedup mechanism (the
+		// mapping below is); it stays for the same crash-safety reason as
+		// before: a build row can pre-exist from a prior partial pass.
+		if err := c.store.GetBuildStore().Create(ctx, build); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return fmt.Errorf("failed to persist build %s: %w", build.ID, err)
+		}
+
+		// Persist the path->build mapping. This is the dedup marker for the
+		// path, checked at the top of this loop before Trigger runs.
+		mapping := entity.SpeculationPathBuild{
+			PathID:    p.ID,
+			BuildID:   build.ID,
+			BatchID:   batch.ID,
+			Version:   1,
+			CreatedAt: time.Now().UnixMilli(),
+		}
+		if err := c.store.GetSpeculationPathBuildStore().Create(ctx, mapping); err != nil {
+			if errors.Is(err, storage.ErrAlreadyExists) {
+				// A concurrent delivery already won the mapping race for this
+				// path. Our just-created build row above is now an accepted
+				// orphan: lost mapping races cost one orphaned CI build by
+				// design — duplicates are the retry/redundancy mechanism, and
+				// the recorded mapping (not the build row) is the source of
+				// truth for "which build resolves this path." Republish
+				// buildsignal for the winner so it has an active poll loop
+				// even if its own publish was lost.
+				metrics.NamedCounter(c.metricsScope, opName, "trigger_race_lost", 1)
+				winner, gerr := c.store.GetSpeculationPathBuildStore().Get(ctx, p.ID)
+				if gerr != nil {
+					metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+					return fmt.Errorf("failed to re-get path->build mapping for path %s of batch %s: %w", p.ID, batch.ID, gerr)
+				}
+				winnerBuild, gerr := c.store.GetBuildStore().Get(ctx, winner.BuildID)
+				if gerr != nil {
+					metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+					return fmt.Errorf("failed to get winning build %s for path %s of batch %s: %w", winner.BuildID, p.ID, batch.ID, gerr)
+				}
+				if err := c.publish(ctx, topickey.TopicKeyBuildSignal, winnerBuild); err != nil {
+					metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+					return fmt.Errorf("failed to re-publish to buildsignal: %w", err)
+				}
+				continue
+			}
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return fmt.Errorf("failed to persist path->build mapping for path %s of batch %s: %w", p.ID, batch.ID, err)
+		}
+
+		// Hand off to the buildsignal poll loop; it calls Status, updates the
+		// persisted Build, publishes to speculate, and re-publishes itself
+		// via PublishAfter until terminal.
+		if err := c.publish(ctx, topickey.TopicKeyBuildSignal, build); err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+			return fmt.Errorf("failed to publish to buildsignal: %w", err)
+		}
+
+		c.logger.Infow("published build to buildsignal",
+			"batch_id", batch.ID,
+			"build_id", build.ID,
+			"status", string(build.Status),
+			"topic_key", topickey.TopicKeyBuildSignal,
+		)
+
+		triggered++
 	}
 
-	build := entity.Build{
-		ID:      buildID.ID,
-		BatchID: batch.ID,
-		Status:  entity.BuildStatusAccepted,
+	if triggered == 0 {
+		// Either no path was Prioritized, or every Prioritized path already
+		// had a matching Build row. This is a no-op republish, not an error.
+		metrics.NamedCounter(c.metricsScope, opName, "no_paths_to_trigger", 1)
 	}
-
-	// Persist the initial Build snapshot so the buildsignal poll loop has a
-	// row to UpdateStatus against. ErrAlreadyExists is benign — a redelivery
-	// of this message after a previous successful Create.
-	if err := c.store.GetBuildStore().Create(ctx, build); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to persist build %s: %w", build.ID, err)
-	}
-
-	// Hand off to the buildsignal poll loop; it calls Status, updates the
-	// persisted Build, publishes to speculate, and re-publishes itself via
-	// PublishAfter until terminal.
-	if err := c.publish(ctx, topickey.TopicKeyBuildSignal, build); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
-		return fmt.Errorf("failed to publish to buildsignal: %w", err)
-	}
-
-	c.logger.Infow("published build to buildsignal",
-		"batch_id", batch.ID,
-		"build_id", build.ID,
-		"status", string(build.Status),
-		"topic_key", topickey.TopicKeyBuildSignal,
-	)
 
 	return nil // Success - message will be acked
+}
+
+// runnerResolver returns a lazily-memoizing accessor for queue's build
+// runner: the factory is consulted on the first call only, and every
+// subsequent call reuses that result. Callers that never invoke the accessor
+// never resolve a runner at all.
+func (c *Controller) runnerResolver(queue string) func() (buildrunner.BuildRunner, error) {
+	var runner buildrunner.BuildRunner
+	return func() (buildrunner.BuildRunner, error) {
+		if runner != nil {
+			return runner, nil
+		}
+		r, err := c.buildRunners.For(buildrunner.Config{QueueName: queue})
+		if err != nil {
+			return nil, err
+		}
+		runner = r
+		return r, nil
+	}
+}
+
+// enactCancel enacts a persisted Cancelling intent for path p: it resolves
+// the path's build via the path->build mapping, issues a runner Cancel
+// against it if the build is not already terminal, and republishes
+// buildsignal so the poll loop observes the cancellation promptly instead of
+// waiting out its current delay. Cancel is idempotent from the runner's
+// point of view, so redelivery (e.g. after a crash between Cancel and the
+// republish) simply re-issues it.
+//
+// Every lookup miss here is tolerated rather than treated as an error: a
+// path can be marked Cancelling before this controller ever triggered a
+// build for it (no mapping yet), or the mapping can point at a build row
+// that a defensive skip elsewhere left dangling. In both cases there is
+// nothing to cancel, so the intent is left for speculate's reconcile to
+// settle the path to Cancelled on its next pass.
+func (c *Controller) enactCancel(ctx context.Context, batch entity.Batch, p entity.SpeculationPathInfo, resolveRunner func() (buildrunner.BuildRunner, error)) error {
+	pb, err := c.store.GetSpeculationPathBuildStore().Get(ctx, p.ID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			metrics.NamedCounter(c.metricsScope, opName, "cancel_no_mapping", 1)
+			return nil
+		}
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return fmt.Errorf("failed to get path->build mapping for path %s of batch %s: %w", p.ID, batch.ID, err)
+	}
+
+	b, err := c.store.GetBuildStore().Get(ctx, pb.BuildID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			// Same invariant-breach defense as the trigger path above: the
+			// mapping is authoritative even though its target is missing, so
+			// skip rather than guessing.
+			metrics.NamedCounter(c.metricsScope, opName, "mapping_dangling", 1)
+			c.logger.Warnw("path->build mapping points at a missing build; skipping cancel",
+				"batch_id", batch.ID,
+				"path_id", p.ID,
+				"build_id", pb.BuildID,
+			)
+			return nil
+		}
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return fmt.Errorf("failed to get build %s for path %s of batch %s: %w", pb.BuildID, p.ID, batch.ID, err)
+	}
+
+	if b.Status.IsTerminal() {
+		// Nothing in flight to cancel; speculate's reconcile settles the
+		// path's own status on its next pass.
+		metrics.NamedCounter(c.metricsScope, opName, "cancel_already_terminal", 1)
+		return nil
+	}
+
+	runner, err := resolveRunner()
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "cancel_errors", 1)
+		return fmt.Errorf("failed to get build runner for batch %s: %w", batch.ID, err)
+	}
+	if err := runner.Cancel(ctx, entity.BuildID{ID: b.ID}); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "cancel_errors", 1)
+		return fmt.Errorf("failed to cancel build %s for path %s of batch %s: %w", b.ID, p.ID, batch.ID, err)
+	}
+
+	if err := c.publish(ctx, topickey.TopicKeyBuildSignal, b); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+		return fmt.Errorf("failed to re-publish to buildsignal after cancel: %w", err)
+	}
+
+	metrics.NamedCounter(c.metricsScope, opName, "cancel_enacted", 1)
+	c.logger.Infow("enacted cancel for speculation path",
+		"batch_id", batch.ID,
+		"path_id", p.ID,
+		"build_id", b.ID,
+	)
+	return nil
 }
 
 // loadBatches loads each batch by ID, preserving order. Used to load the base

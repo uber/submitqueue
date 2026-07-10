@@ -13,13 +13,16 @@
 // limitations under the License.
 
 // Package buildsignal implements the build poll loop. Each message carries
-// a Build; the controller calls BuildRunner.Status, writes the latest
-// status to the BuildStore, publishes the batch ID to TopicKeySpeculate
-// so the state machine re-evaluates, and re-publishes itself via
-// PublishAfter when the build has not yet reached a terminal state. Each
-// buildID partitions independently, so slow polls on one build do not
-// block others. A webhook-capable backend can publish into this same
-// topic — the controller cannot tell a poll-driven message from a push.
+// a Build's ID; the controller loads the row, calls BuildRunner.Status
+// against the build's ID — which is both the build store's primary key and
+// the runner-minted handle, there is no separate store-key/runner-ID split
+// — writes the latest status to the BuildStore (keyed by the same ID),
+// publishes the batch ID to TopicKeySpeculate so the state machine
+// re-evaluates, and re-publishes itself via PublishAfter when the build has
+// not yet reached a terminal state. Each build partitions independently by
+// its ID, so slow polls on one build do not block others. A webhook-capable
+// backend can publish into this same topic — the controller cannot tell a
+// poll-driven message from a push.
 package buildsignal
 
 import (
@@ -93,14 +96,14 @@ func NewController(
 // a delayed message back to this topic when the build is still in flight.
 // Returns nil to ack (success), or error to nack/reject.
 //
-// Error classification: deserialize, Status, UpdateStatus, and the speculate
-// publish stay non-retryable — they reject straight to DLQ on the first
-// failure, where the operational republish path is the recovery mechanism.
-// Only the PublishAfter self-reschedule is retryable: it is the poll loop's
-// heartbeat and runs only after status/persist/speculate have all succeeded,
-// so a transient enqueue blip nacks and replays (up to MaxAttempts) rather
-// than silently stalling the build, then still falls through to DLQ if it
-// persists.
+// Error classification: retryability is decided per error cause by the
+// wired classifier walk, not per call site. Only transient infra causes the
+// classifiers recognize (context cancellation, transient MySQL driver/server
+// errors — which covers both storage calls and queue publishes, since both
+// run on the same driver) nack and replay up to MaxAttempts. Everything
+// else — malformed payloads, domain storage sentinels, runner Status
+// failures — is non-retryable by default and rejects to DLQ on the first
+// failure, where the buildsignal DLQ consumer fails the batch loudly.
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
 	const opName = "process"
 
@@ -116,9 +119,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("failed to deserialize build ID: %w", err)
 	}
 
-	// Only the build ID travels on the queue; load the full Build from
-	// storage, which is the single source of truth for its BatchID and the
-	// snapshot the poll loop updates.
+	// Only the build's ID travels on the queue; load the full Build from
+	// storage, which is the single source of truth for its BatchID, its ID
+	// (also the runner handle), and the snapshot the poll loop updates.
 	build, err := c.store.GetBuildStore().Get(ctx, buildID.ID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
@@ -146,7 +149,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("failed to build runner for batch %s: %w", batch.ID, err)
 	}
 
-	status, _, err := buildRunner.Status(ctx, buildID)
+	status, _, err := buildRunner.Status(ctx, entity.BuildID{ID: build.ID})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "status_errors", 1)
 		return fmt.Errorf("failed to get status for build %s: %w", buildID.ID, err)

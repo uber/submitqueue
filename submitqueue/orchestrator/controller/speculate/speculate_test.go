@@ -91,22 +91,29 @@ type testHarness struct {
 // dependency limit is effectively ungated (1000). Every publish succeeds and
 // is appended to records.
 func newTestHarness(t *testing.T, ctrl *gomock.Controller) *testHarness {
-	return newHarness(t, ctrl, nil, 1000)
+	return newHarness(t, ctrl, nil, "", 1000)
 }
 
 // newFailingPublishHarness is identical to newTestHarness except every
 // publish returns publishErr instead of succeeding.
 func newFailingPublishHarness(t *testing.T, ctrl *gomock.Controller, publishErr error) *testHarness {
-	return newHarness(t, ctrl, publishErr, 1000)
+	return newHarness(t, ctrl, publishErr, "", 1000)
+}
+
+// newTopicFailingPublishHarness is identical to newTestHarness except
+// publishes to failTopic return publishErr; publishes to every other topic
+// succeed and are recorded.
+func newTopicFailingPublishHarness(t *testing.T, ctrl *gomock.Controller, publishErr error, failTopic string) *testHarness {
+	return newHarness(t, ctrl, publishErr, failTopic, 1000)
 }
 
 // newDependencyLimitHarness is identical to newTestHarness except the
 // dependency limit is set to limit instead of the default ungated value.
 func newDependencyLimitHarness(t *testing.T, ctrl *gomock.Controller, limit int) *testHarness {
-	return newHarness(t, ctrl, nil, limit)
+	return newHarness(t, ctrl, nil, "", limit)
 }
 
-func newHarness(t *testing.T, ctrl *gomock.Controller, publishErr error, depLimit int) *testHarness {
+func newHarness(t *testing.T, ctrl *gomock.Controller, publishErr error, failTopic string, depLimit int) *testHarness {
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	treeStore := storagemock.NewMockSpeculationTreeStore(ctrl)
 	buildStore := storagemock.NewMockBuildStore(ctrl)
@@ -138,7 +145,7 @@ func newHarness(t *testing.T, ctrl *gomock.Controller, publishErr error, depLimi
 	pub := queuemock.NewMockPublisher(ctrl)
 	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, topic string, msg entityqueue.Message) error {
-			if publishErr != nil {
+			if publishErr != nil && (failTopic == "" || topic == failTopic) {
 				return publishErr
 			}
 			records = append(records, pubRec{topic: topic, msgID: msg.ID})
@@ -150,7 +157,7 @@ func newHarness(t *testing.T, ctrl *gomock.Controller, publishErr error, depLimi
 
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
-		{Key: topickey.TopicKeyBuild, Name: "build", Queue: mockQ},
+		{Key: topickey.TopicKeyPrioritize, Name: "prioritize", Queue: mockQ},
 		{Key: topickey.TopicKeyMerge, Name: "submitqueue-merge", Queue: mockQ},
 		{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: mockQ},
 	})
@@ -322,8 +329,9 @@ func TestController_Process_TerminalMissingDependentRowErrors(t *testing.T) {
 
 // Created batch: no tree yet -> enumerate, stamp Candidate, mint path IDs,
 // Version 1, Create. Score echoes. Select promotes the lone path to Selected
-// -> tree changed -> Update(1,2,...). The forward step then runs
-// unchanged: batch CASes Created -> Speculating and publishes to build.
+// -> tree changed -> Update(1,2,...). The forward step then CASes Created ->
+// Speculating and publishes the queue to prioritize; tryFinalize does not run
+// on this first pass (it only runs once the batch has reached Speculating).
 func TestController_Process_CreatedEnumeratesScoresSelects(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	h := newTestHarness(t, ctrl)
@@ -353,7 +361,7 @@ func TestController_Process_CreatedEnumeratesScoresSelects(t *testing.T) {
 	h.batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateSpeculating).Return(nil)
 
 	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
-	assert.Equal(t, []pubRec{{topic: "build", msgID: batch.ID}}, *h.records)
+	assert.Equal(t, []pubRec{{topic: "prioritize", msgID: batch.Queue}}, *h.records)
 }
 
 // TestController_Process_CreateTreeMintsPathIDs pins down the exact minted
@@ -381,12 +389,12 @@ func TestController_Process_CreateTreeMintsPathIDs(t *testing.T) {
 	h.batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateSpeculating).Return(nil)
 
 	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
-	assert.Equal(t, []pubRec{{topic: "build", msgID: batch.ID}}, *h.records)
+	assert.Equal(t, []pubRec{{topic: "prioritize", msgID: batch.Queue}}, *h.records)
 }
 
 // Create racing with a concurrent creator: ErrAlreadyExists must fall back to
-// re-reading the winner's tree rather than erroring. The forward step
-// still runs afterward.
+// re-reading the winner's tree rather than erroring. The forward step still
+// runs afterward.
 func TestController_Process_CreateTreeAlreadyExistsRereads(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	h := newTestHarness(t, ctrl)
@@ -415,7 +423,7 @@ func TestController_Process_CreateTreeAlreadyExistsRereads(t *testing.T) {
 	h.batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateSpeculating).Return(nil)
 
 	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
-	assert.Equal(t, []pubRec{{topic: "build", msgID: batch.ID}}, *h.records)
+	assert.Equal(t, []pubRec{{topic: "prioritize", msgID: batch.Queue}}, *h.records)
 }
 
 // Dependency gate: too many active dependencies for a batch with no tree yet
@@ -440,9 +448,10 @@ func TestController_Process_DependencyGateBlocksTreeCreation(t *testing.T) {
 	assert.Empty(t, *h.records)
 }
 
-// A pass over an unchanged tree must not call Update. The forward
-// step still runs: here a still-pending dependency makes tryFinalize wait,
-// so no publish happens at all.
+// A pass over an unchanged tree must not call Update. The batch still
+// publishes the queue to prioritize every pass regardless of tree changes;
+// tryFinalize waits on the still-pending dependency, so no merge/conclude
+// publish happens.
 func TestController_Process_NoChangeSkipsTreeUpdate(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	h := newTestHarness(t, ctrl)
@@ -460,10 +469,10 @@ func TestController_Process_NoChangeSkipsTreeUpdate(t *testing.T) {
 	h.treeStore.EXPECT().Get(gomock.Any(), batch.ID).Return(tree, nil)
 	// Fake scorer echoes, fake selector decides nothing -> no change.
 	// No treeStore.Update expected. tryFinalize waits on the pending dep, so
-	// no UpdateState/publish either.
+	// no UpdateState/merge publish either.
 
 	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
-	assert.Empty(t, *h.records)
+	assert.Equal(t, []pubRec{{topic: "prioritize", msgID: batch.Queue}}, *h.records)
 }
 
 // A version mismatch on the speculation tree Update must surface as an error
@@ -494,7 +503,8 @@ func TestController_Process_TreeUpdateVersionMismatchErrors(t *testing.T) {
 
 // tryFinalize: Speculating with no deps should publish to merge and CAS to
 // Merging. The batch already has an (empty) speculation tree from its
-// Created/Scored pass.
+// Created/Scored pass. Every pass also publishes the queue to prioritize,
+// before tryFinalize's own merge publish.
 func TestController_Process_FinalizeNoDeps(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	h := newTestHarness(t, ctrl)
@@ -505,7 +515,10 @@ func TestController_Process_FinalizeNoDeps(t *testing.T) {
 	h.batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateMerging).Return(nil)
 
 	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
-	assert.Equal(t, []pubRec{{topic: "submitqueue-merge", msgID: batch.ID}}, *h.records)
+	assert.Equal(t, []pubRec{
+		{topic: "prioritize", msgID: batch.Queue},
+		{topic: "submitqueue-merge", msgID: batch.ID},
+	}, *h.records)
 }
 
 // tryFinalize: Speculating with all deps Succeeded should publish to merge
@@ -526,11 +539,15 @@ func TestController_Process_FinalizeAllDepsSucceeded(t *testing.T) {
 	h.batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateMerging).Return(nil)
 
 	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
-	assert.Equal(t, []pubRec{{topic: "submitqueue-merge", msgID: batch.ID}}, *h.records)
+	assert.Equal(t, []pubRec{
+		{topic: "prioritize", msgID: batch.Queue},
+		{topic: "submitqueue-merge", msgID: batch.ID},
+	}, *h.records)
 }
 
-// tryFinalize: Speculating with a dep still in flight is a no-op (no
-// publish, no state change).
+// tryFinalize: Speculating with a dep still in flight is a no-op (no merge
+// publish, no state change). The queue is still published to prioritize
+// every pass.
 func TestController_Process_WaitingOnDep(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	h := newTestHarness(t, ctrl)
@@ -545,7 +562,7 @@ func TestController_Process_WaitingOnDep(t *testing.T) {
 	// No UpdateState expected — gomock will fail if it is called.
 
 	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
-	assert.Empty(t, *h.records)
+	assert.Equal(t, []pubRec{{topic: "prioritize", msgID: batch.Queue}}, *h.records)
 }
 
 // tryFinalize: a failed dep must fail the batch (Speculating → Failed), wake
@@ -572,6 +589,7 @@ func TestController_Process_FailedDepFailsBatch(t *testing.T) {
 
 	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
 	assert.Equal(t, []pubRec{
+		{topic: "prioritize", msgID: batch.Queue},
 		{topic: "speculate", msgID: "test-queue/batch/2"},
 		{topic: "conclude", msgID: batch.ID},
 	}, *h.records)
@@ -579,10 +597,11 @@ func TestController_Process_FailedDepFailsBatch(t *testing.T) {
 
 // A dependent-wake publish failure after the terminal CAS nacks the message;
 // redelivery converges through the terminal branch, which re-runs the
-// fan-out and the conclude publish.
+// fan-out and the conclude publish. Only the speculate topic fails here —
+// the prioritize publish earlier in the pass succeeds and is recorded.
 func TestController_Process_FailedDepDependentPublishFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	h := newFailingPublishHarness(t, ctrl, fmt.Errorf("publish failed"))
+	h := newTopicFailingPublishHarness(t, ctrl, fmt.Errorf("publish failed"), "speculate")
 	dep := entity.Batch{ID: "test-queue/batch/0", Queue: "test-queue", State: entity.BatchStateFailed, Version: 1}
 	batch := testBatch(entity.BatchStateSpeculating, dep.ID)
 
@@ -599,7 +618,7 @@ func TestController_Process_FailedDepDependentPublishFailure(t *testing.T) {
 	}, nil)
 
 	require.Error(t, runProcess(t, ctrl, h.controller, batch.ID))
-	assert.Empty(t, *h.records)
+	assert.Equal(t, []pubRec{{topic: "prioritize", msgID: batch.Queue}}, *h.records)
 }
 
 // tryFinalize: a cancelled dep is treated as out-of-the-way — it will never
@@ -621,7 +640,10 @@ func TestController_Process_CancelledDepSkipped(t *testing.T) {
 	h.batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateMerging).Return(nil)
 
 	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
-	assert.Equal(t, []pubRec{{topic: "submitqueue-merge", msgID: batch.ID}}, *h.records)
+	assert.Equal(t, []pubRec{
+		{topic: "prioritize", msgID: batch.Queue},
+		{topic: "submitqueue-merge", msgID: batch.ID},
+	}, *h.records)
 }
 
 // Cancelling drives the terminal-cancellation flow: cancel any in-flight
@@ -746,7 +768,9 @@ func TestController_Process_CancellingTerminalCASVersionMismatch(t *testing.T) {
 	assert.Empty(t, *h.records)
 }
 
-// Publish failure must not advance the batch state.
+// Publish failure must not advance the batch state further: the CAS to
+// Speculating (which precedes the prioritize publish) still lands, but
+// tryFinalize must never run since the publish error aborts speculateBatch.
 func TestController_Process_PublishFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	h := newFailingPublishHarness(t, ctrl, fmt.Errorf("publish failed"))
@@ -754,7 +778,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 
 	h.batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
 	h.treeStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.SpeculationTree{BatchID: batch.ID, Version: 1, Paths: []entity.SpeculationPathInfo{}}, nil)
-	// No UpdateState expected — publish fails before we get there.
+	h.batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateSpeculating).Return(nil)
 
 	require.Error(t, runProcess(t, ctrl, h.controller, batch.ID))
 }
