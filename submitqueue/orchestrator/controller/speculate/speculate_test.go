@@ -28,6 +28,7 @@ import (
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	buildrunnermock "github.com/uber/submitqueue/submitqueue/extension/buildrunner/mock"
 	dependencylimitfake "github.com/uber/submitqueue/submitqueue/extension/speculation/dependencylimit/fake"
 	dependencylimitmock "github.com/uber/submitqueue/submitqueue/extension/speculation/dependencylimit/mock"
 	enumeratorfake "github.com/uber/submitqueue/submitqueue/extension/speculation/enumerator/fake"
@@ -66,11 +67,12 @@ func testBatch(state entity.BatchState, deps ...string) entity.Batch {
 	}
 }
 
-// testHarness wires a Controller against mocked storage plus programmable
-// fake seam implementations (enumerator, scorer, selector, dependency limit)
-// that tests script per case. Every publish is recorded so tests can assert
-// both content and order. There is no build-runner seam yet: nothing in this
-// package's speculate.go calls one — cancel decisions on the speculation tree
+// testHarness wires a Controller against mocked storage and build runner,
+// plus programmable fake seam implementations (enumerator, scorer, selector,
+// dependency limit) that tests script per case. Every publish is recorded so
+// tests can assert both content and order. The build runner is only ever
+// invoked from cancelBatch's cancelBuilds step (batch-level cancel) — nothing
+// else in this package talks to it: cancel decisions on the speculation tree
 // (both applySelection's and reconcile's) are captured as intent only.
 type testHarness struct {
 	controller     *Controller
@@ -83,6 +85,7 @@ type testHarness struct {
 	scorer         *scorerfake.Scorer
 	selector       *selectorfake.Selector
 	depLimit       *dependencylimitfake.DependencyLimit
+	br             *buildrunnermock.MockBuildRunner
 	records        *[]pubRec
 }
 
@@ -144,6 +147,10 @@ func newHarness(t *testing.T, ctrl *gomock.Controller, publishErr error, failTop
 	depLimitFactory := dependencylimitmock.NewMockFactory(ctrl)
 	depLimitFactory.EXPECT().For(gomock.Any()).Return(dl, nil).AnyTimes()
 
+	br := buildrunnermock.NewMockBuildRunner(ctrl)
+	brFactory := buildrunnermock.NewMockFactory(ctrl)
+	brFactory.EXPECT().For(gomock.Any()).Return(br, nil).AnyTimes()
+
 	var records []pubRec
 	pub := queuemock.NewMockPublisher(ctrl)
 	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
@@ -174,6 +181,7 @@ func newHarness(t *testing.T, ctrl *gomock.Controller, publishErr error, failTop
 		scorerFactory,
 		selectorFactory,
 		depLimitFactory,
+		brFactory,
 		registry,
 		topickey.TopicKeySpeculate,
 		"orchestrator-speculate",
@@ -190,6 +198,7 @@ func newHarness(t *testing.T, ctrl *gomock.Controller, publishErr error, failTop
 		scorer:         scr,
 		selector:       sel,
 		depLimit:       dl,
+		br:             br,
 		records:        &records,
 	}
 }
@@ -758,110 +767,163 @@ func TestController_Process_NonBaseDependencyLandingDeadsSiblingPath(t *testing.
 	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
 }
 
-// Cancelling drives the terminal-cancellation flow: cancel any in-flight
-// build, CAS the batch to Cancelled, fan out dependents, publish to
-// conclude. Validates the full happy-path order with a running build and
-// a couple of dependents. Order matters: dependents must publish AFTER the
-// terminal CAS so the woken dependents observe the dep as Cancelled (and
-// drop it from their chain) rather than as still-Cancelling (which would
-// leave them waiting on a state nobody is going to nudge).
-func TestController_Process_CancellingTerminalFlow(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	h := newTestHarness(t, ctrl)
-	batch := testBatch(entity.BatchStateCancelling)
+// Cancelling drives the terminal-cancellation flow: every non-terminal build
+// recorded for the batch is cancelled through the queue's build runner and
+// flipped locally, every non-terminal tree path is marked Cancelled under
+// its version lock, the batch CASes to terminal Cancelled, dependents are
+// fanned out, and conclude is published. Missing tree and a path with no
+// build row are tolerated; an already-terminal build is left untouched.
+// cancelBuilds and cancelTree each independently fetch the speculation tree
+// (the former to enumerate per-path build keys, the latter to mark paths
+// Cancelled), so every case sets up two treeStore.Get expectations. Order
+// matters: dependents must publish AFTER the terminal CAS so the woken
+// dependents observe the dep as Cancelled (and drop it from their chain)
+// rather than as still-Cancelling (which would leave them waiting on a state
+// nobody is going to nudge).
+func TestController_Process_CancellingFlow(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, h *testHarness, batch entity.Batch)
+	}{
+		{
+			name: "two_non_terminal_builds_and_tree_cancelled",
+			setup: func(t *testing.T, h *testHarness, batch entity.Batch) {
+				pathA := entity.SpeculationPath{Head: batch.ID}
+				pathB := entity.SpeculationPath{Base: []string{"test-queue/batch/dep"}, Head: batch.ID}
+				pathAID := "test-queue/batch/1/path/0"
+				pathBID := "test-queue/batch/1/path/1"
+				tree := entity.SpeculationTree{
+					BatchID: batch.ID,
+					Version: 3,
+					Paths: []entity.SpeculationPathInfo{
+						{ID: pathAID, Path: pathA, Status: entity.SpeculationPathStatusBuilding, BuildID: "runner-1"},
+						{ID: pathBID, Path: pathB, Status: entity.SpeculationPathStatusBuilding, BuildID: "runner-2"},
+					},
+				}
+				h.treeStore.EXPECT().Get(gomock.Any(), batch.ID).Return(tree, nil).Times(2)
+				h.pathBuildStore.EXPECT().Get(gomock.Any(), pathAID).Return(entity.SpeculationPathBuild{PathID: pathAID, BuildID: "runner-1"}, nil)
+				h.buildStore.EXPECT().Get(gomock.Any(), "runner-1").Return(entity.Build{
+					ID: "runner-1", BatchID: batch.ID, SpeculationPathID: pathAID, Status: entity.BuildStatusRunning,
+				}, nil)
+				h.pathBuildStore.EXPECT().Get(gomock.Any(), pathBID).Return(entity.SpeculationPathBuild{PathID: pathBID, BuildID: "runner-2"}, nil)
+				h.buildStore.EXPECT().Get(gomock.Any(), "runner-2").Return(entity.Build{
+					ID: "runner-2", BatchID: batch.ID, SpeculationPathID: pathBID, Status: entity.BuildStatusAccepted,
+				}, nil)
+				h.br.EXPECT().Cancel(gomock.Any(), entity.BuildID{ID: "runner-1"}).Return(nil)
+				h.br.EXPECT().Cancel(gomock.Any(), entity.BuildID{ID: "runner-2"}).Return(nil)
+				h.buildStore.EXPECT().UpdateStatus(gomock.Any(), "runner-1", entity.BuildStatusCancelled).Return(nil)
+				h.buildStore.EXPECT().UpdateStatus(gomock.Any(), "runner-2", entity.BuildStatusCancelled).Return(nil)
+				h.treeStore.EXPECT().Update(gomock.Any(), batch.ID, int32(3), int32(4), gomock.Any()).
+					DoAndReturn(func(_ context.Context, _ string, _, _ int32, paths []entity.SpeculationPathInfo) error {
+						require.Len(t, paths, 2)
+						for _, p := range paths {
+							assert.Equal(t, entity.SpeculationPathStatusCancelled, p.Status)
+						}
+						return nil
+					})
+			},
+		},
+		{
+			name: "already_terminal_build_left_untouched",
+			setup: func(t *testing.T, h *testHarness, batch entity.Batch) {
+				path := entity.SpeculationPath{Head: batch.ID}
+				pathID := "test-queue/batch/1/path/0"
+				tree := entity.SpeculationTree{
+					BatchID: batch.ID,
+					Version: 1,
+					Paths:   []entity.SpeculationPathInfo{{ID: pathID, Path: path, Status: entity.SpeculationPathStatusPassed, BuildID: "runner-1"}},
+				}
+				h.treeStore.EXPECT().Get(gomock.Any(), batch.ID).Return(tree, nil).Times(2)
+				h.pathBuildStore.EXPECT().Get(gomock.Any(), pathID).Return(entity.SpeculationPathBuild{PathID: pathID, BuildID: "runner-1"}, nil)
+				h.buildStore.EXPECT().Get(gomock.Any(), "runner-1").Return(entity.Build{
+					ID: "runner-1", BatchID: batch.ID, SpeculationPathID: pathID, Status: entity.BuildStatusSucceeded,
+				}, nil)
+				// No Cancel, no UpdateStatus expected — the build is already terminal.
+				// Passed is also a terminal path status, so no tree Update expected either.
+			},
+		},
+		{
+			name: "missing_tree_tolerated",
+			setup: func(t *testing.T, h *testHarness, batch entity.Batch) {
+				h.treeStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.SpeculationTree{}, storage.ErrNotFound).Times(2)
+				// No PathBuildStore/BuildStore calls: cancelBuilds returns
+				// immediately when the tree itself is missing — there is
+				// nothing to enumerate.
+			},
+		},
+		{
+			name: "path_with_no_mapping_tolerated",
+			setup: func(t *testing.T, h *testHarness, batch entity.Batch) {
+				path := entity.SpeculationPath{Head: batch.ID}
+				pathID := "test-queue/batch/1/path/0"
+				tree := entity.SpeculationTree{
+					BatchID: batch.ID,
+					Version: 1,
+					Paths:   []entity.SpeculationPathInfo{{ID: pathID, Path: path, Status: entity.SpeculationPathStatusPassed}},
+				}
+				h.treeStore.EXPECT().Get(gomock.Any(), batch.ID).Return(tree, nil).Times(2)
+				h.pathBuildStore.EXPECT().Get(gomock.Any(), pathID).Return(entity.SpeculationPathBuild{}, storage.ErrNotFound)
+				// No mapping yet: no BuildStore.Get expected either. Passed is
+				// terminal, so no tree Update expected.
+			},
+		},
+		{
+			name: "mapping_dangling_invariant_breach_tolerated",
+			setup: func(t *testing.T, h *testHarness, batch entity.Batch) {
+				path := entity.SpeculationPath{Head: batch.ID}
+				pathID := "test-queue/batch/1/path/0"
+				tree := entity.SpeculationTree{
+					BatchID: batch.ID,
+					Version: 1,
+					Paths:   []entity.SpeculationPathInfo{{ID: pathID, Path: path, Status: entity.SpeculationPathStatusBuilding, BuildID: "runner-1"}},
+				}
+				h.treeStore.EXPECT().Get(gomock.Any(), batch.ID).Return(tree, nil).Times(2)
+				// Mapping exists but its target build row is missing: this is
+				// the invariant-breach case. It must not crash or error — just
+				// skip cancelling the (nonexistent) build. cancelTree still
+				// marks the non-terminal path Cancelled independently.
+				h.pathBuildStore.EXPECT().Get(gomock.Any(), pathID).Return(entity.SpeculationPathBuild{PathID: pathID, BuildID: "runner-1"}, nil)
+				h.buildStore.EXPECT().Get(gomock.Any(), "runner-1").Return(entity.Build{}, storage.ErrNotFound)
+				h.treeStore.EXPECT().Update(gomock.Any(), batch.ID, int32(1), int32(2), gomock.Any()).
+					DoAndReturn(func(_ context.Context, _ string, _, _ int32, paths []entity.SpeculationPathInfo) error {
+						require.Len(t, paths, 1)
+						assert.Equal(t, entity.SpeculationPathStatusCancelled, paths[0].Status)
+						return nil
+					})
+			},
+		},
+	}
 
-	h.batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	h.batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			h := newTestHarness(t, ctrl)
+			batch := testBatch(entity.BatchStateCancelling)
 
-	h.buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{
-		ID: batch.ID, BatchID: batch.ID, Status: entity.BuildStatusRunning,
-	}, nil)
-	h.buildStore.EXPECT().UpdateStatus(gomock.Any(), batch.ID, entity.BuildStatusCancelled).Return(nil)
+			h.batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+			h.batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
+			h.depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{
+				BatchID:    batch.ID,
+				Dependents: []string{"test-queue/batch/2", "test-queue/batch/3"},
+				Version:    1,
+			}, nil)
 
-	h.depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{
-		BatchID:    batch.ID,
-		Dependents: []string{"test-queue/batch/2", "test-queue/batch/3"},
-		Version:    1,
-	}, nil)
+			tt.setup(t, h, batch)
 
-	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
+			require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
 
-	assert.Equal(t, []pubRec{
-		{topic: "speculate", msgID: "test-queue/batch/2"},
-		{topic: "speculate", msgID: "test-queue/batch/3"},
-		{topic: "conclude", msgID: batch.ID},
-	}, *h.records)
+			assert.Equal(t, []pubRec{
+				{topic: "speculate", msgID: "test-queue/batch/2"},
+				{topic: "speculate", msgID: "test-queue/batch/3"},
+				{topic: "conclude", msgID: batch.ID},
+			}, *h.records)
+		})
+	}
 }
 
-// If the build for the batch has already reached a terminal status (e.g. CI
-// finished naturally between the cancel intent and the speculate pickup), the
-// cancellation must not re-flip it — UpdateStatus must never fire. The rest
-// of the flow (terminal batch CAS, dependent fan-out, conclude) still runs.
-func TestController_Process_CancellingBuildAlreadyTerminal(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	h := newTestHarness(t, ctrl)
-	batch := testBatch(entity.BatchStateCancelling)
-
-	h.batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	h.batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
-
-	h.buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{
-		ID: batch.ID, BatchID: batch.ID, Status: entity.BuildStatusSucceeded,
-	}, nil)
-	// No UpdateStatus expected — the build is already terminal.
-
-	h.depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{
-		BatchID: batch.ID, Version: 1,
-	}, nil)
-
-	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
-}
-
-// If no Build entity exists for the batch (e.g. cancel arrived before
-// speculation started building), the BuildStore.Get NotFound must be
-// tolerated and the rest of the cancellation flow must continue.
-func TestController_Process_CancellingNoBuildYet(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	h := newTestHarness(t, ctrl)
-	batch := testBatch(entity.BatchStateCancelling)
-
-	h.batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	h.batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
-
-	h.buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
-	// No UpdateStatus expected.
-
-	h.depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{
-		BatchID: batch.ID, Version: 1,
-	}, nil)
-
-	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
-}
-
-// A batch whose BatchDependent row exists with an empty Dependents list must
-// still drive itself to terminal and publish to conclude. This is the normal
-// "no dependents" path: the batch controller creates the row with an empty
-// list at batch creation time and it stays empty if no later batch conflicts.
-func TestController_Process_CancellingNoDependents(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	h := newTestHarness(t, ctrl)
-	batch := testBatch(entity.BatchStateCancelling)
-
-	h.batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	h.batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
-
-	h.buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
-	h.depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{BatchID: batch.ID, Dependents: []string{}, Version: 1}, nil)
-
-	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
-	assert.Equal(t, []pubRec{{topic: "conclude", msgID: batch.ID}}, *h.records)
-}
-
-// storage.ErrVersionMismatch on the terminal CAS must surface as an error
-// with the underlying sentinel in the chain so the base controller can
-// classify it as retryable. The dependent fan-out and conclude publish must
-// NOT run if the terminal CAS failed — on redelivery the self-heal branch
-// will pick up the (now-terminal) state and complete the fan-out.
+// storage.ErrVersionMismatch on the terminal cancel CAS must surface as an
+// error with the underlying sentinel in the chain, and must not run the
+// dependent fan-out or conclude publish.
 func TestController_Process_CancellingTerminalCASVersionMismatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	h := newTestHarness(t, ctrl)
@@ -870,9 +932,10 @@ func TestController_Process_CancellingTerminalCASVersionMismatch(t *testing.T) {
 	h.batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
 	h.batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).
 		Return(storage.ErrVersionMismatch)
-
-	h.buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
-	// BatchDependentStore must NOT be touched — terminal CAS failed before fan-out.
+	h.treeStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.SpeculationTree{}, storage.ErrNotFound).Times(2)
+	// No BuildStore calls: cancelBuilds returns immediately when the tree
+	// itself is missing. BatchDependentStore must NOT be touched — terminal
+	// CAS failed before fan-out.
 
 	err := runProcess(t, ctrl, h.controller, batch.ID)
 	require.Error(t, err)
