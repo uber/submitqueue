@@ -29,6 +29,7 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	"github.com/uber/submitqueue/stovepipe/extension/queueconfig"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
@@ -39,6 +40,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	store         storage.Storage
+	queueConfigs  queueconfig.Store
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -51,6 +53,7 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	store storage.Storage,
+	queueConfigs queueconfig.Store,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
@@ -58,6 +61,7 @@ func NewController(
 		logger:        logger.Named("process_controller"),
 		metricsScope:  scope.SubScope("process_controller"),
 		store:         store,
+		queueConfigs:  queueConfigs,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
@@ -101,8 +105,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 }
 
-// processAccepted coalesces older heads against queue.latest_request_id. The latest
-// head is left in accepted until admit and the concurrency gate land in later PRs.
+// processAccepted coalesces older heads against queue.latest_request_id, then resolves
+// per-queue config for the concurrency gate. Admit lands in a follow-up PR.
 func (c *Controller) processAccepted(ctx context.Context, request entity.Request) error {
 	queueRow, err := c.loadQueue(ctx, request.Queue)
 	if err != nil {
@@ -130,6 +134,20 @@ func (c *Controller) processAccepted(ctx context.Context, request entity.Request
 			"request_id", request.ID,
 			"queue", request.Queue,
 			"latest_request_id", queueRow.LatestRequestID,
+		)
+		return nil
+	}
+
+	cfg, err := c.queueConfigs.Get(ctx, request.Queue)
+	if err != nil {
+		return fmt.Errorf("ProcessController failed to load queue config for %s: %w", request.Queue, err)
+	}
+
+	if queueRow.InFlightCount >= cfg.MaxConcurrent {
+		c.logger.Infow("latest head awaiting build slot",
+			"request_id", request.ID,
+			"queue", request.Queue,
+			"in_flight_count", queueRow.InFlightCount,
 		)
 		return nil
 	}

@@ -28,6 +28,7 @@ import (
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -57,7 +58,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, processM
 	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
 	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 
-	c := NewController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), store, stovepipemq.TopicKeyProcess, "stovepipe-process")
+	c := NewController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), store, queueconfigdefault.NewStore(), stovepipemq.TopicKeyProcess, "stovepipe-process")
 	return c, m
 }
 
@@ -128,6 +129,18 @@ func TestProcess(t *testing.T) {
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
 					Name:    testQueue,
 					Version: 1,
+				}, nil)
+			},
+		},
+		{
+			name: "latest accepted head awaits slot when gate closed",
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name:            testQueue,
+					LatestRequestID: testID,
+					InFlightCount:   1,
+					Version:         1,
 				}, nil)
 			},
 		},

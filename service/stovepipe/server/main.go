@@ -38,6 +38,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/controller"
 	"github.com/uber/submitqueue/stovepipe/controller/process"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	sourcecontrolfake "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/fake"
 	storageMySQL "github.com/uber/submitqueue/stovepipe/extension/storage/mysql"
@@ -209,7 +210,7 @@ func run() error {
 		),
 	)
 
-	processController := process.NewController(logger.Sugar(), scope, store, stovepipemq.TopicKeyProcess, "stovepipe-process")
+	processController := process.NewController(logger.Sugar(), scope, store, queueconfigdefault.NewStore(), stovepipemq.TopicKeyProcess, "stovepipe-process")
 	if err := primaryConsumer.Register(processController); err != nil {
 		return fmt.Errorf("failed to register process controller: %w", err)
 	}
