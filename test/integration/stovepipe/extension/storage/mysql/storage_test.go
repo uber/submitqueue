@@ -23,10 +23,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
-
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/stovepipe/extension/storage/mysql"
+	storagesuite "github.com/uber/submitqueue/test/integration/stovepipe/extension/storage"
 	"github.com/uber/submitqueue/test/testutil"
 )
 
@@ -185,4 +185,52 @@ func (s *MySQLRequestStoreSuite) TestURIMappingDistinctAcrossQueues() {
 	idB, err := s.uriStore.GetIDByURI(s.ctx, "queue-b", uri)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "request/queue-b/1", idB)
+}
+
+// MySQLQueueStoreSuite exercises the MySQL-backed QueueStore by embedding the shared contract suite.
+type MySQLQueueStoreSuite struct {
+	storagesuite.QueueStoreContractSuite
+	stack *testutil.ComposeStack
+	db    *sql.DB
+	log   *testutil.TestLogger
+}
+
+func TestMySQLQueueStore(t *testing.T) {
+	suite.Run(t, new(MySQLQueueStoreSuite))
+}
+
+func (s *MySQLQueueStoreSuite) SetupSuite() {
+	t := s.T()
+	ctx := context.Background()
+	s.log = testutil.NewTestLogger(t)
+
+	s.stack = testutil.NewComposeStack(
+		t,
+		s.log,
+		ctx,
+		"docker-compose.yml",
+		"ext-stovepipe-storage-mysql",
+	)
+
+	err := s.stack.Up()
+	require.NoError(t, err, "failed to start compose stack")
+
+	s.db, err = s.stack.ConnectMySQLService("mysql")
+	require.NoError(t, err, "failed to connect to MySQL")
+
+	schemaDir := testutil.SchemaDir("stovepipe/extension/storage/mysql/schema")
+	testutil.ApplySchema(t, s.log, s.db, schemaDir)
+
+	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
+	require.NoError(t, err, "failed to create storage")
+
+	s.SetContext(ctx)
+	s.SetQueueStore(store.GetQueueStore())
+	s.SetLogger(s.log)
+
+	t.Cleanup(func() {
+		if s.db != nil {
+			s.db.Close()
+		}
+	})
 }

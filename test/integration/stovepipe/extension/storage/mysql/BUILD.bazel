@@ -15,6 +15,7 @@ go_test(
         "//stovepipe/entity:go_default_library",
         "//stovepipe/extension/storage:go_default_library",
         "//stovepipe/extension/storage/mysql:go_default_library",
+        "//test/integration/stovepipe/extension/storage:go_default_library",
         "//test/testutil:go_default_library",
         "@com_github_go_sql_driver_mysql//:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
