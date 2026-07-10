@@ -25,7 +25,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
-	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	mqmock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
@@ -65,7 +65,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, processM
 
 func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) consumer.Delivery {
 	t.Helper()
-	d := queuemock.NewMockDelivery(ctrl)
+	d := mqmock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(entityqueue.NewMessage(testID, payload, testQueue, nil)).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
 	return d
@@ -88,6 +88,21 @@ func acceptedRequest(id string) entity.Request {
 	}
 }
 
+func expectAdmit(m processMocks, id string) {
+	updatedQueue := entity.Queue{
+		Name:            testQueue,
+		LatestRequestID: id,
+		InFlightCount:   1,
+		Version:         1,
+	}
+	m.queueStore.EXPECT().Update(gomock.Any(), updatedQueue, int32(1), int32(2)).Return(nil)
+
+	updatedReq := acceptedRequest(id)
+	updatedReq.State = entity.RequestStateProcessing
+	updatedReq.BuildStrategy = entity.BuildStrategyFull
+	m.reqStore.EXPECT().Update(gomock.Any(), updatedReq, int32(1), int32(2)).Return(nil)
+}
+
 func TestProcess(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -106,7 +121,7 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "processing is no-op until republish lands",
+			name: "processing is no-op until build publish lands",
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
 					ID: testID, Queue: testQueue, State: entity.RequestStateProcessing, Version: 2,
@@ -122,7 +137,7 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "latest accepted head awaits admit",
+			name: "latest accepted head is admitted",
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
@@ -130,10 +145,11 @@ func TestProcess(t *testing.T) {
 					LatestRequestID: testID,
 					Version:         1,
 				}, nil)
+				expectAdmit(m, testID)
 			},
 		},
 		{
-			name: "accepted with empty latest pointer awaits admit",
+			name: "accepted with empty latest pointer awaits ingest stamp",
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
