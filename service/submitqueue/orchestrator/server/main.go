@@ -63,6 +63,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/scorer/heuristic"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
+	validatorfake "github.com/uber/submitqueue/submitqueue/extension/validator/fake"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/batch"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/build"
@@ -571,6 +572,7 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 		store,
 		registry,
 		cpf,
+		validatorfake.NewFactory(),
 		runwaymq.TopicKeyMergeConflictCheck,
 		topickey.TopicKeyValidate,
 		"orchestrator-validate",

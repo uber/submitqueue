@@ -1,0 +1,9 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["validator.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/extension/validator",
+    visibility = ["//visibility:public"],
+    deps = ["//submitqueue/entity:go_default_library"],
+)
