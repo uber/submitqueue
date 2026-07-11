@@ -98,10 +98,17 @@ const (
 
 // SpeculationPathInfo is the per-path entry in a speculation tree: a path, its
 // latest predicted-success score, its controller-owned status, and a link to
-// the build dispatched for it (if any). Path is immutable once the entry is
-// persisted; Score, Status, and BuildID are updateable, written only by the
-// controller under the tree's Version optimistic lock.
+// the build dispatched for it (if any). ID and Path are immutable once the
+// entry is persisted; Score, Status, and BuildID are updateable, written only
+// by the controller under the tree's Version optimistic lock.
 type SpeculationPathInfo struct {
+	// ID identifies this path within its tree. It is assigned by the controller
+	// when the path entry is first persisted, immutable thereafter, and unique
+	// within the tree; its format is the controller's choice and carries no
+	// meaning — never parse it. Everything outside the tree names a path by this
+	// ID: seam outputs (path scores, path decisions) and durable links from
+	// other entities all refer to it rather than restating the Base/Head split.
+	ID string
 	// Path is the Base/Head split this entry covers. Immutable: it identifies
 	// the entry and never changes after the path is first persisted.
 	Path SpeculationPath
