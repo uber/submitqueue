@@ -29,7 +29,7 @@ import (
 // deliberately dumb and purely structural: it mechanically lists candidate
 // Base/Head paths from the dependency batches it is handed and nothing else. It
 // does not score paths — that is the scorer's job (see
-// extension/speculation/scorer), which the controller re-runs on every
+// extension/speculation/pathscorer), which the controller re-runs on every
 // respeculate — it does not decide which paths to build — that is the selector's
 // job (see extension/speculation/selector) — and it does not decide how far
 // back to speculate: the controller gates on the dependency limit and hands

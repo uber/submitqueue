@@ -130,6 +130,19 @@ type SpeculationPathInfo struct {
 	BuildID string
 }
 
+// PathScore is the path scorer's verdict for a single path: the
+// path's identity and its freshly computed predicted-success score. It is the
+// scorer seam's only output — the controller merges scores into the tree by
+// path ID and persists them; tree structure and status never pass through the
+// scorer. Like SpeculationPathDecision, it is ephemeral and never persisted.
+type PathScore struct {
+	// PathID identifies the scored path (SpeculationPathInfo.ID) within the
+	// tree the scorer was handed.
+	PathID string
+	// Score is the path's predicted-success probability, in [0, 1].
+	Score float32
+}
+
 // SpeculationPathDecision is a seam's decision for a single path: the action the
 // controller should take for it. It is the output of both the selector (per
 // batch) and the prioritizer (queue-wide), and is not persisted. A seam returns
