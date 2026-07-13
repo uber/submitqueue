@@ -6,6 +6,7 @@ go_library(
         "cancel.go",
         "land.go",
         "ping.go",
+        "read_errors.go",
         "status.go",
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/gateway/controller",
@@ -34,6 +35,7 @@ go_test(
         "land_test.go",
         "ping_test.go",
         "status_test.go",
+        "storage_fixture_test.go",
     ],
     embed = [":go_default_library"],
     deps = [
