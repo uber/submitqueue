@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
@@ -153,7 +154,7 @@ func (c *Controller) processAccepted(ctx context.Context, request entity.Request
 		return fmt.Errorf("ProcessController failed to load queue config for %s: %w", request.Queue, err)
 	}
 
-	return c.admitLatestHead(ctx, request, queueRow, cfg.MaxConcurrent)
+	return c.admitLatestHead(ctx, request, queueRow, cfg)
 }
 
 // coalesce supersedes request when a newer head exists (RFC process step 5), returning
@@ -183,23 +184,16 @@ func (c *Controller) coalesce(ctx context.Context, request entity.Request, lates
 // admitLatestHead runs the gate-then-admit workflow for the latest head: claim a build
 // slot, mark the request processing, and publish it to build. Every queue-row reload
 // re-runs coalesce-then-gate, so a slot is never spent on a now-stale head; a closed gate
-// defers (acks) rather than failing.
-func (c *Controller) admitLatestHead(ctx context.Context, request entity.Request, queueRow entity.Queue, maxConcurrent int32) error {
+// defers by rescheduling the request (ack after re-enqueue) rather than failing.
+func (c *Controller) admitLatestHead(ctx context.Context, request entity.Request, queueRow entity.Queue, cfg entity.QueueConfig) error {
 	var sc sourcecontrol.SourceControl
 	var strategy entity.BuildStrategy
 	var baseURI string
 	var err error
 
 	for {
-		if queueRow.InFlightCount >= maxConcurrent {
-			// TODO: re-enqueue the request via PublishAfter on the process topic with GateWaitDelayMs.
-			c.logger.Infow("latest head awaiting build slot",
-				"request_id", request.ID,
-				"queue", request.Queue,
-				"uri", request.URI,
-				"in_flight_count", queueRow.InFlightCount,
-			)
-			return nil
+		if queueRow.InFlightCount >= cfg.MaxConcurrent {
+			return c.rescheduleProcess(ctx, request, queueRow.InFlightCount, cfg.GateWaitDelayMs)
 		}
 
 		if queueRow.LastGreenURI != "" && sc == nil {
@@ -416,6 +410,47 @@ func (c *Controller) supersedeRequest(ctx context.Context, request entity.Reques
 		}
 		return nil
 	}
+}
+
+// rescheduleProcess re-enqueues the same ProcessRequest after a delay so the gate can be
+// re-checked without burning MaxAttempts. delayMs must be positive.
+func (c *Controller) rescheduleProcess(ctx context.Context, request entity.Request, inFlightCount int32, delayMs int64) error {
+	if delayMs <= 0 {
+		metrics.NamedCounter(c.metricsScope, _opName, "config_errors", 1)
+		return fmt.Errorf("ProcessController requires a positive gate wait delay for queue %s, got %dms", request.Queue, delayMs)
+	}
+
+	payload, err := stovepipemq.Marshal(&stovepipemq.ProcessRequest{Id: request.ID})
+	if err != nil {
+		return fmt.Errorf("ProcessController failed to serialize process request %s: %w", request.ID, err)
+	}
+
+	// Suffix the message id with the publish time so the reschedule can't collide with
+	// the in-flight delivery's still-present message-store row.
+	msgID := fmt.Sprintf("%s/reschedule/%d", request.ID, time.Now().UnixMilli())
+	msg := entityqueue.NewMessage(msgID, payload, request.Queue, nil)
+
+	q, ok := c.registry.Queue(c.topicKey)
+	if !ok {
+		return fmt.Errorf("no queue registered for topic key %s", c.topicKey)
+	}
+	topicName, ok := c.registry.TopicName(c.topicKey)
+	if !ok {
+		return fmt.Errorf("no topic name registered for topic key %s", c.topicKey)
+	}
+
+	if err := q.Publisher().PublishAfter(ctx, topicName, msg, delayMs); err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "publish_errors", 1)
+		return fmt.Errorf("ProcessController failed to reschedule process request %s: %w", request.ID, err)
+	}
+	c.logger.Infow("rescheduled latest head awaiting build slot",
+		"request_id", request.ID,
+		"queue", request.Queue,
+		"uri", request.URI,
+		"in_flight_count", inFlightCount,
+		"delay_ms", delayMs,
+	)
+	return nil
 }
 
 // loadRequest returns the request for id. A not-yet-visible row is retryable.

@@ -44,6 +44,14 @@ const (
 	testURI     = "git://repo/monorepo/main/abc123"
 )
 
+// rescheduledMsg matches a gate-wait re-publish: same partition, but a fresh message id —
+// re-publishing under the in-flight delivery's id would be silently deduped against its
+// still-present message-store row and lost on ack.
+func rescheduledMsg(msg entityqueue.Message) bool {
+	// Fresh non-empty id, same queue.
+	return msg.ID != testID && msg.ID != "" && msg.PartitionKey == testQueue
+}
+
 type processMocks struct {
 	reqStore      *storagemock.MockRequestStore
 	queueStore    *storagemock.MockQueueStore
@@ -74,6 +82,7 @@ func newControllerWithScope(t *testing.T, ctrl *gomock.Controller, scope tally.S
 	queue := mqmock.NewMockQueue(ctrl)
 	queue.EXPECT().Publisher().Return(m.publisher).AnyTimes()
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: stovepipemq.TopicKeyProcess, Name: "process", Queue: queue},
 		{Key: stovepipemq.TopicKeyBuild, Name: "build", Queue: queue},
 	})
 	require.NoError(t, err)
@@ -499,7 +508,7 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "latest accepted head awaits slot when gate closed",
+			name: "latest accepted head reschedules when gate closed",
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
@@ -509,6 +518,52 @@ func TestProcess(t *testing.T) {
 					LastGreenURI:    "git://repo/monorepo/main/green",
 					Version:         1,
 				}, nil)
+				m.publisher.EXPECT().
+					PublishAfter(gomock.Any(), "process", gomock.Cond(rescheduledMsg), int64(5000)).
+					Return(nil)
+			},
+		},
+		{
+			name:      "gate reschedule publish error surfaces",
+			wantErr:   true,
+			wantRetry: false,
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name:            testQueue,
+					LatestRequestID: testID,
+					InFlightCount:   1,
+					Version:         1,
+				}, nil)
+				m.publisher.EXPECT().
+					PublishAfter(gomock.Any(), "process", gomock.Cond(rescheduledMsg), int64(5000)).
+					Return(errors.New("queue down"))
+			},
+		},
+		{
+			name: "gate closed after slot claim race reschedules",
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name:            testQueue,
+					LatestRequestID: testID,
+					Version:         1,
+				}, nil)
+				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
+					Name:            testQueue,
+					LatestRequestID: testID,
+					InFlightCount:   1,
+					Version:         1,
+				}, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name:            testQueue,
+					LatestRequestID: testID,
+					InFlightCount:   1,
+					Version:         2,
+				}, nil)
+				m.publisher.EXPECT().
+					PublishAfter(gomock.Any(), "process", gomock.Cond(rescheduledMsg), int64(5000)).
+					Return(nil)
 			},
 		},
 		{
@@ -535,22 +590,6 @@ func TestProcess(t *testing.T) {
 				updatedReq.BuildStrategy = entity.BuildStrategyFull
 				m.reqStore.EXPECT().Update(gomock.Any(), updatedReq, int32(1), int32(2)).Return(nil)
 				expectBuildPublish(t, m, testID)
-			},
-		},
-		{
-			name: "gate closed after reload acks without failing",
-			setup: func(m processMocks) {
-				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
-				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
-					Name: testQueue, LatestRequestID: testID, Version: 1,
-				}, nil)
-				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
-					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, Version: 1,
-				}, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
-				// Reload: another admit took the last slot — gate now closed, defer (ack).
-				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
-					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, Version: 2,
-				}, nil)
 			},
 		},
 		{
@@ -764,4 +803,14 @@ func TestProcess(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestRescheduleProcessRequiresPositiveDelay(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, _ := newController(t, ctrl)
+
+	err := c.rescheduleProcess(context.Background(), acceptedRequest(testID), 1, 0)
+
+	require.Error(t, err)
+	assert.False(t, errs.IsRetryable(err))
 }
