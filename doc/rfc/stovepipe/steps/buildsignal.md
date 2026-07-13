@@ -74,7 +74,7 @@ For a delivery carrying build id `B`:
 
 `Status` is not a point of divergence from SubmitQueue: both domains' `BuildRunner`s share the same `Status(ctx, buildID) (BuildStatus, BuildMetadata, error)` signature via `platform/extension/buildrunner.StatusCanceller` (see [build.md](doc/rfc/stovepipe/steps/build.md#stovepipe-buildrunner-contract-design-sketch)). `BuildMetadata` is caller-supplied and provider-echoed — the runner must not depend on it, but nothing stops a consumer from reading it. `buildsignal`'s own poll loop (steps 6-8) doesn't need to interpret it to decide when to stop polling, same as SubmitQueue's, but that's a statement about what the poll loop happens to need, not a rule that the value is unused: `build-runner.md` describes its purpose as round-tripping to users ([#buildmetadata](doc/rfc/submitqueue/build-runner.md#buildmetadata)), and a future check in either domain's buildsignal is free to read it — e.g. to short-circuit some behavior — without changing the contract.
 
-Returning `TargetGraph` from `Status` in place of `BuildMetadata`, with `buildsignal` persisting it for `analyze` to read later, was considered and set aside — see [build.md](doc/rfc/stovepipe/steps/build.md#target-graph-not-part-of-status-resolved-separately) for where the target graph lives instead and why `buildsignal` isn't the right place to carry it.
+Returning `TargetGraph` from `Status` in place of `BuildMetadata`, with `buildsignal` persisting it for `analyze` to read later, was considered and set aside — how `analyze` obtains the target graph is left to its own design, not `buildsignal`'s poll loop.
 
 ## Polling primitive: `PublishAfter`, not `Nack`
 
@@ -98,18 +98,17 @@ Package-level `var`s (not `const`s) so tests can shorten them; the server always
 
 ## Error classification
 
-Per `platform/errs`' non-retryable-by-default rule (see [platform/errs/README.md](platform/errs/README.md)); the controller returns raw errors and lets the classifier decide, opting into retryability only where it knows more than the error value carries:
+Per `platform/errs`'s non-retryable-by-default rule (see [platform/errs/README.md](platform/errs/README.md)), a plain returned error is already non-retryable and rejects straight to DLQ, where the fail-closed path forces a conservative not-green so a Request never wedges its Queue's slot ([workflow.md](doc/rfc/stovepipe/workflow.md#fail-closed-on-unprocessable-work)). So this section documents only the departures from that default, not every failure the algorithm can hit:
 
 | Failure | Disposition | Why |
 |---|---|---|
 | `Build` not found | retryable (`errs.NewRetryableError`) | `build`'s `Create` not visible yet; redelivery converges. |
 | `Request` not found | retryable (`errs.NewRetryableError`) | The Build's existence proves the Request write is older, so a miss is a stale read; a genuine orphan still dead-letters at `MaxAttempts`. |
-| Factory lookup | non-retryable | Config error, same as `build`. |
-| `Status` call | raw error; classifier decides | Runner timeout/connection is transient; "runner not deployed for this queue" is not. |
+| `Status` call | raw error; classifier decides | Deliberately left open rather than fixed either way — runner timeout/connection is transient, "runner not deployed for this queue" is not, and only a backend classifier can tell them apart. |
 | `Update` CAS conflict (`ErrVersionMismatch`) | retryable | A concurrent (redelivered) writer moved the row; reload and re-check converges. |
-| `Update` other store error | non-retryable | Storage down; DLQ reconciliation recovers. |
-| Publish to `record` | non-retryable | Status persisted; operational republish recovers. |
 | `PublishAfter` re-poll | retryable | The poll heartbeat; it runs only after status/persist/record all succeeded, so a transient enqueue blip is worth replaying to `MaxAttempts` before dead-lettering. |
+
+Everything else — factory lookup, an `Update` store error other than a CAS conflict, and the publish to `record` — is returned raw with no override, because the default is already correct: a queue with no registered runner is a config error, and storage/queue failures dead-letter and let DLQ reconciliation recover.
 
 ## Idempotency
 
