@@ -309,7 +309,10 @@ func TestLand_PropagatesQueueConfigStoreError(t *testing.T) {
 func TestLand_PublishesToQueue(t *testing.T) {
 	var publishedTopic string
 	var publishedMessage entityqueue.Message
-	var persistedSummary entity.RequestSummary
+	var receiptSummary entity.RequestSummary
+	var materializedSummary entity.RequestSummary
+	var persistedMapping entity.RequestURI
+	var persistedQueueSummary entity.RequestQueueSummary
 	var persistedLog entity.RequestLog
 
 	ctrl := gomock.NewController(t)
@@ -319,15 +322,19 @@ func TestLand_PublishesToQueue(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
+	uriStore := storagemock.NewMockRequestURIStore(ctrl)
+	queueStore := storagemock.NewMockRequestQueueSummaryStore(ctrl)
 	logStore := storagemock.NewMockRequestLogStore(ctrl)
 	store.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
+	store.EXPECT().GetRequestURIStore().Return(uriStore).AnyTimes()
+	store.EXPECT().GetRequestQueueSummaryStore().Return(queueStore).AnyTimes()
 	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 
 	registry, publisher := newTestRegistry(t, ctrl)
 	gomock.InOrder(
 		summaryStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
 			func(_ context.Context, summary entity.RequestSummary) error {
-				persistedSummary = summary
+				receiptSummary = summary
 				return nil
 			},
 		),
@@ -341,6 +348,35 @@ func TestLand_PublishesToQueue(t *testing.T) {
 		logStore.EXPECT().Insert(gomock.Any(), gomock.Any()).DoAndReturn(
 			func(_ context.Context, log entity.RequestLog) error {
 				persistedLog = log
+				return nil
+			},
+		),
+		summaryStore.EXPECT().Get(gomock.Any(), "test-queue/123").DoAndReturn(
+			func(context.Context, string) (entity.RequestSummary, error) {
+				return receiptSummary, nil
+			},
+		),
+		summaryStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).DoAndReturn(
+			func(_ context.Context, summary entity.RequestSummary, _, newVersion int32) error {
+				summary.Version = newVersion
+				materializedSummary = summary
+				return nil
+			},
+		),
+		queueStore.EXPECT().Get(gomock.Any(), "test-queue", gomock.Any(), "test-queue/123").DoAndReturn(
+			func(context.Context, string, int64, string) (entity.RequestQueueSummary, error) {
+				return entity.RequestQueueSummary{}, storage.ErrNotFound
+			},
+		),
+		uriStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, mapping entity.RequestURI) error {
+				persistedMapping = mapping
+				return nil
+			},
+		),
+		queueStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, summary entity.RequestQueueSummary) error {
+				persistedQueueSummary = summary
 				return nil
 			},
 		),
@@ -363,19 +399,35 @@ func TestLand_PublishesToQueue(t *testing.T) {
 		RequestID:         "test-queue/123",
 		Queue:             "test-queue",
 		ChangeURIs:        []string{"github://github.example.com/uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"},
-		ReceivedAtMs:      persistedSummary.ReceivedAtMs,
+		ReceivedAtMs:      receiptSummary.ReceivedAtMs,
 		Status:            entity.RequestStatusAccepting,
-		StatusTimestampMs: persistedSummary.ReceivedAtMs,
+		StatusTimestampMs: receiptSummary.ReceivedAtMs,
 		Version:           1,
 		Metadata:          map[string]string{},
-	}, persistedSummary)
-	assert.Positive(t, persistedSummary.ReceivedAtMs)
+	}, receiptSummary)
+	assert.Positive(t, receiptSummary.ReceivedAtMs)
 	assert.Equal(t, entity.RequestLog{
 		RequestID:   "test-queue/123",
-		TimestampMs: persistedSummary.ReceivedAtMs,
+		TimestampMs: receiptSummary.ReceivedAtMs,
 		Status:      entity.RequestStatusAccepted,
 		Metadata:    map[string]string{},
 	}, persistedLog)
+	assert.Equal(t, entity.RequestStatusAccepted, materializedSummary.Status)
+	assert.Equal(t, int32(2), materializedSummary.Version)
+	assert.Equal(t, entity.RequestURI{
+		ChangeURI:    "github://github.example.com/uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98",
+		ReceivedAtMs: receiptSummary.ReceivedAtMs,
+		RequestID:    "test-queue/123",
+	}, persistedMapping)
+	assert.Equal(t, entity.RequestQueueSummary{
+		RequestID:    "test-queue/123",
+		Queue:        "test-queue",
+		ChangeURIs:   []string{"github://github.example.com/uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"},
+		ReceivedAtMs: receiptSummary.ReceivedAtMs,
+		Status:       entity.RequestStatusAccepted,
+		Version:      2,
+		Metadata:     map[string]string{},
+	}, persistedQueueSummary)
 
 	// Verify message was published to the topic registered under TopicKeyStart
 	assert.Equal(t, "start", publishedTopic)

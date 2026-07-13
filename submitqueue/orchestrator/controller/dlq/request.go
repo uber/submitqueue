@@ -72,6 +72,7 @@ type requestController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	store         storage.Storage
+	registry      consumer.TopicRegistry
 	decode        RequestIDDecoder
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -87,6 +88,7 @@ func NewDLQRequestController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	store storage.Storage,
+	registry consumer.TopicRegistry,
 	decode RequestIDDecoder,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -96,6 +98,7 @@ func NewDLQRequestController(
 		logger:        logger.Named(name),
 		metricsScope:  scope.SubScope(name),
 		store:         store,
+		registry:      registry,
 		decode:        decode,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -134,7 +137,7 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
 
-	if err := failRequest(ctx, c.store, c.logger, requestID); err != nil {
+	if err := failRequest(ctx, c.store, c.registry, c.logger, requestID, dmeta["dlq.last_error"]); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
 		return err
 	}

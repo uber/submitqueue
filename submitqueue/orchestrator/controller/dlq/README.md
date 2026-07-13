@@ -20,9 +20,9 @@ The recognised error condition is handled explicitly in `dlq.go`:
 
 Everything else — including `storage.ErrVersionMismatch` on the CAS — is returned plain and, after the always-retryable processor wrap, redelivered until it either succeeds or hits the attempt cap. There is no point in pre-classifying retryability at this layer when the processor forces every non-nil error retryable anyway.
 
-## Request log entries are written directly, not via the queue
+## Request log entries are published to Gateway
 
-When a DLQ controller transitions a request to `RequestStateError` it also appends a `RequestStatusError` row to `RequestLogStore` via a direct `Insert` call, rather than publishing a `RequestLog` message to the `log` topic the way the primary controllers do. This is deliberate: DLQ controllers must not call back into the primary pipeline. The primary pipeline is what failed and routed the message here in the first place, and re-entering it would risk the same failure mode that caused the DLQ trip. The direct insert produces an equivalent record because the primary log controller is itself a thin wrapper around the same `RequestLogStore`.
+When a DLQ controller transitions a request to `RequestStateError`, it publishes the terminal request log to the `log` topic. Gateway consumes that topic and remains the sole writer of the request log and public projections. A publish failure leaves the DLQ delivery unacknowledged so redelivery retries the same idempotent log event.
 
 ## Controller mapping
 
@@ -39,8 +39,8 @@ Two controller shapes cover the eleven primary pipeline topics:
 
 Reconciliation is safe to run more than once for the same message:
 
-- A request already in a terminal state skips the state-transition CAS but still gets a `RequestStatusError` row appended to the request log. The log write runs unconditionally so that a previous DLQ attempt which successfully flipped the state but then failed to insert the log is repaired on redelivery. A duplicate log entry from such a retry is the accepted trade-off; a missing one would leave the gateway-visible status divergent from the entity state.
-- A batch already in a terminal state still fans out to member requests, because a previous attempt may have transitioned the batch but crashed before completing the fan-out.
+- A request already in `RequestStateError` skips the state-transition CAS but republishes its terminal log so redelivery repairs an earlier publish failure. Requests in a different terminal state are left unchanged.
+- A batch already in `BatchStateFailed` still fans out to member requests, because a previous attempt may have transitioned the batch but crashed before completing the fan-out. Batches in a different terminal state are left unchanged.
 - Per-request fan-out is itself idempotent via `failRequest`.
 - A request in `RequestStateCancelling` is reconciled to `RequestStateError`, not left in place: DLQ means the pipeline failed to converge, so we cannot confirm the cancel completed cleanly. Writing Error is the honest signal.
 

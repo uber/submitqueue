@@ -30,55 +30,56 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
-// newTestController creates a controller with test dependencies.
-func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock.MockStorage) *Controller {
-	logger := zaptest.NewLogger(t).Sugar()
-	scope := tally.NoopScope
-
-	return NewController(logger, scope, store, topickey.TopicKeyLog, "gateway-log")
-}
-
 func TestController_Process(t *testing.T) {
 	tests := []struct {
 		name       string
-		logEntry   *entity.RequestLog // nil means use rawPayload instead
-		rawPayload []byte             // used when logEntry is nil (e.g. invalid JSON)
+		logEntry   *entity.RequestLog
+		rawPayload []byte
 		setupStore func(*gomock.Controller) *storagemock.MockStorage
 		wantErr    bool
 	}{
 		{
-			name: "success",
-			logEntry: newRequestLog(
-				"test-queue/1", entity.RequestStatusStarted, 1, "", nil,
-			),
+			name:     "success",
+			logEntry: newRequestLog("test-queue/1", entity.RequestStatusStarted, 1, "", nil),
 			setupStore: func(ctrl *gomock.Controller) *storagemock.MockStorage {
-				mockLogStore := storagemock.NewMockRequestLogStore(ctrl)
-				mockLogStore.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(nil)
-				store := storagemock.NewMockStorage(ctrl)
-				store.EXPECT().GetRequestLogStore().Return(mockLogStore).AnyTimes()
-				return store
+				return newLogControllerStore(ctrl, nil, nil, nil, nil)
 			},
-			wantErr: false,
 		},
 		{
 			name:       "invalid JSON",
 			rawPayload: []byte(`{"invalid": json"}`),
+			setupStore: func(ctrl *gomock.Controller) *storagemock.MockStorage { return storagemock.NewMockStorage(ctrl) },
+			wantErr:    true,
+		},
+		{
+			name:     "audit insert failure",
+			logEntry: newRequestLog("test-queue/2", entity.RequestStatusError, 3, "merge conflict", nil),
 			setupStore: func(ctrl *gomock.Controller) *storagemock.MockStorage {
-				return storagemock.NewMockStorage(ctrl)
+				return newLogControllerStore(ctrl, fmt.Errorf("audit down"), nil, nil, nil)
 			},
 			wantErr: true,
 		},
 		{
-			name: "storage failure",
-			logEntry: newRequestLog(
-				"test-queue/2", entity.RequestStatusError, 3, "merge conflict", map[string]string{"step": "merge"},
-			),
+			name:     "summary read failure",
+			logEntry: newRequestLog("test-queue/2", entity.RequestStatusError, 3, "merge conflict", nil),
 			setupStore: func(ctrl *gomock.Controller) *storagemock.MockStorage {
-				mockLogStore := storagemock.NewMockRequestLogStore(ctrl)
-				mockLogStore.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(fmt.Errorf("database connection failed"))
-				store := storagemock.NewMockStorage(ctrl)
-				store.EXPECT().GetRequestLogStore().Return(mockLogStore).AnyTimes()
-				return store
+				return newLogControllerStore(ctrl, nil, fmt.Errorf("summary down"), nil, nil)
+			},
+			wantErr: true,
+		},
+		{
+			name:     "summary update failure",
+			logEntry: newRequestLog("test-queue/2", entity.RequestStatusError, 3, "merge conflict", nil),
+			setupStore: func(ctrl *gomock.Controller) *storagemock.MockStorage {
+				return newLogControllerStore(ctrl, nil, nil, fmt.Errorf("summary update down"), nil)
+			},
+			wantErr: true,
+		},
+		{
+			name:     "queue projection failure",
+			logEntry: newRequestLog("test-queue/2", entity.RequestStatusError, 3, "merge conflict", nil),
+			setupStore: func(ctrl *gomock.Controller) *storagemock.MockStorage {
+				return newLogControllerStore(ctrl, nil, nil, nil, fmt.Errorf("queue update down"))
 			},
 			wantErr: true,
 		},
@@ -87,26 +88,19 @@ func TestController_Process(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
-
-			var payload []byte
+			payload := tt.rawPayload
 			if tt.logEntry != nil {
 				var err error
 				payload, err = tt.logEntry.ToBytes()
 				require.NoError(t, err)
-			} else {
-				payload = tt.rawPayload
 			}
-
-			store := tt.setupStore(ctrl)
-			controller := newTestController(t, ctrl, store)
-
+			controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, tt.setupStore(ctrl), topickey.TopicKeyLog, "gateway-log")
 			msg := entityqueue.NewMessage("test-queue/1", payload, "test-queue", nil)
 			delivery := queuemock.NewMockDelivery(ctrl)
 			delivery.EXPECT().Message().Return(msg).AnyTimes()
 			delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
 			err := controller.Process(context.Background(), delivery)
-
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -116,7 +110,37 @@ func TestController_Process(t *testing.T) {
 	}
 }
 
-// newRequestLog is a helper that returns a pointer to a RequestLog for use in test tables.
+func newLogControllerStore(ctrl *gomock.Controller, insertErr, getErr, updateErr, queueErr error) *storagemock.MockStorage {
+	store := storagemock.NewMockStorage(ctrl)
+	logStore := storagemock.NewMockRequestLogStore(ctrl)
+	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
+	queueStore := storagemock.NewMockRequestQueueSummaryStore(ctrl)
+	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
+	store.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
+	store.EXPECT().GetRequestQueueSummaryStore().Return(queueStore).AnyTimes()
+	logStore.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(insertErr)
+	if insertErr != nil {
+		return store
+	}
+	summaryStore.EXPECT().Get(gomock.Any(), gomock.Any()).Return(entity.RequestSummary{
+		RequestID: "test-queue/2", Queue: "test-queue", ChangeURIs: []string{}, ReceivedAtMs: 1,
+		Status: entity.RequestStatusAccepted, StatusTimestampMs: 1, Version: 1, Metadata: map[string]string{},
+	}, getErr)
+	if getErr != nil {
+		return store
+	}
+	summaryStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(updateErr)
+	if updateErr != nil {
+		return store
+	}
+	queueStore.EXPECT().Get(gomock.Any(), "test-queue", int64(1), "test-queue/2").Return(entity.RequestQueueSummary{
+		RequestID: "test-queue/2", Queue: "test-queue", ChangeURIs: []string{}, ReceivedAtMs: 1,
+		Status: entity.RequestStatusAccepted, Version: 1, Metadata: map[string]string{},
+	}, nil)
+	queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(queueErr)
+	return store
+}
+
 func newRequestLog(requestID string, status entity.RequestStatus, requestVersion int32, lastError string, metadata map[string]string) *entity.RequestLog {
 	log := entity.NewRequestLog(requestID, status, requestVersion, lastError, metadata)
 	return &log

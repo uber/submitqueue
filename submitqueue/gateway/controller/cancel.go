@@ -23,6 +23,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
+	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -35,21 +36,23 @@ import (
 // and returns a response. The orchestrator-side cancel controller performs the actual
 // state transitions and emits the terminal RequestStatusCancelled log entry.
 type CancelController struct {
-	logger          *zap.SugaredLogger
-	metricsScope    tally.Scope
-	requestLogStore storage.RequestLogStore
-	registry        consumer.TopicRegistry
+	logger              *zap.SugaredLogger
+	metricsScope        tally.Scope
+	requestSummaryStore storage.RequestSummaryStore
+	materializer        *requestcore.Materializer
+	registry            consumer.TopicRegistry
 }
 
 // NewCancelController creates a new instance of the gateway cancel controller.
-// The controller writes a RequestStatusCancelling log entry through requestLogStore and
+// The controller writes a RequestStatusCancelling log entry through the shared materializer and
 // publishes cancel requests to the topic registered under topickey.TopicKeyCancel.
-func NewCancelController(logger *zap.SugaredLogger, scope tally.Scope, requestLogStore storage.RequestLogStore, registry consumer.TopicRegistry) *CancelController {
+func NewCancelController(logger *zap.SugaredLogger, scope tally.Scope, store storage.Storage, registry consumer.TopicRegistry) *CancelController {
 	return &CancelController{
-		logger:          logger,
-		metricsScope:    scope,
-		requestLogStore: requestLogStore,
-		registry:        registry,
+		logger:              logger,
+		metricsScope:        scope,
+		requestSummaryStore: store.GetRequestSummaryStore(),
+		materializer:        requestcore.NewMaterializer(store),
+		registry:            registry,
 	}
 }
 
@@ -78,18 +81,13 @@ func (c *CancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 		"reason", req.Reason,
 	)
 
-	// Verify the sqid exists before recording intent or publishing. Cancel is opt-in
-	// by sqid; an unknown sqid is a user error and must never leave a cancelling log
-	// row or a queue message behind for a request that never existed. The Land
-	// controller writes its "accepted" log entry synchronously to the same store, so
-	// a NotFound here reliably means "this sqid was never accepted by the gateway"
-	// rather than "in flight" — there is no false-negative race window.
-	if _, err := c.requestLogStore.List(ctx, req.ID); err != nil {
+	// Verify the sqid exists before recording intent or publishing.
+	if _, err := c.requestSummaryStore.Get(ctx, req.ID); err != nil {
 		if storage.IsNotFound(err) {
 			c.metricsScope.Counter("cancel_request_not_found").Inc(1)
 			return errs.NewUserError(&RequestNotFoundError{Sqid: req.ID})
 		}
-		return fmt.Errorf("CancelController failed to look up request log for sqid=%s: %w", req.ID, err)
+		return fmt.Errorf("CancelController failed to look up request summary for sqid=%s: %w", req.ID, err)
 	}
 
 	// Record the user's intent in the request log before publishing. Writing direct to the
@@ -100,7 +98,7 @@ func (c *CancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 		metadata["reason"] = req.Reason
 	}
 	logEntry := entity.NewRequestLog(req.ID, entity.RequestStatusCancelling, 0, "", metadata)
-	if err := c.requestLogStore.Insert(ctx, logEntry); err != nil {
+	if err := c.materializer.PersistLog(ctx, logEntry); err != nil {
 		return fmt.Errorf("CancelController failed to insert cancelling log for sqid=%s: %w", req.ID, err)
 	}
 

@@ -44,6 +44,7 @@ import (
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/test/testutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -192,6 +193,13 @@ func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 	require.NoError(t, err, "failed to create topic registry")
 
 	const sqid = "log-consumer-test/1"
+	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
+	require.NoError(t, err)
+	summary := entity.RequestSummary{
+		RequestID: sqid, Queue: "log-consumer-test", ChangeURIs: []string{}, ReceivedAtMs: 1,
+		Status: entity.RequestStatusAccepting, StatusTimestampMs: 1, Version: 1, Metadata: map[string]string{},
+	}
+	require.NoError(t, store.GetRequestSummaryStore().Create(s.ctx, summary))
 	logEntry := entity.NewRequestLog(sqid, entity.RequestStatusStarted, 1, "", nil)
 	require.NoError(t, corerequest.PublishLog(s.ctx, registry, logEntry, sqid),
 		"failed to publish request log to log topic")
