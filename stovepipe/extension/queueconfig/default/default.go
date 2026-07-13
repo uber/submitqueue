@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package default provides a queueconfig.Store that returns global wiring
+// Package defaultconfig provides a queueconfig.Store that returns global wiring
 // defaults for any non-empty queue name. Replace with a YAML- or service-backed
 // store when per-queue overrides are needed.
 package defaultconfig

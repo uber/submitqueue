@@ -149,6 +149,8 @@ func (c *Controller) processAccepted(ctx context.Context, request entity.Request
 
 	cfg, err := c.queueConfigs.Get(ctx, request.Queue)
 	if err != nil {
+		// TODO(queueconfig): decide retryability when a real config store lands — is a
+		// missing queue "drop" (non-retryable) or "retry until configured"?
 		return fmt.Errorf("ProcessController failed to load queue config for %s: %w", request.Queue, err)
 	}
 
