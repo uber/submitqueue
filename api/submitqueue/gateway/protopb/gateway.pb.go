@@ -651,6 +651,143 @@ func (x *GetRequestSummaryByChangeURIResponse) GetRequests() []*RequestSummary {
 	return nil
 }
 
+// ListRequest defines one bounded queue receipt-history query.
+type ListRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Exact queue to query.
+	Queue string `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
+	// Inclusive lower receipt-time bound in Unix milliseconds.
+	ReceivedAtOrAfterMs int64 `protobuf:"varint,2,opt,name=received_at_or_after_ms,json=receivedAtOrAfterMs,proto3" json:"received_at_or_after_ms,omitempty"`
+	// Exclusive upper receipt-time bound in Unix milliseconds.
+	ReceivedBeforeMs int64 `protobuf:"varint,3,opt,name=received_before_ms,json=receivedBeforeMs,proto3" json:"received_before_ms,omitempty"`
+	// Maximum results to return. Zero selects the server default; values above the server maximum are invalid.
+	PageSize int32 `protobuf:"varint,4,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	// Opaque continuation token from a previous response. Empty selects the first page.
+	PageToken     string `protobuf:"bytes,5,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListRequest) Reset() {
+	*x = ListRequest{}
+	mi := &file_gateway_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListRequest) ProtoMessage() {}
+
+func (x *ListRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gateway_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListRequest.ProtoReflect.Descriptor instead.
+func (*ListRequest) Descriptor() ([]byte, []int) {
+	return file_gateway_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ListRequest) GetQueue() string {
+	if x != nil {
+		return x.Queue
+	}
+	return ""
+}
+
+func (x *ListRequest) GetReceivedAtOrAfterMs() int64 {
+	if x != nil {
+		return x.ReceivedAtOrAfterMs
+	}
+	return 0
+}
+
+func (x *ListRequest) GetReceivedBeforeMs() int64 {
+	if x != nil {
+		return x.ReceivedBeforeMs
+	}
+	return 0
+}
+
+func (x *ListRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *ListRequest) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
+// ListResponse defines one page of queue receipt history.
+type ListResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Requests ordered by receipt time descending, then sqid descending.
+	Requests []*RequestSummary `protobuf:"bytes,1,rep,name=requests,proto3" json:"requests,omitempty"`
+	// Opaque continuation token. Empty when this is the last page.
+	NextPageToken string `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListResponse) Reset() {
+	*x = ListResponse{}
+	mi := &file_gateway_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListResponse) ProtoMessage() {}
+
+func (x *ListResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gateway_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListResponse.ProtoReflect.Descriptor instead.
+func (*ListResponse) Descriptor() ([]byte, []int) {
+	return file_gateway_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *ListResponse) GetRequests() []*RequestSummary {
+	if x != nil {
+		return x.Requests
+	}
+	return nil
+}
+
+func (x *ListResponse) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
+}
+
 // Generic error with metadata. Each custom error type should extend this message.
 type Error struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -662,7 +799,7 @@ type Error struct {
 
 func (x *Error) Reset() {
 	*x = Error{}
-	mi := &file_gateway_proto_msgTypes[11]
+	mi := &file_gateway_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -674,7 +811,7 @@ func (x *Error) String() string {
 func (*Error) ProtoMessage() {}
 
 func (x *Error) ProtoReflect() protoreflect.Message {
-	mi := &file_gateway_proto_msgTypes[11]
+	mi := &file_gateway_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -687,7 +824,7 @@ func (x *Error) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Error.ProtoReflect.Descriptor instead.
 func (*Error) Descriptor() ([]byte, []int) {
-	return file_gateway_proto_rawDescGZIP(), []int{11}
+	return file_gateway_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *Error) GetMessage() string {
@@ -710,7 +847,7 @@ type UnrecognizedQueueError struct {
 
 func (x *UnrecognizedQueueError) Reset() {
 	*x = UnrecognizedQueueError{}
-	mi := &file_gateway_proto_msgTypes[12]
+	mi := &file_gateway_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -722,7 +859,7 @@ func (x *UnrecognizedQueueError) String() string {
 func (*UnrecognizedQueueError) ProtoMessage() {}
 
 func (x *UnrecognizedQueueError) ProtoReflect() protoreflect.Message {
-	mi := &file_gateway_proto_msgTypes[12]
+	mi := &file_gateway_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -735,7 +872,7 @@ func (x *UnrecognizedQueueError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnrecognizedQueueError.ProtoReflect.Descriptor instead.
 func (*UnrecognizedQueueError) Descriptor() ([]byte, []int) {
-	return file_gateway_proto_rawDescGZIP(), []int{12}
+	return file_gateway_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *UnrecognizedQueueError) GetError() *Error {
@@ -767,7 +904,7 @@ type RequestNotFoundError struct {
 
 func (x *RequestNotFoundError) Reset() {
 	*x = RequestNotFoundError{}
-	mi := &file_gateway_proto_msgTypes[13]
+	mi := &file_gateway_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -779,7 +916,7 @@ func (x *RequestNotFoundError) String() string {
 func (*RequestNotFoundError) ProtoMessage() {}
 
 func (x *RequestNotFoundError) ProtoReflect() protoreflect.Message {
-	mi := &file_gateway_proto_msgTypes[13]
+	mi := &file_gateway_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -792,7 +929,7 @@ func (x *RequestNotFoundError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RequestNotFoundError.ProtoReflect.Descriptor instead.
 func (*RequestNotFoundError) Descriptor() ([]byte, []int) {
-	return file_gateway_proto_rawDescGZIP(), []int{13}
+	return file_gateway_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *RequestNotFoundError) GetError() *Error {
@@ -859,7 +996,17 @@ const file_gateway_proto_rawDesc = "" +
 	"\n" +
 	"change_uri\x18\x01 \x01(\tR\tchangeUri\"l\n" +
 	"$GetRequestSummaryByChangeURIResponse\x12D\n" +
-	"\brequests\x18\x01 \x03(\v2(.uber.submitqueue.gateway.RequestSummaryR\brequests\"!\n" +
+	"\brequests\x18\x01 \x03(\v2(.uber.submitqueue.gateway.RequestSummaryR\brequests\"\xc3\x01\n" +
+	"\vListRequest\x12\x14\n" +
+	"\x05queue\x18\x01 \x01(\tR\x05queue\x124\n" +
+	"\x17received_at_or_after_ms\x18\x02 \x01(\x03R\x13receivedAtOrAfterMs\x12,\n" +
+	"\x12received_before_ms\x18\x03 \x01(\x03R\x10receivedBeforeMs\x12\x1b\n" +
+	"\tpage_size\x18\x04 \x01(\x05R\bpageSize\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\x05 \x01(\tR\tpageToken\"|\n" +
+	"\fListResponse\x12D\n" +
+	"\brequests\x18\x01 \x03(\v2(.uber.submitqueue.gateway.RequestSummaryR\brequests\x12&\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"!\n" +
 	"\x05Error\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"e\n" +
 	"\x16UnrecognizedQueueError\x125\n" +
@@ -869,13 +1016,14 @@ const file_gateway_proto_rawDesc = "" +
 	"\x05error\x18\x01 \x01(\v2\x1f.uber.submitqueue.gateway.ErrorR\x05error\x12\x12\n" +
 	"\x04sqid\x18\x02 \x01(\tR\x04sqid\x12\x1d\n" +
 	"\n" +
-	"change_uri\x18\x03 \x01(\tR\tchangeUri2\xd4\x04\n" +
+	"change_uri\x18\x03 \x01(\tR\tchangeUri2\xad\x05\n" +
 	"\x12SubmitQueueGateway\x12W\n" +
 	"\x04Ping\x12%.uber.submitqueue.gateway.PingRequest\x1a&.uber.submitqueue.gateway.PingResponse\"\x00\x12W\n" +
 	"\x04Land\x12%.uber.submitqueue.gateway.LandRequest\x1a&.uber.submitqueue.gateway.LandResponse\"\x00\x12]\n" +
 	"\x06Cancel\x12'.uber.submitqueue.gateway.CancelRequest\x1a(.uber.submitqueue.gateway.CancelResponse\"\x00\x12\x8a\x01\n" +
 	"\x15GetRequestSummaryByID\x126.uber.submitqueue.gateway.GetRequestSummaryByIDRequest\x1a7.uber.submitqueue.gateway.GetRequestSummaryByIDResponse\"\x00\x12\x9f\x01\n" +
-	"\x1cGetRequestSummaryByChangeURI\x12=.uber.submitqueue.gateway.GetRequestSummaryByChangeURIRequest\x1a>.uber.submitqueue.gateway.GetRequestSummaryByChangeURIResponse\"\x00Bk\n" +
+	"\x1cGetRequestSummaryByChangeURI\x12=.uber.submitqueue.gateway.GetRequestSummaryByChangeURIRequest\x1a>.uber.submitqueue.gateway.GetRequestSummaryByChangeURIResponse\"\x00\x12W\n" +
+	"\x04List\x12%.uber.submitqueue.gateway.ListRequest\x1a&.uber.submitqueue.gateway.ListResponse\"\x00Bk\n" +
 	"\x1ccom.uber.submitqueue.gatewayB\fGatewayProtoP\x01Z;github.com/uber/submitqueue/api/submitqueue/gateway/protopbb\x06proto3"
 
 var (
@@ -890,7 +1038,7 @@ func file_gateway_proto_rawDescGZIP() []byte {
 	return file_gateway_proto_rawDescData
 }
 
-var file_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_gateway_proto_goTypes = []any{
 	(*PingRequest)(nil),                          // 0: uber.submitqueue.gateway.PingRequest
 	(*PingResponse)(nil),                         // 1: uber.submitqueue.gateway.PingResponse
@@ -903,36 +1051,41 @@ var file_gateway_proto_goTypes = []any{
 	(*GetRequestSummaryByIDResponse)(nil),        // 8: uber.submitqueue.gateway.GetRequestSummaryByIDResponse
 	(*GetRequestSummaryByChangeURIRequest)(nil),  // 9: uber.submitqueue.gateway.GetRequestSummaryByChangeURIRequest
 	(*GetRequestSummaryByChangeURIResponse)(nil), // 10: uber.submitqueue.gateway.GetRequestSummaryByChangeURIResponse
-	(*Error)(nil),                                // 11: uber.submitqueue.gateway.Error
-	(*UnrecognizedQueueError)(nil),               // 12: uber.submitqueue.gateway.UnrecognizedQueueError
-	(*RequestNotFoundError)(nil),                 // 13: uber.submitqueue.gateway.RequestNotFoundError
-	nil,                                          // 14: uber.submitqueue.gateway.RequestSummary.MetadataEntry
-	(*protopb.Change)(nil),                       // 15: uber.base.change.Change
-	(protopb1.Strategy)(0),                       // 16: uber.base.mergestrategy.Strategy
+	(*ListRequest)(nil),                          // 11: uber.submitqueue.gateway.ListRequest
+	(*ListResponse)(nil),                         // 12: uber.submitqueue.gateway.ListResponse
+	(*Error)(nil),                                // 13: uber.submitqueue.gateway.Error
+	(*UnrecognizedQueueError)(nil),               // 14: uber.submitqueue.gateway.UnrecognizedQueueError
+	(*RequestNotFoundError)(nil),                 // 15: uber.submitqueue.gateway.RequestNotFoundError
+	nil,                                          // 16: uber.submitqueue.gateway.RequestSummary.MetadataEntry
+	(*protopb.Change)(nil),                       // 17: uber.base.change.Change
+	(protopb1.Strategy)(0),                       // 18: uber.base.mergestrategy.Strategy
 }
 var file_gateway_proto_depIdxs = []int32{
-	15, // 0: uber.submitqueue.gateway.LandRequest.change:type_name -> uber.base.change.Change
-	16, // 1: uber.submitqueue.gateway.LandRequest.strategy:type_name -> uber.base.mergestrategy.Strategy
-	14, // 2: uber.submitqueue.gateway.RequestSummary.metadata:type_name -> uber.submitqueue.gateway.RequestSummary.MetadataEntry
+	17, // 0: uber.submitqueue.gateway.LandRequest.change:type_name -> uber.base.change.Change
+	18, // 1: uber.submitqueue.gateway.LandRequest.strategy:type_name -> uber.base.mergestrategy.Strategy
+	16, // 2: uber.submitqueue.gateway.RequestSummary.metadata:type_name -> uber.submitqueue.gateway.RequestSummary.MetadataEntry
 	6,  // 3: uber.submitqueue.gateway.GetRequestSummaryByIDResponse.request:type_name -> uber.submitqueue.gateway.RequestSummary
 	6,  // 4: uber.submitqueue.gateway.GetRequestSummaryByChangeURIResponse.requests:type_name -> uber.submitqueue.gateway.RequestSummary
-	11, // 5: uber.submitqueue.gateway.UnrecognizedQueueError.error:type_name -> uber.submitqueue.gateway.Error
-	11, // 6: uber.submitqueue.gateway.RequestNotFoundError.error:type_name -> uber.submitqueue.gateway.Error
-	0,  // 7: uber.submitqueue.gateway.SubmitQueueGateway.Ping:input_type -> uber.submitqueue.gateway.PingRequest
-	2,  // 8: uber.submitqueue.gateway.SubmitQueueGateway.Land:input_type -> uber.submitqueue.gateway.LandRequest
-	4,  // 9: uber.submitqueue.gateway.SubmitQueueGateway.Cancel:input_type -> uber.submitqueue.gateway.CancelRequest
-	7,  // 10: uber.submitqueue.gateway.SubmitQueueGateway.GetRequestSummaryByID:input_type -> uber.submitqueue.gateway.GetRequestSummaryByIDRequest
-	9,  // 11: uber.submitqueue.gateway.SubmitQueueGateway.GetRequestSummaryByChangeURI:input_type -> uber.submitqueue.gateway.GetRequestSummaryByChangeURIRequest
-	1,  // 12: uber.submitqueue.gateway.SubmitQueueGateway.Ping:output_type -> uber.submitqueue.gateway.PingResponse
-	3,  // 13: uber.submitqueue.gateway.SubmitQueueGateway.Land:output_type -> uber.submitqueue.gateway.LandResponse
-	5,  // 14: uber.submitqueue.gateway.SubmitQueueGateway.Cancel:output_type -> uber.submitqueue.gateway.CancelResponse
-	8,  // 15: uber.submitqueue.gateway.SubmitQueueGateway.GetRequestSummaryByID:output_type -> uber.submitqueue.gateway.GetRequestSummaryByIDResponse
-	10, // 16: uber.submitqueue.gateway.SubmitQueueGateway.GetRequestSummaryByChangeURI:output_type -> uber.submitqueue.gateway.GetRequestSummaryByChangeURIResponse
-	12, // [12:17] is the sub-list for method output_type
-	7,  // [7:12] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	6,  // 5: uber.submitqueue.gateway.ListResponse.requests:type_name -> uber.submitqueue.gateway.RequestSummary
+	13, // 6: uber.submitqueue.gateway.UnrecognizedQueueError.error:type_name -> uber.submitqueue.gateway.Error
+	13, // 7: uber.submitqueue.gateway.RequestNotFoundError.error:type_name -> uber.submitqueue.gateway.Error
+	0,  // 8: uber.submitqueue.gateway.SubmitQueueGateway.Ping:input_type -> uber.submitqueue.gateway.PingRequest
+	2,  // 9: uber.submitqueue.gateway.SubmitQueueGateway.Land:input_type -> uber.submitqueue.gateway.LandRequest
+	4,  // 10: uber.submitqueue.gateway.SubmitQueueGateway.Cancel:input_type -> uber.submitqueue.gateway.CancelRequest
+	7,  // 11: uber.submitqueue.gateway.SubmitQueueGateway.GetRequestSummaryByID:input_type -> uber.submitqueue.gateway.GetRequestSummaryByIDRequest
+	9,  // 12: uber.submitqueue.gateway.SubmitQueueGateway.GetRequestSummaryByChangeURI:input_type -> uber.submitqueue.gateway.GetRequestSummaryByChangeURIRequest
+	11, // 13: uber.submitqueue.gateway.SubmitQueueGateway.List:input_type -> uber.submitqueue.gateway.ListRequest
+	1,  // 14: uber.submitqueue.gateway.SubmitQueueGateway.Ping:output_type -> uber.submitqueue.gateway.PingResponse
+	3,  // 15: uber.submitqueue.gateway.SubmitQueueGateway.Land:output_type -> uber.submitqueue.gateway.LandResponse
+	5,  // 16: uber.submitqueue.gateway.SubmitQueueGateway.Cancel:output_type -> uber.submitqueue.gateway.CancelResponse
+	8,  // 17: uber.submitqueue.gateway.SubmitQueueGateway.GetRequestSummaryByID:output_type -> uber.submitqueue.gateway.GetRequestSummaryByIDResponse
+	10, // 18: uber.submitqueue.gateway.SubmitQueueGateway.GetRequestSummaryByChangeURI:output_type -> uber.submitqueue.gateway.GetRequestSummaryByChangeURIResponse
+	12, // 19: uber.submitqueue.gateway.SubmitQueueGateway.List:output_type -> uber.submitqueue.gateway.ListResponse
+	14, // [14:20] is the sub-list for method output_type
+	8,  // [8:14] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_gateway_proto_init() }
@@ -946,7 +1099,7 @@ func file_gateway_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gateway_proto_rawDesc), len(file_gateway_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

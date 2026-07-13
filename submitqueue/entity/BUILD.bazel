@@ -12,6 +12,7 @@ go_library(
         "change_record.go",
         "conflict.go",
         "land.go",
+        "list.go",
         "merge_result.go",
         "push_result.go",
         "queue.go",

@@ -170,13 +170,55 @@ func (s *GatewayIntegrationSuite) TestLandAPI() {
 	s.log.Logf("Land API test passed: request stored and message published")
 }
 
-// TestRequestSummaryAPIErrorCodes verifies request-summary controller errors reach stable gRPC codes.
-func (s *GatewayIntegrationSuite) TestRequestSummaryAPIErrorCodes() {
+// TestListAPI verifies the queue projection is exposed in deterministic receipt order.
+func (s *GatewayIntegrationSuite) TestListAPI() {
+	t := s.T()
+	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
+	require.NoError(t, err)
+	materializer := corerequest.NewMaterializer(store)
+	for _, summary := range []entity.RequestSummary{
+		{RequestID: "test-queue/list-1", Queue: "test-queue", ChangeURIs: []string{"uri/1"}, ReceivedAtMs: 100, Status: entity.RequestStatusAccepted, StatusTimestampMs: 100, Version: 1, Metadata: map[string]string{}},
+		{RequestID: "test-queue/list-2", Queue: "test-queue", ChangeURIs: []string{"uri/2"}, ReceivedAtMs: 200, Status: entity.RequestStatusLanded, StatusTimestampMs: 200, Version: 1, Metadata: map[string]string{}},
+	} {
+		publicStatus := summary.Status
+		summary.Status = entity.RequestStatusAccepting
+		require.NoError(t, store.GetRequestSummaryStore().Create(s.ctx, summary))
+		require.NoError(t, materializer.PersistLog(s.ctx, entity.RequestLog{
+			RequestID:   summary.RequestID,
+			TimestampMs: summary.StatusTimestampMs,
+			Status:      publicStatus,
+			Metadata:    map[string]string{},
+		}))
+	}
+
+	resp, err := s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, PageSize: 1})
+	require.NoError(t, err)
+	require.Len(t, resp.Requests, 1)
+	assert.Equal(t, "test-queue/list-2", resp.Requests[0].Sqid)
+	require.NotEmpty(t, resp.NextPageToken)
+
+	resp, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, PageSize: 1, PageToken: resp.NextPageToken})
+	require.NoError(t, err)
+	require.Len(t, resp.Requests, 1)
+	assert.Equal(t, "test-queue/list-1", resp.Requests[0].Sqid)
+	assert.Empty(t, resp.NextPageToken)
+}
+
+// TestReadAPIErrorCodes verifies controller error classes reach stable gRPC codes.
+func (s *GatewayIntegrationSuite) TestReadAPIErrorCodes() {
 	t := s.T()
 
 	_, err := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: "missing/1"})
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, status.Code(err))
+
+	_, err = s.client.List(s.ctx, &pb.ListRequest{
+		Queue:               "missing-queue",
+		ReceivedAtOrAfterMs: 1,
+		ReceivedBeforeMs:    2,
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 
 	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
 	require.NoError(t, err)

@@ -39,6 +39,7 @@ const (
 	SubmitQueueGateway_Cancel_FullMethodName                       = "/uber.submitqueue.gateway.SubmitQueueGateway/Cancel"
 	SubmitQueueGateway_GetRequestSummaryByID_FullMethodName        = "/uber.submitqueue.gateway.SubmitQueueGateway/GetRequestSummaryByID"
 	SubmitQueueGateway_GetRequestSummaryByChangeURI_FullMethodName = "/uber.submitqueue.gateway.SubmitQueueGateway/GetRequestSummaryByChangeURI"
+	SubmitQueueGateway_List_FullMethodName                         = "/uber.submitqueue.gateway.SubmitQueueGateway/List"
 )
 
 // SubmitQueueGatewayClient is the client API for SubmitQueueGateway service.
@@ -68,6 +69,8 @@ type SubmitQueueGatewayClient interface {
 	GetRequestSummaryByID(ctx context.Context, in *GetRequestSummaryByIDRequest, opts ...grpc.CallOption) (*GetRequestSummaryByIDResponse, error)
 	// GetRequestSummaryByChangeURI returns current materialized statuses for an exact pinned change URI.
 	GetRequestSummaryByChangeURI(ctx context.Context, in *GetRequestSummaryByChangeURIRequest, opts ...grpc.CallOption) (*GetRequestSummaryByChangeURIResponse, error)
+	// List returns requests received for one queue during a bounded receipt-time range.
+	List(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (*ListResponse, error)
 }
 
 type submitQueueGatewayClient struct {
@@ -128,6 +131,16 @@ func (c *submitQueueGatewayClient) GetRequestSummaryByChangeURI(ctx context.Cont
 	return out, nil
 }
 
+func (c *submitQueueGatewayClient) List(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (*ListResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListResponse)
+	err := c.cc.Invoke(ctx, SubmitQueueGateway_List_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SubmitQueueGatewayServer is the server API for SubmitQueueGateway service.
 // All implementations must embed UnimplementedSubmitQueueGatewayServer
 // for forward compatibility.
@@ -155,6 +168,8 @@ type SubmitQueueGatewayServer interface {
 	GetRequestSummaryByID(context.Context, *GetRequestSummaryByIDRequest) (*GetRequestSummaryByIDResponse, error)
 	// GetRequestSummaryByChangeURI returns current materialized statuses for an exact pinned change URI.
 	GetRequestSummaryByChangeURI(context.Context, *GetRequestSummaryByChangeURIRequest) (*GetRequestSummaryByChangeURIResponse, error)
+	// List returns requests received for one queue during a bounded receipt-time range.
+	List(context.Context, *ListRequest) (*ListResponse, error)
 	mustEmbedUnimplementedSubmitQueueGatewayServer()
 }
 
@@ -179,6 +194,9 @@ func (UnimplementedSubmitQueueGatewayServer) GetRequestSummaryByID(context.Conte
 }
 func (UnimplementedSubmitQueueGatewayServer) GetRequestSummaryByChangeURI(context.Context, *GetRequestSummaryByChangeURIRequest) (*GetRequestSummaryByChangeURIResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetRequestSummaryByChangeURI not implemented")
+}
+func (UnimplementedSubmitQueueGatewayServer) List(context.Context, *ListRequest) (*ListResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method List not implemented")
 }
 func (UnimplementedSubmitQueueGatewayServer) mustEmbedUnimplementedSubmitQueueGatewayServer() {}
 func (UnimplementedSubmitQueueGatewayServer) testEmbeddedByValue()                            {}
@@ -291,6 +309,24 @@ func _SubmitQueueGateway_GetRequestSummaryByChangeURI_Handler(srv interface{}, c
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SubmitQueueGateway_List_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SubmitQueueGatewayServer).List(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SubmitQueueGateway_List_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SubmitQueueGatewayServer).List(ctx, req.(*ListRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SubmitQueueGateway_ServiceDesc is the grpc.ServiceDesc for SubmitQueueGateway service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -317,6 +353,10 @@ var SubmitQueueGateway_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetRequestSummaryByChangeURI",
 			Handler:    _SubmitQueueGateway_GetRequestSummaryByChangeURI_Handler,
+		},
+		{
+			MethodName: "List",
+			Handler:    _SubmitQueueGateway_List_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

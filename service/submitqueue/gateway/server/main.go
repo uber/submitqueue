@@ -56,6 +56,7 @@ type GatewayServer struct {
 	landController           *controller.LandController
 	cancelController         *controller.CancelController
 	requestSummaryController *controller.RequestSummaryController
+	listController           *controller.ListController
 }
 
 // Ping delegates to the controller
@@ -102,6 +103,15 @@ func (s *GatewayServer) GetRequestSummaryByChangeURI(ctx context.Context, req *p
 		return nil, err
 	}
 	return &pb.GetRequestSummaryByChangeURIResponse{Requests: mapper.RequestSummariesToProto(summaries)}, nil
+}
+
+// List maps the wire request to an entity, delegates to the controller, and maps the result back to the wire response.
+func (s *GatewayServer) List(ctx context.Context, req *pb.ListRequest) (*pb.ListResponse, error) {
+	result, err := s.listController.List(ctx, mapper.ProtoToListRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	return mapper.ListResultToProto(result), nil
 }
 
 func gatewayStatusError(err error) error {
@@ -299,11 +309,13 @@ func run() error {
 		store.GetRequestSummaryStore(),
 		store.GetRequestURIStore(),
 	)
+	listController := controller.NewListController(logger.Sugar(), scope, store.GetRequestQueueSummaryStore(), queueConfigs)
 	gatewayServer := &GatewayServer{
 		pingController:           pingController,
 		landController:           landController,
 		cancelController:         cancelController,
 		requestSummaryController: requestSummaryController,
+		listController:           listController,
 	}
 
 	pb.RegisterSubmitQueueGatewayServer(grpcServer, gatewayServer)

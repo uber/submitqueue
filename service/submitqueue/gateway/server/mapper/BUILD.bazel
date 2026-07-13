@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "cancel.go",
         "land.go",
+        "list.go",
         "request_summary.go",
     ],
     importpath = "github.com/uber/submitqueue/service/submitqueue/gateway/server/mapper",
@@ -23,6 +24,7 @@ go_test(
     srcs = [
         "cancel_test.go",
         "land_test.go",
+        "list_test.go",
         "request_summary_test.go",
     ],
     embed = [":go_default_library"],
