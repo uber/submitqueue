@@ -12,11 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package process holds the process-stage queue controller. It consumes the
-// request ids ingest publishes, reloads the Request from storage, and (in a
-// future change) decides the build strategy by asking SourceControl how the new
-// head relates to the queue's last-green URI. For now it is a thin consumer that
-// reloads and logs the request, establishing the stage and its wiring.
+// Package process holds the process-stage queue controller. It consumes request
+// ids from ingest, reloads the Request from storage, coalesces older heads, and
+// (in later changes) gates concurrency, decides build strategy, and admits
+// winners to build.
 package process
 
 import (
@@ -29,12 +28,13 @@ import (
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
 
 // Controller consumes ProcessRequest messages from the process stage, reloads the
-// referenced Request from storage, and logs it. Implements consumer.Controller.
+// referenced Request from storage, and coalesces older heads. Implements consumer.Controller.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
@@ -45,6 +45,9 @@ type Controller struct {
 
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
+
+// _opName is the metric operation name shared by every emit in this file.
+const _opName = "process"
 
 // NewController creates a new process controller.
 func NewController(
@@ -63,46 +66,140 @@ func NewController(
 	}
 }
 
-// Process reloads the request referenced by the delivery and logs it. Returns nil
-// to ack (success) or an error to nack (retry). A not-yet-visible request is
-// retryable: ingest persists and publishes, but a stale read may not see the row
-// yet, so redelivery converges.
+// Process reloads the request referenced by the delivery and coalesces older heads.
+// Returns nil to ack (success) or an error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName)
+	op := metrics.Begin(c.metricsScope, _opName)
 	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
 	pr := &stovepipemq.ProcessRequest{}
 	if err := stovepipemq.Unmarshal(msg.Payload, pr); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "deserialize_errors", 1)
 		// Non-retryable: a malformed message will never succeed regardless of retries.
 		return fmt.Errorf("failed to deserialize process request: %w", err)
 	}
 
-	request, err := c.store.GetRequestStore().Get(ctx, pr.Id)
+	request, err := c.loadRequest(ctx, pr.Id)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		if errors.Is(err, storage.ErrNotFound) {
-			// Retryable: the request row may not be visible yet; redelivery converges.
-			return errs.NewRetryableError(fmt.Errorf("request %s not found yet: %w", pr.Id, err))
-		}
-		return fmt.Errorf("failed to load request %s: %w", pr.Id, err)
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+		return err
 	}
 
-	c.logger.Infow("processing request",
+	switch request.State {
+	case entity.RequestStateProcessing:
+		// TODO: re-publish to build once the build stage lands (RFC process algorithm, step 3).
+		return nil
+	case entity.RequestStateSuperseded:
+		return nil
+	case entity.RequestStateAccepted:
+		return c.processAccepted(ctx, request)
+	default:
+		c.logger.Warnw("ignored request in unexpected state",
+			"request_id", request.ID,
+			"queue", request.Queue,
+			"state", string(request.State),
+		)
+		return nil
+	}
+}
+
+// processAccepted coalesces older heads against queue.latest_request_id. The latest
+// head is left in accepted until admit and the concurrency gate land in later PRs.
+func (c *Controller) processAccepted(ctx context.Context, request entity.Request) error {
+	queueRow, err := c.loadQueue(ctx, request.Queue)
+	if err != nil {
+		if !errs.IsRetryable(err) {
+			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+		}
+		return err
+	}
+
+	if queueRow.LatestRequestID == "" {
+		c.logger.Infow("latest head awaiting admit",
+			"request_id", request.ID,
+			"queue", request.Queue,
+			"uri", request.URI,
+		)
+		return nil
+	}
+
+	cmp, err := entity.CompareRequestID(request.Queue, request.ID, queueRow.LatestRequestID)
+	if err != nil {
+		return fmt.Errorf("ProcessController failed to compare request ids for queue %s: %w", request.Queue, err)
+	}
+	if cmp < 0 {
+		if err := c.supersedeRequest(ctx, request); err != nil {
+			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+			return err
+		}
+		metrics.NamedCounter(c.metricsScope, _opName, "superseded", 1)
+		c.logger.Infow("superseded request for newer head",
+			"request_id", request.ID,
+			"queue", request.Queue,
+			"latest_request_id", queueRow.LatestRequestID,
+		)
+		return nil
+	}
+
+	c.logger.Infow("latest head awaiting admit",
 		"request_id", request.ID,
 		"queue", request.Queue,
 		"uri", request.URI,
-		"state", string(request.State),
-		"version", request.Version,
-		"attempt", delivery.Attempt(),
-		"partition_key", msg.PartitionKey,
 	)
-
 	return nil
+}
+
+// supersedeRequest CAS-marks request accepted→superseded, retrying on version conflicts.
+func (c *Controller) supersedeRequest(ctx context.Context, request entity.Request) error {
+	reqStore := c.store.GetRequestStore()
+
+	for {
+		if request.State != entity.RequestStateAccepted {
+			return nil
+		}
+
+		updated := request
+		updated.State = entity.RequestStateSuperseded
+		newVersion := request.Version + 1
+		if err := reqStore.Update(ctx, updated, request.Version, newVersion); err != nil {
+			if errors.Is(err, storage.ErrVersionMismatch) {
+				got, getErr := reqStore.Get(ctx, request.ID)
+				if getErr != nil {
+					return fmt.Errorf("ProcessController failed to reload request %s after version mismatch: %w", request.ID, getErr)
+				}
+				request = got
+				continue
+			}
+			return fmt.Errorf("ProcessController failed to supersede request %s: %w", request.ID, err)
+		}
+		return nil
+	}
+}
+
+// loadRequest returns the request for id. A not-yet-visible row is retryable.
+func (c *Controller) loadRequest(ctx context.Context, id string) (entity.Request, error) {
+	got, err := c.store.GetRequestStore().Get(ctx, id)
+	if err == nil {
+		return got, nil
+	}
+	if errors.Is(err, storage.ErrNotFound) {
+		return entity.Request{}, errs.NewRetryableError(fmt.Errorf("request %s not found yet: %w", id, err))
+	}
+	return entity.Request{}, fmt.Errorf("ProcessController failed to load request %s: %w", id, err)
+}
+
+// loadQueue returns the queue row for name. A not-yet-visible row is retryable.
+func (c *Controller) loadQueue(ctx context.Context, name string) (entity.Queue, error) {
+	got, err := c.store.GetQueueStore().Get(ctx, name)
+	if err == nil {
+		return got, nil
+	}
+	if errors.Is(err, storage.ErrNotFound) {
+		return entity.Queue{}, errs.NewRetryableError(fmt.Errorf("queue %s not found yet: %w", name, err))
+	}
+	return entity.Queue{}, fmt.Errorf("ProcessController failed to load queue %s: %w", name, err)
 }
 
 // Name returns the controller name for logging and metrics.
