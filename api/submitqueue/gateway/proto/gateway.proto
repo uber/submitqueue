@@ -82,22 +82,46 @@ message CancelRequest {
 message CancelResponse {
 }
 
-// StatusRequest defines a request to look up the current status of a previously submitted request.
-message StatusRequest {
-    // Globally unique identifier for the request, as returned by Land in the LandResponse.
+// RequestSummary is the gateway-owned materialized current view of one received request.
+message RequestSummary {
+    // Globally unique request identifier. This is request_id in internal storage.
+    string sqid = 1;
+    // Queue supplied when the request was received.
+    string queue = 2;
+    // Change URIs supplied when the request was received, in caller order.
+    repeated string change_uris = 3;
+    // Receipt time in Unix milliseconds.
+    int64 received_at_ms = 4;
+    // Current customer-friendly status of the request.
+    string status = 5;
+    // Last error associated with the current status. Empty when absent.
+    string last_error = 6;
+    // Display and debugging metadata associated with the current status.
+    map<string, string> metadata = 7;
+}
+
+// GetRequestSummaryByIDRequest selects one request by the sqid returned from Land.
+message GetRequestSummaryByIDRequest {
+    // Globally unique identifier for the request.
     string sqid = 1;
 }
 
-// StatusResponse defines the response to a status request.
-// The status is eventually consistent with the request store; it might take some time to converge, typically no more than a few seconds.
-message StatusResponse {
-    // Current customer-friendly status of the request (e.g. "accepted", "validating", "landed", "error").
-    // Status is a free-form string because the system may introduce new statuses without breaking existing clients.
-    string status = 1;
-    // Last error message associated with the current status. Empty string if there is no error.
-    string last_error = 2;
-    // Free-form key-value metadata associated with the current status, for display or debugging purposes. Empty if none.
-    map<string, string> metadata = 3;
+// GetRequestSummaryByIDResponse contains the current materialized request view.
+message GetRequestSummaryByIDResponse {
+    // Matching request.
+    RequestSummary request = 1;
+}
+
+// GetRequestSummaryByChangeURIRequest selects requests by an exact pinned change URI.
+message GetRequestSummaryByChangeURIRequest {
+    // Exact change URI supplied in a Land request.
+    string change_uri = 1;
+}
+
+// GetRequestSummaryByChangeURIResponse contains matching requests newest first.
+message GetRequestSummaryByChangeURIResponse {
+    // Matching requests ordered by receipt time descending, then sqid descending.
+    repeated RequestSummary requests = 1;
 }
 
 // ***************
@@ -124,6 +148,8 @@ message RequestNotFoundError {
     Error error = 1;
     // The sqid that was not found.
     string sqid = 2;
+    // Exact change URI that was not found. Populated only for change-URI lookup.
+    string change_uri = 3;
 }
 
 // ***************
@@ -149,10 +175,13 @@ service SubmitQueueGateway {
     // Cancellation is NOT GUARANTEED: a request that has already merged, or that races to completion before the cancel
     // signal propagates through the pipeline, may still land (or end in an error). Callers must NOT assume that a
     // successful Cancel response means the request was cancelled — the actual terminal outcome (cancelled, landed, or
-    // error) must be checked through the separate status / request-log API.
+    // error) must be checked through the request-summary or request-history APIs.
     rpc Cancel(CancelRequest) returns (CancelResponse) {}
 
-    // Status returns the current status of a previously submitted request, identified by its sqid.
-    // The status is eventually consistent with the request store and reconciled from the append-only request log.
-    rpc Status(StatusRequest) returns (StatusResponse) {}
+    // GetRequestSummaryByID returns the current materialized status of one request.
+    rpc GetRequestSummaryByID(GetRequestSummaryByIDRequest) returns (GetRequestSummaryByIDResponse) {}
+
+    // GetRequestSummaryByChangeURI returns current materialized statuses for an exact pinned change URI.
+    rpc GetRequestSummaryByChangeURI(GetRequestSummaryByChangeURIRequest) returns (GetRequestSummaryByChangeURIResponse) {}
+
 }

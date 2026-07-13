@@ -14,11 +14,15 @@
 
 package controller
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 const (
 	maxQueueIdentifierBytes   = 235
 	maxStorageIdentifierBytes = 255
+	maxChangeRequestResults   = 100
 )
 
 func validateQueueIdentifier(queue string) error {
@@ -29,6 +33,59 @@ func validateQueueIdentifier(queue string) error {
 		return fmt.Errorf("queue exceeds %d bytes: %w", maxQueueIdentifierBytes, ErrInvalidRequest)
 	}
 	return nil
+}
+
+// RequestNotFoundError indicates that no request exists for the selected sqid or change URI.
+type RequestNotFoundError struct {
+	Sqid      string
+	ChangeURI string
+}
+
+// Error implements the error interface.
+func (e *RequestNotFoundError) Error() string {
+	if e.Sqid != "" {
+		return fmt.Sprintf("request not found for sqid %q", e.Sqid)
+	}
+	return fmt.Sprintf("request not found for change URI %q", e.ChangeURI)
+}
+
+// IsRequestNotFound returns true if any error in the chain is a *RequestNotFoundError.
+func IsRequestNotFound(err error) bool {
+	var target *RequestNotFoundError
+	return errors.As(err, &target)
+}
+
+// TooManyChangeRequestsError indicates that a change URI exceeded the API result limit.
+type TooManyChangeRequestsError struct {
+	ChangeURI string
+	Limit     int
+}
+
+// Error implements the error interface.
+func (e *TooManyChangeRequestsError) Error() string {
+	return fmt.Sprintf("change URI %q matched more than %d requests", e.ChangeURI, e.Limit)
+}
+
+// IsTooManyChangeRequests returns true if any error in the chain is a *TooManyChangeRequestsError.
+func IsTooManyChangeRequests(err error) bool {
+	var target *TooManyChangeRequestsError
+	return errors.As(err, &target)
+}
+
+// InternalConsistencyError indicates that gateway-owned read models disagree.
+type InternalConsistencyError struct {
+	Message string
+}
+
+// Error implements the error interface.
+func (e *InternalConsistencyError) Error() string {
+	return e.Message
+}
+
+// IsInternalConsistency returns true if any error in the chain is an *InternalConsistencyError.
+func IsInternalConsistency(err error) bool {
+	var target *InternalConsistencyError
+	return errors.As(err, &target)
 }
 
 func validateStoredIdentifier(name, value string) error {

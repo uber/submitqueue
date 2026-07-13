@@ -52,10 +52,10 @@ import (
 // GatewayServer wraps the controller and implements the gRPC service interface
 type GatewayServer struct {
 	pb.UnimplementedSubmitQueueGatewayServer
-	pingController   *controller.PingController
-	landController   *controller.LandController
-	cancelController *controller.CancelController
-	statusController *controller.StatusController
+	pingController           *controller.PingController
+	landController           *controller.LandController
+	cancelController         *controller.CancelController
+	requestSummaryController *controller.RequestSummaryController
 }
 
 // Ping delegates to the controller
@@ -86,14 +86,37 @@ func (s *GatewayServer) Cancel(ctx context.Context, req *pb.CancelRequest) (*pb.
 	return &pb.CancelResponse{}, nil
 }
 
-// Status maps the wire request to an entity, delegates to the controller, and
-// maps the read-model result back to the wire response.
-func (s *GatewayServer) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusResponse, error) {
-	state, err := s.statusController.Status(ctx, mapper.ProtoToStatusRequest(req))
+// GetRequestSummaryByID maps the wire request to an entity, delegates to the controller, and maps the result back to the wire response.
+func (s *GatewayServer) GetRequestSummaryByID(ctx context.Context, req *pb.GetRequestSummaryByIDRequest) (*pb.GetRequestSummaryByIDResponse, error) {
+	summary, err := s.requestSummaryController.GetRequestSummaryByID(ctx, mapper.ProtoToGetRequestSummaryByIDRequest(req))
 	if err != nil {
 		return nil, err
 	}
-	return mapper.CurrentStateToProto(state), nil
+	return &pb.GetRequestSummaryByIDResponse{Request: mapper.RequestSummaryToProto(summary)}, nil
+}
+
+// GetRequestSummaryByChangeURI maps the wire request to an entity, delegates to the controller, and maps the results back to the wire response.
+func (s *GatewayServer) GetRequestSummaryByChangeURI(ctx context.Context, req *pb.GetRequestSummaryByChangeURIRequest) (*pb.GetRequestSummaryByChangeURIResponse, error) {
+	summaries, err := s.requestSummaryController.GetRequestSummaryByChangeURI(ctx, mapper.ProtoToGetRequestSummaryByChangeURIRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	return &pb.GetRequestSummaryByChangeURIResponse{Requests: mapper.RequestSummariesToProto(summaries)}, nil
+}
+
+func gatewayStatusError(err error) error {
+	switch {
+	case controller.IsRequestNotFound(err):
+		return status.Error(codes.NotFound, err.Error())
+	case controller.IsTooManyChangeRequests(err):
+		return status.Error(codes.ResourceExhausted, err.Error())
+	case controller.IsInternalConsistency(err):
+		return status.Error(codes.Internal, err.Error())
+	case controller.IsInvalidRequest(err), controller.IsUnrecognizedQueue(err):
+		return status.Error(codes.InvalidArgument, err.Error())
+	default:
+		return err
+	}
 }
 
 func main() {
@@ -234,29 +257,26 @@ func run() error {
 		return fmt.Errorf("failed to create topic registry: %w", err)
 	}
 
-	// Create gRPC server with a unary interceptor that translates user-input
-	// validation errors (anything in the chain that matches controller.ErrInvalidRequest)
-	// into codes.InvalidArgument so gRPC clients can distinguish bad input from
-	// infrastructure failures. Other errors pass through unchanged.
+	// Create gRPC server with a unary interceptor that translates gateway
+	// controller errors into stable transport status codes.
 	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(
 		func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 			resp, err := handler(ctx, req)
-			if err != nil && controller.IsInvalidRequest(err) {
-				return nil, status.Error(codes.InvalidArgument, err.Error())
+			if err != nil {
+				return nil, gatewayStatusError(err)
 			}
-			return resp, err
+			return resp, nil
 		},
 	))
 
 	// Initialize storage from the shared app database connection. The land
-	// controller writes to this store directly; cancel/status use the request
-	// log store directly. The log consumer registered below persists request
-	// log entries published by the orchestrator's normal pipeline.
+	// controller writes to this store directly; cancel and request-summary
+	// controllers use its request stores. The log consumer registered below
+	// persists entries published by the orchestrator's normal pipeline.
 	store, err := mysqlstorage.NewStorage(appDB, scope.SubScope("storage"))
 	if err != nil {
 		return fmt.Errorf("failed to create storage: %w", err)
 	}
-	requestLogStore := store.GetRequestLogStore()
 
 	// Load queue configurations from YAML. Path is required so the gateway
 	// can reject requests for unknown queues at the edge.
@@ -273,12 +293,17 @@ func run() error {
 	pingController := controller.NewPingController(logger, scope)
 	landController := controller.NewLandController(logger.Sugar(), scope, cnt, store, queueConfigs, registry)
 	cancelController := controller.NewCancelController(logger.Sugar(), scope, store, registry)
-	statusController := controller.NewStatusController(logger.Sugar(), scope, requestLogStore)
+	requestSummaryController := controller.NewRequestSummaryController(
+		logger.Sugar(),
+		scope,
+		store.GetRequestSummaryStore(),
+		store.GetRequestURIStore(),
+	)
 	gatewayServer := &GatewayServer{
-		pingController:   pingController,
-		landController:   landController,
-		cancelController: cancelController,
-		statusController: statusController,
+		pingController:           pingController,
+		landController:           landController,
+		cancelController:         cancelController,
+		requestSummaryController: requestSummaryController,
 	}
 
 	pb.RegisterSubmitQueueGatewayServer(grpcServer, gatewayServer)

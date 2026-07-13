@@ -15,10 +15,10 @@
 package e2e_test
 
 // Reusable e2e helpers so tests read as intent, not plumbing. They drive the
-// stack through the real gateway gRPC surface (Land / Cancel / Status) and
+// stack through the real gateway gRPC surface (Land / Cancel / GetRequestSummaryByID) and
 // observe outcomes two ways:
 //
-//   - black-box, by polling the Status RPC to a target/terminal status; and
+//   - black-box, by polling the GetRequestSummaryByID RPC to a target/terminal status; and
 //   - white-box, by reading the request_log timeline (RequestLogStore.List on
 //     mysql-app) to assert the ordered stage progression.
 //
@@ -28,6 +28,8 @@ package e2e_test
 // stage is genuinely stuck, not a timing race.
 
 import (
+	"fmt"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	changepb "github.com/uber/submitqueue/api/base/change/protopb"
@@ -51,32 +53,35 @@ func (s *E2EIntegrationSuite) land(queue string, uris ...string) string {
 	return resp.Sqid
 }
 
-// currentStatus reads the request's current customer-facing status via the
-// Status RPC. A transport error is returned so callers can keep polling.
+// currentStatus reads the request's current customer-facing status via
+// GetRequestSummaryByID. A transport error is returned so callers can keep polling.
 func (s *E2EIntegrationSuite) currentStatus(sqid string) (entity.RequestStatus, error) {
-	resp, err := s.gatewayClient.Status(s.ctx, &gatewaypb.StatusRequest{Sqid: sqid})
+	resp, err := s.gatewayClient.GetRequestSummaryByID(s.ctx, &gatewaypb.GetRequestSummaryByIDRequest{Sqid: sqid})
 	if err != nil {
 		return entity.RequestStatusUnknown, err
 	}
-	return entity.RequestStatus(resp.Status), nil
+	if resp.Request == nil {
+		return entity.RequestStatusUnknown, fmt.Errorf("GetRequestSummaryByID(%s) returned no request", sqid)
+	}
+	return entity.RequestStatus(resp.Request.Status), nil
 }
 
-// awaitStatus polls Status until the request reaches exactly want.
+// awaitStatus polls GetRequestSummaryByID until the request reaches exactly want.
 func (s *E2EIntegrationSuite) awaitStatus(sqid string, want entity.RequestStatus) {
 	t := s.T()
 	require.Eventually(t, func() bool {
 		got, err := s.currentStatus(sqid)
 		if err != nil {
-			s.log.Logf("Status(%s) not ready yet: %v", sqid, err)
+			s.log.Logf("GetRequestSummaryByID(%s) not ready yet: %v", sqid, err)
 			return false
 		}
-		s.log.Logf("Status(%s) = %q (want %q)", sqid, got, want)
+		s.log.Logf("GetRequestSummaryByID(%s) = %q (want %q)", sqid, got, want)
 		return got == want
 	}, persistTimeout, persistPollInterval,
 		"request %s should reach status %q", sqid, want)
 }
 
-// awaitTerminal polls Status until the request reaches a terminal status
+// awaitTerminal polls GetRequestSummaryByID until the request reaches a terminal status
 // (landed, error, or cancelled) and returns it.
 func (s *E2EIntegrationSuite) awaitTerminal(sqid string) entity.RequestStatus {
 	t := s.T()
@@ -84,19 +89,17 @@ func (s *E2EIntegrationSuite) awaitTerminal(sqid string) entity.RequestStatus {
 	require.Eventually(t, func() bool {
 		got, err := s.currentStatus(sqid)
 		if err != nil {
-			s.log.Logf("Status(%s) not ready yet: %v", sqid, err)
+			s.log.Logf("GetRequestSummaryByID(%s) not ready yet: %v", sqid, err)
 			return false
 		}
 		last = got
-		s.log.Logf("Status(%s) = %q (awaiting terminal)", sqid, got)
+		s.log.Logf("GetRequestSummaryByID(%s) = %q (awaiting terminal)", sqid, got)
 		return isTerminalStatus(got)
 	}, persistTimeout, persistPollInterval,
 		"request %s should reach a terminal status", sqid)
 	return last
 }
 
-// timeline returns the ordered status history from the request_log (the audit
-// trail persisted by the gateway log consumer on mysql-app).
 // timeline returns the ordered status history from the request_log (the audit
 // trail persisted by the gateway log consumer on mysql-app). These are the
 // customer-facing RequestStatus values — the only ordered history in the system
@@ -141,13 +144,13 @@ func (s *E2EIntegrationSuite) terminalState(sqid string) entity.RequestState {
 	return req.State
 }
 
-// lastError returns the LastError reported by the Status RPC (populated on the
-// error path).
+// lastError returns the LastError reported by GetRequestSummaryByID.
 func (s *E2EIntegrationSuite) lastError(sqid string) string {
 	t := s.T()
-	resp, err := s.gatewayClient.Status(s.ctx, &gatewaypb.StatusRequest{Sqid: sqid})
-	require.NoError(t, err, "Status failed for %s", sqid)
-	return resp.LastError
+	resp, err := s.gatewayClient.GetRequestSummaryByID(s.ctx, &gatewaypb.GetRequestSummaryByIDRequest{Sqid: sqid})
+	require.NoError(t, err, "GetRequestSummaryByID failed for %s", sqid)
+	require.NotNil(t, resp.Request)
+	return resp.Request.LastError
 }
 
 // isTerminalStatus reports whether a customer-facing status is terminal.

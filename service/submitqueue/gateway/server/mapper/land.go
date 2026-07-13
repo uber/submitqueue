@@ -14,7 +14,7 @@
 
 // Package mapper translates gateway wire (proto) types to and from the domain
 // entities the controllers operate on. Each RPC gets its own file (land.go,
-// status.go, cancel.go, …); translation lives here so controllers stay
+// request_summary.go and cancel.go); translation lives here so controllers stay
 // proto-free.
 package mapper
 

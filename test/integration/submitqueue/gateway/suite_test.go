@@ -28,6 +28,7 @@ package gateway
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -48,6 +49,8 @@ import (
 	"github.com/uber/submitqueue/test/testutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type GatewayIntegrationSuite struct {
@@ -65,7 +68,7 @@ func TestGatewayIntegration(t *testing.T) {
 }
 
 // The log consumer runs inside the gateway-service container, so this suite can
-// only observe persistence black-box through the Status RPC — there is no
+// only observe persistence black-box through the request-summary RPC — there is no
 // in-process channel/HookSignal to wait on across the container boundary. A
 // bounded poll is therefore the deterministic-enough analog: persistTimeout is a
 // safety net (a failure here means something is genuinely stuck, not a timing
@@ -167,12 +170,46 @@ func (s *GatewayIntegrationSuite) TestLandAPI() {
 	s.log.Logf("Land API test passed: request stored and message published")
 }
 
+// TestRequestSummaryAPIErrorCodes verifies request-summary controller errors reach stable gRPC codes.
+func (s *GatewayIntegrationSuite) TestRequestSummaryAPIErrorCodes() {
+	t := s.T()
+
+	_, err := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: "missing/1"})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+
+	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
+	require.NoError(t, err)
+	const overflowChangeURI = "uri/read-api-overflow"
+	for i := 1; i <= 101; i++ {
+		require.NoError(t, store.GetRequestURIStore().Create(s.ctx, entity.RequestURI{
+			ChangeURI:    overflowChangeURI,
+			ReceivedAtMs: int64(i),
+			RequestID:    fmt.Sprintf("overflow/%d", i),
+		}))
+	}
+
+	_, err = s.client.GetRequestSummaryByChangeURI(s.ctx, &pb.GetRequestSummaryByChangeURIRequest{ChangeUri: overflowChangeURI})
+	require.Error(t, err)
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+
+	const inconsistentChangeURI = "uri/read-api-inconsistent"
+	require.NoError(t, store.GetRequestURIStore().Create(s.ctx, entity.RequestURI{
+		ChangeURI:    inconsistentChangeURI,
+		ReceivedAtMs: 1,
+		RequestID:    "missing-summary/1",
+	}))
+	_, err = s.client.GetRequestSummaryByChangeURI(s.ctx, &pb.GetRequestSummaryByChangeURIRequest{ChangeUri: inconsistentChangeURI})
+	require.Error(t, err)
+	assert.Equal(t, codes.Internal, status.Code(err))
+}
+
 // TestRequestLogConsumer verifies the gateway's log-topic consumer in isolation:
 // no orchestrator runs in this stack, so the test itself publishes a request log
 // entry to the log topic exactly as the orchestrator does in production (via
 // submitqueue/core/request.PublishLog). The gateway is the sole writer of the
 // request log; this asserts its consumer drains the log topic and persists the
-// entry to storage, observable through the Status RPC.
+// entry to storage, observable through the request-summary RPC.
 func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 	t := s.T()
 
@@ -207,13 +244,13 @@ func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 	s.log.Logf("Published 'started' log for sqid=%s; waiting for gateway consumer to persist it", sqid)
 
 	require.Eventually(t, func() bool {
-		resp, statusErr := s.client.Status(s.ctx, &pb.StatusRequest{Sqid: sqid})
+		resp, statusErr := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: sqid})
 		if statusErr != nil {
 			return false
 		}
-		return resp.Status == string(entity.RequestStatusStarted)
+		return resp.Request != nil && resp.Request.Status == string(entity.RequestStatusStarted)
 	}, persistTimeout, persistPollInterval,
 		"gateway log consumer should persist the published request log for sqid=%s", sqid)
 
-	s.log.Logf("Request log consumer test passed: entry persisted and readable via Status")
+	s.log.Logf("Request log consumer test passed: entry persisted and readable via GetRequestSummaryByID")
 }

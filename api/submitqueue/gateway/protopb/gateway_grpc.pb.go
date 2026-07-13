@@ -34,10 +34,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SubmitQueueGateway_Ping_FullMethodName   = "/uber.submitqueue.gateway.SubmitQueueGateway/Ping"
-	SubmitQueueGateway_Land_FullMethodName   = "/uber.submitqueue.gateway.SubmitQueueGateway/Land"
-	SubmitQueueGateway_Cancel_FullMethodName = "/uber.submitqueue.gateway.SubmitQueueGateway/Cancel"
-	SubmitQueueGateway_Status_FullMethodName = "/uber.submitqueue.gateway.SubmitQueueGateway/Status"
+	SubmitQueueGateway_Ping_FullMethodName                         = "/uber.submitqueue.gateway.SubmitQueueGateway/Ping"
+	SubmitQueueGateway_Land_FullMethodName                         = "/uber.submitqueue.gateway.SubmitQueueGateway/Land"
+	SubmitQueueGateway_Cancel_FullMethodName                       = "/uber.submitqueue.gateway.SubmitQueueGateway/Cancel"
+	SubmitQueueGateway_GetRequestSummaryByID_FullMethodName        = "/uber.submitqueue.gateway.SubmitQueueGateway/GetRequestSummaryByID"
+	SubmitQueueGateway_GetRequestSummaryByChangeURI_FullMethodName = "/uber.submitqueue.gateway.SubmitQueueGateway/GetRequestSummaryByChangeURI"
 )
 
 // SubmitQueueGatewayClient is the client API for SubmitQueueGateway service.
@@ -61,11 +62,12 @@ type SubmitQueueGatewayClient interface {
 	// Cancellation is NOT GUARANTEED: a request that has already merged, or that races to completion before the cancel
 	// signal propagates through the pipeline, may still land (or end in an error). Callers must NOT assume that a
 	// successful Cancel response means the request was cancelled — the actual terminal outcome (cancelled, landed, or
-	// error) must be checked through the separate status / request-log API.
+	// error) must be checked through the request-summary or request-history APIs.
 	Cancel(ctx context.Context, in *CancelRequest, opts ...grpc.CallOption) (*CancelResponse, error)
-	// Status returns the current status of a previously submitted request, identified by its sqid.
-	// The status is eventually consistent with the request store and reconciled from the append-only request log.
-	Status(ctx context.Context, in *StatusRequest, opts ...grpc.CallOption) (*StatusResponse, error)
+	// GetRequestSummaryByID returns the current materialized status of one request.
+	GetRequestSummaryByID(ctx context.Context, in *GetRequestSummaryByIDRequest, opts ...grpc.CallOption) (*GetRequestSummaryByIDResponse, error)
+	// GetRequestSummaryByChangeURI returns current materialized statuses for an exact pinned change URI.
+	GetRequestSummaryByChangeURI(ctx context.Context, in *GetRequestSummaryByChangeURIRequest, opts ...grpc.CallOption) (*GetRequestSummaryByChangeURIResponse, error)
 }
 
 type submitQueueGatewayClient struct {
@@ -106,10 +108,20 @@ func (c *submitQueueGatewayClient) Cancel(ctx context.Context, in *CancelRequest
 	return out, nil
 }
 
-func (c *submitQueueGatewayClient) Status(ctx context.Context, in *StatusRequest, opts ...grpc.CallOption) (*StatusResponse, error) {
+func (c *submitQueueGatewayClient) GetRequestSummaryByID(ctx context.Context, in *GetRequestSummaryByIDRequest, opts ...grpc.CallOption) (*GetRequestSummaryByIDResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(StatusResponse)
-	err := c.cc.Invoke(ctx, SubmitQueueGateway_Status_FullMethodName, in, out, cOpts...)
+	out := new(GetRequestSummaryByIDResponse)
+	err := c.cc.Invoke(ctx, SubmitQueueGateway_GetRequestSummaryByID_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *submitQueueGatewayClient) GetRequestSummaryByChangeURI(ctx context.Context, in *GetRequestSummaryByChangeURIRequest, opts ...grpc.CallOption) (*GetRequestSummaryByChangeURIResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetRequestSummaryByChangeURIResponse)
+	err := c.cc.Invoke(ctx, SubmitQueueGateway_GetRequestSummaryByChangeURI_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -137,11 +149,12 @@ type SubmitQueueGatewayServer interface {
 	// Cancellation is NOT GUARANTEED: a request that has already merged, or that races to completion before the cancel
 	// signal propagates through the pipeline, may still land (or end in an error). Callers must NOT assume that a
 	// successful Cancel response means the request was cancelled — the actual terminal outcome (cancelled, landed, or
-	// error) must be checked through the separate status / request-log API.
+	// error) must be checked through the request-summary or request-history APIs.
 	Cancel(context.Context, *CancelRequest) (*CancelResponse, error)
-	// Status returns the current status of a previously submitted request, identified by its sqid.
-	// The status is eventually consistent with the request store and reconciled from the append-only request log.
-	Status(context.Context, *StatusRequest) (*StatusResponse, error)
+	// GetRequestSummaryByID returns the current materialized status of one request.
+	GetRequestSummaryByID(context.Context, *GetRequestSummaryByIDRequest) (*GetRequestSummaryByIDResponse, error)
+	// GetRequestSummaryByChangeURI returns current materialized statuses for an exact pinned change URI.
+	GetRequestSummaryByChangeURI(context.Context, *GetRequestSummaryByChangeURIRequest) (*GetRequestSummaryByChangeURIResponse, error)
 	mustEmbedUnimplementedSubmitQueueGatewayServer()
 }
 
@@ -161,8 +174,11 @@ func (UnimplementedSubmitQueueGatewayServer) Land(context.Context, *LandRequest)
 func (UnimplementedSubmitQueueGatewayServer) Cancel(context.Context, *CancelRequest) (*CancelResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Cancel not implemented")
 }
-func (UnimplementedSubmitQueueGatewayServer) Status(context.Context, *StatusRequest) (*StatusResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Status not implemented")
+func (UnimplementedSubmitQueueGatewayServer) GetRequestSummaryByID(context.Context, *GetRequestSummaryByIDRequest) (*GetRequestSummaryByIDResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetRequestSummaryByID not implemented")
+}
+func (UnimplementedSubmitQueueGatewayServer) GetRequestSummaryByChangeURI(context.Context, *GetRequestSummaryByChangeURIRequest) (*GetRequestSummaryByChangeURIResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetRequestSummaryByChangeURI not implemented")
 }
 func (UnimplementedSubmitQueueGatewayServer) mustEmbedUnimplementedSubmitQueueGatewayServer() {}
 func (UnimplementedSubmitQueueGatewayServer) testEmbeddedByValue()                            {}
@@ -239,20 +255,38 @@ func _SubmitQueueGateway_Cancel_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
-func _SubmitQueueGateway_Status_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(StatusRequest)
+func _SubmitQueueGateway_GetRequestSummaryByID_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRequestSummaryByIDRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SubmitQueueGatewayServer).Status(ctx, in)
+		return srv.(SubmitQueueGatewayServer).GetRequestSummaryByID(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: SubmitQueueGateway_Status_FullMethodName,
+		FullMethod: SubmitQueueGateway_GetRequestSummaryByID_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SubmitQueueGatewayServer).Status(ctx, req.(*StatusRequest))
+		return srv.(SubmitQueueGatewayServer).GetRequestSummaryByID(ctx, req.(*GetRequestSummaryByIDRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SubmitQueueGateway_GetRequestSummaryByChangeURI_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRequestSummaryByChangeURIRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SubmitQueueGatewayServer).GetRequestSummaryByChangeURI(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SubmitQueueGateway_GetRequestSummaryByChangeURI_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SubmitQueueGatewayServer).GetRequestSummaryByChangeURI(ctx, req.(*GetRequestSummaryByChangeURIRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -277,8 +311,12 @@ var SubmitQueueGateway_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _SubmitQueueGateway_Cancel_Handler,
 		},
 		{
-			MethodName: "Status",
-			Handler:    _SubmitQueueGateway_Status_Handler,
+			MethodName: "GetRequestSummaryByID",
+			Handler:    _SubmitQueueGateway_GetRequestSummaryByID_Handler,
+		},
+		{
+			MethodName: "GetRequestSummaryByChangeURI",
+			Handler:    _SubmitQueueGateway_GetRequestSummaryByChangeURI_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
