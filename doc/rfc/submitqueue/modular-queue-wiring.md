@@ -222,7 +222,37 @@ Rewrite the example to compose the new packages:
 | Controller wire | `submitqueue/orchestrator/controller/wire` | `PrimaryParams`, `DLQParams`, `RegisterPrimary()`, `RegisterDLQ()` | ~170 (registerPrimaryControllers, registerDLQControllers) |
 | Profile hints | `submitqueue/entity` (extended) | `QueueProfile` (added to `QueueConfig`) | 0 (additive) |
 
-## Rejected
+## Trade-off: profile hints vs. removing QueueConfig entirely
+
+Step 4 (profile hints in `QueueConfig`) deserves separate scrutiny because there is an open question about whether `QueueConfig` should exist at all.
+
+### Current role of QueueConfig
+
+`QueueConfig` today is a single-field entity (`Name string`). Its sole consumer is the gateway's `LandController`, which calls `queueconfig.Store.Get(ctx, queue)` to reject requests targeting unknown queues — a pure name-validation gate. The orchestrator does not import `queueconfig` at all; it maintains its own hardcoded `queueRegistry` with no programmatic link to the YAML config. The TODO on line 477 of the orchestrator example envisions bridging the two ("see also queueconfig.Store, which holds the per-queue data half"), but that bridge does not exist today.
+
+### Three options for per-queue extension selection
+
+| Option | Description | Pros | Cons |
+|---|---|---|---|
+| **A: Profile hints in QueueConfig (step 4 as proposed)** | Add `QueueProfile` fields to the entity; deployers declare scorer/conflict/etc. in `queues.yaml`; the wiring layer maps hint strings → instances. | Single source of truth for queue identity + behavior. YAML-only queue addition for known extension types. | Expands `QueueConfig` from a pure name registry into a config carrier — if QueueConfig is later removed, these fields need a new home. The entity gains fields the gateway doesn't use (profile hints are orchestrator-only). |
+| **B: Separate profile config file** | Leave `QueueConfig` as-is (name-only). Create a separate `queue-profiles.yaml` (or a `profiles:` section in a new file) consumed only by the orchestrator wiring. The orchestrator loads both queue names and profiles; the gateway loads only names. | Clean separation: gateway validates names, orchestrator resolves profiles. `QueueConfig` stays minimal and removable. No entity-level coupling. | Two config files to keep in sync (queue names must match). More moving parts in the wiring layer. |
+| **C: No data-driven profiles — keep profiles in Go code** | Drop step 4 entirely. Steps 1–3 (queueprofile, topicregistry, wire) still land as mechanical extractions. Per-queue profiles stay in Go, just using the promoted `queueprofile.Registry` instead of the current inline types. | Simplest change. No new config surface. Full type safety — a misspelled scorer name is a compile error, not a runtime lookup miss. Consistent with the existing philosophy ("all behavioral and VCS configuration lives in the extension factory implementations"). | Adding a new queue still requires a recompile. Doesn't address the "three-place edit" problem for deployers who don't write custom extensions. |
+
+### If QueueConfig is removed
+
+If the direction is to remove `QueueConfig` entirely (perhaps because queue name validation moves to a different mechanism — e.g. the orchestrator's `queueprofile.Registry` becomes the implicit registry of valid queues, and the gateway queries it or the profile store), then:
+
+- **Option A becomes wasted work** — we'd add profile fields to an entity that's about to be deleted.
+- **Option B is resilient** — the separate profile config survives independently.
+- **Option C is neutral** — no config-layer dependency either way.
+
+If queue name validation stays but moves out of the entity (e.g. the gateway calls `queueprofile.Registry.Get()` directly, treating the profile registry as the source of truth for "which queues exist"), then `QueueConfig` + `queueconfig.Store` can be removed without losing the validation gate. The gateway would depend on the profile registry instead of a name-only store. This would be a clean removal: the `queueconfig` extension package, its YAML impl, its mock, and the `QueueConfig` entity all go away; the `queueprofile.Registry` subsumes both name validation and extension resolution.
+
+### Recommendation
+
+**Land steps 1–3 unconditionally** — they are mechanical extractions with zero behavioral change and no dependency on the QueueConfig question. **Defer step 4** until the QueueConfig question is resolved. If QueueConfig stays, option A is the natural evolution; if it's removed, option B or C is cleaner, and the promoted `queueprofile.Registry` from step 1 already provides the foundation either way.
+
+
 
 - **DI framework (wire/dig/fx).** Adds indirection and a build-time dependency for a problem that explicit code solves. The refactor reduces the volume of explicit wiring, not its nature.
 - **Hot-reload of queue configs.** Out of scope. The YAML is loaded at startup. Hot-reload can build on this foundation later — `queueconfig.Store` already abstracts the read path, so swapping the YAML impl for a watching impl is a future, independent change.
