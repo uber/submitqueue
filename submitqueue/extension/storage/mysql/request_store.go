@@ -84,9 +84,7 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) (retE
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
-			// MySQL error code 1062 is "Duplicate entry". Hopefully it will never change with new versions of MySQL.
-			// Also it requires to have a single unique index on the table.
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrDuplicateEntry {
 			return fmt.Errorf("request entity id=%s: %w", request.ID, storage.ErrAlreadyExists)
 		}
 		return fmt.Errorf("failed to insert request entity id=%s: %w", request.ID, err)

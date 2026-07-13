@@ -1,21 +1,21 @@
-# Gateway History APIs
+# Gateway Request History APIs
 
-Design notes for gateway history APIs that return retained lifecycle events selected by SubmitQueue request ID or change ID.
+Design notes for gateway history APIs that return retained lifecycle events selected by SubmitQueue request ID or change URI.
 
 This document captures **design decisions and rationale only**.
 
 ## Problem
 
-Users need to inspect how a request progressed through SubmitQueue, not only its current reconciled state. They may start with the `sqid` returned by `Land` or with a provider-specific change ID represented by a change URI supplied to `Land`. The existing `Status` API collapses the append-only request log into one current status, which is appropriate for polling but hides the sequence of events needed for debugging and lifecycle displays.
+Users need to inspect how a request progressed through SubmitQueue, not only its current reconciled state. They may start with the `sqid` returned by `Land` or with a provider-specific change URI supplied to `Land`. The request-summary API collapses the append-only request log into one current status, which is appropriate for polling but hides the sequence of events needed for debugging and lifecycle displays.
 
 The gateway owns the request log and is the only service that reads it. The history APIs preserve that ownership boundary by serving gateway-owned `RequestLog` records for the request or requests selected by the caller.
 
 ## API Shape
 
-The gateway exposes two read-only RPCs because an `sqid` selects one event list while a change ID may select multiple requests:
+The gateway exposes two read-only RPCs because an `sqid` selects one event list while a change URI may select multiple requests:
 
 ```proto
-message HistoryBySQIDRequest {
+message GetRequestHistoryByIDRequest {
     // Globally unique identifier for a request, as returned by Land.
     string sqid = 1;
 }
@@ -31,14 +31,14 @@ message HistoryEvent {
     map<string, string> metadata = 4;
 }
 
-message HistoryBySQIDResponse {
+message GetRequestHistoryByIDResponse {
     // Retained request-log events ordered by timestamp_ms ascending with a stable tie-breaker.
     repeated HistoryEvent events = 1;
 }
 
-message HistoryByChangeIDRequest {
-    // Provider-specific change identifier represented by a change URI supplied to Land.
-    string change_id = 1;
+message GetRequestHistoryByChangeURIRequest {
+    // Exact change URI supplied to Land.
+    string change_uri = 1;
 }
 
 message RequestHistory {
@@ -48,22 +48,22 @@ message RequestHistory {
     repeated HistoryEvent events = 2;
 }
 
-message HistoryByChangeIDResponse {
+message GetRequestHistoryByChangeURIResponse {
     // Request histories ordered by the numeric sqid counter ascending.
     repeated RequestHistory histories = 1;
 }
 
 service SubmitQueueGateway {
-    rpc HistoryBySQID(HistoryBySQIDRequest) returns (HistoryBySQIDResponse) {}
-    rpc HistoryByChangeID(HistoryByChangeIDRequest) returns (HistoryByChangeIDResponse) {}
+    rpc GetRequestHistoryByID(GetRequestHistoryByIDRequest) returns (GetRequestHistoryByIDResponse) {}
+    rpc GetRequestHistoryByChangeURI(GetRequestHistoryByChangeURIRequest) returns (GetRequestHistoryByChangeURIResponse) {}
 }
 ```
 
-`HistoryBySQID` returns one list of events for exactly one request. `HistoryByChangeID` returns a list of request histories because the same change can be submitted more than once. Each history includes its `sqid` so callers can distinguish submissions and use the identifier with other gateway APIs.
+`GetRequestHistoryByID` returns one list of events for exactly one request. `GetRequestHistoryByChangeURI` returns a list of request histories because the same change can be submitted more than once. Each history includes its `sqid` so callers can distinguish submissions and use the identifier with other gateway APIs.
 
 ## Status Contract
 
-`HistoryEvent.status` is a string, not a protobuf enum. Its value is populated from `entity.RequestStatus`, the same customer-facing status type stored in `RequestLog` and returned by `Status`.
+`HistoryEvent.status` is a string, not a protobuf enum. Its value is populated from `entity.RequestStatus`, the same customer-facing status type stored in `RequestLog` and returned by `GetRequestSummaryByID` and `GetRequestSummaryByChangeURI`.
 
 Keeping the wire field as a string allows SubmitQueue to add request statuses without requiring clients to adopt a new generated enum before they can read the response. Clients must tolerate status strings they do not recognize.
 
@@ -80,7 +80,7 @@ The history APIs do not introduce a projection table or persist a second history
 
 `RequestVersion` is intentionally excluded. It is an internal reconciliation signal used to determine the current state and is not part of the public lifecycle event contract.
 
-`RequestID` is excluded from each event because the request is identified by the `HistoryBySQID` request or by `RequestHistory.sqid`.
+`RequestID` is excluded from each event because the request is identified by the `GetRequestHistoryByID` request or by `RequestHistory.sqid`.
 
 ## Ordering
 
@@ -90,7 +90,7 @@ Request-log timestamps are generated by callers, not by the storage backend. The
 
 Multiple events may have the same timestamp. Events with equal timestamps are ordered by a stable, implementation-defined tie-breaker so repeated reads of the same retained rows return the same sequence. The tie-breaker is not exposed in the API because it has no lifecycle meaning. For example, the MySQL implementation uses the persisted `salt` column as its secondary sort key.
 
-`HistoryByChangeIDResponse.histories` is ordered by the numeric SQID counter ascending. Implementations must parse the counter rather than compare SQIDs lexicographically, so `main/2` precedes `main/10`.
+`GetRequestHistoryByChangeURIResponse.histories` is ordered by the numeric SQID counter ascending. Implementations must parse the counter rather than compare SQIDs lexicographically, so `main/2` precedes `main/10`.
 
 ## Preserve Every Stored Event
 
@@ -110,16 +110,16 @@ A SubmitQueue request has a bounded lifecycle under normal operation, and a chan
 
 The history APIs are eventually consistent. Direct request-log writes become visible after storage persistence, while events sent through the log topic become visible after the gateway consumes and persists them. A successful response may therefore briefly omit recently emitted events.
 
-Unlike `Status`, the history APIs do not reconcile competing log entries. They expose retained event sequences directly.
+Unlike request-summary retrieval, the history APIs do not reconcile competing log entries. They expose retained event sequences directly.
 
 ## Errors
 
-Error behavior follows the conventions established by `Status`:
+Error behavior follows the conventions established by request-summary retrieval:
 
-- An empty `sqid` passed to `HistoryBySQID` is an invalid request.
-- An empty `change_id` passed to `HistoryByChangeID` is an invalid request.
-- If no request-log records exist for an `sqid`, `HistoryBySQID` returns the existing `RequestNotFoundError`.
-- If no retained request histories match a `change_id`, `HistoryByChangeID` returns a change-ID-specific not-found user error.
+- An empty `sqid` passed to `GetRequestHistoryByID` is an invalid request.
+- An empty `change_uri` passed to `GetRequestHistoryByChangeURI` is an invalid request.
+- If no request-log records exist for an `sqid`, `GetRequestHistoryByID` returns the existing `RequestNotFoundError`.
+- If no retained request histories match a `change_uri`, `GetRequestHistoryByChangeURI` returns a change-URI-specific not-found user error.
 - A request-log storage failure is returned as an infrastructure error.
 
 Using the existing request not-found error for `sqid` lookups keeps point lookups consistent across the gateway API.
@@ -127,7 +127,7 @@ Using the existing request not-found error for `sqid` lookups keeps point lookup
 ## Flow
 
 ```text
-HistoryBySQIDRequest(sqid)
+GetRequestHistoryByIDRequest(sqid)
         |
         v
 validate sqid
@@ -139,12 +139,12 @@ RequestLogStore.List(sqid)
 project each RequestLog to one HistoryEvent
         |
         v
-HistoryBySQIDResponse(events)
+GetRequestHistoryByIDResponse(events)
 
-HistoryByChangeIDRequest(change_id)
+GetRequestHistoryByChangeURIRequest(change_uri)
         |
         v
-validate change_id
+validate change_uri
         |
         v
 resolve matching sqids
@@ -156,7 +156,7 @@ RequestLogStore.List(sqid) for each match
 project each RequestLog to one HistoryEvent
         |
         v
-HistoryByChangeIDResponse(histories)
+GetRequestHistoryByChangeURIResponse(histories)
 ```
 
-The API contract does not prescribe how a change ID is mapped to matching requests. That lookup is an implementation concern and must preserve the gateway's ownership of the history read path.
+The API contract does not prescribe how a change URI is mapped to matching requests. That lookup is an implementation concern and must preserve the gateway's ownership of the history read path.

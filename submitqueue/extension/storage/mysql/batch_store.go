@@ -93,7 +93,7 @@ func (s *batchStore) Create(ctx context.Context, batch entity.Batch) (retErr err
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrDuplicateEntry {
 			return fmt.Errorf("batch entity id=%s: %w", batch.ID, storage.ErrAlreadyExists)
 		}
 		return fmt.Errorf("failed to insert batch entity id=%s: %w", batch.ID, err)
