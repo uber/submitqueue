@@ -1,0 +1,31 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["land.go"],
+    importpath = "github.com/uber/submitqueue/service/submitqueue/gateway/server/mapper",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api/base/mergestrategy/protopb:go_default_library",
+        "//api/submitqueue/gateway/protopb:go_default_library",
+        "//platform/base/change:go_default_library",
+        "//platform/base/mergestrategy:go_default_library",
+        "//submitqueue/entity:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["land_test.go"],
+    embed = [":go_default_library"],
+    deps = [
+        "//api/base/change/protopb:go_default_library",
+        "//api/base/mergestrategy/protopb:go_default_library",
+        "//api/submitqueue/gateway/protopb:go_default_library",
+        "//platform/base/change:go_default_library",
+        "//platform/base/mergestrategy:go_default_library",
+        "//submitqueue/entity:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+    ],
+)

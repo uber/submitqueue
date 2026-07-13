@@ -11,10 +11,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/gateway/controller",
     visibility = ["//visibility:public"],
     deps = [
-        "//api/base/mergestrategy/protopb:go_default_library",
         "//api/submitqueue/gateway/protopb:go_default_library",
-        "//platform/base/change:go_default_library",
-        "//platform/base/mergestrategy:go_default_library",
         "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
         "//platform/errs:go_default_library",
@@ -40,9 +37,8 @@ go_test(
     ],
     embed = [":go_default_library"],
     deps = [
-        "//api/base/change/protopb:go_default_library",
-        "//api/base/mergestrategy/protopb:go_default_library",
         "//api/submitqueue/gateway/protopb:go_default_library",
+        "//platform/base/change:go_default_library",
         "//platform/base/mergestrategy:go_default_library",
         "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",

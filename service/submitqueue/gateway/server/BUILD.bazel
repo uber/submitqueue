@@ -19,6 +19,7 @@ go_library(
         "//platform/extension/counter/mysql:go_default_library",
         "//platform/extension/messagequeue:go_default_library",
         "//platform/extension/messagequeue/mysql:go_default_library",
+        "//service/submitqueue/gateway/server/mapper:go_default_library",
         "//submitqueue/core/topickey:go_default_library",
         "//submitqueue/extension/queueconfig/yaml:go_default_library",
         "//submitqueue/extension/storage/mysql:go_default_library",

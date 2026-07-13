@@ -20,10 +20,6 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
-	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
-	"github.com/uber/submitqueue/platform/base/change"
-	"github.com/uber/submitqueue/platform/base/mergestrategy"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
@@ -87,8 +83,8 @@ func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter cou
 	}
 }
 
-// Land handles the land request and returns a response
-func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (resp *pb.LandResponse, retErr error) {
+// Land handles the land request and returns the ID assigned to the accepted request.
+func (c *LandController) Land(ctx context.Context, req entity.LandRequest) (result entity.LandResult, retErr error) {
 	const opName = "land"
 
 	op := metrics.Begin(c.metricsScope, opName)
@@ -96,74 +92,57 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (resp *p
 
 	// Validate required fields.
 	if req.Queue == "" {
-		return nil, fmt.Errorf("LandController requires the request to have a queue name specified: %w", ErrInvalidRequest)
+		return entity.LandResult{}, fmt.Errorf("LandController requires the request to have a queue name specified: %w", ErrInvalidRequest)
 	}
-	if req.Change == nil || len(req.Change.Uris) == 0 {
-		return nil, fmt.Errorf("LandController requires the request to have at least one change URI specified: %w", ErrInvalidRequest)
-	}
-
-	change := change.Change{
-		URIs: req.Change.GetUris(),
+	if len(req.Change.URIs) == 0 {
+		return entity.LandResult{}, fmt.Errorf("LandController requires the request to have at least one change URI specified: %w", ErrInvalidRequest)
 	}
 
 	queue := req.Queue
 	if _, err := c.queueConfigs.Get(ctx, queue); err != nil {
 		if errors.Is(err, queueconfig.ErrNotFound) {
-			return nil, errs.NewUserError(&UnrecognizedQueueError{Queue: queue})
+			return entity.LandResult{}, errs.NewUserError(&UnrecognizedQueueError{Queue: queue})
 		}
-		return nil, fmt.Errorf("LandController failed to look up queue %q: %w", queue, err)
-	}
-
-	// TODO: pass default queue land strategy to resolver function to process a default.
-	strategy, err := resolveMergeStrategy(req.Strategy)
-	if err != nil {
-		return nil, fmt.Errorf("LandController failed to map strategy for queue=%s: %w", req.Queue, err)
+		return entity.LandResult{}, fmt.Errorf("LandController failed to look up queue %q: %w", queue, err)
 	}
 
 	// Generate a globally unique request ID for the land request.
+	// The inbound entity arrives with an empty ID; the controller owns minting it.
 	seq, err := c.counter.Next(ctx, "request/"+queue)
 	if err != nil {
-		return nil, fmt.Errorf("LandController failed to generate request ID for queue=%s: %w", queue, err)
+		return entity.LandResult{}, fmt.Errorf("LandController failed to generate request ID for queue=%s: %w", queue, err)
 	}
-
-	landRequest := entity.LandRequest{
-		ID:           fmt.Sprintf("%s/%d", queue, seq),
-		Queue:        queue,
-		Change:       change,
-		LandStrategy: strategy,
-	}
+	req.ID = fmt.Sprintf("%s/%d", queue, seq)
 
 	// Record the accepted status in the request log for reconciliation. Once the request materializes as a Request entity, the status might be updated to "new".
 	// It is important to record the status before publishing to the queue for processing. It is important to publish straight to the database and not via a entityqueue.
 	// Gateway has to stay consistent with the request log.
-	logEntry := entity.NewRequestLog(landRequest.ID, entity.RequestStatusAccepted, 0, "", nil)
+	logEntry := entity.NewRequestLog(req.ID, entity.RequestStatusAccepted, 0, "", nil)
 	if err := c.store.GetRequestLogStore().Insert(ctx, logEntry); err != nil {
-		return nil, fmt.Errorf("LandController failed to insert request log for sqid=%s: %w", landRequest.ID, err)
+		return entity.LandResult{}, fmt.Errorf("LandController failed to insert request log for sqid=%s: %w", req.ID, err)
 	}
 
 	c.logger.Debugw("land request created",
 		"queue", req.Queue,
-		"sqid", landRequest.ID,
-		"change_uris", change.URIs,
-		"change_count", len(change.URIs),
-		"strategy", string(strategy),
+		"sqid", req.ID,
+		"change_uris", req.Change.URIs,
+		"change_count", len(req.Change.URIs),
+		"strategy", string(req.LandStrategy),
 	)
 
 	// Publish to queue for async processing
-	if err := c.publishToQueue(ctx, landRequest); err != nil {
-		return nil, fmt.Errorf("LandController failed to publish request to queue: %w", err)
+	if err := c.publishToQueue(ctx, req); err != nil {
+		return entity.LandResult{}, fmt.Errorf("LandController failed to publish request to queue: %w", err)
 	}
 
 	c.logger.Infow("request published to queue",
 		"queue", req.Queue,
-		"sqid", landRequest.ID,
+		"sqid", req.ID,
 		"topic_key", topickey.TopicKeyStart,
 	)
 	metrics.NamedCounter(c.metricsScope, opName, "publish_success", 1)
 
-	return &pb.LandResponse{
-		Sqid: landRequest.ID,
-	}, nil
+	return entity.LandResult{ID: req.ID}, nil
 }
 
 // publishToQueue publishes a land request to the request queue for async processing.
@@ -195,21 +174,4 @@ func (c *LandController) publishToQueue(ctx context.Context, landRequest entity.
 	}
 
 	return nil
-}
-
-// resolveMergeStrategy maps a proto Strategy enum to the shared mergestrategy.MergeStrategy.
-func resolveMergeStrategy(s mergestrategypb.Strategy) (mergestrategy.MergeStrategy, error) {
-	switch s {
-	case mergestrategypb.Strategy_DEFAULT:
-		// TODO: resolve default strategy based on queue configuration
-		return mergestrategy.MergeStrategyRebase, nil
-	case mergestrategypb.Strategy_REBASE:
-		return mergestrategy.MergeStrategyRebase, nil
-	case mergestrategypb.Strategy_SQUASH_REBASE:
-		return mergestrategy.MergeStrategySquashRebase, nil
-	case mergestrategypb.Strategy_MERGE:
-		return mergestrategy.MergeStrategyMerge, nil
-	default:
-		return mergestrategy.MergeStrategyUnknown, fmt.Errorf("unknown land strategy in proto message: %v", s)
-	}
 }
