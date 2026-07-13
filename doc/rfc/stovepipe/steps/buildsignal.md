@@ -36,7 +36,7 @@ For a delivery carrying build id `B`:
 4. Resolve the build-runner: buildRunner = Factory.For(Config{QueueName: R.Queue}).
    - lookup failure -> non-retryable (config error, same as build stage).
 
-5. Poll: status, metadata, err := buildRunner.Status(ctx, base.BuildID{ID: B})
+5. Poll: status, metadata, err := buildRunner.Status(ctx, entity.BuildID{ID: B})
    - B is Build.ID, the runner-assigned id minted at Trigger — one id end to end (see build.md).
    - Status may fail transiently (runner unavailable, unknown build id) -> return raw; classifier decides.
    - metadata is BuildMetadata (caller-supplied, provider-echoed); the poll loop's own control flow
@@ -70,9 +70,9 @@ For a delivery carrying build id `B`:
 
 **Why step 6 guards on status and makes terminal write-once**: an unchanged status skips the CAS write entirely, so a long build being polled every couple of seconds doesn't churn `Build.Version` on every tick — the version only advances on a real state transition. The write-once rule exists because CAS alone cannot provide it: optimistic locking defends against *concurrent* writers, but a later delivery that polls a flaky backend and sees a different terminal status would CAS cleanly against the current version and overwrite (see Edge cases). A given `Build` has a single poll partition (see [Partitioning](doc/rfc/stovepipe/steps/build.md#partitioning)), so the only writer racing the CAS is a redelivery of the same message (e.g. after a lapsed visibility lease); `ErrVersionMismatch` there is handled as retryable and converges.
 
-## Status: shared with SubmitQueue
+## Status: shaped like SubmitQueue's, not shared code
 
-`Status` is not a point of divergence from SubmitQueue: both domains' `BuildRunner`s share the same `Status(ctx, buildID) (BuildStatus, BuildMetadata, error)` signature via `platform/extension/buildrunner.StatusCanceller` (see [build.md](doc/rfc/stovepipe/steps/build.md#stovepipe-buildrunner-contract-design-sketch)). `BuildMetadata` is caller-supplied and provider-echoed — the runner must not depend on it, but nothing stops a consumer from reading it. `buildsignal`'s own poll loop (steps 6-8) doesn't need to interpret it to decide when to stop polling, same as SubmitQueue's, but that's a statement about what the poll loop happens to need, not a rule that the value is unused: `build-runner.md` describes its purpose as round-tripping to users ([#buildmetadata](doc/rfc/submitqueue/build-runner.md#buildmetadata)), and a future check in either domain's buildsignal is free to read it — e.g. to short-circuit some behavior — without changing the contract.
+`Status` is not a point of conceptual divergence from SubmitQueue: both domains' `BuildRunner`s poll by the same opaque, runner-minted id with the same `Status(ctx, buildID) (BuildStatus, BuildMetadata, error)` signature. That similarity stays a shape, not a shared `platform/extension/buildrunner` interface — each domain keeps its own `BuildRunner` (including its own local `Status`), with reuse pushed to a shared backend implementation instead (see [build.md](doc/rfc/stovepipe/steps/build.md#alternatives-considered-for-sharing-the-contract)). `BuildMetadata` is caller-supplied and provider-echoed — the runner must not depend on it, but nothing stops a consumer from reading it. `buildsignal`'s own poll loop (steps 6-8) doesn't need to interpret it to decide when to stop polling, same as SubmitQueue's, but that's a statement about what the poll loop happens to need, not a rule that the value is unused: `build-runner.md` describes its purpose as round-tripping to users ([#buildmetadata](doc/rfc/submitqueue/build-runner.md#buildmetadata)), and a future check in either domain's buildsignal is free to read it — e.g. to short-circuit some behavior — without changing the contract.
 
 Returning `TargetGraph` from `Status` in place of `BuildMetadata`, with `buildsignal` persisting it for `analyze` to read later, was considered and set aside — how `analyze` obtains the target graph is left to its own design, not `buildsignal`'s poll loop.
 

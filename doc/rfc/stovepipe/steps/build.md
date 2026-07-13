@@ -4,7 +4,7 @@
 
 It handles only the trigger: it does not poll for completion, record greenness, or decide incremental-vs-full — those are `buildsignal`'s, `record`'s, and `process`'s jobs respectively.
 
-`build` is structurally the same controller as `submitqueue/orchestrator/controller/build/build.go`, and [doc/rfc/submitqueue/build-runner.md](doc/rfc/submitqueue/build-runner.md) is the reference rationale for the trigger-then-poll shape this stage reuses. The `BuildRunner` contract's `Status`/`Cancel` half now carries over as literally shared code with SubmitQueue, via `platform/extension/buildrunner`; what does *not* carry over is `Trigger` — the two domains model different problems, so each keeps its own, following the [extension-contract.md](doc/rfc/submitqueue/extension-contract.md) "identity in, resolve internally" principle.
+`build` is structurally the same controller as `submitqueue/orchestrator/controller/build/build.go`, and [doc/rfc/submitqueue/build-runner.md](doc/rfc/submitqueue/build-runner.md) is the reference rationale for the trigger-then-poll shape this stage reuses. The `BuildRunner` contract itself — `Trigger`, `Status`, and `Cancel` alike — stays a separate `stovepipe/extension/buildrunner` interface rather than sharing SubmitQueue's; the two domains model different problems, so each keeps its own, following the [extension-contract.md](doc/rfc/submitqueue/extension-contract.md) "identity in, resolve internally" principle. What's shared is the underlying implementation, not the contract: a concrete backend (e.g. Buildkite) can satisfy both domains' interfaces off one client, so real code reuse happens at that layer instead of forcing a lowest-common-denominator interface (see [Why separate contracts](#why-separate-contracts)).
 
 ## Input, partitioning, and the single-writer property
 
@@ -47,7 +47,9 @@ For a delivery carrying request id `R`:
      id there is no key to check by, so a redelivery re-triggers and downstream
      idempotency absorbs the duplicate (see Idempotency).
    - Trigger is async: it returns promptly with the runner-assigned id, not an outcome.
-   - metadata is empty for now; reserved for future caller annotations.
+   - metadata is empty for now; expected to carry real data eventually (e.g. conflict-graph
+     info, or other upstream decisions relevant to the build) once a concrete need lands in
+     either domain — the shape is deferred until then, not decided here.
    - failure -> return raw; classifier decides (transient runner blip retryable, bad URI not).
 
 6. Persist Build{ID: buildID.ID, RequestID: R.ID, URI: R.URI, BaseURI: baseURI,
@@ -99,7 +101,7 @@ Per `platform/errs`'s non-retryable-by-default rule (see [platform/errs/README.m
 
 | Failure | Disposition | Why |
 |---|---|---|
-| `Request` not found (`storage.ErrNotFound`) | retryable (`errs.NewRetryableError`) | Producing stage's write not visible yet; redelivery converges — same as `process.go`. |
+| `Request` not found (`storage.ErrNotFound`) | retryable (`errs.NewRetryableError`) | On a primary-only read this shouldn't happen in practice — `process` commits before it publishes — but the check costs nothing when the row is already visible and gives free convergence on the rare chance it isn't, same posture as `process.go`. |
 | `Trigger` | raw error; classifier decides | Deliberately left open rather than fixed either way — a runner timeout/connection is transient, a bad URI is permanent, and only a backend classifier can tell them apart. |
 
 Everything else — factory lookup, a malformed message, a build-store error other than `ErrAlreadyExists`, and the publish to `buildsignal` — is returned raw with no override, because the default is already correct: none of them are worth automatically replaying (a queue with no registered builder is a config error, a broken payload will never parse, and storage/queue and publish failures dead-letter and let DLQ reconciliation recover).
@@ -136,42 +138,41 @@ There is no batch, no dependency list, and nothing to resolve — the URIs *are*
 
 The linearity assumption in point 1 is load-bearing and already guarded upstream: stovepipe assumes a linear trunk by default, and when `SourceControl` reports that last-green is no longer an ancestor of the head (history rewrite), `process` falls back to a full build rather than trusting the interval ([process.md](doc/rfc/stovepipe/steps/process.md#build-strategy-decision)). The URI-pair contract is exactly as expressive as that model — a valid `base..head` range, or a full build with an empty baseline — and nothing more.
 
-So `build`'s `Trigger` gets its own shape under `stovepipe/extension/buildrunner`, still "identity in, resolve internally" — just with URI identity instead of batch identity. `Status` and `Cancel` don't have this mismatch — both domains poll and cancel by the same opaque, runner-minted id with the same async semantics — so they move to a shared `platform/extension/buildrunner.StatusCanceller` sub-interface instead of being duplicated (see the contract sketch below).
+So `build`'s `Trigger` gets its own shape under `stovepipe/extension/buildrunner`, still "identity in, resolve internally" — just with URI identity instead of batch identity. `Status` and `Cancel` don't have this mismatch — both domains poll and cancel by the same opaque, runner-minted id with the same async semantics — but that similarity is shaped-the-same, not shared code: they stay on `stovepipe/extension/buildrunner.BuildRunner` too, duplicated in shape from SubmitQueue's, with reuse pushed down to a shared backend implementation instead (see the contract sketch below and [Alternatives considered for sharing the contract](#alternatives-considered-for-sharing-the-contract)).
 
 ### Stovepipe `BuildRunner` contract (design sketch)
 
-Not implemented here. `BuildID`, `BuildStatus`, and `BuildMetadata` move to `platform/base` (promoted from each domain's own `entity` package, now that `Status`/`Cancel` are genuinely shared — see [Alternatives considered for sharing the contract](#alternatives-considered-for-sharing-the-contract) for why); `stovepipe/extension/buildrunner` holds only `Trigger`, `Config`, and the `Factory` interface, per [CLAUDE.md](CLAUDE.md)'s extension rules.
+Not implemented here. `BuildID`, `BuildStatus`, and `BuildMetadata` are defined locally in `stovepipe/entity`, shaped the same as SubmitQueue's equivalents in `submitqueue/entity` but not the same Go types — per the reviewer preference recorded in [Alternatives considered for sharing the contract](#alternatives-considered-for-sharing-the-contract), a shared `platform/base`/`platform/extension/buildrunner` contract was considered and set aside in favor of keeping each domain's interface separate and reusing at the implementation layer instead. `stovepipe/extension/buildrunner` holds `Trigger`, `Status`, `Cancel`, `Config`, and the `Factory` interface, per [CLAUDE.md](CLAUDE.md)'s extension rules.
 
 ```go
-// platform/extension/buildrunner — shared with SubmitQueue
-type StatusCanceller interface {
-    // Status returns the current status. Takes the id Trigger returned
-    // (Build.ID). May round-trip to the backend. BuildMetadata is
-    // caller-supplied, provider-echoed; the runner must not depend on it, but
-    // a controller may read it for its own purposes (e.g. round-tripping to
-    // users, or a future short-circuit check) — buildsignal's own poll loop
-    // doesn't need it to decide when to stop polling, in either domain.
-    Status(ctx context.Context, buildID base.BuildID) (base.BuildStatus, base.BuildMetadata, error)
-
-    // Cancel requests cancellation; a no-op on terminal builds. Takes the id
-    // Trigger returned, like Status. Unused today in stovepipe (see
-    // "Cancellation: defined, not yet called").
-    Cancel(ctx context.Context, buildID base.BuildID) error
-}
-
 // package buildrunner (stovepipe/extension/buildrunner)
 type BuildRunner interface {
-    buildrunner.StatusCanceller
-
     // Trigger starts a new build every call and mints the build's identity —
     // there is no caller-supplied dedup input, matching SubmitQueue's contract
     // exactly (see "Alternatives considered for the build identity" below
     // for other shapes this doc considered). headURI is the commit
     // under validation; baseURI is the incremental baseline (empty for a full
     // build). metadata is caller annotations the runner may echo but must not
-    // depend on. Runner-side work is async; callers learn progress via Status.
+    // depend on — empty today, but expected to carry real data eventually (e.g.
+    // conflict-graph info, or other upstream decisions relevant to the build)
+    // once a concrete need lands in either domain; the shape is deferred until
+    // then, not decided here. Runner-side work is async; callers learn progress
+    // via Status.
     // Returns the runner-assigned build id, which the caller adopts as Build.ID.
-    Trigger(ctx context.Context, headURI, baseURI string, metadata base.BuildMetadata) (base.BuildID, error)
+    Trigger(ctx context.Context, headURI, baseURI string, metadata entity.BuildMetadata) (entity.BuildID, error)
+
+    // Status returns the current status. Takes the id Trigger returned
+    // (Build.ID). May round-trip to the backend. BuildMetadata is
+    // caller-supplied, provider-echoed; the runner must not depend on it, but
+    // a controller may read it for its own purposes (e.g. round-tripping to
+    // users, or a future short-circuit check) — buildsignal's own poll loop
+    // doesn't need it to decide when to stop polling, in either domain.
+    Status(ctx context.Context, buildID entity.BuildID) (entity.BuildStatus, entity.BuildMetadata, error)
+
+    // Cancel requests cancellation; a no-op on terminal builds. Takes the id
+    // Trigger returned, like Status. Unused today in stovepipe (see
+    // "Cancellation: defined, not yet called").
+    Cancel(ctx context.Context, buildID entity.BuildID) error
 }
 
 type Config struct{ QueueName string } // the only identity the system hands a Factory
@@ -185,20 +186,20 @@ type Factory interface{ For(cfg Config) (BuildRunner, error) }
 The shape isn't decided here because project semantics belong to `analyze`, not `build`: how a project maps to a buildable scope (a Bazel target pattern, a directory, a service name) is implementer-specific per [workflow.md](doc/rfc/stovepipe/workflow.md#project---greenness-at-a-finer-grain). The expectation is that this stays an opaque token — following the same "identity in, resolve internally" shape already used for `headURI`/`baseURI` (owned and interpreted by `SourceControl`) — that `build` reads off the `Request`/message and hands to the runner uninterpreted, rather than a structured type `build` would have to understand:
 
 ```go
-Trigger(ctx context.Context, headURI, baseURI string, projectScope entity.ProjectScope, metadata base.BuildMetadata) (base.BuildID, error)
+Trigger(ctx context.Context, headURI, baseURI string, projectScope entity.ProjectScope, metadata entity.BuildMetadata) (entity.BuildID, error)
 ```
 
-`ProjectScope` lives in `stovepipe/entity` rather than `platform/base` — unlike `BuildID`/`BuildStatus`/`BuildMetadata`, projects have no SubmitQueue equivalent, so there is nothing to share. Its zero value covers Phase 1 (no project — whole-repo/incremental scope only, exactly today's sketch); `analyze` is what would populate a non-zero value for Phase 2. This mirrors the additive optional field already reserved on `BuildRequest` for the same purpose (see [Queue contract additions](#queue-contract-additions)) — the wire message and the extension contract need the same new dimension, and both are deferred to the same design.
+`ProjectScope` lives in `stovepipe/entity` alongside `BuildID`/`BuildStatus`/`BuildMetadata` — projects have no SubmitQueue equivalent at all, not even a shape to mirror. Its zero value covers Phase 1 (no project — whole-repo/incremental scope only, exactly today's sketch); `analyze` is what would populate a non-zero value for Phase 2. This mirrors the additive optional field already reserved on `BuildRequest` for the same purpose (see [Queue contract additions](#queue-contract-additions)) — the wire message and the extension contract need the same new dimension, and both are deferred to the same design.
 
-Only `Trigger` differs between domains — batches vs. URIs, per [Why separate contracts](#why-separate-contracts). `Status` and `Cancel` don't have that mismatch: both domains poll and cancel by the same opaque, runner-minted id with the same async semantics, so duplicating them per domain (one copy in each domain's own `entity` package, mirroring the choice already made for `RequestID`) would be "shaped the same" without being shared code. Sharing them for real means `BuildID`/`BuildStatus`/`BuildMetadata` have to be the same Go types on both sides, which is why they move to `platform/base` here rather than staying duplicated — a one-time migration of SubmitQueue's already-shipped controllers, storage, and protobuf mappings onto the shared type, accepted as worth it for real reuse (a dual-implementing backend satisfies both `BuildRunner` interfaces through one embedded method set) instead of two interfaces that only look alike. [Alternatives considered for sharing the contract](#alternatives-considered-for-sharing-the-contract) below records the shapes that were weighed against this one.
+Both `Trigger` and `Status`/`Cancel` differ *in contract* between domains, even though `Status`/`Cancel` happen to be identical in shape: both domains poll and cancel by the same opaque, runner-minted id with the same async semantics. Rather than promoting that shape parity into a shared `platform/base`/`platform/extension/buildrunner` type and interface — which would force a one-time migration of SubmitQueue's already-shipped controllers, storage, and protobuf mappings onto the shared type — each domain keeps its own `BuildRunner` interface and its own local `BuildID`/`BuildStatus`/`BuildMetadata`, and real code reuse happens one layer down, in a shared backend implementation (e.g. a Buildkite client) that both domains' concrete runners wrap. [Alternatives considered for sharing the contract](#alternatives-considered-for-sharing-the-contract) below records the shapes weighed against this one, including the shared-interface alternative that was set aside.
 
 There is exactly one build id: the runner mints it at `Trigger`, `build` adopts it as `Build.ID`, and every later call and message carries it verbatim — `Status`/`Cancel` take the same value `Trigger` returned, the queue payload is the same value, the store key is the same value. This is SubmitQueue's convention end to end. The id is opaque: no stovepipe reader parses it, derives it, or equates it with another entity's id — the trap SubmitQueue's speculate/cancel path falls into. And per the extension rules a runner keeps only transient local state, so the durable `Request` ↔ `Build` linkage lives in **our** store as `Build.RequestID`, never in the runner.
 
-Supporting entity types: `BuildStatus`, `BuildMetadata`, and `BuildID` live in `platform/base`, shared verbatim with SubmitQueue rather than duplicated — `BuildStatus` is the narrow lowercase enum `"" (unknown) / accepted / running / succeeded / failed / cancelled` with an `IsTerminal()` predicate covering the last three, `BuildMetadata` is the free-form `map[string]string`, and `BuildID` is a `{ID string}` wire struct wrapping the one runner-assigned id everywhere it appears — `Trigger`'s return, `Status`/`Cancel`'s parameter, the queue payload. `stovepipe/entity/build.go` keeps what's stovepipe-specific: the `Build` entity itself (`RequestID`/`URI`/`BaseURI` alongside the shared `ID`/`Status`/`Version`). How a target graph reaches `analyze` is out of scope for this doc — left to the `analyze` design.
+Supporting entity types: `BuildStatus`, `BuildMetadata`, and `BuildID` live in `stovepipe/entity`, shaped the same as SubmitQueue's `submitqueue/entity` equivalents but defined and duplicated locally rather than shared — `BuildStatus` is the narrow lowercase enum `"" (unknown) / accepted / running / succeeded / failed / cancelled` with an `IsTerminal()` predicate covering the last three, `BuildMetadata` is the free-form `map[string]string`, and `BuildID` is a `{ID string}` wire struct wrapping the one runner-assigned id everywhere it appears — `Trigger`'s return, `Status`/`Cancel`'s parameter, the queue payload. `stovepipe/entity/build.go` keeps what's stovepipe-specific: the `Build` entity itself (`RequestID`/`URI`/`BaseURI` alongside `ID`/`Status`/`Version`). How a target graph reaches `analyze` is out of scope for this doc — left to the `analyze` design.
 
 ### Alternatives considered for sharing the contract
 
-Three further shapes for sharing the `BuildRunner` contract across domains were also raised during the design discussion, weighed against the shared-`Status`/`Cancel`-plus-per-domain-`Trigger` split adopted above. Recorded here for context; none of these three were adopted:
+Several shapes for sharing the `BuildRunner` contract across domains were raised during the design discussion. The last one below — a shared backend implementation behind thin, separate per-domain contracts — is the shape adopted above; the others were set aside:
 
 - **One platform-level `BuildRunner` with both trigger verbs.** Move the interface to `platform/extension` and add `TriggerChanges(baseURI, headURI)` beside the batch-based `Trigger`:
 
@@ -223,7 +224,10 @@ Three further shapes for sharing the `BuildRunner` contract across domains were 
   ```
 
   Trade-offs: this inverts the metadata contract — `BuildMetadata` is caller annotation the runner echoes but **must not depend on** ([build-runner.md](doc/rfc/submitqueue/build-runner.md#buildmetadata)). Routing the build's one load-bearing input through it would make the scope untyped, unvalidated, and invisible in the interface — a runner correctly honoring the "must not depend on metadata" rule would ignore `head_uri`/`base_uri` entirely and build the wrong scope.
-- **Shared backend under `platform`, thin per-domain contracts.** House the Buildkite / CI-gateway implementation once under `platform/extension` and let each domain define its own contract over it:
+- **Shared `Status`/`Cancel` via a `platform/extension/buildrunner.StatusCanceller` sub-interface, with `BuildID`/`BuildStatus`/`BuildMetadata` promoted to `platform/base`.** An earlier draft of this doc adopted exactly this: since both domains poll and cancel by the same opaque, runner-minted id with the same async semantics, `Status`/`Cancel` moved to a shared interface embedded in each domain's `BuildRunner`, with the supporting types promoted to `platform/base` so both sides used the same Go types (a dual-implementing backend would then satisfy both interfaces through one embedded method set).
+
+  Trade-offs: set aside on review — splitting one conceptual contract (`Trigger` + `Status` + `Cancel`) across two packages (`platform/extension/buildrunner` for two of the three methods, `{domain}/extension/buildrunner` for the third) fragments a single interface across an ownership boundary for a resemblance that isn't yet load-bearing: SubmitQueue is the only existing consumer of the "shared" half today, and the promotion cost — migrating SubmitQueue's already-shipped controllers, storage, and protobuf mappings onto the shared type — bought less than keeping each domain's `BuildRunner` whole and pushing reuse down to the implementation layer instead, per the option below.
+- **Shared backend under `platform`, thin per-domain contracts (adopted).** House the Buildkite / CI-gateway implementation once under `platform/extension` and let each domain define its own contract over it:
 
   ```go
   // platform/extension/buildrunner/buildkite — shared HTTP client, auth, poll loop
@@ -238,7 +242,7 @@ Three further shapes for sharing the `BuildRunner` contract across domains were 
   func NewBuildkiteRunner(c *buildkite.Client) stovepipebuildrunner.BuildRunner { /* checks out headURI, diffs against baseURI, then calls c */ }
   ```
 
-  Trade-offs: the shareable layer is thinner than it looks — the *checkout intent* differs at the CI-pipeline level: SubmitQueue's job applies patch lists into a composite commit, stovepipe's checks out an existing commit and diffs against a baseline — so the pipeline side must know which caller it serves either way. What this option gets right can still be had at the implementation layer without a shared contract: a concrete backend package can implement **both** domain interfaces and share its client/auth/poll plumbing internally (each service wires only the interface it needs — the "one backend, two interfaces" shape), and genuinely domain-free plumbing can live under `platform/`.
+  The shareable layer is thinner than it looks — the *checkout intent* differs at the CI-pipeline level: SubmitQueue's job applies patch lists into a composite commit, stovepipe's checks out an existing commit and diffs against a baseline — so the pipeline side must know which caller it serves either way. But that's exactly the point: a concrete backend package implements **both** domain interfaces and shares its client/auth/poll plumbing internally (each service wires only the interface it needs — the "one backend, two interfaces" shape), and genuinely domain-free plumbing lives under `platform/`, without either domain's contract having to bend to match the other's.
 
 Contract-level reuse is not zero even for the parts that stayed separate: the `Trigger` async contract — returns a handle not an outcome, callers learn progress via `Status` — and the id model carry over verbatim between the two domains' `Trigger` methods, even though `Trigger` itself isn't shared code — see [Carries over vs. new](#carries-over-vs-new).
 
@@ -274,12 +278,14 @@ Either could be adopted independently: the idempotency token, if a backend that 
 
 ### Carries over vs. new
 
-- **Carries over as literally shared code**: the `BuildStatus` enum and `IsTerminal()` (nothing batch-specific — [build-runner.md](doc/rfc/submitqueue/build-runner.md#buildstatus)); `BuildMetadata` (caller-supplied, provider-echoed, controller-uninterpreted — [#buildmetadata](doc/rfc/submitqueue/build-runner.md#buildmetadata)); the async contract — `Trigger` returns a handle not an outcome, `Status` may round-trip, `Cancel` reaches the provider not the engine ([#async-vs-sync-contract](doc/rfc/submitqueue/build-runner.md#async-vs-sync-contract)); and the id model — no caller-supplied id, the runner mints the build's identity, and that one `base.BuildID` is the store key, queue payload, and `Status`/`Cancel` parameter (see [Alternatives considered](#alternatives-considered-for-the-build-identity)). These now live in `platform/base`/`platform/extension/buildrunner`, not duplicated per domain — see the contract sketch above.
-- **New in stovepipe**: URI-based scope in `Trigger` instead of batch lists — the one part of the contract that stays domain-specific, per [Why separate contracts](#why-separate-contracts). Mapping targets to projects is still stovepipe-only; how `analyze` obtains a target graph is left to its own design, out of scope for this doc.
+- **Shaped the same, not shared code**: the `BuildStatus` enum and `IsTerminal()` (nothing batch-specific — [build-runner.md](doc/rfc/submitqueue/build-runner.md#buildstatus)); `BuildMetadata` (caller-supplied, provider-echoed, controller-uninterpreted — [#buildmetadata](doc/rfc/submitqueue/build-runner.md#buildmetadata)); the async contract — `Trigger` returns a handle not an outcome, `Status` may round-trip, `Cancel` reaches the provider not the engine ([#async-vs-sync-contract](doc/rfc/submitqueue/build-runner.md#async-vs-sync-contract)); and the id model — no caller-supplied id, the runner mints the build's identity, and that one `entity.BuildID` is the store key, queue payload, and `Status`/`Cancel` parameter (see [Alternatives considered](#alternatives-considered-for-the-build-identity)). These are duplicated locally in `stovepipe/entity`/`stovepipe/extension/buildrunner` rather than promoted to `platform/base`/`platform/extension/buildrunner` — see the contract sketch above and [Alternatives considered for sharing the contract](#alternatives-considered-for-sharing-the-contract).
+- **Shared as implementation, not contract**: a concrete backend (e.g. Buildkite) can satisfy both domains' `BuildRunner` interfaces off one client, sharing HTTP/auth/poll-loop plumbing internally even though the two `BuildRunner` interfaces it implements are separate types — see the "Shared backend under `platform`, thin per-domain contracts" option above.
+- **New in stovepipe**: URI-based scope in `Trigger` instead of batch lists — the one part of the contract that was always domain-specific by necessity, per [Why separate contracts](#why-separate-contracts). Mapping targets to projects is still stovepipe-only; how `analyze` obtains a target graph is left to its own design, out of scope for this doc.
 
 ## Entity and storage additions needed
 
-**`Build` entity** (`stovepipe/entity/build.go`), following the immutable-except-`Status`/`Version` shape of `entity.Request`; `ID` and `Status` reuse the shared `platform/base` types (`BuildID`, `BuildStatus`) now that `Status`/`Cancel` are shared with SubmitQueue (see the [contract sketch](#stovepipe-buildrunner-contract-design-sketch)), while `RequestID`/`URI`/`BaseURI` stay stovepipe-specific:
+**`Build` entity** (`stovepipe/entity/build.go`), following the immutable-except-`Status`/`Version` shape of `entity.Request`; `ID` and `Status` use the stovepipe-local `BuildID`/`BuildStatus` types (see the [contract sketch](#stovepipe-buildrunner-contract-design-sketch)), while `RequestID`/`URI`/`BaseURI` stay stovepipe-specific:
+
 
 | Field | Role | Mutable? |
 |---|---|---|
@@ -301,9 +307,9 @@ Either could be adopted independently: the idempotency token, if a backend that 
 | `failed` | Build finished, at least one check failed | **yes** |
 | `cancelled` | Build stopped before finishing (see [Cancellation](#cancellation-defined-not-yet-called)) | **yes** |
 
-`IsTerminal()` on `base.BuildStatus` covers exactly the three terminal rows. Once `buildsignal` persists one of them, that status is **write-once** — a later poll reporting a different terminal value never overwrites it (see [buildsignal.md](doc/rfc/stovepipe/steps/buildsignal.md#algorithm), step 6).
+`IsTerminal()` on `entity.BuildStatus` covers exactly the three terminal rows. Once `buildsignal` persists one of them, that status is **write-once** — a later poll reporting a different terminal value never overwrites it (see [buildsignal.md](doc/rfc/stovepipe/steps/buildsignal.md#algorithm), step 6).
 
-Plus the `BuildID{ID string}` wire type from `platform/base` (same "id only travels" convention as `RequestID`, but shared rather than duplicated — see the [contract sketch](#stovepipe-buildrunner-contract-design-sketch)), wrapping the one runner-assigned id everywhere it appears — `Trigger`'s return, the queue payload, `Status`/`Cancel`'s parameter. `buildsignal` and `record` reach a build by the id carried in their messages, so no reverse index from `Request` to its builds is ever needed.
+Plus the `BuildID{ID string}` wire type in `stovepipe/entity` (same "id only travels" convention as `RequestID`, shaped like SubmitQueue's own `entity.BuildID` but not the same Go type — see the [contract sketch](#stovepipe-buildrunner-contract-design-sketch)), wrapping the one runner-assigned id everywhere it appears — `Trigger`'s return, the queue payload, `Status`/`Cancel`'s parameter. `buildsignal` and `record` reach a build by the id carried in their messages, so no reverse index from `Request` to its builds is ever needed.
 
 **`BuildStore`** (new, added to the `Storage` aggregator via `GetBuildStore()`), matching stovepipe's existing `RequestStore` conventions — **generic `Update` with caller-owned version arithmetic, not SubmitQueue's field-specific `UpdateStatus`**:
 
