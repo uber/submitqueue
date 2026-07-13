@@ -19,8 +19,7 @@ package e2e_test
 // observe outcomes two ways:
 //
 //   - black-box, by polling the GetRequestSummaryByID RPC to a target/terminal status; and
-//   - white-box, by reading the request_log timeline (RequestLogStore.List on
-//     mysql-app) to assert the ordered stage progression.
+//   - black-box, by reading the ordered stage progression through GetRequestHistoryByID.
 //
 // Convergence is bounded by require.Eventually (persistTimeout /
 // persistPollInterval) rather than time.Sleep: the pipeline consumers run inside
@@ -100,23 +99,21 @@ func (s *E2EIntegrationSuite) awaitTerminal(sqid string) entity.RequestStatus {
 	return last
 }
 
-// timeline returns the ordered status history from the request_log (the audit
-// trail persisted by the gateway log consumer on mysql-app). These are the
-// customer-facing RequestStatus values — the only ordered history in the system
-// (the internal RequestState is point-in-time, see terminalState).
+// timeline returns the ordered customer-facing status history through
+// GetRequestHistoryByID.
 func (s *E2EIntegrationSuite) timeline(sqid string) []entity.RequestStatus {
 	t := s.T()
-	logs, err := s.requestLog.List(s.ctx, sqid)
-	require.NoError(t, err, "failed to list request_log for %s", sqid)
-	statuses := make([]entity.RequestStatus, len(logs))
-	for i, l := range logs {
-		statuses[i] = l.Status
+	resp, err := s.gatewayClient.GetRequestHistoryByID(s.ctx, &gatewaypb.GetRequestHistoryByIDRequest{Sqid: sqid})
+	require.NoError(t, err, "GetRequestHistoryByID failed for %s", sqid)
+	statuses := make([]entity.RequestStatus, len(resp.Events))
+	for i, event := range resp.Events {
+		statuses[i] = entity.RequestStatus(event.Status)
 	}
 	return statuses
 }
 
 // assertStatusesInOrder asserts that want appears as an ordered subsequence of
-// the request_log status timeline. It tolerates intermediate statuses (so it is
+// the GetRequestHistoryByID status timeline. It tolerates intermediate statuses (so it is
 // not a change-detector), asserting only the relative order of the statuses that
 // matter.
 func (s *E2EIntegrationSuite) assertStatusesInOrder(sqid string, want ...entity.RequestStatus) {
@@ -129,7 +126,7 @@ func (s *E2EIntegrationSuite) assertStatusesInOrder(sqid string, want ...entity.
 		}
 	}
 	assert.Equalf(t, len(want), matched,
-		"request_log for %s should contain %v as an ordered subsequence; got %v",
+		"GetRequestHistoryByID for %s should contain %v as an ordered subsequence; got %v",
 		sqid, want, got)
 }
 

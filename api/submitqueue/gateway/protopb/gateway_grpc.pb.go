@@ -40,6 +40,8 @@ const (
 	SubmitQueueGateway_GetRequestSummaryByID_FullMethodName        = "/uber.submitqueue.gateway.SubmitQueueGateway/GetRequestSummaryByID"
 	SubmitQueueGateway_GetRequestSummaryByChangeURI_FullMethodName = "/uber.submitqueue.gateway.SubmitQueueGateway/GetRequestSummaryByChangeURI"
 	SubmitQueueGateway_List_FullMethodName                         = "/uber.submitqueue.gateway.SubmitQueueGateway/List"
+	SubmitQueueGateway_GetRequestHistoryByID_FullMethodName        = "/uber.submitqueue.gateway.SubmitQueueGateway/GetRequestHistoryByID"
+	SubmitQueueGateway_GetRequestHistoryByChangeURI_FullMethodName = "/uber.submitqueue.gateway.SubmitQueueGateway/GetRequestHistoryByChangeURI"
 )
 
 // SubmitQueueGatewayClient is the client API for SubmitQueueGateway service.
@@ -71,6 +73,10 @@ type SubmitQueueGatewayClient interface {
 	GetRequestSummaryByChangeURI(ctx context.Context, in *GetRequestSummaryByChangeURIRequest, opts ...grpc.CallOption) (*GetRequestSummaryByChangeURIResponse, error)
 	// List returns requests received for one queue during a bounded receipt-time range.
 	List(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (*ListResponse, error)
+	// GetRequestHistoryByID returns every retained request-log event for one request.
+	GetRequestHistoryByID(ctx context.Context, in *GetRequestHistoryByIDRequest, opts ...grpc.CallOption) (*GetRequestHistoryByIDResponse, error)
+	// GetRequestHistoryByChangeURI returns retained request histories for an exact pinned change URI.
+	GetRequestHistoryByChangeURI(ctx context.Context, in *GetRequestHistoryByChangeURIRequest, opts ...grpc.CallOption) (*GetRequestHistoryByChangeURIResponse, error)
 }
 
 type submitQueueGatewayClient struct {
@@ -141,6 +147,26 @@ func (c *submitQueueGatewayClient) List(ctx context.Context, in *ListRequest, op
 	return out, nil
 }
 
+func (c *submitQueueGatewayClient) GetRequestHistoryByID(ctx context.Context, in *GetRequestHistoryByIDRequest, opts ...grpc.CallOption) (*GetRequestHistoryByIDResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetRequestHistoryByIDResponse)
+	err := c.cc.Invoke(ctx, SubmitQueueGateway_GetRequestHistoryByID_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *submitQueueGatewayClient) GetRequestHistoryByChangeURI(ctx context.Context, in *GetRequestHistoryByChangeURIRequest, opts ...grpc.CallOption) (*GetRequestHistoryByChangeURIResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetRequestHistoryByChangeURIResponse)
+	err := c.cc.Invoke(ctx, SubmitQueueGateway_GetRequestHistoryByChangeURI_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SubmitQueueGatewayServer is the server API for SubmitQueueGateway service.
 // All implementations must embed UnimplementedSubmitQueueGatewayServer
 // for forward compatibility.
@@ -170,6 +196,10 @@ type SubmitQueueGatewayServer interface {
 	GetRequestSummaryByChangeURI(context.Context, *GetRequestSummaryByChangeURIRequest) (*GetRequestSummaryByChangeURIResponse, error)
 	// List returns requests received for one queue during a bounded receipt-time range.
 	List(context.Context, *ListRequest) (*ListResponse, error)
+	// GetRequestHistoryByID returns every retained request-log event for one request.
+	GetRequestHistoryByID(context.Context, *GetRequestHistoryByIDRequest) (*GetRequestHistoryByIDResponse, error)
+	// GetRequestHistoryByChangeURI returns retained request histories for an exact pinned change URI.
+	GetRequestHistoryByChangeURI(context.Context, *GetRequestHistoryByChangeURIRequest) (*GetRequestHistoryByChangeURIResponse, error)
 	mustEmbedUnimplementedSubmitQueueGatewayServer()
 }
 
@@ -197,6 +227,12 @@ func (UnimplementedSubmitQueueGatewayServer) GetRequestSummaryByChangeURI(contex
 }
 func (UnimplementedSubmitQueueGatewayServer) List(context.Context, *ListRequest) (*ListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method List not implemented")
+}
+func (UnimplementedSubmitQueueGatewayServer) GetRequestHistoryByID(context.Context, *GetRequestHistoryByIDRequest) (*GetRequestHistoryByIDResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetRequestHistoryByID not implemented")
+}
+func (UnimplementedSubmitQueueGatewayServer) GetRequestHistoryByChangeURI(context.Context, *GetRequestHistoryByChangeURIRequest) (*GetRequestHistoryByChangeURIResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetRequestHistoryByChangeURI not implemented")
 }
 func (UnimplementedSubmitQueueGatewayServer) mustEmbedUnimplementedSubmitQueueGatewayServer() {}
 func (UnimplementedSubmitQueueGatewayServer) testEmbeddedByValue()                            {}
@@ -327,6 +363,42 @@ func _SubmitQueueGateway_List_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SubmitQueueGateway_GetRequestHistoryByID_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRequestHistoryByIDRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SubmitQueueGatewayServer).GetRequestHistoryByID(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SubmitQueueGateway_GetRequestHistoryByID_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SubmitQueueGatewayServer).GetRequestHistoryByID(ctx, req.(*GetRequestHistoryByIDRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SubmitQueueGateway_GetRequestHistoryByChangeURI_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRequestHistoryByChangeURIRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SubmitQueueGatewayServer).GetRequestHistoryByChangeURI(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SubmitQueueGateway_GetRequestHistoryByChangeURI_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SubmitQueueGatewayServer).GetRequestHistoryByChangeURI(ctx, req.(*GetRequestHistoryByChangeURIRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SubmitQueueGateway_ServiceDesc is the grpc.ServiceDesc for SubmitQueueGateway service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -357,6 +429,14 @@ var SubmitQueueGateway_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "List",
 			Handler:    _SubmitQueueGateway_List_Handler,
+		},
+		{
+			MethodName: "GetRequestHistoryByID",
+			Handler:    _SubmitQueueGateway_GetRequestHistoryByID_Handler,
+		},
+		{
+			MethodName: "GetRequestHistoryByChangeURI",
+			Handler:    _SubmitQueueGateway_GetRequestHistoryByChangeURI_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

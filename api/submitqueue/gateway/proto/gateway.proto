@@ -146,6 +146,50 @@ message ListResponse {
     string next_page_token = 2;
 }
 
+// GetRequestHistoryByIDRequest selects one retained request history by sqid.
+message GetRequestHistoryByIDRequest {
+    // Globally unique identifier for the request.
+    string sqid = 1;
+}
+
+// HistoryEvent is one retained append-only request-log event.
+message HistoryEvent {
+    // Time the request-log entry was created, in Unix milliseconds.
+    int64 timestamp_ms = 1;
+    // Customer-friendly request status recorded by the event.
+    string status = 2;
+    // Error message associated with the event. Empty when absent.
+    string last_error = 3;
+    // Display and debugging metadata associated with this event. Each lifecycle event carries its own values.
+    map<string, string> metadata = 4;
+}
+
+// GetRequestHistoryByIDResponse contains all retained events for one request.
+message GetRequestHistoryByIDResponse {
+    // Events ordered by timestamp ascending with a stable storage tie-breaker.
+    repeated HistoryEvent events = 1;
+}
+
+// GetRequestHistoryByChangeURIRequest selects retained histories by an exact pinned change URI.
+message GetRequestHistoryByChangeURIRequest {
+    // Exact change URI supplied in a Land request.
+    string change_uri = 1;
+}
+
+// RequestHistory groups retained events for one request.
+message RequestHistory {
+    // Globally unique request identifier.
+    string sqid = 1;
+    // Retained events ordered chronologically.
+    repeated HistoryEvent events = 2;
+}
+
+// GetRequestHistoryByChangeURIResponse contains retained histories ordered by numeric sqid counter ascending.
+message GetRequestHistoryByChangeURIResponse {
+    // Matching request histories.
+    repeated RequestHistory histories = 1;
+}
+
 // ***************
 // Error messages, returned as `google.rpc.Status` messages.
 // ***************
@@ -209,4 +253,9 @@ service SubmitQueueGateway {
     // List returns requests received for one queue during a bounded receipt-time range.
     rpc List(ListRequest) returns (ListResponse) {}
 
+    // GetRequestHistoryByID returns every retained request-log event for one request.
+    rpc GetRequestHistoryByID(GetRequestHistoryByIDRequest) returns (GetRequestHistoryByIDResponse) {}
+
+    // GetRequestHistoryByChangeURI returns retained request histories for an exact pinned change URI.
+    rpc GetRequestHistoryByChangeURI(GetRequestHistoryByChangeURIRequest) returns (GetRequestHistoryByChangeURIResponse) {}
 }

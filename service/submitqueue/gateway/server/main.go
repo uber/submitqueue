@@ -57,6 +57,7 @@ type GatewayServer struct {
 	cancelController         *controller.CancelController
 	requestSummaryController *controller.RequestSummaryController
 	listController           *controller.ListController
+	requestHistoryController *controller.RequestHistoryController
 }
 
 // Ping delegates to the controller
@@ -112,6 +113,24 @@ func (s *GatewayServer) List(ctx context.Context, req *pb.ListRequest) (*pb.List
 		return nil, err
 	}
 	return mapper.ListResultToProto(result), nil
+}
+
+// GetRequestHistoryByID maps the wire request to an entity, delegates to the controller, and maps the result back to the wire response.
+func (s *GatewayServer) GetRequestHistoryByID(ctx context.Context, req *pb.GetRequestHistoryByIDRequest) (*pb.GetRequestHistoryByIDResponse, error) {
+	events, err := s.requestHistoryController.GetRequestHistoryByID(ctx, mapper.ProtoToGetRequestHistoryByIDRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	return &pb.GetRequestHistoryByIDResponse{Events: mapper.HistoryEventsToProto(events)}, nil
+}
+
+// GetRequestHistoryByChangeURI maps the wire request to an entity, delegates to the controller, and maps the result back to the wire response.
+func (s *GatewayServer) GetRequestHistoryByChangeURI(ctx context.Context, req *pb.GetRequestHistoryByChangeURIRequest) (*pb.GetRequestHistoryByChangeURIResponse, error) {
+	histories, err := s.requestHistoryController.GetRequestHistoryByChangeURI(ctx, mapper.ProtoToGetRequestHistoryByChangeURIRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	return &pb.GetRequestHistoryByChangeURIResponse{Histories: mapper.RequestHistoriesToProto(histories)}, nil
 }
 
 func gatewayStatusError(err error) error {
@@ -279,15 +298,15 @@ func run() error {
 		},
 	))
 
-	// Initialize storage from the shared app database connection. The land
-	// controller writes to this store directly; cancel and request-summary
-	// controllers use its request stores. The log consumer registered below
-	// persists entries published by the orchestrator's normal pipeline.
+	// Initialize gateway-owned storage from the shared app database connection.
+	// Land creates receipt projections, request-summary and List controllers
+	// read materialized views, and request-history controllers read retained
+	// logs. Normal log-topic persistence and terminal DLQ repair both use the
+	// materializer.
 	store, err := mysqlstorage.NewStorage(appDB, scope.SubScope("storage"))
 	if err != nil {
 		return fmt.Errorf("failed to create storage: %w", err)
 	}
-
 	// Load queue configurations from YAML. Path is required so the gateway
 	// can reject requests for unknown queues at the edge.
 	queueConfigPath := os.Getenv("QUEUE_CONFIG_PATH")
@@ -310,12 +329,19 @@ func run() error {
 		store.GetRequestURIStore(),
 	)
 	listController := controller.NewListController(logger.Sugar(), scope, store.GetRequestQueueSummaryStore(), queueConfigs)
+	requestHistoryController := controller.NewRequestHistoryController(
+		logger.Sugar(),
+		scope,
+		store.GetRequestLogStore(),
+		store.GetRequestURIStore(),
+	)
 	gatewayServer := &GatewayServer{
 		pingController:           pingController,
 		landController:           landController,
 		cancelController:         cancelController,
 		requestSummaryController: requestSummaryController,
 		listController:           listController,
+		requestHistoryController: requestHistoryController,
 	}
 
 	pb.RegisterSubmitQueueGatewayServer(grpcServer, gatewayServer)

@@ -235,6 +235,10 @@ func (s *GatewayIntegrationSuite) TestReadAPIErrorCodes() {
 	require.Error(t, err)
 	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
 
+	_, err = s.client.GetRequestHistoryByChangeURI(s.ctx, &pb.GetRequestHistoryByChangeURIRequest{ChangeUri: overflowChangeURI})
+	require.Error(t, err)
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+
 	const inconsistentChangeURI = "uri/read-api-inconsistent"
 	require.NoError(t, store.GetRequestURIStore().Create(s.ctx, entity.RequestURI{
 		ChangeURI:    inconsistentChangeURI,
