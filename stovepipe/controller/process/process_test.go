@@ -35,9 +35,10 @@ import (
 )
 
 const (
-	testQueue = "monorepo/main"
-	testID    = "request/monorepo/main/7"
-	testURI   = "git://repo/monorepo/main/abc123"
+	testQueue   = "monorepo/main"
+	testID      = "request/monorepo/main/7"
+	testOlderID = "request/monorepo/main/3"
+	testURI     = "git://repo/monorepo/main/abc123"
 )
 
 type processMocks struct {
@@ -90,6 +91,7 @@ func TestProcess(t *testing.T) {
 	tests := []struct {
 		name      string
 		id        string
+		payload   []byte
 		setup     func(m processMocks)
 		wantErr   bool
 		wantRetry bool
@@ -107,6 +109,14 @@ func TestProcess(t *testing.T) {
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
 					ID: testID, Queue: testQueue, State: entity.RequestStateProcessing, Version: 2,
+				}, nil)
+			},
+		},
+		{
+			name: "unknown state is acked without retry",
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
+					ID: testID, Queue: testQueue, State: entity.RequestStateUnknown, Version: 1,
 				}, nil)
 			},
 		},
@@ -133,36 +143,47 @@ func TestProcess(t *testing.T) {
 		},
 		{
 			name: "older accepted head is superseded",
-			id:   "request/monorepo/main/3",
+			id:   testOlderID,
 			setup: func(m processMocks) {
-				olderID := "request/monorepo/main/3"
-				m.reqStore.EXPECT().Get(gomock.Any(), olderID).Return(acceptedRequest(olderID), nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), testOlderID).Return(acceptedRequest(testOlderID), nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
 					Name:            testQueue,
 					LatestRequestID: testID,
 					Version:         1,
 				}, nil)
-				updated := acceptedRequest(olderID)
+				updated := acceptedRequest(testOlderID)
 				updated.State = entity.RequestStateSuperseded
 				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(nil)
 			},
 		},
 		{
 			name: "supersede retries on version mismatch",
-			id:   "request/monorepo/main/3",
+			id:   testOlderID,
 			setup: func(m processMocks) {
-				olderID := "request/monorepo/main/3"
-				m.reqStore.EXPECT().Get(gomock.Any(), olderID).Return(acceptedRequest(olderID), nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), testOlderID).Return(acceptedRequest(testOlderID), nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
 					Name:            testQueue,
 					LatestRequestID: testID,
 					Version:         1,
 				}, nil)
-				updated := acceptedRequest(olderID)
+				updated := acceptedRequest(testOlderID)
 				updated.State = entity.RequestStateSuperseded
 				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
-				m.reqStore.EXPECT().Get(gomock.Any(), olderID).Return(entity.Request{
-					ID: olderID, Queue: testQueue, State: entity.RequestStateSuperseded, Version: 2,
+				m.reqStore.EXPECT().Get(gomock.Any(), testOlderID).Return(entity.Request{
+					ID: testOlderID, Queue: testQueue, State: entity.RequestStateSuperseded, Version: 2,
+				}, nil)
+			},
+		},
+		{
+			name:      "malformed latest_request_id is not retryable",
+			wantErr:   true,
+			wantRetry: false,
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name:            testQueue,
+					LatestRequestID: "request/other-queue/99",
+					Version:         1,
 				}, nil)
 			},
 		},
@@ -193,6 +214,7 @@ func TestProcess(t *testing.T) {
 		},
 		{
 			name:      "malformed payload is not retryable",
+			payload:   []byte("not-json"),
 			wantErr:   true,
 			wantRetry: false,
 			setup:     func(m processMocks) {},
@@ -211,9 +233,9 @@ func TestProcess(t *testing.T) {
 			if tt.id != "" {
 				id = tt.id
 			}
-			payload := processPayload(t, id)
-			if tt.name == "malformed payload is not retryable" {
-				payload = []byte("not-json")
+			payload := tt.payload
+			if payload == nil {
+				payload = processPayload(t, id)
 			}
 
 			err := c.Process(context.Background(), delivery(t, ctrl, payload))

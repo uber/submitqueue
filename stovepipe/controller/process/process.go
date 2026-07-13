@@ -46,6 +46,9 @@ type Controller struct {
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
 
+// _opName is the metric operation name shared by every emit in this file.
+const _opName = "process"
+
 // NewController creates a new process controller.
 func NewController(
 	logger *zap.SugaredLogger,
@@ -66,33 +69,34 @@ func NewController(
 // Process reloads the request referenced by the delivery and coalesces older heads.
 // Returns nil to ack (success) or an error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName)
+	op := metrics.Begin(c.metricsScope, _opName)
 	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
 	pr := &stovepipemq.ProcessRequest{}
 	if err := stovepipemq.Unmarshal(msg.Payload, pr); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "deserialize_errors", 1)
 		// Non-retryable: a malformed message will never succeed regardless of retries.
 		return fmt.Errorf("failed to deserialize process request: %w", err)
 	}
 
 	request, err := c.loadRequest(ctx, pr.Id)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
 		return err
 	}
 
 	switch request.State {
-	case entity.RequestStateSuperseded, entity.RequestStateProcessing:
+	case entity.RequestStateProcessing:
+		// TODO: re-publish to build once the build stage lands (RFC process algorithm, step 3).
+		return nil
+	case entity.RequestStateSuperseded:
 		return nil
 	case entity.RequestStateAccepted:
 		return c.processAccepted(ctx, request)
 	default:
-		c.logger.Infow("ignored request in unexpected state",
+		c.logger.Warnw("ignored request in unexpected state",
 			"request_id", request.ID,
 			"queue", request.Queue,
 			"state", string(request.State),
@@ -106,6 +110,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 func (c *Controller) processAccepted(ctx context.Context, request entity.Request) error {
 	queueRow, err := c.loadQueue(ctx, request.Queue)
 	if err != nil {
+		if !errs.IsRetryable(err) {
+			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+		}
 		return err
 	}
 
@@ -124,8 +131,10 @@ func (c *Controller) processAccepted(ctx context.Context, request entity.Request
 	}
 	if cmp < 0 {
 		if err := c.supersedeRequest(ctx, request); err != nil {
+			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
 			return err
 		}
+		metrics.NamedCounter(c.metricsScope, _opName, "superseded", 1)
 		c.logger.Infow("superseded request for newer head",
 			"request_id", request.ID,
 			"queue", request.Queue,
