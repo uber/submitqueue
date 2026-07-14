@@ -22,9 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
-	changepb "github.com/uber/submitqueue/api/base/change/protopb"
-	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
-	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
+	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/platform/base/mergestrategy"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
@@ -84,6 +82,16 @@ func noopQueueConfigStore(ctrl *gomock.Controller) *qcmock.MockStore {
 	return s
 }
 
+// testLandRequest returns a valid entity.LandRequest for the given queue. The ID
+// is intentionally left empty — the controller assigns it.
+func testLandRequest(queue string) entity.LandRequest {
+	return entity.LandRequest{
+		Queue:        queue,
+		Change:       change.Change{URIs: []string{"github://github.example.com/uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
+		LandStrategy: mergestrategy.MergeStrategyRebase,
+	}
+}
+
 func TestNewLandController(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
@@ -100,14 +108,10 @@ func TestLand_ReturnsSqid(t *testing.T) {
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopStorage(ctrl), noopQueueConfigStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
-	req := &pb.LandRequest{
-		Queue:  "test-queue",
-		Change: &changepb.Change{Uris: []string{"github://github.example.com/uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
-	}
-	resp, err := controller.Land(ctx, req)
+	result, err := controller.Land(ctx, testLandRequest("test-queue"))
 
 	require.NoError(t, err)
-	assert.Equal(t, "test-queue/1", resp.Sqid)
+	assert.Equal(t, "test-queue/1", result.ID)
 }
 
 func TestLand_ReturnsErrorOnCounterFailure(t *testing.T) {
@@ -118,11 +122,7 @@ func TestLand_ReturnsErrorOnCounterFailure(t *testing.T) {
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopStorage(ctrl), noopQueueConfigStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
-	req := &pb.LandRequest{
-		Queue:  "test-queue",
-		Change: &changepb.Change{Uris: []string{"github://github.example.com/uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
-	}
-	_, err := controller.Land(ctx, req)
+	_, err := controller.Land(ctx, testLandRequest("test-queue"))
 
 	require.Error(t, err)
 }
@@ -142,11 +142,7 @@ func TestLand_CounterDomainIncludesQueue(t *testing.T) {
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopStorage(ctrl), noopQueueConfigStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
-	req := &pb.LandRequest{
-		Queue:  "my-queue",
-		Change: &changepb.Change{Uris: []string{"github://github.example.com/uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
-	}
-	_, err := controller.Land(ctx, req)
+	_, err := controller.Land(ctx, testLandRequest("my-queue"))
 
 	require.NoError(t, err)
 	assert.Equal(t, "request/my-queue", capturedDomain)
@@ -159,10 +155,7 @@ func TestLand_ReturnsErrorOnEmptyQueue(t *testing.T) {
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopStorage(ctrl), noopQueueConfigStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
-	req := &pb.LandRequest{
-		Queue:  "",
-		Change: &changepb.Change{Uris: []string{"github://github.example.com/uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
-	}
+	req := testLandRequest("")
 	_, err := controller.Land(ctx, req)
 
 	require.Error(t, err)
@@ -176,9 +169,9 @@ func TestLand_ReturnsErrorOnEmptyChangeUri(t *testing.T) {
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopStorage(ctrl), noopQueueConfigStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
-	req := &pb.LandRequest{
+	req := entity.LandRequest{
 		Queue:  "test-queue",
-		Change: &changepb.Change{Uris: []string{}},
+		Change: change.Change{URIs: []string{}},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -186,16 +179,16 @@ func TestLand_ReturnsErrorOnEmptyChangeUri(t *testing.T) {
 	assert.True(t, IsInvalidRequest(err))
 }
 
-func TestLand_ReturnsErrorOnNilChange(t *testing.T) {
+func TestLand_ReturnsErrorOnZeroValueChange(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	cnt := countermock.NewMockCounter(ctrl)
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopStorage(ctrl), noopQueueConfigStore(ctrl), newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
-	req := &pb.LandRequest{
+	req := entity.LandRequest{
 		Queue:  "test-queue",
-		Change: nil,
+		Change: change.Change{},
 	}
 	_, err := controller.Land(ctx, req)
 
@@ -213,11 +206,7 @@ func TestLand_ReturnsUnrecognizedQueueWhenStoreReportsNotFound(t *testing.T) {
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopStorage(ctrl), qcs, newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
-	req := &pb.LandRequest{
-		Queue:  "missing-queue",
-		Change: &changepb.Change{Uris: []string{"github://github.example.com/uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
-	}
-	_, err := controller.Land(ctx, req)
+	_, err := controller.Land(ctx, testLandRequest("missing-queue"))
 
 	require.Error(t, err)
 	assert.True(t, IsUnrecognizedQueue(err))
@@ -239,11 +228,7 @@ func TestLand_PropagatesQueueConfigStoreError(t *testing.T) {
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopStorage(ctrl), qcs, newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
-	req := &pb.LandRequest{
-		Queue:  "test-queue",
-		Change: &changepb.Change{Uris: []string{"github://github.example.com/uber/test-repo/pull/123/c3a4d5e6f7890123456789abcdef0123456789ab"}},
-	}
-	_, err := controller.Land(ctx, req)
+	_, err := controller.Land(ctx, testLandRequest("test-queue"))
 
 	require.Error(t, err)
 	assert.False(t, IsUnrecognizedQueue(err))
@@ -271,15 +256,15 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopStorage(ctrl), noopQueueConfigStore(ctrl), registry)
 	ctx := context.Background()
 
-	req := &pb.LandRequest{
-		Queue:    "test-queue",
-		Change:   &changepb.Change{Uris: []string{"github://github.example.com/uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"}},
-		Strategy: mergestrategypb.Strategy_REBASE,
+	req := entity.LandRequest{
+		Queue:        "test-queue",
+		Change:       change.Change{URIs: []string{"github://github.example.com/uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"}},
+		LandStrategy: mergestrategy.MergeStrategyRebase,
 	}
-	resp, err := controller.Land(ctx, req)
+	result, err := controller.Land(ctx, req)
 
 	require.NoError(t, err)
-	assert.Equal(t, "test-queue/123", resp.Sqid)
+	assert.Equal(t, "test-queue/123", result.ID)
 
 	// Verify message was published to the topic registered under TopicKeyStart
 	assert.Equal(t, "start", publishedTopic)
@@ -307,11 +292,7 @@ func TestLand_ContinuesWhenPublishFails(t *testing.T) {
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopStorage(ctrl), noopQueueConfigStore(ctrl), registry)
 	ctx := context.Background()
 
-	req := &pb.LandRequest{
-		Queue:  "test-queue",
-		Change: &changepb.Change{Uris: []string{"github://github.example.com/uber/service/pull/1/c3a4d5e6f7890123456789abcdef0123456789ab"}},
-	}
-	_, err := controller.Land(ctx, req)
+	_, err := controller.Land(ctx, testLandRequest("test-queue"))
 
 	// Should fail if publish fails
 	require.Error(t, err)

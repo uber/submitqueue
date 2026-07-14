@@ -46,3 +46,12 @@ func LandRequestFromBytes(data []byte) (LandRequest, error) {
 	err := json.Unmarshal(data, &req)
 	return req, err
 }
+
+// LandResult is the outcome of accepting a land request. It carries the ID the
+// controller assigned to the request so the transport layer can echo it back to
+// the caller.
+type LandResult struct {
+	// ID is the globally unique identifier assigned to the accepted land request.
+	// Format: "<queue>/<counter_value>".
+	ID string
+}

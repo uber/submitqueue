@@ -36,6 +36,7 @@ import (
 	mysqlcounter "github.com/uber/submitqueue/platform/extension/counter/mysql"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
+	"github.com/uber/submitqueue/service/submitqueue/gateway/server/mapper"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	yamlqueueconfig "github.com/uber/submitqueue/submitqueue/extension/queueconfig/yaml"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
@@ -62,19 +63,37 @@ func (s *GatewayServer) Ping(ctx context.Context, req *pb.PingRequest) (*pb.Ping
 	return s.pingController.Ping(ctx, req)
 }
 
-// Land delegates to the controller
+// Land maps the wire request to an entity, delegates to the controller, and maps
+// the result back to the wire response.
 func (s *GatewayServer) Land(ctx context.Context, req *pb.LandRequest) (*pb.LandResponse, error) {
-	return s.landController.Land(ctx, req)
+	landReq, err := mapper.ProtoToLandRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	result, err := s.landController.Land(ctx, landReq)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.LandResponse{Sqid: result.ID}, nil
 }
 
-// Cancel delegates to the controller
+// Cancel maps the wire request to an entity, delegates to the controller, and
+// returns an empty response on success.
 func (s *GatewayServer) Cancel(ctx context.Context, req *pb.CancelRequest) (*pb.CancelResponse, error) {
-	return s.cancelController.Cancel(ctx, req)
+	if err := s.cancelController.Cancel(ctx, mapper.ProtoToCancelRequest(req)); err != nil {
+		return nil, err
+	}
+	return &pb.CancelResponse{}, nil
 }
 
-// Status delegates to the controller
+// Status maps the wire request to an entity, delegates to the controller, and
+// maps the read-model result back to the wire response.
 func (s *GatewayServer) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusResponse, error) {
-	return s.statusController.Status(ctx, req)
+	state, err := s.statusController.Status(ctx, mapper.ProtoToStatusRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	return mapper.CurrentStateToProto(state), nil
 }
 
 func main() {

@@ -22,7 +22,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
-	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
@@ -68,6 +67,11 @@ func newRequestLogStoreNoop(t *testing.T, ctrl *gomock.Controller) *storagemock.
 	return store
 }
 
+// testCancelRequest returns a valid entity.CancelRequest for testing.
+func testCancelRequest(sqid string, reason string) entity.CancelRequest {
+	return entity.CancelRequest{ID: sqid, Reason: reason}
+}
+
 func TestNewCancelController(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
@@ -81,11 +85,9 @@ func TestCancel_HappyPath(t *testing.T) {
 	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, newRequestLogStoreNoop(t, ctrl), newCancelTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
-	req := &pb.CancelRequest{Sqid: "test-queue/42", Reason: "user changed their mind"}
-	resp, err := controller.Cancel(ctx, req)
+	err := controller.Cancel(ctx, testCancelRequest("test-queue/42", "user changed their mind"))
 
 	require.NoError(t, err)
-	require.NotNil(t, resp)
 }
 
 func TestCancel_ReturnsErrorOnEmptySqid(t *testing.T) {
@@ -94,8 +96,7 @@ func TestCancel_ReturnsErrorOnEmptySqid(t *testing.T) {
 	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, newRequestLogStoreNoop(t, ctrl), newCancelTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
-	req := &pb.CancelRequest{Sqid: "", Reason: "anything"}
-	_, err := controller.Cancel(ctx, req)
+	err := controller.Cancel(ctx, testCancelRequest("", "anything"))
 
 	require.Error(t, err)
 	assert.True(t, IsInvalidRequest(err))
@@ -119,8 +120,7 @@ func TestCancel_PublishesToQueue(t *testing.T) {
 	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, newRequestLogStoreNoop(t, ctrl), registry)
 	ctx := context.Background()
 
-	req := &pb.CancelRequest{Sqid: "my-queue/7", Reason: "obsolete change"}
-	_, err := controller.Cancel(ctx, req)
+	err := controller.Cancel(ctx, testCancelRequest("my-queue/7", "obsolete change"))
 	require.NoError(t, err)
 
 	assert.Equal(t, "cancel", publishedTopic)
@@ -160,8 +160,7 @@ func TestCancel_InsertsCancellingLog(t *testing.T) {
 
 	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, logStore, registry)
 
-	req := &pb.CancelRequest{Sqid: "my-queue/42", Reason: "obsolete change"}
-	_, err := controller.Cancel(context.Background(), req)
+	err := controller.Cancel(context.Background(), testCancelRequest("my-queue/42", "obsolete change"))
 	require.NoError(t, err)
 
 	assert.Equal(t, "my-queue/42", insertedLog.RequestID)
@@ -180,11 +179,10 @@ func TestCancel_LogInsertFailure(t *testing.T) {
 	logStore.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(fmt.Errorf("db unavailable"))
 
 	registry, publisher := newCancelTestRegistry(t, ctrl)
-	// No Publish expectation: log insert must fail before publish runs.
 	_ = publisher
 
 	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, logStore, registry)
-	_, err := controller.Cancel(context.Background(), &pb.CancelRequest{Sqid: "q/1"})
+	err := controller.Cancel(context.Background(), testCancelRequest("q/1", ""))
 	require.Error(t, err)
 }
 
@@ -197,8 +195,7 @@ func TestCancel_ReturnsErrorOnPublishFailure(t *testing.T) {
 	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, newRequestLogStoreNoop(t, ctrl), registry)
 	ctx := context.Background()
 
-	req := &pb.CancelRequest{Sqid: "test-queue/1"}
-	_, err := controller.Cancel(ctx, req)
+	err := controller.Cancel(ctx, testCancelRequest("test-queue/1", ""))
 
 	require.Error(t, err)
 }
@@ -211,14 +208,12 @@ func TestCancel_UnknownSqidIsUserError(t *testing.T) {
 
 	logStore := storagemock.NewMockRequestLogStore(ctrl)
 	logStore.EXPECT().List(gomock.Any(), "ghost/1").Return(nil, storage.ErrNotFound)
-	// No Insert expectation: existence check must short-circuit before Insert.
 
 	registry, publisher := newCancelTestRegistry(t, ctrl)
-	// No Publish expectation: existence check must short-circuit before Publish.
 	_ = publisher
 
 	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, logStore, registry)
-	_, err := controller.Cancel(context.Background(), &pb.CancelRequest{Sqid: "ghost/1"})
+	err := controller.Cancel(context.Background(), testCancelRequest("ghost/1", ""))
 	require.Error(t, err)
 	assert.True(t, IsRequestNotFound(err))
 	assert.True(t, errs.IsUserError(err))
@@ -242,7 +237,7 @@ func TestCancel_RequestLogLookupFailure(t *testing.T) {
 	_ = publisher
 
 	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, logStore, registry)
-	_, err := controller.Cancel(context.Background(), &pb.CancelRequest{Sqid: "q/1"})
+	err := controller.Cancel(context.Background(), testCancelRequest("q/1", ""))
 	require.Error(t, err)
 	assert.False(t, errs.IsUserError(err))
 	assert.False(t, IsRequestNotFound(err))

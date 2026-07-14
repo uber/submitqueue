@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
-	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
@@ -62,7 +61,7 @@ func NewCancelController(logger *zap.SugaredLogger, scope tally.Scope, requestLo
 // completion before the cancel propagates may still land. The RequestStatusCancelling
 // entry written here records the user's intent; the terminal outcome is reflected by a
 // later RequestStatusCancelled (orchestrator side) or RequestStatusLanded entry.
-func (c *CancelController) Cancel(ctx context.Context, req *pb.CancelRequest) (*pb.CancelResponse, error) {
+func (c *CancelController) Cancel(ctx context.Context, req entity.CancelRequest) error {
 	start := time.Now()
 	defer func() {
 		c.metricsScope.Timer("cancel_request_latency").Record(time.Since(start))
@@ -70,18 +69,13 @@ func (c *CancelController) Cancel(ctx context.Context, req *pb.CancelRequest) (*
 
 	c.metricsScope.Counter("cancel_request_count").Inc(1)
 
-	if req.Sqid == "" {
-		return nil, fmt.Errorf("CancelController requires the request to have a sqid specified: %w", ErrInvalidRequest)
-	}
-
-	cancelRequest := entity.CancelRequest{
-		ID:     req.Sqid,
-		Reason: req.Reason,
+	if req.ID == "" {
+		return fmt.Errorf("CancelController requires the request to have a sqid specified: %w", ErrInvalidRequest)
 	}
 
 	c.logger.Debugw("cancel request received",
-		"sqid", cancelRequest.ID,
-		"reason", cancelRequest.Reason,
+		"sqid", req.ID,
+		"reason", req.Reason,
 	)
 
 	// Verify the sqid exists before recording intent or publishing. Cancel is opt-in
@@ -90,37 +84,37 @@ func (c *CancelController) Cancel(ctx context.Context, req *pb.CancelRequest) (*
 	// controller writes its "accepted" log entry synchronously to the same store, so
 	// a NotFound here reliably means "this sqid was never accepted by the gateway"
 	// rather than "in flight" — there is no false-negative race window.
-	if _, err := c.requestLogStore.List(ctx, cancelRequest.ID); err != nil {
+	if _, err := c.requestLogStore.List(ctx, req.ID); err != nil {
 		if storage.IsNotFound(err) {
 			c.metricsScope.Counter("cancel_request_not_found").Inc(1)
-			return nil, errs.NewUserError(&RequestNotFoundError{Sqid: cancelRequest.ID})
+			return errs.NewUserError(&RequestNotFoundError{Sqid: req.ID})
 		}
-		return nil, fmt.Errorf("CancelController failed to look up request log for sqid=%s: %w", cancelRequest.ID, err)
+		return fmt.Errorf("CancelController failed to look up request log for sqid=%s: %w", req.ID, err)
 	}
 
 	// Record the user's intent in the request log before publishing. Writing direct to the
 	// store (rather than via the log topic) keeps the gateway-emitted entry consistent with
 	// the Land "accepted" entry and guarantees the entry is visible the moment Cancel returns.
 	metadata := map[string]string{}
-	if cancelRequest.Reason != "" {
-		metadata["reason"] = cancelRequest.Reason
+	if req.Reason != "" {
+		metadata["reason"] = req.Reason
 	}
-	logEntry := entity.NewRequestLog(cancelRequest.ID, entity.RequestStatusCancelling, 0, "", metadata)
+	logEntry := entity.NewRequestLog(req.ID, entity.RequestStatusCancelling, 0, "", metadata)
 	if err := c.requestLogStore.Insert(ctx, logEntry); err != nil {
-		return nil, fmt.Errorf("CancelController failed to insert cancelling log for sqid=%s: %w", cancelRequest.ID, err)
+		return fmt.Errorf("CancelController failed to insert cancelling log for sqid=%s: %w", req.ID, err)
 	}
 
-	if err := c.publishToQueue(ctx, cancelRequest); err != nil {
-		return nil, fmt.Errorf("CancelController failed to publish cancel request to queue: %w", err)
+	if err := c.publishToQueue(ctx, req); err != nil {
+		return fmt.Errorf("CancelController failed to publish cancel request to queue: %w", err)
 	}
 
 	c.logger.Infow("cancel request published to queue",
-		"sqid", cancelRequest.ID,
+		"sqid", req.ID,
 		"topic_key", topickey.TopicKeyCancel,
 	)
 	c.metricsScope.Counter("cancel_publish_success").Inc(1)
 
-	return &pb.CancelResponse{}, nil
+	return nil
 }
 
 // publishToQueue publishes a cancel request to the cancel queue for async processing.

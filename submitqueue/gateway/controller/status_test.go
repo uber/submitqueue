@@ -22,7 +22,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
-	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -42,12 +41,12 @@ func TestStatus_ReturnsCurrentState(t *testing.T) {
 
 	controller := NewStatusController(zap.NewNop().Sugar(), tally.NoopScope, store)
 
-	resp, err := controller.Status(context.Background(), &pb.StatusRequest{Sqid: "test-queue/1"})
+	state, err := controller.Status(context.Background(), entity.StatusRequest{ID: "test-queue/1"})
 
 	require.NoError(t, err)
-	assert.Equal(t, string(entity.RequestStatusValidating), resp.Status)
-	assert.Equal(t, "boom", resp.LastError)
-	assert.Equal(t, map[string]string{"k": "v"}, resp.Metadata)
+	assert.Equal(t, entity.RequestStatusValidating, state.Status)
+	assert.Equal(t, "boom", state.LastError)
+	assert.Equal(t, map[string]string{"k": "v"}, state.Metadata)
 }
 
 func TestStatus_Errors(t *testing.T) {
@@ -93,12 +92,9 @@ func TestStatus_Errors(t *testing.T) {
 
 			controller := NewStatusController(zap.NewNop().Sugar(), tally.NoopScope, store)
 
-			_, err := controller.Status(context.Background(), &pb.StatusRequest{Sqid: tt.sqid})
+			_, err := controller.Status(context.Background(), entity.StatusRequest{ID: tt.sqid})
 
 			require.Error(t, err)
-			// IsRequestNotFound is a precise type check; IsInvalidRequest matches any
-			// user error (see errs.userError.Is), so only assert it where it is the
-			// defining classification.
 			assert.Equal(t, tt.wantNotFound, IsRequestNotFound(err))
 			assert.Equal(t, tt.wantUserError, errs.IsUserError(err))
 			assert.False(t, errs.IsRetryable(err))

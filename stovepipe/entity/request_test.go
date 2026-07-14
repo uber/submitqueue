@@ -79,6 +79,27 @@ func TestRequestFromBytes_EmptyData(t *testing.T) {
 	assert.Equal(t, int32(0), req.Version)
 }
 
+func TestRequestState_IsTerminal(t *testing.T) {
+	tests := []struct {
+		name     string
+		state    RequestState
+		expected bool
+	}{
+		{name: "superseded is terminal", state: RequestStateSuperseded, expected: true},
+		{name: "recorded green is terminal", state: RequestStateRecordedGreen, expected: true},
+		{name: "recorded not green is terminal", state: RequestStateRecordedNotGreen, expected: true},
+		{name: "unknown is not terminal", state: RequestStateUnknown, expected: false},
+		{name: "accepted is not terminal", state: RequestStateAccepted, expected: false},
+		{name: "processing is not terminal", state: RequestStateProcessing, expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.state.IsTerminal())
+		})
+	}
+}
+
 func TestRequestID_SerializationRoundTrip(t *testing.T) {
 	original := RequestID{ID: "request/monorepo/main/100"}
 
