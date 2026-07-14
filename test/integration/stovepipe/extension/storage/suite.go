@@ -186,6 +186,192 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateSequentialCAS() {
 	s.log.Logf("UpdateSequentialCAS passed: queue %s", name)
 }
 
+// BuildStoreContractSuite defines contract tests for storage.BuildStore.
+// All BuildStore implementations must pass these tests.
+type BuildStoreContractSuite struct {
+	suite.Suite
+	ctx        context.Context
+	buildStore storage.BuildStore
+	log        *testutil.TestLogger
+}
+
+// SetContext sets the context for tests.
+func (s *BuildStoreContractSuite) SetContext(ctx context.Context) {
+	s.ctx = ctx
+}
+
+// SetBuildStore provides the concrete BuildStore under test.
+func (s *BuildStoreContractSuite) SetBuildStore(store storage.BuildStore) {
+	s.buildStore = store
+}
+
+// SetLogger sets the logger for tests.
+func (s *BuildStoreContractSuite) SetLogger(log *testutil.TestLogger) {
+	s.log = log
+}
+
+// TestBuildStore_CreateAndGet verifies Create persists caller-supplied fields, readable via Get.
+func (s *BuildStoreContractSuite) TestBuildStore_CreateAndGet() {
+	t := s.T()
+	const id = "contract/create"
+
+	build := entity.Build{
+		ID:        id,
+		RequestID: "request/contract/create/1",
+		URI:       "git://remote/monorepo/main/aaaa1111",
+		BaseURI:   "git://remote/monorepo/main/green-bbbb",
+		Status:    entity.BuildStatusAccepted,
+		Version:   1,
+	}
+	require.NoError(t, s.buildStore.Create(s.ctx, build))
+
+	got, err := s.buildStore.Get(s.ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, build, got)
+
+	s.log.Logf("CreateAndGet passed: created build %s", id)
+}
+
+// TestBuildStore_CreateAlreadyExists verifies a duplicate Create returns ErrAlreadyExists.
+func (s *BuildStoreContractSuite) TestBuildStore_CreateAlreadyExists() {
+	t := s.T()
+	const id = "contract/already-exists"
+
+	first := entity.Build{
+		ID:        id,
+		RequestID: "request/contract/already-exists/1",
+		URI:       "git://remote/monorepo/main/aaaa1111",
+		Status:    entity.BuildStatusAccepted,
+		Version:   1,
+	}
+	require.NoError(t, s.buildStore.Create(s.ctx, first))
+
+	err := s.buildStore.Create(s.ctx, entity.Build{
+		ID:        id,
+		RequestID: "request/contract/already-exists/ignored-on-race",
+		URI:       "git://remote/monorepo/main/ignored",
+		Status:    entity.BuildStatusRunning,
+		Version:   1,
+	})
+	assert.ErrorIs(t, err, storage.ErrAlreadyExists)
+
+	got, err := s.buildStore.Get(s.ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, first, got)
+
+	s.log.Logf("CreateAlreadyExists passed: build %s", id)
+}
+
+// TestBuildStore_GetNotFound verifies Get returns ErrNotFound for a missing build.
+func (s *BuildStoreContractSuite) TestBuildStore_GetNotFound() {
+	t := s.T()
+
+	_, err := s.buildStore.Get(s.ctx, "contract/does-not-exist")
+	assert.True(t, storage.IsNotFound(err))
+
+	s.log.Logf("GetNotFound passed")
+}
+
+// TestBuildStore_UpdateCAS verifies a conditional update persists the new status and rejects stale versions.
+func (s *BuildStoreContractSuite) TestBuildStore_UpdateCAS() {
+	t := s.T()
+	const id = "contract/update-cas"
+
+	created := entity.Build{
+		ID:        id,
+		RequestID: "request/contract/update-cas/1",
+		URI:       "git://remote/monorepo/main/aaaa1111",
+		Status:    entity.BuildStatusAccepted,
+		Version:   1,
+	}
+	require.NoError(t, s.buildStore.Create(s.ctx, created))
+
+	updated := created
+	updated.Status = entity.BuildStatusRunning
+	require.NoError(t, s.buildStore.Update(s.ctx, updated, 1, 2))
+
+	got, err := s.buildStore.Get(s.ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, entity.BuildStatusRunning, got.Status)
+	assert.Equal(t, int32(2), got.Version)
+
+	err = s.buildStore.Update(s.ctx, updated, 1, 2)
+	assert.ErrorIs(t, err, storage.ErrVersionMismatch)
+
+	s.log.Logf("UpdateCAS passed: build %s", id)
+}
+
+// TestBuildStore_UpdateNotFoundIsVersionMismatch verifies Update on a missing row returns ErrVersionMismatch.
+func (s *BuildStoreContractSuite) TestBuildStore_UpdateNotFoundIsVersionMismatch() {
+	t := s.T()
+
+	err := s.buildStore.Update(s.ctx, entity.Build{ID: "contract/missing"}, 1, 2)
+	assert.ErrorIs(t, err, storage.ErrVersionMismatch)
+
+	s.log.Logf("UpdateNotFoundIsVersionMismatch passed")
+}
+
+// TestBuildStore_UpdateSequentialCAS verifies successive conditional updates advance version monotonically
+// and are write-once on terminal status, per build.md's algorithm step 6.
+func (s *BuildStoreContractSuite) TestBuildStore_UpdateSequentialCAS() {
+	t := s.T()
+	const id = "contract/sequential-cas"
+
+	require.NoError(t, s.buildStore.Create(s.ctx, entity.Build{
+		ID:        id,
+		RequestID: "request/contract/sequential-cas/1",
+		URI:       "git://remote/monorepo/main/aaaa1111",
+		Status:    entity.BuildStatusAccepted,
+		Version:   1,
+	}))
+
+	v2 := entity.Build{ID: id, Status: entity.BuildStatusRunning, Version: 1}
+	require.NoError(t, s.buildStore.Update(s.ctx, v2, 1, 2))
+
+	v3 := entity.Build{ID: id, Status: entity.BuildStatusSucceeded, Version: 2}
+	require.NoError(t, s.buildStore.Update(s.ctx, v3, 2, 3))
+
+	got, err := s.buildStore.Get(s.ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, entity.BuildStatusSucceeded, got.Status)
+	assert.Equal(t, int32(3), got.Version)
+
+	s.log.Logf("UpdateSequentialCAS passed: build %s", id)
+}
+
+// TestBuildStore_QueueIsolation verifies updates to one build do not affect another.
+func (s *BuildStoreContractSuite) TestBuildStore_QueueIsolation() {
+	t := s.T()
+	const (
+		idA = "contract/isolation-a"
+		idB = "contract/isolation-b"
+	)
+
+	require.NoError(t, s.buildStore.Create(s.ctx, entity.Build{
+		ID: idA, RequestID: "request/contract/isolation-a/1",
+		URI: "git://remote/monorepo/main/aaaa1111", Status: entity.BuildStatusAccepted, Version: 1,
+	}))
+	require.NoError(t, s.buildStore.Create(s.ctx, entity.Build{
+		ID: idB, RequestID: "request/contract/isolation-b/1",
+		URI: "git://remote/monorepo/main/bbbb2222", Status: entity.BuildStatusAccepted, Version: 1,
+	}))
+
+	baseline, err := s.buildStore.Get(s.ctx, idB)
+	require.NoError(t, err)
+
+	updatedA := entity.Build{
+		ID: idA, RequestID: "request/contract/isolation-a/1",
+		URI: "git://remote/monorepo/main/aaaa1111", Status: entity.BuildStatusRunning, Version: 1,
+	}
+	require.NoError(t, s.buildStore.Update(s.ctx, updatedA, 1, 2))
+
+	gotB, err := s.buildStore.Get(s.ctx, idB)
+	require.NoError(t, err)
+	assert.Equal(t, baseline, gotB)
+
+	s.log.Logf("QueueIsolation passed: builds %s and %s", idA, idB)
+}
+
 // TestQueueStore_QueueIsolation verifies updates to one queue do not affect another.
 func (s *QueueStoreContractSuite) TestQueueStore_QueueIsolation() {
 	t := s.T()
