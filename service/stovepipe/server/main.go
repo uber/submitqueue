@@ -35,6 +35,7 @@ import (
 	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
+	"github.com/uber/submitqueue/service/stovepipe/server/mapper"
 	"github.com/uber/submitqueue/stovepipe/controller"
 	"github.com/uber/submitqueue/stovepipe/controller/process"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
@@ -59,9 +60,14 @@ func (s *StovepipeServer) Ping(ctx context.Context, req *pb.PingRequest) (*pb.Pi
 	return s.pingController.Ping(ctx, req)
 }
 
-// Ingest delegates to the controller.
+// Ingest maps the wire request to an entity, delegates to the controller, and maps
+// the result back to the wire response.
 func (s *StovepipeServer) Ingest(ctx context.Context, req *pb.IngestRequest) (*pb.IngestResponse, error) {
-	return s.ingestController.Ingest(ctx, req)
+	result, err := s.ingestController.Ingest(ctx, mapper.ProtoToIngestRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	return mapper.IngestResultToProto(result), nil
 }
 
 // inMemoryCounter is a minimal, process-local counter.Counter used to wire the example

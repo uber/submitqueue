@@ -20,7 +20,6 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
@@ -87,14 +86,14 @@ func NewIngestController(
 // URI mapping committed but the request write failed — completes the missing steps instead of
 // returning a dangling reference. The (queue, URI) mapping is the dedup gate, so concurrent
 // ingests of the same head converge on one request.
-func (c *IngestController) Ingest(ctx context.Context, req *pb.IngestRequest) (resp *pb.IngestResponse, retErr error) {
+func (c *IngestController) Ingest(ctx context.Context, req entity.IngestRequest) (result entity.IngestResult, retErr error) {
 	const opName = "ingest"
 
 	op := metrics.Begin(c.metricsScope, opName)
 	defer func() { op.Complete(retErr) }()
 
 	if req.Queue == "" {
-		return nil, fmt.Errorf("IngestController requires the request to have a queue name specified: %w", ErrInvalidRequest)
+		return entity.IngestResult{}, fmt.Errorf("IngestController requires the request to have a queue name specified: %w", ErrInvalidRequest)
 	}
 	queue := req.Queue
 
@@ -102,32 +101,32 @@ func (c *IngestController) Ingest(ctx context.Context, req *pb.IngestRequest) (r
 	// An unresolvable queue/ref is a caller error (unknown queue), not infrastructure.
 	sc, err := c.sourceControl.For(sourcecontrol.Config{QueueName: queue})
 	if err != nil {
-		return nil, fmt.Errorf("IngestController failed to resolve source control for queue=%s: %w", queue, err)
+		return entity.IngestResult{}, fmt.Errorf("IngestController failed to resolve source control for queue=%s: %w", queue, err)
 	}
 	uri, err := sc.Latest(ctx)
 	if err != nil {
 		if sourcecontrol.IsNotFound(err) {
-			return nil, fmt.Errorf("IngestController could not resolve head for queue=%s: %w: %w", queue, err, ErrInvalidRequest)
+			return entity.IngestResult{}, fmt.Errorf("IngestController could not resolve head for queue=%s: %w: %w", queue, err, ErrInvalidRequest)
 		}
-		return nil, fmt.Errorf("IngestController failed to resolve head for queue=%s: %w", queue, err)
+		return entity.IngestResult{}, fmt.Errorf("IngestController failed to resolve head for queue=%s: %w", queue, err)
 	}
 
 	// The (queue, URI) mapping is the dedup gate and the source of truth for "does this head
 	// have a request id".
 	id, err := c.resolveID(ctx, queue, uri)
 	if err != nil {
-		return nil, err
+		return entity.IngestResult{}, err
 	}
 
 	// Ensure the request row exists, healing a prior partial write where the mapping committed
 	// but the request did not.
 	request, err := c.ensureRequest(ctx, id, queue, uri)
 	if err != nil {
-		return nil, err
+		return entity.IngestResult{}, err
 	}
 
 	if err := c.advanceQueueLatestRequestID(ctx, queue, id); err != nil {
-		return nil, err
+		return entity.IngestResult{}, err
 	}
 
 	// Publish while the request is still pre-pipeline (Accepted). The process consumer is
@@ -136,7 +135,7 @@ func (c *IngestController) Ingest(ctx context.Context, req *pb.IngestRequest) (r
 	// process advances the request past Accepted, ingest stops re-publishing.
 	if request.State == entity.RequestStateAccepted {
 		if err := c.publishProcess(ctx, id, queue); err != nil {
-			return nil, fmt.Errorf("IngestController failed to publish request %s to process: %w", id, err)
+			return entity.IngestResult{}, fmt.Errorf("IngestController failed to publish request %s to process: %w", id, err)
 		}
 	}
 
@@ -147,7 +146,7 @@ func (c *IngestController) Ingest(ctx context.Context, req *pb.IngestRequest) (r
 		"state", request.State,
 	)
 
-	return &pb.IngestResponse{Id: id}, nil
+	return entity.IngestResult{ID: id}, nil
 }
 
 // resolveID returns the request id mapped to (queue, URI), minting and claiming a new one if the
