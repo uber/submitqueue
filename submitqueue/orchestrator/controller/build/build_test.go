@@ -216,7 +216,6 @@ func TestController_Process_TriggersWithBaseAndHead(t *testing.T) {
 	assert.Equal(t, "build-xyz", created.ID)
 	assert.Equal(t, headBatch.ID, created.BatchID)
 	assert.Equal(t, entity.BuildStatusAccepted, created.Status)
-	assert.Equal(t, []string{depBatch.ID}, created.SpeculationPath.Base)
 	assert.Equal(t, published.ID, created.ID)
 }
 

@@ -138,6 +138,20 @@ func (mr *MockStorageMockRecorder) GetRequestStore() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRequestStore", reflect.TypeOf((*MockStorage)(nil).GetRequestStore))
 }
 
+// GetSpeculationPathBuildStore mocks base method.
+func (m *MockStorage) GetSpeculationPathBuildStore() storage.SpeculationPathBuildStore {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetSpeculationPathBuildStore")
+	ret0, _ := ret[0].(storage.SpeculationPathBuildStore)
+	return ret0
+}
+
+// GetSpeculationPathBuildStore indicates an expected call of GetSpeculationPathBuildStore.
+func (mr *MockStorageMockRecorder) GetSpeculationPathBuildStore() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSpeculationPathBuildStore", reflect.TypeOf((*MockStorage)(nil).GetSpeculationPathBuildStore))
+}
+
 // GetSpeculationTreeStore mocks base method.
 func (m *MockStorage) GetSpeculationTreeStore() storage.SpeculationTreeStore {
 	m.ctrl.T.Helper()

@@ -14,6 +14,8 @@
 
 package entity
 
+import "slices"
+
 // SpeculationPath is a single speculation path: an assumed-good prefix of
 // predecessor batches (Base) on top of which the batch under verification
 // (Head) is built and validated.
@@ -27,6 +29,16 @@ type SpeculationPath struct {
 	Base []string
 	// Head is the batch ID being verified by this path.
 	Head string
+}
+
+// Equal reports whether p and other are structurally the same speculation
+// path. It is true iff Head matches and Base has the same elements in the same
+// order — Base order is the build order and is significant. The controller uses
+// it where only structure can identify a path (deduplicating enumerator output,
+// carrying entries over across re-enumeration); everything else references a
+// persisted path by its assigned ID (SpeculationPathInfo.ID).
+func (p SpeculationPath) Equal(other SpeculationPath) bool {
+	return p.Head == other.Head && slices.Equal(p.Base, other.Base)
 }
 
 // SpeculationPathStatus is the observed lifecycle state of a speculation path.
@@ -102,12 +114,15 @@ const (
 // entry is persisted; Score, Status, and BuildID are updateable, written only
 // by the controller under the tree's Version optimistic lock.
 type SpeculationPathInfo struct {
-	// ID identifies this path within its tree. It is assigned by the controller
-	// when the path entry is first persisted, immutable thereafter, and unique
-	// within the tree; its format is the controller's choice and carries no
-	// meaning — never parse it. Everything outside the tree names a path by this
-	// ID: seam outputs (path scores, path decisions) and durable links from
-	// other entities all refer to it rather than restating the Base/Head split.
+	// ID identifies this path. It is assigned by the controller when the path
+	// entry is first persisted, immutable thereafter, and globally unique —
+	// not merely unique within its tree, because other entities key rows by it
+	// alone (SpeculationPathBuild.PathID is a primary key with no extra
+	// scoping column). Its format is the controller's choice and carries no
+	// meaning — never parse it. Everything outside the tree names a path by
+	// this ID: seam outputs (path scores, path decisions) and durable links
+	// from other entities all refer to it rather than restating the Base/Head
+	// split.
 	ID string
 	// Path is the Base/Head split this entry covers. Immutable: it identifies
 	// the entry and never changes after the path is first persisted.
@@ -124,9 +139,9 @@ type SpeculationPathInfo struct {
 	// only by the controller; read by the decision seams (scorer, selector,
 	// prioritizer).
 	Status SpeculationPathStatus
-	// BuildID links this path to its build. Updateable: empty until a build
-	// signal confirms the build and the controller records it (Prioritized ->
-	// Building); the controller never knows the ID at send time.
+	// BuildID holds the runner-minted build identifier (also the build store's
+	// primary key) for this path. Updateable: it is empty until the speculate
+	// controller's reconcile stamps it once a build exists for this path.
 	BuildID string
 }
 

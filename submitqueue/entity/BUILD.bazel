@@ -18,6 +18,7 @@ go_library(
         "request.go",
         "request_log.go",
         "request_summary.go",
+        "speculation_path_build.go",
         "speculation_tree.go",
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/entity",
@@ -37,6 +38,7 @@ go_test(
         "land_request_test.go",
         "request_log_test.go",
         "request_test.go",
+        "speculation_tree_test.go",
     ],
     embed = [":go_default_library"],
     deps = [
