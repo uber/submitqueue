@@ -29,6 +29,8 @@ import (
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
+	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
+	sourcecontrolmock "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -43,23 +45,35 @@ const (
 )
 
 type processMocks struct {
-	reqStore   *storagemock.MockRequestStore
-	queueStore *storagemock.MockQueueStore
+	reqStore      *storagemock.MockRequestStore
+	queueStore    *storagemock.MockQueueStore
+	sourceFactory *sourcecontrolmock.MockFactory
+	sourceControl *sourcecontrolmock.MockSourceControl
 }
 
 func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, processMocks) {
 	t.Helper()
 
 	m := processMocks{
-		reqStore:   storagemock.NewMockRequestStore(ctrl),
-		queueStore: storagemock.NewMockQueueStore(ctrl),
+		reqStore:      storagemock.NewMockRequestStore(ctrl),
+		queueStore:    storagemock.NewMockQueueStore(ctrl),
+		sourceFactory: sourcecontrolmock.NewMockFactory(ctrl),
+		sourceControl: sourcecontrolmock.NewMockSourceControl(ctrl),
 	}
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
 	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 
-	c := NewController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), store, queueconfigdefault.NewStore(), stovepipemq.TopicKeyProcess, "stovepipe-process")
+	c := NewController(
+		zap.NewNop().Sugar(),
+		tally.NewTestScope("test", nil),
+		store,
+		queueconfigdefault.NewStore(),
+		m.sourceFactory,
+		stovepipemq.TopicKeyProcess,
+		"stovepipe-process",
+	)
 	return c, m
 }
 
@@ -101,6 +115,136 @@ func expectAdmit(m processMocks, id string) {
 	updatedReq.State = entity.RequestStateProcessing
 	updatedReq.BuildStrategy = entity.BuildStrategyFull
 	m.reqStore.EXPECT().Update(gomock.Any(), updatedReq, int32(1), int32(2)).Return(nil)
+}
+
+func TestDeriveBuildStrategy(t *testing.T) {
+	const lastGreenURI = "git://repo/monorepo/main/green"
+
+	tests := []struct {
+		name         string
+		queue        entity.Queue
+		setup        func(m processMocks)
+		wantStrategy entity.BuildStrategy
+		wantBaseURI  string
+		wantErr      bool
+	}{
+		{
+			name:         "cold start uses full build without source control",
+			queue:        entity.Queue{Name: testQueue},
+			wantStrategy: entity.BuildStrategyFull,
+		},
+		{
+			name:  "ancestor uses incremental build",
+			queue: entity.Queue{Name: testQueue, LastGreenURI: lastGreenURI},
+			setup: func(m processMocks) {
+				m.sourceFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sourceControl, nil)
+				m.sourceControl.EXPECT().IsAncestor(gomock.Any(), lastGreenURI, testURI).Return(true, nil)
+			},
+			wantStrategy: entity.BuildStrategyIncrementalSinceGreen,
+			wantBaseURI:  lastGreenURI,
+		},
+		{
+			name:  "history rewrite uses full build",
+			queue: entity.Queue{Name: testQueue, LastGreenURI: lastGreenURI},
+			setup: func(m processMocks) {
+				m.sourceFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sourceControl, nil)
+				m.sourceControl.EXPECT().IsAncestor(gomock.Any(), lastGreenURI, testURI).Return(false, nil)
+			},
+			wantStrategy: entity.BuildStrategyFull,
+		},
+		{
+			name:  "unknown ancestry uses full build",
+			queue: entity.Queue{Name: testQueue, LastGreenURI: lastGreenURI},
+			setup: func(m processMocks) {
+				m.sourceFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sourceControl, nil)
+				m.sourceControl.EXPECT().IsAncestor(gomock.Any(), lastGreenURI, testURI).Return(false, sourcecontrol.ErrNotFound)
+			},
+			wantStrategy: entity.BuildStrategyFull,
+		},
+		{
+			name:  "factory error fails",
+			queue: entity.Queue{Name: testQueue, LastGreenURI: lastGreenURI},
+			setup: func(m processMocks) {
+				m.sourceFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(nil, errors.New("source control unavailable"))
+			},
+			wantErr: true,
+		},
+		{
+			name:  "ancestry error fails",
+			queue: entity.Queue{Name: testQueue, LastGreenURI: lastGreenURI},
+			setup: func(m processMocks) {
+				m.sourceFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sourceControl, nil)
+				m.sourceControl.EXPECT().IsAncestor(gomock.Any(), lastGreenURI, testURI).Return(false, errors.New("source control unavailable"))
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+			if tt.setup != nil {
+				tt.setup(m)
+			}
+
+			strategy, baseURI, err := c.deriveBuildStrategy(context.Background(), tt.queue, acceptedRequest(testID))
+
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantStrategy, strategy)
+			assert.Equal(t, tt.wantBaseURI, baseURI)
+		})
+	}
+}
+
+func TestProcessRederivesStrategyAfterQueueReload(t *testing.T) {
+	const (
+		initialLastGreen  = "git://repo/monorepo/main/green-old"
+		reloadedLastGreen = "git://repo/monorepo/main/green-new"
+	)
+
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	request := acceptedRequest(testID)
+
+	initialQueue := entity.Queue{
+		Name:            testQueue,
+		LatestRequestID: testID,
+		LastGreenURI:    initialLastGreen,
+		Version:         1,
+	}
+	reloadedQueue := entity.Queue{
+		Name:            testQueue,
+		LatestRequestID: testID,
+		LastGreenURI:    reloadedLastGreen,
+		Version:         2,
+	}
+	claimedQueue := reloadedQueue
+	claimedQueue.InFlightCount = 1
+	initialClaim := initialQueue
+	initialClaim.InFlightCount = 1
+
+	updatedRequest := request
+	updatedRequest.State = entity.RequestStateProcessing
+	updatedRequest.BuildStrategy = entity.BuildStrategyIncrementalSinceGreen
+	updatedRequest.BaseURI = reloadedLastGreen
+
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(initialQueue, nil)
+	m.sourceFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sourceControl, nil)
+	m.sourceControl.EXPECT().IsAncestor(gomock.Any(), initialLastGreen, testURI).Return(true, nil)
+	m.queueStore.EXPECT().Update(gomock.Any(), initialClaim, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(reloadedQueue, nil)
+	m.sourceFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sourceControl, nil)
+	m.sourceControl.EXPECT().IsAncestor(gomock.Any(), reloadedLastGreen, testURI).Return(true, nil)
+	m.queueStore.EXPECT().Update(gomock.Any(), claimedQueue, int32(2), int32(3)).Return(nil)
+	m.reqStore.EXPECT().Update(gomock.Any(), updatedRequest, int32(1), int32(2)).Return(nil)
+
+	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, processPayload(t, testID))))
 }
 
 func TestProcess(t *testing.T) {
@@ -146,6 +290,22 @@ func TestProcess(t *testing.T) {
 					Version:         1,
 				}, nil)
 				expectAdmit(m, testID)
+			},
+		},
+		{
+			name:    "source control failure does not claim a build slot",
+			wantErr: true,
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name:            testQueue,
+					LatestRequestID: testID,
+					LastGreenURI:    "git://repo/monorepo/main/green",
+					Version:         1,
+				}, nil)
+				m.sourceFactory.EXPECT().
+					For(sourcecontrol.Config{QueueName: testQueue}).
+					Return(nil, errors.New("source control unavailable"))
 			},
 		},
 		{

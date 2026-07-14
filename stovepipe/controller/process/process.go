@@ -30,6 +30,7 @@ import (
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/queueconfig"
+	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
@@ -42,6 +43,7 @@ type Controller struct {
 	metricsScope  tally.Scope
 	store         storage.Storage
 	queueConfigs  queueconfig.Store
+	sourceControl sourcecontrol.Factory
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -58,6 +60,7 @@ func NewController(
 	scope tally.Scope,
 	store storage.Storage,
 	queueConfigs queueconfig.Store,
+	sourceControl sourcecontrol.Factory,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
@@ -66,6 +69,7 @@ func NewController(
 		metricsScope:  scope.SubScope("process_controller"),
 		store:         store,
 		queueConfigs:  queueConfigs,
+		sourceControl: sourceControl,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
@@ -186,8 +190,15 @@ func (c *Controller) admitLatestHead(ctx context.Context, request entity.Request
 			return nil
 		}
 
-		err := c.claimBuildSlot(ctx, &queueRow)
+		strategy, baseURI, err := c.deriveBuildStrategy(ctx, queueRow, request)
+		if err != nil {
+			return err
+		}
+
+		err = c.claimBuildSlot(ctx, &queueRow)
 		if err == nil {
+			request.BuildStrategy = strategy
+			request.BaseURI = baseURI
 			break
 		}
 		if !errors.Is(err, storage.ErrVersionMismatch) {
@@ -200,10 +211,6 @@ func (c *Controller) admitLatestHead(ctx context.Context, request entity.Request
 			return err
 		}
 	}
-
-	// TODO(build-strategy): derive from queue last_green_uri + SourceControl.IsAncestor.
-	request.BuildStrategy = entity.BuildStrategyFull
-	request.BaseURI = ""
 
 	transitioned, err := c.markProcessing(ctx, &request)
 	if err != nil {
@@ -225,8 +232,40 @@ func (c *Controller) admitLatestHead(ctx context.Context, request entity.Request
 		"queue", request.Queue,
 		"uri", request.URI,
 		"build_strategy", string(request.BuildStrategy),
+		"base_uri", request.BaseURI,
 	)
 	return nil
+}
+
+// deriveBuildStrategy chooses the validation scope and baseline from the queue's last-known-good commit.
+// The caller persists the returned values only after successfully claiming a build slot.
+func (c *Controller) deriveBuildStrategy(ctx context.Context, queueRow entity.Queue, request entity.Request) (strategy entity.BuildStrategy, baseURI string, err error) {
+	if queueRow.LastGreenURI == "" {
+		return entity.BuildStrategyFull, "", nil
+	}
+
+	sc, err := c.sourceControl.For(sourcecontrol.Config{QueueName: request.Queue})
+	if err != nil {
+		return entity.BuildStrategyUnknown, "", fmt.Errorf("ProcessController failed to resolve source control for queue %s: %w", request.Queue, err)
+	}
+
+	isAncestor, err := sc.IsAncestor(ctx, queueRow.LastGreenURI, request.URI)
+	if err != nil {
+		if sourcecontrol.IsNotFound(err) {
+			c.logger.Warnw("last-green URI is not in request history; using full build",
+				"queue", request.Queue,
+				"last_green_uri", queueRow.LastGreenURI,
+				"request_uri", request.URI,
+			)
+			return entity.BuildStrategyFull, "", nil
+		}
+		return entity.BuildStrategyUnknown, "", fmt.Errorf("ProcessController failed to check ancestry for queue %s: %w", request.Queue, err)
+	}
+
+	if isAncestor {
+		return entity.BuildStrategyIncrementalSinceGreen, queueRow.LastGreenURI, nil
+	}
+	return entity.BuildStrategyFull, "", nil
 }
 
 // claimBuildSlot CAS-increments queue.in_flight_count by one. On version mismatch it
