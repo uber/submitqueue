@@ -36,7 +36,20 @@ const (
 	RequestStateProcessing RequestState = "processing"
 	// RequestStateSuperseded means process skipped the request because a newer head exists.
 	RequestStateSuperseded RequestState = "superseded"
+	// RequestStateRecordedGreen means record wrote whole-repo greenness as green for this URI.
+	RequestStateRecordedGreen RequestState = "recorded_green"
+	// RequestStateRecordedNotGreen means record wrote whole-repo greenness as not-green for this
+	// URI — either a genuine build failure, or a conservative verdict forced by the DLQ
+	// reconciler when the request could never complete (see workflow.md's fail-closed posture).
+	RequestStateRecordedNotGreen RequestState = "recorded_not_green"
 )
+
+// IsTerminal returns true if the state is one the pipeline never advances past: superseded (a
+// newer head preempted this request) or either recorded outcome (record wrote greenness for
+// this URI, whether via the normal path or the fail-closed reconciler).
+func (s RequestState) IsTerminal() bool {
+	return s == RequestStateSuperseded || s == RequestStateRecordedGreen || s == RequestStateRecordedNotGreen
+}
 
 // BuildStrategy defines how build validates the request's commit.
 type BuildStrategy string
