@@ -37,12 +37,16 @@ import (
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/service/stovepipe/server/mapper"
 	"github.com/uber/submitqueue/stovepipe/controller"
+	"github.com/uber/submitqueue/stovepipe/controller/build"
 	"github.com/uber/submitqueue/stovepipe/controller/dlq"
 	"github.com/uber/submitqueue/stovepipe/controller/process"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
+	buildrunnerfake "github.com/uber/submitqueue/stovepipe/extension/buildrunner/fake"
 	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	sourcecontrolfake "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/fake"
+	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storageMySQL "github.com/uber/submitqueue/stovepipe/extension/storage/mysql"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -98,6 +102,15 @@ type fakeSourceControlFactory struct{}
 
 func (fakeSourceControlFactory) For(cfg sourcecontrol.Config) (sourcecontrol.SourceControl, error) {
 	return sourcecontrolfake.New([]string{fmt.Sprintf("git://%s/HEAD", cfg.QueueName)}), nil
+}
+
+// fakeBuildRunnerFactory is the example BuildRunner factory: every queue shares the same
+// stateless fake runner, which succeeds unless a caller embeds a failure marker in the head
+// URI. A real deployment supplies a backend-specific factory (e.g. Buildkite, per queue).
+type fakeBuildRunnerFactory struct{}
+
+func (fakeBuildRunnerFactory) For(_ buildrunner.Config) (buildrunner.BuildRunner, error) {
+	return buildrunnerfake.New(), nil
 }
 
 func main() {
@@ -225,24 +238,21 @@ func run() error {
 		errs.AlwaysRetryableProcessor,
 	)
 
-	processController := process.NewController(
-		logger.Sugar(),
-		scope,
-		store,
-		queueconfigdefault.NewStore(),
-		fakeSourceControlFactory{},
-		registry,
-		stovepipemq.TopicKeyProcess,
-		"stovepipe-process",
-	)
-	if err := primaryConsumer.Register(processController); err != nil {
-		return fmt.Errorf("failed to register process controller: %w", err)
-	}
+	// Each factory is constructed once and threaded through every consumer of
+	// it, so a real (stateful) backend introduced later is shared rather than
+	// silently duplicated across controllers.
+	scf := fakeSourceControlFactory{}
+	brf := fakeBuildRunnerFactory{}
 
-	processDLQController := dlq.NewController(logger.Sugar(), scope, store, dlq.TopicKey(stovepipemq.TopicKeyProcess), "stovepipe-process-dlq")
-	if err := dlqConsumer.Register(processDLQController); err != nil {
-		return fmt.Errorf("failed to register process dlq controller: %w", err)
+	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, store, registry, scf, brf)
+	if err != nil {
+		return err
 	}
+	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, store, registry)
+	if err != nil {
+		return err
+	}
+	logger.Info("controllers registered", zap.Int("primary", primaryCount), zap.Int("dlq", dlqCount))
 
 	// Start consumers. DLQ first because Start begins processing messages
 	// immediately; if the primary consumer then fails to start, the half we
@@ -266,7 +276,7 @@ func run() error {
 		logger.Sugar(),
 		scope,
 		newInMemoryCounter(),
-		fakeSourceControlFactory{},
+		scf,
 		store,
 		registry,
 	)
@@ -338,10 +348,67 @@ func run() error {
 	return err
 }
 
+// registerPrimaryControllers creates the primary-pipeline queue controllers and
+// registers them with c, returning how many were registered.
+func registerPrimaryControllers(
+	c consumer.Consumer,
+	logger *zap.SugaredLogger,
+	scope tally.Scope,
+	store storage.Storage,
+	registry consumer.TopicRegistry,
+	scf sourcecontrol.Factory,
+	brf buildrunner.Factory,
+) (int, error) {
+	var count int
+
+	processController := process.NewController(
+		logger,
+		scope,
+		store,
+		queueconfigdefault.NewStore(),
+		scf,
+		registry,
+		stovepipemq.TopicKeyProcess,
+		"stovepipe-process",
+	)
+	if err := c.Register(processController); err != nil {
+		return count, fmt.Errorf("failed to register process controller: %w", err)
+	}
+	count++
+
+	buildController := build.NewController(logger, scope, store, brf, registry, stovepipemq.TopicKeyBuild, "stovepipe-build")
+	if err := c.Register(buildController); err != nil {
+		return count, fmt.Errorf("failed to register build controller: %w", err)
+	}
+	count++
+
+	return count, nil
+}
+
+// registerDLQControllers creates one DLQ reconciler per primary stage and
+// registers them with c, returning how many were registered.
+func registerDLQControllers(
+	c consumer.Consumer,
+	logger *zap.SugaredLogger,
+	scope tally.Scope,
+	store storage.Storage,
+	registry consumer.TopicRegistry,
+) (int, error) {
+	var count int
+
+	processDLQController := dlq.NewController(logger, scope, store, dlq.TopicKey(stovepipemq.TopicKeyProcess), "stovepipe-process-dlq")
+	if err := c.Register(processDLQController); err != nil {
+		return count, fmt.Errorf("failed to register process dlq controller: %w", err)
+	}
+	count++
+
+	return count, nil
+}
+
 // newTopicRegistry builds the TopicRegistry for Stovepipe's internal pipeline queues. ingest
-// publishes to process; process publishes admitted requests to the publish-only build topic.
-// The process_dlq topic is the dead-letter destination the queue backend routes to (per
-// DefaultSubscriptionConfig's DLQ.TopicSuffix) when the process controller exhausts retries.
+// publishes to the process topic and the process consumer subscribes to it; process publishes
+// to the build topic and the build consumer subscribes to it. The buildsignal topic is added
+// once the buildsignal controller lands to consume it.
 func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRegistry, error) {
 	return consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{
@@ -356,6 +423,9 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Key:   stovepipemq.TopicKeyBuild,
 			Name:  "build",
 			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "stovepipe-build",
+			),
 		},
 		{
 			Key:          dlq.TopicKey(stovepipemq.TopicKeyProcess),
