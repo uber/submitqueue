@@ -130,22 +130,9 @@ func (c *Controller) processAccepted(ctx context.Context, request entity.Request
 		return nil
 	}
 
-	cmp, err := entity.CompareRequestID(request.Queue, request.ID, queueRow.LatestRequestID)
-	if err != nil {
-		return fmt.Errorf("ProcessController failed to compare request ids for queue %s: %w", request.Queue, err)
-	}
-	if cmp < 0 {
-		if err := c.supersedeRequest(ctx, request); err != nil {
-			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
-			return err
-		}
-		metrics.NamedCounter(c.metricsScope, _opName, "superseded", 1)
-		c.logger.Infow("superseded request for newer head",
-			"request_id", request.ID,
-			"queue", request.Queue,
-			"latest_request_id", queueRow.LatestRequestID,
-		)
-		return nil
+	superseded, err := c.coalesce(ctx, request, queueRow.LatestRequestID)
+	if err != nil || superseded {
+		return err
 	}
 
 	cfg, err := c.queueConfigs.Get(ctx, request.Queue)
@@ -155,44 +142,80 @@ func (c *Controller) processAccepted(ctx context.Context, request entity.Request
 		return fmt.Errorf("ProcessController failed to load queue config for %s: %w", request.Queue, err)
 	}
 
-	if queueRow.InFlightCount >= cfg.MaxConcurrent {
-		// TODO: re-enqueue the request via PublishAfter on the process topic with GateWaitDelayMs
-		c.logger.Infow("latest head awaiting build slot",
-			"request_id", request.ID,
-			"queue", request.Queue,
-			"uri", request.URI,
-			"in_flight_count", queueRow.InFlightCount,
-		)
-		return nil
-	}
-
-	return c.admitRequestToBuild(ctx, request, queueRow, cfg.MaxConcurrent)
+	return c.admitLatestHead(ctx, request, queueRow, cfg.MaxConcurrent)
 }
 
-// admitRequestToBuild runs the admit workflow: claim a build slot on the queue row,
-// mark the request processing with build strategy, and publish the request to build.
-func (c *Controller) admitRequestToBuild(ctx context.Context, request entity.Request, queueRow entity.Queue, maxConcurrent int32) error {
+// coalesce supersedes request when a newer head exists (RFC process step 5), returning
+// true so the caller acks. It returns false when request is still the latest head and
+// should proceed to the gate. Superseding consumes no build slot.
+func (c *Controller) coalesce(ctx context.Context, request entity.Request, latestRequestID string) (bool, error) {
+	cmp, err := entity.CompareRequestID(request.Queue, request.ID, latestRequestID)
+	if err != nil {
+		return false, fmt.Errorf("ProcessController failed to compare request ids for queue %s: %w", request.Queue, err)
+	}
+	if cmp >= 0 {
+		return false, nil
+	}
+	if err := c.supersedeRequest(ctx, request); err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+		return false, err
+	}
+	metrics.NamedCounter(c.metricsScope, _opName, "superseded", 1)
+	c.logger.Infow("superseded request for newer head",
+		"request_id", request.ID,
+		"queue", request.Queue,
+		"latest_request_id", latestRequestID,
+	)
+	return true, nil
+}
+
+// admitLatestHead runs the gate-then-admit workflow for the latest head: claim a build
+// slot, mark the request processing, and publish it to build. Every queue-row reload
+// re-runs coalesce-then-gate, so a slot is never spent on a now-stale head; a closed gate
+// defers (acks) rather than failing.
+func (c *Controller) admitLatestHead(ctx context.Context, request entity.Request, queueRow entity.Queue, maxConcurrent int32) error {
 	for {
+		if queueRow.InFlightCount >= maxConcurrent {
+			// TODO: re-enqueue the request via PublishAfter on the process topic with GateWaitDelayMs.
+			c.logger.Infow("latest head awaiting build slot",
+				"request_id", request.ID,
+				"queue", request.Queue,
+				"uri", request.URI,
+				"in_flight_count", queueRow.InFlightCount,
+			)
+			return nil
+		}
+
 		err := c.claimBuildSlot(ctx, &queueRow)
 		if err == nil {
 			break
 		}
-		if errors.Is(err, storage.ErrVersionMismatch) {
-			// claimBuildSlot reloaded queueRow; another admit may have taken the last slot.
-			if queueRow.InFlightCount >= maxConcurrent {
-				return fmt.Errorf("ProcessController gate closed for queue %s", queueRow.Name)
-			}
-			continue
+		if !errors.Is(err, storage.ErrVersionMismatch) {
+			return err
 		}
-		return err
+		// claimBuildSlot reloaded queueRow. Re-coalesce: supersede if a newer head arrived,
+		// otherwise loop to re-check the gate.
+		superseded, err := c.coalesce(ctx, request, queueRow.LatestRequestID)
+		if err != nil || superseded {
+			return err
+		}
 	}
 
 	// TODO(build-strategy): derive from queue last_green_uri + SourceControl.IsAncestor.
 	request.BuildStrategy = entity.BuildStrategyFull
 	request.BaseURI = ""
 
-	if err := c.markProcessing(ctx, &request); err != nil {
+	transitioned, err := c.markProcessing(ctx, &request)
+	if err != nil {
+		// Slot claimed but never admitted: release best-effort so the slot isn't leaked
+		// (a redelivery would find the gate closed by its own claim and nothing decrements it).
+		c.releaseBuildSlot(ctx, request.Queue)
 		return err
+	}
+	if !transitioned {
+		// Lost the admit race: another delivery advanced this request. Release and skip.
+		c.releaseBuildSlot(ctx, request.Queue)
+		return nil
 	}
 
 	// TODO(build-publish): publish BuildRequest to the build stage here.
@@ -231,13 +254,15 @@ func (c *Controller) claimBuildSlot(ctx context.Context, queueRow *entity.Queue)
 }
 
 // markProcessing CAS-marks request accepted→processing, persisting BuildStrategy and BaseURI
-// already set on request by the admit workflow. Retries on version conflicts.
-func (c *Controller) markProcessing(ctx context.Context, request *entity.Request) error {
+// already set by the admit workflow. Retries on version conflicts. transitioned is true only
+// when this call performed the CAS; false means a concurrent writer already advanced the
+// request past accepted (a lost admit race), so the caller must release its claimed slot.
+func (c *Controller) markProcessing(ctx context.Context, request *entity.Request) (transitioned bool, err error) {
 	reqStore := c.store.GetRequestStore()
 
 	for {
 		if request.State != entity.RequestStateAccepted {
-			return nil
+			return false, nil
 		}
 
 		updated := *request
@@ -247,16 +272,53 @@ func (c *Controller) markProcessing(ctx context.Context, request *entity.Request
 			if errors.Is(err, storage.ErrVersionMismatch) {
 				got, getErr := reqStore.Get(ctx, request.ID)
 				if getErr != nil {
-					return fmt.Errorf("ProcessController failed to reload request %s after version mismatch: %w", request.ID, getErr)
+					return false, fmt.Errorf("ProcessController failed to reload request %s after version mismatch: %w", request.ID, getErr)
 				}
 				*request = got
 				continue
 			}
-			return fmt.Errorf("ProcessController failed to mark request %s processing: %w", request.ID, err)
+			return false, fmt.Errorf("ProcessController failed to mark request %s processing: %w", request.ID, err)
 		}
 		updated.Version = newVersion
 		*request = updated
-		return nil
+		return true, nil
+	}
+}
+
+// releaseBuildSlot CAS-decrements queue.in_flight_count to compensate a slot claimed but never
+// admitted. It decrements relatively (preserving a concurrent record decrement) and retries on
+// version conflicts. Best-effort: it only logs on a hard failure, since the caller is unwinding.
+func (c *Controller) releaseBuildSlot(ctx context.Context, queueName string) {
+	queueStore := c.store.GetQueueStore()
+
+	for {
+		queueRow, err := queueStore.Get(ctx, queueName)
+		if err != nil {
+			c.logger.Errorw("failed to release claimed build slot",
+				"queue", queueName,
+				"error", err,
+			)
+			return
+		}
+		if queueRow.InFlightCount <= 0 {
+			return
+		}
+
+		updated := queueRow
+		updated.InFlightCount = queueRow.InFlightCount - 1
+		newVersion := queueRow.Version + 1
+		if err := queueStore.Update(ctx, updated, queueRow.Version, newVersion); err != nil {
+			if errors.Is(err, storage.ErrVersionMismatch) {
+				continue
+			}
+			c.logger.Errorw("failed to release claimed build slot",
+				"queue", queueName,
+				"error", err,
+			)
+			return
+		}
+		metrics.NamedCounter(c.metricsScope, _opName, "slot_released", 1)
+		return
 	}
 }
 
