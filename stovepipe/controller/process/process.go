@@ -24,6 +24,7 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
@@ -44,6 +45,7 @@ type Controller struct {
 	store         storage.Storage
 	queueConfigs  queueconfig.Store
 	sourceControl sourcecontrol.Factory
+	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -61,6 +63,7 @@ func NewController(
 	store storage.Storage,
 	queueConfigs queueconfig.Store,
 	sourceControl sourcecontrol.Factory,
+	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
@@ -70,6 +73,7 @@ func NewController(
 		store:         store,
 		queueConfigs:  queueConfigs,
 		sourceControl: sourceControl,
+		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
@@ -98,7 +102,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	switch request.State {
 	case entity.RequestStateProcessing:
-		// TODO: re-publish to build once the build stage lands (RFC process algorithm, step 3).
+		if err := c.publishBuild(ctx, request.ID); err != nil {
+			metrics.NamedCounter(c.metricsScope, _opName, "publish_errors", 1)
+			return fmt.Errorf("ProcessController failed to publish request %s to build: %w", request.ID, err)
+		}
 		return nil
 	case entity.RequestStateSuperseded:
 		return nil
@@ -238,7 +245,10 @@ func (c *Controller) admitLatestHead(ctx context.Context, request entity.Request
 		return nil
 	}
 
-	// TODO(build-publish): publish BuildRequest to the build stage here.
+	if err := c.publishBuild(ctx, request.ID); err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "publish_errors", 1)
+		return fmt.Errorf("ProcessController failed to publish request %s to build: %w", request.ID, err)
+	}
 
 	metrics.NamedCounter(c.metricsScope, _opName, "admitted", 1,
 		metrics.NewTag("strategy", string(request.BuildStrategy)),
@@ -430,6 +440,29 @@ func (c *Controller) loadQueue(ctx context.Context, name string) (entity.Queue, 
 		return entity.Queue{}, errs.NewRetryableError(fmt.Errorf("queue %s not found yet: %w", name, err))
 	}
 	return entity.Queue{}, fmt.Errorf("ProcessController failed to load queue %s: %w", name, err)
+}
+
+// publishBuild publishes the admitted request ID to the build stage. The build
+// controller reloads the Request from storage to read its immutable strategy
+// and baseline.
+func (c *Controller) publishBuild(ctx context.Context, id string) error {
+	payload, err := stovepipemq.Marshal(&stovepipemq.BuildRequest{Id: id})
+	if err != nil {
+		return fmt.Errorf("failed to serialize build request: %w", err)
+	}
+
+	q, ok := c.registry.Queue(stovepipemq.TopicKeyBuild)
+	if !ok {
+		return fmt.Errorf("no queue registered for topic key %s", stovepipemq.TopicKeyBuild)
+	}
+	topicName, ok := c.registry.TopicName(stovepipemq.TopicKeyBuild)
+	if !ok {
+		return fmt.Errorf("no topic name registered for topic key %s", stovepipemq.TopicKeyBuild)
+	}
+	if err := q.Publisher().Publish(ctx, topicName, entityqueue.NewMessage(id, payload, id, nil)); err != nil {
+		return fmt.Errorf("failed to publish build request: %w", err)
+	}
+	return nil
 }
 
 // Name returns the controller name for logging and metrics.

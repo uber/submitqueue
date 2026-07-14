@@ -49,6 +49,7 @@ type processMocks struct {
 	queueStore    *storagemock.MockQueueStore
 	sourceFactory *sourcecontrolmock.MockFactory
 	sourceControl *sourcecontrolmock.MockSourceControl
+	publisher     *mqmock.MockPublisher
 }
 
 func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, processMocks) {
@@ -63,11 +64,19 @@ func newControllerWithScope(t *testing.T, ctrl *gomock.Controller, scope tally.S
 		queueStore:    storagemock.NewMockQueueStore(ctrl),
 		sourceFactory: sourcecontrolmock.NewMockFactory(ctrl),
 		sourceControl: sourcecontrolmock.NewMockSourceControl(ctrl),
+		publisher:     mqmock.NewMockPublisher(ctrl),
 	}
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
 	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
+
+	queue := mqmock.NewMockQueue(ctrl)
+	queue.EXPECT().Publisher().Return(m.publisher).AnyTimes()
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: stovepipemq.TopicKeyBuild, Name: "build", Queue: queue},
+	})
+	require.NoError(t, err)
 
 	c := NewController(
 		zap.NewNop().Sugar(),
@@ -75,6 +84,7 @@ func newControllerWithScope(t *testing.T, ctrl *gomock.Controller, scope tally.S
 		store,
 		queueconfigdefault.NewStore(),
 		m.sourceFactory,
+		registry,
 		stovepipemq.TopicKeyProcess,
 		"stovepipe-process",
 	)
@@ -106,7 +116,24 @@ func acceptedRequest(id string) entity.Request {
 	}
 }
 
-func expectAdmit(m processMocks, id string) {
+func TestProcessBuildPublishRequiresRegisteredTopic(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	c.registry = consumer.TopicRegistry{}
+
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
+		ID: testID, Queue: testQueue, State: entity.RequestStateProcessing, Version: 2,
+	}, nil)
+
+	err := c.Process(context.Background(), delivery(t, ctrl, processPayload(t, testID)))
+
+	require.Error(t, err)
+	assert.False(t, errs.IsRetryable(err))
+}
+
+func expectAdmit(t *testing.T, m processMocks, id string) {
+	t.Helper()
+
 	updatedQueue := entity.Queue{
 		Name:            testQueue,
 		LatestRequestID: id,
@@ -119,6 +146,23 @@ func expectAdmit(m processMocks, id string) {
 	updatedReq.State = entity.RequestStateProcessing
 	updatedReq.BuildStrategy = entity.BuildStrategyFull
 	m.reqStore.EXPECT().Update(gomock.Any(), updatedReq, int32(1), int32(2)).Return(nil)
+
+	expectBuildPublish(t, m, id)
+}
+
+func expectBuildPublish(t *testing.T, m processMocks, id string) {
+	t.Helper()
+
+	m.publisher.EXPECT().
+		Publish(gomock.Any(), "build", gomock.AssignableToTypeOf(entityqueue.Message{})).
+		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+			assert.Equal(t, id, msg.ID)
+			assert.Equal(t, id, msg.PartitionKey)
+			buildReq := &stovepipemq.BuildRequest{}
+			require.NoError(t, stovepipemq.Unmarshal(msg.Payload, buildReq))
+			assert.Equal(t, id, buildReq.Id)
+			return nil
+		})
 }
 
 func TestDeriveBuildStrategy(t *testing.T) {
@@ -257,7 +301,7 @@ func TestProcessEmitsAdmittedStrategyMetric(t *testing.T) {
 		LatestRequestID: testID,
 		Version:         1,
 	}, nil)
-	expectAdmit(m, testID)
+	expectAdmit(t, m, testID)
 
 	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, processPayload(t, testID))))
 
@@ -349,6 +393,7 @@ func TestProcessRederivesStrategyAfterQueueReload(t *testing.T) {
 			m.sourceControl.EXPECT().IsAncestor(gomock.Any(), reloadedLastGreen, testURI).Return(true, nil)
 			m.queueStore.EXPECT().Update(gomock.Any(), claimedQueue, int32(2), int32(3)).Return(nil)
 			m.reqStore.EXPECT().Update(gomock.Any(), updatedRequest, int32(1), int32(2)).Return(nil)
+			expectBuildPublish(t, m, testID)
 
 			require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, processPayload(t, testID))))
 		})
@@ -373,11 +418,12 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "processing is no-op until build publish lands",
+			name: "processing republishes to build",
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
 					ID: testID, Queue: testQueue, State: entity.RequestStateProcessing, Version: 2,
 				}, nil)
+				expectBuildPublish(t, m, testID)
 			},
 		},
 		{
@@ -397,7 +443,33 @@ func TestProcess(t *testing.T) {
 					LatestRequestID: testID,
 					Version:         1,
 				}, nil)
-				expectAdmit(m, testID)
+				expectAdmit(t, m, testID)
+			},
+		},
+		{
+			name:    "build publish failure retains admitted request and claimed slot",
+			wantErr: true,
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name:            testQueue,
+					LatestRequestID: testID,
+					Version:         1,
+				}, nil)
+				updatedQueue := entity.Queue{
+					Name:            testQueue,
+					LatestRequestID: testID,
+					InFlightCount:   1,
+					Version:         1,
+				}
+				m.queueStore.EXPECT().Update(gomock.Any(), updatedQueue, int32(1), int32(2)).Return(nil)
+				updatedRequest := acceptedRequest(testID)
+				updatedRequest.State = entity.RequestStateProcessing
+				updatedRequest.BuildStrategy = entity.BuildStrategyFull
+				m.reqStore.EXPECT().Update(gomock.Any(), updatedRequest, int32(1), int32(2)).Return(nil)
+				m.publisher.EXPECT().
+					Publish(gomock.Any(), "build", gomock.AssignableToTypeOf(entityqueue.Message{})).
+					Return(errors.New("queue unavailable"))
 			},
 		},
 		{
@@ -462,6 +534,7 @@ func TestProcess(t *testing.T) {
 				updatedReq.State = entity.RequestStateProcessing
 				updatedReq.BuildStrategy = entity.BuildStrategyFull
 				m.reqStore.EXPECT().Update(gomock.Any(), updatedReq, int32(1), int32(2)).Return(nil)
+				expectBuildPublish(t, m, testID)
 			},
 		},
 		{
@@ -529,6 +602,7 @@ func TestProcess(t *testing.T) {
 				retry.BuildStrategy = entity.BuildStrategyIncrementalSinceGreen
 				retry.BaseURI = lastGreenURI
 				m.reqStore.EXPECT().Update(gomock.Any(), retry, int32(2), int32(3)).Return(nil)
+				expectBuildPublish(t, m, testID)
 			},
 		},
 		{

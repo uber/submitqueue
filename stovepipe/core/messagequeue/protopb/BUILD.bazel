@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "go_default_library",
-    srcs = ["process.pb.go"],
+    srcs = [
+        "build.pb.go",
+        "process.pb.go",
+    ],
     importpath = "github.com/uber/submitqueue/stovepipe/core/messagequeue/protopb",
     visibility = ["//visibility:public"],
     deps = [

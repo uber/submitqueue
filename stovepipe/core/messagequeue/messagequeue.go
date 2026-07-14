@@ -41,6 +41,10 @@ type (
 	// ProcessRequest is the payload ingest publishes to the process stage: the
 	// minted request id to validate.
 	ProcessRequest = protopb.ProcessRequest
+
+	// BuildRequest is the payload process publishes to the build stage: the
+	// admitted request id whose persisted strategy and baseline build reloads.
+	BuildRequest = protopb.BuildRequest
 )
 
 // marshalOpts keeps the JSON field names identical to the proto field names
