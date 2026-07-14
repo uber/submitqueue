@@ -178,6 +178,11 @@ func (c *Controller) coalesce(ctx context.Context, request entity.Request, lates
 // re-runs coalesce-then-gate, so a slot is never spent on a now-stale head; a closed gate
 // defers (acks) rather than failing.
 func (c *Controller) admitLatestHead(ctx context.Context, request entity.Request, queueRow entity.Queue, maxConcurrent int32) error {
+	var sc sourcecontrol.SourceControl
+	var strategy entity.BuildStrategy
+	var baseURI string
+	var err error
+
 	for {
 		if queueRow.InFlightCount >= maxConcurrent {
 			// TODO: re-enqueue the request via PublishAfter on the process topic with GateWaitDelayMs.
@@ -190,15 +195,22 @@ func (c *Controller) admitLatestHead(ctx context.Context, request entity.Request
 			return nil
 		}
 
-		strategy, baseURI, err := c.deriveBuildStrategy(ctx, queueRow, request)
+		if queueRow.LastGreenURI != "" && sc == nil {
+			var err error
+			sc, err = c.sourceControl.For(sourcecontrol.Config{QueueName: request.Queue})
+			if err != nil {
+				metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1)
+				return fmt.Errorf("ProcessController failed to resolve source control for queue %s: %w", request.Queue, err)
+			}
+		}
+
+		strategy, baseURI, err = c.deriveBuildStrategy(ctx, sc, queueRow, request)
 		if err != nil {
 			return err
 		}
 
 		err = c.claimBuildSlot(ctx, &queueRow)
 		if err == nil {
-			request.BuildStrategy = strategy
-			request.BaseURI = baseURI
 			break
 		}
 		if !errors.Is(err, storage.ErrVersionMismatch) {
@@ -212,7 +224,7 @@ func (c *Controller) admitLatestHead(ctx context.Context, request entity.Request
 		}
 	}
 
-	transitioned, err := c.markProcessing(ctx, &request)
+	transitioned, err := c.markProcessing(ctx, &request, strategy, baseURI)
 	if err != nil {
 		// Slot claimed but never admitted: release best-effort so the slot isn't leaked
 		// (a redelivery would find the gate closed by its own claim and nothing decrements it).
@@ -227,6 +239,9 @@ func (c *Controller) admitLatestHead(ctx context.Context, request entity.Request
 
 	// TODO(build-publish): publish BuildRequest to the build stage here.
 
+	metrics.NamedCounter(c.metricsScope, _opName, "admitted", 1,
+		metrics.NewTag("strategy", string(request.BuildStrategy)),
+	)
 	c.logger.Infow("admitted request to build",
 		"request_id", request.ID,
 		"queue", request.Queue,
@@ -238,20 +253,18 @@ func (c *Controller) admitLatestHead(ctx context.Context, request entity.Request
 }
 
 // deriveBuildStrategy chooses the validation scope and baseline from the queue's last-known-good commit.
-// The caller persists the returned values only after successfully claiming a build slot.
-func (c *Controller) deriveBuildStrategy(ctx context.Context, queueRow entity.Queue, request entity.Request) (strategy entity.BuildStrategy, baseURI string, err error) {
+// The caller resolves source control once and persists the returned values only after successfully claiming a build slot.
+func (c *Controller) deriveBuildStrategy(ctx context.Context, sc sourcecontrol.SourceControl, queueRow entity.Queue, request entity.Request) (strategy entity.BuildStrategy, baseURI string, err error) {
 	if queueRow.LastGreenURI == "" {
 		return entity.BuildStrategyFull, "", nil
-	}
-
-	sc, err := c.sourceControl.For(sourcecontrol.Config{QueueName: request.Queue})
-	if err != nil {
-		return entity.BuildStrategyUnknown, "", fmt.Errorf("ProcessController failed to resolve source control for queue %s: %w", request.Queue, err)
 	}
 
 	isAncestor, err := sc.IsAncestor(ctx, queueRow.LastGreenURI, request.URI)
 	if err != nil {
 		if sourcecontrol.IsNotFound(err) {
+			metrics.NamedCounter(c.metricsScope, _opName, "strategy_fallbacks", 1,
+				metrics.NewTag("reason", "unknown_ancestry"),
+			)
 			c.logger.Warnw("last-green URI is not in request history; using full build",
 				"queue", request.Queue,
 				"last_green_uri", queueRow.LastGreenURI,
@@ -259,6 +272,7 @@ func (c *Controller) deriveBuildStrategy(ctx context.Context, queueRow entity.Qu
 			)
 			return entity.BuildStrategyFull, "", nil
 		}
+		metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1)
 		return entity.BuildStrategyUnknown, "", fmt.Errorf("ProcessController failed to check ancestry for queue %s: %w", request.Queue, err)
 	}
 
@@ -292,11 +306,12 @@ func (c *Controller) claimBuildSlot(ctx context.Context, queueRow *entity.Queue)
 	return nil
 }
 
-// markProcessing CAS-marks request accepted→processing, persisting BuildStrategy and BaseURI
-// already set by the admit workflow. Retries on version conflicts. transitioned is true only
-// when this call performed the CAS; false means a concurrent writer already advanced the
-// request past accepted (a lost admit race), so the caller must release its claimed slot.
-func (c *Controller) markProcessing(ctx context.Context, request *entity.Request) (transitioned bool, err error) {
+// markProcessing CAS-marks request accepted→processing and persists the strategy chosen after the
+// build slot was claimed. It reapplies the values after a request reload so an accepted concurrent
+// update cannot discard them. transitioned is true only when this call performed the CAS; false
+// means a concurrent writer already advanced the request past accepted, so the caller must release
+// its claimed slot.
+func (c *Controller) markProcessing(ctx context.Context, request *entity.Request, strategy entity.BuildStrategy, baseURI string) (transitioned bool, err error) {
 	reqStore := c.store.GetRequestStore()
 
 	for {
@@ -306,6 +321,8 @@ func (c *Controller) markProcessing(ctx context.Context, request *entity.Request
 
 		updated := *request
 		updated.State = entity.RequestStateProcessing
+		updated.BuildStrategy = strategy
+		updated.BaseURI = baseURI
 		newVersion := request.Version + 1
 		if err := reqStore.Update(ctx, updated, request.Version, newVersion); err != nil {
 			if errors.Is(err, storage.ErrVersionMismatch) {

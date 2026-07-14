@@ -53,7 +53,11 @@ type processMocks struct {
 
 func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, processMocks) {
 	t.Helper()
+	return newControllerWithScope(t, ctrl, tally.NewTestScope("test", nil))
+}
 
+func newControllerWithScope(t *testing.T, ctrl *gomock.Controller, scope tally.Scope) (*Controller, processMocks) {
+	t.Helper()
 	m := processMocks{
 		reqStore:      storagemock.NewMockRequestStore(ctrl),
 		queueStore:    storagemock.NewMockQueueStore(ctrl),
@@ -67,7 +71,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, processM
 
 	c := NewController(
 		zap.NewNop().Sugar(),
-		tally.NewTestScope("test", nil),
+		scope,
 		store,
 		queueconfigdefault.NewStore(),
 		m.sourceFactory,
@@ -137,7 +141,6 @@ func TestDeriveBuildStrategy(t *testing.T) {
 			name:  "ancestor uses incremental build",
 			queue: entity.Queue{Name: testQueue, LastGreenURI: lastGreenURI},
 			setup: func(m processMocks) {
-				m.sourceFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sourceControl, nil)
 				m.sourceControl.EXPECT().IsAncestor(gomock.Any(), lastGreenURI, testURI).Return(true, nil)
 			},
 			wantStrategy: entity.BuildStrategyIncrementalSinceGreen,
@@ -147,7 +150,6 @@ func TestDeriveBuildStrategy(t *testing.T) {
 			name:  "history rewrite uses full build",
 			queue: entity.Queue{Name: testQueue, LastGreenURI: lastGreenURI},
 			setup: func(m processMocks) {
-				m.sourceFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sourceControl, nil)
 				m.sourceControl.EXPECT().IsAncestor(gomock.Any(), lastGreenURI, testURI).Return(false, nil)
 			},
 			wantStrategy: entity.BuildStrategyFull,
@@ -156,24 +158,14 @@ func TestDeriveBuildStrategy(t *testing.T) {
 			name:  "unknown ancestry uses full build",
 			queue: entity.Queue{Name: testQueue, LastGreenURI: lastGreenURI},
 			setup: func(m processMocks) {
-				m.sourceFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sourceControl, nil)
 				m.sourceControl.EXPECT().IsAncestor(gomock.Any(), lastGreenURI, testURI).Return(false, sourcecontrol.ErrNotFound)
 			},
 			wantStrategy: entity.BuildStrategyFull,
 		},
 		{
-			name:  "factory error fails",
-			queue: entity.Queue{Name: testQueue, LastGreenURI: lastGreenURI},
-			setup: func(m processMocks) {
-				m.sourceFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(nil, errors.New("source control unavailable"))
-			},
-			wantErr: true,
-		},
-		{
 			name:  "ancestry error fails",
 			queue: entity.Queue{Name: testQueue, LastGreenURI: lastGreenURI},
 			setup: func(m processMocks) {
-				m.sourceFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sourceControl, nil)
 				m.sourceControl.EXPECT().IsAncestor(gomock.Any(), lastGreenURI, testURI).Return(false, errors.New("source control unavailable"))
 			},
 			wantErr: true,
@@ -188,7 +180,11 @@ func TestDeriveBuildStrategy(t *testing.T) {
 				tt.setup(m)
 			}
 
-			strategy, baseURI, err := c.deriveBuildStrategy(context.Background(), tt.queue, acceptedRequest(testID))
+			var sc sourcecontrol.SourceControl
+			if tt.queue.LastGreenURI != "" {
+				sc = m.sourceControl
+			}
+			strategy, baseURI, err := c.deriveBuildStrategy(context.Background(), sc, tt.queue, acceptedRequest(testID))
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -199,6 +195,74 @@ func TestDeriveBuildStrategy(t *testing.T) {
 			assert.Equal(t, tt.wantBaseURI, baseURI)
 		})
 	}
+}
+
+func TestDeriveBuildStrategyEmitsSourceControlMetrics(t *testing.T) {
+	const lastGreenURI = "git://repo/monorepo/main/green"
+
+	tests := []struct {
+		name        string
+		ancestryErr error
+		metricName  string
+		metricTags  string
+	}{
+		{
+			name:        "unknown ancestry records fallback",
+			ancestryErr: sourcecontrol.ErrNotFound,
+			metricName:  "strategy_fallbacks",
+			metricTags:  "reason=unknown_ancestry",
+		},
+		{
+			name:        "source control failure records error",
+			ancestryErr: errors.New("source control unavailable"),
+			metricName:  "source_control_errors",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			scope := tally.NewTestScope("test", nil)
+			c, m := newControllerWithScope(t, ctrl, scope)
+			m.sourceControl.EXPECT().IsAncestor(gomock.Any(), lastGreenURI, testURI).Return(false, tt.ancestryErr)
+
+			_, _, err := c.deriveBuildStrategy(
+				context.Background(),
+				m.sourceControl,
+				entity.Queue{Name: testQueue, LastGreenURI: lastGreenURI},
+				acceptedRequest(testID),
+			)
+
+			if sourcecontrol.IsNotFound(tt.ancestryErr) {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+			counter, ok := scope.Snapshot().Counters()["test.process_controller.process."+tt.metricName+"+"+tt.metricTags]
+			require.True(t, ok)
+			assert.Equal(t, int64(1), counter.Value())
+		})
+	}
+}
+
+func TestProcessEmitsAdmittedStrategyMetric(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	scope := tally.NewTestScope("test", nil)
+	c, m := newControllerWithScope(t, ctrl, scope)
+
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+		Name:            testQueue,
+		LatestRequestID: testID,
+		Version:         1,
+	}, nil)
+	expectAdmit(m, testID)
+
+	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, processPayload(t, testID))))
+
+	counter, ok := scope.Snapshot().Counters()["test.process_controller.process.admitted+strategy=full"]
+	require.True(t, ok)
+	assert.Equal(t, int64(1), counter.Value())
 }
 
 func TestProcessRederivesStrategyAfterQueueReload(t *testing.T) {
@@ -239,7 +303,6 @@ func TestProcessRederivesStrategyAfterQueueReload(t *testing.T) {
 	m.sourceControl.EXPECT().IsAncestor(gomock.Any(), initialLastGreen, testURI).Return(true, nil)
 	m.queueStore.EXPECT().Update(gomock.Any(), initialClaim, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
 	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(reloadedQueue, nil)
-	m.sourceFactory.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(m.sourceControl, nil)
 	m.sourceControl.EXPECT().IsAncestor(gomock.Any(), reloadedLastGreen, testURI).Return(true, nil)
 	m.queueStore.EXPECT().Update(gomock.Any(), claimedQueue, int32(2), int32(3)).Return(nil)
 	m.reqStore.EXPECT().Update(gomock.Any(), updatedRequest, int32(1), int32(2)).Return(nil)
@@ -388,6 +451,32 @@ func TestProcess(t *testing.T) {
 				superseded := acceptedRequest(testID)
 				superseded.State = entity.RequestStateSuperseded
 				m.reqStore.EXPECT().Update(gomock.Any(), superseded, int32(1), int32(2)).Return(nil)
+			},
+		},
+		{
+			name: "mark processing retry preserves derived strategy after accepted reload",
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name: testQueue, LatestRequestID: testID, Version: 1,
+				}, nil)
+				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
+					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, Version: 1,
+				}, int32(1), int32(2)).Return(nil)
+
+				firstAttempt := acceptedRequest(testID)
+				firstAttempt.State = entity.RequestStateProcessing
+				firstAttempt.BuildStrategy = entity.BuildStrategyFull
+				m.reqStore.EXPECT().Update(gomock.Any(), firstAttempt, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
+
+				reloaded := acceptedRequest(testID)
+				reloaded.Version = 2
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(reloaded, nil)
+
+				retry := reloaded
+				retry.State = entity.RequestStateProcessing
+				retry.BuildStrategy = entity.BuildStrategyFull
+				m.reqStore.EXPECT().Update(gomock.Any(), retry, int32(2), int32(3)).Return(nil)
 			},
 		},
 		{
