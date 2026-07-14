@@ -73,3 +73,51 @@ func TestSpeculationPath_Equal(t *testing.T) {
 		})
 	}
 }
+
+func TestSpeculationTree_PathIndex(t *testing.T) {
+	tree := SpeculationTree{
+		BatchID: "q/batch/3",
+		Paths: []SpeculationPathInfo{
+			{ID: "q/batch/3/path/0", Path: SpeculationPath{Base: []string{"q/batch/1", "q/batch/2"}, Head: "q/batch/3"}},
+			{ID: "q/batch/3/path/1", Path: SpeculationPath{Base: []string{"q/batch/1"}, Head: "q/batch/3"}},
+			{ID: "q/batch/3/path/2", Path: SpeculationPath{Head: "q/batch/3"}},
+		},
+	}
+
+	tests := []struct {
+		name string
+		id   string
+		want int
+	}{
+		{
+			name: "first path found",
+			id:   "q/batch/3/path/0",
+			want: 0,
+		},
+		{
+			name: "last path found",
+			id:   "q/batch/3/path/2",
+			want: 2,
+		},
+		{
+			name: "unknown id not found",
+			id:   "q/batch/3/path/9",
+			want: -1,
+		},
+		{
+			name: "empty id not found",
+			id:   "",
+			want: -1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tree.PathIndex(tt.id))
+		})
+	}
+}
+
+func TestSpeculationTree_PathIndex_EmptyTree(t *testing.T) {
+	assert.Equal(t, -1, SpeculationTree{}.PathIndex("q/batch/1/path/0"))
+}

@@ -48,7 +48,7 @@ message MergeStep {
 // Runway echoes it back unchanged.
 message MergeRequest {
     option (uber.base.messagequeue.topic_keys) = "merge-conflict-check";
-    option (uber.base.messagequeue.topic_keys) = "merge";
+    option (uber.base.messagequeue.topic_keys) = "runway-merge";
 
     // id is the client-owned correlation id for this request (one per request).
     // Runway echoes it back on the result unchanged.

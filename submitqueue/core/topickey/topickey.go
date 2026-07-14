@@ -33,6 +33,14 @@ const (
 	TopicKeyScore TopicKey = "score"
 	// TopicKeySpeculate is the pipeline stage where scored batches are published for speculation.
 	TopicKeySpeculate TopicKey = "speculate"
+	// TopicKeyPrioritize is the queue-wide reconcile stage that rations the
+	// build budget across every in-flight batch of a queue. Each message
+	// carries a QueueID; the consumer loads every Speculating batch's tree,
+	// runs the queue's Prioritizer over the candidate paths, applies the
+	// resulting decisions — promoting paths into the build budget, or
+	// cancelling in-flight paths a preemptive policy evicts — and republishes
+	// to TopicKeyBuild for any path cleared to run.
+	TopicKeyPrioritize TopicKey = "prioritize"
 	// TopicKeyBuild is the pipeline stage where speculated batches are published for builds.
 	TopicKeyBuild TopicKey = "build"
 	// TopicKeyBuildSignal is the polling stage for triggered builds. Each
@@ -42,7 +50,7 @@ const (
 	// PublishAfter when the build has not yet reached a terminal state.
 	TopicKeyBuildSignal TopicKey = "buildsignal"
 	// TopicKeyMerge is the pipeline stage where speculated batches are published for merging.
-	TopicKeyMerge TopicKey = "merge"
+	TopicKeyMerge TopicKey = "submitqueue-merge"
 	// TopicKeyConclude is the pipeline stage where merged requests are published for conclusion.
 	TopicKeyConclude TopicKey = "conclude"
 	// TopicKeyLog is the pipeline stage where per-request logs are written.

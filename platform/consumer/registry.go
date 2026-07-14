@@ -62,7 +62,10 @@ type topicGroup struct {
 }
 
 // NewTopicRegistry creates a new TopicRegistry from a list of TopicConfigs.
-// Returns an error if any topic name is invalid.
+// Returns an error if any topic name is invalid, or if two configs share a
+// topic key — a duplicate key would silently shadow the earlier entry (last
+// write wins on the key→queue/name maps), routing publishes and subscriptions
+// registered against one topic onto another.
 func NewTopicRegistry(configs []TopicConfig) (TopicRegistry, error) {
 	queues := make(map[TopicKey]extqueue.Queue, len(configs))
 	topicNames := make(map[TopicKey]string, len(configs))
@@ -71,6 +74,12 @@ func NewTopicRegistry(configs []TopicConfig) (TopicRegistry, error) {
 	for _, cfg := range configs {
 		if err := ValidateTopicName(cfg.Name); err != nil {
 			return TopicRegistry{}, fmt.Errorf("invalid topic name for key %s: %w", cfg.Key, err)
+		}
+
+		if existing, ok := topicNames[cfg.Key]; ok {
+			return TopicRegistry{}, fmt.Errorf(
+				"duplicate topic key %s: already registered with name %q, cannot also register name %q",
+				cfg.Key, existing, cfg.Name)
 		}
 
 		queues[cfg.Key] = cfg.Queue

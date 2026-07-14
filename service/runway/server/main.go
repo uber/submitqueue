@@ -275,7 +275,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 		},
 		{
 			Key:   runwaymq.TopicKeyMerge,
-			Name:  "merge",
+			Name:  "runway-merge",
 			Queue: q,
 			Subscription: extqueue.DefaultSubscriptionConfig(
 				subscriberName, "runway-merge",

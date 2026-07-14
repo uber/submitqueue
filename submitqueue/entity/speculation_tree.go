@@ -19,10 +19,6 @@ import "slices"
 // SpeculationPath is a single speculation path: an assumed-good prefix of
 // predecessor batches (Base) on top of which the batch under verification
 // (Head) is built and validated.
-//
-// This is the unit the build stage consumes: Base maps to the build runner's
-// base changes (an assumed-good prefix to apply) and Head maps to the changes
-// being validated.
 type SpeculationPath struct {
 	// Base is the ordered list of predecessor batch IDs assumed to have passed.
 	// Empty means the path builds the head batch directly on the target branch.
@@ -33,18 +29,14 @@ type SpeculationPath struct {
 
 // Equal reports whether p and other are structurally the same speculation
 // path. It is true iff Head matches and Base has the same elements in the same
-// order — Base order is the build order and is significant. The controller uses
-// it where only structure can identify a path (deduplicating enumerator output,
-// carrying entries over across re-enumeration); everything else references a
-// persisted path by its assigned ID (SpeculationPathInfo.ID).
+// order — Base order is the build order and is significant. Structural
+// equality identifies a path that has no assigned ID yet; a persisted path is
+// referenced by its ID (SpeculationPathInfo.ID).
 func (p SpeculationPath) Equal(other SpeculationPath) bool {
 	return p.Head == other.Head && slices.Equal(p.Base, other.Base)
 }
 
 // SpeculationPathStatus is the observed lifecycle state of a speculation path.
-// It is written only by the orchestrator's speculate controller (into the
-// speculation tree store) and read by the decision seams (selector, prioritizer)
-// as input; the seams never write it.
 type SpeculationPathStatus string
 
 const (
@@ -52,30 +44,28 @@ const (
 	// on init. A persisted path always carries a real status (candidate onward),
 	// so this should never be seen in the store.
 	SpeculationPathStatusUnknown SpeculationPathStatus = ""
-	// SpeculationPathStatusCandidate is a freshly enumerated path the controller
-	// has persisted but not yet acted on.
+	// SpeculationPathStatusCandidate is a freshly enumerated path, persisted but
+	// not yet acted on.
 	SpeculationPathStatusCandidate SpeculationPathStatus = "candidate"
-	// SpeculationPathStatusSelected is a path the selector has promoted — a
-	// per-batch desire to build it — that the queue-wide prioritizer has not yet
-	// cleared. It is not sent to build while Selected: it waits on the build
-	// budget until it is prioritized (or dropped).
+	// SpeculationPathStatusSelected is a path promoted by per-batch selection —
+	// a desire to build it — that queue-wide prioritization has not yet cleared.
+	// It is not built while Selected: it waits on the build budget until it is
+	// prioritized (or dropped).
 	SpeculationPathStatusSelected SpeculationPathStatus = "selected"
-	// SpeculationPathStatusPrioritized is a path the prioritizer has admitted
-	// under the queue's build budget; it is cleared to run. The build effector
-	// triggers only Prioritized paths.
+	// SpeculationPathStatusPrioritized is a path admitted under the queue's
+	// build budget: it is cleared to build.
 	SpeculationPathStatusPrioritized SpeculationPathStatus = "prioritized"
-	// SpeculationPathStatusBuilding is a path a build signal has confirmed is in
+	// SpeculationPathStatusBuilding is a path whose build is confirmed in
 	// flight; its BuildID is known.
 	SpeculationPathStatusBuilding SpeculationPathStatus = "building"
 	// SpeculationPathStatusPassed is a path whose build succeeded.
 	SpeculationPathStatusPassed SpeculationPathStatus = "passed"
 	// SpeculationPathStatusFailed is a path whose build failed.
 	SpeculationPathStatusFailed SpeculationPathStatus = "failed"
-	// SpeculationPathStatusCancelling is a path whose in-flight build the
-	// controller has asked to stop but whose cancellation is not yet confirmed. It
-	// mirrors the batch-level cancelling intent (BatchStateCancelling): the cancel
-	// decision is recorded here and the effector drives it to terminal Cancelled.
-	// A path with no build in flight is dropped straight to Cancelled instead.
+	// SpeculationPathStatusCancelling is a path whose in-flight build has been
+	// asked to stop but whose cancellation is not yet confirmed. It mirrors the
+	// batch-level cancelling intent (BatchStateCancelling). A path with no build
+	// in flight is dropped straight to Cancelled instead.
 	SpeculationPathStatusCancelling SpeculationPathStatus = "cancelling"
 	// SpeculationPathStatusCancelled is the terminal state for a path that is no
 	// longer pursued — its in-flight build was confirmed stopped, or the path was
@@ -83,99 +73,82 @@ const (
 	SpeculationPathStatusCancelled SpeculationPathStatus = "cancelled"
 )
 
-// SpeculationPathAction is the decision a seam (the selector or the prioritizer)
-// asks the controller to take for a path. It names the decision, not its effect:
-// it is ephemeral (recomputed every time a seam runs) and never persisted. The
-// controller maps it to the corresponding SpeculationPathStatus transition —
-// applied under the tree's optimistic lock (Version) — and records the result;
-// the seams never write status themselves.
+// SpeculationPathAction is a requested action for a single speculation path.
+// It names the decision, not its effect — applying it yields the corresponding
+// SpeculationPathStatus transition — and it is ephemeral: recomputed each time
+// decisions are made, never persisted.
 type SpeculationPathAction string
 
 const (
-	// SpeculationPathActionUnknown is the unreachable zero value. A seam
-	// expresses "leave this path as-is" by omitting the path from its decisions,
-	// not by returning this.
+	// SpeculationPathActionUnknown is the unreachable zero value. "Leave this
+	// path as-is" is expressed by omitting the path from the decision set, not
+	// by this value.
 	SpeculationPathActionUnknown SpeculationPathAction = ""
-	// SpeculationPathActionPromote asks the controller to advance this path one
-	// stage toward running. The target status depends on which seam decided it:
-	// the selector's promote moves a path to Selected; the prioritizer's promote
-	// moves it to Prioritized (cleared to build).
+	// SpeculationPathActionPromote advances the path one stage toward building:
+	// to Selected when decided per batch (selection), to Prioritized — cleared
+	// to build — when decided queue-wide (prioritization).
 	SpeculationPathActionPromote SpeculationPathAction = "promote"
-	// SpeculationPathActionCancel asks the controller to stop pursuing this path:
-	// it moves to Cancelling if a build is in flight (the effector then confirms
-	// the stop and drives it to terminal Cancelled), or straight to Cancelled if
-	// no build has started.
+	// SpeculationPathActionCancel stops pursuing the path: it moves to
+	// Cancelling if a build is in flight, or straight to Cancelled if no build
+	// has started.
 	SpeculationPathActionCancel SpeculationPathAction = "cancel"
 )
 
 // SpeculationPathInfo is the per-path entry in a speculation tree: a path, its
-// latest predicted-success score, its controller-owned status, and a link to
-// the build dispatched for it (if any). ID and Path are immutable once the
-// entry is persisted; Score, Status, and BuildID are updateable, written only
-// by the controller under the tree's Version optimistic lock.
+// latest predicted-success score, its status, and a link to the build
+// dispatched for it (if any). ID and Path are immutable once the entry is
+// persisted; Score, Status, and BuildID are updateable under the tree's
+// Version optimistic lock.
 type SpeculationPathInfo struct {
-	// ID identifies this path. It is assigned by the controller when the path
-	// entry is first persisted, immutable thereafter, and globally unique —
-	// not merely unique within its tree, because other entities key rows by it
-	// alone (SpeculationPathBuild.PathID is a primary key with no extra
-	// scoping column). Its format is the controller's choice and carries no
-	// meaning — never parse it. Everything outside the tree names a path by
-	// this ID: seam outputs (path scores, path decisions) and durable links
-	// from other entities all refer to it rather than restating the Base/Head
-	// split.
+	// ID identifies this path. It is assigned when the path entry is first
+	// persisted, immutable thereafter, and globally unique — not merely unique
+	// within its tree, because other entities key rows by it alone
+	// (SpeculationPathBuild.PathID is a primary key with no extra scoping
+	// column). Its format carries no meaning — never parse it. Everything
+	// outside the tree names a path by this ID (PathScore, PathDecision,
+	// SpeculationPathBuild) rather than restating the Base/Head split.
 	ID string
 	// Path is the Base/Head split this entry covers. Immutable: it identifies
 	// the entry and never changes after the path is first persisted.
 	Path SpeculationPath
-	// Score is the path's predicted-success score. Updateable: it is computed by
-	// the scorer and persisted by the controller, not set at enumeration — the
-	// enumerator produces structure only. It is dynamic: the controller re-runs
-	// the scorer on every respeculate (as dependencies land, dependency builds
-	// pass, or sibling paths fail), so the value tracks the latest state rather
-	// than a figure frozen when the path was first enumerated (~0 until the
-	// first pass).
+	// Score is the path's predicted-success score. Updateable: it is recomputed
+	// as the world changes (dependencies land, dependency builds pass, sibling
+	// paths fail), so it tracks the latest state rather than a figure frozen at
+	// enumeration (0 until first scored).
 	Score float32
-	// Status is the observed lifecycle state of the path. Updateable: written
-	// only by the controller; read by the decision seams (scorer, selector,
-	// prioritizer).
+	// Status is the observed lifecycle state of the path. Updateable.
 	Status SpeculationPathStatus
 	// BuildID holds the runner-minted build identifier (also the build store's
-	// primary key) for this path. Updateable: it is empty until the speculate
-	// controller's reconcile stamps it once a build exists for this path.
+	// primary key) for this path. Updateable: it is empty until a build exists
+	// for this path.
 	BuildID string
 }
 
-// PathScore is the path scorer's verdict for a single path: the
-// path's identity and its freshly computed predicted-success score. It is the
-// scorer seam's only output — the controller merges scores into the tree by
-// path ID and persists them; tree structure and status never pass through the
-// scorer. Like PathDecision, it is ephemeral and never persisted.
+// PathScore is a freshly computed predicted-success score for a single path,
+// named by its ID. Like PathDecision, it is ephemeral and never persisted; the
+// score it carries lands in the tree entry (SpeculationPathInfo.Score).
 type PathScore struct {
-	// PathID identifies the scored path (SpeculationPathInfo.ID) within the
-	// tree the scorer was handed.
+	// PathID identifies the scored path (SpeculationPathInfo.ID).
 	PathID string
 	// Score is the path's predicted-success probability, in [0, 1].
 	Score float32
 }
 
-// PathDecision is a seam's decision for a single path: the action the
-// controller should take for it. It is the output of both the selector (per
-// batch) and the prioritizer (queue-wide), and is not persisted. A seam returns
-// a decision only for the paths it wants to act on; omitted paths are left
-// as-is. A seam must return at most one decision per path — the controller
-// treats conflicting duplicates as a policy bug, applying the first and
-// logging and skipping the rest.
+// PathDecision is a requested action for a single speculation path, named by
+// its ID. It is ephemeral and never persisted. A decision set covers only the
+// paths to act on — omitted paths are left as-is — and carries at most one
+// decision per path.
 type PathDecision struct {
 	// PathID identifies the speculation path the action applies to
-	// (SpeculationPathInfo.ID), within the tree(s) the seam was handed.
+	// (SpeculationPathInfo.ID).
 	PathID string
-	// Action is what the controller should do for the path.
+	// Action is the requested action for the path.
 	Action SpeculationPathAction
 }
 
 // SpeculationTree is the set of candidate speculation paths for a batch, built
-// from its dependency graph. BatchID is immutable; Paths is updateable (the
-// controller overwrites it wholesale on every respeculate), guarded by Version.
+// from its dependency graph. BatchID is immutable; Paths is updateable —
+// overwritten wholesale on re-speculation — guarded by Version.
 type SpeculationTree struct {
 	// BatchID is the batch for which this speculation tree is constructed.
 	// Immutable: it identifies the tree.
@@ -196,7 +169,17 @@ type SpeculationTree struct {
 	// Version is the version of the object. It is used for optimistic locking:
 	// updates are conditional on the persisted version matching the caller's
 	// expected version. Versioning starts at 1 and is incremented for each
-	// change to the object; version arithmetic is owned by the controller, the
-	// store performs a pure conditional write.
+	// change to the object.
 	Version int32
+}
+
+// PathIndex returns the index of the entry in t.Paths whose ID is id, or -1
+// if none is.
+func (t SpeculationTree) PathIndex(id string) int {
+	for i, p := range t.Paths {
+		if p.ID == id {
+			return i
+		}
+	}
+	return -1
 }

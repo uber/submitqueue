@@ -34,8 +34,8 @@ func TestDLQBatchController_InterfaceAndAccessors(t *testing.T) {
 
 	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), store, TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")
 
-	assert.Equal(t, "merge_dlq", c.Name())
-	assert.Equal(t, consumer.TopicKey("merge_dlq"), c.TopicKey())
+	assert.Equal(t, "submitqueue-merge_dlq", c.Name())
+	assert.Equal(t, consumer.TopicKey("submitqueue-merge_dlq"), c.TopicKey())
 	assert.Equal(t, "orchestrator-merge-dlq", c.ConsumerGroup())
 }
 

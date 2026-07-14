@@ -61,6 +61,9 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/scorer/composite"
 	scorerfake "github.com/uber/submitqueue/submitqueue/extension/scorer/fake"
 	"github.com/uber/submitqueue/submitqueue/extension/scorer/heuristic"
+	prioritizationlimitstatic "github.com/uber/submitqueue/submitqueue/extension/speculation/prioritizationlimit/static"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/prioritizer"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/prioritizer/sticky"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	validatorfake "github.com/uber/submitqueue/submitqueue/extension/validator/fake"
@@ -74,6 +77,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/merge"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/mergeconflictsignal"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/mergesignal"
+	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/prioritize"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/score"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/speculate"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/start"
@@ -244,13 +248,14 @@ func run() error {
 	brf := buildRunnerFactory{queues}
 	scf := scorerFactory{queues}
 	cof := analyzerFactory{queues}
+	prf := prioritizerFactory{queues}
 
 	// Register controllers
-	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, registry, cpf, brf, scf, cof, cnt, store)
+	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, registry, cpf, brf, scf, cof, prf, cnt, store)
 	if err != nil {
 		return err
 	}
-	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, store)
+	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, registry, store)
 	if err != nil {
 		return err
 	}
@@ -380,9 +385,10 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 		{topickey.TopicKeyBatch, "batch", "orchestrator-batch"},
 		{topickey.TopicKeyScore, "score", "orchestrator-score"},
 		{topickey.TopicKeySpeculate, "speculate", "orchestrator-speculate"},
+		{topickey.TopicKeyPrioritize, "prioritize", "orchestrator-prioritize"},
 		{topickey.TopicKeyBuild, "build", "orchestrator-build"},
 		{topickey.TopicKeyBuildSignal, "buildsignal", "orchestrator-buildsignal"},
-		{topickey.TopicKeyMerge, "merge", "orchestrator-merge"},
+		{topickey.TopicKeyMerge, "submitqueue-merge", "orchestrator-merge"},
 		{runwaymq.TopicKeyMergeSignal, "merge-signal", "orchestrator-mergesignal"},
 		{topickey.TopicKeyConclude, "conclude", "orchestrator-conclude"},
 	}
@@ -450,7 +456,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 	// consumed primary topic above.
 	configs = append(configs, consumer.TopicConfig{
 		Key:   runwaymq.TopicKeyMerge,
-		Name:  "merge",
+		Name:  "runway-merge",
 		Queue: q,
 	})
 
@@ -471,6 +477,13 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 // merge-conflict-check queue (⇢); runway performs the merge attempt and
 // publishes the result to merge-conflict-check-signal, which mergeconflictsignal
 // consumes before fanning the request out to batch.
+//
+// prioritize sits alongside this per-batch flow rather than in its line: it
+// is queue-wide, not batch-scoped. Its message carries only a queue name; on
+// each invocation it loads every Speculating batch's speculation tree for
+// that queue, ranks the queue-wide candidate paths against the queue's build
+// budget, applies the resulting decisions, and republishes to build for any
+// path newly (or still) cleared to run.
 
 // TODO(wiring abstraction): queueExtensions + queueRegistry currently live here
 // as example-local wiring. Evaluate promoting them into a defined abstraction in
@@ -493,6 +506,7 @@ type queueExtensions struct {
 	buildRunner    buildrunner.BuildRunner
 	scorer         scorer.Scorer
 	analyzer       conflict.Analyzer
+	prioritizer    prioritizer.Prioritizer
 }
 
 // queueRegistry maps a queue name to its extensions, falling back to a default
@@ -538,7 +552,13 @@ func (f analyzerFactory) For(cfg conflict.Config) (conflict.Analyzer, error) {
 	return f.reg.get(cfg.QueueName).analyzer, nil
 }
 
-func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, cpf changeprovider.Factory, brf buildrunner.Factory, scf scorer.Factory, cof conflict.Factory, cnt counter.Counter, store storage.Storage) (int, error) {
+type prioritizerFactory struct{ reg queueRegistry }
+
+func (f prioritizerFactory) For(cfg prioritizer.Config) (prioritizer.Prioritizer, error) {
+	return f.reg.get(cfg.QueueName).prioritizer, nil
+}
+
+func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, cpf changeprovider.Factory, brf buildrunner.Factory, scf scorer.Factory, cof conflict.Factory, prf prioritizer.Factory, cnt counter.Counter, store storage.Storage) (int, error) {
 	var count int
 	requestController := start.NewController(
 		logger,
@@ -637,6 +657,20 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 	}
 	count++
 
+	prioritizeController := prioritize.NewController(
+		logger,
+		scope,
+		store,
+		prf,
+		registry,
+		topickey.TopicKeyPrioritize,
+		"orchestrator-prioritize",
+	)
+	if err := c.Register(prioritizeController); err != nil {
+		return count, fmt.Errorf("failed to register prioritize controller: %w", err)
+	}
+	count++
+
 	buildController := build.NewController(
 		logger,
 		scope,
@@ -712,7 +746,7 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 // registers them with the DLQ consumer. Each reconciler drives the affected
 // request or batch into a terminal Error/Failed state so the gateway stops
 // reporting it as stuck-in-progress.
-func registerDLQControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, store storage.Storage) (int, error) {
+func registerDLQControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, store storage.Storage) (int, error) {
 	dlqScope := scope.SubScope("dlq")
 	dlqRegs := []struct {
 		name string
@@ -725,6 +759,7 @@ func registerDLQControllers(c consumer.Consumer, logger *zap.SugaredLogger, scop
 		{"batch_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeRequestID, dlq.TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")},
 		{"score_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyScore), "orchestrator-score-dlq")},
 		{"speculate_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeySpeculate), "orchestrator-speculate-dlq")},
+		{"prioritize_dlq", dlq.NewDLQQueueController(logger, dlqScope, registry, dlq.TopicKey(topickey.TopicKeyPrioritize), "orchestrator-prioritize-dlq")},
 		{"build_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyBuild), "orchestrator-build-dlq")},
 		{"buildsignal_dlq", dlq.NewDLQBuildSignalController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")},
 		{"merge_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")},
@@ -859,6 +894,11 @@ func newPhabChangeProvider(logger *zap.Logger, scope tally.Scope) (changeprovide
 	}), nil
 }
 
+// defaultPrioritizationLimit is the baseline queue-wide concurrent-build
+// budget handed to the sticky prioritizer. It is a parity default —
+// effectively admit-all — until per-queue budgets are configured.
+const defaultPrioritizationLimit = 1000
+
 // newQueueRegistry builds the per-queue extension profiles for the example.
 // Edge integrations (change provider) and the build
 // runner form a shared baseline; each per-queue profile starts from that
@@ -880,16 +920,19 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.
 
 	// Baseline profile: shared edge integrations + a fake build runner (every
 	// build succeeds unless a head URI carries a failure marker), plus permissive
-	// defaults for scorer and conflict. The build runner instance is shared by
-	// the build and buildsignal controllers (same profile, same instance) so a
-	// build's recorded outcome survives across their separate factory lookups.
+	// defaults for scorer, conflict, and prioritization. The build runner
+	// instance is shared by the build and buildsignal controllers (same
+	// profile, same instance) so a build's recorded outcome survives across
+	// their separate factory lookups.
 	//
 	// The scorer is wrapped by scorerfake so a change URI carrying
 	// "sq-fake=score-error" forces a scoring error end-to-end; it is a pure
 	// passthrough otherwise. The analyzer is wrapped by conflictfake with a nil
 	// predicate (passthrough) — swap the predicate (e.g. conflictfake.FailAlways)
 	// on a queue to exercise the analyzer error path, as e2e-conflict-error-queue
-	// below does.
+	// below does. The prioritizer is sticky over a static budget: it never
+	// preempts a running build and admits Selected candidates by score until
+	// defaultPrioritizationLimit concurrent builds are in flight.
 	base := queueExtensions{
 		changeProvider: cp,
 		buildRunner:    buildfake.New(resolver),
@@ -900,7 +943,8 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.
 		)),
 		// TODO: replace the delegate with a real analyzer (e.g. Tango target
 		// analysis). "all" serializes the queue conservatively.
-		analyzer: conflictfake.New(all.New(), nil),
+		analyzer:    conflictfake.New(all.New(), nil),
+		prioritizer: sticky.New(prioritizationlimitstatic.New(defaultPrioritizationLimit)),
 	}
 
 	// test-queue: bucketed heuristic scorer; conservative (serialized) conflicts
