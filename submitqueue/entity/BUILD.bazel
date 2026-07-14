@@ -21,6 +21,7 @@ go_library(
         "request_summary.go",
         "speculation_path_build.go",
         "speculation_tree.go",
+        "status.go",
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/entity",
     visibility = ["//visibility:public"],
