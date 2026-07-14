@@ -50,7 +50,7 @@ const (
 	// PublishAfter when the build has not yet reached a terminal state.
 	TopicKeyBuildSignal TopicKey = "buildsignal"
 	// TopicKeyMerge is the pipeline stage where speculated batches are published for merging.
-	TopicKeyMerge TopicKey = "merge"
+	TopicKeyMerge TopicKey = "submitqueue-merge"
 	// TopicKeyConclude is the pipeline stage where merged requests are published for conclusion.
 	TopicKeyConclude TopicKey = "conclude"
 	// TopicKeyLog is the pipeline stage where per-request logs are written.

@@ -443,12 +443,12 @@ const file_merge_proto_rawDesc = "" +
 	"\tMergeStep\x12\x17\n" +
 	"\astep_id\x18\x01 \x01(\tR\x06stepId\x122\n" +
 	"\achanges\x18\x02 \x03(\v2\x18.uber.base.change.ChangeR\achanges\x12=\n" +
-	"\bstrategy\x18\x03 \x01(\x0e2!.uber.base.mergestrategy.StrategyR\bstrategy\"\x9b\x01\n" +
+	"\bstrategy\x18\x03 \x01(\x0e2!.uber.base.mergestrategy.StrategyR\bstrategy\"\xa2\x01\n" +
 	"\fMergeRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
 	"queue_name\x18\x02 \x01(\tR\tqueueName\x129\n" +
-	"\x05steps\x18\x03 \x03(\v2#.uber.runway.messagequeue.MergeStepR\x05steps:!\x8a\xb5\x18\x14merge-conflict-check\x8a\xb5\x18\x05merge\"\x1c\n" +
+	"\x05steps\x18\x03 \x03(\v2#.uber.runway.messagequeue.MergeStepR\x05steps:(\x8a\xb5\x18\x14merge-conflict-check\x8a\xb5\x18\frunway-merge\"\x1c\n" +
 	"\n" +
 	"StepOutput\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"}\n" +

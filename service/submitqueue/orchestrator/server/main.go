@@ -388,7 +388,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 		{topickey.TopicKeyPrioritize, "prioritize", "orchestrator-prioritize"},
 		{topickey.TopicKeyBuild, "build", "orchestrator-build"},
 		{topickey.TopicKeyBuildSignal, "buildsignal", "orchestrator-buildsignal"},
-		{topickey.TopicKeyMerge, "merge", "orchestrator-merge"},
+		{topickey.TopicKeyMerge, "submitqueue-merge", "orchestrator-merge"},
 		{runwaymq.TopicKeyMergeSignal, "merge-signal", "orchestrator-mergesignal"},
 		{topickey.TopicKeyConclude, "conclude", "orchestrator-conclude"},
 	}
@@ -456,7 +456,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 	// consumed primary topic above.
 	configs = append(configs, consumer.TopicConfig{
 		Key:   runwaymq.TopicKeyMerge,
-		Name:  "merge",
+		Name:  "runway-merge",
 		Queue: q,
 	})
 

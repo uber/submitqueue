@@ -70,7 +70,7 @@ func TestNewController(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	q := queuemock.NewMockQueue(ctrl)
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "merge", Queue: q}},
+		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "runway-merge", Queue: q}},
 	)
 	require.NoError(t, err)
 
@@ -130,7 +130,7 @@ func TestProcess_PublishesFullPayloadToRunway(t *testing.T) {
 	q := queuemock.NewMockQueue(ctrl)
 	q.EXPECT().Publisher().Return(pub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "merge", Queue: q}},
+		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "runway-merge", Queue: q}},
 	)
 	require.NoError(t, err)
 
@@ -138,7 +138,7 @@ func TestProcess_PublishesFullPayloadToRunway(t *testing.T) {
 	require.NoError(t, c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue)))
 
 	// Full payload published to runway, keyed by the batch id (the correlation id).
-	assert.Equal(t, "merge", gotTopic)
+	assert.Equal(t, "runway-merge", gotTopic)
 	got := &runwaymq.MergeRequest{}
 	require.NoError(t, runwaymq.Unmarshal(gotPayload, got))
 	assert.Equal(t, batch.ID, got.Id)
@@ -180,7 +180,7 @@ func TestProcess_HaltedBatchSkips(t *testing.T) {
 			q := queuemock.NewMockQueue(ctrl)
 			q.EXPECT().Publisher().Return(pub).AnyTimes()
 			registry, err := consumer.NewTopicRegistry(
-				[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "merge", Queue: q}},
+				[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "runway-merge", Queue: q}},
 			)
 			require.NoError(t, err)
 
@@ -211,7 +211,7 @@ func TestProcess_PublishFailureReturnsError(t *testing.T) {
 	q := queuemock.NewMockQueue(ctrl)
 	q.EXPECT().Publisher().Return(pub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "merge", Queue: q}},
+		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "runway-merge", Queue: q}},
 	)
 	require.NoError(t, err)
 
@@ -233,7 +233,7 @@ func TestProcess_BatchStoreGetFailureNotRetryable(t *testing.T) {
 
 	q := queuemock.NewMockQueue(ctrl)
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "merge", Queue: q}},
+		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "runway-merge", Queue: q}},
 	)
 	require.NoError(t, err)
 

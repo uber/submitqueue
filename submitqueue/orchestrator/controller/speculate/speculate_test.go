@@ -71,7 +71,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
 			{Key: topickey.TopicKeyBuild, Name: "build", Queue: mockQ},
-			{Key: topickey.TopicKeyMerge, Name: "merge", Queue: mockQ},
+			{Key: topickey.TopicKeyMerge, Name: "submitqueue-merge", Queue: mockQ},
 			{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: mockQ},
 			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
 		},
