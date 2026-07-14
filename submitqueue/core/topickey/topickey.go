@@ -42,7 +42,11 @@ const (
 	// PublishAfter when the build has not yet reached a terminal state.
 	TopicKeyBuildSignal TopicKey = "buildsignal"
 	// TopicKeyMerge is the pipeline stage where speculated batches are published for merging.
-	TopicKeyMerge TopicKey = "merge"
+	// The key value is deliberately NOT "merge": the orchestrator registers this internal
+	// stage alongside the runway-owned merge queue (runwaymq.TopicKeyMerge == "merge") in
+	// one registry over one queue backend, so both the key and the wire name must differ
+	// from runway's or the two topics collapse into each other.
+	TopicKeyMerge TopicKey = "mergebatch"
 	// TopicKeyConclude is the pipeline stage where merged requests are published for conclusion.
 	TopicKeyConclude TopicKey = "conclude"
 	// TopicKeyLog is the pipeline stage where per-request logs are written.

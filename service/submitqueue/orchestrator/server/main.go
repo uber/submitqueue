@@ -382,7 +382,12 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 		{topickey.TopicKeySpeculate, "speculate", "orchestrator-speculate"},
 		{topickey.TopicKeyBuild, "build", "orchestrator-build"},
 		{topickey.TopicKeyBuildSignal, "buildsignal", "orchestrator-buildsignal"},
-		{topickey.TopicKeyMerge, "merge", "orchestrator-merge"},
+		// The internal merge stage is deliberately distinct from the
+		// runway-owned "merge" queue registered below — both in key (see
+		// topickey.TopicKeyMerge) and in wire name. Both topics live in the
+		// same registry over the same queue backend, so a shared key would
+		// shadow one entry and a shared name would interleave their payloads.
+		{topickey.TopicKeyMerge, "mergebatch", "orchestrator-merge"},
 		{runwaymq.TopicKeyMergeSignal, "merge-signal", "orchestrator-mergesignal"},
 		{topickey.TopicKeyConclude, "conclude", "orchestrator-conclude"},
 	}
