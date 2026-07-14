@@ -341,14 +341,8 @@ func run() error {
 // newTopicRegistry builds the TopicRegistry for Stovepipe's internal pipeline queues. ingest
 // publishes to process; process publishes admitted requests to the publish-only build topic.
 // The process_dlq topic is the dead-letter destination the queue backend routes to (per
-// DefaultSubscriptionConfig's DLQ.TopicSuffix) when the process controller exhausts retries;
-// DLQ.Enabled is false on its own subscription so a reconciliation failure retries in place
-// rather than cascading to a further DLQ.
+// DefaultSubscriptionConfig's DLQ.TopicSuffix) when the process controller exhausts retries.
 func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRegistry, error) {
-	dlqSub := extqueue.DefaultSubscriptionConfig(subscriberName, "stovepipe-process-dlq")
-	dlqSub.DLQ.Enabled = false
-	dlqSub.Retry.MaxAttempts = 1000
-
 	return consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{
 			Key:   stovepipemq.TopicKeyProcess,
@@ -367,7 +361,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Key:          dlq.TopicKey(stovepipemq.TopicKeyProcess),
 			Name:         "process_dlq",
 			Queue:        q,
-			Subscription: dlqSub,
+			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-process-dlq"),
 		},
 	})
 }

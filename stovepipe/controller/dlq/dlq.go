@@ -27,8 +27,7 @@
 // name). The DLQ controller decodes that payload to recover the affected request, then
 // transitions it to RequestStateRecordedNotGreen — the conservative not-green verdict
 // for gating (see entity.RequestState) — with an idempotent optimistic-locking write so
-// concurrent
-// activity (a late successful pipeline transition) wins cleanly. If the request had
+// concurrent activity (a late successful pipeline transition) wins cleanly. If the request had
 // already been admitted (processing) and was holding a concurrency slot, the
 // reconciler also releases it by CAS-decrementing the queue's in_flight_count, per
 // doc/rfc/stovepipe/steps/process.md#in_flight_count-integrity.
@@ -61,8 +60,16 @@ func TopicKey(main consumer.TopicKey) consumer.TopicKey {
 // failRequest transitions request to RequestStateRecordedNotGreen if it is not already
 // in a terminal state. If the request had reached RequestStateProcessing — meaning process's
 // admit step already CAS-incremented the queue's in_flight_count for it — the queue's
-// slot is released first, so a crash between the two writes leaves the count still
-// bound to a non-terminal request rather than double-released.
+// slot is released first. Queue and Request are separate entities with no cross-entity
+// transaction, so the two writes cannot be atomic and the ordering picks which crash
+// failure mode we accept: a crash between the writes leaves the request non-terminal,
+// redelivery re-runs reconciliation, and releaseSlot (which tracks no per-request slot
+// ownership) decrements again — transiently over-admitting by one slot until the
+// under-count re-converges at releaseSlot's zero clamp. The reverse order would leak
+// the slot instead: redelivery skips terminal requests, permanently shrinking the
+// queue's capacity toward a wedge. Over-admission is the failure mode we prefer. See
+// doc/rfc/stovepipe/steps/process.md#in_flight_count-integrity for the broader
+// counter-drift story.
 func failRequest(ctx context.Context, store storage.Storage, logger *zap.SugaredLogger, requestID string) error {
 	request, err := store.GetRequestStore().Get(ctx, requestID)
 	if err != nil {
@@ -93,7 +100,7 @@ func failRequest(ctx context.Context, store storage.Storage, logger *zap.Sugared
 	updated.State = entity.RequestStateRecordedNotGreen
 	newVersion := request.Version + 1
 	if err := store.GetRequestStore().Update(ctx, updated, request.Version, newVersion); err != nil {
-		return fmt.Errorf("failed to update request %s state to failed: %w", requestID, err)
+		return fmt.Errorf("failed to update request %s state to recorded_not_green: %w", requestID, err)
 	}
 	logger.Infow("dlq reconcile: request forced terminal not-green",
 		"request_id", requestID,

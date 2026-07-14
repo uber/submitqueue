@@ -75,8 +75,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	pr := &stovepipemq.ProcessRequest{}
 	if err := stovepipemq.Unmarshal(msg.Payload, pr); err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "deserialize_errors", 1)
-		// Malformed DLQ payload is non-retryable: a re-delivery will decode the same
-		// bytes and fail the same way.
+		// Decoding the same bytes normally fails deterministically, but this error is
+		// still retried: the DLQ consumer's AlwaysRetryableProcessor (see Process doc)
+		// classifies every error as retryable. That is deliberate — the recoverable
+		// cause is deployment skew, where a newer producer's payload shape reaches a
+		// not-yet-upgraded consumer and decodes fine once the rollout completes. A
+		// genuinely malformed payload exhausts the DLQ subscription's MaxAttempts
+		// backstop and is dropped by the subscriber with a warning log; acking it here
+		// instead would skip reconciliation silently and leave the referenced request
+		// non-terminal.
 		return fmt.Errorf("failed to decode dlq payload: %w", err)
 	}
 	if pr.Id == "" {
