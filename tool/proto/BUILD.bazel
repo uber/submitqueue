@@ -67,8 +67,8 @@ go_proto_generated_files(
 go_proto_generated_files(
     name = "stovepipe_core_messagequeue",
     srcs = [
-        "//stovepipe/core/messagequeue/proto:process.proto",
         "//stovepipe/core/messagequeue/proto:build.proto",
+        "//stovepipe/core/messagequeue/proto:process.proto",
     ],
     gen_services = False,
     imports = [
