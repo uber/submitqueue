@@ -70,8 +70,6 @@ func (s *QueueStoreContractSuite) TestQueueStore_Create() {
 		LatestRequestID: "",
 		Version:         1,
 	}, got)
-
-	s.log.Logf("Create passed: created queue %s", name)
 }
 
 // TestQueueStore_CreateWithFields verifies caller-supplied initial field values are persisted.
@@ -90,8 +88,6 @@ func (s *QueueStoreContractSuite) TestQueueStore_CreateWithFields() {
 	got, err := s.queueStore.Get(s.ctx, name)
 	require.NoError(t, err)
 	assert.Equal(t, toCreate, got)
-
-	s.log.Logf("CreateWithFields passed: persisted fields for queue %s", name)
 }
 
 // TestQueueStore_CreateAlreadyExists verifies a duplicate Create returns ErrAlreadyExists.
@@ -113,8 +109,6 @@ func (s *QueueStoreContractSuite) TestQueueStore_CreateAlreadyExists() {
 	got, err := s.queueStore.Get(s.ctx, name)
 	require.NoError(t, err)
 	assert.Equal(t, first, got)
-
-	s.log.Logf("CreateAlreadyExists passed: queue %s", name)
 }
 
 // TestQueueStore_GetNotFound verifies Get returns ErrNotFound for a missing queue.
@@ -123,8 +117,6 @@ func (s *QueueStoreContractSuite) TestQueueStore_GetNotFound() {
 
 	_, err := s.queueStore.Get(s.ctx, "contract/does-not-exist")
 	assert.True(t, storage.IsNotFound(err))
-
-	s.log.Logf("GetNotFound passed")
 }
 
 // TestQueueStore_UpdateCAS verifies a conditional update persists all mutable fields and rejects stale versions.
@@ -150,8 +142,6 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateCAS() {
 
 	err = s.queueStore.Update(s.ctx, updated, 1, 2)
 	assert.ErrorIs(t, err, storage.ErrVersionMismatch)
-
-	s.log.Logf("UpdateCAS passed: queue %s", name)
 }
 
 // TestQueueStore_UpdateNotFoundIsVersionMismatch verifies Update on a missing row returns ErrVersionMismatch.
@@ -160,8 +150,6 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateNotFoundIsVersionMismatch
 
 	err := s.queueStore.Update(s.ctx, entity.Queue{Name: "contract/missing"}, 1, 2)
 	assert.ErrorIs(t, err, storage.ErrVersionMismatch)
-
-	s.log.Logf("UpdateNotFoundIsVersionMismatch passed")
 }
 
 // TestQueueStore_UpdateSequentialCAS verifies successive conditional updates advance version monotonically.
@@ -182,8 +170,6 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateSequentialCAS() {
 	assert.Equal(t, "request/contract/sequential-cas/10", got.LatestRequestID)
 	assert.Equal(t, int32(1), got.InFlightCount)
 	assert.Equal(t, int32(3), got.Version)
-
-	s.log.Logf("UpdateSequentialCAS passed: queue %s", name)
 }
 
 // TestQueueStore_QueueIsolation verifies updates to one queue do not affect another.
@@ -212,6 +198,4 @@ func (s *QueueStoreContractSuite) TestQueueStore_QueueIsolation() {
 	gotB, err := s.queueStore.Get(s.ctx, nameB)
 	require.NoError(t, err)
 	assert.Equal(t, baseline, gotB)
-
-	s.log.Logf("QueueIsolation passed: queues %s and %s", nameA, nameB)
 }

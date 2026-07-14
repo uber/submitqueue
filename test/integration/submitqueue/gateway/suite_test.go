@@ -136,8 +136,6 @@ func (s *GatewayIntegrationSuite) TestPingAPI() {
 	assert.Equal(t, "gateway", resp.ServiceName)
 	assert.NotEmpty(t, resp.Message)
 	assert.NotZero(t, resp.Timestamp)
-
-	s.log.Logf("Gateway Ping test passed: %s", resp.Message)
 }
 
 // TestLandAPI tests the Gateway Land API with queue publishing
@@ -162,8 +160,6 @@ func (s *GatewayIntegrationSuite) TestLandAPI() {
 	err = s.queueDB.QueryRow("SELECT COUNT(*) FROM queue_messages WHERE id = ?", resp.Sqid).Scan(&msgCount)
 	require.NoError(t, err, "failed to query queue messages")
 	assert.Equal(t, 1, msgCount, "should have 1 message in queue")
-
-	s.log.Logf("Land API test passed: request stored and message published")
 }
 
 // TestRequestLogConsumer verifies the gateway's log-topic consumer in isolation:
@@ -206,6 +202,4 @@ func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 		return resp.Status == string(entity.RequestStatusStarted)
 	}, persistTimeout, persistPollInterval,
 		"gateway log consumer should persist the published request log for sqid=%s", sqid)
-
-	s.log.Logf("Request log consumer test passed: entry persisted and readable via Status")
 }
