@@ -7,7 +7,7 @@ go_library(
         "batch_changes.go",
         "batch_dependent.go",
         "build.go",
-        "cancel_request.go",
+        "cancel.go",
         "change_provider.go",
         "change_record.go",
         "conflict.go",
@@ -35,7 +35,7 @@ go_test(
     srcs = [
         "batch_test.go",
         "build_test.go",
-        "cancel_request_test.go",
+        "cancel_test.go",
         "land_test.go",
         "queue_test.go",
         "request_log_test.go",

@@ -77,9 +77,13 @@ func (s *GatewayServer) Land(ctx context.Context, req *pb.LandRequest) (*pb.Land
 	return &pb.LandResponse{Sqid: result.ID}, nil
 }
 
-// Cancel delegates to the controller
+// Cancel maps the wire request to an entity, delegates to the controller, and
+// returns an empty response on success.
 func (s *GatewayServer) Cancel(ctx context.Context, req *pb.CancelRequest) (*pb.CancelResponse, error) {
-	return s.cancelController.Cancel(ctx, req)
+	if err := s.cancelController.Cancel(ctx, mapper.ProtoToCancelRequest(req)); err != nil {
+		return nil, err
+	}
+	return &pb.CancelResponse{}, nil
 }
 
 // Status delegates to the controller

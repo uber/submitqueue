@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "go_default_library",
-    srcs = ["land.go"],
+    srcs = [
+        "cancel.go",
+        "land.go",
+    ],
     importpath = "github.com/uber/submitqueue/service/submitqueue/gateway/server/mapper",
     visibility = ["//visibility:public"],
     deps = [
@@ -16,7 +19,10 @@ go_library(
 
 go_test(
     name = "go_default_test",
-    srcs = ["land_test.go"],
+    srcs = [
+        "cancel_test.go",
+        "land_test.go",
+    ],
     embed = [":go_default_library"],
     deps = [
         "//api/base/change/protopb:go_default_library",
