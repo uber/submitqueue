@@ -33,7 +33,7 @@ type SpeculationPathBuild struct {
 	CreatedAt int64
 	// Version is the version of the object. It is used for optimistic locking:
 	// updates are conditional on the persisted version matching the caller's
-	// expected version. Versioning starts at 1; version arithmetic is owned by
-	// the controller, the store performs a pure conditional write.
+	// expected version. Versioning starts at 1 and is incremented for each
+	// change to the object.
 	Version int32
 }

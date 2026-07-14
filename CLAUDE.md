@@ -120,6 +120,7 @@ Domain objects live under each domain's `entity/` tree, or under `platform/base/
 4. Every field must have a comment
 5. Reference other entities by ID (string or int), not directly
 6. String enums with sentinel values (`""` for unknown)
+7. Docs describe the data, not the choreography — say what a type or field *is* and its invariants (immutability, uniqueness scope, units, valid range), never which controller/stage/seam reads or writes it. Ownership and write-path rules live with the code that owns them (controller, store, or extension docs). Lifecycle enums may define states in terms of pipeline stages where that *is* the state's meaning (e.g. "admitted under the build budget"), but must not name the components that perform transitions.
 
 ### Extensions
 
