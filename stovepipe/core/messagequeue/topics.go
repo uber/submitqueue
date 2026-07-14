@@ -27,4 +27,9 @@ const (
 	// stage. ingest publishes a ProcessRequest (the request id) here; the process
 	// controller consumes it, reloads the Request, and decides the build strategy.
 	TopicKeyProcess TopicKey = "process"
+
+	// TopicKeyBuild carries admitted requests from process to build. process
+	// publishes a BuildRequest (the request id) after it persists the strategy
+	// and baseline; build reloads the Request from storage.
+	TopicKeyBuild TopicKey = "build"
 )
