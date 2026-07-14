@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "go_default_test",
-    srcs = ["queue_test.go"],
+    srcs = [
+        "queue_test.go",
+        "stagehold_test.go",
+    ],
     data = [
         "docker-compose.yml",
         "//platform/extension/messagequeue/mysql/schema",

@@ -15,13 +15,17 @@
 package testutil
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
 
 // TestLogger is a simple test-aware logger that records elapsed time between logs.
+// Safe for concurrent use — harness goroutines (e.g. queue observers) may log
+// while the test goroutine does.
 type TestLogger struct {
 	t    *testing.T // The testing object to report logs to.
+	mu   sync.Mutex // Guards last.
 	last time.Time  // Timestamp of the last log, for elapsed calculation.
 }
 
@@ -35,10 +39,12 @@ func NewTestLogger(t *testing.T) *TestLogger {
 func (l *TestLogger) Logf(format string, args ...any) {
 	l.t.Helper()
 	now := time.Now()
+	l.mu.Lock()
 	delta := ""
 	if !l.last.IsZero() {
 		delta = " +" + now.Sub(l.last).Truncate(time.Millisecond).String()
 	}
 	l.last = now
+	l.mu.Unlock()
 	l.t.Logf("[%s%s] "+format, append([]any{now.Format(time.RFC3339Nano), delta}, args...)...)
 }

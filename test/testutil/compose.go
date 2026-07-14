@@ -43,15 +43,16 @@ type ComposeStack struct {
 }
 
 // getDockerComposeCommand returns the docker-compose command to use.
-// Tries "docker-compose" first (V1), falls back to "docker compose" (V2).
+// Prefers "docker compose" (V2) because the harness relies on V2-only behavior
+// ("up --wait"); falls back to standalone "docker-compose" (V1) otherwise.
 func getDockerComposeCommand() []string {
-	// Try docker-compose (V1)
-	if _, err := exec.LookPath("docker-compose"); err == nil {
-		return []string{"docker-compose"}
+	// Probe for the V2 plugin: `docker compose version` fails when absent.
+	if err := exec.Command("docker", "compose", "version").Run(); err == nil {
+		return []string{"docker", "compose"}
 	}
 
-	// Fall back to docker compose (V2)
-	return []string{"docker", "compose"}
+	// Fall back to standalone docker-compose (V1).
+	return []string{"docker-compose"}
 }
 
 // NewComposeStack creates a new compose stack from the given docker-compose file.
@@ -285,6 +286,7 @@ func (s *ComposeStack) ConnectGRPC(serviceName string, containerPort int) (*grpc
 
 // StopService sends SIGTERM to a service and waits for it to stop.
 // timeoutSec is the maximum time to wait before Docker sends SIGKILL.
+// Used during TearDownSuite to verify graceful shutdown and exit codes.
 func (s *ComposeStack) StopService(serviceName string, timeoutSec int) error {
 	s.t.Helper()
 

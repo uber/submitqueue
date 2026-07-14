@@ -2,8 +2,13 @@ load("@rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "go_default_test",
+    # First run builds the service images inside compose up; give the suite a
+    # 900s budget (the suite context derives every wait bound from it).
+    timeout = "long",
     srcs = [
         "harness_test.go",
+        "observer_test.go",
+        "stage_test.go",
         "suite_test.go",
     ],
     data = [
@@ -22,8 +27,16 @@ go_test(
     deps = [
         "//api/base/change/protopb:go_default_library",
         "//api/base/mergestrategy/protopb:go_default_library",
+        "//api/runway/messagequeue:go_default_library",
+        "//api/runway/messagequeue/protopb:go_default_library",
+        "//api/runway/protopb:go_default_library",
         "//api/submitqueue/gateway/protopb:go_default_library",
         "//api/submitqueue/orchestrator/protopb:go_default_library",
+        "//platform/consumer:go_default_library",
+        "//platform/errs:go_default_library",
+        "//platform/extension/messagequeue:go_default_library",
+        "//platform/extension/messagequeue/mysql:go_default_library",
+        "//submitqueue/core/topickey:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/storage:go_default_library",
         "//submitqueue/extension/storage/mysql:go_default_library",
@@ -35,5 +48,6 @@ go_test(
         "@org_golang_google_grpc//:go_default_library",
         "@org_golang_google_grpc//codes:go_default_library",
         "@org_golang_google_grpc//status:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
     ],
 )
