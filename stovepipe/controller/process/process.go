@@ -196,10 +196,11 @@ func (c *Controller) admitLatestHead(ctx context.Context, request entity.Request
 		}
 
 		if queueRow.LastGreenURI != "" && sc == nil {
-			var err error
 			sc, err = c.sourceControl.For(sourcecontrol.Config{QueueName: request.Queue})
 			if err != nil {
-				metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1)
+				metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
+					metrics.NewTag("stage", "resolve"),
+				)
 				return fmt.Errorf("ProcessController failed to resolve source control for queue %s: %w", request.Queue, err)
 			}
 		}
@@ -272,7 +273,9 @@ func (c *Controller) deriveBuildStrategy(ctx context.Context, sc sourcecontrol.S
 			)
 			return entity.BuildStrategyFull, "", nil
 		}
-		metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
+			metrics.NewTag("stage", "ancestry"),
+		)
 		return entity.BuildStrategyUnknown, "", fmt.Errorf("ProcessController failed to check ancestry for queue %s: %w", request.Queue, err)
 	}
 
