@@ -86,9 +86,14 @@ func (s *GatewayServer) Cancel(ctx context.Context, req *pb.CancelRequest) (*pb.
 	return &pb.CancelResponse{}, nil
 }
 
-// Status delegates to the controller
+// Status maps the wire request to an entity, delegates to the controller, and
+// maps the read-model result back to the wire response.
 func (s *GatewayServer) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusResponse, error) {
-	return s.statusController.Status(ctx, req)
+	state, err := s.statusController.Status(ctx, mapper.ProtoToStatusRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	return mapper.CurrentStateToProto(state), nil
 }
 
 func main() {

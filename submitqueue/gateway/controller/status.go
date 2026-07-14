@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
-	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/submitqueue/core/request"
+	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
@@ -64,7 +64,7 @@ func NewStatusController(logger *zap.SugaredLogger, scope tally.Scope, requestLo
 }
 
 // Status returns the current reconciled status of a request identified by its sqid.
-func (c *StatusController) Status(ctx context.Context, req *pb.StatusRequest) (*pb.StatusResponse, error) {
+func (c *StatusController) Status(ctx context.Context, req entity.StatusRequest) (request.CurrentState, error) {
 	start := time.Now()
 	defer func() {
 		c.metricsScope.Timer("status_latency").Record(time.Since(start))
@@ -72,26 +72,22 @@ func (c *StatusController) Status(ctx context.Context, req *pb.StatusRequest) (*
 
 	c.metricsScope.Counter("status_count").Inc(1)
 
-	if req.Sqid == "" {
-		return nil, fmt.Errorf("StatusController requires the request to have a sqid specified: %w", ErrInvalidRequest)
+	if req.ID == "" {
+		return request.CurrentState{}, fmt.Errorf("StatusController requires the request to have a sqid specified: %w", ErrInvalidRequest)
 	}
 
-	state, err := request.GetCurrentStateFromRequestLog(ctx, c.requestLogStore, req.Sqid)
+	state, err := request.GetCurrentStateFromRequestLog(ctx, c.requestLogStore, req.ID)
 	if err != nil {
 		if storage.IsNotFound(err) {
-			return nil, errs.NewUserError(&RequestNotFoundError{Sqid: req.Sqid})
+			return request.CurrentState{}, errs.NewUserError(&RequestNotFoundError{Sqid: req.ID})
 		}
-		return nil, fmt.Errorf("StatusController failed to get current state for sqid=%s: %w", req.Sqid, err)
+		return request.CurrentState{}, fmt.Errorf("StatusController failed to get current state for sqid=%s: %w", req.ID, err)
 	}
 
 	c.logger.Debugw("request status retrieved",
-		"sqid", req.Sqid,
+		"sqid", req.ID,
 		"status", string(state.Status),
 	)
 
-	return &pb.StatusResponse{
-		Status:    string(state.Status),
-		LastError: state.LastError,
-		Metadata:  state.Metadata,
-	}, nil
+	return state, nil
 }
