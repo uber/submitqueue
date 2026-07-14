@@ -44,6 +44,17 @@ func TestBuildRequestRoundTrip(t *testing.T) {
 	assert.True(t, proto.Equal(req, got), "round-tripped BuildRequest should equal the original")
 }
 
+func TestBuildSignalRoundTrip(t *testing.T) {
+	sig := &BuildSignal{Id: "bk-1001"}
+
+	data, err := Marshal(sig)
+	require.NoError(t, err)
+
+	got := &BuildSignal{}
+	require.NoError(t, Unmarshal(data, got))
+	assert.True(t, proto.Equal(sig, got), "round-tripped BuildSignal should equal the original")
+}
+
 // TestWireFormat locks the protojson encoding decision the contract relies on:
 // snake_case field names (UseProtoNames).
 func TestWireFormat(t *testing.T) {
@@ -58,7 +69,11 @@ func TestWireFormat(t *testing.T) {
 // no topic_keys option names an unknown key.
 func TestTopicKeysBindEveryTopicKey(t *testing.T) {
 	bound := map[string]int{}
+<<<<<<< HEAD:stovepipe/core/messagequeue/process_test.go
 	for _, m := range []proto.Message{&ProcessRequest{}, &BuildRequest{}} {
+=======
+	for _, m := range []proto.Message{&ProcessRequest{}, &BuildRequest{}, &BuildSignal{}} {
+>>>>>>> fe02a12 (feat(stovepipe): add BuildRequest/BuildSignal queue contract):stovepipe/core/messagequeue/messagequeue_test.go
 		keys := TopicKeys(m)
 		require.NotEmpty(t, keys, "message must declare a non-empty topic_keys option")
 		for _, key := range keys {
@@ -69,6 +84,7 @@ func TestTopicKeysBindEveryTopicKey(t *testing.T) {
 	keys := []TopicKey{
 		TopicKeyProcess,
 		TopicKeyBuild,
+		TopicKeyBuildSignal,
 	}
 
 	valid := map[string]bool{}

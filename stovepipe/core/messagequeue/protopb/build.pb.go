@@ -37,12 +37,14 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// BuildRequest is the payload process publishes after admitting a request. Only
-// the request id travels; build reloads the request from storage and uses the
-// strategy and baseline process persisted at admission.
+// BuildRequest is the payload process/analyze publishes to the build stage once
+// the request's build scope (BuildStrategy/BaseURI) has been decided: only the
+// request id travels on the queue. build reloads the full Request from storage
+// by this id (producer and consumer share the store, so the id is enough and
+// redelivery stays idempotent). See doc/rfc/stovepipe/steps/build.md.
 type BuildRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// id is the admitted request id to build. Format: "request/<queue>/<counter>".
+	// id is the request id to build. Format: "request/<queue>/<counter>".
 	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

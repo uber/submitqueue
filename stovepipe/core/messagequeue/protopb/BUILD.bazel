@@ -4,6 +4,10 @@ go_library(
     name = "go_default_library",
     srcs = [
         "build.pb.go",
+<<<<<<< HEAD
+=======
+        "buildsignal.pb.go",
+>>>>>>> fe02a12 (feat(stovepipe): add BuildRequest/BuildSignal queue contract)
         "process.pb.go",
     ],
     importpath = "github.com/uber/submitqueue/stovepipe/core/messagequeue/protopb",
