@@ -43,9 +43,8 @@ type Consumer interface {
 	Register(controller Controller) error
 
 	// Start subscribes to all registered controllers' topics and begins consuming messages.
-	// Context is cancelled when the consumer is stopped, the implementation should propagate it to the controllers
-	// running message processing. The implementation can react immediately to the context cancellation by returning `ctx.Err()` instead of starting the message processing,
-	// but can also opt out to defer the cancellation after the message processing routine is set up.
+	// ctx governs only the synchronous subscribe calls; consume loops run independently
+	// and must be terminated by calling Stop().
 	// Start() will only be called once at the application startup, so it does not need to be idempotent.
 	Start(ctx context.Context) error
 
@@ -191,8 +190,8 @@ func (m *consumer) subscribe(ctx context.Context, controller Controller) error {
 		return fmt.Errorf("subscribe failed: %w", err)
 	}
 
-	// Create cancellable context for this controller
-	controllerCtx, cancel := context.WithCancel(ctx)
+	// Manage the controller lifecycle independently of the caller's context.
+	controllerCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 
 	// Track active subscription
 	done := make(chan struct{})
@@ -227,7 +226,7 @@ func (m *consumer) subscribe(ctx context.Context, controller Controller) error {
 //	  └── processPartition("part-N")
 //
 // Shutdown sequence:
-//  1. ctx is cancelled (by Stop or parent context)
+//  1. ctx is cancelled (by Stop)
 //  2. consumeLoop exits the select loop and runs the deferred cleanup
 //  3. All partition channels are closed, causing processPartition goroutines to
 //     drain remaining buffered messages and return (range loop ends)
@@ -322,7 +321,7 @@ func (m *consumer) shutdownPartitions(partitionChs map[string]chan extqueue.Deli
 //
 // The loop exits when either:
 //   - deliveryCh is closed (consumeLoop cleanup)
-//   - ctx is cancelled (graceful shutdown)
+//   - ctx is cancelled (by Stop)
 //
 // On context cancellation, the current delivery being read from the channel is
 // dropped without processing. This is safe because the queue's visibility timeout

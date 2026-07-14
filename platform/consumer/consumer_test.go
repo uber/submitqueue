@@ -811,3 +811,52 @@ func TestConsumer_PartitionWorkerCleanup(t *testing.T) {
 	err = c.Stop(30000)
 	require.NoError(t, err)
 }
+
+func TestConsumer_ConsumeLoopSurvivesCallerDeadline(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	logger := zaptest.NewLogger(t).Sugar()
+
+	deliveryChan := make(chan extqueue.Delivery, 1)
+	mockSub := queuemock.NewMockSubscriber(ctrl)
+	mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
+
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Subscriber().Return(mockSub)
+
+	reg := newRegistry(t, mockQ, topickey.TopicKeyStart, "test-group")
+
+	c := consumer.New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor())
+
+	processed := make(chan string, 1)
+	handler := consumermock.NewMockController(ctrl)
+	setupController(handler, "test-handler", topickey.TopicKeyStart, "test-group",
+		func(ctx context.Context, delivery consumer.Delivery) error {
+			processed <- delivery.Message().ID
+			return nil
+		},
+	)
+
+	err := c.Register(handler)
+	require.NoError(t, err)
+
+	// Start with a context that expires quickly, simulating an Fx OnStart hook.
+	startCtx, startCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer startCancel()
+
+	err = c.Start(startCtx)
+	require.NoError(t, err)
+
+	<-startCtx.Done()
+
+	msg := entityqueue.NewMessage("after-deadline", []byte("payload"), "partition1", nil)
+	mockDel := queuemock.NewMockDelivery(ctrl)
+	done := setupDelivery(mockDel, msg, nil, nil)
+
+	deliveryChan <- mockDel
+	<-done
+
+	assert.Equal(t, "after-deadline", <-processed)
+
+	err = c.Stop(30000)
+	require.NoError(t, err)
+}
