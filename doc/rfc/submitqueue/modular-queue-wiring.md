@@ -1,6 +1,6 @@
 # Modular Queue Wiring
 
-Design notes for making the orchestrator's per-queue extension wiring and topic-registry setup modular, data-driven, and reusable across deployers. Decisions and rationale only; the code changes land after this RFC is reviewed.
+Design notes for making the orchestrator's per-queue extension wiring and topic-registry setup modular, reusable, and importable by external deployers. Decisions and rationale only; the code changes land after this RFC is reviewed.
 
 ## Problem
 
@@ -10,221 +10,307 @@ The orchestrator's example `main.go` (`example/submitqueue/orchestrator/server/m
 2. **Queue topology / topic registry** — `newTopicRegistry` is a static list of 12+ pipeline stages, each with a primary subscription and a mirrored DLQ subscription, plus publish-only topics. Adding or removing a pipeline stage requires editing this function in lockstep with controller registration.
 3. **Per-queue extension wiring** — `queueRegistry`, `newQueueRegistry`, and four thin `*Factory` adapter types. The only way to configure which scorer / analyzer / change-provider / build-runner a queue uses is to edit Go code in this file, recompile, and redeploy.
 
-Adding a new queue today requires changes in **three places**: YAML config (`queues.yaml`), Go code (`newQueueRegistry`), and a recompile. Adding a new pipeline stage requires **two coordinated edits** (topic list + controller registration). This makes adoption harder for new integrators who want to deploy SubmitQueue with their own queues and extension profiles.
+Adding a new queue today requires changes in **three places**: YAML config (`queues.yaml`), Go code (`newQueueRegistry`), and a recompile. Adding a new pipeline stage requires **two coordinated edits** (topic list + controller registration). The topic → subscription → DLQ subscription → DLQ controller linkage is maintained by copy-paste across 12 stages, where forgetting any half creates a silent failure.
 
 The [TODO on line 477](../../example/submitqueue/orchestrator/server/main.go) already flags the queue-registry pattern as a candidate for promotion into the domain layer, contingent on a trigger: a second consumer needing the same wiring, data-driven config, or lifecycle requirements.
 
+## Vocabulary
+
+```
+seam     an extension interface the library defines and the deployer fills
+         (storage, buildrunner, sourcecontrol, …) — always an interface, never an impl
+stage    one pipeline step: a topic being consumed + the controller consuming it
+         (+ optionally its dead-letter reconciler)
+engine   pipeline.Construct — the ONE shared assembly routine
+profile  the host's per-queue choice of seam impls
+host     the deployer binary: our own example/ mains, or an external repo's fx/plain-main app
+```
+
 ## Principle
 
-- **The wiring layer assembles; the domain layer provides reusable building blocks.** Today the domain layer owns controllers, entities, and extension interfaces — but the *composition* of extensions into per-queue profiles and the *registration* of controllers into consumers is copy-pasted into each deployer's main.go. These compositions are mechanical and identical across deployers; they belong in the domain.
-- **Data-driven where practical, code-driven where necessary.** Queue *names* are already data-driven (YAML via `queueconfig.Store`). Queue *extension profiles* — which scorer, which conflict analyzer — should also be declarable as data. Custom extension *implementations* remain code (a deployer writes a new `scorer.Scorer` impl), but selecting among known implementations should not require a recompile.
-- **No DI framework.** The wiring stays explicit Go code. This refactor reduces its volume, not its nature.
+- **Declare, don't assemble.** A service is defined by three declarations — a seam contract (struct), a topology table (slice of stages), and a controller set (struct). The engine (`pipeline.Construct`) consumes these declarations and produces one lifecycle handle. The host fills seams and starts the handle. Assembly logic lives in exactly one place (the engine), not in every deployer's main.go.
+- **Library vs. host.** The library (controllers, engine, extension interfaces) owns no server, reads no environment variables, catches no signals, and calls no `os.Exit`. The host owns transport (gRPC/HTTP), process model (signals, exit codes, health checks), and policy (credentials, impl selection, queue routing). This boundary makes the library importable by any host — fx, plain main, test harness — without unwanted side effects.
+- **Profiles stay host-private.** The per-queue routing decision ("monorepo/main gets buildkite, monorepo/exp gets local runner") is host policy. It lives in the host's `profiles.go`, never crosses the library boundary, and maps to the library's `Factory` interfaces through thin adapters at the seam boundary.
+
+```
+┌───────────────────────── HOST ──────────────────────────┐
+│  transport            process model         policy      │
+│  gRPC/HTTP — mount    fx or plain main,    config, creds,│
+│  controllers behind   signals, exit codes  impl selection,│
+│  YOUR proto+server    health checks        queue routing │
+└──────────┬──────────────────┬──────────────────┬─────────┘
+           │ glue: pb svc →   │ Start(ctx)       │ Deps
+           │  controllers     ▼ Stop(ctx)        ▼
+┌──────────────────────── LIBRARY ────────────────────────┐
+│  controllers        ONE lifecycle handle    extension   │
+│  (pure logic)       from pipeline.Construct seams       │
+│        NO server · NO env reads · NO signals · NO exit  │
+└─────────────────────────────────────────────────────────┘
+```
 
 ## Proposal
 
-### 1. Promote queue-profile registry into `submitqueue/core/queueprofile`
-
-Extract the `queueExtensions` struct (renamed `Profile`) and `queueRegistry` (renamed `Registry`) from the example into `submitqueue/core/queueprofile/`. This is the domain-internal analogue of `submitqueue/core/topickey` — infrastructure shared between the orchestrator and (potentially) future services, but private to the SubmitQueue domain.
+### Step 1 · `platform/lifecycle` — the one interface a host ever sees
 
 ```go
-// submitqueue/core/queueprofile/profile.go
-package queueprofile
-
-// Profile is the full set of extension implementations for a single queue.
-// Grouping per queue (rather than per extension) lets the wiring read as
-// "for this queue, here are its scorer, analyzer, change provider, …"
-// and lets a profile start from a baseline and override only what differs.
-type Profile struct {
-    // ChangeProvider resolves change metadata for land requests in this queue.
-    ChangeProvider changeprovider.ChangeProvider
-
-    // BuildRunner triggers and polls CI builds for batches in this queue.
-    BuildRunner buildrunner.BuildRunner
-
-    // Scorer computes success probability for batches in this queue.
-    Scorer scorer.Scorer
-
-    // Analyzer detects conflicts between batches in this queue.
-    Analyzer conflict.Analyzer
+// Component is anything with a lifecycle. Construct returns one; hosts drive it.
+type Component interface {
+    Start(ctx context.Context) error
+    Stop(ctx context.Context) error
 }
 
-// Registry maps a queue name to its Profile, falling back to a default
-// for queues without an explicit entry. It is the single place that knows
-// the queue topology; extension packages remain queue-agnostic.
-type Registry struct { … }
-
-func NewRegistry(def Profile, perQueue map[string]Profile) Registry
-func (r Registry) Get(queue string) Profile
+// Group runs an ordered list of Components as one Component.
+//
+//   Start: members in order; if member i fails to start, members i-1…0 are
+//          stopped in reverse and the error is returned — no half-started state.
+//   Stop:  members in REVERSE order (work-acceptors drain before the
+//          connections under them close); errors joined, none swallowed.
+func NewGroup(ordered ...Component) *Group
 ```
 
-The four thin factory adapters (`changeProviderFactory`, `buildRunnerFactory`, `scorerFactory`, `analyzerFactory`) also move into this package as exported types. They are mechanical — `For(cfg) → registry.Get(cfg.QueueName).X` — and every deployer needs them identically.
+The engine uses Group internally; hosts can also nest Groups (e.g. two services in one process). This replaces the ad-hoc `sync.WaitGroup` + `chan` + manual error-joining in today's main.go.
 
-**Why a new package instead of expanding `queueconfig`:** `queueconfig` is a resolution target (key/value store of queue names). The profile registry is a *consumer* of queue names that additionally bundles behavioral extension instances. Mixing them would give `queueconfig` a dependency on every extension interface, violating the "stores are resolution targets, not aggregators" principle from CLAUDE.md.
-
-### 2. Extract topic-registry builder into `submitqueue/core/topicregistry`
-
-Replace `newTopicRegistry` with a reusable builder that declaratively constructs primary + DLQ topic pairs from a slice of stage specs, plus publish-only topics.
+### Step 2 · `platform/pipeline` — the engine
 
 ```go
-// submitqueue/core/topicregistry/builder.go
-package topicregistry
-
-// StageSpec declares one pipeline stage that needs a primary subscription
-// and an auto-generated DLQ subscription.
-type StageSpec struct {
-    // Key is the consumer.TopicKey for this stage.
+// Stage is one row of a service's topology table. D is that service's Deps type.
+type Stage[D any] struct {
+    // Key is the stage's LOGICAL topic key (e.g. topickey.Start). The engine maps
+    // it to a physical topic name via the TopicNames option — the mapping is host
+    // data, so two deployments can run the same pipeline on different topic names.
     Key consumer.TopicKey
 
-    // Name is the wire topic name (e.g. "start", "batch").
-    Name string
+    // New builds the stage's controller from the service's Deps. The engine calls
+    // it ONCE, eagerly, inside Construct — so a nil/missing dependency fails at
+    // boot with the stage's name on it, never mid-delivery.
+    New func(D) (consumer.Controller, error)
 
-    // GroupSuffix is the consumer-group suffix (e.g. "orchestrator-start").
-    GroupSuffix string
+    // DLQ, when non-nil, declares "this stage dead-letters". The engine then
+    // derives the paired DLQ topic (<topic>_dlq, retry budget, DLQ-of-DLQ
+    // disabled) AND registers this reconciler on the DLQ consumer. Declaring
+    // one without getting the other is impossible — that's the invariant.
+    DLQ func(D) (consumer.Controller, error)
 }
-
-// BuildParams configures the topic registry builder.
-type BuildParams struct {
-    // Queue is the message queue backend.
-    Queue extqueue.Queue
-
-    // SubscriberName identifies this subscriber for partition leases.
-    SubscriberName string
-
-    // Stages are the primary pipeline stages. Each gets a paired DLQ
-    // subscription with DLQ disabled (no _dlq_dlq cascade) and a high
-    // MaxAttempts for convergent reconciliation.
-    Stages []StageSpec
-
-    // PublishOnly are topics the service publishes to but never consumes.
-    PublishOnly []consumer.TopicConfig
-}
-
-func Build(p BuildParams) (consumer.TopicRegistry, error)
-```
-
-This eliminates the manual duplication of the primary/DLQ pairing pattern across 12 stages. Each stage is one `StageSpec` entry; the builder guarantees every primary stage gets a correctly-configured DLQ subscription (disabled DLQ-of-DLQ, high MaxAttempts) without copy-paste. Adding or removing a pipeline stage becomes adding or removing one line.
-
-### 3. Extract controller-registration helpers into `submitqueue/orchestrator/controller/wire`
-
-Create a `wire` subpackage under `submitqueue/orchestrator/controller/` with two functions:
-
-```go
-// submitqueue/orchestrator/controller/wire/wire.go
-package wire
-
-// PrimaryParams holds the dependencies needed to construct and register
-// all primary pipeline controllers.
-type PrimaryParams struct {
-    Consumer          consumer.Consumer
-    Logger            *zap.SugaredLogger
-    Scope             tally.Scope
-    Registry          consumer.TopicRegistry
-    ChangeProviderF   changeprovider.Factory
-    BuildRunnerF      buildrunner.Factory
-    ScorerF           scorer.Factory
-    ConflictF         conflict.Factory
-    Counter           counter.Counter
-    Store             storage.Storage
-}
-
-// RegisterPrimary creates and registers all primary pipeline controllers.
-// Returns the count of registered controllers.
-func RegisterPrimary(p PrimaryParams) (int, error)
-
-// DLQParams holds the dependencies needed to construct and register
-// all DLQ reconciliation controllers.
-type DLQParams struct {
-    Consumer consumer.Consumer
-    Logger   *zap.SugaredLogger
-    Scope    tally.Scope
-    Store    storage.Storage
-}
-
-// RegisterDLQ creates and registers all DLQ reconciliation controllers.
-// Returns the count of registered controllers.
-func RegisterDLQ(p DLQParams) (int, error)
-```
-
-This keeps the controller list in the domain layer (testable, importable) and reduces the wiring main.go to: build dependencies → call `wire.RegisterPrimary` → call `wire.RegisterDLQ`. Adding a new pipeline stage becomes a single-file edit in this package.
-
-### 4. Extend `QueueConfig` with optional profile hints
-
-Add an optional `Profile` field to `entity.QueueConfig` so the YAML file can declare which scorer / conflict / build-runner strategy each queue uses:
-
-```yaml
-queues:
-  - name: test-queue
-    profile:
-      scorer: heuristic
-      conflict: file-overlap
-  - name: e2e-test-queue
-    profile:
-      scorer: composite
-      conflict: none
-  - name: e2e-cancel-queue
-    # No profile — inherits the baseline.
 ```
 
 ```go
-// submitqueue/entity/queue_config.go
-type QueueConfig struct {
-    // Name uniquely identifies this queue within the system.
-    Name string `json:"name" yaml:"name"`
+// Construct is the ONLY assembly code in the repo. Schematic:
+func Construct[D any](deps D, stages []Stage[D], opts ...Option) (lifecycle.Component, error) {
+    o := applyOptions(opts)                       // TopicNames map, Classifiers, extra Components
 
-    // Profile carries optional hints for which extension implementations
-    // this queue uses. The wiring layer maps hint strings to concrete
-    // extension instances; the entity does not import extension packages.
-    // Zero value means "use the deployer's baseline profile."
-    Profile QueueProfile `json:"profile,omitempty" yaml:"profile,omitempty"`
-}
+    registry := consumer.NewTopicRegistry()
+    primary  := consumer.New(o.queues, registry, o.classifiers, subscriberName())
+    dlq      := consumer.New(o.queues, registry, errs.AlwaysRetryableProcessor, subscriberName())
 
-// QueueProfile carries string-typed hints for extension selection.
-// Each field names a known implementation (e.g. "heuristic", "composite",
-// "file-overlap", "none", "all"). Deployers register the mapping from
-// hint → implementation in the wiring layer. An empty string means
-// "inherit from the baseline."
-type QueueProfile struct {
-    // Scorer names the scoring strategy (e.g. "heuristic", "composite").
-    Scorer string `json:"scorer,omitempty" yaml:"scorer,omitempty"`
+    for _, s := range stages {
+        topic := o.physicalName(s.Key)            // logical key → deployment's topic name
+        registry.Add(s.Key, subscription(topic))
 
-    // Conflict names the conflict-analysis strategy (e.g. "all", "none", "file-overlap").
-    Conflict string `json:"conflict,omitempty" yaml:"conflict,omitempty"`
+        ctl, err := s.New(deps)                   // eager ⇒ boot-time, named failure
+        if err != nil { return nil, fmt.Errorf("stage %s: %w", s.Key, err) }
+        primary.Register(ctl)
 
-    // BuildRunner names the build-runner backend (e.g. "fake", "jenkins").
-    BuildRunner string `json:"build_runner,omitempty" yaml:"build_runner,omitempty"`
+        if s.DLQ != nil {                         // declared ⇒ pair + reconciler, derived together
+            registry.Add(dlqKey(s.Key), dlqSubscription(topic))
+            rec, err := s.DLQ(deps)
+            if err != nil { return nil, fmt.Errorf("stage %s dlq: %w", s.Key, err) }
+            dlq.Register(rec)
+        }
+    }
 
-    // ChangeProvider names the change-provider backend (e.g. "github", "phabricator", "routing").
-    ChangeProvider string `json:"change_provider,omitempty" yaml:"change_provider,omitempty"`
+    // order is decided HERE, once: infra → publishers → consumers; Stop reverses it
+    return lifecycle.NewGroup(o.infra, o.publishers, primary, dlq), nil
 }
 ```
 
-**Constraints:** `QueueConfig` stays a simple data carrier — it does NOT import extension packages. The mapping from hint string → extension instance remains in the wiring layer (`example/.../main.go` or a deployer's equivalent). This preserves the clean architecture boundary: entities are pure, factories are injected.
+This unifies topic-registry construction, subscription configuration, controller creation, DLQ pairing, and consumer lifecycle into one call. Each stage is a single row in a typed table; the engine enforces the invariant that every DLQ-declaring stage gets a paired DLQ subscription and reconciler, derived together. The host never sees consumer internals.
 
-### 5. Refactor the example orchestrator main.go
+### Step 3 · Service self-declaration — `submitqueue/orchestrator/pipeline.go`
 
-Rewrite the example to compose the new packages:
+A service's **entire** definition is three declarations — a struct (seams), a slice (topology), a constructor (controllers). No assembly code:
 
-1. Build infrastructure (DB, logger, metrics) — stays in main.go (deployment-specific).
-2. Load queue configs from YAML — stays in main.go.
-3. Build queue profiles using `queueprofile.NewRegistry(...)` — stays in main.go but is now ~30 lines instead of ~100, and can optionally be driven by profile hints from the YAML.
-4. Build topic registry using `topicregistry.Build(...)` — one call, ~10 lines instead of ~90.
-5. Register controllers using `wire.RegisterPrimary(...)` + `wire.RegisterDLQ(...)` — two calls instead of ~170 lines.
-6. Start consumers and gRPC server — stays in main.go.
+```go
+// ① Deps: one field per dependency the pipeline needs.
+// This struct IS the service's public API toward deployers.
+type Deps struct {
+    Logger  *zap.SugaredLogger
+    Scope   tally.Scope
+    Storage storage.Storage                // singleton seams
+    Queues  messagequeue.Stores
+    BuildRunner    buildrunner.Factory     // per-queue seams: Factory is a RESOLVER —
+    ChangeProvider changeprovider.Factory  //   For(Config{QueueName}) → impl for THAT queue
+    Scorer         scorer.Factory
+    Analyzer       conflict.Factory
+    Counter        counter.Counter
+}
 
-**Result:** main.go drops from ~950 to ~300 lines. The domain-layer packages are independently testable. A new integrator copies the example, edits `queues.yaml` (including optional profile hints), and optionally customizes the `queueprofile.Registry` population — no need to understand the full pipeline topology.
+// ② Stages: the pipeline topology as a typed table.
+// Adding a stage = adding one row. Nothing else, anywhere.
+var Stages = []pipeline.Stage[Deps]{
+    {
+        Key: topickey.Start,
+        New: func(d Deps) (consumer.Controller, error) {
+            return start.NewController(d.Logger, d.Scope, d.Storage, d.Queues), nil
+        },
+        DLQ: func(d Deps) (consumer.Controller, error) {
+            return dlq.NewRequestController(d.Logger, d.Scope, d.Storage,
+                dlq.DecodeLandRequestID, dlq.TopicKey(topickey.Start),
+                "orchestrator-start-dlq"), nil
+        },
+    },
+    { Key: topickey.Validate, /* same shape */ },
+    { Key: topickey.Batch,    /* same shape */ },
+    // … all 12 stages
+}
 
-## What each extraction produces
+// ③ Controllers: RPC-facing controllers, constructed but NOT bound to any
+// wire contract. Binding to a proto service + transport is host glue,
+// because consumers may use different protos or transports.
+type Controllers struct {
+    Ping *controller.PingController
+}
 
-| Extraction | New package | Key types | Lines removed from main.go |
-|---|---|---|---|
-| Queue profiles | `submitqueue/core/queueprofile` | `Profile`, `Registry`, `ChangeProviderFactory`, `BuildRunnerFactory`, `ScorerFactory`, `AnalyzerFactory` | ~100 (queueExtensions, queueRegistry, 4 factory types, newQueueRegistry) |
-| Topic registry | `submitqueue/core/topicregistry` | `StageSpec`, `BuildParams`, `Build()` | ~90 (newTopicRegistry) |
-| Controller wire | `submitqueue/orchestrator/controller/wire` | `PrimaryParams`, `DLQParams`, `RegisterPrimary()`, `RegisterDLQ()` | ~170 (registerPrimaryControllers, registerDLQControllers) |
-| Profile hints | `submitqueue/entity` (extended) | `QueueProfile` (added to `QueueConfig`) | 0 (additive) |
+func NewControllers(d Deps) Controllers {
+    return Controllers{Ping: controller.NewPingController(d.Logger, d.Scope)}
+}
+```
+
+### Step 4 · Host-private profiles — `service/.../profiles.go`
+
+Profiles stay entirely in the host. Nothing profile-shaped crosses the library boundary:
+
+```go
+type Profile struct {
+    BuildRunner    buildrunner.BuildRunner
+    ChangeProvider changeprovider.Provider
+    Scorer         scorer.Scorer
+    Analyzer       conflict.Analyzer
+}
+
+type Profiles struct {
+    byQueue        map[string]Profile
+    defaultProfile Profile
+}
+
+func (p Profiles) For(queue string) Profile {
+    if prof, ok := p.byQueue[queue]; ok { return prof }
+    return p.defaultProfile
+}
+
+func newProfiles(cfg Config) Profiles {
+    return Profiles{
+        byQueue: map[string]Profile{
+            "monorepo/main": {BuildRunner: buildkite.New(cfg.CI), Scorer: heuristic.New()},
+            "monorepo/exp":  {BuildRunner: local.New(),           Scorer: heuristic.New()},
+        },
+        defaultProfile: Profile{BuildRunner: noop.New(), Scorer: constant.New()},
+    }
+}
+
+// Thin adapters crossing the boundary — the http.HandlerFunc trick:
+type buildRunnerFunc func(buildrunner.Config) (buildrunner.BuildRunner, error)
+func (f buildRunnerFunc) For(c buildrunner.Config) (buildrunner.BuildRunner, error) { return f(c) }
+
+func (p Profiles) BuildRunnerFactory() buildrunner.Factory {
+    return buildRunnerFunc(func(c buildrunner.Config) (buildrunner.BuildRunner, error) {
+        return p.For(c.QueueName).BuildRunner, nil
+    })
+}
+// … same pattern for Scorer, Analyzer, ChangeProvider
+```
+
+### Step 5 · Host main.go — `service/.../main.go`
+
+```go
+func run(ctx context.Context) error {
+    cfg := loadConfig()                                    // env/flags: host-owned
+    logger, scope := newLogger(cfg), newScope(cfg)
+
+    store  := storagemysql.New(cfg.DB, logger, scope)
+    queues := mqmysql.New(cfg.QueueDB, logger, scope)
+    profiles := newProfiles(cfg)                           // Step 4
+
+    deps := orchestrator.Deps{
+        Logger: logger, Scope: scope,
+        Storage: store, Queues: queues,
+        BuildRunner:    profiles.BuildRunnerFactory(),
+        ChangeProvider: profiles.ChangeProviderFactory(),
+        Scorer:         profiles.ScorerFactory(),
+        Analyzer:       profiles.AnalyzerFactory(),
+    }
+
+    pl, err := pipeline.Construct(deps, orchestrator.Stages,
+        pipeline.TopicNames(cfg.TopicNames),               // logical → physical topic names
+        pipeline.Classifiers(backendClassifiers()),
+    )
+    if err != nil { return err }
+
+    srv := grpc.NewServer()
+    ctls := orchestrator.NewControllers(deps)
+    pb.RegisterSubmitQueueOrchestratorServer(srv, rpcServer{c: ctls})
+
+    if err := pl.Start(ctx); err != nil { return err }
+    defer pl.Stop(context.Background())
+    return serveUntilDone(ctx, srv)
+}
+```
+
+## At delivery time — all the pieces meeting
+
+```
+row appears on topic "start", partition key "monorepo/exp"
+ └─▶ primary consumer (built in Step 2) holds the partition lease, fetches delivery
+      └─▶ start controller (built by Step 3's row) .Process(ctx, delivery)
+           └─▶ needs a runner for THIS queue:
+               deps.BuildRunner.For(Config{QueueName: "monorepo/exp"})
+                └─▶ Step 4's adapter → profiles.For("monorepo/exp").BuildRunner → local runner
+                     (the SAME Deps field answers "monorepo/main" with buildkite
+                      on the next delivery — that's the Factory-as-resolver contract,
+                      identical to today's buildRunnerFactory{queues} in main.go)
+      controller returns nil ⇒ ack
+      controller returns err ⇒ Step 5's classifier decides: retry (nack) or not;
+      after retry budget ⇒ row moves to "start_dlq" ⇒ Step 2's derived pairing
+      guarantees the reconciler from Step 3's DLQ field is listening there
+```
+
+## Generalizes across all four services
+
+```
+                 gateway              orchestrator          stovepipe            runway
+────────────────────────────────────────────────────────────────────────────────────────────
+ Deps seams   counter · storage ·  changeprovider ·      storage · counter ·  storage ·
+              queueconfig.Store ·  buildrunner · scorer  sourcecontrol.       merger Factory
+              requestlog store     analyzer · validator  Factory ·
+                                   (+7 speculation)      queueconfig.Store
+
+ Stages       log                  start · cancel ·      process              mergeconflictcheck ·
+ (rows)                            validate · batch ·                         merge
+                                   … (+ DLQ column)
+
+ Controllers  Gateway              Orchestrator          Stovepipe            Runway
+              Ping·Land·Cancel     Ping                  Ping·Ingest          Ping
+
+ host keeps   impl selection · creds · TopicKey→name map · classifiers · transport · signals
+              — identical across all four columns: a new service copies any column and
+                fills in two rows of DATA
+────────────────────────────────────────────────────────────────────────────────────────────
+```
+
+Two integration surfaces fall out — the Go library surface above (Deps · Stages · Controllers · `pipeline.Construct`), and the proto contracts in `api/` for cross-language consumers. The Go library never dictates the wire contract; binding controllers to a proto service + transport is host glue.
+
+## What the engine enforces
+
+| Concern | Enforced by |
+|---|---|
+| Start/Stop ordering, rollback on partial failure | `lifecycle.Group` — one implementation, tested once |
+| DLQ pair + reconciler always present together | Engine property: any row declaring `DLQ:` gets both the DLQ subscription and the reconciler, derived together |
+| Missing seam at boot | Eager ctor run in `Construct` ⇒ named boot error with the failing stage |
+| Naming drift | Nothing to name — services export data (Deps struct + Stages slice), not assembly functions |
+| Wrong data (bad row) | Typechecking + a trivial data test (`Stages` keys unique) |
 
 ## Trade-off: profile hints vs. removing QueueConfig entirely
 
-Step 4 (profile hints in `QueueConfig`) deserves separate scrutiny because there is an open question about whether `QueueConfig` should exist at all.
+Profile selection (which scorer/conflict/build-runner a queue uses) deserves separate scrutiny because there is an open question about whether `QueueConfig` should exist at all.
 
 ### Current role of QueueConfig
 
@@ -234,39 +320,29 @@ Step 4 (profile hints in `QueueConfig`) deserves separate scrutiny because there
 
 | Option | Description | Pros | Cons |
 |---|---|---|---|
-| **A: Profile hints in QueueConfig (step 4 as proposed)** | Add `QueueProfile` fields to the entity; deployers declare scorer/conflict/etc. in `queues.yaml`; the wiring layer maps hint strings → instances. | Single source of truth for queue identity + behavior. YAML-only queue addition for known extension types. | Expands `QueueConfig` from a pure name registry into a config carrier — if QueueConfig is later removed, these fields need a new home. The entity gains fields the gateway doesn't use (profile hints are orchestrator-only). |
-| **B: Separate profile config file** | Leave `QueueConfig` as-is (name-only). Create a separate `queue-profiles.yaml` (or a `profiles:` section in a new file) consumed only by the orchestrator wiring. The orchestrator loads both queue names and profiles; the gateway loads only names. | Clean separation: gateway validates names, orchestrator resolves profiles. `QueueConfig` stays minimal and removable. No entity-level coupling. | Two config files to keep in sync (queue names must match). More moving parts in the wiring layer. |
-| **C: No data-driven profiles — keep profiles in Go code** | Drop step 4 entirely. Steps 1–3 (queueprofile, topicregistry, wire) still land as mechanical extractions. Per-queue profiles stay in Go, just using the promoted `queueprofile.Registry` instead of the current inline types. | Simplest change. No new config surface. Full type safety — a misspelled scorer name is a compile error, not a runtime lookup miss. Consistent with the existing philosophy ("all behavioral and VCS configuration lives in the extension factory implementations"). | Adding a new queue still requires a recompile. Doesn't address the "three-place edit" problem for deployers who don't write custom extensions. |
+| **A: Profile hints in QueueConfig** | Add `QueueProfile` fields to the entity; deployers declare scorer/conflict/etc. in `queues.yaml`; the wiring layer maps hint strings → instances. | Single source of truth for queue identity + behavior. YAML-only queue addition for known extension types. | Expands `QueueConfig` from a pure name registry into a config carrier — if QueueConfig is later removed, these fields need a new home. The entity gains fields the gateway doesn't use (profile hints are orchestrator-only). |
+| **B: Separate profile config file** | Leave `QueueConfig` as-is (name-only). Create a separate config consumed only by the host's profiles.go. | Clean separation: gateway validates names, host resolves profiles. `QueueConfig` stays minimal and removable. No entity-level coupling. | Two config files to keep in sync (queue names must match). More moving parts in the wiring layer. |
+| **C: Profiles stay in Go code (recommended)** | Per-queue profiles stay in the host's `profiles.go` as Go code. Full type safety — a misspelled scorer name is a compile error, not a runtime lookup miss. Consistent with the existing philosophy ("all behavioral and VCS configuration lives in the extension factory implementations"). | Simplest change. No new config surface. Type-safe. Matches the "host owns policy" principle. `core/queueprofile` stays trigger-gated per the in-code TODO: if a trigger fires, `profiles.go` moves wholesale — nothing profile-shaped ever crossed the boundary. | Adding a new queue requires a recompile. |
 
 ### If QueueConfig is removed
 
-If the direction is to remove `QueueConfig` entirely (perhaps because queue name validation moves to a different mechanism — e.g. the orchestrator's `queueprofile.Registry` becomes the implicit registry of valid queues, and the gateway queries it or the profile store), then:
+If queue name validation moves to a different mechanism (e.g. the host's profile registry becomes the implicit registry of valid queues, and the gateway queries it), then `QueueConfig` + `queueconfig.Store` can be removed without losing the validation gate. This would be a clean removal: the `queueconfig` extension package, its YAML impl, its mock, and the `QueueConfig` entity all go away. Option C is resilient to this removal because profiles never depended on `QueueConfig` in the first place.
 
-- **Option A becomes wasted work** — we'd add profile fields to an entity that's about to be deleted.
-- **Option B is resilient** — the separate profile config survives independently.
-- **Option C is neutral** — no config-layer dependency either way.
+## Rejected
 
-If queue name validation stays but moves out of the entity (e.g. the gateway calls `queueprofile.Registry.Get()` directly, treating the profile registry as the source of truth for "which queues exist"), then `QueueConfig` + `queueconfig.Store` can be removed without losing the validation gate. The gateway would depend on the profile registry instead of a name-only store. This would be a clean removal: the `queueconfig` extension package, its YAML impl, its mock, and the `QueueConfig` entity all go away; the `queueprofile.Registry` subsumes both name validation and extension resolution.
+- **DI framework (wire/dig/fx).** `pipeline.Construct` is not DI: no runtime graph, no reflection, no topo-sort — a typed engine over declarative data. One-offs enter via `Option`s. Hosts that use fx can wrap the engine in `fx.Provide` / `fx.Hook` without the engine knowing.
+- **Hot-reload of queue configs.** Out of scope. The YAML is loaded at startup. Hot-reload can build on this foundation later.
+- **Changing the Factory interface contract.** The existing `Factory.For(Config)` pattern is sound. The engine consumes factories exactly as today's main.go does; profiles produce them through the same thin adapters currently in main.go.
+- **Promoting `newChangeProvider` / `newGitHubChangeProvider` / `newPhabChangeProvider` out of the example.** These are deployment-specific (token sources, HTTP clients, timeouts). They stay in the host.
+- **Merging profiles into `queueconfig`.** The config store is a resolution target (key/value); profiles aggregate behavioral instances. Mixing them gives `queueconfig` a dependency on every extension interface, violating the "stores are resolution targets" principle.
 
-### Recommendation
+## Migration path
 
-**Land steps 1–3 unconditionally** — they are mechanical extractions with zero behavioral change and no dependency on the QueueConfig question. **Defer step 4** until the QueueConfig question is resolved. If QueueConfig stays, option A is the natural evolution; if it's removed, option B or C is cleaner, and the promoted `queueprofile.Registry` from step 1 already provides the foundation either way.
+The refactor can land incrementally:
 
+1. **`platform/lifecycle`** — pure addition, no existing code changes. Tested independently.
+2. **`platform/pipeline`** — pure addition, no existing code changes. Tested with mock stages.
+3. **Service self-declarations** (`orchestrator/pipeline.go`, etc.) — pure addition alongside the existing controllers.
+4. **Example main.go rewrite** — the one breaking change: replace ~950 lines with ~100 lines composing the new packages. The existing behavior is identical; the diff is large but mechanical.
 
-
-- **DI framework (wire/dig/fx).** Adds indirection and a build-time dependency for a problem that explicit code solves. The refactor reduces the volume of explicit wiring, not its nature.
-- **Hot-reload of queue configs.** Out of scope. The YAML is loaded at startup. Hot-reload can build on this foundation later — `queueconfig.Store` already abstracts the read path, so swapping the YAML impl for a watching impl is a future, independent change.
-- **Changing the Factory interface contract.** The existing `Factory.For(Config)` pattern is sound and is the way controllers resolve per-queue extension instances. We add a first-class registry that factories resolve *against*, not a new factory contract.
-- **Promoting `newChangeProvider` / `newGitHubChangeProvider` / `newPhabChangeProvider` out of the example.** These are deployment-specific (token sources, HTTP clients, timeouts). They stay in the wiring layer.
-- **Merging `queueprofile` into `queueconfig`.** The config store is a resolution target (key/value); the profile registry aggregates behavioral instances. Mixing them gives `queueconfig` a dependency on every extension interface, violating the "stores are resolution targets" principle.
-- **A generic "service bootstrap" package.** The duplicated boilerplate between gateway and orchestrator (logger, metrics, DB, gRPC server, signal handling) is real but is a separate, orthogonal concern. Folding it into this RFC would conflate infrastructure and domain — extract it separately if/when a third service lands.
-
-## Triggers
-
-Per the existing TODO, the extractions should land when any of these occur:
-
-1. A second consumer needs the same wiring (a real production server, or an e2e harness building real per-queue profiles).
-2. Per-queue config becomes data-driven (build profiles from `queueconfig.Store` / `queues.yaml` instead of Go literals) — step 4 of this proposal.
-3. The bundle grows lifecycle (Close / health / hot-reload).
-
-Steps 1–3 can land independently as mechanical extractions with zero behavioral change. Step 4 (profile hints) is additive and can follow once the structural extractions stabilize.
+Steps 1–3 can land independently as pure additions with zero behavioral change. Step 4 is the switch-over.
