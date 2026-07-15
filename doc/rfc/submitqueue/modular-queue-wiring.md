@@ -308,6 +308,113 @@ Two integration surfaces fall out — the Go library surface above (Deps · Stag
 | Naming drift | Nothing to name — services export data (Deps struct + Stages slice), not assembly functions |
 | Wrong data (bad row) | Typechecking + a trivial data test (`Stages` keys unique) |
 
+## Fluent builder API — convenience layer on top of the engine
+
+The `pipeline.Construct[D]` engine is the foundational API: typed, composable, and testable. For deployers who wire a single orchestrator with a handful of queues, a **fluent builder** provides a more readable entry point without hiding or replacing the engine.
+
+### Usage
+
+```go
+app, err := submitqueue.New().
+    WithStorage(store).
+    WithMessageQueue(mq).
+    WithQueue(
+        submitqueue.Queue("go-code").
+            WithChangeProvider(ghProvider).
+            WithBuildRunner(buildkiteBuildRunner).
+            WithScorer(defaultScorer).
+            WithConflictAnalyzer(tango),
+    ).
+    WithQueue(
+        submitqueue.Queue("monorepo/exp").
+            WithChangeProvider(ghProvider).
+            WithBuildRunner(localRunner).
+            WithScorer(defaultScorer).
+            WithConflictAnalyzer(fileOverlap),
+    ).
+    Build()
+
+if err != nil { return err }
+if err := app.Start(ctx); err != nil { return err }
+defer app.Stop(context.Background())
+```
+
+### Implementation sketch
+
+```go
+// submitqueue/builder.go
+package submitqueue
+
+// Builder accumulates configuration for a SubmitQueue orchestrator app.
+// It is a convenience layer — Build() populates a Deps struct, constructs
+// profiles, and calls pipeline.Construct under the hood.
+type Builder struct {
+    storage  storage.Storage
+    queues   messagequeue.Stores
+    perQueue map[string]Profile
+    opts     []pipeline.Option
+    errs     []error
+}
+
+func New() *Builder { return &Builder{perQueue: map[string]Profile{}} }
+
+func (b *Builder) WithStorage(s storage.Storage) *Builder {
+    b.storage = s; return b
+}
+
+func (b *Builder) WithMessageQueue(q messagequeue.Stores) *Builder {
+    b.queues = q; return b
+}
+
+func (b *Builder) WithQueue(qb QueueBuilder) *Builder {
+    b.perQueue[qb.name] = qb.profile; return b
+}
+
+func (b *Builder) WithOption(o pipeline.Option) *Builder {
+    b.opts = append(b.opts, o); return b
+}
+
+func (b *Builder) Build() (*App, error) {
+    // Validate required fields (storage, queues, at least one queue).
+    // Populate Deps from the accumulated state.
+    // Build profiles registry from perQueue map.
+    // Call pipeline.Construct(deps, orchestrator.Stages, b.opts...).
+    // Return App wrapping the lifecycle.Component.
+}
+
+// QueueBuilder accumulates per-queue extension selections.
+type QueueBuilder struct {
+    name    string
+    profile Profile
+}
+
+func Queue(name string) QueueBuilder { return QueueBuilder{name: name} }
+
+func (q QueueBuilder) WithChangeProvider(cp changeprovider.ChangeProvider) QueueBuilder {
+    q.profile.ChangeProvider = cp; return q
+}
+
+func (q QueueBuilder) WithBuildRunner(br buildrunner.BuildRunner) QueueBuilder {
+    q.profile.BuildRunner = br; return q
+}
+
+func (q QueueBuilder) WithScorer(s scorer.Scorer) QueueBuilder {
+    q.profile.Scorer = s; return q
+}
+
+func (q QueueBuilder) WithConflictAnalyzer(a conflict.Analyzer) QueueBuilder {
+    q.profile.Analyzer = a; return q
+}
+```
+
+### Design constraints
+
+- **Convenience, not replacement.** The builder calls `pipeline.Construct` — it does not bypass or duplicate the engine. Deployers who need full control (custom `Option`s, multi-service composition, fx integration) use the engine directly.
+- **Compile-time type safety.** Each `With*` method takes the concrete extension interface, not a string hint. A missing or mistyped extension is a compile error.
+- **`QueueBuilder` is a value type.** The fluent chain returns copies, not pointers, so partial builders are safe to reuse as templates (e.g. a `baseQueue` with defaults that each real queue overrides).
+- **`Build()` validates eagerly.** Missing required fields (no storage, no queues, zero queue profiles) produce a clear error at build time, not a nil-pointer panic at runtime.
+- **No global state.** `New()` returns an isolated builder. Multiple orchestrator apps can coexist in the same process (useful for integration tests).
+
 ## Trade-off: profile hints vs. removing QueueConfig entirely
 
 Profile selection (which scorer/conflict/build-runner a queue uses) deserves separate scrutiny because there is an open question about whether `QueueConfig` should exist at all.
