@@ -115,6 +115,4 @@ func (s *OrchestratorIntegrationSuite) TestPingAPI() {
 	assert.Equal(t, "orchestrator", resp.ServiceName)
 	assert.NotEmpty(t, resp.Message)
 	assert.NotZero(t, resp.Timestamp)
-
-	s.log.Logf("Orchestrator Ping test passed: %s", resp.Message)
 }

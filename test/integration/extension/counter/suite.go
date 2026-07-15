@@ -71,8 +71,6 @@ func (s *CounterContractSuite) TestCounter_Next() {
 	seq3, err := s.counter.Next(ctx, domain)
 	require.NoError(t, err)
 	assert.Equal(t, seq2+1, seq3, "sequence should continue incrementing")
-
-	s.log.Logf("Next test passed: %d → %d → %d", seq1, seq2, seq3)
 }
 
 // TestCounter_MultipleDomains tests independent counters
@@ -99,9 +97,6 @@ func (s *CounterContractSuite) TestCounter_MultipleDomains() {
 	// Each domain should increment independently
 	assert.Equal(t, seq1a+1, seq1b, "domain1 should increment")
 	assert.Equal(t, seq2a+1, seq2b, "domain2 should increment")
-
-	s.log.Logf("Multiple domains test passed: domain1=%d→%d, domain2=%d→%d",
-		seq1a, seq1b, seq2a, seq2b)
 }
 
 // TestCounter_Concurrency tests concurrent access to the same counter
@@ -141,7 +136,4 @@ func (s *CounterContractSuite) TestCounter_Concurrency() {
 		assert.Equal(t, sequences[i-1]+1, sequences[i],
 			"sequences should be contiguous at index %d: got %d and %d", i, sequences[i-1], sequences[i])
 	}
-
-	s.log.Logf("Concurrency test passed: %d goroutines generated %d contiguous sequences (%d-%d)",
-		numGoroutines, len(sequences), sequences[0], sequences[len(sequences)-1])
 }
