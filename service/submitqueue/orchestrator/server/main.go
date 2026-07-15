@@ -403,27 +403,15 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 				subscriberName, t.groupSuffix,
 			),
 		})
-		// DLQ subscription for the same primary stage. DLQ is disabled here
-		// to avoid a "_dlq_dlq" cascade: if DLQ reconciliation itself fails,
-		// the consumer retries forever and the failure is surfaced via logs
-		// and metrics rather than being moved to a second-level dead-letter
-		// topic that nobody consumes.
-		//
-		// MaxAttempts is bumped to a very high value so the per-message
-		// retry budget effectively never runs out — this pairs with the
-		// AlwaysRetryableProcessor wired into the DLQ consumer to guarantee
-		// reconciliation eventually converges instead of being silently
-		// dropped after the default retry count.
-		dlqSub := extqueue.DefaultSubscriptionConfig(
-			subscriberName, t.groupSuffix+"-dlq",
-		)
-		dlqSub.DLQ.Enabled = false
-		dlqSub.Retry.MaxAttempts = 1000
+		// DLQ subscription for the same primary stage. DLQSubscriptionConfig
+		// disables the subscription's own DLQ (no "_dlq_dlq" cascade) and sets
+		// an effectively unlimited retry budget to pair with the
+		// AlwaysRetryableProcessor wired into the DLQ consumer.
 		configs = append(configs, consumer.TopicConfig{
 			Key:          dlq.TopicKey(t.key),
 			Name:         t.name + "_dlq",
 			Queue:        q,
-			Subscription: dlqSub,
+			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, t.groupSuffix+"-dlq"),
 		})
 	}
 

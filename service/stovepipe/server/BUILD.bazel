@@ -15,6 +15,7 @@ go_library(
         "//platform/extension/messagequeue/mysql:go_default_library",
         "//service/stovepipe/server/mapper:go_default_library",
         "//stovepipe/controller:go_default_library",
+        "//stovepipe/controller/dlq:go_default_library",
         "//stovepipe/controller/process:go_default_library",
         "//stovepipe/core/messagequeue:go_default_library",
         "//stovepipe/extension/queueconfig/default:go_default_library",

@@ -37,6 +37,7 @@ import (
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/service/stovepipe/server/mapper"
 	"github.com/uber/submitqueue/stovepipe/controller"
+	"github.com/uber/submitqueue/stovepipe/controller/dlq"
 	"github.com/uber/submitqueue/stovepipe/controller/process"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
@@ -208,12 +209,20 @@ func run() error {
 		return fmt.Errorf("failed to create topic registry: %w", err)
 	}
 
-	// Consumer running the process stage.
+	// Two consumers share the topic registry but apply different error classification
+	// policies. The primary consumer runs the standard classifier walk. The DLQ consumer
+	// uses AlwaysRetryableProcessor so every non-nil error from a DLQ controller is
+	// forced retryable — reconciliation must redeliver on any failure because the DLQ
+	// subscription is a final destination (DLQ.Enabled is false on it, so there is no
+	// further DLQ to fall back on).
 	primaryConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
 		errs.NewClassifierProcessor(
 			genericerrs.Classifier,
 			mysqlerrs.Classifier,
 		),
+	)
+	dlqConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer-dlq"), registry,
+		errs.AlwaysRetryableProcessor,
 	)
 
 	processController := process.NewController(
@@ -230,10 +239,23 @@ func run() error {
 		return fmt.Errorf("failed to register process controller: %w", err)
 	}
 
-	if err := primaryConsumer.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start consumer: %w", err)
+	processDLQController := dlq.NewController(logger.Sugar(), scope, store, dlq.TopicKey(stovepipemq.TopicKeyProcess), "stovepipe-process-dlq")
+	if err := dlqConsumer.Register(processDLQController); err != nil {
+		return fmt.Errorf("failed to register process dlq controller: %w", err)
 	}
-	logger.Info("consumer started")
+
+	// Start consumers. DLQ first because Start begins processing messages
+	// immediately; if the primary consumer then fails to start, the half we
+	// already started is the DLQ side, whose work is idempotent reconciliation
+	// and is safe to interrupt mid-flight for rollback.
+	if err := dlqConsumer.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start dlq consumer: %w", err)
+	}
+	if err := primaryConsumer.Start(ctx); err != nil {
+		stopErr := dlqConsumer.Stop(30000)
+		return errors.Join(fmt.Errorf("failed to start consumer: %w", err), stopErr)
+	}
+	logger.Info("consumers started")
 
 	// Create gRPC server
 	grpcServer := grpc.NewServer()
@@ -298,9 +320,15 @@ func run() error {
 		serverErr = fmt.Errorf("GRPC server exited with error: %w", serverErr)
 	}
 
-	consumerStopErr := primaryConsumer.Stop(30000)
+	// Stop consumers in reverse start order: primary first, then DLQ. The primary
+	// pipeline writes the state that DLQ reconciliation reads, so draining primary
+	// first means in-flight DLQ reconciliation finishes against a settled primary
+	// rather than racing its shutdown.
+	primaryStopErr := primaryConsumer.Stop(30000)
+	dlqStopErr := dlqConsumer.Stop(30000)
+	consumerStopErr := errors.Join(primaryStopErr, dlqStopErr)
 	if consumerStopErr != nil {
-		consumerStopErr = fmt.Errorf("failed to stop consumer: %w", consumerStopErr)
+		consumerStopErr = fmt.Errorf("failed to stop consumers: %w", consumerStopErr)
 	}
 
 	if consumerStopErr != nil || serverErr != nil {
@@ -312,6 +340,8 @@ func run() error {
 
 // newTopicRegistry builds the TopicRegistry for Stovepipe's internal pipeline queues. ingest
 // publishes to process; process publishes admitted requests to the publish-only build topic.
+// The process_dlq topic is the dead-letter destination the queue backend routes to (per
+// DefaultSubscriptionConfig's DLQ.TopicSuffix) when the process controller exhausts retries.
 func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRegistry, error) {
 	return consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{
@@ -326,6 +356,12 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Key:   stovepipemq.TopicKeyBuild,
 			Name:  "build",
 			Queue: q,
+		},
+		{
+			Key:          dlq.TopicKey(stovepipemq.TopicKeyProcess),
+			Name:         "process_dlq",
+			Queue:        q,
+			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-process-dlq"),
 		},
 	})
 }
