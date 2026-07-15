@@ -17,6 +17,8 @@ go_library(
         "//platform/errs:go_default_library",
         "//platform/errs/generic:go_default_library",
         "//platform/errs/mysql:go_default_library",
+        "//platform/extension/consumergate:go_default_library",
+        "//platform/extension/consumergate/file:go_default_library",
         "//platform/extension/counter:go_default_library",
         "//platform/extension/counter/mysql:go_default_library",
         "//platform/extension/messagequeue:go_default_library",

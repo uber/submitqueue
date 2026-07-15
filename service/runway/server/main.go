@@ -34,6 +34,8 @@ import (
 	"github.com/uber/submitqueue/platform/errs"
 	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
 	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
+	"github.com/uber/submitqueue/platform/extension/consumergate"
+	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/runway/controller"
@@ -152,6 +154,7 @@ func run() error {
 			genericerrs.Classifier,
 			mysqlerrs.Classifier,
 		),
+		newConsumerGate(logger),
 	)
 
 	mergerFactory := newMergerFactory()
@@ -287,4 +290,24 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Queue: q,
 		},
 	})
+}
+
+// defaultConsumerGateDir is the path the compose stack bind-mounts for gate
+// state files. A missing directory simply means every gate is open.
+const defaultConsumerGateDir = "/var/submitqueue/consumergate"
+
+// getEnv returns environment variable value or default if not set.
+func getEnv(key, defaultVal string) string {
+	if val := os.Getenv(key); val != "" {
+		return val
+	}
+	return defaultVal
+}
+
+// newConsumerGate returns a file-backed consumer gate rooted at the directory
+// from CONSUMER_GATE_DIR (defaulting to defaultConsumerGateDir).
+func newConsumerGate(logger *zap.Logger) consumergate.Gate {
+	dir := getEnv("CONSUMER_GATE_DIR", defaultConsumerGateDir)
+	logger.Info("consumer gate configured", zap.String("dir", dir))
+	return consumergatefile.New(dir, consumergate.DefaultConfig())
 }

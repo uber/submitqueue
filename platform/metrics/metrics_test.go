@@ -185,7 +185,7 @@ func TestNamedTimer(t *testing.T) {
 
 func TestNamedHistogram(t *testing.T) {
 	scope := tally.NewTestScope("", nil)
-	h := NamedHistogram(scope, "process", "duration", defaultLatencyBuckets)
+	h := NamedHistogram(scope, "process", "duration", DefaultLatencyBuckets)
 	assert.NotNil(t, h)
 
 	h.RecordDuration(50 * time.Millisecond)
@@ -208,10 +208,10 @@ func TestNamedGauge(t *testing.T) {
 }
 
 func TestDefaultLatencyBuckets_Sorted(t *testing.T) {
-	for i := 1; i < len(defaultLatencyBuckets); i++ {
-		assert.Greater(t, defaultLatencyBuckets[i], defaultLatencyBuckets[i-1],
-			"defaultLatencyBuckets[%d] (%v) must be greater than defaultLatencyBuckets[%d] (%v)",
-			i, defaultLatencyBuckets[i], i-1, defaultLatencyBuckets[i-1])
+	for i := 1; i < len(DefaultLatencyBuckets); i++ {
+		assert.Greater(t, DefaultLatencyBuckets[i], DefaultLatencyBuckets[i-1],
+			"DefaultLatencyBuckets[%d] (%v) must be greater than DefaultLatencyBuckets[%d] (%v)",
+			i, DefaultLatencyBuckets[i], i-1, DefaultLatencyBuckets[i-1])
 	}
 }
 

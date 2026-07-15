@@ -23,6 +23,7 @@ import (
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/errs"
+	"github.com/uber/submitqueue/platform/extension/consumergate"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	"github.com/uber/submitqueue/platform/metrics"
 	"go.uber.org/zap"
@@ -32,6 +33,16 @@ const (
 	// startupCleanupTimeoutMs is the timeout for cleaning up subscriptions when
 	// a controller fails to start during Start().
 	startupCleanupTimeoutMs = 30000
+
+	// gateExtensionMs is the visibility extension applied to a delivery blocked
+	// behind its consumer gate on each keep-in-flight tick, keeping it in-flight
+	// without burning retry budget (milliseconds). Must comfortably exceed
+	// defaultGateExtendInterval.
+	gateExtensionMs = int64(30000)
+
+	// defaultGateExtendInterval is how often a gate-blocked delivery's
+	// visibility is extended.
+	defaultGateExtendInterval = 10 * time.Second
 )
 
 // Consumer orchestrates multiple queue consumers. It handles subscription lifecycle,
@@ -61,6 +72,12 @@ type consumer struct {
 	metricsScope tally.Scope
 	registry     TopicRegistry
 	processor    errs.ErrorProcessor
+	gate         consumergate.Gate
+
+	// gateExtendInterval is how often a gate-blocked delivery's visibility is
+	// extended. Fixed to defaultGateExtendInterval by New; a field (not the
+	// const) so in-package tests can exercise the keep-in-flight path quickly.
+	gateExtendInterval time.Duration
 
 	mu            sync.Mutex
 	stopped       bool
@@ -85,13 +102,20 @@ type activeSubscription struct {
 // consumers such as DLQ reconciliation that must redeliver on any failure.
 // processor must not be nil; callers that genuinely want no transformation
 // can pass errs.NewClassifierProcessor() with no classifiers.
-func New(logger *zap.SugaredLogger, scope tally.Scope, registry TopicRegistry, processor errs.ErrorProcessor) Consumer {
+//
+// gate is the consumer-gate implementation consulted before each delivery
+// reaches its controller. Pass noop.New() (from
+// platform/extension/consumergate/noop) for services that do not need runtime
+// gating. gate must not be nil.
+func New(logger *zap.SugaredLogger, scope tally.Scope, registry TopicRegistry, processor errs.ErrorProcessor, gate consumergate.Gate) Consumer {
 	return &consumer{
-		logger:        logger,
-		metricsScope:  scope.SubScope("consumer"),
-		registry:      registry,
-		processor:     processor,
-		subscriptions: make(map[TopicKey]*activeSubscription),
+		logger:             logger,
+		metricsScope:       scope.SubScope("consumer"),
+		registry:           registry,
+		processor:          processor,
+		gate:               gate,
+		gateExtendInterval: defaultGateExtendInterval,
+		subscriptions:      make(map[TopicKey]*activeSubscription),
 	}
 }
 
@@ -341,6 +365,14 @@ func (m *consumer) processPartition(ctx context.Context, controller Controller, 
 func (m *consumer) processDelivery(ctx context.Context, controller Controller, delivery extqueue.Delivery, controllerScope tally.Scope) {
 	const opName = "process"
 
+	// Consumer gate: block the delivery while the controller's gate is closed.
+	// A false return means the consumer is shutting down while blocked — leave
+	// the delivery in-flight (no process, no ack/nack) so its visibility lapses
+	// into a normal redelivery. Gate errors fail open inside waitGate.
+	if !m.waitGate(ctx, controller, delivery, controllerScope) {
+		return
+	}
+
 	start := time.Now()
 	metrics.NamedCounter(controllerScope, opName, "messages_received", 1)
 
@@ -483,6 +515,128 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 		"attempt", delivery.Attempt(),
 		"elapsed_ms", elapsed.Milliseconds(),
 	)
+}
+
+// waitGate clears a delivery through the consumer gate before it reaches the
+// controller. It returns true when the delivery may proceed, false when it
+// must be dropped without processing or ack/nack (the visibility timeout then
+// lapses into a normal redelivery).
+//
+// Gate.Enter checks the gate synchronously; an unblocked entry is the common
+// path and costs nothing further. For a blocked entry the gate hands back a
+// watch channel (its own monitoring goroutine behind it), and this routine
+// multiplexes three events in a single select loop — the watch channel, a
+// visibility-extension ticker that keeps the blocked delivery in-flight, and
+// parent-context cancellation — with no extra goroutine on the consumer side.
+// The watch context is a child of ctx cancelled on every return path, so the
+// gate's goroutine always exits and nothing is left dangling. Failures fail
+// open: if gate state cannot be read or recorded, or the delivery can no longer
+// be held safely because a visibility extension failed, the delivery proceeds
+// and the failure is surfaced via log and counter. Only consumer shutdown drops
+// the delivery.
+func (m *consumer) waitGate(ctx context.Context, controller Controller, delivery extqueue.Delivery, scope tally.Scope) bool {
+	const opName = "gate"
+
+	msg := delivery.Message()
+	consumerGroup := controller.ConsumerGroup()
+	topic := controller.TopicKey().String()
+
+	entry, err := m.gate.Enter(ctx, consumergate.Key{ConsumerGroup: consumerGroup, PartitionKey: msg.PartitionKey})
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			// Cancellation is in progress; return false per the contract.
+			return false
+		}
+		// Gate state could not be read: fail open — gating is auxiliary, and
+		// a broken gate medium must not become a pipeline stall.
+		metrics.NamedCounter(scope, opName, "enter_errors", 1)
+		m.logger.Errorw("gate check failed, failing open",
+			"consumer_group", consumerGroup,
+			"topic", topic,
+			"message_id", msg.ID,
+			"error", err,
+		)
+		return true
+	}
+	if !entry.Blocked() {
+		return true
+	}
+
+	start := time.Now()
+	defer func() {
+		metrics.NamedHistogram(scope, opName, "wait_latency", metrics.DefaultLatencyBuckets).RecordDuration(time.Since(start))
+	}()
+
+	// The delivery is blocked. Build the caller-owned descriptor and start
+	// watching the gate; watchCtx is cancelled on every return path so the gate's
+	// monitoring goroutine exits even when we fail open with the consumer still
+	// running.
+	descriptor := consumergate.DeliveryDescriptor{
+		Topic:     topic,
+		MessageID: msg.ID,
+		Payload:   msg.Payload,
+		Attempt:   delivery.Attempt(),
+	}
+
+	// Start a child context for the watch and cancel it on every return path,
+	// so the gate's monitoring goroutine always exits.
+	watchCtx, cancelWatch := context.WithCancel(ctx)
+	defer cancelWatch()
+	watchCh := entry.Watch(watchCtx, descriptor)
+
+	// Keep the blocked delivery in-flight on a ticker while multiplexing the
+	// gate watch and parent cancellation.
+	ticker := time.NewTicker(m.gateExtendInterval)
+	defer ticker.Stop()
+
+loop:
+	for {
+		select {
+		case e := <-watchCh:
+			if e == nil {
+				// The gate opened; the delivery proceeds. Returning is safe:
+				// the deferred cancelWatch stops the gate's monitoring
+				// goroutine and the deferred ticker.Stop halts the extender.
+				return true
+			}
+			if err == nil {
+				// This includes a cancellation error propagated from the
+				// parent context.
+				err = e
+			}
+			break loop
+
+		case <-ticker.C:
+			if err != nil {
+				// The error is already set, so this tick is bogus and can be
+				// skipped; wait for the gate watch to report back and end the
+				// loop.
+				continue
+			}
+			if e := delivery.ExtendVisibilityTimeout(ctx, gateExtensionMs); e != nil {
+				// The delivery can no longer be held safely, so cancel the gate
+				// watch; it reports back on watchCh and ends the loop.
+				err = e
+				cancelWatch()
+			}
+		}
+	}
+
+	// The loop only breaks with a non-nil err.
+	if errors.Is(err, context.Canceled) {
+		// Cancellation is in progress; return false per the contract.
+		return false
+	}
+	// Gate state could not be re-read or the record could not be
+	// written: fail open, as above.
+	metrics.NamedCounter(scope, opName, "wait_errors", 1)
+	m.logger.Errorw("gate wait failed, failing open",
+		"consumer_group", consumerGroup,
+		"topic", topic,
+		"message_id", msg.ID,
+		"error", err,
+	)
+	return true
 }
 
 // Stop gracefully shuts down all handlers with the specified timeout.
