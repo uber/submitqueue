@@ -221,6 +221,8 @@ func (p Profiles) BuildRunnerFactory() buildrunner.Factory {
 
 ### Step 5 · Host main.go — `service/.../main.go`
 
+The host's main.go shrinks to infrastructure setup, profile construction, and a single `pipeline.Construct` call. See "Usage examples" below for complete, runnable examples of both the core engine and fluent builder paths.
+
 ```go
 func run(ctx context.Context) error {
     cfg := loadConfig()                                    // env/flags: host-owned
@@ -308,36 +310,236 @@ Two integration surfaces fall out — the Go library surface above (Deps · Stag
 | Naming drift | Nothing to name — services export data (Deps struct + Stages slice), not assembly functions |
 | Wrong data (bad row) | Typechecking + a trivial data test (`Stages` keys unique) |
 
-## Fluent builder API — convenience layer on top of the engine
+## Usage examples
 
-The `pipeline.Construct[D]` engine is the foundational API: typed, composable, and testable. For deployers who wire a single orchestrator with a handful of queues, a **fluent builder** provides a more readable entry point without hiding or replacing the engine.
+Two APIs serve different deployer needs. The core engine (`pipeline.Construct`) gives full control; the fluent builder (`submitqueue.New()`) wraps it for the common case.
 
-### Usage
+### When to use which
+
+| Scenario | API | Why |
+|---|---|---|
+| Single orchestrator, handful of queues | Fluent builder | Reads top-to-bottom; no boilerplate |
+| Multiple services in one process | Core engine | Compose multiple `lifecycle.Component`s into a `lifecycle.Group` |
+| fx / custom DI integration | Core engine | `Construct` returns a `lifecycle.Component` that slots into `fx.Hook` |
+| Custom `pipeline.Option`s (classifiers, extra components) | Either | Fluent builder exposes `WithOption()`; core engine takes variadic `Option`s directly |
+| Integration / e2e tests | Either | Both produce a `lifecycle.Component` with `Start`/`Stop` |
+
+### Core engine — complete example
+
+A single file showing the full `pipeline.Construct` path end-to-end. This is what Steps 3–5 above produce when stitched together.
 
 ```go
+package main
+
+import (
+    "context"
+    "os/signal"
+
+    "github.com/uber/submitqueue/platform/lifecycle"
+    "github.com/uber/submitqueue/platform/pipeline"
+    "github.com/uber/submitqueue/submitqueue/orchestrator"
+    storagemysql "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
+    mqmysql "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
+)
+
+func main() {
+    ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+    defer stop()
+    if err := run(ctx); err != nil { log.Fatal(err) }
+}
+
+func run(ctx context.Context) error {
+    // ── infrastructure (host-owned) ─────────────────────────────────
+    cfg := loadConfig()
+    logger, scope := newLogger(cfg), newScope(cfg)
+    store := storagemysql.New(cfg.DB, logger, scope)
+    queues := mqmysql.New(cfg.QueueDB, logger, scope)
+
+    // ── per-queue profiles (host-private, Step 4) ───────────────────
+    profiles := newProfiles(cfg)
+
+    // ── populate Deps (the library's public API, Step 3) ────────────
+    deps := orchestrator.Deps{
+        Logger:  logger,
+        Scope:   scope,
+        Storage: store,
+        Queues:  queues,
+        // Factory fields — profiles produce thin adapters that cross
+        // the host/library boundary via the existing Factory interface:
+        BuildRunner:    profiles.BuildRunnerFactory(),
+        ChangeProvider: profiles.ChangeProviderFactory(),
+        Scorer:         profiles.ScorerFactory(),
+        Analyzer:       profiles.AnalyzerFactory(),
+    }
+
+    // ── assemble the pipeline (Step 2) ──────────────────────────────
+    // orchestrator.Stages is a []pipeline.Stage[orchestrator.Deps] declared
+    // once in the library (Step 3). The host never lists stages or controllers.
+    pl, err := pipeline.Construct(deps, orchestrator.Stages,
+        pipeline.TopicNames(cfg.TopicNames),           // logical → physical topic names
+        pipeline.Classifiers(backendClassifiers()),     // error classification per backend
+    )
+    if err != nil { return err }
+
+    // ── transport (host-owned) ──────────────────────────────────────
+    srv := grpc.NewServer()
+    ctls := orchestrator.NewControllers(deps)
+    pb.RegisterSubmitQueueOrchestratorServer(srv, rpcServer{c: ctls})
+
+    // ── lifecycle ───────────────────────────────────────────────────
+    if err := pl.Start(ctx); err != nil { return err }
+    defer pl.Stop(context.Background())
+    return serveUntilDone(ctx, srv)
+}
+```
+
+**Advanced: two services in one process.** The core engine returns `lifecycle.Component`, so composing multiple services is a `lifecycle.NewGroup` call:
+
+```go
+orchPl, _ := pipeline.Construct(orchDeps, orchestrator.Stages, orchOpts...)
+gwPl, _   := pipeline.Construct(gwDeps,   gateway.Stages,     gwOpts...)
+
+combined := lifecycle.NewGroup(orchPl, gwPl)   // start in order, stop in reverse
+if err := combined.Start(ctx); err != nil { return err }
+defer combined.Stop(context.Background())
+```
+
+**Advanced: fx integration.** The engine has no opinion on DI frameworks — `lifecycle.Component` maps directly to fx hooks:
+
+```go
+fx.New(
+    fx.Provide(newDeps, newProfiles),
+    fx.Invoke(func(lc fx.Lifecycle, deps orchestrator.Deps) error {
+        pl, err := pipeline.Construct(deps, orchestrator.Stages)
+        if err != nil { return err }
+        lc.Append(fx.Hook{
+            OnStart: pl.Start,
+            OnStop:  pl.Stop,
+        })
+        return nil
+    }),
+).Run()
+```
+
+### Fluent builder — complete example
+
+The same orchestrator, expressed with the builder API. `Build()` calls `pipeline.Construct` internally — the engine is always the assembly mechanism.
+
+```go
+package main
+
+import (
+    "context"
+    "os/signal"
+
+    "github.com/uber/submitqueue/submitqueue"
+    storagemysql "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
+    mqmysql "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
+)
+
+func main() {
+    ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+    defer stop()
+    if err := run(ctx); err != nil { log.Fatal(err) }
+}
+
+func run(ctx context.Context) error {
+    cfg := loadConfig()
+    logger, scope := newLogger(cfg), newScope(cfg)
+    store := storagemysql.New(cfg.DB, logger, scope)
+    mq := mqmysql.New(cfg.QueueDB, logger, scope)
+
+    app, err := submitqueue.New().
+        WithLogger(logger).
+        WithScope(scope).
+        WithStorage(store).
+        WithMessageQueue(mq).
+        WithQueue(
+            submitqueue.Queue("go-code").
+                WithChangeProvider(github.New(cfg.GitHub)).
+                WithBuildRunner(buildkite.New(cfg.CI)).
+                WithScorer(heuristic.New()).
+                WithConflictAnalyzer(tango.New(cfg.Tango)),
+        ).
+        WithQueue(
+            submitqueue.Queue("monorepo/exp").
+                WithChangeProvider(github.New(cfg.GitHub)).
+                WithBuildRunner(local.New()).
+                WithScorer(heuristic.New()).
+                WithConflictAnalyzer(fileoverlap.New()),
+        ).
+        WithOption(pipeline.TopicNames(cfg.TopicNames)).
+        WithOption(pipeline.Classifiers(backendClassifiers())).
+        Build()
+    if err != nil { return err }
+
+    if err := app.Start(ctx); err != nil { return err }
+    defer app.Stop(context.Background())
+    return app.ServeGRPC(ctx)   // convenience: app also holds the RPC controllers
+}
+```
+
+**Template reuse.** `QueueBuilder` is a value type, so a partial builder can serve as a baseline that each queue overrides:
+
+```go
+// Common baseline: every queue uses GitHub and heuristic scoring.
+base := submitqueue.Queue("").
+    WithChangeProvider(github.New(cfg.GitHub)).
+    WithScorer(heuristic.New())
+
 app, err := submitqueue.New().
     WithStorage(store).
     WithMessageQueue(mq).
-    WithQueue(
-        submitqueue.Queue("go-code").
-            WithChangeProvider(ghProvider).
-            WithBuildRunner(buildkiteBuildRunner).
-            WithScorer(defaultScorer).
-            WithConflictAnalyzer(tango),
+    // Override only what differs per queue:
+    WithQueue(base.Named("go-code").
+        WithBuildRunner(buildkite.New(cfg.CI)).
+        WithConflictAnalyzer(tango.New(cfg.Tango)),
     ).
-    WithQueue(
-        submitqueue.Queue("monorepo/exp").
-            WithChangeProvider(ghProvider).
-            WithBuildRunner(localRunner).
-            WithScorer(defaultScorer).
-            WithConflictAnalyzer(fileOverlap),
+    WithQueue(base.Named("monorepo/exp").
+        WithBuildRunner(local.New()).
+        WithConflictAnalyzer(fileoverlap.New()),
+    ).
+    WithQueue(base.Named("monorepo/test").
+        WithBuildRunner(noop.New()).
+        WithConflictAnalyzer(noop.NewAnalyzer()),
     ).
     Build()
-
-if err != nil { return err }
-if err := app.Start(ctx); err != nil { return err }
-defer app.Stop(context.Background())
 ```
+
+**Integration test.** The builder produces a `lifecycle.Component` just like the engine, so tests start and stop the full pipeline without special harness code:
+
+```go
+func TestOrchestrator(t *testing.T) {
+    store := inmemory.NewStorage()
+    mq := inmemory.NewQueues()
+
+    app, err := submitqueue.New().
+        WithStorage(store).
+        WithMessageQueue(mq).
+        WithQueue(
+            submitqueue.Queue("test-queue").
+                WithChangeProvider(fake.NewChangeProvider()).
+                WithBuildRunner(fake.NewBuildRunner()).
+                WithScorer(constant.New(1.0)).
+                WithConflictAnalyzer(noop.NewAnalyzer()),
+        ).
+        Build()
+    require.NoError(t, err)
+
+    ctx, cancel := context.WithCancel(context.Background())
+    defer cancel()
+    require.NoError(t, app.Start(ctx))
+    defer app.Stop(context.Background())
+
+    // Publish a message to the "start" topic and assert controller behavior.
+    mq.Publish(t, topickey.Start, landRequestPayload("test-queue", "PR-42"))
+    // … assertions on store state …
+}
+```
+
+## Fluent builder — design and implementation
+
+The `pipeline.Construct[D]` engine is the foundational API: typed, composable, and testable. The fluent builder wraps it for deployers who wire a single orchestrator with a handful of queues.
 
 ### Implementation sketch
 
@@ -349,6 +551,8 @@ package submitqueue
 // It is a convenience layer — Build() populates a Deps struct, constructs
 // profiles, and calls pipeline.Construct under the hood.
 type Builder struct {
+    logger   *zap.SugaredLogger
+    scope    tally.Scope
     storage  storage.Storage
     queues   messagequeue.Stores
     perQueue map[string]Profile
@@ -357,6 +561,9 @@ type Builder struct {
 }
 
 func New() *Builder { return &Builder{perQueue: map[string]Profile{}} }
+
+func (b *Builder) WithLogger(l *zap.SugaredLogger) *Builder { b.logger = l; return b }
+func (b *Builder) WithScope(s tally.Scope) *Builder         { b.scope = s; return b }
 
 func (b *Builder) WithStorage(s storage.Storage) *Builder {
     b.storage = s; return b
@@ -375,20 +582,32 @@ func (b *Builder) WithOption(o pipeline.Option) *Builder {
 }
 
 func (b *Builder) Build() (*App, error) {
-    // Validate required fields (storage, queues, at least one queue).
-    // Populate Deps from the accumulated state.
-    // Build profiles registry from perQueue map.
-    // Call pipeline.Construct(deps, orchestrator.Stages, b.opts...).
-    // Return App wrapping the lifecycle.Component.
+    // 1. Validate required fields (storage, queues, at least one queue profile).
+    // 2. Build a Profiles struct from b.perQueue (same as host profiles.go).
+    // 3. Populate orchestrator.Deps from the accumulated state:
+    //        deps.BuildRunner    = profiles.BuildRunnerFactory()
+    //        deps.ChangeProvider = profiles.ChangeProviderFactory()
+    //        deps.Scorer         = profiles.ScorerFactory()
+    //        deps.Analyzer       = profiles.AnalyzerFactory()
+    // 4. Call pipeline.Construct(deps, orchestrator.Stages, b.opts...).
+    // 5. Return App wrapping the lifecycle.Component + RPC controllers.
 }
 
 // QueueBuilder accumulates per-queue extension selections.
+// It is a VALUE TYPE — fluent methods return copies, so partial builders
+// are safe to reuse as templates.
 type QueueBuilder struct {
     name    string
     profile Profile
 }
 
 func Queue(name string) QueueBuilder { return QueueBuilder{name: name} }
+
+// Named returns a copy of this builder with a different queue name.
+// Use with template reuse: base := Queue("").WithScorer(...); base.Named("q1")
+func (q QueueBuilder) Named(name string) QueueBuilder {
+    q.name = name; return q
+}
 
 func (q QueueBuilder) WithChangeProvider(cp changeprovider.ChangeProvider) QueueBuilder {
     q.profile.ChangeProvider = cp; return q
@@ -411,7 +630,7 @@ func (q QueueBuilder) WithConflictAnalyzer(a conflict.Analyzer) QueueBuilder {
 
 - **Convenience, not replacement.** The builder calls `pipeline.Construct` — it does not bypass or duplicate the engine. Deployers who need full control (custom `Option`s, multi-service composition, fx integration) use the engine directly.
 - **Compile-time type safety.** Each `With*` method takes the concrete extension interface, not a string hint. A missing or mistyped extension is a compile error.
-- **`QueueBuilder` is a value type.** The fluent chain returns copies, not pointers, so partial builders are safe to reuse as templates (e.g. a `baseQueue` with defaults that each real queue overrides).
+- **`QueueBuilder` is a value type.** The fluent chain returns copies, not pointers, so partial builders are safe to reuse as templates (e.g. a `baseQueue` with defaults that each real queue overrides — see the template-reuse example above).
 - **`Build()` validates eagerly.** Missing required fields (no storage, no queues, zero queue profiles) produce a clear error at build time, not a nil-pointer panic at runtime.
 - **No global state.** `New()` returns an isolated builder. Multiple orchestrator apps can coexist in the same process (useful for integration tests).
 
