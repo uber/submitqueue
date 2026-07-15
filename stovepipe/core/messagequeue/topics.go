@@ -28,12 +28,6 @@ const (
 	// controller consumes it, reloads the Request, and decides the build strategy.
 	TopicKeyProcess TopicKey = "process"
 
-<<<<<<< HEAD
-	// TopicKeyBuild carries admitted requests from process to build. process
-	// publishes a BuildRequest (the request id) after it persists the strategy
-	// and baseline; build reloads the Request from storage.
-	TopicKeyBuild TopicKey = "build"
-=======
 	// TopicKeyBuild carries requests whose build scope has been decided from
 	// process/analyze to the build stage. The producer publishes a BuildRequest
 	// (the request id) here; the build controller consumes it, reloads the
@@ -47,5 +41,4 @@ const (
 	// Partitioned by build id, so each build's poll loop is an independent
 	// partition.
 	TopicKeyBuildSignal TopicKey = "buildsignal"
->>>>>>> fe02a12 (feat(stovepipe): add BuildRequest/BuildSignal queue contract)
 )

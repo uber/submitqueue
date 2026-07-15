@@ -69,11 +69,7 @@ func TestWireFormat(t *testing.T) {
 // no topic_keys option names an unknown key.
 func TestTopicKeysBindEveryTopicKey(t *testing.T) {
 	bound := map[string]int{}
-<<<<<<< HEAD:stovepipe/core/messagequeue/process_test.go
-	for _, m := range []proto.Message{&ProcessRequest{}, &BuildRequest{}} {
-=======
 	for _, m := range []proto.Message{&ProcessRequest{}, &BuildRequest{}, &BuildSignal{}} {
->>>>>>> fe02a12 (feat(stovepipe): add BuildRequest/BuildSignal queue contract):stovepipe/core/messagequeue/messagequeue_test.go
 		keys := TopicKeys(m)
 		require.NotEmpty(t, keys, "message must declare a non-empty topic_keys option")
 		for _, key := range keys {
