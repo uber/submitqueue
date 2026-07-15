@@ -215,8 +215,9 @@ func run() error {
 	// Build the topic registry. The gateway publishes to the start of the
 	// orchestrator pipeline (TopicKeyStart) and the cancel topic (TopicKeyCancel) —
 	// both publish-only. It additionally consumes the log topic (TopicKeyLog):
-	// the gateway is the sole writer of the request log, persisting entries that
-	// the orchestrator publishes there.
+	// the gateway persists normal pipeline entries that the orchestrator
+	// publishes there. Orchestrator DLQ reconciliation may repair terminal
+	// request-log projections directly.
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{Key: topickey.TopicKeyStart, Name: "start", Queue: mysqlQueue},
 		{Key: topickey.TopicKeyCancel, Name: "cancel", Queue: mysqlQueue},
@@ -249,8 +250,8 @@ func run() error {
 
 	// Initialize storage from the shared app database connection. The land
 	// controller writes to this store directly; cancel/status use the request
-	// log store directly. The log consumer (registered below) is the sole
-	// persister of request log entries published by the orchestrator.
+	// log store directly. The log consumer registered below persists request
+	// log entries published by the orchestrator's normal pipeline.
 	store, err := mysqlstorage.NewStorage(appDB, scope.SubScope("storage"))
 	if err != nil {
 		return fmt.Errorf("failed to create storage: %w", err)
@@ -271,7 +272,7 @@ func run() error {
 	// Create controllers and wrap them for gRPC
 	pingController := controller.NewPingController(logger, scope)
 	landController := controller.NewLandController(logger.Sugar(), scope, cnt, store, queueConfigs, registry)
-	cancelController := controller.NewCancelController(logger.Sugar(), scope, requestLogStore, registry)
+	cancelController := controller.NewCancelController(logger.Sugar(), scope, store, registry)
 	statusController := controller.NewStatusController(logger.Sugar(), scope, requestLogStore)
 	gatewayServer := &GatewayServer{
 		pingController:   pingController,
@@ -285,9 +286,10 @@ func run() error {
 	// Register reflection service for debugging with grpcurl
 	reflection.Register(grpcServer)
 
-	// Create the queue consumer and register the log controller. The gateway is
-	// the sole persister of the request log: the orchestrator publishes entries
-	// to the log topic and this consumer writes them to storage.
+	// Create the queue consumer and register the log controller. The orchestrator
+	// publishes normal pipeline entries to the log topic and this consumer writes
+	// them to storage. Orchestrator DLQ reconciliation repairs terminal entries
+	// directly so reconciliation does not depend on another asynchronous path.
 	logConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
 		errs.NewClassifierProcessor(
 			// Storage (submitqueue/extension/storage/mysql) and queue (platform/extension/messagequeue/mysql)

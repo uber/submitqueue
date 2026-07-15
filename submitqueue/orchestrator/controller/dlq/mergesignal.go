@@ -34,6 +34,7 @@ type mergeSignalController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	store         storage.Storage
+	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -46,6 +47,7 @@ func NewDLQMergeSignalController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	store storage.Storage,
+	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) consumer.Controller {
@@ -54,6 +56,7 @@ func NewDLQMergeSignalController(
 		logger:        logger.Named(name),
 		metricsScope:  scope.SubScope(name),
 		store:         store,
+		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
@@ -83,7 +86,7 @@ func (c *mergeSignalController) Process(ctx context.Context, delivery consumer.D
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
 
-	if err := failBatch(ctx, c.store, c.logger, result.Id); err != nil {
+	if err := failBatch(ctx, c.store, c.registry, c.logger, result.Id, dmeta["dlq.last_error"]); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
 		return err
 	}

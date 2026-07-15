@@ -21,6 +21,7 @@ import (
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
@@ -36,7 +37,7 @@ import (
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	store         storage.Storage
+	materializer  *requestcore.Materializer
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -55,7 +56,7 @@ func NewController(
 	return &Controller{
 		logger:        logger.Named("log_controller"),
 		metricsScope:  scope.SubScope("log_controller"),
-		store:         store,
+		materializer:  requestcore.NewMaterializer(store),
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
@@ -87,10 +88,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"attempt", delivery.Attempt(),
 	)
 
-	// Persist request log to storage
-	if err := c.store.GetRequestLogStore().Insert(ctx, logEntry); err != nil {
+	// Persist the audit log and materialized views as one retryable application operation.
+	if err := c.materializer.PersistLog(ctx, logEntry); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to insert request log: %w", err)
+		return fmt.Errorf("failed to persist request log: %w", err)
 	}
 
 	return nil // Success - message will be acked

@@ -33,7 +33,7 @@ func TestDLQMergeSignalController_InterfaceAndAccessors(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
 
-	c := NewDLQMergeSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-mergesignal-dlq")
+	c := NewDLQMergeSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-mergesignal-dlq")
 
 	assert.Equal(t, "merge-signal_dlq", c.Name())
 	assert.Equal(t, consumer.TopicKey("merge-signal_dlq"), c.TopicKey())
@@ -58,15 +58,15 @@ func TestDLQMergeSignalController_Process_ReconcilesBatch(t *testing.T) {
 	}, nil)
 	requestStore.EXPECT().UpdateState(gomock.Any(), "q/1", int32(1), int32(2), entity.RequestStateError).Return(nil)
 
-	logStore := storagemock.NewMockRequestLogStore(ctrl)
-	logStore.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(nil)
+	registry := newTestLogRegistry(t, ctrl, 1, func(entity.RequestLog) error {
+		return nil
+	})
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
-	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 
-	c := NewDLQMergeSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-mergesignal-dlq")
+	c := NewDLQMergeSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, registry, TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-mergesignal-dlq")
 
 	payload, err := runwaymq.Marshal(&runwaymq.MergeResult{Id: "q/batch/1", Outcome: runwaypb.Outcome_FAILED, Reason: "boom"})
 	require.NoError(t, err)
@@ -79,7 +79,7 @@ func TestDLQMergeSignalController_Process_MalformedPayloadFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	store := storagemock.NewMockStorage(ctrl)
-	c := NewDLQMergeSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-mergesignal-dlq")
+	c := NewDLQMergeSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-mergesignal-dlq")
 
 	delivery := newMockDelivery(ctrl, []byte("garbage"))
 	require.Error(t, c.Process(context.Background(), delivery))

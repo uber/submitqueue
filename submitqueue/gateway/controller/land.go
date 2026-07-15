@@ -26,6 +26,7 @@ import (
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
+	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/queueconfig"
@@ -66,6 +67,7 @@ type LandController struct {
 	metricsScope tally.Scope
 	counter      counter.Counter
 	store        storage.Storage
+	materializer *requestcore.Materializer
 	queueConfigs queueconfig.Store
 	registry     consumer.TopicRegistry
 }
@@ -79,6 +81,7 @@ func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter cou
 		metricsScope: scope.SubScope("land_controller"),
 		counter:      counter,
 		store:        store,
+		materializer: requestcore.NewMaterializer(store),
 		queueConfigs: queueConfigs,
 		registry:     registry,
 	}
@@ -145,7 +148,7 @@ func (c *LandController) Land(ctx context.Context, req entity.LandRequest) (resu
 		Status:      entity.RequestStatusAccepted,
 		Metadata:    map[string]string{},
 	}
-	if err := c.store.GetRequestLogStore().Insert(ctx, logEntry); err != nil {
+	if err := c.materializer.PersistLog(ctx, logEntry); err != nil {
 		// Publication is the Land success boundary. Later pipeline events repair
 		// the accepting projection even if this accepted log is not persisted. If
 		// the client retries after losing the response, the orchestrator rejects
