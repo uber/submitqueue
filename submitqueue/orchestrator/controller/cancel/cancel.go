@@ -40,7 +40,7 @@
 // state and is already wired with the tree/dependent stores. While speculate
 // drives the batch to its terminal state, the other stages hold
 // BatchStateCancelling to "no new work": score and merge short-circuit
-// entirely, build enacts persisted cancel intents but never triggers CI, and
+// entirely, build enacts persisted cancel intents but never triggers builds, and
 // buildsignal keeps polling so the wind-down is recorded and speculate is
 // re-woken to finish.
 //

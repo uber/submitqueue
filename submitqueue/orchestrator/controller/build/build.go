@@ -49,16 +49,16 @@ import (
 // it is being torn down batch-wide, so the loop cancels every path's
 // in-flight build regardless of the path's recorded status (the sweep that
 // records per-path intents may not have run yet), which is how batch-level
-// cancellation reaches the runner — but no new CI is ever triggered for a
-// batch that is being torn down.
+// cancellation reaches the runner — but no new build is ever triggered for
+// a batch that is being torn down.
 //
 // Dedup for triggering is on the path->build mapping (PathBuildStore), not
 // on a Build row keyed by a derived key: the mapping is readable before
 // Trigger ever runs, so it is checked first. A crash between Trigger
 // succeeding and the mapping Create means redelivery re-triggers a fresh
 // build for the same path; the new mapping Create then races the
-// (never-persisted) old one and simply wins, orphaning the earlier CI
-// build. See the per-path loop below for the full crash-safety ordering.
+// (never-persisted) old one and simply wins, orphaning the earlier build
+// in the build system. See the per-path loop below for the full crash-safety ordering.
 // Implements consumer.Controller interface for integration with the consumer.
 type Controller struct {
 	logger        *zap.SugaredLogger
@@ -139,7 +139,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// leave any straggler builds to run out — so there is no path work left
 	// here. Cancelling batches proceed: the per-path loop below cancels
 	// every in-flight build of a batch being torn down (that is how a
-	// batch-level cancel reaches the runner) and guarantees no new CI is
+	// batch-level cancel reaches the runner) and guarantees no new build is
 	// ever kicked off for it.
 	if batch.State.IsTerminal() {
 		metrics.NamedCounter(c.metricsScope, opName, "skipped_terminal", 1)
@@ -175,16 +175,19 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		if batch.State == entity.BatchStateCancelling {
 			// Batch-wide teardown: every path of a Cancelling batch is
 			// doomed, so any in-flight build is cancelled right here,
-			// regardless of the path's recorded status — a path can still
-			// read Building (or even Cancelled — see the pre-build cancel
-			// race in speculate's cancelTree) when this message races the
-			// tree sweep that records the intents, and waiting for the
-			// sweep would only leave CI running one round-trip longer.
-			// Passed and Failed are skipped without I/O: those statuses
-			// derive from terminal builds, so there is nothing to stop.
-			// enactCancel tolerates paths with no build. Never trigger
-			// new CI for a batch being torn down; speculate's sweep owns
-			// settling the path statuses and the terminal batch write.
+			// regardless of the path's recorded status. A path can still
+			// read Building when this message races the tree sweep that
+			// records the intents, or already read Cancelled from another
+			// signal — a speculation-level cancel (a selector or
+			// prioritizer decision) that landed before its build was
+			// stamped onto the tree — and waiting for the sweep would only
+			// leave the build running in the build system one round-trip
+			// longer. Passed and Failed are skipped without I/O: those
+			// statuses derive from terminal builds, so there is nothing to
+			// stop. enactCancel tolerates paths with no build. Never
+			// trigger a new build for a batch being torn down; speculate's
+			// sweep owns settling the path statuses and the terminal batch
+			// write.
 			if p.Status == entity.SpeculationPathStatusPassed || p.Status == entity.SpeculationPathStatusFailed {
 				continue
 			}
@@ -337,8 +340,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 			if errors.Is(err, storage.ErrAlreadyExists) {
 				// A concurrent delivery already won the mapping race for this
 				// path. Our just-created build row above is now an accepted
-				// orphan: lost mapping races cost one orphaned CI build by
-				// design — duplicates are the retry/redundancy mechanism, and
+				// orphan: lost mapping races cost one orphaned build in the
+				// build system by design — duplicates are the retry/redundancy mechanism, and
 				// the recorded mapping (not the build row) is the source of
 				// truth for "which build resolves this path." Republish
 				// buildsignal for the winner so it has an active poll loop

@@ -1060,9 +1060,9 @@ func (c *Controller) cancelTree(ctx context.Context, batch entity.Batch) (int, e
 
 	// Terminal-transition guard: a path can sit at Cancelled while its build
 	// is still live — a pre-build Cancel (selection or prioritize) can land
-	// in the window after the build stage triggered CI but before any
-	// reconcile stamped the build onto the tree. Letting the batch settle
-	// then would strand that CI forever: a terminal batch stops the
+	// in the window after the build stage triggered a build but before any
+	// reconcile stamped it onto the tree. Letting the batch settle then
+	// would strand that build forever: a terminal batch stops the
 	// buildsignal loop, so the orphan's stop would never be recorded. So on
 	// a pass that would otherwise settle, resolve pre-existing Cancelled
 	// paths' mappings too and pull any that still has a live build back to

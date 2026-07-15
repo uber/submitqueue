@@ -159,7 +159,7 @@ func TestController_Process_NoPrioritizedPaths(t *testing.T) {
 	// to dedup-check.
 
 	br := buildrunnermock.NewMockBuildRunner(ctrl)
-	// No Trigger expectation: a stray CI trigger with no Prioritized path
+	// No Trigger expectation: a stray build trigger with no Prioritized path
 	// fails the test.
 	controller := newTestController(t, ctrl, store, br, nil, nil)
 
@@ -435,7 +435,7 @@ func TestController_Process_SpeculationTreeStorageFailure(t *testing.T) {
 
 // TestController_Process_TerminalShortCircuit: a terminal batch must
 // short-circuit before touching the speculation tree or build stores: the
-// build controller acks without triggering an external CI run and without
+// build controller acks without triggering a build in the build system and without
 // publishing anything. The cancel flow only writes its terminal state after
 // every build has quiesced, and other terminal transitions leave stragglers
 // to run out, so there is nothing left for this controller to enact.
@@ -455,7 +455,7 @@ func TestController_Process_TerminalShortCircuit(t *testing.T) {
 			// No tree/build/path-build store expectations: a terminal batch
 			// must never reach the speculation tree or build stores.
 
-			// No Trigger expectation: a stray CI trigger on a terminal batch
+			// No Trigger expectation: a stray build trigger on a terminal batch
 			// fails the test.
 			br := buildrunnermock.NewMockBuildRunner(ctrl)
 
@@ -472,7 +472,7 @@ func TestController_Process_TerminalShortCircuit(t *testing.T) {
 // batch in BatchStateCancelling is being torn down batch-wide, so the loop
 // cancels every path's in-flight build regardless of the path's recorded
 // status — including a path still recorded as Building, which the tree
-// sweep may not have marked Cancelling yet — while never triggering CI.
+// sweep may not have marked Cancelling yet — while never triggering a build.
 // Passed paths are skipped without any storage read (their builds are
 // terminal by construction), and a path with no build yet is a tolerated
 // no-op (the Prioritized path here gets no Trigger and no Create).
@@ -515,7 +515,7 @@ func TestController_Process_CancellingBatchCancelsInFlightNeverTriggers(t *testi
 	br := buildrunnermock.NewMockBuildRunner(ctrl)
 	br.EXPECT().Cancel(gomock.Any(), entity.BuildID{ID: "runner-1"}).Return(nil)
 	br.EXPECT().Cancel(gomock.Any(), entity.BuildID{ID: "runner-2"}).Return(nil)
-	// No Trigger expectation: a stray CI trigger fails the test.
+	// No Trigger expectation: a stray build trigger fails the test.
 
 	var published []string
 	controller := newTestController(t, ctrl, store, br, nil, &published)

@@ -912,7 +912,7 @@ func TestController_Process_CancellingFlow(t *testing.T) {
 			// a live build (pre-build Cancel racing the build stage's
 			// trigger). A pass about to settle must pull it back to
 			// Cancelling so the build stage enacts the stop, instead of
-			// CASing the batch terminal over a running CI.
+			// CASing the batch terminal over a running build.
 			name:        "cancelled_path_with_live_build_reopened",
 			wantPending: true,
 			setup: func(t *testing.T, h *testHarness, batch entity.Batch) {

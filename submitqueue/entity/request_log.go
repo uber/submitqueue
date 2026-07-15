@@ -58,7 +58,7 @@ const (
 	// RequestStatusSpeculated indicates that the request has been successfully speculated and is ready to be validated via a build system.
 	RequestStatusSpeculated RequestStatus = "speculated"
 
-	// RequestStatusBuilding indicates that the request is currently being built (e.g., CI/CD system is building the change on top of the speculation path).
+	// RequestStatusBuilding indicates that the request is currently being built (e.g., the build system is building the change on top of the speculation path).
 	RequestStatusBuilding RequestStatus = "building"
 
 	// RequestStatusBuilt indicates that the request has finished the build step successfully and can move to the next phase, either wait for other requests to finish or move to the land phase.
