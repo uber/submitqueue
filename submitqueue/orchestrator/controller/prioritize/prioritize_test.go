@@ -108,14 +108,15 @@ func TestController_Identity(t *testing.T) {
 	var _ consumer.Controller = h.controller
 }
 
-// TestController_Process_NoSpeculatingBatches verifies an empty queue just
-// acks without touching the prioritizer or publishing anything.
-func TestController_Process_NoSpeculatingBatches(t *testing.T) {
+// TestController_Process_NoInFlightBatches verifies an empty queue (no
+// Speculating or Cancelling batches) just acks without touching the
+// prioritizer or publishing anything.
+func TestController_Process_NoInFlightBatches(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	h := newTestHarness(t, ctrl)
 
 	h.batchStore.EXPECT().
-		GetByQueueAndStates(gomock.Any(), "q", []entity.BatchState{entity.BatchStateSpeculating}).
+		GetByQueueAndStates(gomock.Any(), "q", []entity.BatchState{entity.BatchStateSpeculating, entity.BatchStateCancelling}).
 		Return(nil, nil)
 
 	err := h.controller.Process(context.Background(), queueDelivery(t, ctrl, "q"))
@@ -131,7 +132,7 @@ func TestController_Process_TreeMissingSkipsBatch(t *testing.T) {
 
 	batch := entity.Batch{ID: "q/batch/1", Queue: "q", State: entity.BatchStateSpeculating}
 	h.batchStore.EXPECT().
-		GetByQueueAndStates(gomock.Any(), "q", []entity.BatchState{entity.BatchStateSpeculating}).
+		GetByQueueAndStates(gomock.Any(), "q", []entity.BatchState{entity.BatchStateSpeculating, entity.BatchStateCancelling}).
 		Return([]entity.Batch{batch}, nil)
 	h.treeStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(entity.SpeculationTree{}, storage.ErrNotFound)
 
@@ -156,7 +157,7 @@ func TestController_Process_PromoteApplied(t *testing.T) {
 	}
 
 	h.batchStore.EXPECT().
-		GetByQueueAndStates(gomock.Any(), "q", []entity.BatchState{entity.BatchStateSpeculating}).
+		GetByQueueAndStates(gomock.Any(), "q", []entity.BatchState{entity.BatchStateSpeculating, entity.BatchStateCancelling}).
 		Return([]entity.Batch{batch}, nil)
 	h.treeStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(tree, nil)
 	h.prio.EXPECT().Prioritize(gomock.Any(), gomock.Any()).Return([]entity.PathDecision{
@@ -199,7 +200,7 @@ func TestController_Process_IllegalDecisionSkipped(t *testing.T) {
 	}
 
 	h.batchStore.EXPECT().
-		GetByQueueAndStates(gomock.Any(), "q", []entity.BatchState{entity.BatchStateSpeculating}).
+		GetByQueueAndStates(gomock.Any(), "q", []entity.BatchState{entity.BatchStateSpeculating, entity.BatchStateCancelling}).
 		Return([]entity.Batch{batch}, nil)
 	h.treeStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(tree, nil)
 	// Cancel on a Selected path is not a legal transition: skip it.
@@ -207,6 +208,73 @@ func TestController_Process_IllegalDecisionSkipped(t *testing.T) {
 		{PathID: "q/batch/1/path/0", Action: entity.SpeculationPathActionCancel},
 	}, nil)
 	// No treeStore.Update, no publish expected.
+
+	err := h.controller.Process(context.Background(), queueDelivery(t, ctrl, "q"))
+	require.NoError(t, err)
+}
+
+// TestController_Process_CancellingBatchRoutedNotRanked verifies a
+// Cancelling batch's tree is loaded for routing only: none of its paths are
+// offered to the prioritizer (even statuses that would normally be
+// candidates), no decision is applied to it, but republishBuilds still
+// publishes a build message for it because its tree carries a persisted
+// Cancelling intent the build stage must enact.
+func TestController_Process_CancellingBatchRoutedNotRanked(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	h := newTestHarness(t, ctrl)
+
+	speculating := entity.Batch{ID: "q/batch/1", Queue: "q", State: entity.BatchStateSpeculating}
+	cancelling := entity.Batch{ID: "q/batch/2", Queue: "q", State: entity.BatchStateCancelling}
+
+	specTree := entity.SpeculationTree{
+		BatchID: speculating.ID,
+		Version: 1,
+		Paths: []entity.SpeculationPathInfo{
+			{ID: "q/batch/1/path/0", Path: entity.SpeculationPath{Head: speculating.ID}, Status: entity.SpeculationPathStatusSelected},
+		},
+	}
+	// The Cancelling batch's tree carries a Building path (a would-be
+	// candidate had the batch not been cancelled) alongside its persisted
+	// Cancelling intent.
+	cxlTree := entity.SpeculationTree{
+		BatchID: cancelling.ID,
+		Version: 4,
+		Paths: []entity.SpeculationPathInfo{
+			{ID: "q/batch/2/path/0", Path: entity.SpeculationPath{Head: cancelling.ID}, Status: entity.SpeculationPathStatusBuilding, BuildID: "runner-2"},
+			{ID: "q/batch/2/path/1", Path: entity.SpeculationPath{Head: cancelling.ID}, Status: entity.SpeculationPathStatusCancelling, BuildID: "runner-3"},
+		},
+	}
+
+	h.batchStore.EXPECT().
+		GetByQueueAndStates(gomock.Any(), "q", []entity.BatchState{entity.BatchStateSpeculating, entity.BatchStateCancelling}).
+		Return([]entity.Batch{speculating, cancelling}, nil)
+	h.treeStore.EXPECT().Get(gomock.Any(), speculating.ID).Return(specTree, nil)
+	h.treeStore.EXPECT().Get(gomock.Any(), cancelling.ID).Return(cxlTree, nil)
+
+	// Only the Speculating batch's path is a candidate; the Cancelling
+	// batch's paths must not appear, whatever their status. Return a rogue
+	// decision naming the Cancelling batch's Building path — it was never a
+	// candidate, so it must be skipped as illegal rather than applied.
+	h.prio.EXPECT().Prioritize(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, candidates []entity.SpeculationPathInfo) ([]entity.PathDecision, error) {
+			require.Len(t, candidates, 1)
+			assert.Equal(t, "q/batch/1/path/0", candidates[0].ID)
+			return []entity.PathDecision{
+				{PathID: "q/batch/2/path/0", Action: entity.SpeculationPathActionCancel},
+			}, nil
+		})
+
+	// The rogue decision is dropped -> no tree Update on either batch.
+	// republishBuilds fires for the Cancelling batch only: the Speculating
+	// tree has no Prioritized-no-build or Cancelling path.
+	h.buildPub.EXPECT().
+		Publish(gomock.Any(), "build", gomock.AssignableToTypeOf(entityqueue.Message{})).
+		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+			bid, err := entity.BatchIDFromBytes(msg.Payload)
+			require.NoError(t, err)
+			assert.Equal(t, cancelling.ID, bid.ID)
+			return nil
+		})
 
 	err := h.controller.Process(context.Background(), queueDelivery(t, ctrl, "q"))
 	require.NoError(t, err)
@@ -231,7 +299,7 @@ func TestController_Process_CancelBuildingCapturesIntent(t *testing.T) {
 	}
 
 	h.batchStore.EXPECT().
-		GetByQueueAndStates(gomock.Any(), "q", []entity.BatchState{entity.BatchStateSpeculating}).
+		GetByQueueAndStates(gomock.Any(), "q", []entity.BatchState{entity.BatchStateSpeculating, entity.BatchStateCancelling}).
 		Return([]entity.Batch{batch}, nil)
 	h.treeStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(tree, nil)
 	h.prio.EXPECT().Prioritize(gomock.Any(), gomock.Any()).Return([]entity.PathDecision{
@@ -271,7 +339,7 @@ func TestController_Process_CancelPrioritizedNoRunnerCall(t *testing.T) {
 	}
 
 	h.batchStore.EXPECT().
-		GetByQueueAndStates(gomock.Any(), "q", []entity.BatchState{entity.BatchStateSpeculating}).
+		GetByQueueAndStates(gomock.Any(), "q", []entity.BatchState{entity.BatchStateSpeculating, entity.BatchStateCancelling}).
 		Return([]entity.Batch{batch}, nil)
 	h.treeStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(tree, nil)
 	h.prio.EXPECT().Prioritize(gomock.Any(), gomock.Any()).Return([]entity.PathDecision{
@@ -305,7 +373,7 @@ func TestController_Process_VersionMismatchErrors(t *testing.T) {
 	}
 
 	h.batchStore.EXPECT().
-		GetByQueueAndStates(gomock.Any(), "q", []entity.BatchState{entity.BatchStateSpeculating}).
+		GetByQueueAndStates(gomock.Any(), "q", []entity.BatchState{entity.BatchStateSpeculating, entity.BatchStateCancelling}).
 		Return([]entity.Batch{batch}, nil)
 	h.treeStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(tree, nil)
 	h.prio.EXPECT().Prioritize(gomock.Any(), gomock.Any()).Return([]entity.PathDecision{
@@ -335,7 +403,7 @@ func TestController_Process_PrioritizerErrors(t *testing.T) {
 	}
 
 	h.batchStore.EXPECT().
-		GetByQueueAndStates(gomock.Any(), "q", []entity.BatchState{entity.BatchStateSpeculating}).
+		GetByQueueAndStates(gomock.Any(), "q", []entity.BatchState{entity.BatchStateSpeculating, entity.BatchStateCancelling}).
 		Return([]entity.Batch{batch}, nil)
 	h.treeStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(tree, nil)
 	h.prio.EXPECT().Prioritize(gomock.Any(), gomock.Any()).Return(nil, errors.New("policy boom"))
@@ -363,7 +431,7 @@ func TestController_Process_RepublishesPreExistingPrioritized(t *testing.T) {
 	}
 
 	h.batchStore.EXPECT().
-		GetByQueueAndStates(gomock.Any(), "q", []entity.BatchState{entity.BatchStateSpeculating}).
+		GetByQueueAndStates(gomock.Any(), "q", []entity.BatchState{entity.BatchStateSpeculating, entity.BatchStateCancelling}).
 		Return([]entity.Batch{batch}, nil)
 	h.treeStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(tree, nil)
 	h.prio.EXPECT().Prioritize(gomock.Any(), gomock.Any()).Return(nil, nil)

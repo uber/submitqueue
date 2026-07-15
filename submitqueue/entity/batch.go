@@ -38,9 +38,9 @@ const (
 	// batch has not yet been transitioned to BatchStateCancelled. A batch in this state may still reach
 	// BatchStateSucceeded or BatchStateFailed if a concurrent merge wins the race (e.g. the push had
 	// already completed before the cancel CAS observed the batch); those terminal states prevail.
-	// Forward-progress controllers must treat this state as halted (no new work). The speculate
-	// controller owns the transition to the terminal BatchStateCancelled and the downstream fan-out
-	// (cancelling in-flight builds, respeculating dependents, publishing to conclude).
+	// The state holds while the batch's in-flight builds wind down: no new pipeline work may start for
+	// the batch, and the transition to the terminal BatchStateCancelled follows once every build has
+	// been observed in a terminal status.
 	BatchStateCancelling BatchState = "cancelling"
 	// BatchStateCancelled is the terminal state of a batch that was cancelled before completion.
 	BatchStateCancelled BatchState = "cancelled"
@@ -62,9 +62,9 @@ func (s BatchState) IsTerminal() bool {
 }
 
 // IsBatchStateHalted returns true if the batch is either terminal or in the process of being cancelled.
-// Forward-progress controllers (score, build, buildsignal, speculate, merge) use this to short-circuit
-// work for batches that the user has asked to cancel — even though Cancelling is non-terminal, no
-// further pipeline work should start (cancel will write the terminal state and fan out).
+// Use it to gate work that must not start for a batch that will not proceed — even though Cancelling
+// is non-terminal, a halted batch makes no forward progress (cancellation will write the terminal
+// state once in-flight work quiesces).
 func IsBatchStateHalted(s BatchState) bool {
 	return s.IsTerminal() || s == BatchStateCancelling
 }

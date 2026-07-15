@@ -25,7 +25,6 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/dependencylimit"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/enumerator"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/pathscorer"
@@ -53,9 +52,11 @@ import (
 //
 //   - Created, Scored, or Speculating → speculateBatch, the unified entry
 //     point described below.
-//   - Cancelling → cancelBatch: cancel every in-flight Build via the queue's
-//     build runner, mark every non-terminal speculation path Cancelled,
-//     respeculate dependents, CAS to terminal Cancelled, publish to conclude.
+//   - Cancelling → cancelBatch: sweep the speculation tree toward
+//     cancellation (live builds → Cancelling intent, everything else →
+//     Cancelled), route the persisted intents to the build stage via
+//     prioritize, and — only once every build has quiesced — respeculate
+//     dependents, CAS to terminal Cancelled, publish to conclude.
 //   - Merging → no-op (owned by the merge controller).
 //   - Terminal → re-publish the dependent fan-out and the conclude event.
 //     Every terminal transition is routed back through this controller, so
@@ -89,17 +90,25 @@ import (
 //     to Merging. Otherwise, if no path can ever merge, CAS to Failed and
 //     publish to conclude. Otherwise wait for the next event.
 //
-// Merge readiness requires a path's own build to have Passed in addition
-// to its base having landed: build results gate merging directly rather
-// than surfacing indirectly through runway's merge failure.
+// Two things must both hold before a path merges: its own build Passed, and
+// its base actually landed (Succeeded). The build result is checked here on
+// purpose — a failed build should stop the merge directly, not surface
+// later as a runway merge failure.
 //
-// Speculation-tree decisions that would cancel a running build during
-// speculateBatch (applySelection and reconcile) are captured as intent only
-// (SpeculationPathStatusCancelling) — nothing in speculateBatch or reconcile
-// calls a build runner. cancelBatch is the one exception in this file:
-// batch-level cancellation calls the build runner directly, because halted
-// batches are short-circuited everywhere else, so nothing downstream would
-// ever enact a batch-terminal cancel.
+// A base that is only Merging — published for merge but not yet confirmed —
+// does NOT count as landed. The queue can deliver messages out of order
+// when one is retrying, so our merge request could reach runway before the
+// base's, and we would land changes that were only validated on top of a
+// base that never landed. Merging optimistically behind a Merging base
+// would require the merge stage to verify dependency outcomes before
+// handing off to runway; relaxing this check alone is not safe.
+//
+// No code in this file talks to a build runner. Every decision that stops a
+// build — a dead or deselected path during speculateBatch (applySelection
+// and reconcile), or the batch-wide sweep during cancelBatch — is captured
+// as intent only (SpeculationPathStatusCancelling) and flows through
+// prioritize to the build stage, the sole owner of runner interaction. The
+// path settles to Cancelled only once its build is observed terminal.
 //
 // The controller is re-triggered on every relevant downstream event
 // (buildsignal, a prioritize tree write, merge, a dependency's own
@@ -113,7 +122,6 @@ type Controller struct {
 	scorers       pathscorer.Factory
 	selectors     selector.Factory
 	depLimits     dependencylimit.Factory
-	buildRunners  buildrunner.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -134,7 +142,6 @@ func NewController(
 	scorers pathscorer.Factory,
 	selectors selector.Factory,
 	depLimits dependencylimit.Factory,
-	buildRunners buildrunner.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -147,7 +154,6 @@ func NewController(
 		scorers:       scorers,
 		selectors:     selectors,
 		depLimits:     depLimits,
-		buildRunners:  buildRunners,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -176,9 +182,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	// Cancelling intent: the cancel controller has handed this batch off to
-	// speculate to drive to terminal. Cancel in-flight builds, cancel the
-	// speculation tree, fan out to dependents, CAS to terminal Cancelled, and
-	// publish to conclude.
+	// speculate to drive to terminal. Each pass sweeps the speculation tree
+	// toward cancellation, routes any persisted cancel intents to the build
+	// stage via prioritize, and — only once every build has quiesced — fans
+	// out to dependents, CASes to terminal Cancelled, and publishes to
+	// conclude.
 	if batch.State == entity.BatchStateCancelling {
 		return c.cancelBatch(ctx, batch)
 	}
@@ -759,8 +767,9 @@ func (c *Controller) applySelection(batch entity.Batch, tree entity.SpeculationT
 // three outcomes applies per pass:
 //
 //  1. Merge now: some path is mergeableNow (its build passed and its
-//     assumption set holds) — publish to merge and CAS the batch to
-//     Merging.
+//     assumption set holds) — publish to merge, CAS the batch to Merging,
+//     and wake dependents, for whom the Merging batch already counts as
+//     landed (optimistic merge finalization; see mergeableNow).
 //  2. Wait: no path is mergeable yet, but at least one is still viable —
 //     no-op; the next event (a build outcome via buildsignal, a dependency
 //     going terminal) re-runs this evaluation.
@@ -851,6 +860,11 @@ func (c *Controller) finalize(ctx context.Context, batch entity.Batch, tree enti
 // condition is what makes this stricter than a plain "base landed" check: a
 // still in-flight non-base dependency might yet land and dead the path (see
 // pathDead), so merging must wait for it to resolve one way or the other.
+//
+// A base dependency in Merging deliberately does NOT count as landed: the
+// queue can deliver messages out of order when one is retrying, so merging
+// behind an unconfirmed base could land changes validated on a base that
+// never landed. See the Merging note on the Controller doc.
 func mergeableNow(p entity.SpeculationPathInfo, depByID map[string]entity.Batch) bool {
 	if p.Status != entity.SpeculationPathStatusPassed {
 		return false
@@ -892,44 +906,49 @@ func viable(p entity.SpeculationPathInfo, depByID map[string]entity.Batch) bool 
 // cancelBatch drives a batch from BatchStateCancelling to BatchStateCancelled.
 // The cancel controller records the user's intent (Cancelling) and hands the
 // batch off; speculate owns the rest because all the work that must precede
-// the terminal write — flipping in-flight builds, cancelling the speculation
-// tree, respeculating dependents — already lives in the speculate domain.
-// The terminal transition is the single writer of every non-Cancelling batch
-// state across the system.
+// the terminal write — settling the speculation tree, respeculating
+// dependents — already lives in the speculate domain. The terminal
+// transition is the single writer of every non-Cancelling batch state across
+// the system.
 //
-// Order matters for correctness:
+// Like speculateBatch, this is a reconcile pass, not a one-shot — it never
+// talks to a build runner. Each invocation sweeps the tree (cancelTree),
+// dropping paths with nothing running straight to Cancelled and capturing a
+// live build's stop as intent (Cancelling). While any path is still
+// Cancelling the batch stays in BatchStateCancelling: the pass publishes the
+// queue to prioritize — which routes the persisted intents to the build
+// stage, the sole owner of runner interaction — and acks. Each buildsignal
+// tick for a winding-down build re-publishes this batch to speculate, so the
+// pass re-runs until every build has been observed terminal and no
+// Cancelling path remains. Even if a runner cancel is never enacted (lost
+// message, runner refusing), the sweep still converges once the build
+// finishes on its own.
 //
-//  1. Cancel every in-flight Build recorded for the batch via the queue's
-//     build runner (cancelBuilds). This is the one place in this file that
-//     talks to a build runner directly: the build stage short-circuits
-//     halted batches, so it never gets a chance to enact a batch-terminal
-//     cancel itself, unlike a single dead path's Cancelling intent.
+// Only once nothing is pending does the terminal sequence run, in an order
+// that matters:
 //
-//  2. Mark every non-terminal path in the speculation tree Cancelled
-//     (cancelTree), so a later reconcile pass (redelivery, or a stray
-//     buildsignal) sees a tree consistent with the batch's terminal state.
-//
-//  3. CAS the batch to terminal Cancelled. This must happen BEFORE the
+//  1. CAS the batch to terminal Cancelled. This must happen BEFORE the
 //     dependent fan-out: finalize only drops a Cancelled dep from the chain,
 //     so dependents woken with the dep still in Cancelling would wait
 //     pending and never get pinged again.
 //
-//  4. Re-publish each downstream dependent to speculate so they can drop
+//  2. Re-publish each downstream dependent to speculate so they can drop
 //     this cancelled batch from their chain and advance (or finalize, if
 //     this was their last outstanding dep).
 //
-//  5. Publish to conclude so contained requests reach RequestStateCancelled.
+//  3. Publish to conclude so contained requests reach RequestStateCancelled.
 //
-// A crash between steps 3 and 4/5 is recovered on redelivery via the
+// A crash between steps 1 and 2/3 is recovered on redelivery via the
 // terminal self-heal branch, which re-runs the dependent fan-out and the
 // conclude publish for already-Cancelled batches.
 //
-// storage.ErrVersionMismatch on the terminal CAS is returned as-is for the
-// base controller to classify as retryable; the redelivery will land in the
-// self-heal branch and complete the fan-out.
+// storage.ErrVersionMismatch on the terminal CAS is returned as-is, like
+// every storage error here — retryability is the consumer's classifier
+// walk's decision. A retried delivery lands in the self-heal branch and
+// completes the fan-out.
 func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error {
 	metrics.NamedCounter(c.metricsScope, opName, "cancel_batch", 1)
-	c.logger.Infow("cancelling batch",
+	c.logger.Debugw("cancel sweep",
 		"batch_id", batch.ID,
 		"queue", batch.Queue,
 	)
@@ -939,12 +958,26 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 	// collateral requests need a fresh request ID and a re-publish to TopicKeyStart so
 	// they can be re-batched without the cancelled change.
 
-	if err := c.cancelBuilds(ctx, batch); err != nil {
+	pending, err := c.cancelTree(ctx, batch)
+	if err != nil {
 		return err
 	}
 
-	if err := c.cancelTree(ctx, batch); err != nil {
-		return err
+	if pending > 0 {
+		// Builds are still winding down. The Cancelling intents are already
+		// persisted; hand them to the build stage through the queue-wide
+		// prioritize stage and wait for the next buildsignal wake to
+		// re-evaluate.
+		metrics.NamedCounter(c.metricsScope, opName, "cancel_pending_builds", 1)
+		c.logger.Debugw("waiting for builds to quiesce before terminal cancel",
+			"batch_id", batch.ID,
+			"pending_paths", pending,
+		)
+		if err := c.publishQueue(ctx, topickey.TopicKeyPrioritize, batch.Queue); err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+			return fmt.Errorf("failed to publish queue %s to prioritize: %w", batch.Queue, err)
+		}
+		return nil
 	}
 
 	newVersion := batch.Version + 1
@@ -954,6 +987,10 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 	}
 	batch.Version = newVersion
 	batch.State = entity.BatchStateCancelled
+	c.logger.Infow("batch cancelled",
+		"batch_id", batch.ID,
+		"queue", batch.Queue,
+	)
 
 	if err := c.respeculateDependents(ctx, batch); err != nil {
 		return err
@@ -967,129 +1004,142 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 	return nil
 }
 
-// cancelBuilds cancels every non-terminal Build recorded for the batch via
-// the queue's build runner, then flips it locally to BuildStatusCancelled.
-// The batch's speculation tree enumerates the paths to consider; each path's
-// build (if any) is located through the path->build mapping keyed by the
-// path's assigned ID (SpeculationPathInfo.ID) — a two-hop lookup (mapping
-// then build), there is no batch-scoped listing. The build's ID is both its
-// store key and the runner handle, so the runner is addressed directly by
-// it. The build runner is resolved lazily, at most once, so a batch with no
-// in-flight builds never touches the factory. A missing tree, or a path with
-// no mapping yet, is benign: it means cancel arrived before anything was
-// ever triggered for that path. A mapping that resolves to a missing build
-// row is an invariant breach, handled defensively (see reconcile). A batch
-// with no builds yet, or only already-terminal builds, is a no-op. The local
-// UpdateStatus flip stays required after a successful runner Cancel:
-// buildsignal short-circuits halted batches, so nothing else ever records the
-// stop.
-func (c *Controller) cancelBuilds(ctx context.Context, batch entity.Batch) error {
-	tree, err := c.store.GetSpeculationTreeStore().Get(ctx, batch.ID)
-	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			metrics.NamedCounter(c.metricsScope, opName, "cancel_builds_no_tree", 1)
-			return nil
-		}
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to get speculation tree for batch %s: %w", batch.ID, err)
-	}
-
-	var runner buildrunner.BuildRunner
-	resolveRunner := func() (buildrunner.BuildRunner, error) {
-		if runner != nil {
-			return runner, nil
-		}
-		r, err := c.buildRunners.For(buildrunner.Config{QueueName: batch.Queue})
-		if err != nil {
-			return nil, fmt.Errorf("failed to get build runner for queue %s: %w", batch.Queue, err)
-		}
-		runner = r
-		return r, nil
-	}
-
-	for _, p := range tree.Paths {
-		pb, err := c.store.GetSpeculationPathBuildStore().Get(ctx, p.ID)
-		if err != nil {
-			if errors.Is(err, storage.ErrNotFound) {
-				continue
-			}
-			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-			return fmt.Errorf("failed to get path->build mapping for path %s of batch %s: %w", p.ID, batch.ID, err)
-		}
-
-		b, err := c.store.GetBuildStore().Get(ctx, pb.BuildID)
-		if err != nil {
-			if errors.Is(err, storage.ErrNotFound) {
-				// Invariant breach: see reconcile's identical handling.
-				metrics.NamedCounter(c.metricsScope, opName, "mapping_dangling", 1)
-				c.logger.Warnw("path->build mapping points at a missing build; skipping cancel for path",
-					"batch_id", batch.ID,
-					"path_id", p.ID,
-					"build_id", pb.BuildID,
-				)
-				continue
-			}
-			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-			return fmt.Errorf("failed to get build %s for path %s of batch %s: %w", pb.BuildID, p.ID, batch.ID, err)
-		}
-		if b.Status.IsTerminal() {
-			metrics.NamedCounter(c.metricsScope, opName, "cancel_build_already_terminal", 1)
-			continue
-		}
-
-		r, err := resolveRunner()
-		if err != nil {
-			return err
-		}
-		if err := r.Cancel(ctx, entity.BuildID{ID: b.ID}); err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "cancel_errors", 1)
-			return fmt.Errorf("failed to cancel build %s for batch %s: %w", b.ID, batch.ID, err)
-		}
-		if err := c.store.GetBuildStore().UpdateStatus(ctx, b.ID, entity.BuildStatusCancelled); err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-			return fmt.Errorf("failed to cancel build %s for batch %s: %w", b.ID, batch.ID, err)
-		}
-		metrics.NamedCounter(c.metricsScope, opName, "cancel_build_done", 1)
-	}
-	return nil
-}
-
-// cancelTree marks every non-terminal path in the batch's speculation tree
-// Cancelled and persists the change under the tree's version lock. Tolerates
-// a missing tree (the batch was cancelled before it was ever speculated on)
-// and is a no-op if nothing needed to change.
-func (c *Controller) cancelTree(ctx context.Context, batch entity.Batch) error {
+// cancelTree sweeps the batch's speculation tree toward cancellation and
+// reports how many paths remain Cancelling — that is, whose builds have not
+// yet been observed terminal. Terminal paths are settled outcomes and are
+// skipped without I/O on ordinary passes (a pass about to settle re-checks
+// Cancelled paths once — see the terminal-transition guard below). Every
+// other path is resolved through the path->build mapping keyed by its
+// assigned ID (SpeculationPathInfo.ID) — the same two-hop lookup as
+// reconcile, with the same tolerance for a path with no mapping yet and the
+// same defensive handling of a mapping whose build row is missing: in both
+// cases nothing is running, so the path drops straight to Cancelled. A path
+// whose build is already terminal likewise settles to Cancelled; a path
+// whose build is still in flight is marked Cancelling — intent only, enacted
+// by the build stage. A missing tree (the batch was cancelled before it was
+// ever speculated on) is benign: nothing to sweep, nothing pending. The
+// sweep is persisted under the tree's version lock only when a status
+// actually moved, and costs one pass with at most two point reads per
+// unresolved path, mirroring reconcile.
+func (c *Controller) cancelTree(ctx context.Context, batch entity.Batch) (int, error) {
 	tree, err := c.store.GetSpeculationTreeStore().Get(ctx, batch.ID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			metrics.NamedCounter(c.metricsScope, opName, "cancel_tree_not_found", 1)
-			return nil
+			return 0, nil
 		}
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to get speculation tree for batch %s: %w", batch.ID, err)
+		return 0, fmt.Errorf("failed to get speculation tree for batch %s: %w", batch.ID, err)
 	}
 
-	paths := make([]entity.SpeculationPathInfo, len(tree.Paths))
-	copy(paths, tree.Paths)
+	paths := tree.Paths
 	changed := false
+	pending := 0
+	// resolved marks paths whose build state this pass already read, so the
+	// terminal-transition guard below never re-reads a path settled by this
+	// very pass.
+	resolved := make([]bool, len(paths))
 	for i, p := range paths {
 		if isTerminalPathStatus(p.Status) {
 			continue
 		}
-		paths[i].Status = entity.SpeculationPathStatusCancelled
-		changed = true
+		resolved[i] = true
+
+		status, err := c.cancelPathStatus(ctx, batch, p)
+		if err != nil {
+			return 0, err
+		}
+		if status == entity.SpeculationPathStatusCancelling {
+			pending++
+		}
+		if p.Status != status {
+			paths[i].Status = status
+			changed = true
+		}
 	}
+
+	// Terminal-transition guard: a path can sit at Cancelled while its build
+	// is still live — a pre-build Cancel (selection or prioritize) can land
+	// in the window after the build stage triggered CI but before any
+	// reconcile stamped the build onto the tree. Letting the batch settle
+	// then would strand that CI forever: a terminal batch stops the
+	// buildsignal loop, so the orphan's stop would never be recorded. So on
+	// a pass that would otherwise settle, resolve pre-existing Cancelled
+	// paths' mappings too and pull any that still has a live build back to
+	// Cancelling for the build stage to enact. Only Cancelled can hide a
+	// live build — Passed and Failed are derived from terminal builds — and
+	// this is the one deliberate downgrade of a terminal path status in the
+	// system, costing extra point reads only on would-be-final passes.
+	if pending == 0 {
+		for i, p := range paths {
+			if resolved[i] || p.Status != entity.SpeculationPathStatusCancelled {
+				continue
+			}
+			status, err := c.cancelPathStatus(ctx, batch, p)
+			if err != nil {
+				return 0, err
+			}
+			if status != entity.SpeculationPathStatusCancelling {
+				continue
+			}
+			metrics.NamedCounter(c.metricsScope, opName, "orphan_build_cancelling", 1)
+			c.logger.Warnw("cancelled path still has a live build; re-opening cancel intent",
+				"batch_id", batch.ID,
+				"path_id", p.ID,
+			)
+			paths[i].Status = entity.SpeculationPathStatusCancelling
+			pending++
+			changed = true
+		}
+	}
+
 	if !changed {
-		return nil
+		return pending, nil
 	}
 
 	newVersion := tree.Version + 1
 	if err := c.store.GetSpeculationTreeStore().Update(ctx, batch.ID, tree.Version, newVersion, paths); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to update speculation tree for batch %s: %w", batch.ID, err)
+		return 0, fmt.Errorf("failed to update speculation tree for batch %s: %w", batch.ID, err)
 	}
-	metrics.NamedCounter(c.metricsScope, opName, "cancel_tree_done", 1)
-	return nil
+	metrics.NamedCounter(c.metricsScope, opName, "cancel_tree_updated", 1)
+	return pending, nil
+}
+
+// cancelPathStatus resolves the cancellation status for one non-terminal
+// path: Cancelling while its build is still in flight, Cancelled when there
+// is no build (no mapping yet, or a dangling mapping) or the build already
+// reached a terminal state.
+func (c *Controller) cancelPathStatus(ctx context.Context, batch entity.Batch, p entity.SpeculationPathInfo) (entity.SpeculationPathStatus, error) {
+	pb, err := c.store.GetSpeculationPathBuildStore().Get(ctx, p.ID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return entity.SpeculationPathStatusCancelled, nil
+		}
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return entity.SpeculationPathStatusUnknown, fmt.Errorf("failed to get path->build mapping for path %s of batch %s: %w", p.ID, batch.ID, err)
+	}
+
+	b, err := c.store.GetBuildStore().Get(ctx, pb.BuildID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			// Invariant breach: see reconcile's identical handling.
+			metrics.NamedCounter(c.metricsScope, opName, "mapping_dangling", 1)
+			c.logger.Warnw("path->build mapping points at a missing build; treating path as unbuilt",
+				"batch_id", batch.ID,
+				"path_id", p.ID,
+				"build_id", pb.BuildID,
+			)
+			return entity.SpeculationPathStatusCancelled, nil
+		}
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return entity.SpeculationPathStatusUnknown, fmt.Errorf("failed to get build %s for path %s of batch %s: %w", pb.BuildID, p.ID, batch.ID, err)
+	}
+
+	if b.Status.IsTerminal() {
+		return entity.SpeculationPathStatusCancelled, nil
+	}
+	return entity.SpeculationPathStatusCancelling, nil
 }
 
 // respeculateDependents publishes a speculate event for every batch that

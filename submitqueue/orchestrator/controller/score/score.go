@@ -121,7 +121,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// the terminal state (speculate.cancelBatch / failOnDependency, or merge)
 	// already published to conclude, and speculate's terminal self-heal
 	// republishes conclude on every redelivery of a terminal batch. Silently
-	// ack — same pattern as build / buildsignal on halted.
+	// ack — same as the build stage's terminal skip.
 	if batch.State.IsTerminal() {
 		c.metricsScope.Counter("skipped_terminal").Inc(1)
 		c.logger.Infow("skipping score for terminal batch",

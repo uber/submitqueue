@@ -136,7 +136,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	)
 
 	// Load the batch first: it gives us the queue (needed to build the right
-	// BuildRunner) and lets us short-circuit halted batches before polling.
+	// BuildRunner) and the state that decides, after the poll, whether the
+	// result is persisted and propagated (non-terminal batches, including
+	// Cancelling) or dropped (terminal batches).
 	batch, err := c.store.GetBatchStore().Get(ctx, build.BatchID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
@@ -155,14 +157,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("failed to get status for build %s: %w", buildID.ID, err)
 	}
 
-	// Short-circuit if the batch is already halted (terminal OR cancelling).
-	// Speculate is already idempotent on terminal, but skipping the publish
-	// avoids noise. For Cancelling batches the cancel controller owns the
-	// terminal write and the downstream fan-out, so further pipeline work
-	// would race against it; silent ack is the only safe action.
-	if entity.IsBatchStateHalted(batch.State) {
-		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1)
-		c.logger.Infow("skipping buildsignal publish for halted batch",
+	// Short-circuit only once the batch is terminal: its outcome is settled,
+	// so recording further status or waking speculate would just be noise.
+	// A Cancelling batch, by contrast, NEEDS this loop to keep running — the
+	// cancel flow parks the batch in Cancelling until every build has been
+	// observed terminal, and it is precisely these polls that record the
+	// wind-down and re-publish speculate so the cancel sweep re-evaluates
+	// and eventually performs the terminal write.
+	if batch.State.IsTerminal() {
+		metrics.NamedCounter(c.metricsScope, opName, "skipped_terminal", 1)
+		c.logger.Infow("skipping buildsignal publish for terminal batch",
 			"batch_id", batch.ID,
 			"state", string(batch.State),
 		)

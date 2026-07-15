@@ -42,9 +42,15 @@ import (
 // which is why persisted Cancelling intents are enacted here rather than
 // where they were decided.
 //
-// Halted (terminal or Cancelling) batches are skipped before any path work:
-// batch-level cancellation has its own owner, and the skip guarantees this
-// controller never starts CI for a batch that is being torn down.
+// Terminal batches are skipped before any path work: the cancel flow only
+// writes its terminal state after every build has quiesced, and other
+// terminal transitions leave stragglers to run out, so there is nothing for
+// this controller to enact. A Cancelling batch is the deliberate exception —
+// it is being torn down batch-wide, so the loop cancels every path's
+// in-flight build regardless of the path's recorded status (the sweep that
+// records per-path intents may not have run yet), which is how batch-level
+// cancellation reaches the runner — but no new CI is ever triggered for a
+// batch that is being torn down.
 //
 // Dedup for triggering is on the path->build mapping (PathBuildStore), not
 // on a Build row keyed by a derived key: the mapping is readable before
@@ -95,7 +101,9 @@ func NewController(
 // Deserializes the batch, loads its speculation tree, and for every path
 // either triggers a build (Prioritized, no build yet) or enacts a persisted
 // cancel intent (Cancelling), publishing to the build signal topic as
-// appropriate.
+// appropriate. For a Cancelling batch it instead cancels every path's
+// in-flight build, whatever the path's recorded status, and triggers
+// nothing.
 // Returns nil to ack (success), or error to nack/reject.
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
 	op := metrics.Begin(c.metricsScope, opName)
@@ -126,14 +134,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"partition_key", msg.PartitionKey,
 	)
 
-	// If the batch is halted (terminal OR cancelling), skip triggering CI and
-	// ack. This is a forward-progress controller: per the cancel design, the
-	// speculate controller owns cancelling any in-flight Build and driving the
-	// batch to its terminal state, so the build stage simply short-circuits
-	// while speculate does the work. No external CI is ever kicked off.
-	if entity.IsBatchStateHalted(batch.State) {
-		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1)
-		c.logger.Infow("skipping build for halted batch",
+	// Terminal batches are settled — the cancel flow only writes Cancelled
+	// once every build has been observed terminal, and Failed/Succeeded
+	// leave any straggler builds to run out — so there is no path work left
+	// here. Cancelling batches proceed: the per-path loop below cancels
+	// every in-flight build of a batch being torn down (that is how a
+	// batch-level cancel reaches the runner) and guarantees no new CI is
+	// ever kicked off for it.
+	if batch.State.IsTerminal() {
+		metrics.NamedCounter(c.metricsScope, opName, "skipped_terminal", 1)
+		c.logger.Infow("skipping build for terminal batch",
 			"batch_id", batch.ID,
 			"state", string(batch.State),
 		)
@@ -162,6 +172,28 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	triggered := 0
 	for _, p := range tree.Paths {
+		if batch.State == entity.BatchStateCancelling {
+			// Batch-wide teardown: every path of a Cancelling batch is
+			// doomed, so any in-flight build is cancelled right here,
+			// regardless of the path's recorded status — a path can still
+			// read Building (or even Cancelled — see the pre-build cancel
+			// race in speculate's cancelTree) when this message races the
+			// tree sweep that records the intents, and waiting for the
+			// sweep would only leave CI running one round-trip longer.
+			// Passed and Failed are skipped without I/O: those statuses
+			// derive from terminal builds, so there is nothing to stop.
+			// enactCancel tolerates paths with no build. Never trigger
+			// new CI for a batch being torn down; speculate's sweep owns
+			// settling the path statuses and the terminal batch write.
+			if p.Status == entity.SpeculationPathStatusPassed || p.Status == entity.SpeculationPathStatusFailed {
+				continue
+			}
+			if err := c.enactCancel(ctx, batch, p, resolveRunner); err != nil {
+				return err
+			}
+			continue
+		}
+
 		if p.Status == entity.SpeculationPathStatusCancelling {
 			// A Cancelling path is a persisted cancel intent — recorded
 			// elsewhere, enacted here by the sole caller of the build runner
@@ -378,20 +410,21 @@ func (c *Controller) runnerResolver(queue string) func() (buildrunner.BuildRunne
 	}
 }
 
-// enactCancel enacts a persisted Cancelling intent for path p: it resolves
-// the path's build via the path->build mapping, issues a runner Cancel
-// against it if the build is not already terminal, and republishes
-// buildsignal so the poll loop observes the cancellation promptly instead of
-// waiting out its current delay. Cancel is idempotent from the runner's
-// point of view, so redelivery (e.g. after a crash between Cancel and the
-// republish) simply re-issues it.
+// enactCancel stops path p's build, if one is in flight: it resolves the
+// path's build via the path->build mapping, issues a runner Cancel against
+// it if the build is not already terminal, and republishes buildsignal so
+// the poll loop observes the cancellation promptly instead of waiting out
+// its current delay. Called both for a path's persisted Cancelling intent
+// and for every path of a Cancelling batch's batch-wide teardown. Cancel is
+// idempotent from the runner's point of view, so redelivery (e.g. after a
+// crash between Cancel and the republish) simply re-issues it.
 //
 // Every lookup miss here is tolerated rather than treated as an error: a
-// path can be marked Cancelling before this controller ever triggered a
-// build for it (no mapping yet), or the mapping can point at a build row
+// path can be marked for cancellation before this controller ever triggered
+// a build for it (no mapping yet), or the mapping can point at a build row
 // that a defensive skip elsewhere left dangling. In both cases there is
-// nothing to cancel, so the intent is left for speculate's reconcile to
-// settle the path to Cancelled on its next pass.
+// nothing to cancel, so settling the path's status is left to speculate's
+// next pass.
 func (c *Controller) enactCancel(ctx context.Context, batch entity.Batch, p entity.SpeculationPathInfo, resolveRunner func() (buildrunner.BuildRunner, error)) error {
 	pb, err := c.store.GetSpeculationPathBuildStore().Get(ctx, p.ID)
 	if err != nil {

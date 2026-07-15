@@ -28,14 +28,23 @@
 //   - Cancel on a Prioritized path (no build yet) drops it straight to
 //     Cancelled.
 //
+// Cancelling batches' trees are loaded alongside the Speculating ones, but
+// for routing only: a batch being torn down still carries persisted
+// Cancelling intents that must reach the build stage, and this stage is the
+// one channel from tree state to build messages. Their paths are never
+// offered to the prioritizer — a doomed path neither wants a slot nor is
+// worth preempting for.
+//
 // Each affected tree is persisted under its own optimistic lock, so a
 // version conflict only nacks and re-derives that tree's part of the round
 // on redelivery — the whole computation is a pure function of freshly read
 // state, so recomputing it is always safe. After applying decisions, the
 // controller republishes to the build topic for every batch whose tree has
-// at least one Prioritized path with no build yet, not just newly promoted
-// ones — this heals a build message dropped by a prior crash and is itself
-// idempotent, since the build stage dedups on batch ID.
+// at least one Prioritized path with no build yet or one Cancelling path
+// (a persisted cancel intent), not just ones it touched this round — this
+// heals a build message dropped by a prior crash and is itself idempotent,
+// since the build stage dedups triggers on the path->build mapping and
+// runner cancels are idempotent.
 package prioritize
 
 import (
@@ -96,12 +105,13 @@ func NewController(
 }
 
 // Process re-evaluates the build budget for one queue: it loads every
-// Speculating batch's speculation tree, ranks the queue-wide candidate paths
-// through the queue's prioritizer, applies the returned decisions, persists
-// the affected trees, and republishes to build for any path now cleared to
-// run. Returns nil to ack (success), or error to nack (retry) — the whole
-// round is a pure function of freshly read state, so redelivery simply
-// recomputes it.
+// Speculating and Cancelling batch's speculation tree, ranks the queue-wide
+// candidate paths (Speculating batches only) through the queue's
+// prioritizer, applies the returned decisions, persists the affected trees,
+// and republishes to build for any path now cleared to run or carrying a
+// persisted cancel intent. Returns nil to ack (success), or error to nack
+// (retry) — the whole round is a pure function of freshly read state, so
+// redelivery simply recomputes it.
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
 	op := metrics.Begin(c.metricsScope, opName)
 	defer func() { op.Complete(retErr) }()
@@ -114,13 +124,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("failed to deserialize queue ID: %w", err)
 	}
 
-	batches, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, qid.Name, []entity.BatchState{entity.BatchStateSpeculating})
+	batches, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, qid.Name, []entity.BatchState{
+		entity.BatchStateSpeculating,
+		entity.BatchStateCancelling,
+	})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to get speculating batches for queue %s: %w", qid.Name, err)
+		return fmt.Errorf("failed to get in-flight batches for queue %s: %w", qid.Name, err)
 	}
 	if len(batches) == 0 {
-		metrics.NamedCounter(c.metricsScope, opName, "no_speculating_batches", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "no_batches", 1)
 		return nil
 	}
 
@@ -133,7 +146,18 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return nil
 	}
 
-	candidates := candidatesOf(trees)
+	// A Cancelling batch's tree is loaded for routing only: republishBuilds
+	// must still deliver its persisted Cancelling intents to the build
+	// stage, but none of its paths may compete for (or count against) the
+	// build budget.
+	cancelling := make(map[string]bool, len(batches))
+	for _, b := range batches {
+		if b.State == entity.BatchStateCancelling {
+			cancelling[b.ID] = true
+		}
+	}
+
+	candidates := candidatesOf(trees, cancelling)
 
 	pf, err := c.prioritizers.For(prioritizer.Config{QueueName: qid.Name})
 	if err != nil {
@@ -146,7 +170,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("failed to prioritize candidates for queue %s: %w", qid.Name, err)
 	}
 
-	changed, err := c.applyDecisions(ctx, qid.Name, trees, decisions)
+	changed, err := c.applyDecisions(ctx, qid.Name, trees, cancelling, decisions)
 	if err != nil {
 		return err
 	}
@@ -193,10 +217,16 @@ func (c *Controller) loadTrees(ctx context.Context, batches []entity.Batch) (map
 
 // candidatesOf flattens every path across all loaded trees whose status
 // represents a queue-wide interest: Selected (wants a slot), or
-// Prioritized/Building (holds one).
-func candidatesOf(trees map[string]entity.SpeculationTree) []entity.SpeculationPathInfo {
+// Prioritized/Building (holds one). Trees of batches in the cancelling set
+// are skipped wholesale — their paths are doomed, so they neither want a
+// slot nor hold one worth ranking; those trees are loaded only so
+// republishBuilds can route their persisted Cancelling intents.
+func candidatesOf(trees map[string]entity.SpeculationTree, cancelling map[string]bool) []entity.SpeculationPathInfo {
 	var candidates []entity.SpeculationPathInfo
-	for _, tree := range trees {
+	for batchID, tree := range trees {
+		if cancelling[batchID] {
+			continue
+		}
 		for _, p := range tree.Paths {
 			switch p.Status {
 			case entity.SpeculationPathStatusSelected,
@@ -222,22 +252,30 @@ func candidatesOf(trees map[string]entity.SpeculationTree) []entity.SpeculationP
 // intent before any side effect is what makes the flow crash-safe: a lost
 // build message is healed by republishBuilds, not by remembering this round.
 //
-// A decision naming a batch or path the round did not load, or applying an
-// action the path's current status does not support, is a policy bug in the
-// prioritizer: it is logged as a warning and skipped rather than corrupting
-// the tree.
+// A decision naming a batch or path the round did not offer as a candidate —
+// including any path of a Cancelling batch, whose tree is loaded for routing
+// only — or applying an action the path's current status does not support,
+// is a policy bug in the prioritizer: it is logged as a warning and skipped
+// rather than corrupting the tree.
 func (c *Controller) applyDecisions(
 	ctx context.Context,
 	queue string,
 	trees map[string]entity.SpeculationTree,
+	cancelling map[string]bool,
 	decisions []entity.PathDecision,
 ) (map[string]bool, error) {
 	changed := make(map[string]bool)
 
 	// Decisions name paths by ID only; recover each path's tree from the
 	// trees loaded this round rather than parsing anything out of the ID.
+	// Cancelling batches' paths are deliberately absent: they were never
+	// candidates, so a decision naming one falls through to the "not loaded
+	// this round" skip below.
 	pathBatch := make(map[string]string)
 	for batchID, tree := range trees {
+		if cancelling[batchID] {
+			continue
+		}
 		for _, p := range tree.Paths {
 			pathBatch[p.ID] = batchID
 		}

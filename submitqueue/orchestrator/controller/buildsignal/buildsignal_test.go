@@ -284,16 +284,12 @@ func TestController_Process_MalformedPayload(t *testing.T) {
 	require.Error(t, err)
 }
 
-// A halted batch (terminal OR cancelling) must short-circuit: just ack, no
-// status persist and no publish to speculate. For terminal: speculate is
-// already idempotent on terminal, but skipping the publish keeps the system
-// from re-emitting noise. For Cancelling: the cancel controller owns the
-// terminal write and downstream fan-out, so any further pipeline work would
-// race against it.
-func TestController_Process_HaltedShortCircuit(t *testing.T) {
+// A terminal batch must short-circuit: just ack, no status persist and no
+// publish to speculate — the batch's outcome is settled, so re-emitting
+// signals is pure noise.
+func TestController_Process_TerminalBatchShortCircuit(t *testing.T) {
 	for _, state := range []entity.BatchState{
 		entity.BatchStateCancelled,
-		entity.BatchStateCancelling,
 		entity.BatchStateSucceeded,
 		entity.BatchStateFailed,
 	} {
@@ -306,11 +302,53 @@ func TestController_Process_HaltedShortCircuit(t *testing.T) {
 			h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(build, nil)
 			h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: build.ID}).Return(entity.BuildStatusRunning, entity.BuildMetadata{}, nil)
 			h.batchStore.EXPECT().Get(gomock.Any(), build.BatchID).Return(entity.Batch{ID: build.BatchID, State: state}, nil)
-			// Halted: no UpdateStatus, no speculate Publish, no buildsignal
+			// Terminal: no UpdateStatus, no speculate Publish, no buildsignal
 			// PublishAfter. The harness publishers have no expectations, so any
 			// publish fails the test.
 
 			require.NoError(t, h.controller.Process(context.Background(), buildDelivery(t, ctrl, build)))
 		})
 	}
+}
+
+// A Cancelling batch must NOT short-circuit: the cancel flow parks the batch
+// in Cancelling until every build is observed terminal, and it is this loop
+// that records the wind-down and re-publishes speculate so the cancel sweep
+// re-evaluates. A still-running build keeps polling; a build observed
+// terminal stops the loop after the speculate wake.
+func TestController_Process_CancellingBatchKeepsPolling(t *testing.T) {
+	t.Run("running_build_reschedules", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		h := newTestHarness(t, ctrl)
+
+		build := entity.Build{ID: "b-cxl", BatchID: "batch-cxl", Status: entity.BuildStatusRunning}
+
+		h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(build, nil)
+		h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: build.ID}).Return(entity.BuildStatusRunning, entity.BuildMetadata{}, nil)
+		h.batchStore.EXPECT().Get(gomock.Any(), build.BatchID).Return(entity.Batch{ID: build.BatchID, State: entity.BatchStateCancelling}, nil)
+		h.buildStore.EXPECT().UpdateStatus(gomock.Any(), build.ID, entity.BuildStatusRunning).Return(nil)
+		h.speculatePub.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).Return(nil).Times(1)
+		h.signalPub.EXPECT().
+			PublishAfter(gomock.Any(), "buildsignal", gomock.Any(), PollDelayRunningMs).
+			Return(nil).Times(1)
+
+		require.NoError(t, h.controller.Process(context.Background(), buildDelivery(t, ctrl, build)))
+	})
+
+	t.Run("cancelled_build_wakes_speculate_and_stops", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		h := newTestHarness(t, ctrl)
+
+		build := entity.Build{ID: "b-cxl", BatchID: "batch-cxl", Status: entity.BuildStatusRunning}
+
+		h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(build, nil)
+		h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: build.ID}).Return(entity.BuildStatusCancelled, entity.BuildMetadata{}, nil)
+		h.batchStore.EXPECT().Get(gomock.Any(), build.BatchID).Return(entity.Batch{ID: build.BatchID, State: entity.BatchStateCancelling}, nil)
+		h.buildStore.EXPECT().UpdateStatus(gomock.Any(), build.ID, entity.BuildStatusCancelled).Return(nil)
+		// Terminal status: speculate is woken (this is what lets the cancel
+		// sweep settle the path and finish), but no reschedule.
+		h.speculatePub.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).Return(nil).Times(1)
+
+		require.NoError(t, h.controller.Process(context.Background(), buildDelivery(t, ctrl, build)))
+	})
 }

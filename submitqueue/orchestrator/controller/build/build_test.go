@@ -433,18 +433,15 @@ func TestController_Process_SpeculationTreeStorageFailure(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestController_Process_HaltedShortCircuit: a batch in any halted state
-// (terminal OR cancelling) must short-circuit before touching the
-// speculation tree or build stores: the build controller acks without
-// triggering an external CI run and without publishing anything. Per the
-// cancel design the speculate controller owns cancelling in-flight builds
-// and driving the batch terminal, so the build stage simply does no work.
-// Cancelling is included because the cancel controller is mid-flight; both
-// halted branches reach the same observable behaviour (no build performed).
-func TestController_Process_HaltedShortCircuit(t *testing.T) {
+// TestController_Process_TerminalShortCircuit: a terminal batch must
+// short-circuit before touching the speculation tree or build stores: the
+// build controller acks without triggering an external CI run and without
+// publishing anything. The cancel flow only writes its terminal state after
+// every build has quiesced, and other terminal transitions leave stragglers
+// to run out, so there is nothing left for this controller to enact.
+func TestController_Process_TerminalShortCircuit(t *testing.T) {
 	for _, state := range []entity.BatchState{
 		entity.BatchStateCancelled,
-		entity.BatchStateCancelling,
 		entity.BatchStateSucceeded,
 		entity.BatchStateFailed,
 	} {
@@ -455,20 +452,76 @@ func TestController_Process_HaltedShortCircuit(t *testing.T) {
 			batch.State = state
 			store, batchStore, _, _, _ := newMockStorage(ctrl)
 			batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil).AnyTimes()
-			// No tree/build/path-build store expectations: a halted batch must
-			// never reach the speculation tree or build stores.
+			// No tree/build/path-build store expectations: a terminal batch
+			// must never reach the speculation tree or build stores.
 
-			// No Trigger expectation: a stray CI trigger on a halted batch
+			// No Trigger expectation: a stray CI trigger on a terminal batch
 			// fails the test.
 			br := buildrunnermock.NewMockBuildRunner(ctrl)
 
-			// Sentinel publish error: the halted path must not publish. If it
+			// Sentinel publish error: the terminal path must not publish. If it
 			// does, Process surfaces this error and require.NoError catches it.
 			controller := newTestController(t, ctrl, store, br, fmt.Errorf("should not publish"), nil)
 
 			require.NoError(t, runProcess(t, ctrl, controller, batch))
 		})
 	}
+}
+
+// TestController_Process_CancellingBatchCancelsInFlightNeverTriggers: a
+// batch in BatchStateCancelling is being torn down batch-wide, so the loop
+// cancels every path's in-flight build regardless of the path's recorded
+// status — including a path still recorded as Building, which the tree
+// sweep may not have marked Cancelling yet — while never triggering CI.
+// Passed paths are skipped without any storage read (their builds are
+// terminal by construction), and a path with no build yet is a tolerated
+// no-op (the Prioritized path here gets no Trigger and no Create).
+func TestController_Process_CancellingBatchCancelsInFlightNeverTriggers(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	batch := testBatch()
+	batch.State = entity.BatchStateCancelling
+	cancellingID := "test-queue/batch/1/path/0"
+	buildingID := "test-queue/batch/1/path/1"
+	prioritizedID := "test-queue/batch/1/path/2"
+	passedID := "test-queue/batch/1/path/3"
+	tree := entity.SpeculationTree{
+		BatchID: batch.ID,
+		Version: 2,
+		Paths: []entity.SpeculationPathInfo{
+			{ID: cancellingID, Path: entity.SpeculationPath{Head: batch.ID}, Status: entity.SpeculationPathStatusCancelling},
+			{ID: buildingID, Path: entity.SpeculationPath{Base: []string{"test-queue/batch/0"}, Head: batch.ID}, Status: entity.SpeculationPathStatusBuilding, BuildID: "runner-2"},
+			{ID: prioritizedID, Path: entity.SpeculationPath{Head: batch.ID}, Status: entity.SpeculationPathStatusPrioritized},
+			{ID: passedID, Path: entity.SpeculationPath{Head: batch.ID}, Status: entity.SpeculationPathStatusPassed, BuildID: "runner-4"},
+		},
+	}
+
+	store, batchStore, treeStore, buildStore, pathBuildStore := newMockStorage(ctrl)
+	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil).AnyTimes()
+	treeStore.EXPECT().Get(gomock.Any(), batch.ID).Return(tree, nil)
+	// The Cancelling and Building paths resolve to live builds and are both
+	// cancelled; the Prioritized path has no mapping (nothing to stop); the
+	// Passed path is never even looked up.
+	pathBuildStore.EXPECT().Get(gomock.Any(), cancellingID).Return(entity.SpeculationPathBuild{PathID: cancellingID, BuildID: "runner-1"}, nil)
+	buildStore.EXPECT().Get(gomock.Any(), "runner-1").Return(entity.Build{
+		ID: "runner-1", BatchID: batch.ID, SpeculationPathID: cancellingID, Status: entity.BuildStatusRunning,
+	}, nil)
+	pathBuildStore.EXPECT().Get(gomock.Any(), buildingID).Return(entity.SpeculationPathBuild{PathID: buildingID, BuildID: "runner-2"}, nil)
+	buildStore.EXPECT().Get(gomock.Any(), "runner-2").Return(entity.Build{
+		ID: "runner-2", BatchID: batch.ID, SpeculationPathID: buildingID, Status: entity.BuildStatusRunning,
+	}, nil)
+	pathBuildStore.EXPECT().Get(gomock.Any(), prioritizedID).Return(entity.SpeculationPathBuild{}, storage.ErrNotFound)
+
+	br := buildrunnermock.NewMockBuildRunner(ctrl)
+	br.EXPECT().Cancel(gomock.Any(), entity.BuildID{ID: "runner-1"}).Return(nil)
+	br.EXPECT().Cancel(gomock.Any(), entity.BuildID{ID: "runner-2"}).Return(nil)
+	// No Trigger expectation: a stray CI trigger fails the test.
+
+	var published []string
+	controller := newTestController(t, ctrl, store, br, nil, &published)
+
+	require.NoError(t, runProcess(t, ctrl, controller, batch))
+	assert.Equal(t, []string{"runner-1", "runner-2"}, published, "each enacted cancel must republish buildsignal so the poll loop observes the stop")
 }
 
 // TestController_Process_CreateAlreadyExistsTolerated covers the redelivery

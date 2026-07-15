@@ -26,18 +26,23 @@
 //   - The request is already part of an active batch — the controller performs
 //     a single intent CAS on the batch (advancing it to BatchStateCancelling)
 //     and hands off to the speculate controller by publishing the batch ID to
-//     TopicKeySpeculate. The speculate controller then owns: cancelling any
-//     in-flight Build entity for the batch, fanning out to dependents, the
-//     terminal CAS to BatchStateCancelled, and publishing to conclude. Cancel
-//     does no terminal write and no downstream fan-out on the batch path.
+//     TopicKeySpeculate. The speculate controller then owns: sweeping the
+//     batch's speculation tree toward cancellation (a live build's stop is
+//     captured as a Cancelling intent that the build stage — the sole runner
+//     caller — enacts), fanning out to dependents, the terminal CAS to
+//     BatchStateCancelled once every build has quiesced, and publishing to
+//     conclude. Cancel does no terminal write and no downstream fan-out on
+//     the batch path.
 //
 // The split exists so that the terminal write and the work that must precede
-// it (cancelling builds, respeculating dependents) live in the same controller
-// — speculate is the single writer of every non-Cancelling batch state and is
-// already wired with the build/dependent stores. Forward-progress controllers
-// (score, build, buildsignal, merge) observe BatchStateCancelling via
-// IsBatchStateHalted and short-circuit while speculate drives the batch to
-// its terminal state.
+// it (settling the tree, respeculating dependents) live in the same
+// controller — speculate is the single writer of every non-Cancelling batch
+// state and is already wired with the tree/dependent stores. While speculate
+// drives the batch to its terminal state, the other stages hold
+// BatchStateCancelling to "no new work": score and merge short-circuit
+// entirely, build enacts persisted cancel intents but never triggers CI, and
+// buildsignal keeps polling so the wind-down is recorded and speculate is
+// re-woken to finish.
 //
 // The controller is idempotent: re-delivery of the same CancelRequest after
 // the terminal request transition is a no-op; re-delivery after the
