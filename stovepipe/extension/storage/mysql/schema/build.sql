@@ -3,8 +3,6 @@
 CREATE TABLE IF NOT EXISTS build (
     id          VARCHAR(255) NOT NULL,
     request_id  VARCHAR(255) NOT NULL,
-    uri         VARCHAR(255) NOT NULL,
-    base_uri    VARCHAR(255) NOT NULL DEFAULT '',
     status      VARCHAR(64)  NOT NULL,
     version     INT          NOT NULL,
     PRIMARY KEY (id)

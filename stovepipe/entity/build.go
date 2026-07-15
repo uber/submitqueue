@@ -67,10 +67,6 @@ type Build struct {
 	// RequestID is the Request this build validates (Build->Request
 	// navigation; no reverse index from Request to its builds is needed).
 	RequestID string `json:"request_id"`
-	// URI is the head URI being built (== Request.URI).
-	URI string `json:"uri"`
-	// BaseURI is the incremental baseline; empty for full builds.
-	BaseURI string `json:"base_uri"`
 	// Status is the build's lifecycle state.
 	Status BuildStatus `json:"status"`
 	// Version is used for optimistic locking. Versioning starts at 1 and

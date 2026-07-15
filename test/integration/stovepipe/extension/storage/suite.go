@@ -218,8 +218,6 @@ func (s *BuildStoreContractSuite) TestBuildStore_CreateAndGet() {
 	build := entity.Build{
 		ID:        id,
 		RequestID: "request/contract/create/1",
-		URI:       "git://remote/monorepo/main/aaaa1111",
-		BaseURI:   "git://remote/monorepo/main/green-bbbb",
 		Status:    entity.BuildStatusAccepted,
 		Version:   1,
 	}
@@ -240,7 +238,6 @@ func (s *BuildStoreContractSuite) TestBuildStore_CreateAlreadyExists() {
 	first := entity.Build{
 		ID:        id,
 		RequestID: "request/contract/already-exists/1",
-		URI:       "git://remote/monorepo/main/aaaa1111",
 		Status:    entity.BuildStatusAccepted,
 		Version:   1,
 	}
@@ -249,7 +246,6 @@ func (s *BuildStoreContractSuite) TestBuildStore_CreateAlreadyExists() {
 	err := s.buildStore.Create(s.ctx, entity.Build{
 		ID:        id,
 		RequestID: "request/contract/already-exists/ignored-on-race",
-		URI:       "git://remote/monorepo/main/ignored",
 		Status:    entity.BuildStatusRunning,
 		Version:   1,
 	})
@@ -280,7 +276,6 @@ func (s *BuildStoreContractSuite) TestBuildStore_UpdateCAS() {
 	created := entity.Build{
 		ID:        id,
 		RequestID: "request/contract/update-cas/1",
-		URI:       "git://remote/monorepo/main/aaaa1111",
 		Status:    entity.BuildStatusAccepted,
 		Version:   1,
 	}
@@ -320,7 +315,6 @@ func (s *BuildStoreContractSuite) TestBuildStore_UpdateSequentialCAS() {
 	require.NoError(t, s.buildStore.Create(s.ctx, entity.Build{
 		ID:        id,
 		RequestID: "request/contract/sequential-cas/1",
-		URI:       "git://remote/monorepo/main/aaaa1111",
 		Status:    entity.BuildStatusAccepted,
 		Version:   1,
 	}))
@@ -349,11 +343,11 @@ func (s *BuildStoreContractSuite) TestBuildStore_QueueIsolation() {
 
 	require.NoError(t, s.buildStore.Create(s.ctx, entity.Build{
 		ID: idA, RequestID: "request/contract/isolation-a/1",
-		URI: "git://remote/monorepo/main/aaaa1111", Status: entity.BuildStatusAccepted, Version: 1,
+		Status: entity.BuildStatusAccepted, Version: 1,
 	}))
 	require.NoError(t, s.buildStore.Create(s.ctx, entity.Build{
 		ID: idB, RequestID: "request/contract/isolation-b/1",
-		URI: "git://remote/monorepo/main/bbbb2222", Status: entity.BuildStatusAccepted, Version: 1,
+		Status: entity.BuildStatusAccepted, Version: 1,
 	}))
 
 	baseline, err := s.buildStore.Get(s.ctx, idB)
@@ -361,7 +355,7 @@ func (s *BuildStoreContractSuite) TestBuildStore_QueueIsolation() {
 
 	updatedA := entity.Build{
 		ID: idA, RequestID: "request/contract/isolation-a/1",
-		URI: "git://remote/monorepo/main/aaaa1111", Status: entity.BuildStatusRunning, Version: 1,
+		Status: entity.BuildStatusRunning, Version: 1,
 	}
 	require.NoError(t, s.buildStore.Update(s.ctx, updatedA, 1, 2))
 
