@@ -63,8 +63,13 @@ func NewStatusController(logger *zap.SugaredLogger, scope tally.Scope, requestLo
 	}
 }
 
+// StatusResult is the outcome of a status query. It is a type alias for
+// request.CurrentState so that the controller's return type follows the
+// same Result naming convention as LandResult and other controller outputs.
+type StatusResult = request.CurrentState
+
 // Status returns the current reconciled status of a request identified by its sqid.
-func (c *StatusController) Status(ctx context.Context, req entity.StatusRequest) (request.CurrentState, error) {
+func (c *StatusController) Status(ctx context.Context, req entity.StatusRequest) (StatusResult, error) {
 	start := time.Now()
 	defer func() {
 		c.metricsScope.Timer("status_latency").Record(time.Since(start))
@@ -73,15 +78,15 @@ func (c *StatusController) Status(ctx context.Context, req entity.StatusRequest)
 	c.metricsScope.Counter("status_count").Inc(1)
 
 	if req.ID == "" {
-		return request.CurrentState{}, fmt.Errorf("StatusController requires the request to have a sqid specified: %w", ErrInvalidRequest)
+		return StatusResult{}, fmt.Errorf("StatusController requires the request to have a sqid specified: %w", ErrInvalidRequest)
 	}
 
 	state, err := request.GetCurrentStateFromRequestLog(ctx, c.requestLogStore, req.ID)
 	if err != nil {
 		if storage.IsNotFound(err) {
-			return request.CurrentState{}, errs.NewUserError(&RequestNotFoundError{Sqid: req.ID})
+			return StatusResult{}, errs.NewUserError(&RequestNotFoundError{Sqid: req.ID})
 		}
-		return request.CurrentState{}, fmt.Errorf("StatusController failed to get current state for sqid=%s: %w", req.ID, err)
+		return StatusResult{}, fmt.Errorf("StatusController failed to get current state for sqid=%s: %w", req.ID, err)
 	}
 
 	c.logger.Debugw("request status retrieved",
