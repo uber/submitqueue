@@ -258,7 +258,7 @@ func (s *sqlpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Contex
 	for _, partitionKey := range partitions {
 		// Enforce maxPartitions cap using local count
 		if maxPartitions > 0 && ownedCount >= maxPartitions {
-			s.logger.Infow("reached max partitions cap, stopping acquisition",
+			s.logger.Debugw("reached max partitions cap, stopping acquisition",
 				logTopic, topic,
 				"max_partitions", maxPartitions,
 				"owned_count", ownedCount,
@@ -291,7 +291,7 @@ func (s *sqlpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Contex
 
 	metrics.NamedCounter(s.scope, "discover_and_acquire", "partitions_discovered", int64(len(partitions)), metrics.NewTag("topic", topic))
 	metrics.NamedCounter(s.scope, "discover_and_acquire", "partitions_acquired", int64(acquiredCount), metrics.NewTag("topic", topic))
-	s.logger.Infow("completed partition discovery and acquisition",
+	s.logger.Debugw("completed partition discovery and acquisition",
 		logTopic, topic,
 		"discovered_count", len(partitions),
 		"acquired_count", acquiredCount,
