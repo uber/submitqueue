@@ -18,11 +18,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/submitqueue/core/speculation"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/dependencylimit"
@@ -57,7 +59,10 @@ import (
 //     Cancelled), route the persisted intents to the build stage via
 //     prioritize, and — only once every build has quiesced — respeculate
 //     dependents, CAS to terminal Cancelled, publish to conclude.
-//   - Merging → no-op (owned by the merge controller).
+//   - Merging → superviseMerging: wake dependents (a Merging batch already
+//     counts as landed for their merge readiness — see below) and fail the
+//     batch if no path can confirm anymore (its base failed before the
+//     runway hand-off ever happened).
 //   - Terminal → re-publish the dependent fan-out and the conclude event.
 //     Every terminal transition is routed back through this controller, so
 //     this branch is how waiting dependents learn a dependency resolved;
@@ -86,22 +91,26 @@ import (
 //     does not publish straight to build: a path only reaches build once
 //     prioritize admits it under the queue's build budget, so the pipeline is
 //     speculate → prioritize → build.
-//  9. Finalize: if some path is mergeable right now, publish to merge and CAS
-//     to Merging. Otherwise, if no path can ever merge, CAS to Failed and
-//     publish to conclude. Otherwise wait for the next event.
+//  9. Finalize: if some path is mergeable now — optimistically, see below —
+//     publish to merge, CAS to Merging, and wake dependents. Otherwise, if
+//     no path can ever merge, CAS to Failed and publish to conclude.
+//     Otherwise wait for the next event.
 //
 // Two things must both hold before a path merges: its own build Passed, and
-// its base actually landed (Succeeded). The build result is checked here on
-// purpose — a failed build should stop the merge directly, not surface
-// later as a runway merge failure.
+// its base is out of the way. The build result is checked here on purpose —
+// a failed build should stop the merge directly, not surface later as a
+// runway merge failure.
 //
-// A base that is only Merging — published for merge but not yet confirmed —
-// does NOT count as landed. The queue can deliver messages out of order
-// when one is retrying, so our merge request could reach runway before the
-// base's, and we would land changes that were only validated on top of a
-// base that never landed. Merging optimistically behind a Merging base
-// would require the merge stage to verify dependency outcomes before
-// handing off to runway; relaxing this check alone is not safe.
+// The base check is optimistic: a base that is published for merge
+// (Merging) already counts, so a dependent finalizes right behind its base
+// instead of waiting a runway round-trip per chain link
+// (speculation.PathMergePossible). The safety net lives downstream — the merge
+// stage holds the runway hand-off until the dependency outcomes are
+// actually confirmed (speculation.PathMergeConfirmed), so out-of-order delivery
+// cannot land a dependent whose base never landed; and if a base's merge
+// fails, mergesignal drives it terminal, the dependent fan-out re-wakes
+// this controller, and superviseMerging fails every dependent whose bet
+// died.
 //
 // No code in this file talks to a build runner. Every decision that stops a
 // build — a dead or deselected path during speculateBatch (applySelection
@@ -111,7 +120,7 @@ import (
 // path settles to Cancelled only once its build is observed terminal.
 //
 // The controller is re-triggered on every relevant downstream event
-// (buildsignal, a prioritize tree write, merge, a dependency's own
+// (buildsignal, a prioritize tree write, mergesignal, a dependency's own
 // speculate pass), so each call simply re-evaluates the current state and
 // either advances or waits.
 type Controller struct {
@@ -207,10 +216,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return c.fanout(ctx, batch.ID, batch.Queue)
 	}
 
-	// Merging is owned by the merge controller, which has its own self-heal.
+	// Merging: the merge stage owns the batch's forward motion; speculate
+	// supervises — waking dependents and failing the batch if its
+	// optimistic bet died. See superviseMerging.
 	if batch.State == entity.BatchStateMerging {
-		metrics.NamedCounter(c.metricsScope, opName, "noop_merging", 1)
-		return nil
+		return c.superviseMerging(ctx, batch)
 	}
 
 	switch batch.State {
@@ -766,20 +776,21 @@ func (c *Controller) applySelection(batch entity.Batch, tree entity.SpeculationT
 // finalize settles the batch's forward step from the tree. Exactly one of
 // three outcomes applies per pass:
 //
-//  1. Merge now: some path is mergeableNow (its build passed and its
-//     assumption set holds) — publish to merge, CAS the batch to Merging,
-//     and wake dependents, for whom the Merging batch already counts as
-//     landed (optimistic merge finalization; see mergeableNow).
+//  1. Merge now: some path's merge assumptions hold — optimistically: its
+//     own build Passed and its base is landed, cancelled out of the way, or
+//     itself published for merge (speculation.PathMergePossible; see the
+//     Controller doc) — publish to merge, CAS the batch to Merging, and
+//     wake dependents, for whom this batch now counts as landed.
 //  2. Wait: no path is mergeable yet, but at least one is still viable —
 //     no-op; the next event (a build outcome via buildsignal, a dependency
 //     going terminal) re-runs this evaluation.
 //  3. Fail: no viable path remains — every path has Failed, been Cancelled,
 //     or gone dead with no chance of ever merging — so the batch can never
-//     merge. The !anyViable branch below CASes the batch to Failed, fans
-//     out to dependents, and publishes to conclude.
+//     merge. The !anyViable branch below runs the shared Failed sequence
+//     (failBatch): CAS to Failed, dependent fan-out, conclude.
 func (c *Controller) finalize(ctx context.Context, batch entity.Batch, tree entity.SpeculationTree, depByID map[string]entity.Batch) error {
 	for _, p := range tree.Paths {
-		if !mergeableNow(p, depByID) {
+		if !speculation.PathMergePossible(p, depByID) {
 			continue
 		}
 
@@ -793,8 +804,16 @@ func (c *Controller) finalize(ctx context.Context, batch entity.Batch, tree enti
 			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 			return fmt.Errorf("failed to update batch %s state to merging: %w", batch.ID, err)
 		}
+		batch.Version = newVersion
+		batch.State = entity.BatchStateMerging
 		metrics.NamedCounter(c.metricsScope, opName, "merging", 1)
-		return nil
+
+		// Wake dependents now: a Merging batch already counts as landed for
+		// their merge readiness. Fan out AFTER the CAS so a woken dependent
+		// reads this batch as Merging; a crash in between is healed by
+		// superviseMerging, which re-runs the fan-out on every later
+		// delivery.
+		return c.respeculateDependents(ctx, batch)
 	}
 
 	anyViable := false
@@ -818,34 +837,7 @@ func (c *Controller) finalize(ctx context.Context, batch entity.Batch, tree enti
 			"cancelled_paths", cancelledCount,
 		)
 		metrics.NamedCounter(c.metricsScope, opName, "no_viable_path", 1)
-
-		newVersion := batch.Version + 1
-		if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateFailed); err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-			return fmt.Errorf("failed to update batch %s state to failed: %w", batch.ID, err)
-		}
-		batch.Version = newVersion
-		batch.State = entity.BatchStateFailed
-
-		// Fan out to dependents BEFORE concluding, mirroring cancelBatch's
-		// ordering. The fan-out is publish-only — one speculate wake-up per
-		// dependent, each processed asynchronously on its own delivery;
-		// nothing is re-evaluated inline here. A dependent only drops this
-		// batch from its tree (dead chain path) and lets a surviving path
-		// take over once it observes the terminal Failed state. Nothing else
-		// re-notifies them — a batch failed here never reaches mergesignal,
-		// whose fan-out covers the merge-failure flow. A crash after the CAS
-		// is recovered by the terminal self-heal branch, which re-runs this
-		// fan-out for Failed.
-		if err := c.respeculateDependents(ctx, batch); err != nil {
-			return err
-		}
-
-		if err := c.publish(ctx, topickey.TopicKeyConclude, batch.ID, batch.Queue); err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
-			return fmt.Errorf("failed to publish to conclude: %w", err)
-		}
-		return nil
+		return c.failBatch(ctx, batch)
 	}
 
 	metrics.NamedCounter(c.metricsScope, opName, "waiting_on_deps", 1)
@@ -853,43 +845,98 @@ func (c *Controller) finalize(ctx context.Context, batch entity.Batch, tree enti
 	return nil
 }
 
-// mergeableNow reports whether p is ready to merge right now: its own build
-// Passed, every base dependency has either landed or been cancelled out of
-// the way, and every dependency of the head NOT in the base has been ruled
-// out (Failed or Cancelled) rather than still possibly landing. The last
-// condition is what makes this stricter than a plain "base landed" check: a
-// still in-flight non-base dependency might yet land and dead the path (see
-// pathDead), so merging must wait for it to resolve one way or the other.
+// failBatch runs the shared terminal-Failed sequence for a batch that can
+// never merge: CAS to Failed, wake dependents, publish to conclude. Callers
+// log and count their own reason before calling.
 //
-// A base dependency in Merging deliberately does NOT count as landed: the
-// queue can deliver messages out of order when one is retrying, so merging
-// behind an unconfirmed base could land changes validated on a base that
-// never landed. See the Merging note on the Controller doc.
-func mergeableNow(p entity.SpeculationPathInfo, depByID map[string]entity.Batch) bool {
-	if p.Status != entity.SpeculationPathStatusPassed {
-		return false
+// The fan-out runs AFTER the CAS and BEFORE concluding, mirroring
+// cancelBatch's ordering. It is publish-only — one speculate wake-up per
+// dependent, each processed asynchronously on its own delivery; nothing is
+// re-evaluated inline here. A dependent only drops this batch from its tree
+// (dead chain path) and lets a surviving path take over once it observes
+// the terminal Failed state. Nothing else re-notifies them — a batch failed
+// here never reaches mergesignal, whose fan-out covers the merge-failure
+// flow. A crash after the CAS is recovered by the terminal self-heal
+// branch, which re-runs this fan-out for Failed.
+func (c *Controller) failBatch(ctx context.Context, batch entity.Batch) error {
+	newVersion := batch.Version + 1
+	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateFailed); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return fmt.Errorf("failed to update batch %s state to failed: %w", batch.ID, err)
+	}
+	batch.Version = newVersion
+	batch.State = entity.BatchStateFailed
+
+	if err := c.respeculateDependents(ctx, batch); err != nil {
+		return err
 	}
 
-	inBase := make(map[string]bool, len(p.Path.Base))
-	for _, id := range p.Path.Base {
-		inBase[id] = true
-		d, ok := depByID[id]
-		if !ok {
-			continue
-		}
-		if d.State != entity.BatchStateSucceeded && d.State != entity.BatchStateCancelled {
-			return false
+	if err := c.publish(ctx, topickey.TopicKeyConclude, batch.ID, batch.Queue); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+		return fmt.Errorf("failed to publish to conclude: %w", err)
+	}
+	return nil
+}
+
+// superviseMerging handles a speculate wake for a batch already in Merging.
+// The merge stage owns the batch's forward motion; this branch owns two
+// things:
+//
+//   - Wake dependents. A Merging batch already counts as landed for their
+//     merge readiness (optimistic merge finalization), and re-publishing
+//     the fan-out on every delivery self-heals one lost to a crash right
+//     after the Merging CAS, exactly like the terminal branch.
+//   - Fail the batch if its optimistic bet died. A batch may finalize while
+//     a base dependency is itself still Merging; the merge stage only hands
+//     off to runway once some path's assumptions are confirmed. If the base
+//     failed instead, no hand-off will ever happen and nothing else would
+//     move this batch again — so when no path is possible anymore, run the
+//     shared Failed sequence. This never races a runway verdict: hand-off
+//     requires confirmed assumptions, confirmed outcomes are terminal
+//     dependency states that cannot un-happen, and possible ⊇ confirmed —
+//     so a handed-off batch always takes the wake branch here.
+func (c *Controller) superviseMerging(ctx context.Context, batch entity.Batch) error {
+	deps, err := c.fetchDependencies(ctx, batch)
+	if err != nil {
+		return err
+	}
+	depByID := make(map[string]entity.Batch, len(deps))
+	for _, d := range deps {
+		depByID[d.ID] = d
+	}
+
+	// A Merging batch always has a tree — it finalized from one, and trees
+	// are never deleted — so a miss is corrupted state: the error rejects
+	// the message and the DLQ reconciler fails the batch loudly.
+	tree, err := c.store.GetSpeculationTreeStore().Get(ctx, batch.ID)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return fmt.Errorf("failed to get speculation tree for batch %s: %w", batch.ID, err)
+	}
+
+	for _, p := range tree.Paths {
+		if speculation.PathMergePossible(p, depByID) {
+			metrics.NamedCounter(c.metricsScope, opName, "merging_fanout", 1)
+			// Re-arm the merge trigger before waking dependents. The merge
+			// stage's delayed re-check cycle is the only live message for a
+			// waiting Merging batch; if that chain is ever lost, nothing
+			// else would re-create it, so every healthy supervision wake
+			// re-arms it. Duplicated triggers converge: a confirmed batch
+			// hands off idempotently (runway dedups on the correlation id)
+			// and halted batches ack the trigger away.
+			if err := c.republishMergeTrigger(ctx, batch); err != nil {
+				metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+				return fmt.Errorf("failed to re-arm merge trigger for batch %s: %w", batch.ID, err)
+			}
+			return c.respeculateDependents(ctx, batch)
 		}
 	}
-	for id, d := range depByID {
-		if inBase[id] {
-			continue
-		}
-		if d.State != entity.BatchStateFailed && d.State != entity.BatchStateCancelled {
-			return false
-		}
-	}
-	return true
+
+	metrics.NamedCounter(c.metricsScope, opName, "merge_bet_refuted", 1)
+	c.logger.Warnw("no path can confirm for merging batch; failing batch",
+		"batch_id", batch.ID,
+	)
+	return c.failBatch(ctx, batch)
 }
 
 // viable reports whether p could still merge in the future: it has not
@@ -1140,6 +1187,34 @@ func (c *Controller) cancelPathStatus(ctx context.Context, batch entity.Batch, p
 		return entity.SpeculationPathStatusCancelled, nil
 	}
 	return entity.SpeculationPathStatusCancelling, nil
+}
+
+// republishMergeTrigger re-arms the batch's merge trigger with a freshly
+// minted message ID. The minted ID matters: the queue dedups publishes on
+// (topic, partition, id) against un-GC'd rows including consumed ones, so
+// re-publishing under the batch ID — the ID finalize's original trigger
+// used — could be silently swallowed and heal nothing.
+func (c *Controller) republishMergeTrigger(ctx context.Context, batch entity.Batch) error {
+	payload, err := entity.BatchID{ID: batch.ID}.ToBytes()
+	if err != nil {
+		return fmt.Errorf("failed to serialize batch ID: %w", err)
+	}
+
+	msgID := fmt.Sprintf("%s/mergeheal/%d", batch.ID, time.Now().UnixMilli())
+	msg := entityqueue.NewMessage(msgID, payload, batch.Queue, nil)
+
+	q, ok := c.registry.Queue(topickey.TopicKeyMerge)
+	if !ok {
+		return fmt.Errorf("no queue registered for topic key %s", topickey.TopicKeyMerge)
+	}
+	topicName, ok := c.registry.TopicName(topickey.TopicKeyMerge)
+	if !ok {
+		return fmt.Errorf("no topic name registered for topic key %s", topickey.TopicKeyMerge)
+	}
+	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
+		return fmt.Errorf("failed to publish message: %w", err)
+	}
+	return nil
 }
 
 // respeculateDependents publishes a speculate event for every batch that

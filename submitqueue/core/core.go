@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package core groups infrastructure shared across SubmitQueue's own services
-// (gateway and orchestrator) — the SubmitQueue-scoped analogue of the repo-level
-// core/. Cross-domain infrastructure lives in the top-level core/; this package
-// is for plumbing private to SubmitQueue. Subpackages: core/consumer (queue
-// consumption framework) and core/request (request lifecycle shared by gateway
-// and orchestrator).
+// Package core groups infrastructure and domain logic shared across
+// SubmitQueue's own services and pipeline stages — the SubmitQueue-scoped
+// analogue of the repo-level platform/. Cross-domain code lives under
+// platform/; this package is for plumbing and shared rules private to
+// SubmitQueue. Subpackages hold queue topic keys (topickey), request
+// lifecycle plumbing (request), changeset resolution (changeset), and
+// speculation rules evaluated by multiple stages (speculation).
 package core

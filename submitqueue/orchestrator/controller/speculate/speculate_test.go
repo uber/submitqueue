@@ -17,6 +17,7 @@ package speculate
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,6 +27,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	"github.com/uber/submitqueue/submitqueue/core/speculation"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	dependencylimitfake "github.com/uber/submitqueue/submitqueue/extension/speculation/dependencylimit/fake"
@@ -249,17 +251,34 @@ func TestController_Process_UnrecognizedState(t *testing.T) {
 	require.Error(t, runProcess(t, ctrl, h.controller, batch.ID))
 }
 
-// Merging is owned by the merge controller — speculate is a no-op for it.
-func TestController_Process_MergingNoOp(t *testing.T) {
+// A Merging batch is supervised, not advanced: state moves only when the
+// bet died (covered by TestController_Process_MergingSupervision). Here the
+// bet is fine, so the only effect is the dependent wake-up.
+func TestController_Process_MergingWakesDependentsOnly(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	h := newTestHarness(t, ctrl)
 	batch := testBatch(entity.BatchStateMerging)
+	// No dependencies and a Passed path: trivially still possible.
+	tree := entity.SpeculationTree{
+		BatchID: batch.ID,
+		Version: 2,
+		Paths:   []entity.SpeculationPathInfo{{ID: "test-queue/batch/1/path/0", Path: entity.SpeculationPath{Head: batch.ID}, Status: entity.SpeculationPathStatusPassed, BuildID: "build-1"}},
+	}
 
 	h.batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	// No UpdateState, no tree access, no publish expected.
+	h.treeStore.EXPECT().Get(gomock.Any(), batch.ID).Return(tree, nil)
+	// No UpdateState expected — supervision never advances a healthy batch.
+	h.depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{
+		BatchID:    batch.ID,
+		Dependents: []string{"test-queue/batch/2"},
+		Version:    1,
+	}, nil)
 
 	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
-	assert.Empty(t, *h.records)
+	require.Len(t, *h.records, 2)
+	assert.Equal(t, "submitqueue-merge", (*h.records)[0].topic)
+	assert.True(t, strings.HasPrefix((*h.records)[0].msgID, batch.ID+"/mergeheal/"))
+	assert.Equal(t, pubRec{topic: "speculate", msgID: "test-queue/batch/2"}, (*h.records)[1])
 }
 
 // Terminal states wake dependents (re-publish speculate for each) and then
@@ -518,10 +537,10 @@ func TestController_Process_MergeGate(t *testing.T) {
 		wantMerge  bool
 	}{
 		{name: "passed_and_base_dep_succeeded_merges", pathStatus: entity.SpeculationPathStatusPassed, depState: entity.BatchStateSucceeded, wantMerge: true},
-		// A base dependency merely published for merge (Merging) must NOT
-		// count as landed: the queue reorders across nack backoff, so an
-		// optimistic dependent could overtake its base on the way to runway.
-		{name: "passed_and_base_dep_merging_waits", pathStatus: entity.SpeculationPathStatusPassed, depState: entity.BatchStateMerging, wantMerge: false},
+		// Optimistic merge finalization: a base already published for merge
+		// counts as landed — the merge stage confirms outcomes before the
+		// runway hand-off, so finalizing early is safe.
+		{name: "passed_and_base_dep_merging_merges", pathStatus: entity.SpeculationPathStatusPassed, depState: entity.BatchStateMerging, wantMerge: true},
 		{name: "passed_and_base_dep_pending_waits", pathStatus: entity.SpeculationPathStatusPassed, depState: entity.BatchStateSpeculating, wantMerge: false},
 		{name: "building_and_base_dep_succeeded_waits", pathStatus: entity.SpeculationPathStatusBuilding, depState: entity.BatchStateSucceeded, wantMerge: false},
 	}
@@ -549,13 +568,23 @@ func TestController_Process_MergeGate(t *testing.T) {
 
 			if tt.wantMerge {
 				h.batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateMerging).Return(nil)
+				// Entering Merging wakes dependents right after the CAS —
+				// this batch now counts as landed for their merge readiness.
+				h.depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{
+					BatchID:    batch.ID,
+					Dependents: []string{"test-queue/batch/9"},
+					Version:    1,
+				}, nil)
 			}
 
 			require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
 
 			wantRecords := []pubRec{{topic: "prioritize", msgID: "test-queue"}}
 			if tt.wantMerge {
-				wantRecords = append(wantRecords, pubRec{topic: "submitqueue-merge", msgID: batch.ID})
+				wantRecords = append(wantRecords,
+					pubRec{topic: "submitqueue-merge", msgID: batch.ID},
+					pubRec{topic: "speculate", msgID: "test-queue/batch/9"},
+				)
 			}
 			assert.ElementsMatch(t, wantRecords, *h.records)
 		})
@@ -583,12 +612,82 @@ func TestController_Process_CancelledBaseDepToleratedMerges(t *testing.T) {
 	// No path->build read: the path is already terminal (Passed), so
 	// reconcile skips it without touching storage.
 	h.batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateMerging).Return(nil)
+	h.depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{
+		BatchID: batch.ID,
+		Version: 1,
+	}, nil)
 
 	require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
 	assert.ElementsMatch(t, []pubRec{
 		{topic: "prioritize", msgID: "test-queue"},
 		{topic: "submitqueue-merge", msgID: batch.ID},
 	}, *h.records)
+}
+
+// Merging: the merge stage owns forward motion; speculate supervises. While
+// some path's assumptions are still possible (base Succeeded or itself
+// Merging), each wake just re-publishes the dependent fan-out — the
+// optimistic "this batch counts as landed" wake-up and its crash self-heal.
+// Once no path can confirm anymore (the base failed before any runway
+// hand-off), the batch is failed with the shared terminal sequence.
+func TestController_Process_MergingSupervision(t *testing.T) {
+	tests := []struct {
+		name     string
+		depState entity.BatchState
+		wantFail bool
+	}{
+		{name: "base_merging_wakes_dependents", depState: entity.BatchStateMerging, wantFail: false},
+		// Cancelling is transient — it settles to a state that confirms or
+		// refutes — so supervision waits rather than failing the batch.
+		{name: "base_cancelling_wakes_dependents", depState: entity.BatchStateCancelling, wantFail: false},
+		{name: "base_succeeded_wakes_dependents", depState: entity.BatchStateSucceeded, wantFail: false},
+		{name: "base_failed_fails_batch", depState: entity.BatchStateFailed, wantFail: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			h := newTestHarness(t, ctrl)
+			dep := entity.Batch{ID: "test-queue/batch/0", Queue: "test-queue", State: tt.depState, Version: 1}
+			batch := testBatch(entity.BatchStateMerging, dep.ID)
+			path := entity.SpeculationPath{Base: []string{dep.ID}, Head: batch.ID}
+			tree := entity.SpeculationTree{
+				BatchID: batch.ID,
+				Version: 3,
+				Paths:   []entity.SpeculationPathInfo{{ID: "test-queue/batch/1/path/0", Path: path, Status: entity.SpeculationPathStatusPassed, BuildID: "build-1"}},
+			}
+
+			h.batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+			h.batchStore.EXPECT().Get(gomock.Any(), dep.ID).Return(dep, nil)
+			h.treeStore.EXPECT().Get(gomock.Any(), batch.ID).Return(tree, nil)
+			h.depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{
+				BatchID:    batch.ID,
+				Dependents: []string{"test-queue/batch/2"},
+				Version:    1,
+			}, nil)
+
+			if tt.wantFail {
+				h.batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateFailed).Return(nil)
+			}
+
+			require.NoError(t, runProcess(t, ctrl, h.controller, batch.ID))
+
+			if tt.wantFail {
+				assert.Equal(t, []pubRec{
+					{topic: "speculate", msgID: "test-queue/batch/2"},
+					{topic: "conclude", msgID: batch.ID},
+				}, *h.records)
+				return
+			}
+			// A healthy wake re-arms the merge trigger (minted ID — never
+			// the bare batch ID, which publish dedup could swallow) before
+			// waking dependents.
+			require.Len(t, *h.records, 2)
+			rearm := (*h.records)[0]
+			assert.Equal(t, "submitqueue-merge", rearm.topic)
+			assert.True(t, strings.HasPrefix(rearm.msgID, batch.ID+"/mergeheal/"), "re-arm must mint a fresh ID, got %q", rearm.msgID)
+			assert.Equal(t, pubRec{topic: "speculate", msgID: "test-queue/batch/2"}, (*h.records)[1])
+		})
+	}
 }
 
 // A failed base dependency deads the path: a Building path is captured as a
@@ -1155,9 +1254,11 @@ func TestPathDead(t *testing.T) {
 	}
 }
 
-// mergeableNow and viable are pure functions over a path and its
-// dependencies; table-test the combinations not already covered end-to-end.
-func TestMergeableNowAndViable(t *testing.T) {
+// speculation.PathMergePossible (finalize's optimistic gate) and viable are
+// pure functions over a path and its dependencies; table-test the
+// combinations not already covered end-to-end. core/speculation's own tests
+// cover the Possible/Confirmed split exhaustively.
+func TestPathMergePossibleAndViable(t *testing.T) {
 	base := "q/batch/1"
 	head := "q/batch/2"
 
@@ -1186,13 +1287,12 @@ func TestMergeableNowAndViable(t *testing.T) {
 			pathBaseIsBase: true,
 		},
 		{
-			// A base dependency published for merge is NOT landed yet: the
-			// queue reorders across nack backoff, so merging now could
-			// overtake the base on the way to runway.
-			name:           "passed_base_merging_waits",
+			// Optimistic: a base already published for merge counts — the
+			// merge stage confirms outcomes before the runway hand-off.
+			name:           "passed_base_merging_possible",
 			status:         entity.SpeculationPathStatusPassed,
 			deps:           map[string]entity.Batch{base: {ID: base, State: entity.BatchStateMerging}},
-			wantMergeable:  false,
+			wantMergeable:  true,
 			wantViable:     true,
 			pathBaseIsBase: true,
 		},
@@ -1233,7 +1333,7 @@ func TestMergeableNowAndViable(t *testing.T) {
 				path = entity.SpeculationPath{Head: head}
 			}
 			info := entity.SpeculationPathInfo{Path: path, Status: tt.status}
-			assert.Equal(t, tt.wantMergeable, mergeableNow(info, tt.deps))
+			assert.Equal(t, tt.wantMergeable, speculation.PathMergePossible(info, tt.deps))
 			assert.Equal(t, tt.wantViable, viable(info, tt.deps))
 		})
 	}
