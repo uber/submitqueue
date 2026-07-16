@@ -1,0 +1,45 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "clock.go",
+        "error.go",
+        "profile.go",
+        "runtime.go",
+        "sequence.go",
+        "state.go",
+        "timeline.go",
+        "uri.go",
+    ],
+    importpath = "github.com/uber/submitqueue/sqsim/model",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//platform/errs:go_default_library",
+        "//sqsim:go_default_library",
+        "//sqsim/entity:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = [
+        "clock_test.go",
+        "error_test.go",
+        "profile_test.go",
+        "runtime_test.go",
+        "sequence_test.go",
+        "state_test.go",
+        "timeline_test.go",
+        "uri_test.go",
+    ],
+    embed = [":go_default_library"],
+    deps = [
+        "//platform/errs:go_default_library",
+        "//sqsim:go_default_library",
+        "//sqsim/entity:go_default_library",
+        "//sqsim/scenarios:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+    ],
+)
