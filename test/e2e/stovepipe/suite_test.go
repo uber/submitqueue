@@ -26,18 +26,15 @@ package e2e_test
 //
 //   bazel test //test/e2e/stovepipe:stovepipe_test
 //
-// The stack runs the Stovepipe gRPC service plus a storage MySQL (request,
-// request_uri) and a queue MySQL (the process stage). Unlike the integration
-// suite (test/integration/stovepipe), which asserts only that Ingest *publishes*
-// a process message, this suite additionally drives the asynchronous process
-// consumer to completion — proving the ingest→process pipeline runs end-to-end.
+// The stack runs the Stovepipe gRPC service plus storage and queue MySQL
+// backends. Scenarios start through the public gRPC API and assert durable
+// downstream outcomes, while integration tests may seed backend state directly.
 
 import (
 	"context"
 	"database/sql"
 	"path/filepath"
 	"testing"
-	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
@@ -45,18 +42,8 @@ import (
 	"github.com/stretchr/testify/suite"
 	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
 	"github.com/uber/submitqueue/test/testutil"
+	stovepipetest "github.com/uber/submitqueue/test/testutil/stovepipe"
 	"google.golang.org/grpc"
-)
-
-// The process consumer runs inside the stovepipe-service container, so this
-// suite can only observe its completion black-box through the queue backend's
-// delivery-state table — there is no in-process signal to await across the
-// container boundary. A bounded poll is the deterministic-enough analog:
-// processTimeout is a safety net (a failure here means the stage is genuinely
-// stuck, not a timing race) and processPollInterval bounds re-query frequency.
-const (
-	processTimeout      = 30 * time.Second
-	processPollInterval = 500 * time.Millisecond
 )
 
 type StovepipeE2ESuite struct {
@@ -125,12 +112,8 @@ func (s *StovepipeE2ESuite) TestPing() {
 }
 
 // TestIngest_HappyPath_Processes drives a queue's head commit through the whole
-// pipeline. Ingest synchronously resolves the head URI via the (fake)
-// SourceControl, persists the Request and its (queue, URI) mapping, and publishes
-// the request id to the process stage; the process consumer then drains that
-// message. This asserts both the synchronous side effects and — the piece the
-// integration suite does not cover — that the async process stage acked the
-// message.
+// pipeline. It verifies the asynchronous process stage admits the request,
+// claims one slot, chooses the cold-start strategy, and publishes to build.
 func (s *StovepipeE2ESuite) TestIngest_HappyPath_Processes() {
 	const queue = "monorepo/main"
 
@@ -140,8 +123,8 @@ func (s *StovepipeE2ESuite) TestIngest_HappyPath_Processes() {
 	// Synchronous side effects of Ingest.
 	s.assertIngestPersisted(queue, id)
 
-	// Asynchronous completion: the process consumer acked the message.
-	s.awaitProcessed(queue)
+	// Asynchronous outcome, including the build-stage handoff.
+	stovepipetest.AssertColdStartAdmitted(s.T(), s.db, s.queueDB, queue, id)
 }
 
 // TestIngest_Idempotent verifies that re-ingesting the same queue resolves the
