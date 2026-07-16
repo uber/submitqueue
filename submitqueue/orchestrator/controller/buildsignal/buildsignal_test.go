@@ -195,16 +195,17 @@ func TestController_Process_SucceededPublishesBuiltLog(t *testing.T) {
 }
 
 // TestController_Process_NonTerminal verifies a non-terminal poll persists
-// the status, publishes to speculate, AND re-publishes to buildsignal via
-// PublishAfter with the per-status delay.
+// status transitions, publishes to speculate, AND re-publishes to buildsignal
+// via PublishAfter with the per-status delay.
 func TestController_Process_NonTerminal(t *testing.T) {
 	tests := []struct {
 		name        string
 		status      entity.BuildStatus
 		wantDelayMs int64
+		wantUpdate  bool
 	}{
-		{"accepted uses accepted delay", entity.BuildStatusAccepted, PollDelayAcceptedMs},
-		{"running uses running delay", entity.BuildStatusRunning, PollDelayRunningMs},
+		{"unchanged accepted uses accepted delay", entity.BuildStatusAccepted, PollDelayAcceptedMs, false},
+		{"transition to running uses running delay", entity.BuildStatusRunning, PollDelayRunningMs, true},
 	}
 
 	for _, tt := range tests {
@@ -217,7 +218,9 @@ func TestController_Process_NonTerminal(t *testing.T) {
 			h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(build, nil)
 			h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: build.ID}).Return(tt.status, entity.BuildMetadata{}, nil)
 			h.batchStore.EXPECT().Get(gomock.Any(), build.BatchID).Return(entity.Batch{ID: build.BatchID, State: entity.BatchStateSpeculating}, nil)
-			h.buildStore.EXPECT().UpdateStatus(gomock.Any(), build.ID, tt.status).Return(nil)
+			if tt.wantUpdate {
+				h.buildStore.EXPECT().UpdateStatus(gomock.Any(), build.ID, tt.status).Return(nil)
+			}
 			h.speculatePub.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).Return(nil).Times(1)
 			h.signalPub.EXPECT().
 				PublishAfter(gomock.Any(), "buildsignal", gomock.AssignableToTypeOf(entityqueue.Message{}), tt.wantDelayMs).
