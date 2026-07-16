@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "go_default_library",
@@ -23,6 +23,36 @@ go_library(
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/storage:go_default_library",
         "@com_github_go_sql_driver_mysql//:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = [
+        "batch_dependent_store_test.go",
+        "batch_store_test.go",
+        "build_store_test.go",
+        "change_store_test.go",
+        "request_log_store_test.go",
+        "request_queue_summary_store_test.go",
+        "request_store_test.go",
+        "request_summary_store_test.go",
+        "request_uri_store_test.go",
+        "speculation_path_build_store_test.go",
+        "speculation_tree_store_test.go",
+        "storage_test.go",
+    ],
+    embed = [":go_default_library"],
+    deps = [
+        "//platform/base/change:go_default_library",
+        "//platform/base/mergestrategy:go_default_library",
+        "//submitqueue/entity:go_default_library",
+        "//submitqueue/extension/storage:go_default_library",
+        "@com_github_data_dog_go_sqlmock//:go_default_library",
+        "@com_github_go_sql_driver_mysql//:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
         "@com_github_uber_go_tally//:go_default_library",
     ],
 )
