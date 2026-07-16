@@ -12,27 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mapper
+package storage
+
+//go:generate mockgen -source=request_uri_store.go -destination=mock/request_uri_store_mock.go -package=mock
 
 import (
-	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
-	"github.com/uber/submitqueue/submitqueue/core/request"
+	"context"
+
 	"github.com/uber/submitqueue/submitqueue/entity"
 )
 
-// ProtoToStatusRequest maps the wire StatusRequest to the entity.StatusRequest
-// the controller operates on.
-func ProtoToStatusRequest(req *pb.StatusRequest) entity.StatusRequest {
-	return entity.StatusRequest{
-		ID: req.GetSqid(),
-	}
-}
+// RequestURIStore persists the immutable change-URI reverse mapping.
+type RequestURIStore interface {
+	// Create inserts mapping and returns ErrAlreadyExists when its full primary key already exists.
+	Create(ctx context.Context, mapping entity.RequestURI) error
 
-// CurrentStateToProto maps the domain read model to the wire StatusResponse.
-func CurrentStateToProto(state request.CurrentState) *pb.StatusResponse {
-	return &pb.StatusResponse{
-		Status:    string(state.Status),
-		LastError: state.LastError,
-		Metadata:  state.Metadata,
-	}
+	// ListByURI returns at most limit mappings ordered by received_at_ms descending, then request_id descending.
+	ListByURI(ctx context.Context, changeURI string, limit int) ([]entity.RequestURI, error)
 }

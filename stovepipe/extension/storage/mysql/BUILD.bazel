@@ -1,8 +1,9 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "go_default_library",
     srcs = [
+        "build_store.go",
         "queue_store.go",
         "request_store.go",
         "request_uri_store.go",
@@ -15,6 +16,27 @@ go_library(
         "//stovepipe/entity:go_default_library",
         "//stovepipe/extension/storage:go_default_library",
         "@com_github_go_sql_driver_mysql//:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = [
+        "build_store_test.go",
+        "queue_store_test.go",
+        "request_store_test.go",
+        "request_uri_store_test.go",
+        "storage_test.go",
+    ],
+    embed = [":go_default_library"],
+    deps = [
+        "//stovepipe/entity:go_default_library",
+        "//stovepipe/extension/storage:go_default_library",
+        "@com_github_data_dog_go_sqlmock//:go_default_library",
+        "@com_github_go_sql_driver_mysql//:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
         "@com_github_uber_go_tally//:go_default_library",
     ],
 )

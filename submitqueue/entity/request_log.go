@@ -31,7 +31,11 @@ const (
 	// RequestStatusUnknown is the unknown sentinel status. It is set by default when the structure is initialized. It should never be seen in the system.
 	RequestStatusUnknown RequestStatus = ""
 
-	// RequestStatusAccepted indicates that the request has been accepted by the system. Typically a gateway service will set this status when the land request is received and persisted to the logging database.
+	// RequestStatusAccepting is the internal status of a persisted Land receipt that has not yet been published to the processing pipeline.
+	// Public read APIs must not expose requests that remain in this status.
+	RequestStatusAccepting RequestStatus = "accepting"
+
+	// RequestStatusAccepted indicates that the request has been published to the processing pipeline.
 	RequestStatusAccepted RequestStatus = "accepted"
 
 	// RequestStatusStarted is the initial status of a request. It corresponds to the RequestStateStarted state and typically set by the orchestrator service when the request is received and persisted to the operating database.

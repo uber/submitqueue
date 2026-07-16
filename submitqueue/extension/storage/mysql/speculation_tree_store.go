@@ -82,7 +82,7 @@ func (s *speculationTreeStore) Create(ctx context.Context, speculationTree entit
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrDuplicateEntry {
 			return fmt.Errorf("speculation tree entity batchID=%s: %w", speculationTree.BatchID, storage.ErrAlreadyExists)
 		}
 		return fmt.Errorf("failed to insert speculation tree entity batchID=%s: %w", speculationTree.BatchID, err)

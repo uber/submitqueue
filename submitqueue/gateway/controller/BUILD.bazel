@@ -5,8 +5,11 @@ go_library(
     srcs = [
         "cancel.go",
         "land.go",
+        "list.go",
         "ping.go",
-        "status.go",
+        "read_errors.go",
+        "request_history.go",
+        "request_summary.go",
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/gateway/controller",
     visibility = ["//visibility:public"],
@@ -32,8 +35,11 @@ go_test(
     srcs = [
         "cancel_test.go",
         "land_test.go",
+        "list_test.go",
         "ping_test.go",
-        "status_test.go",
+        "request_history_test.go",
+        "request_summary_test.go",
+        "storage_fixture_test.go",
     ],
     embed = [":go_default_library"],
     deps = [

@@ -17,6 +17,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -64,14 +65,9 @@ func newTestRegistryWithNoopPublisher(t *testing.T, ctrl *gomock.Controller) con
 	return registry
 }
 
-// noopStorage returns a storage.Storage whose RequestLogStore.Insert
-// succeeds silently for any entityqueue.
+// noopStorage returns stateful request storage whose writes succeed.
 func noopStorage(ctrl *gomock.Controller) storage.Storage {
-	logStore := storagemock.NewMockRequestLogStore(ctrl)
-	logStore.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	store := storagemock.NewMockStorage(ctrl)
-	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
-	return store
+	return newControllerStorageFixture(ctrl).storage
 }
 
 // noopQueueConfigStore returns a mock queueconfig.Store that always reports
@@ -162,6 +158,48 @@ func TestLand_ReturnsErrorOnEmptyQueue(t *testing.T) {
 	assert.True(t, IsInvalidRequest(err))
 }
 
+func TestLand_ValidatesQueueLengthBeforeAllocatingSqid(t *testing.T) {
+	tests := []struct {
+		name      string
+		queue     string
+		wantError bool
+	}{
+		{name: "maximum length", queue: strings.Repeat("q", maxQueueIdentifierBytes)},
+		{name: "over maximum", queue: strings.Repeat("q", maxQueueIdentifierBytes+1), wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			cnt := countermock.NewMockCounter(ctrl)
+			if !tt.wantError {
+				cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(1), nil)
+			}
+			controller := NewLandController(
+				zap.NewNop().Sugar(),
+				tally.NoopScope,
+				cnt,
+				noopStorage(ctrl),
+				noopQueueConfigStore(ctrl),
+				newTestRegistryWithNoopPublisher(t, ctrl),
+			)
+
+			result, err := controller.Land(context.Background(), entity.LandRequest{
+				Queue:  tt.queue,
+				Change: change.Change{URIs: []string{"uri"}},
+			})
+
+			if tt.wantError {
+				require.Error(t, err)
+				assert.True(t, IsInvalidRequest(err))
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.queue+"/1", result.ID)
+		})
+	}
+}
+
 func TestLand_ReturnsErrorOnEmptyChangeUri(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
@@ -177,6 +215,39 @@ func TestLand_ReturnsErrorOnEmptyChangeUri(t *testing.T) {
 
 	require.Error(t, err)
 	assert.True(t, IsInvalidRequest(err))
+}
+
+func TestLand_ReturnsErrorOnInvalidChangeURIs(t *testing.T) {
+	tests := []struct {
+		name string
+		uris []string
+	}{
+		{name: "empty URI element", uris: []string{""}},
+		{name: "URI exceeds storage limit", uris: []string{strings.Repeat("x", maxStorageIdentifierBytes+1)}},
+		{name: "duplicate exact URI", uris: []string{"uri", "uri"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			controller := NewLandController(
+				zap.NewNop().Sugar(),
+				tally.NoopScope,
+				countermock.NewMockCounter(ctrl),
+				noopStorage(ctrl),
+				noopQueueConfigStore(ctrl),
+				newTestRegistryWithNoopPublisher(t, ctrl),
+			)
+
+			_, err := controller.Land(context.Background(), entity.LandRequest{
+				Queue:  "test-queue",
+				Change: change.Change{URIs: tt.uris},
+			})
+
+			require.Error(t, err)
+			assert.True(t, IsInvalidRequest(err))
+		})
+	}
 }
 
 func TestLand_ReturnsErrorOnZeroValueChange(t *testing.T) {
@@ -238,22 +309,80 @@ func TestLand_PropagatesQueueConfigStoreError(t *testing.T) {
 func TestLand_PublishesToQueue(t *testing.T) {
 	var publishedTopic string
 	var publishedMessage entityqueue.Message
+	var receiptSummary entity.RequestSummary
+	var materializedSummary entity.RequestSummary
+	var persistedMapping entity.RequestURI
+	var persistedQueueSummary entity.RequestQueueSummary
+	var persistedLog entity.RequestLog
 
 	ctrl := gomock.NewController(t)
 
 	cnt := countermock.NewMockCounter(ctrl)
 	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(123), nil)
 
+	store := storagemock.NewMockStorage(ctrl)
+	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
+	uriStore := storagemock.NewMockRequestURIStore(ctrl)
+	queueStore := storagemock.NewMockRequestQueueSummaryStore(ctrl)
+	logStore := storagemock.NewMockRequestLogStore(ctrl)
+	store.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
+	store.EXPECT().GetRequestURIStore().Return(uriStore).AnyTimes()
+	store.EXPECT().GetRequestQueueSummaryStore().Return(queueStore).AnyTimes()
+	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
+
 	registry, publisher := newTestRegistry(t, ctrl)
-	publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, topic string, msg entityqueue.Message) error {
-			publishedTopic = topic
-			publishedMessage = msg
-			return nil
-		},
+	gomock.InOrder(
+		summaryStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, summary entity.RequestSummary) error {
+				receiptSummary = summary
+				return nil
+			},
+		),
+		publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, topic string, msg entityqueue.Message) error {
+				publishedTopic = topic
+				publishedMessage = msg
+				return nil
+			},
+		),
+		logStore.EXPECT().Insert(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, log entity.RequestLog) error {
+				persistedLog = log
+				return nil
+			},
+		),
+		summaryStore.EXPECT().Get(gomock.Any(), "test-queue/123").DoAndReturn(
+			func(context.Context, string) (entity.RequestSummary, error) {
+				return receiptSummary, nil
+			},
+		),
+		summaryStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).DoAndReturn(
+			func(_ context.Context, summary entity.RequestSummary, _, newVersion int32) error {
+				summary.Version = newVersion
+				materializedSummary = summary
+				return nil
+			},
+		),
+		queueStore.EXPECT().Get(gomock.Any(), "test-queue", gomock.Any(), "test-queue/123").DoAndReturn(
+			func(context.Context, string, int64, string) (entity.RequestQueueSummary, error) {
+				return entity.RequestQueueSummary{}, storage.ErrNotFound
+			},
+		),
+		uriStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, mapping entity.RequestURI) error {
+				persistedMapping = mapping
+				return nil
+			},
+		),
+		queueStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, summary entity.RequestQueueSummary) error {
+				persistedQueueSummary = summary
+				return nil
+			},
+		),
 	)
 
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopStorage(ctrl), noopQueueConfigStore(ctrl), registry)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, store, noopQueueConfigStore(ctrl), registry)
 	ctx := context.Background()
 
 	req := entity.LandRequest{
@@ -265,6 +394,40 @@ func TestLand_PublishesToQueue(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "test-queue/123", result.ID)
+
+	assert.Equal(t, entity.RequestSummary{
+		RequestID:         "test-queue/123",
+		Queue:             "test-queue",
+		ChangeURIs:        []string{"github://github.example.com/uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"},
+		ReceivedAtMs:      receiptSummary.ReceivedAtMs,
+		Status:            entity.RequestStatusAccepting,
+		StatusTimestampMs: receiptSummary.ReceivedAtMs,
+		Version:           1,
+		Metadata:          map[string]string{},
+	}, receiptSummary)
+	assert.Positive(t, receiptSummary.ReceivedAtMs)
+	assert.Equal(t, entity.RequestLog{
+		RequestID:   "test-queue/123",
+		TimestampMs: receiptSummary.ReceivedAtMs,
+		Status:      entity.RequestStatusAccepted,
+		Metadata:    map[string]string{},
+	}, persistedLog)
+	assert.Equal(t, entity.RequestStatusAccepted, materializedSummary.Status)
+	assert.Equal(t, int32(2), materializedSummary.Version)
+	assert.Equal(t, entity.RequestURI{
+		ChangeURI:    "github://github.example.com/uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98",
+		ReceivedAtMs: receiptSummary.ReceivedAtMs,
+		RequestID:    "test-queue/123",
+	}, persistedMapping)
+	assert.Equal(t, entity.RequestQueueSummary{
+		RequestID:    "test-queue/123",
+		Queue:        "test-queue",
+		ChangeURIs:   []string{"github://github.example.com/uber/backend/pull/456/fedcba9876543210fedcba9876543210fedcba98"},
+		ReceivedAtMs: receiptSummary.ReceivedAtMs,
+		Status:       entity.RequestStatusAccepted,
+		Version:      2,
+		Metadata:     map[string]string{},
+	}, persistedQueueSummary)
 
 	// Verify message was published to the topic registered under TopicKeyStart
 	assert.Equal(t, "start", publishedTopic)
@@ -280,20 +443,48 @@ func TestLand_PublishesToQueue(t *testing.T) {
 	assert.Equal(t, mergestrategy.MergeStrategyRebase, deserializedReq.LandStrategy)
 }
 
-func TestLand_ContinuesWhenPublishFails(t *testing.T) {
+func TestLand_ReturnsErrorWhenPublishFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	cnt := countermock.NewMockCounter(ctrl)
 	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(999), nil)
 
+	store := storagemock.NewMockStorage(ctrl)
+	summaryStore := storagemock.NewMockRequestSummaryStore(ctrl)
+	store.EXPECT().GetRequestSummaryStore().Return(summaryStore)
+	summaryStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, summary entity.RequestSummary) error {
+		assert.Equal(t, entity.RequestStatusAccepting, summary.Status)
+		return nil
+	})
+
 	registry, publisher := newTestRegistry(t, ctrl)
 	publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("queue unavailable"))
 
-	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopStorage(ctrl), noopQueueConfigStore(ctrl), registry)
+	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, store, noopQueueConfigStore(ctrl), registry)
 	ctx := context.Background()
 
 	_, err := controller.Land(ctx, testLandRequest("test-queue"))
 
-	// Should fail if publish fails
 	require.Error(t, err)
+}
+
+func TestLand_ReturnsSqidWhenAcceptedLogFailsAfterPublish(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	cnt := countermock.NewMockCounter(ctrl)
+	cnt.EXPECT().Next(gomock.Any(), gomock.Any()).Return(int64(999), nil)
+	fixture := newControllerStorageFixture(ctrl)
+	fixture.setLogInsertError(fmt.Errorf("log unavailable"))
+
+	controller := NewLandController(
+		zap.NewNop().Sugar(),
+		tally.NoopScope,
+		cnt,
+		fixture.storage,
+		noopQueueConfigStore(ctrl),
+		newTestRegistryWithNoopPublisher(t, ctrl),
+	)
+	result, err := controller.Land(context.Background(), testLandRequest("test-queue"))
+
+	require.NoError(t, err)
+	assert.Equal(t, "test-queue/999", result.ID)
 }

@@ -52,8 +52,6 @@ func TestBuild_SerializationRoundTrip(t *testing.T) {
 			build: Build{
 				ID:        "bk-1001",
 				RequestID: "request/monorepo/main/42",
-				URI:       "git://remote/monorepo/main/deadbeef",
-				BaseURI:   "git://remote/monorepo/main/cafef00d",
 				Status:    BuildStatusAccepted,
 				Version:   1,
 			},
@@ -63,7 +61,6 @@ func TestBuild_SerializationRoundTrip(t *testing.T) {
 			build: Build{
 				ID:        "bk-1002",
 				RequestID: "request/monorepo/main/43",
-				URI:       "git://remote/monorepo/main/feedface",
 				Status:    BuildStatusSucceeded,
 				Version:   3,
 			},
@@ -73,8 +70,6 @@ func TestBuild_SerializationRoundTrip(t *testing.T) {
 			build: Build{
 				ID:        "bk-1003",
 				RequestID: "request/monorepo/main/44",
-				URI:       "git://remote/monorepo/main/0ff1ce",
-				BaseURI:   "git://remote/monorepo/main/cafef00d",
 				Status:    BuildStatusFailed,
 				Version:   2,
 			},

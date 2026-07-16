@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
@@ -25,6 +26,7 @@ import (
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
+	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/queueconfig"
@@ -65,6 +67,7 @@ type LandController struct {
 	metricsScope tally.Scope
 	counter      counter.Counter
 	store        storage.Storage
+	materializer *requestcore.Materializer
 	queueConfigs queueconfig.Store
 	registry     consumer.TopicRegistry
 }
@@ -78,6 +81,7 @@ func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter cou
 		metricsScope: scope.SubScope("land_controller"),
 		counter:      counter,
 		store:        store,
+		materializer: requestcore.NewMaterializer(store),
 		queueConfigs: queueConfigs,
 		registry:     registry,
 	}
@@ -90,12 +94,12 @@ func (c *LandController) Land(ctx context.Context, req entity.LandRequest) (resu
 	op := metrics.Begin(c.metricsScope, opName)
 	defer func() { op.Complete(retErr) }()
 
-	// Validate required fields.
-	if req.Queue == "" {
-		return entity.LandResult{}, fmt.Errorf("LandController requires the request to have a queue name specified: %w", ErrInvalidRequest)
+	// Validate provider-agnostic request constraints before allocating an sqid.
+	if err := validateQueueIdentifier(req.Queue); err != nil {
+		return entity.LandResult{}, fmt.Errorf("LandController invalid queue: %w", err)
 	}
-	if len(req.Change.URIs) == 0 {
-		return entity.LandResult{}, fmt.Errorf("LandController requires the request to have at least one change URI specified: %w", ErrInvalidRequest)
+	if err := validateChangeURIs(req.Change.URIs); err != nil {
+		return entity.LandResult{}, fmt.Errorf("LandController invalid change URIs: %w", err)
 	}
 
 	queue := req.Queue
@@ -113,13 +117,48 @@ func (c *LandController) Land(ctx context.Context, req entity.LandRequest) (resu
 		return entity.LandResult{}, fmt.Errorf("LandController failed to generate request ID for queue=%s: %w", queue, err)
 	}
 	req.ID = fmt.Sprintf("%s/%d", queue, seq)
+	if err := validateStoredIdentifier("generated sqid", req.ID); err != nil {
+		return entity.LandResult{}, fmt.Errorf("LandController generated invalid request ID for queue=%s: %w", queue, err)
+	}
 
-	// Record the accepted status in the request log for reconciliation. Once the request materializes as a Request entity, the status might be updated to "new".
-	// It is important to record the status before publishing to the queue for processing. It is important to publish straight to the database and not via a entityqueue.
-	// Gateway has to stay consistent with the request log.
-	logEntry := entity.NewRequestLog(req.ID, entity.RequestStatusAccepted, 0, "", nil)
-	if err := c.store.GetRequestLogStore().Insert(ctx, logEntry); err != nil {
-		return entity.LandResult{}, fmt.Errorf("LandController failed to insert request log for sqid=%s: %w", req.ID, err)
+	receivedAtMs := time.Now().UnixMilli()
+	summary := entity.RequestSummary{
+		RequestID:         req.ID,
+		Queue:             req.Queue,
+		ChangeURIs:        append([]string{}, req.Change.URIs...),
+		ReceivedAtMs:      receivedAtMs,
+		Status:            entity.RequestStatusAccepting,
+		StatusTimestampMs: receivedAtMs,
+		Version:           1,
+		Metadata:          map[string]string{},
+	}
+	if err := c.store.GetRequestSummaryStore().Create(ctx, summary); err != nil {
+		return entity.LandResult{}, fmt.Errorf("LandController failed to create request receipt sqid=%s: %w", req.ID, err)
+	}
+
+	// Publish before exposing the request as accepted. A failed publish leaves an
+	// internal accepting receipt that public read APIs do not expose.
+	if err := c.publishToQueue(ctx, req); err != nil {
+		return entity.LandResult{}, fmt.Errorf("LandController failed to publish request to queue: %w", err)
+	}
+
+	logEntry := entity.RequestLog{
+		RequestID:   req.ID,
+		TimestampMs: receivedAtMs,
+		Status:      entity.RequestStatusAccepted,
+		Metadata:    map[string]string{},
+	}
+	if err := c.materializer.PersistLog(ctx, logEntry); err != nil {
+		// Publication is the Land success boundary. Later pipeline events repair
+		// the accepting projection even if this accepted log is not persisted. If
+		// the client retries after losing the response, the orchestrator rejects
+		// the new sqid as a duplicate while the original request continues.
+		c.logger.Errorw("failed to record accepted status after publishing request",
+			"queue", req.Queue,
+			"sqid", req.ID,
+			"error", err,
+		)
+		metrics.NamedCounter(c.metricsScope, opName, "accepted_log_failure", 1)
 	}
 
 	c.logger.Debugw("land request created",
@@ -129,11 +168,6 @@ func (c *LandController) Land(ctx context.Context, req entity.LandRequest) (resu
 		"change_count", len(req.Change.URIs),
 		"strategy", string(req.LandStrategy),
 	)
-
-	// Publish to queue for async processing
-	if err := c.publishToQueue(ctx, req); err != nil {
-		return entity.LandResult{}, fmt.Errorf("LandController failed to publish request to queue: %w", err)
-	}
 
 	c.logger.Infow("request published to queue",
 		"queue", req.Queue,

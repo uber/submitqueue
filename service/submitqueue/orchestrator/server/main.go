@@ -403,34 +403,21 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 				subscriberName, t.groupSuffix,
 			),
 		})
-		// DLQ subscription for the same primary stage. DLQ is disabled here
-		// to avoid a "_dlq_dlq" cascade: if DLQ reconciliation itself fails,
-		// the consumer retries forever and the failure is surfaced via logs
-		// and metrics rather than being moved to a second-level dead-letter
-		// topic that nobody consumes.
-		//
-		// MaxAttempts is bumped to a very high value so the per-message
-		// retry budget effectively never runs out — this pairs with the
-		// AlwaysRetryableProcessor wired into the DLQ consumer to guarantee
-		// reconciliation eventually converges instead of being silently
-		// dropped after the default retry count.
-		dlqSub := extqueue.DefaultSubscriptionConfig(
-			subscriberName, t.groupSuffix+"-dlq",
-		)
-		dlqSub.DLQ.Enabled = false
-		dlqSub.Retry.MaxAttempts = 1000
+		// DLQ subscription for the same primary stage. DLQSubscriptionConfig
+		// disables the subscription's own DLQ (no "_dlq_dlq" cascade) and sets
+		// an effectively unlimited retry budget to pair with the
+		// AlwaysRetryableProcessor wired into the DLQ consumer.
 		configs = append(configs, consumer.TopicConfig{
 			Key:          dlq.TopicKey(t.key),
 			Name:         t.name + "_dlq",
 			Queue:        q,
-			Subscription: dlqSub,
+			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, t.groupSuffix+"-dlq"),
 		})
 	}
 
-	// Publish-only: the orchestrator emits request log entries to the log
-	// topic but never persists them. The gateway is the sole consumer that
-	// writes the request log to storage, so the orchestrator registers no
-	// consuming subscription (and therefore no log DLQ) for this topic.
+	// Publish-only: the orchestrator emits request-log entries to the log topic.
+	// The gateway is the sole consumer and writer of request logs and public
+	// projections, so the orchestrator registers no consuming subscription.
 	configs = append(configs, consumer.TopicConfig{
 		Key:   topickey.TopicKeyLog,
 		Name:  "log",
@@ -752,19 +739,19 @@ func registerDLQControllers(c consumer.Consumer, logger *zap.SugaredLogger, scop
 		name string
 		ctl  consumer.Controller
 	}{
-		{"start_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeLandRequestID, dlq.TopicKey(topickey.TopicKeyStart), "orchestrator-start-dlq")},
-		{"cancel_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeCancelRequestID, dlq.TopicKey(topickey.TopicKeyCancel), "orchestrator-cancel-dlq")},
-		{"validate_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeRequestID, dlq.TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")},
-		{"mergeconflictsignal_dlq", dlq.NewDLQMergeConflictSignalController(logger, dlqScope, store, dlq.TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-mergeconflictsignal-dlq")},
-		{"batch_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeRequestID, dlq.TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")},
-		{"score_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyScore), "orchestrator-score-dlq")},
-		{"speculate_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeySpeculate), "orchestrator-speculate-dlq")},
+		{"start_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, registry, dlq.DecodeLandRequestID, dlq.TopicKey(topickey.TopicKeyStart), "orchestrator-start-dlq")},
+		{"cancel_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, registry, dlq.DecodeCancelRequestID, dlq.TopicKey(topickey.TopicKeyCancel), "orchestrator-cancel-dlq")},
+		{"validate_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, registry, dlq.DecodeRequestID, dlq.TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")},
+		{"mergeconflictsignal_dlq", dlq.NewDLQMergeConflictSignalController(logger, dlqScope, store, registry, dlq.TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-mergeconflictsignal-dlq")},
+		{"batch_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, registry, dlq.DecodeRequestID, dlq.TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")},
+		{"score_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeyScore), "orchestrator-score-dlq")},
+		{"speculate_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeySpeculate), "orchestrator-speculate-dlq")},
 		{"prioritize_dlq", dlq.NewDLQQueueController(logger, dlqScope, registry, dlq.TopicKey(topickey.TopicKeyPrioritize), "orchestrator-prioritize-dlq")},
-		{"build_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyBuild), "orchestrator-build-dlq")},
-		{"buildsignal_dlq", dlq.NewDLQBuildSignalController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")},
-		{"merge_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")},
-		{"mergesignal_dlq", dlq.NewDLQMergeSignalController(logger, dlqScope, store, dlq.TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-mergesignal-dlq")},
-		{"conclude_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyConclude), "orchestrator-conclude-dlq")},
+		{"build_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeyBuild), "orchestrator-build-dlq")},
+		{"buildsignal_dlq", dlq.NewDLQBuildSignalController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")},
+		{"merge_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")},
+		{"mergesignal_dlq", dlq.NewDLQMergeSignalController(logger, dlqScope, store, registry, dlq.TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-mergesignal-dlq")},
+		{"conclude_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeyConclude), "orchestrator-conclude-dlq")},
 	}
 	var count int
 	for _, reg := range dlqRegs {

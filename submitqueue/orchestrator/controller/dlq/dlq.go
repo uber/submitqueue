@@ -39,6 +39,7 @@ import (
 	"fmt"
 
 	"github.com/uber/submitqueue/platform/consumer"
+	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
@@ -60,18 +61,18 @@ func TopicKey(main consumer.TopicKey) consumer.TopicKey {
 	return consumer.TopicKey(string(main) + topicSuffix)
 }
 
-// failRequest transitions a request to RequestStateError if it is not already
-// in a terminal state, and unconditionally appends a RequestStatusError row to
-// the request log. The state transition is idempotent — a request already in a
-// terminal state skips the UpdateState CAS — but the log insert runs on every
-// successful call so that a prior attempt that wrote the Error state but then
-// failed to insert the log is repaired on redelivery.
+// failRequest transitions a non-terminal request to RequestStateError and
+// appends the matching RequestStatusError log. Redelivery for an existing Error
+// state repeats materialization to repair a previous partial attempt. A
+// different terminal outcome is left unchanged.
+// lastError is the failure reason preserved by the queue in DLQ delivery
+// metadata and is exposed through Status and History for diagnosis.
 //
 // A request in RequestStateCancelling is reconciled to RequestStateError, not
 // left in place: DLQ means the pipeline failed to converge, so we cannot
 // confirm the cancel completed cleanly. Writing Error is the honest signal and
 // keeps the request from being stuck in a non-terminal state forever.
-func failRequest(ctx context.Context, store storage.Storage, logger *zap.SugaredLogger, requestID string) error {
+func failRequest(ctx context.Context, store storage.Storage, registry consumer.TopicRegistry, logger *zap.SugaredLogger, requestID, lastError string) error {
 	request, err := store.GetRequestStore().Get(ctx, requestID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
@@ -84,12 +85,18 @@ func failRequest(ctx context.Context, store storage.Storage, logger *zap.Sugared
 	}
 
 	logVersion := request.Version
-	if entity.IsRequestStateTerminal(request.State) {
-		logger.Infow("dlq reconcile: request already terminal, ensuring log entry",
+	switch request.State {
+	case entity.RequestStateError:
+		logger.Infow("dlq reconcile: request already failed, republishing terminal log",
+			"request_id", requestID,
+		)
+	case entity.RequestStateLanded, entity.RequestStateCancelled:
+		logger.Infow("dlq reconcile: request has a different terminal outcome, skipping",
 			"request_id", requestID,
 			"state", string(request.State),
 		)
-	} else {
+		return nil
+	default:
 		newVersion := request.Version + 1
 		if err := store.GetRequestStore().UpdateState(ctx, requestID, request.Version, newVersion, entity.RequestStateError); err != nil {
 			return fmt.Errorf("failed to update request %s state to error: %w", requestID, err)
@@ -101,24 +108,13 @@ func failRequest(ctx context.Context, store storage.Storage, logger *zap.Sugared
 		)
 	}
 
-	// Append the terminal Error status to the request log directly via the
-	// RequestLogStore, bypassing the log topic and the primary log controller.
-	// DLQ controllers must not call back into the primary pipeline (publishing
-	// to a primary topic) — the primary pipeline is what failed and routed this
-	// message to the DLQ in the first place, and re-entering it would risk the
-	// same failure mode that put us here. The log store is the same storage
-	// backend the primary log controller eventually writes to, so a direct
-	// insert produces an equivalent record without the round-trip.
-	//
-	// The log entry is written unconditionally — even when the state was already
-	// terminal on entry — so a previous DLQ attempt that succeeded in flipping
-	// the state but then failed to insert the log is repaired on redelivery.
-	// A duplicate log entry from such a retry is the accepted trade-off; a
-	// missing one would leave the gateway-visible status divergent from the
-	// entity state.
-	logEntry := entity.NewRequestLog(requestID, entity.RequestStatusError, logVersion, "", nil)
-	if err := store.GetRequestLogStore().Insert(ctx, logEntry); err != nil {
-		return fmt.Errorf("failed to insert request log for %s: %w", requestID, err)
+	// Publish the terminal Error status through the log topic so Gateway remains
+	// the sole writer of request logs and public projections. An existing Error
+	// state republishes the same logical event so a previous attempt that changed
+	// the entity but failed to publish can be repaired.
+	logEntry := entity.NewRequestLog(requestID, entity.RequestStatusError, logVersion, lastError, nil)
+	if err := requestcore.PublishLog(ctx, registry, logEntry, requestID); err != nil {
+		return fmt.Errorf("failed to publish request log for %s: %w", requestID, err)
 	}
 
 	return nil
@@ -135,11 +131,11 @@ func failRequest(ctx context.Context, store storage.Storage, logger *zap.Sugared
 // same reason failRequest reconciles Cancelling requests: DLQ means we cannot
 // confirm the cancel completed, so the batch must reach a terminal state.
 //
-// Idempotency: if the batch is already terminal the function still fans out
-// to the member requests, because a previous attempt may have transitioned
-// the batch but crashed before completing the fan-out. Per-request fan-out
-// is itself idempotent via failRequest.
-func failBatch(ctx context.Context, store storage.Storage, logger *zap.SugaredLogger, batchID string) error {
+// Idempotency: an existing Failed batch repeats fan-out because a previous
+// attempt may have crashed after updating the batch. Succeeded and Cancelled
+// are different terminal outcomes and do not fan out errors.
+// lastError is propagated to each member request's terminal Error log.
+func failBatch(ctx context.Context, store storage.Storage, registry consumer.TopicRegistry, logger *zap.SugaredLogger, batchID, lastError string) error {
 	batch, err := store.GetBatchStore().Get(ctx, batchID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
@@ -151,12 +147,18 @@ func failBatch(ctx context.Context, store storage.Storage, logger *zap.SugaredLo
 		return fmt.Errorf("failed to get batch %s: %w", batchID, err)
 	}
 
-	if batch.State.IsTerminal() {
-		logger.Infow("dlq reconcile: batch already terminal, fanning out only",
+	switch batch.State {
+	case entity.BatchStateFailed:
+		logger.Infow("dlq reconcile: batch already failed, repairing request fan-out",
+			"batch_id", batchID,
+		)
+	case entity.BatchStateSucceeded, entity.BatchStateCancelled:
+		logger.Infow("dlq reconcile: batch has a different terminal outcome, skipping",
 			"batch_id", batchID,
 			"state", string(batch.State),
 		)
-	} else {
+		return nil
+	default:
 		newVersion := batch.Version + 1
 		if err := store.GetBatchStore().UpdateState(ctx, batchID, batch.Version, newVersion, entity.BatchStateFailed); err != nil {
 			return fmt.Errorf("failed to update batch %s state to failed: %w", batchID, err)
@@ -168,7 +170,7 @@ func failBatch(ctx context.Context, store storage.Storage, logger *zap.SugaredLo
 	}
 
 	for _, requestID := range batch.Contains {
-		if err := failRequest(ctx, store, logger, requestID); err != nil {
+		if err := failRequest(ctx, store, registry, logger, requestID, lastError); err != nil {
 			return fmt.Errorf("fan-out for batch %s: %w", batchID, err)
 		}
 	}

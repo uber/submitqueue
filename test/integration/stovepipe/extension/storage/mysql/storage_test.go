@@ -255,3 +255,51 @@ func (s *MySQLQueueStoreSuite) SetupSuite() {
 		}
 	})
 }
+
+// MySQLBuildStoreSuite exercises the MySQL-backed BuildStore by embedding the shared contract suite.
+type MySQLBuildStoreSuite struct {
+	storagesuite.BuildStoreContractSuite
+	stack *testutil.ComposeStack
+	db    *sql.DB
+	log   *testutil.TestLogger
+}
+
+func TestMySQLBuildStore(t *testing.T) {
+	suite.Run(t, new(MySQLBuildStoreSuite))
+}
+
+func (s *MySQLBuildStoreSuite) SetupSuite() {
+	t := s.T()
+	ctx := context.Background()
+	s.log = testutil.NewTestLogger(t)
+
+	s.stack = testutil.NewComposeStack(
+		t,
+		s.log,
+		ctx,
+		"docker-compose.yml",
+		"ext-stovepipe-storage-mysql",
+	)
+
+	err := s.stack.Up()
+	require.NoError(t, err, "failed to start compose stack")
+
+	s.db, err = s.stack.ConnectMySQLService("mysql")
+	require.NoError(t, err, "failed to connect to MySQL")
+
+	schemaDir := testutil.SchemaDir("stovepipe/extension/storage/mysql/schema")
+	testutil.ApplySchema(t, s.log, s.db, schemaDir)
+
+	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
+	require.NoError(t, err, "failed to create storage")
+
+	s.SetContext(ctx)
+	s.SetBuildStore(store.GetBuildStore())
+	s.SetLogger(s.log)
+
+	t.Cleanup(func() {
+		if s.db != nil {
+			s.db.Close()
+		}
+	})
+}

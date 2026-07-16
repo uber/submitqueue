@@ -588,3 +588,124 @@ func (s *StorageContractSuite) TestStorage_SpeculationPathBuildGetNotFound() {
 	_, err := s.storage.GetSpeculationPathBuildStore().Get(ctx, "spec/path-build/nonexistent")
 	assert.ErrorIs(t, err, storage.ErrNotFound, "Get for unknown path ID should return ErrNotFound")
 }
+
+func (s *StorageContractSuite) TestStorage_RequestSummaryCreateGetAndCAS() {
+	t := s.T()
+	ctx := s.ctx
+	summary := entity.RequestSummary{
+		RequestID: "summary/1", Queue: "summary-q", ChangeURIs: nil, ReceivedAtMs: 100,
+		Status: entity.RequestStatusAccepted, StatusTimestampMs: 100, Version: 1, Metadata: nil,
+	}
+
+	require.NoError(t, s.storage.GetRequestSummaryStore().Create(ctx, summary))
+	require.ErrorIs(t, s.storage.GetRequestSummaryStore().Create(ctx, summary), storage.ErrAlreadyExists)
+
+	got, err := s.storage.GetRequestSummaryStore().Get(ctx, summary.RequestID)
+	require.NoError(t, err)
+	assert.NotNil(t, got.ChangeURIs)
+	assert.NotNil(t, got.Metadata)
+	_, err = s.storage.GetRequestSummaryStore().Get(ctx, "summary/missing")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+
+	got.Status = entity.RequestStatusLanded
+	got.RequestVersion = 2
+	got.StatusTimestampMs = 200
+	got.LastError = "terminal detail"
+	got.Metadata = map[string]string{"source": "test"}
+	require.NoError(t, s.storage.GetRequestSummaryStore().Update(ctx, got, 1, 2))
+	require.ErrorIs(t, s.storage.GetRequestSummaryStore().Update(ctx, got, 1, 3), storage.ErrVersionMismatch)
+
+	updated, err := s.storage.GetRequestSummaryStore().Get(ctx, summary.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), updated.Version)
+	assert.Equal(t, entity.RequestStatusLanded, updated.Status)
+	assert.Equal(t, "terminal detail", updated.LastError)
+	assert.Equal(t, map[string]string{"source": "test"}, updated.Metadata)
+}
+
+func (s *StorageContractSuite) TestStorage_RequestQueueSummaryListAndCursor() {
+	t := s.T()
+	ctx := s.ctx
+	store := s.storage.GetRequestQueueSummaryStore()
+	rows := []entity.RequestQueueSummary{
+		{RequestID: "queue-summary/1", Queue: "queue-summary", ChangeURIs: nil, ReceivedAtMs: 100, Status: entity.RequestStatusAccepted, Version: 1, Metadata: nil},
+		{RequestID: "queue-summary/2", Queue: "queue-summary", ChangeURIs: []string{"uri/2"}, ReceivedAtMs: 200, Status: entity.RequestStatusLanded, Version: 1, Metadata: map[string]string{}},
+		{RequestID: "queue-summary/3", Queue: "queue-summary", ChangeURIs: []string{"uri/3"}, ReceivedAtMs: 200, Status: entity.RequestStatusError, Version: 1, Metadata: map[string]string{}},
+	}
+	for _, row := range rows {
+		require.NoError(t, store.Create(ctx, row))
+	}
+	require.ErrorIs(t, store.Create(ctx, rows[0]), storage.ErrAlreadyExists)
+
+	got, err := store.Get(ctx, rows[0].Queue, rows[0].ReceivedAtMs, rows[0].RequestID)
+	require.NoError(t, err)
+	assert.NotNil(t, got.ChangeURIs)
+	assert.NotNil(t, got.Metadata)
+	_, err = store.Get(ctx, "queue-summary", 999, "queue-summary/missing")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+
+	got.Status = entity.RequestStatusLanded
+	got.LastError = "done"
+	got.Metadata = map[string]string{"result": "landed"}
+	require.NoError(t, store.Update(ctx, got, 1, 2))
+	require.ErrorIs(t, store.Update(ctx, got, 1, 3), storage.ErrVersionMismatch)
+	updated, err := store.Get(ctx, got.Queue, got.ReceivedAtMs, got.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), updated.Version)
+	assert.Equal(t, entity.RequestStatusLanded, updated.Status)
+	assert.Equal(t, "done", updated.LastError)
+
+	firstPage, err := store.List(ctx, storage.RequestQueueSummaryQuery{
+		Queue: "queue-summary", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, Limit: 2,
+	})
+	require.NoError(t, err)
+	require.Len(t, firstPage, 2)
+	assert.Equal(t, []string{"queue-summary/3", "queue-summary/2"}, []string{firstPage[0].RequestID, firstPage[1].RequestID})
+
+	secondPage, err := store.List(ctx, storage.RequestQueueSummaryQuery{
+		Queue: "queue-summary", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, Limit: 2,
+		HasCursor: true, Cursor: storage.RequestQueueSummaryCursor{ReceivedAtMs: 200, RequestID: "queue-summary/2"},
+	})
+	require.NoError(t, err)
+	require.Len(t, secondPage, 1)
+	assert.Equal(t, "queue-summary/1", secondPage[0].RequestID)
+	assert.NotNil(t, secondPage[0].ChangeURIs)
+	assert.NotNil(t, secondPage[0].Metadata)
+
+	bounded, err := store.List(ctx, storage.RequestQueueSummaryQuery{
+		Queue: "queue-summary", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, bounded, 1)
+	assert.Equal(t, "queue-summary/1", bounded[0].RequestID)
+
+	empty, err := store.List(ctx, storage.RequestQueueSummaryQuery{
+		Queue: "queue-summary", ReceivedAtOrAfterMs: 300, ReceivedBeforeMs: 400, Limit: 10,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, empty)
+}
+
+func (s *StorageContractSuite) TestStorage_RequestURIListIsBoundedAndOrdered() {
+	t := s.T()
+	ctx := s.ctx
+	store := s.storage.GetRequestURIStore()
+	rows := []entity.RequestURI{
+		{ChangeURI: "uri/shared", ReceivedAtMs: 100, RequestID: "uri/1"},
+		{ChangeURI: "uri/shared", ReceivedAtMs: 200, RequestID: "uri/2"},
+		{ChangeURI: "uri/shared", ReceivedAtMs: 200, RequestID: "uri/3"},
+	}
+	for _, row := range rows {
+		require.NoError(t, store.Create(ctx, row))
+	}
+	require.ErrorIs(t, store.Create(ctx, rows[0]), storage.ErrAlreadyExists)
+
+	got, err := store.ListByURI(ctx, "uri/shared", 2)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, []string{"uri/3", "uri/2"}, []string{got[0].RequestID, got[1].RequestID})
+
+	empty, err := store.ListByURI(ctx, "uri/missing", 2)
+	require.NoError(t, err)
+	assert.Empty(t, empty)
+}
