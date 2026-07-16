@@ -70,7 +70,7 @@ func New(resolver changeset.Resolver, buckets []Bucket, valueFunc ValueFunc, sco
 // if no bucket matches.
 func (s *heuristicScorer) Score(ctx context.Context, batch entity.Batch) (ret float64, retErr error) {
 	op := metrics.Begin(s.scope, "score")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.FastLatencyBuckets) }()
 	changes, err := s.resolver.DetailedForBatch(ctx, batch)
 	if err != nil {
 		return 0, err

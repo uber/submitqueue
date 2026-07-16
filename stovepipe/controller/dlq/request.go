@@ -68,7 +68,7 @@ func NewController(
 // instead of dead-lettering the DLQ message itself.
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
 	op := metrics.Begin(c.metricsScope, _opName)
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.LongLatencyBuckets) }()
 
 	msg := delivery.Message()
 

@@ -65,7 +65,7 @@ func (c *mergeChecker) Check(ctx context.Context, request entity.Request) (resul
 	const opName = "check"
 
 	op := metrics.Begin(c.metricsScope, opName)
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.LongLatencyBuckets) }()
 
 	change := request.Change
 

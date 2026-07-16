@@ -42,7 +42,7 @@ func NewRequestStore(db *sql.DB, scope tally.Scope) storage.RequestStore {
 // Get retrieves a land request by ID. Returns ErrNotFound if the request is not found.
 func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, retErr error) {
 	op := metrics.Begin(r.scope, "get")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	var req entity.Request
 	var changeURIsJSON []byte
@@ -70,7 +70,7 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 // Create creates a new land request. The request must have a unique ID already assigned. Returns ErrAlreadyExists if the request ID already exists.
 func (r *requestStore) Create(ctx context.Context, request entity.Request) (retErr error) {
 	op := metrics.Begin(r.scope, "create")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	// Marshal the change URIs to JSON
 	changeURIsJSON, err := json.Marshal(request.Change.URIs)
@@ -98,7 +98,7 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) (retE
 // Version arithmetic is owned by the caller; this is a pure conditional write.
 func (r *requestStore) UpdateState(ctx context.Context, id string, oldVersion, newVersion int32, newState entity.RequestState) (retErr error) {
 	op := metrics.Begin(r.scope, "update_state")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	result, err := r.db.ExecContext(ctx,
 		"UPDATE request SET state = ?, version = ? WHERE id = ? AND version = ?",

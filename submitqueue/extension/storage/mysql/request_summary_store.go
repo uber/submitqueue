@@ -41,7 +41,7 @@ func NewRequestSummaryStore(db *sql.DB, scope tally.Scope) storage.RequestSummar
 
 func (s *requestSummaryStore) Create(ctx context.Context, summary entity.RequestSummary) (retErr error) {
 	op := metrics.Begin(s.scope, "create")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	changeURIsJSON, metadataJSON, err := marshalSummaryJSON(summary.ChangeURIs, summary.Metadata)
 	if err != nil {
@@ -71,7 +71,7 @@ func (s *requestSummaryStore) Create(ctx context.Context, summary entity.Request
 
 func (s *requestSummaryStore) Get(ctx context.Context, requestID string) (ret entity.RequestSummary, retErr error) {
 	op := metrics.Begin(s.scope, "get")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	var changeURIsJSON []byte
 	var metadataJSON []byte
@@ -101,7 +101,7 @@ func (s *requestSummaryStore) Get(ctx context.Context, requestID string) (ret en
 
 func (s *requestSummaryStore) Update(ctx context.Context, summary entity.RequestSummary, oldVersion, newVersion int32) (retErr error) {
 	op := metrics.Begin(s.scope, "update")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	metadata := normalizeMetadata(summary.Metadata)
 	metadataJSON, err := json.Marshal(metadata)

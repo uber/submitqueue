@@ -470,14 +470,14 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 
 			snapshot := testScope.Snapshot()
 
-			timers := snapshot.Timers()
-			assert.NotEmpty(t, timers, "Should have timer metrics")
+			histograms := snapshot.Histograms()
+			assert.NotEmpty(t, histograms, "Should have histogram metrics")
 
 			var foundLatency bool
-			for _, timer := range timers {
-				if strings.Contains(timer.Name(), "controller_latency") {
+			for _, histogram := range histograms {
+				if strings.Contains(histogram.Name(), "controller_latency") {
 					foundLatency = true
-					tags := timer.Tags()
+					tags := histogram.Tags()
 					if tt.expectSuccess {
 						assert.Equal(t, "true", tags["success"])
 					} else {
@@ -542,7 +542,7 @@ func TestConsumer_AckNackLatencyTracking(t *testing.T) {
 	<-done
 
 	snapshot := scope.Snapshot()
-	assert.NotEmpty(t, snapshot.Timers(), "Should have timer metrics for latency tracking")
+	assert.NotEmpty(t, snapshot.Histograms(), "Should have histogram metrics for latency tracking")
 	assert.NotEmpty(t, snapshot.Counters(), "Should have counter metrics")
 
 	err = c.Stop(30000)

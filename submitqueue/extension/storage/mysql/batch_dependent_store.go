@@ -42,7 +42,7 @@ func NewBatchDependentStore(db *sql.DB, scope tally.Scope) storage.BatchDependen
 // Get retrieves the batch dependent by batch ID. Returns ErrNotFound if the batch dependent is not found.
 func (s *batchDependentStore) Get(ctx context.Context, batchID string) (ret entity.BatchDependent, retErr error) {
 	op := metrics.Begin(s.scope, "get")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	var bd entity.BatchDependent
 	var dependentsJSON []byte
@@ -69,7 +69,7 @@ func (s *batchDependentStore) Get(ctx context.Context, batchID string) (ret enti
 // Create creates a new batch dependent. Returns ErrAlreadyExists if the entry already exists.
 func (s *batchDependentStore) Create(ctx context.Context, batchDependent entity.BatchDependent) (retErr error) {
 	op := metrics.Begin(s.scope, "create")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	dependentsJSON, err := json.Marshal(batchDependent.Dependents)
 	if err != nil {
@@ -96,7 +96,7 @@ func (s *batchDependentStore) Create(ctx context.Context, batchDependent entity.
 // Version arithmetic is owned by the caller; this is a pure conditional write.
 func (s *batchDependentStore) UpdateDependents(ctx context.Context, batchID string, oldVersion, newVersion int32, dependents []string) (retErr error) {
 	op := metrics.Begin(s.scope, "update_dependents")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	dependentsJSON, err := json.Marshal(dependents)
 	if err != nil {

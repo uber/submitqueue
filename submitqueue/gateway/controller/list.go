@@ -65,7 +65,7 @@ func NewListController(logger *zap.SugaredLogger, scope tally.Scope, requestQueu
 // List returns one page of requests received for a queue in the supplied half-open time range.
 func (c *ListController) List(ctx context.Context, req entity.ListRequest) (result entity.ListResult, retErr error) {
 	op := metrics.Begin(c.metricsScope, "list")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	if err := validateStoredIdentifier("queue", req.Queue); err != nil {
 		return entity.ListResult{}, fmt.Errorf("invalid queue: %w", err)

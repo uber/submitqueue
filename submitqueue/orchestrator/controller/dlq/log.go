@@ -61,7 +61,7 @@ func (c *logController) Process(_ context.Context, delivery consumer.Delivery) (
 	const opName = "process"
 
 	op := metrics.Begin(c.metricsScope, opName)
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.LongLatencyBuckets) }()
 
 	msg := delivery.Message()
 	dmeta := delivery.Metadata()

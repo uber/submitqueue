@@ -53,7 +53,7 @@ func (s *sqldeliveryStateStore) MarkDelivered(ctx context.Context, consumerGroup
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup),
 		metrics.NewTag("partition_key", partitionKey))
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	now := time.Now().UnixMilli()
 	invisibleUntil := now + visibilityTimeoutMs
@@ -94,7 +94,7 @@ func (s *sqldeliveryStateStore) ExtendVisibility(ctx context.Context, consumerGr
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup),
 		metrics.NewTag("partition_key", partitionKey))
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	now := time.Now().UnixMilli()
 	invisibleUntil := now + visibilityTimeoutMs
@@ -128,7 +128,7 @@ func (s *sqldeliveryStateStore) MarkAcked(ctx context.Context, consumerGroup, to
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup),
 		metrics.NewTag("partition_key", partitionKey))
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (consumer_group, topic, partition_key, message_offset, acked, invisible_until, retry_count)
@@ -151,7 +151,7 @@ func (s *sqldeliveryStateStore) MarkNacked(ctx context.Context, consumerGroup, t
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup),
 		metrics.NewTag("partition_key", partitionKey))
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	now := time.Now().UnixMilli()
 	invisibleUntil := now + delayMs
@@ -178,7 +178,7 @@ func (s *sqldeliveryStateStore) GetDeliveryState(ctx context.Context, consumerGr
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup),
 		metrics.NewTag("partition_key", partitionKey))
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	var state DeliveryState
 	err := s.db.QueryRowContext(ctx, fmt.Sprintf(`
@@ -205,7 +205,7 @@ func (s *sqldeliveryStateStore) AdvanceWatermark(ctx context.Context, consumerGr
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup),
 		metrics.NewTag("partition_key", partitionKey))
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	if len(offsets) == 0 {
 		return currentWatermark, nil
