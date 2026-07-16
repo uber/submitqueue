@@ -113,7 +113,10 @@ func newTestController(
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ}},
+		[]consumer.TopicConfig{
+			{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
+		},
 	)
 	require.NoError(t, err)
 
@@ -184,20 +187,21 @@ func TestController_Process_PublishesCheckToRunway(t *testing.T) {
 
 	logger := zaptest.NewLogger(t).Sugar()
 
-	var gotTopic string
-	var gotPayload []byte
+	published := make(map[string][]byte)
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, topic string, msg entityqueue.Message) error {
-			gotTopic = topic
-			gotPayload = msg.Payload
+		func(_ context.Context, topic string, msg entityqueue.Message) error {
+			published[topic] = msg.Payload
 			return nil
 		},
-	)
+	).Times(2)
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ}},
+		[]consumer.TopicConfig{
+			{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
+		},
 	)
 	require.NoError(t, err)
 	cpFactory := changeprovidermock.NewMockFactory(ctrl)
@@ -212,10 +216,15 @@ func TestController_Process_PublishesCheckToRunway(t *testing.T) {
 
 	require.NoError(t, controller.Process(context.Background(), delivery))
 
+	logEntry, err := entity.RequestLogFromBytes(published["log"])
+	require.NoError(t, err)
+	assert.Equal(t, entity.RequestStatusValidating, logEntry.Status)
+	assert.Equal(t, request.ID, logEntry.RequestID)
+	assert.Equal(t, "validate", logEntry.Metadata["controller"])
+
 	// Full payload published to runway, keyed by the request id (the correlation id).
-	assert.Equal(t, "merge-conflict-check", gotTopic)
 	got := &runwaymq.MergeRequest{}
-	require.NoError(t, runwaymq.Unmarshal(gotPayload, got))
+	require.NoError(t, runwaymq.Unmarshal(published["merge-conflict-check"], got))
 	assert.Equal(t, request.ID, got.Id)
 	assert.Equal(t, request.Queue, got.QueueName)
 	require.Len(t, got.Steps, 1)
@@ -583,11 +592,14 @@ func TestController_Process_CustomValidatorPasses(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 
 	mockPub := queuemock.NewMockPublisher(ctrl)
-	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(2)
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ}},
+		[]consumer.TopicConfig{
+			{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
+		},
 	)
 	require.NoError(t, err)
 
@@ -632,7 +644,10 @@ func TestController_Process_CustomValidatorFails(t *testing.T) {
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ}},
+		[]consumer.TopicConfig{
+			{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
+		},
 	)
 	require.NoError(t, err)
 

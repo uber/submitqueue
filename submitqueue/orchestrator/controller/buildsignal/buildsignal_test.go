@@ -44,6 +44,7 @@ type testHarness struct {
 	batchStore   *storagemock.MockBatchStore
 	signalPub    *queuemock.MockPublisher
 	speculatePub *queuemock.MockPublisher
+	logPub       *queuemock.MockPublisher
 }
 
 func newTestHarness(t *testing.T, ctrl *gomock.Controller) *testHarness {
@@ -59,9 +60,14 @@ func newTestHarness(t *testing.T, ctrl *gomock.Controller) *testHarness {
 	speculateQ := queuemock.NewMockQueue(ctrl)
 	speculateQ.EXPECT().Publisher().Return(speculatePub).AnyTimes()
 
+	logPub := queuemock.NewMockPublisher(ctrl)
+	logQ := queuemock.NewMockQueue(ctrl)
+	logQ.EXPECT().Publisher().Return(logPub).AnyTimes()
+
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{Key: topickey.TopicKeyBuildSignal, Name: "buildsignal", Queue: signalQ},
 		{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: speculateQ},
+		{Key: topickey.TopicKeyLog, Name: "log", Queue: logQ},
 	})
 	require.NoError(t, err)
 
@@ -87,6 +93,7 @@ func newTestHarness(t *testing.T, ctrl *gomock.Controller) *testHarness {
 		batchStore:   batchStore,
 		signalPub:    signalPub,
 		speculatePub: speculatePub,
+		logPub:       logPub,
 	}
 }
 
@@ -153,6 +160,38 @@ func TestController_Process_Terminal(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestController_Process_SucceededPublishesBuiltLog(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	h := newTestHarness(t, ctrl)
+
+	build := entity.Build{ID: "b-built", BatchID: "batch-built", Status: entity.BuildStatusRunning}
+	batch := entity.Batch{
+		ID:       build.BatchID,
+		Queue:    "test-queue",
+		Contains: []string{"test-queue/1"},
+		State:    entity.BatchStateSpeculating,
+	}
+
+	h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(build, nil)
+	h.batchStore.EXPECT().Get(gomock.Any(), build.BatchID).Return(batch, nil)
+	h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: build.ID}).Return(entity.BuildStatusSucceeded, nil, nil)
+	h.buildStore.EXPECT().UpdateStatus(gomock.Any(), build.ID, entity.BuildStatusSucceeded).Return(nil)
+	h.logPub.EXPECT().Publish(gomock.Any(), "log", gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, msg entityqueue.Message) error {
+			logEntry, err := entity.RequestLogFromBytes(msg.Payload)
+			require.NoError(t, err)
+			assert.Equal(t, entity.RequestStatusBuilt, logEntry.Status)
+			assert.Equal(t, batch.Contains[0], logEntry.RequestID)
+			assert.Equal(t, batch.ID, logEntry.Metadata["batch_id"])
+			assert.Equal(t, build.ID, logEntry.Metadata["build_id"])
+			return nil
+		},
+	)
+	h.speculatePub.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).Return(nil)
+
+	require.NoError(t, h.controller.Process(context.Background(), buildDelivery(t, ctrl, build)))
 }
 
 // TestController_Process_NonTerminal verifies a non-terminal poll persists

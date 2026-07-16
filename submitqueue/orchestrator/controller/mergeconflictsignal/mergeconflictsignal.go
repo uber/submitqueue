@@ -130,6 +130,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return nil
 	}
 
+	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusValidated, request.Version, "", map[string]string{
+		"controller": "mergeconflictsignal",
+	})
+	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "log_publish_errors", 1)
+		return fmt.Errorf("failed to publish validated request log for %s: %w", request.ID, err)
+	}
+
 	if err := c.publishRequestID(ctx, topickey.TopicKeyBatch, request.ID, request.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to batch: %w", err)

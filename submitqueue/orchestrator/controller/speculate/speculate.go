@@ -23,6 +23,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -153,6 +154,14 @@ func (c *Controller) startSpeculation(ctx context.Context, batch entity.Batch) e
 		"batch_id", batch.ID,
 		"speculation_chain", append(append([]string{}, batch.Dependencies...), batch.ID),
 	)
+
+	if err := corerequest.PublishBatchLogs(ctx, c.registry, batch.Contains, entity.RequestStatusSpeculating, map[string]string{
+		"batch_id":   batch.ID,
+		"controller": "speculate",
+	}); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "log_publish_errors", 1)
+		return fmt.Errorf("failed to publish speculating request logs for batch %s: %w", batch.ID, err)
+	}
 
 	if err := c.publish(ctx, topickey.TopicKeyBuild, batch.ID, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)

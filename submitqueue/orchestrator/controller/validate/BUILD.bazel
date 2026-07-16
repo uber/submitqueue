@@ -14,6 +14,7 @@ go_library(
         "//platform/consumer:go_default_library",
         "//platform/errs:go_default_library",
         "//platform/metrics:go_default_library",
+        "//submitqueue/core/request:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/changeprovider:go_default_library",
         "//submitqueue/extension/storage:go_default_library",

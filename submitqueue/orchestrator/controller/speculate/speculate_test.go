@@ -130,6 +130,53 @@ func TestController_Process_StartSpeculation(t *testing.T) {
 	}
 }
 
+func TestController_Process_StartSpeculationPublishesLog(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	batch := testBatch(entity.BatchStateScored)
+	batch.Contains = []string{"test-queue/1"}
+
+	batchStore := storagemock.NewMockBatchStore(ctrl)
+	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateSpeculating).Return(nil)
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+
+	var gotLog entity.RequestLog
+	pub := queuemock.NewMockPublisher(ctrl)
+	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, topic string, msg entityqueue.Message) error {
+			if topic == "log" {
+				logEntry, err := entity.RequestLogFromBytes(msg.Payload)
+				require.NoError(t, err)
+				gotLog = logEntry
+			}
+			return nil
+		},
+	).Times(2)
+	q := queuemock.NewMockQueue(ctrl)
+	q.EXPECT().Publisher().Return(pub).AnyTimes()
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: topickey.TopicKeyBuild, Name: "build", Queue: q},
+		{Key: topickey.TopicKeyLog, Name: "log", Queue: q},
+	})
+	require.NoError(t, err)
+
+	controller := NewController(
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+		store,
+		registry,
+		topickey.TopicKeySpeculate,
+		"orchestrator-speculate",
+	)
+	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
+
+	assert.Equal(t, entity.RequestStatusSpeculating, gotLog.Status)
+	assert.Equal(t, batch.Contains[0], gotLog.RequestID)
+	assert.Equal(t, batch.ID, gotLog.Metadata["batch_id"])
+}
+
 // tryFinalize: Speculating with no deps should publish to merge and CAS to Merging.
 func TestController_Process_FinalizeNoDeps(t *testing.T) {
 	ctrl := gomock.NewController(t)
