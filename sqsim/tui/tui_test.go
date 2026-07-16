@@ -22,7 +22,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/sqsim/runner"
 )
 
@@ -147,22 +146,6 @@ func TestHistoryWindowScrollsFromLatest(t *testing.T) {
 	start, end = historyWindow(10, 4, 3)
 	assert.Equal(t, 3, start)
 	assert.Equal(t, 6, end)
-}
-
-func TestStageCellsUseHistory(t *testing.T) {
-	cells := stageCells(runner.Request{
-		Status: "building",
-		History: []runner.HistoryEvent{
-			{Status: "validating"},
-			{Status: "validated"},
-			{Status: "batched"},
-			{Status: "scored"},
-			{Status: "speculating"},
-			{Status: "building"},
-		},
-	}, "/")
-	require.Len(t, cells, 6)
-	assert.Equal(t, []string{"ok", "ok", "ok", "ok", "/", "."}, cells[:])
 }
 
 func TestTruncate(t *testing.T) {

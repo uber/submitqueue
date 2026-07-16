@@ -535,6 +535,29 @@ func (s *StorageContractSuite) TestStorage_BuildCreateAndGet() {
 	assert.NotEqual(t, build.ID, build.SpeculationPathID, "build ID and speculation path ID are distinct identifiers")
 }
 
+// TestStorage_BatchBuild verifies immutable batch-to-build mapping behavior.
+func (s *StorageContractSuite) TestStorage_BatchBuild() {
+	t := s.T()
+	ctx := s.ctx
+
+	mapping := entity.BatchBuild{
+		BatchID: "q/batch/build-mapping",
+		BuildID: "runner/build-mapping/1",
+	}
+	require.NoError(t, s.storage.GetBatchBuildStore().Create(ctx, mapping))
+
+	got, err := s.storage.GetBatchBuildStore().Get(ctx, mapping.BatchID)
+	require.NoError(t, err)
+	assert.Equal(t, mapping, got)
+
+	other := mapping
+	other.BuildID = "runner/build-mapping/2"
+	require.ErrorIs(t, s.storage.GetBatchBuildStore().Create(ctx, other), storage.ErrAlreadyExists)
+
+	_, err = s.storage.GetBatchBuildStore().Get(ctx, "q/batch/build-mapping-missing")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+}
+
 // TestStorage_SpeculationPathBuildCreateAndGet verifies a path->build mapping
 // round-trips through the store unchanged.
 func (s *StorageContractSuite) TestStorage_SpeculationPathBuildCreateAndGet() {

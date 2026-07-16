@@ -160,6 +160,7 @@ func newLocalStack(repoRoot, profileDir string, stdout, stderr io.Writer) *local
 			"REPO_ROOT="+repoRoot,
 			"SQSIM_PROFILE_DIR="+profileDir,
 			"SQSIM_SCENARIO_PATH=/sqsim/profile.json",
+			"QUEUE_MYSQL_MAX_OPEN_CONNECTIONS=32",
 		),
 	}
 }

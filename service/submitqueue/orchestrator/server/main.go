@@ -42,6 +42,7 @@ import (
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/platform/http"
+	"github.com/uber/submitqueue/service/internal/sqldb"
 	simbuildrunner "github.com/uber/submitqueue/sqsim/adapter/buildrunner"
 	"github.com/uber/submitqueue/sqsim/model"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
@@ -196,6 +197,9 @@ func run() error {
 		return fmt.Errorf("failed to open queue database: %w", err)
 	}
 	defer queueDB.Close()
+	if err := sqldb.ConfigureMaxOpenConnections(queueDB, os.Getenv("QUEUE_MYSQL_MAX_OPEN_CONNECTIONS")); err != nil {
+		return fmt.Errorf("configure queue database connection limit: %w", err)
+	}
 
 	// Initialize queue
 	mysqlQueue, err := queueMySQL.NewQueue(queueMySQL.Params{

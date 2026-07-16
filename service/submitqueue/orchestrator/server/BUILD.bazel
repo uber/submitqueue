@@ -22,6 +22,7 @@ go_library(
         "//platform/extension/messagequeue:go_default_library",
         "//platform/extension/messagequeue/mysql:go_default_library",
         "//platform/http:go_default_library",
+        "//service/internal/sqldb:go_default_library",
         "//sqsim/adapter/buildrunner:go_default_library",
         "//sqsim/model:go_default_library",
         "//submitqueue/core/changeset:go_default_library",

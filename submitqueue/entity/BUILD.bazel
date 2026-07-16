@@ -4,6 +4,7 @@ go_library(
     name = "go_default_library",
     srcs = [
         "batch.go",
+        "batch_build.go",
         "batch_changes.go",
         "batch_dependent.go",
         "build.go",

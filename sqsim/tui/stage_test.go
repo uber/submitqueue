@@ -12,31 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scenarios
+package tui
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber/submitqueue/sqsim/runner"
 )
 
-func TestRegistry(t *testing.T) {
-	assert.Equal(t, []string{
-		"build-failure",
-		"build-status-recovery",
-		"build-trigger-recovery",
-		"happy-path",
-		"load-1000",
-		"merge-conflict",
-		"merge-conflict-check-recovery",
-		"merge-response-lost",
-		"mixed-concurrent",
-	}, Names())
-	require.NoError(t, ValidateAll())
-}
-
-func TestBuildUnknownScenario(t *testing.T) {
-	_, err := Build("missing")
-	require.Error(t, err)
+func TestStageCellsUseHistory(t *testing.T) {
+	cells := stageCells(runner.Request{
+		Status: "building",
+		History: []runner.HistoryEvent{
+			{Status: "validating"},
+			{Status: "validated"},
+			{Status: "batched"},
+			{Status: "scored"},
+			{Status: "speculating"},
+			{Status: "building"},
+		},
+	}, "/")
+	require.Len(t, cells, 6)
+	assert.Equal(t, []string{"ok", "ok", "ok", "ok", "/", "."}, cells[:])
 }

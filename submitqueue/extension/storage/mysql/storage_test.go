@@ -40,6 +40,7 @@ func TestNewStorage(t *testing.T) {
 	assert.NotNil(t, s.GetChangeStore())
 	assert.NotNil(t, s.GetBatchStore())
 	assert.NotNil(t, s.GetBatchDependentStore())
+	assert.NotNil(t, s.GetBatchBuildStore())
 	assert.NotNil(t, s.GetBuildStore())
 	assert.NotNil(t, s.GetSpeculationPathBuildStore())
 	assert.NotNil(t, s.GetSpeculationTreeStore())

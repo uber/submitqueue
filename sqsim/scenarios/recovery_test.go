@@ -19,24 +19,22 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber/submitqueue/sqsim"
 )
 
-func TestRegistry(t *testing.T) {
-	assert.Equal(t, []string{
-		"build-failure",
-		"build-status-recovery",
-		"build-trigger-recovery",
-		"happy-path",
-		"load-1000",
-		"merge-conflict",
-		"merge-conflict-check-recovery",
-		"merge-response-lost",
-		"mixed-concurrent",
-	}, Names())
-	require.NoError(t, ValidateAll())
-}
-
-func TestBuildUnknownScenario(t *testing.T) {
-	_, err := Build("missing")
-	require.Error(t, err)
+func TestRecoveryScenariosExpectLanding(t *testing.T) {
+	tests := map[string]Builder{
+		"build status":         BuildStatusRecovery,
+		"build trigger":        BuildTriggerRecovery,
+		"merge conflict check": MergeConflictCheckRecovery,
+		"merge response lost":  MergeResponseLost,
+	}
+	for name, build := range tests {
+		t.Run(name, func(t *testing.T) {
+			scenario, err := build()
+			require.NoError(t, err)
+			require.Len(t, scenario.Lands, 1)
+			assert.Equal(t, sqsim.RequestLanded, scenario.Lands[0].Expectation.Status)
+		})
+	}
 }

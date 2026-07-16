@@ -21,22 +21,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRegistry(t *testing.T) {
-	assert.Equal(t, []string{
-		"build-failure",
-		"build-status-recovery",
-		"build-trigger-recovery",
-		"happy-path",
-		"load-1000",
-		"merge-conflict",
-		"merge-conflict-check-recovery",
-		"merge-response-lost",
-		"mixed-concurrent",
-	}, Names())
-	require.NoError(t, ValidateAll())
-}
-
-func TestBuildUnknownScenario(t *testing.T) {
-	_, err := Build("missing")
-	require.Error(t, err)
+func TestLoad1000BuildsWithoutRunning(t *testing.T) {
+	scenario, err := Load1000()
+	require.NoError(t, err)
+	require.Len(t, scenario.Lands, loadRequestCount)
+	assert.Equal(t, "l0001", scenario.Lands[0].Name)
+	assert.Equal(t, "l1000", scenario.Lands[len(scenario.Lands)-1].Name)
 }

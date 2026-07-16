@@ -41,6 +41,7 @@ import (
 	"github.com/uber/submitqueue/runway/controller/mergeconflictcheck"
 	"github.com/uber/submitqueue/runway/extension/merger"
 	"github.com/uber/submitqueue/runway/extension/merger/noop"
+	"github.com/uber/submitqueue/service/internal/sqldb"
 	simmerger "github.com/uber/submitqueue/sqsim/adapter/merger"
 	"github.com/uber/submitqueue/sqsim/model"
 	"go.uber.org/zap"
@@ -131,6 +132,9 @@ func run() error {
 		return fmt.Errorf("failed to open queue database: %w", err)
 	}
 	defer queueDB.Close()
+	if err := sqldb.ConfigureMaxOpenConnections(queueDB, os.Getenv("QUEUE_MYSQL_MAX_OPEN_CONNECTIONS")); err != nil {
+		return fmt.Errorf("configure queue database connection limit: %w", err)
+	}
 
 	mysqlQueue, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           queueDB,

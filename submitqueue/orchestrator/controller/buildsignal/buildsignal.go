@@ -24,6 +24,8 @@ package buildsignal
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 
 	"github.com/uber-go/tally"
@@ -237,7 +239,14 @@ func (c *Controller) publishBuild(ctx context.Context, key consumer.TopicKey, bu
 		return fmt.Errorf("failed to serialize build ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(build.ID, payload, build.BatchID, nil)
+	messageID := build.ID
+	if delayMs > 0 {
+		messageID, err = newEventMessageID("build-poll")
+		if err != nil {
+			return fmt.Errorf("failed to create build poll message ID: %w", err)
+		}
+	}
+	msg := entityqueue.NewMessage(messageID, payload, build.BatchID, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {
@@ -264,7 +273,11 @@ func (c *Controller) publishBatchID(ctx context.Context, key consumer.TopicKey, 
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(batchID, payload, partitionKey, nil)
+	messageID, err := newEventMessageID("build-status")
+	if err != nil {
+		return fmt.Errorf("failed to create build status event ID: %w", err)
+	}
+	msg := entityqueue.NewMessage(messageID, payload, partitionKey, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {
@@ -281,6 +294,17 @@ func (c *Controller) publishBatchID(ctx context.Context, key consumer.TopicKey, 
 	}
 
 	return nil
+}
+
+// newEventMessageID returns a unique ID for one causal event. Polls and build
+// status observations cannot reuse entity IDs because queue message IDs are
+// idempotency keys within a partition.
+func newEventMessageID(prefix string) (string, error) {
+	var suffix [16]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return "", err
+	}
+	return prefix + "-" + hex.EncodeToString(suffix[:]), nil
 }
 
 // Name returns the controller name for logging and metrics.

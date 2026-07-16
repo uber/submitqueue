@@ -15,6 +15,7 @@
 package runner
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -38,4 +39,9 @@ func TestFindRepoRootUsesWorkspaceEnvironment(t *testing.T) {
 	root, err := findRepoRoot(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, "/tmp/repo", root)
+}
+
+func TestLocalStackBoundsQueueDatabaseConnections(t *testing.T) {
+	stack := newLocalStack("/repo", "/profile", nil, nil)
+	assert.True(t, slices.Contains(stack.baseEnv, "QUEUE_MYSQL_MAX_OPEN_CONNECTIONS=32"))
 }

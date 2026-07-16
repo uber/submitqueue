@@ -26,7 +26,15 @@ import (
 type Builder func() (sqsim.Scenario, error)
 
 var registry = map[string]Builder{
-	"happy-path": HappyPath,
+	"build-failure":                 BuildFailure,
+	"build-status-recovery":         BuildStatusRecovery,
+	"build-trigger-recovery":        BuildTriggerRecovery,
+	"happy-path":                    HappyPath,
+	"load-1000":                     Load1000,
+	"merge-conflict":                MergeConflict,
+	"merge-conflict-check-recovery": MergeConflictCheckRecovery,
+	"merge-response-lost":           MergeResponseLost,
+	"mixed-concurrent":              MixedConcurrent,
 }
 
 // Names returns registered scenario names in lexical order.

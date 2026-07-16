@@ -32,7 +32,20 @@ func TestRun(t *testing.T) {
 		wantCode   int
 		wantOutput string
 	}{
-		{name: "list", args: []string{"list"}, wantCode: 0, wantOutput: "happy-path\n"},
+		{
+			name:     "list",
+			args:     []string{"list"},
+			wantCode: 0,
+			wantOutput: "build-failure\n" +
+				"build-status-recovery\n" +
+				"build-trigger-recovery\n" +
+				"happy-path\n" +
+				"load-1000\n" +
+				"merge-conflict\n" +
+				"merge-conflict-check-recovery\n" +
+				"merge-response-lost\n" +
+				"mixed-concurrent\n",
+		},
 		{name: "validate", args: []string{"validate", "happy-path"}, wantCode: 0, wantOutput: "happy-path is valid\n"},
 		{name: "unknown scenario", args: []string{"validate", "missing"}, wantCode: 1},
 		{name: "unknown command", args: []string{"missing"}, wantCode: 2},

@@ -16,7 +16,10 @@ go_library(
 
 go_test(
     name = "go_default_test",
-    srcs = ["tui_test.go"],
+    srcs = [
+        "stage_test.go",
+        "tui_test.go",
+    ],
     embed = [":go_default_library"],
     deps = [
         "//sqsim/runner:go_default_library",
