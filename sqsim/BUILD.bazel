@@ -1,0 +1,36 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "behavior.go",
+        "buildrunner.go",
+        "fault.go",
+        "land.go",
+        "merger.go",
+        "scenario.go",
+        "types.go",
+        "validation.go",
+    ],
+    importpath = "github.com/uber/submitqueue/sqsim",
+    visibility = ["//visibility:public"],
+    deps = ["//sqsim/entity:go_default_library"],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = [
+        "behavior_test.go",
+        "buildrunner_test.go",
+        "fault_test.go",
+        "land_test.go",
+        "merger_test.go",
+        "scenario_test.go",
+        "validation_test.go",
+    ],
+    embed = [":go_default_library"],
+    deps = [
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+    ],
+)
