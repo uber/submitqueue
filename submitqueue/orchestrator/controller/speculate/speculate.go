@@ -180,18 +180,53 @@ func (c *Controller) startSpeculation(ctx context.Context, batch entity.Batch) e
 	return nil
 }
 
-// tryFinalize publishes to merge and transitions to Merging iff every
-// dependency batch has reached Succeeded. Cancelled deps are treated as
-// out-of-the-way: the cancelled batch will never land, so it can no longer
-// conflict — drop it from the chain and proceed. Failed deps still cascade
-// via failOnDependency. If some deps are still in flight, the call is a
-// no-op and waits for the next event.
+// tryFinalize publishes to merge and transitions to Merging only after this
+// batch's build and every dependency batch have succeeded. Cancelled
+// dependencies are out of the way because they will never land, so they are
+// dropped from the chain. Failed dependencies still cascade via
+// failOnDependency. If some dependencies are still in flight, the call waits
+// for the next event.
 //
 // TODO: when a dependency fails we currently fail this batch outright.
 // We will need to respeculate the failed paths — drop the failed dep
 // from the chain and re-issue speculation for the surviving ordering(s)
 // — instead of cascading the failure into requests that could still land.
 func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error {
+	mapping, err := c.store.GetBatchBuildStore().Get(ctx, batch.ID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			metrics.NamedCounter(c.metricsScope, opName, "waiting_on_build", 1)
+			return nil
+		}
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return fmt.Errorf("failed to get build mapping for batch %s: %w", batch.ID, err)
+	}
+
+	build, err := c.store.GetBuildStore().Get(ctx, mapping.BuildID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			metrics.NamedCounter(c.metricsScope, opName, "waiting_on_build", 1)
+			return nil
+		}
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return fmt.Errorf("failed to get build %s for batch %s: %w", mapping.BuildID, batch.ID, err)
+	}
+
+	switch build.Status {
+	case entity.BuildStatusSucceeded:
+		// Continue to dependency evaluation.
+	case entity.BuildStatusFailed, entity.BuildStatusCancelled:
+		return c.failOnBuild(ctx, batch, build)
+	default:
+		metrics.NamedCounter(c.metricsScope, opName, "waiting_on_build", 1)
+		c.logger.Debugw("build still in flight; waiting",
+			"batch_id", batch.ID,
+			"build_id", build.ID,
+			"build_status", string(build.Status),
+		)
+		return nil
+	}
+
 	deps, err := c.fetchDependencies(ctx, batch)
 	if err != nil {
 		return err
@@ -240,11 +275,20 @@ func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error 
 	return nil
 }
 
+// failOnBuild transitions a batch to Failed after its build reaches a
+// non-succeeding terminal status.
+func (c *Controller) failOnBuild(ctx context.Context, batch entity.Batch, build entity.Build) error {
+	metrics.NamedCounter(c.metricsScope, opName, "build_failed", 1)
+	c.logger.Warnw("build failed; failing batch",
+		"batch_id", batch.ID,
+		"build_id", build.ID,
+		"build_status", string(build.Status),
+	)
+	return c.failBatch(ctx, batch)
+}
+
 // failOnDependency transitions a Speculating batch to Failed when one of its
-// dependencies has reached a non-succeeding terminal state, then publishes to
-// the conclude queue so the request store and request log get reconciled.
-// Without this transition the batch would sit in Speculating forever — no
-// downstream event ever fires for it again.
+// dependencies has reached a non-succeeding terminal state.
 func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, dep entity.Batch) error {
 	metrics.NamedCounter(c.metricsScope, opName, "dependency_failed", 1)
 	c.logger.Warnw("dependency in non-succeeding terminal state; failing batch",
@@ -252,7 +296,12 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 		"dependency_id", dep.ID,
 		"dependency_state", string(dep.State),
 	)
+	return c.failBatch(ctx, batch)
+}
 
+// failBatch transitions a Speculating batch to Failed and publishes to
+// conclude so request state is reconciled.
+func (c *Controller) failBatch(ctx context.Context, batch entity.Batch) error {
 	newVersion := batch.Version + 1
 	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateFailed); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
@@ -336,24 +385,33 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 }
 
 // cancelBuild flips any in-flight Build entity for the batch to
-// BuildStatusCancelled. Builds use build.ID == batch.ID, so a single Get
-// covers every build scheduled for the batch. Tolerates ErrNotFound (no
-// build was ever scheduled — the batch was cancelled before speculation
-// started building) and skips already-terminal builds.
+// BuildStatusCancelled. It resolves the runner-minted build ID through the
+// immutable batch-to-build mapping. Missing mappings and Build rows are
+// tolerated because cancellation can arrive before build scheduling finishes.
 //
 // This is the hook point for a future external CI integration: today the
 // system has no external runner, so the local state flip is the complete
 // cancellation. Once a runner exists, it must be invoked here before the
 // local UpdateStatus.
 func (c *Controller) cancelBuild(ctx context.Context, batch entity.Batch) error {
-	build, err := c.store.GetBuildStore().Get(ctx, batch.ID)
+	mapping, err := c.store.GetBatchBuildStore().Get(ctx, batch.ID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			metrics.NamedCounter(c.metricsScope, opName, "cancel_build_not_found", 1)
 			return nil
 		}
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to get build for batch %s: %w", batch.ID, err)
+		return fmt.Errorf("failed to get build mapping for batch %s: %w", batch.ID, err)
+	}
+
+	build, err := c.store.GetBuildStore().Get(ctx, mapping.BuildID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			metrics.NamedCounter(c.metricsScope, opName, "cancel_build_not_found", 1)
+			return nil
+		}
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return fmt.Errorf("failed to get build %s for batch %s: %w", mapping.BuildID, batch.ID, err)
 	}
 
 	if build.Status.IsTerminal() {
@@ -361,9 +419,9 @@ func (c *Controller) cancelBuild(ctx context.Context, batch entity.Batch) error 
 		return nil
 	}
 
-	if err := c.store.GetBuildStore().UpdateStatus(ctx, batch.ID, entity.BuildStatusCancelled); err != nil {
+	if err := c.store.GetBuildStore().UpdateStatus(ctx, build.ID, entity.BuildStatusCancelled); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to cancel build for batch %s: %w", batch.ID, err)
+		return fmt.Errorf("failed to cancel build %s for batch %s: %w", build.ID, batch.ID, err)
 	}
 	metrics.NamedCounter(c.metricsScope, opName, "cancel_build_done", 1)
 	return nil

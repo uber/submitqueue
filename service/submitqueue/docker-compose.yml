@@ -53,6 +53,7 @@ services:
       - MYSQL_DSN=root:root@tcp(mysql-app:3306)/submitqueue?parseTime=true
       # Queue infrastructure connection (separate database)
       - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
+      - QUEUE_MYSQL_MAX_OPEN_CONNECTIONS=${QUEUE_MYSQL_MAX_OPEN_CONNECTIONS:-}
       # Path to YAML queue configuration baked into the image
       - QUEUE_CONFIG_PATH=/root/queues.yaml
       # Stable subscriber name for the request-log consumer
@@ -75,6 +76,7 @@ services:
       - MYSQL_DSN=root:root@tcp(mysql-app:3306)/submitqueue?parseTime=true
       # Queue infrastructure connection (separate database)
       - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
+      - QUEUE_MYSQL_MAX_OPEN_CONNECTIONS=${QUEUE_MYSQL_MAX_OPEN_CONNECTIONS:-}
       - HOSTNAME=orchestrator-dev
       - SQSIM_SCENARIO_PATH=${SQSIM_SCENARIO_PATH:-}
     volumes:
@@ -100,6 +102,7 @@ services:
       - PORT=:8080
       # Queue infrastructure connection (shared with the orchestrator)
       - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
+      - QUEUE_MYSQL_MAX_OPEN_CONNECTIONS=${QUEUE_MYSQL_MAX_OPEN_CONNECTIONS:-}
       - HOSTNAME=runway-dev
       - SQSIM_SCENARIO_PATH=${SQSIM_SCENARIO_PATH:-}
     volumes:

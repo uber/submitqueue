@@ -55,15 +55,16 @@ func testBatch() entity.Batch {
 	}
 }
 
-// newMockStorage creates a MockStorage with a MockBatchStore that returns the
-// given batch on Get, a no-op MockRequestStore, and a MockBuildStore that
-// accepts any Create call. Tests that care about Create arguments build their
-// own MockBuildStore.
+// newMockStorage creates storage for the normal first-delivery path.
 func newMockStorage(ctrl *gomock.Controller, batch entity.Batch) *storagemock.MockStorage {
 	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
 	mockBatchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil).AnyTimes()
 
 	mockRequestStore := storagemock.NewMockRequestStore(ctrl)
+
+	mockBatchBuildStore := storagemock.NewMockBatchBuildStore(ctrl)
+	mockBatchBuildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchBuild{}, storage.ErrNotFound).AnyTimes()
+	mockBatchBuildStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
 	mockBuildStore := storagemock.NewMockBuildStore(ctrl)
 	mockBuildStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -71,6 +72,7 @@ func newMockStorage(ctrl *gomock.Controller, batch entity.Batch) *storagemock.Mo
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(mockRequestStore).AnyTimes()
+	store.EXPECT().GetBatchBuildStore().Return(mockBatchBuildStore).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(mockBuildStore).AnyTimes()
 	return store
 }
@@ -166,6 +168,15 @@ func TestController_Process_TriggersWithBaseAndHead(t *testing.T) {
 	mockBatchStore.EXPECT().Get(gomock.Any(), depBatch.ID).Return(depBatch, nil).AnyTimes()
 
 	var created entity.Build
+	var createdMapping entity.BatchBuild
+	mockBatchBuildStore := storagemock.NewMockBatchBuildStore(ctrl)
+	mockBatchBuildStore.EXPECT().Get(gomock.Any(), headBatch.ID).Return(entity.BatchBuild{}, storage.ErrNotFound)
+	mockBatchBuildStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, mapping entity.BatchBuild) error {
+			createdMapping = mapping
+			return nil
+		},
+	)
 	mockBuildStore := storagemock.NewMockBuildStore(ctrl)
 	mockBuildStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, b entity.Build) error {
@@ -176,6 +187,7 @@ func TestController_Process_TriggersWithBaseAndHead(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	store.EXPECT().GetBatchBuildStore().Return(mockBatchBuildStore).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(mockBuildStore).AnyTimes()
 
 	br := buildrunnermock.NewMockBuildRunner(ctrl)
@@ -233,29 +245,31 @@ func TestController_Process_TriggersWithBaseAndHead(t *testing.T) {
 	assert.Equal(t, headBatch.ID, created.BatchID)
 	assert.Equal(t, entity.BuildStatusAccepted, created.Status)
 	assert.Equal(t, published.ID, created.ID)
+	assert.Equal(t, entity.BatchBuild{BatchID: headBatch.ID, BuildID: "build-xyz"}, createdMapping)
 }
 
-// TestController_Process_BuildStoreAlreadyExistsIsSwallowed covers the
-// redelivery case: Create returns ErrAlreadyExists, the controller proceeds
-// to publish to buildsignal anyway. The polling loop will pick up the
-// existing row via UpdateStatus.
-func TestController_Process_BuildStoreAlreadyExistsIsSwallowed(t *testing.T) {
+// TestController_Process_RedeliveryReusesMapping verifies that a delivery
+// after the external trigger does not trigger a second build.
+func TestController_Process_RedeliveryReusesMapping(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	batch := testBatch()
+	mapping := entity.BatchBuild{BatchID: batch.ID, BuildID: "build-existing"}
 
 	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
 	mockBatchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil).AnyTimes()
+	mockBatchBuildStore := storagemock.NewMockBatchBuildStore(ctrl)
+	mockBatchBuildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(mapping, nil)
 	mockBuildStore := storagemock.NewMockBuildStore(ctrl)
 	mockBuildStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(storagemock.NewMockRequestStore(ctrl)).AnyTimes()
+	store.EXPECT().GetBatchBuildStore().Return(mockBatchBuildStore).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(mockBuildStore).AnyTimes()
 
 	br := buildrunnermock.NewMockBuildRunner(ctrl)
-	br.EXPECT().Trigger(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(entity.BuildID{ID: "build-dup"}, nil)
 
 	publishCalled := false
 	mockPub := queuemock.NewMockPublisher(ctrl)
@@ -282,7 +296,7 @@ func TestController_Process_BuildStoreAlreadyExistsIsSwallowed(t *testing.T) {
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
 	require.NoError(t, controller.Process(context.Background(), delivery))
-	assert.True(t, publishCalled, "publish to buildsignal must run even when Create reports ErrAlreadyExists")
+	assert.True(t, publishCalled, "redelivery must republish to buildsignal")
 }
 
 // TestController_Process_TriggerFailure verifies a build-runner failure is
@@ -296,6 +310,9 @@ func TestController_Process_TriggerFailure(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(storagemock.NewMockRequestStore(ctrl)).AnyTimes()
+	mockBatchBuildStore := storagemock.NewMockBatchBuildStore(ctrl)
+	mockBatchBuildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchBuild{}, storage.ErrNotFound)
+	store.EXPECT().GetBatchBuildStore().Return(mockBatchBuildStore).AnyTimes()
 	// No build store expectation: Trigger failure must short-circuit before Create.
 
 	br := buildrunnermock.NewMockBuildRunner(ctrl)

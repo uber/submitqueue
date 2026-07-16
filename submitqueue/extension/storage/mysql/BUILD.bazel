@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "go_default_library",
     srcs = [
+        "batch_build_store.go",
         "batch_dependent_store.go",
         "batch_store.go",
         "build_store.go",
@@ -30,6 +31,7 @@ go_library(
 go_test(
     name = "go_default_test",
     srcs = [
+        "batch_build_store_test.go",
         "batch_dependent_store_test.go",
         "batch_store_test.go",
         "build_store_test.go",

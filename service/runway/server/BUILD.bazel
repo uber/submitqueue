@@ -19,6 +19,7 @@ go_library(
         "//runway/controller/mergeconflictcheck:go_default_library",
         "//runway/extension/merger:go_default_library",
         "//runway/extension/merger/noop:go_default_library",
+        "//service/internal/sqldb:go_default_library",
         "//sqsim/adapter/merger:go_default_library",
         "//sqsim/model:go_default_library",
         "@com_github_go_sql_driver_mysql//:go_default_library",

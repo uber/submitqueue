@@ -47,6 +47,8 @@ type Controller struct {
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
 
+const opName = "process"
+
 // NewController creates a new build controller for the orchestrator.
 func NewController(
 	logger *zap.SugaredLogger,
@@ -72,8 +74,6 @@ func NewController(
 // Deserializes the batch, triggers a build, and publishes a build entity to the build signal topic.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	const opName = "process"
-
 	op := metrics.Begin(c.metricsScope, opName)
 	defer func() { op.Complete(retErr) }()
 
@@ -116,49 +116,18 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return nil
 	}
 
-	// Load the dependency batches (base) as identity; the build runner resolves
-	// each batch's changes itself. head is this batch.
-	base, err := c.loadBatches(ctx, batch.Dependencies)
+	build, err := c.resolveBuild(ctx, batch)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to load dependency batches for batch %s: %w", batch.ID, err)
-	}
-
-	// Trigger the build with the queue's build runner. metadata is nil
-	// until a caller-supplied source materializes (e.g. requester / ticket
-	// pulled off the originating LandRequest).
-	buildRunner, err := c.buildRunners.For(buildrunner.Config{QueueName: batch.Queue})
-	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "trigger_errors", 1)
-		return fmt.Errorf("failed to build runner for batch %s: %w", batch.ID, err)
-	}
-	buildID, err := buildRunner.Trigger(ctx, base, batch, nil)
-	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "trigger_errors", 1)
-		return fmt.Errorf("failed to trigger build for batch %s: %w", batch.ID, err)
+		return err
 	}
 
 	if err := corerequest.PublishBatchLogs(ctx, c.registry, batch.Contains, entity.RequestStatusBuilding, map[string]string{
 		"batch_id":   batch.ID,
-		"build_id":   buildID.ID,
+		"build_id":   build.ID,
 		"controller": "build",
 	}); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "log_publish_errors", 1)
 		return fmt.Errorf("failed to publish building request logs for batch %s: %w", batch.ID, err)
-	}
-
-	build := entity.Build{
-		ID:      buildID.ID,
-		BatchID: batch.ID,
-		Status:  entity.BuildStatusAccepted,
-	}
-
-	// Persist the initial Build snapshot so the buildsignal poll loop has a
-	// row to UpdateStatus against. ErrAlreadyExists is benign — a redelivery
-	// of this message after a previous successful Create.
-	if err := c.store.GetBuildStore().Create(ctx, build); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to persist build %s: %w", build.ID, err)
 	}
 
 	// Hand off to the buildsignal poll loop; it calls Status, updates the
@@ -177,6 +146,72 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	)
 
 	return nil // Success - message will be acked
+}
+
+// resolveBuild returns the build assigned to a batch, triggering it only when
+// no immutable batch-to-build mapping exists. Persisting the mapping before
+// the Build row lets redelivery repair a missing Build without triggering the
+// external provider again.
+func (c *Controller) resolveBuild(ctx context.Context, batch entity.Batch) (entity.Build, error) {
+	mappingStore := c.store.GetBatchBuildStore()
+	mapping, err := mappingStore.Get(ctx, batch.ID)
+	if err == nil {
+		return c.ensureBuild(ctx, mapping)
+	}
+	if !errors.Is(err, storage.ErrNotFound) {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return entity.Build{}, fmt.Errorf("failed to get build mapping for batch %s: %w", batch.ID, err)
+	}
+
+	// Load the dependency batches as the speculative base. The build runner
+	// resolves each batch's changes itself, and the current batch is the head.
+	base, err := c.loadBatches(ctx, batch.Dependencies)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return entity.Build{}, fmt.Errorf("failed to load dependency batches for batch %s: %w", batch.ID, err)
+	}
+
+	buildRunner, err := c.buildRunners.For(buildrunner.Config{QueueName: batch.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "trigger_errors", 1)
+		return entity.Build{}, fmt.Errorf("failed to build runner for batch %s: %w", batch.ID, err)
+	}
+	buildID, err := buildRunner.Trigger(ctx, base, batch, nil)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "trigger_errors", 1)
+		return entity.Build{}, fmt.Errorf("failed to trigger build for batch %s: %w", batch.ID, err)
+	}
+
+	mapping = entity.BatchBuild{BatchID: batch.ID, BuildID: buildID.ID}
+	if err := mappingStore.Create(ctx, mapping); err != nil {
+		if !errors.Is(err, storage.ErrAlreadyExists) {
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return entity.Build{}, fmt.Errorf("failed to persist build mapping for batch %s: %w", batch.ID, err)
+		}
+
+		// Another delivery won the mapping race. Its mapping is authoritative.
+		mapping, err = mappingStore.Get(ctx, batch.ID)
+		if err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return entity.Build{}, fmt.Errorf("failed to reload build mapping for batch %s: %w", batch.ID, err)
+		}
+	}
+
+	return c.ensureBuild(ctx, mapping)
+}
+
+// ensureBuild persists the initial Build snapshot if it is missing.
+func (c *Controller) ensureBuild(ctx context.Context, mapping entity.BatchBuild) (entity.Build, error) {
+	build := entity.Build{
+		ID:      mapping.BuildID,
+		BatchID: mapping.BatchID,
+		Status:  entity.BuildStatusAccepted,
+	}
+	if err := c.store.GetBuildStore().Create(ctx, build); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+		return entity.Build{}, fmt.Errorf("failed to persist build %s: %w", build.ID, err)
+	}
+	return build, nil
 }
 
 // loadBatches loads each batch by ID, preserving order. Used to load the base

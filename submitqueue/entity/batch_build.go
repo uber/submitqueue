@@ -12,31 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scenarios
+package entity
 
-import (
-	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-)
-
-func TestRegistry(t *testing.T) {
-	assert.Equal(t, []string{
-		"build-failure",
-		"build-status-recovery",
-		"build-trigger-recovery",
-		"happy-path",
-		"load-1000",
-		"merge-conflict",
-		"merge-conflict-check-recovery",
-		"merge-response-lost",
-		"mixed-concurrent",
-	}, Names())
-	require.NoError(t, ValidateAll())
-}
-
-func TestBuildUnknownScenario(t *testing.T) {
-	_, err := Build("missing")
-	require.Error(t, err)
+// BatchBuild maps a batch to the build that verifies it.
+type BatchBuild struct {
+	// BatchID is the globally unique batch identifier and primary key.
+	BatchID string
+	// BuildID is the globally unique build identifier associated with the batch.
+	BuildID string
 }

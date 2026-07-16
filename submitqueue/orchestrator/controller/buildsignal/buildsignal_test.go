@@ -152,6 +152,7 @@ func TestController_Process_Terminal(t *testing.T) {
 					bid, err := entity.BatchIDFromBytes(msg.Payload)
 					require.NoError(t, err)
 					assert.Equal(t, build.BatchID, bid.ID)
+					assert.NotEqual(t, build.BatchID, msg.ID)
 					return nil
 				}).Times(1)
 			// No PublishAfter expected on terminal.
@@ -229,6 +230,7 @@ func TestController_Process_NonTerminal(t *testing.T) {
 					require.NoError(t, err)
 					// Re-published payload carries only the build ID.
 					assert.Equal(t, build.ID, bid.ID)
+					assert.NotEqual(t, build.ID, msg.ID)
 					return nil
 				}).Times(1)
 

@@ -3,7 +3,11 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "go_default_library",
     srcs = [
+        "failure.go",
         "happy_path.go",
+        "load.go",
+        "mixed.go",
+        "recovery.go",
         "registry.go",
     ],
     importpath = "github.com/uber/submitqueue/sqsim/scenarios",
@@ -14,7 +18,11 @@ go_library(
 go_test(
     name = "go_default_test",
     srcs = [
+        "failure_test.go",
         "happy_path_test.go",
+        "load_test.go",
+        "mixed_test.go",
+        "recovery_test.go",
         "registry_test.go",
     ],
     embed = [":go_default_library"],
