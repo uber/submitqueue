@@ -1,0 +1,32 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["buildrunner.go"],
+    importpath = "github.com/uber/submitqueue/sqsim/adapter/buildrunner",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//sqsim/adapter/internal/operationlock:go_default_library",
+        "//sqsim/entity:go_default_library",
+        "//sqsim/model:go_default_library",
+        "//submitqueue/core/changeset:go_default_library",
+        "//submitqueue/entity:go_default_library",
+        "//submitqueue/extension/buildrunner:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["buildrunner_test.go"],
+    embed = [":go_default_library"],
+    deps = [
+        "//platform/base/change:go_default_library",
+        "//sqsim:go_default_library",
+        "//sqsim/model:go_default_library",
+        "//submitqueue/core/changeset/fake:go_default_library",
+        "//submitqueue/entity:go_default_library",
+        "//submitqueue/extension/buildrunner:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+    ],
+)
