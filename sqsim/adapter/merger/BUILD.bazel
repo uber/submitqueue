@@ -1,0 +1,32 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["merger.go"],
+    importpath = "github.com/uber/submitqueue/sqsim/adapter/merger",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api/runway/messagequeue:go_default_library",
+        "//api/runway/messagequeue/protopb:go_default_library",
+        "//runway/extension/merger:go_default_library",
+        "//sqsim/adapter/internal/operationlock:go_default_library",
+        "//sqsim/entity:go_default_library",
+        "//sqsim/model:go_default_library",
+        "@org_golang_google_protobuf//proto:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["merger_test.go"],
+    embed = [":go_default_library"],
+    deps = [
+        "//api/base/change/protopb:go_default_library",
+        "//api/runway/messagequeue:go_default_library",
+        "//runway/extension/merger:go_default_library",
+        "//sqsim:go_default_library",
+        "//sqsim/model:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+    ],
+)
