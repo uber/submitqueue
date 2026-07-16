@@ -423,7 +423,7 @@ fx.New(
 
 ### Fluent builder — complete example
 
-The same orchestrator, expressed with the builder API. `Build()` calls `pipeline.Construct` internally — the engine is always the assembly mechanism.
+The same orchestrator, expressed with the builder API. `Create()` calls `pipeline.Construct` internally — the engine is always the assembly mechanism.
 
 ```go
 package main
@@ -470,7 +470,7 @@ func run(ctx context.Context) error {
         ).
         WithOption(pipeline.TopicNames(cfg.TopicNames)).
         WithOption(pipeline.Classifiers(backendClassifiers())).
-        Build()
+        Create()
     if err != nil { return err }
 
     if err := app.Start(ctx); err != nil { return err }
@@ -503,7 +503,7 @@ app, err := submitqueue.New().
         WithBuildRunner(noop.New()).
         WithConflictAnalyzer(noop.NewAnalyzer()),
     ).
-    Build()
+    Create()
 ```
 
 **Integration test.** The builder produces a `lifecycle.Component` just like the engine, so tests start and stop the full pipeline without special harness code:
@@ -523,7 +523,7 @@ func TestOrchestrator(t *testing.T) {
                 WithScorer(constant.New(1.0)).
                 WithConflictAnalyzer(noop.NewAnalyzer()),
         ).
-        Build()
+        Create()
     require.NoError(t, err)
 
     ctx, cancel := context.WithCancel(context.Background())
@@ -548,7 +548,7 @@ The `pipeline.Construct[D]` engine is the foundational API: typed, composable, a
 package submitqueue
 
 // Builder accumulates configuration for a SubmitQueue orchestrator app.
-// It is a convenience layer — Build() populates a Deps struct, constructs
+// It is a convenience layer — Create() populates a Deps struct, constructs
 // profiles, and calls pipeline.Construct under the hood.
 type Builder struct {
     logger   *zap.SugaredLogger
@@ -581,7 +581,7 @@ func (b *Builder) WithOption(o pipeline.Option) *Builder {
     b.opts = append(b.opts, o); return b
 }
 
-func (b *Builder) Build() (*App, error) {
+func (b *Builder) Create() (*App, error) {
     // 1. Validate required fields (storage, queues, at least one queue profile).
     // 2. Build a Profiles struct from b.perQueue (same as host profiles.go).
     // 3. Populate orchestrator.Deps from the accumulated state:
@@ -631,7 +631,7 @@ func (q QueueBuilder) WithConflictAnalyzer(a conflict.Analyzer) QueueBuilder {
 - **Convenience, not replacement.** The builder calls `pipeline.Construct` — it does not bypass or duplicate the engine. Deployers who need full control (custom `Option`s, multi-service composition, fx integration) use the engine directly.
 - **Compile-time type safety.** Each `With*` method takes the concrete extension interface, not a string hint. A missing or mistyped extension is a compile error.
 - **`QueueBuilder` is a value type.** The fluent chain returns copies, not pointers, so partial builders are safe to reuse as templates (e.g. a `baseQueue` with defaults that each real queue overrides — see the template-reuse example above).
-- **`Build()` validates eagerly.** Missing required fields (no storage, no queues, zero queue profiles) produce a clear error at build time, not a nil-pointer panic at runtime.
+- **`Create()` validates eagerly.** Missing required fields (no storage, no queues, zero queue profiles) produce a clear error at build time, not a nil-pointer panic at runtime.
 - **No global state.** `New()` returns an isolated builder. Multiple orchestrator apps can coexist in the same process (useful for integration tests).
 
 ## Trade-off: profile hints vs. removing QueueConfig entirely
