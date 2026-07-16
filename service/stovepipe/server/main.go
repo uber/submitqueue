@@ -255,16 +255,6 @@ func run() error {
 	}
 	logger.Info("controllers registered", zap.Int("primary", primaryCount), zap.Int("dlq", dlqCount))
 
-	buildController := build.NewController(logger.Sugar(), scope, store, fakeBuildRunnerFactory{}, registry, stovepipemq.TopicKeyBuild, "stovepipe-build")
-	if err := primaryConsumer.Register(buildController); err != nil {
-		return fmt.Errorf("failed to register build controller: %w", err)
-	}
-
-	buildSignalController := buildsignal.NewController(logger.Sugar(), scope, store, fakeBuildRunnerFactory{}, registry, stovepipemq.TopicKeyBuildSignal, "stovepipe-buildsignal")
-	if err := primaryConsumer.Register(buildSignalController); err != nil {
-		return fmt.Errorf("failed to register buildsignal controller: %w", err)
-	}
-
 	// Start consumers. DLQ first because Start begins processing messages
 	// immediately; if the primary consumer then fails to start, the half we
 	// already started is the DLQ side, whose work is idempotent reconciliation
@@ -393,6 +383,12 @@ func registerPrimaryControllers(
 	}
 	count++
 
+	buildSignalController := buildsignal.NewController(logger, scope, store, brf, registry, stovepipemq.TopicKeyBuildSignal, "stovepipe-buildsignal")
+	if err := c.Register(buildSignalController); err != nil {
+		return count, fmt.Errorf("failed to register buildsignal controller: %w", err)
+	}
+	count++
+
 	return count, nil
 }
 
@@ -439,10 +435,11 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Subscription: extqueue.DefaultSubscriptionConfig(
 				subscriberName, "stovepipe-build",
 			),
-
 		},
 		{
 			Key:   stovepipemq.TopicKeyBuildSignal,
+			Name:  "buildsignal",
+			Queue: q,
 			Subscription: extqueue.DefaultSubscriptionConfig(
 				subscriberName, "stovepipe-buildsignal",
 			),
@@ -455,6 +452,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 		{
 			Key:          dlq.TopicKey(stovepipemq.TopicKeyProcess),
 			Name:         "process_dlq",
+			Queue:        q,
 			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-process-dlq"),
 		},
 	})
