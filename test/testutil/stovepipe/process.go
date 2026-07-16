@@ -89,9 +89,11 @@ func AwaitRequestState(t testing.TB, db *sql.DB, id, wantState string) RequestRo
 	require.Eventually(t, func() bool {
 		row, err := ReadRequest(ctx, db, id)
 		if err != nil {
+			t.Logf("Request %s not readable yet: %v", id, err)
 			return false
 		}
 		got = row
+		t.Logf("Request %s state=%q (want %q)", id, row.State, wantState)
 		return row.State == wantState
 	}, defaultProcessTimeout, defaultProcessPollInterval,
 		"request %s should reach state %q", id, wantState)
@@ -148,7 +150,14 @@ func awaitAckedAfter(
 	require.Eventually(t, func() bool {
 		var ackedOffset int64
 		err := queueDB.QueryRow(query, consumerGroup, topic, queue).Scan(&ackedOffset)
-		return err == nil && ackedOffset > priorOffset
+		if err != nil {
+			t.Logf("Ack offset not ready: consumer_group=%s topic=%s queue=%s: %v",
+				consumerGroup, topic, queue, err)
+			return false
+		}
+		t.Logf("Ack offset: consumer_group=%s topic=%s queue=%s offset=%d (want > %d)",
+			consumerGroup, topic, queue, ackedOffset, priorOffset)
+		return ackedOffset > priorOffset
 	}, defaultProcessTimeout, defaultProcessPollInterval,
 		"consumer group %s should ack a newer message on topic %s queue %s",
 		consumerGroup, topic, queue)
@@ -159,18 +168,25 @@ func AwaitBuildRequest(t testing.TB, queueDB *sql.DB, id string) *stovepipemq.Bu
 	t.Helper()
 	var payload []byte
 	require.Eventually(t, func() bool {
-		return queueDB.QueryRow(`
+		err := queueDB.QueryRow(`
 			SELECT payload
 			FROM queue_messages
 			WHERE topic = ? AND partition_key = ? AND id = ?`,
 			BuildTopic, id, id,
-		).Scan(&payload) == nil
+		).Scan(&payload)
+		if err != nil {
+			t.Logf("Build request %s not published yet: %v", id, err)
+			return false
+		}
+		t.Logf("Build request %s found", id)
+		return true
 	}, defaultProcessTimeout, defaultProcessPollInterval,
 		"build request %s should be published", id)
 
 	msg := &stovepipemq.BuildRequest{}
 	require.NoError(t, stovepipemq.Unmarshal(payload, msg))
 	require.Equal(t, id, msg.Id)
+	t.Logf("Build request %s decoded successfully", id)
 	return msg
 }
 
@@ -184,6 +200,7 @@ func BuildMessageCount(t testing.TB, queueDB *sql.DB, id string) int {
 		WHERE topic = ? AND partition_key = ? AND id = ?`,
 		BuildTopic, id, id,
 	).Scan(&count))
+	t.Logf("Build message count: id=%s count=%d", id, count)
 	return count
 }
 
@@ -202,6 +219,8 @@ func AssertColdStartAdmitted(t testing.TB, storageDB, queueDB *sql.DB, queue, id
 	require.Equal(t, int32(1), qrow.InFlightCount, "admit should claim one build slot")
 	require.Equal(t, id, qrow.LatestRequestID, "latest pointer should still reference the admitted head")
 	AwaitBuildRequest(t, queueDB, id)
+	t.Logf("Cold-start admission observed: id=%s queue=%s strategy=%s slots=%d",
+		id, queue, row.BuildStrategy, qrow.InFlightCount)
 	return row
 }
 
@@ -230,6 +249,8 @@ func PublishProcessDelivery(t testing.TB, queueDB *sql.DB, requestID, messageID,
 		ProcessTopic, queue, messageID, payload, now, now,
 	)
 	require.NoError(t, err)
+	t.Logf("Published process delivery: request_id=%s message_id=%s queue=%s",
+		requestID, messageID, queue)
 }
 
 // SeedCoalesceScenario prepares an older and newer accepted head on the same queue
@@ -266,4 +287,6 @@ func SeedCoalesceScenario(
 	}
 
 	PublishProcessMessage(t, queueDB, olderID, queue)
+	t.Logf("Seeded coalescing scenario: older_id=%s newer_id=%s queue=%s",
+		olderID, newerID, queue)
 }

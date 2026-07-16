@@ -125,6 +125,7 @@ func (s *StovepipeE2ESuite) TestIngest_HappyPath_Processes() {
 
 	// Asynchronous outcome, including the build-stage handoff.
 	stovepipetest.AssertColdStartAdmitted(s.T(), s.db, s.queueDB, queue, id)
+	s.log.Logf("Ingest-to-build E2E passed: id=%s queue=%s", id, queue)
 }
 
 // TestIngest_Idempotent verifies that re-ingesting the same queue resolves the
@@ -137,4 +138,5 @@ func (s *StovepipeE2ESuite) TestIngest_Idempotent() {
 
 	id2 := s.ingest(queue)
 	assert.Equal(s.T(), id, id2, "re-ingest of the same head should dedup to the same id")
+	s.log.Logf("Idempotent ingest passed: queue=%s id=%s", queue, id)
 }
