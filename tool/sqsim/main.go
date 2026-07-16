@@ -24,13 +24,14 @@ import (
 
 	"github.com/uber/submitqueue/sqsim/runner"
 	"github.com/uber/submitqueue/sqsim/scenarios"
+	"github.com/uber/submitqueue/sqsim/tui"
 )
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		printUsage(stderr)
 		return 2
@@ -58,7 +59,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "%s is valid\n", args[1])
 		return 0
 	case "run":
-		return runScenarioCommand(args[1:], stdout, stderr)
+		return runScenarioCommand(args[1:], stdin, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n", args[0])
 		printUsage(stderr)
@@ -70,12 +71,13 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage:")
 	fmt.Fprintln(w, "  sqsim list")
 	fmt.Fprintln(w, "  sqsim validate <scenario>")
-	fmt.Fprintln(w, "  sqsim run <scenario> --headless")
+	fmt.Fprintln(w, "  sqsim run <scenario> [--headless]")
 }
 
 var runLocal = runner.RunLocal
+var runTUI = tui.Run
 
-func runScenarioCommand(args []string, stdout, stderr io.Writer) int {
+func runScenarioCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		printUsage(stderr)
 		return 2
@@ -88,23 +90,33 @@ func runScenarioCommand(args []string, stdout, stderr io.Writer) int {
 	if err := flags.Parse(args[1:]); err != nil {
 		return 2
 	}
-	if !*headless {
-		fmt.Fprintln(stderr, "interactive mode is not available yet; pass --headless")
-		return 2
-	}
 	scenario, err := scenarios.Build(scenarioName)
 	if err != nil {
 		fmt.Fprintf(stderr, "invalid scenario: %v\n", err)
 		return 2
 	}
-	report, err := runLocal(context.Background(), runner.LocalOptions{
-		ScenarioName: scenarioName,
-		Scenario:     scenario,
-		Observer:     runner.NewTextObserver(stdout),
-		Stdout:       stdout,
-		Stderr:       stderr,
-		PollInterval: *pollInterval,
-	})
+	var report runner.Report
+	if *headless {
+		report, err = runLocal(context.Background(), runner.LocalOptions{
+			ScenarioName: scenarioName,
+			Scenario:     scenario,
+			Observer:     runner.NewTextObserver(stdout),
+			Stdout:       stdout,
+			Stderr:       stderr,
+			PollInterval: *pollInterval,
+		})
+	} else {
+		report, err = runTUI(context.Background(), scenarioName, stdin, stdout, func(ctx context.Context, observer runner.Observer) (runner.Report, error) {
+			return runLocal(ctx, runner.LocalOptions{
+				ScenarioName: scenarioName,
+				Scenario:     scenario,
+				Observer:     observer,
+				Stdout:       io.Discard,
+				Stderr:       io.Discard,
+				PollInterval: *pollInterval,
+			})
+		})
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "sqsim infrastructure failure: %v\n", err)
 		return 2

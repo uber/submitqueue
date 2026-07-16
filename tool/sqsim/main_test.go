@@ -17,10 +17,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/uber/submitqueue/sqsim/runner"
+	"github.com/uber/submitqueue/sqsim/tui"
 )
 
 func TestRun(t *testing.T) {
@@ -40,7 +42,7 @@ func TestRun(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var stdout bytes.Buffer
 			var stderr bytes.Buffer
-			code := run(tt.args, &stdout, &stderr)
+			code := run(tt.args, &bytes.Buffer{}, &stdout, &stderr)
 			assert.Equal(t, tt.wantCode, code)
 			if tt.wantOutput != "" {
 				assert.Equal(t, tt.wantOutput, stdout.String())
@@ -70,7 +72,24 @@ func TestRunScenarioCommandExitCodes(t *testing.T) {
 			}
 			var stdout bytes.Buffer
 			var stderr bytes.Buffer
-			assert.Equal(t, tt.want, runScenarioCommand([]string{"happy-path", "--headless"}, &stdout, &stderr))
+			assert.Equal(t, tt.want, runScenarioCommand([]string{"happy-path", "--headless"}, &bytes.Buffer{}, &stdout, &stderr))
 		})
 	}
+}
+
+func TestRunScenarioCommandUsesInteractiveTUIByDefault(t *testing.T) {
+	originalLocal := runLocal
+	originalTUI := runTUI
+	t.Cleanup(func() {
+		runLocal = originalLocal
+		runTUI = originalTUI
+	})
+
+	runTUI = func(_ context.Context, scenario string, _ io.Reader, _ io.Writer, execute tui.Execute) (runner.Report, error) {
+		assert.Equal(t, "happy-path", scenario)
+		return runner.Report{Passed: true}, nil
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	assert.Equal(t, 0, runScenarioCommand([]string{"happy-path"}, &bytes.Buffer{}, &stdout, &stderr))
 }

@@ -25,6 +25,11 @@ import (
 	"github.com/uber/submitqueue/sqsim/model"
 )
 
+const (
+	maxSubmissionsPerCycle     = 25
+	maxSubmissionsBetweenPolls = 100
+)
+
 // Gateway is the public SubmitQueue surface used by SQSim.
 type Gateway interface {
 	// Land submits one synthetic change.
@@ -141,6 +146,7 @@ type requestState struct {
 	submitted        bool
 	terminalObserved bool
 	historyLoaded    bool
+	historyDirty     bool
 }
 
 // Run executes and verifies one scenario.
@@ -181,14 +187,14 @@ func Run(ctx context.Context, options Options) (Report, error) {
 	}
 
 	emit(options, startedAt, states, false)
+	submitted := 0
+	submittedSincePoll := 0
 	for {
 		now := options.Clock.Now()
-		changed := false
-		submitted := 0
+		submittedThisCycle := 0
 		for i := range states {
 			state := &states[i]
 			if state.submitted {
-				submitted++
 				continue
 			}
 			if now.Sub(startedAt) < state.submitAfter {
@@ -205,20 +211,34 @@ func Run(ctx context.Context, options Options) (Report, error) {
 			state.request.Status = "submitted"
 			state.submitted = true
 			submitted++
-			changed = true
+			submittedThisCycle++
+			if submittedThisCycle == maxSubmissionsPerCycle {
+				break
+			}
+		}
+		if submittedThisCycle > 0 {
+			submittedSincePoll += submittedThisCycle
+			emit(options, startedAt, states, false)
 		}
 
-		pollChanged, err := poll(runCtx, options, startedAt, states)
-		if err != nil {
-			if runCtx.Err() != nil {
-				return Report{}, fmt.Errorf("scenario %q timed out: %w", options.ScenarioName, runCtx.Err())
+		pollChanged := false
+		shouldPoll := submitted == len(states) ||
+			submittedThisCycle == 0 ||
+			submittedSincePoll >= maxSubmissionsBetweenPolls
+		if shouldPoll {
+			var err error
+			pollChanged, err = poll(runCtx, options, startedAt, states)
+			if err != nil {
+				if runCtx.Err() != nil {
+					return Report{}, fmt.Errorf("scenario %q timed out: %w", options.ScenarioName, runCtx.Err())
+				}
+				return Report{}, err
 			}
-			return Report{}, err
+			submittedSincePoll = 0
 		}
-		changed = changed || pollChanged
 
 		done := submitted == len(states) && allTerminal(states)
-		if changed || done {
+		if pollChanged || done {
 			emit(options, startedAt, states, done)
 		}
 		if done {
@@ -294,6 +314,7 @@ func poll(ctx context.Context, options Options, startedAt time.Time, states []re
 				found[summary.SQID] = struct{}{}
 				if applySummary(state, summary) {
 					changed = true
+					state.historyDirty = true
 				}
 			}
 			if nextToken == "" {
@@ -314,17 +335,23 @@ func poll(ctx context.Context, options Options, startedAt time.Time, states []re
 			if err == nil {
 				if applySummary(state, summary) {
 					changed = true
+					state.historyDirty = true
 				}
 			}
 		}
 		if isTerminal(state.request.Status) {
 			state.terminalObserved = true
-			if !state.historyLoaded {
-				history, err := options.Gateway.History(ctx, state.request.SQID)
-				if err == nil {
-					state.request.History = append([]HistoryEvent(nil), history...)
-					state.historyLoaded = true
+		}
+		if state.historyDirty || (isTerminal(state.request.Status) && !state.historyLoaded) {
+			history, err := options.Gateway.History(ctx, state.request.SQID)
+			if err == nil {
+				if !equalHistory(state.request.History, history) {
+					state.request.History = cloneHistory(history)
 					changed = true
+				}
+				state.historyDirty = false
+				if isTerminal(state.request.Status) {
+					state.historyLoaded = true
 				}
 			}
 		}
@@ -406,6 +433,21 @@ func equalMetadata(left, right map[string]string) bool {
 	}
 	for key, value := range left {
 		if right[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+func equalHistory(left, right []HistoryEvent) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i].TimestampMs != right[i].TimestampMs ||
+			left[i].Status != right[i].Status ||
+			left[i].LastError != right[i].LastError ||
+			!equalMetadata(left[i].Metadata, right[i].Metadata) {
 			return false
 		}
 	}

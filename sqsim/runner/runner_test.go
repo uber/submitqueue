@@ -61,6 +61,7 @@ func TestRunSubmitsObservesAndVerifiesScenario(t *testing.T) {
 		"sqsim://local/mixed/l1",
 	}, gateway.uris)
 	assert.True(t, snapshots[len(snapshots)-1].Done)
+	assert.True(t, hasLiveHistory(snapshots))
 	require.Len(t, report.Requests[1].History, 1)
 }
 
@@ -83,6 +84,62 @@ func TestRunReportsExpectationMismatch(t *testing.T) {
 	assert.False(t, report.Passed)
 }
 
+func TestRunInterleavesSubmissionAndObservation(t *testing.T) {
+	lands := make([]*sqsim.LandBuilder, 0, maxSubmissionsBetweenPolls+1)
+	statuses := make(map[string][]string, maxSubmissionsBetweenPolls+1)
+	for i := 0; i < maxSubmissionsBetweenPolls+1; i++ {
+		lands = append(lands,
+			sqsim.NewLand(fmt.Sprintf("l%d", i+1)).
+				Queue("sqsim").
+				Behavior(testBehavior()).
+				Expect(sqsim.RequestLanded),
+		)
+		statuses[fmt.Sprintf("sqsim/%d", i+1)] = []string{"landed"}
+	}
+	scenario, err := sqsim.NewScenario().
+		Timeout(time.Minute).
+		Land(lands...).
+		Build()
+	require.NoError(t, err)
+
+	gateway := &testGateway{statuses: statuses}
+	observedPartialSubmission := false
+	report, err := Run(context.Background(), Options{
+		ScenarioName: "many",
+		Scenario:     scenario,
+		Gateway:      gateway,
+		Clock:        &testClock{now: time.Unix(0, 0)},
+		PollInterval: time.Second,
+		Observer: ObserverFunc(func(snapshot Snapshot) {
+			submitted := 0
+			for _, request := range snapshot.Requests {
+				if request.SQID != "" {
+					submitted++
+				}
+			}
+			if submitted > 0 && submitted < len(snapshot.Requests) {
+				observedPartialSubmission = true
+			}
+		}),
+	})
+	require.NoError(t, err)
+	assert.True(t, report.Passed)
+	assert.True(t, observedPartialSubmission)
+
+	firstList := -1
+	lastLand := -1
+	for i, event := range gateway.events {
+		if event == "list" && firstList < 0 {
+			firstList = i
+		}
+		if event == "land" {
+			lastLand = i
+		}
+	}
+	assert.NotEqual(t, -1, firstList)
+	assert.Less(t, firstList, lastLand)
+}
+
 func testBehavior() *sqsim.BehaviorBuilder {
 	return sqsim.NewBehavior().
 		BuildRunner(sqsim.SuccessfulBuildRunner()).
@@ -90,9 +147,19 @@ func testBehavior() *sqsim.BehaviorBuilder {
 		Merge(sqsim.SuccessfulMerge())
 }
 
+func hasLiveHistory(snapshots []Snapshot) bool {
+	for _, snapshot := range snapshots {
+		if !snapshot.Done && len(snapshot.Requests) > 0 && len(snapshot.Requests[0].History) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 type testGateway struct {
 	mu       sync.Mutex
 	uris     []string
+	events   []string
 	statuses map[string][]string
 	polls    map[string]int
 }
@@ -101,12 +168,14 @@ func (g *testGateway) Land(_ context.Context, _ string, uri string) (string, err
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.uris = append(g.uris, uri)
+	g.events = append(g.events, "land")
 	return fmt.Sprintf("sqsim/%d", len(g.uris)), nil
 }
 
 func (g *testGateway) List(_ context.Context, _ string, _, _ int64, _ string) ([]Summary, string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.events = append(g.events, "list")
 	if g.polls == nil {
 		g.polls = make(map[string]int)
 	}
