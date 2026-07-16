@@ -16,9 +16,11 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/uber/submitqueue/sqsim/runner"
 )
 
 func TestRun(t *testing.T) {
@@ -43,6 +45,32 @@ func TestRun(t *testing.T) {
 			if tt.wantOutput != "" {
 				assert.Equal(t, tt.wantOutput, stdout.String())
 			}
+		})
+	}
+}
+
+func TestRunScenarioCommandExitCodes(t *testing.T) {
+	original := runLocal
+	t.Cleanup(func() { runLocal = original })
+
+	tests := []struct {
+		name   string
+		report runner.Report
+		err    error
+		want   int
+	}{
+		{name: "success", report: runner.Report{Passed: true}, want: 0},
+		{name: "expectation failure", report: runner.Report{Passed: false}, want: 1},
+		{name: "infrastructure failure", err: assert.AnError, want: 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runLocal = func(context.Context, runner.LocalOptions) (runner.Report, error) {
+				return tt.report, tt.err
+			}
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			assert.Equal(t, tt.want, runScenarioCommand([]string{"happy-path", "--headless"}, &stdout, &stderr))
 		})
 	}
 }

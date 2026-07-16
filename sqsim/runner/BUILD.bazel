@@ -1,0 +1,39 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "grpc.go",
+        "local.go",
+        "runner.go",
+        "text.go",
+    ],
+    importpath = "github.com/uber/submitqueue/sqsim/runner",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api/base/change/protopb:go_default_library",
+        "//api/base/mergestrategy/protopb:go_default_library",
+        "//api/submitqueue/gateway/protopb:go_default_library",
+        "//sqsim:go_default_library",
+        "//sqsim/model:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_grpc//credentials/insecure:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = [
+        "grpc_test.go",
+        "local_test.go",
+        "runner_test.go",
+        "text_test.go",
+    ],
+    embed = [":go_default_library"],
+    deps = [
+        "//api/submitqueue/gateway/protopb:go_default_library",
+        "//sqsim:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+    ],
+)

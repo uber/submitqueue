@@ -5,7 +5,10 @@ go_library(
     srcs = ["main.go"],
     importpath = "github.com/uber/submitqueue/tool/sqsim",
     visibility = ["//visibility:private"],
-    deps = ["//sqsim/scenarios:go_default_library"],
+    deps = [
+        "//sqsim/runner:go_default_library",
+        "//sqsim/scenarios:go_default_library",
+    ],
 )
 
 go_binary(
@@ -18,5 +21,8 @@ go_test(
     name = "go_default_test",
     srcs = ["main_test.go"],
     embed = [":go_default_library"],
-    deps = ["@com_github_stretchr_testify//assert:go_default_library"],
+    deps = [
+        "//sqsim/runner:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+    ],
 )

@@ -167,11 +167,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return nil
 	}
 
-	build.Status = status
-
-	if err := c.store.GetBuildStore().UpdateStatus(ctx, build.ID, status); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to update status for build %s: %w", build.ID, err)
+	if build.Status != status {
+		if err := c.store.GetBuildStore().UpdateStatus(ctx, build.ID, status); err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return fmt.Errorf("failed to update status for build %s: %w", build.ID, err)
+		}
+		build.Status = status
 	}
 
 	if status == entity.BuildStatusSucceeded {
