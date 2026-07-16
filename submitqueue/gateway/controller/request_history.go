@@ -50,7 +50,7 @@ func NewRequestHistoryController(logger *zap.SugaredLogger, scope tally.Scope, r
 // GetRequestHistoryByID returns every retained request-log event for one sqid.
 func (c *RequestHistoryController) GetRequestHistoryByID(ctx context.Context, req entity.GetRequestHistoryByIDRequest) (logs []entity.RequestLog, retErr error) {
 	op := metrics.Begin(c.metricsScope, "get_by_id")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	if err := validateStoredIdentifier("sqid", req.ID); err != nil {
 		return nil, fmt.Errorf("GetRequestHistoryByID invalid request: %w", err)
@@ -74,7 +74,7 @@ func (c *RequestHistoryController) GetRequestHistoryByID(ctx context.Context, re
 // GetRequestHistoryByChangeURI returns retained histories for an exact pinned change URI.
 func (c *RequestHistoryController) GetRequestHistoryByChangeURI(ctx context.Context, req entity.GetRequestHistoryByChangeURIRequest) (result []entity.RequestHistory, retErr error) {
 	op := metrics.Begin(c.metricsScope, "get_by_change_uri")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	if err := validateStoredIdentifier("change URI", req.ChangeURI); err != nil {
 		return nil, fmt.Errorf("GetRequestHistoryByChangeURI invalid request: %w", err)

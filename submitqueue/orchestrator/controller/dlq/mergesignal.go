@@ -67,7 +67,7 @@ func (c *mergeSignalController) Process(ctx context.Context, delivery consumer.D
 	const opName = "process"
 
 	op := metrics.Begin(c.metricsScope, opName)
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.LongLatencyBuckets) }()
 
 	msg := delivery.Message()
 

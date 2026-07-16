@@ -367,7 +367,7 @@ func (s *subscriber) advanceWatermark(ctx context.Context, consumerGroup, topic,
 // Subscribe starts consuming messages from the specified topic
 func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueue.SubscriptionConfig) (_ <-chan extqueue.Delivery, retErr error) {
 	op := metrics.Begin(s.scope, "subscribe", metrics.NewTag("topic", topic))
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	s.mu.RLock()
 	closed := s.closed
@@ -835,10 +835,10 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) error {
 
 		// Calculate message age for metrics
 		messageAge := time.Duration(time.Now().UnixMilli()-row.PublishedAt) * time.Millisecond
-		metrics.NamedTimer(s.scope, "poll", "message_age", messageAge,
+		metrics.NamedHistogram(s.scope, "poll", "message_age", metrics.LongLatencyBuckets,
 			metrics.NewTag("topic", sub.topic),
 			metrics.NewTag("partition_key", partitionKey),
-		)
+		).RecordDuration(messageAge)
 
 		// Create delivery ID from offset
 		deliveryID := strconv.FormatInt(row.Offset, 10)
@@ -920,10 +920,10 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) error {
 			metrics.NewTag("topic", sub.topic),
 			metrics.NewTag("partition_key", partitionKey),
 		)
-		metrics.NamedTimer(s.scope, "poll", "latency", elapsed,
+		metrics.NamedHistogram(s.scope, "poll", "latency", metrics.StorageLatencyBuckets,
 			metrics.NewTag("topic", sub.topic),
 			metrics.NewTag("partition_key", partitionKey),
-		)
+		).RecordDuration(elapsed)
 	}
 
 	return nil
@@ -1089,7 +1089,7 @@ func (s *subscriber) fairShareCap(ctx context.Context, sub *subscription, owned 
 //     (see managePartitions shutdown sequence)
 func (s *subscriber) Close() (retErr error) {
 	op := metrics.Begin(s.scope, "close")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -44,7 +44,7 @@ func (c *PingController) Ping(ctx context.Context, req *pb.PingRequest) (resp *p
 	const opName = "ping"
 
 	op := metrics.Begin(c.metricsScope, opName)
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.FastLatencyBuckets) }()
 
 	message := "pong!"
 	isEcho := false

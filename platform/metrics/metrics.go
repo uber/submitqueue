@@ -34,41 +34,88 @@ func NewTag(key, value string) Tag {
 	return Tag{Key: key, Value: value}
 }
 
-// defaultLatencyBuckets provides pre-defined duration buckets for common latency histograms.
-// Covers sub-millisecond to multi-hour ranges suitable for RPC calls, queue processing,
-// and long-running operations like builds and merges.
-var defaultLatencyBuckets = tally.DurationBuckets{
-	5 * time.Millisecond,
-	10 * time.Millisecond,
-	25 * time.Millisecond,
-	50 * time.Millisecond,
-	100 * time.Millisecond,
-	250 * time.Millisecond,
-	500 * time.Millisecond,
-	1 * time.Second,
-	2500 * time.Millisecond,
-	5 * time.Second,
-	10 * time.Second,
-	30 * time.Second,
-	1 * time.Minute,
-	2 * time.Minute,
-	5 * time.Minute,
-	10 * time.Minute,
-	30 * time.Minute,
-	1 * time.Hour,
-	2 * time.Hour,
-	4 * time.Hour,
-}
+// Common duration bucket sets for latency histograms. Operations differ widely
+// in expected latency, so there is no single default — pick the set whose range
+// matches the operation and pass it to Op.Complete or NamedHistogram. Buckets
+// far outside an operation's real latency waste series cardinality and lose
+// resolution where the data actually lands.
+var (
+	// FastLatencyBuckets suits fast in-process operations (~microseconds to
+	// seconds): scoring, cache lookups, and other CPU-bound work.
+	FastLatencyBuckets = tally.DurationBuckets{
+		100 * time.Microsecond,
+		250 * time.Microsecond,
+		500 * time.Microsecond,
+		1 * time.Millisecond,
+		2500 * time.Microsecond,
+		5 * time.Millisecond,
+		10 * time.Millisecond,
+		25 * time.Millisecond,
+		50 * time.Millisecond,
+		100 * time.Millisecond,
+		250 * time.Millisecond,
+		500 * time.Millisecond,
+		1 * time.Second,
+		2500 * time.Millisecond,
+		5 * time.Second,
+	}
+
+	// StorageLatencyBuckets suits storage and message-queue round-trips
+	// (~1ms to a minute): database reads/writes, publish/consume, and RPC
+	// handlers whose latency is dominated by such calls.
+	StorageLatencyBuckets = tally.DurationBuckets{
+		1 * time.Millisecond,
+		2500 * time.Microsecond,
+		5 * time.Millisecond,
+		10 * time.Millisecond,
+		25 * time.Millisecond,
+		50 * time.Millisecond,
+		100 * time.Millisecond,
+		250 * time.Millisecond,
+		500 * time.Millisecond,
+		1 * time.Second,
+		2500 * time.Millisecond,
+		5 * time.Second,
+		10 * time.Second,
+		30 * time.Second,
+		1 * time.Minute,
+	}
+
+	// LongLatencyBuckets suits long-running pipeline work and external calls
+	// (~5ms to hours): builds, merges, git pushes, and external provider calls.
+	LongLatencyBuckets = tally.DurationBuckets{
+		5 * time.Millisecond,
+		10 * time.Millisecond,
+		25 * time.Millisecond,
+		50 * time.Millisecond,
+		100 * time.Millisecond,
+		250 * time.Millisecond,
+		500 * time.Millisecond,
+		1 * time.Second,
+		2500 * time.Millisecond,
+		5 * time.Second,
+		10 * time.Second,
+		30 * time.Second,
+		1 * time.Minute,
+		2 * time.Minute,
+		5 * time.Minute,
+		10 * time.Minute,
+		30 * time.Minute,
+		1 * time.Hour,
+		2 * time.Hour,
+		4 * time.Hour,
+	}
+)
 
 // Op tracks the lifecycle of a named operation. It captures the start time on
 // creation, emits a {name}.called counter, and records the outcome (succeeded/failed
-// counters + latency timer with error classification tags) when Complete is called.
+// counters + latency histogram with error classification tags) when Complete is called.
 //
 // Usage:
 //
 //	func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
 //	    op := metrics.Begin(c.scope, "process")
-//	    defer func() { op.Complete(retErr) }()
+//	    defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 //	    // ... business logic ...
 //	}
 type Op struct {
@@ -87,19 +134,25 @@ func Begin(scope tally.Scope, name string, tags ...Tag) Op {
 }
 
 // Complete records the outcome of the operation. It emits a {name}.succeeded or
-// {name}.failed counter based on err, and records elapsed time on both
-// {name}.latency (timer) and {name}.latency_histogram (histogram with
-// defaultLatencyBuckets for percentile distributions), tagged with result=success|error.
-// On failure, error classification tags (error_origin, retryable, dependency)
-// are added to both the timer and histogram.
-func (o Op) Complete(err error) {
+// {name}.failed counter based on err, and records elapsed time on the
+// {name}.latency histogram (using the given buckets for percentile
+// distributions), tagged with result=success|error. On failure, error
+// classification tags (error_origin, retryable, dependency) are added to the
+// histogram.
+//
+// buckets is required and has no default: operations differ widely in expected
+// latency, so the caller picks a set (e.g. FastLatencyBuckets,
+// StorageLatencyBuckets, LongLatencyBuckets) matching the operation.
+//
+// Latency is recorded as a histogram rather than a timer because timer
+// percentiles cannot be combined across time series (see the package README).
+func (o Op) Complete(err error, buckets tally.Buckets) {
 	elapsed := time.Since(o.start)
 
 	if err == nil {
 		o.scope.Counter("succeeded").Inc(1)
 		s := o.scope.Tagged(map[string]string{"result": "success"})
-		s.Timer("latency").Record(elapsed)
-		s.Histogram("latency_histogram", defaultLatencyBuckets).RecordDuration(elapsed)
+		s.Histogram("latency", buckets).RecordDuration(elapsed)
 		return
 	}
 
@@ -110,18 +163,12 @@ func (o Op) Complete(err error) {
 		latencyTags[t.Key] = t.Value
 	}
 	s := o.scope.Tagged(latencyTags)
-	s.Timer("latency").Record(elapsed)
-	s.Histogram("latency_histogram", defaultLatencyBuckets).RecordDuration(elapsed)
+	s.Histogram("latency", buckets).RecordDuration(elapsed)
 }
 
 // NamedCounter increments the {name}.{counter} counter by value.
 func NamedCounter(scope tally.Scope, name string, counter string, value int64, tags ...Tag) {
 	tagged(scope, tags).SubScope(name).Counter(counter).Inc(value)
-}
-
-// NamedTimer records a duration on the {name}.{timer} timer.
-func NamedTimer(scope tally.Scope, name string, timer string, d time.Duration, tags ...Tag) {
-	tagged(scope, tags).SubScope(name).Timer(timer).Record(d)
 }
 
 // NamedHistogram returns a tally.Histogram at {name}.{histogram} with the given

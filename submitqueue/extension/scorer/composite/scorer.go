@@ -92,7 +92,7 @@ func New(scorers map[string]scorer.Scorer, reduce ReduceFunc, scope tally.Scope)
 // reduce function. If any child scorer returns an error, that error is returned immediately.
 func (c *compositeScorer) Score(ctx context.Context, batch entity.Batch) (ret float64, retErr error) {
 	op := metrics.Begin(c.scope, "score")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.FastLatencyBuckets) }()
 
 	scores := make(map[string]float64, len(c.scorers))
 	for name, s := range c.scorers {

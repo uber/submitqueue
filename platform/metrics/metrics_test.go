@@ -90,7 +90,7 @@ func TestComplete(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			scope := tally.NewTestScope("", nil)
 			op := Begin(scope, "process")
-			op.Complete(tt.err)
+			op.Complete(tt.err, FastLatencyBuckets)
 
 			snapshot := scope.Snapshot()
 			counters := snapshot.Counters()
@@ -105,14 +105,9 @@ func TestComplete(t *testing.T) {
 				assert.True(t, ok, "expected process.succeeded counter")
 				assert.Equal(t, int64(1), c.Value())
 
-				timers := snapshot.Timers()
-				timer, ok := timers["process.latency+result=success"]
-				assert.True(t, ok, "expected process.latency timer with result=success")
-				assert.NotEmpty(t, timer.Values())
-
 				histograms := snapshot.Histograms()
-				_, ok = histograms["process.latency_histogram+result=success"]
-				assert.True(t, ok, "expected process.latency_histogram with result=success")
+				_, ok = histograms["process.latency+result=success"]
+				assert.True(t, ok, "expected process.latency histogram with result=success")
 			} else {
 				c, ok := counters["process.failed+"]
 				assert.True(t, ok, "expected process.failed counter")
@@ -127,15 +122,7 @@ func TestComplete(t *testing.T) {
 				tagSuffix += ",result=" + tt.expectResultTag
 				tagSuffix += ",retryable=" + tt.expectRetryable
 
-				timerKey := "process.latency+" + tagSuffix
-				timers := snapshot.Timers()
-				timer, ok := timers[timerKey]
-				assert.True(t, ok, "expected timer key %s, got keys: %v", timerKey, timerKeys(timers))
-				if ok {
-					assert.NotEmpty(t, timer.Values())
-				}
-
-				histogramKey := "process.latency_histogram+" + tagSuffix
+				histogramKey := "process.latency+" + tagSuffix
 				histograms := snapshot.Histograms()
 				_, ok = histograms[histogramKey]
 				assert.True(t, ok, "expected histogram key %s, got keys: %v", histogramKey, histogramKeys(histograms))
@@ -147,7 +134,7 @@ func TestComplete(t *testing.T) {
 func TestBegin_WithTags(t *testing.T) {
 	scope := tally.NewTestScope("", nil)
 	op := Begin(scope, "process", NewTag("env", "prod"))
-	op.Complete(nil)
+	op.Complete(nil, FastLatencyBuckets)
 
 	snapshot := scope.Snapshot()
 	counters := snapshot.Counters()
@@ -172,20 +159,9 @@ func TestNamedCounter(t *testing.T) {
 	assert.Equal(t, int64(5), c.Value())
 }
 
-func TestNamedTimer(t *testing.T) {
-	scope := tally.NewTestScope("", nil)
-	NamedTimer(scope, "publish", "queue_latency", 42*time.Millisecond)
-
-	snapshot := scope.Snapshot()
-	timers := snapshot.Timers()
-	timer, ok := timers["publish.queue_latency+"]
-	assert.True(t, ok, "expected publish.queue_latency timer")
-	assert.Equal(t, []time.Duration{42 * time.Millisecond}, timer.Values())
-}
-
 func TestNamedHistogram(t *testing.T) {
 	scope := tally.NewTestScope("", nil)
-	h := NamedHistogram(scope, "process", "duration", defaultLatencyBuckets)
+	h := NamedHistogram(scope, "process", "duration", StorageLatencyBuckets)
 	assert.NotNil(t, h)
 
 	h.RecordDuration(50 * time.Millisecond)
@@ -207,11 +183,20 @@ func TestNamedGauge(t *testing.T) {
 	assert.Equal(t, float64(42), g.Value())
 }
 
-func TestDefaultLatencyBuckets_Sorted(t *testing.T) {
-	for i := 1; i < len(defaultLatencyBuckets); i++ {
-		assert.Greater(t, defaultLatencyBuckets[i], defaultLatencyBuckets[i-1],
-			"defaultLatencyBuckets[%d] (%v) must be greater than defaultLatencyBuckets[%d] (%v)",
-			i, defaultLatencyBuckets[i], i-1, defaultLatencyBuckets[i-1])
+func TestLatencyBuckets_Sorted(t *testing.T) {
+	sets := map[string]tally.DurationBuckets{
+		"FastLatencyBuckets":    FastLatencyBuckets,
+		"StorageLatencyBuckets": StorageLatencyBuckets,
+		"LongLatencyBuckets":    LongLatencyBuckets,
+	}
+	for name, buckets := range sets {
+		t.Run(name, func(t *testing.T) {
+			for i := 1; i < len(buckets); i++ {
+				assert.Greater(t, buckets[i], buckets[i-1],
+					"%s[%d] (%v) must be greater than %s[%d] (%v)",
+					name, i, buckets[i], name, i-1, buckets[i-1])
+			}
+		})
 	}
 }
 
@@ -267,15 +252,6 @@ func TestErrorTags(t *testing.T) {
 			assert.Equal(t, tt.expected, tags)
 		})
 	}
-}
-
-// timerKeys extracts map keys for error messages.
-func timerKeys(m map[string]tally.TimerSnapshot) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
 }
 
 // counterKeys extracts map keys for error messages.

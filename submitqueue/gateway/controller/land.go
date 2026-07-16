@@ -92,7 +92,7 @@ func (c *LandController) Land(ctx context.Context, req entity.LandRequest) (resu
 	const opName = "land"
 
 	op := metrics.Begin(c.metricsScope, opName)
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	// Validate provider-agnostic request constraints before allocating an sqid.
 	if err := validateQueueIdentifier(req.Queue); err != nil {

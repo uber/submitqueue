@@ -90,7 +90,7 @@ func NewController(
 // Returns nil to ack (success or non-retryable rejection), error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
 	op := coremetrics.Begin(c.metricsScope, "process")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, coremetrics.LongLatencyBuckets) }()
 
 	msg := delivery.Message()
 
