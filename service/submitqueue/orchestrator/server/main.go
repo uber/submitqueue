@@ -42,6 +42,8 @@ import (
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/platform/http"
+	simbuildrunner "github.com/uber/submitqueue/sqsim/adapter/buildrunner"
+	"github.com/uber/submitqueue/sqsim/model"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -159,6 +161,11 @@ func run() error {
 		metricsWgDone.Wait()
 	}()
 
+	sqsimRuntime, err := loadSQSimRuntime(os.Getenv("SQSIM_SCENARIO_PATH"))
+	if err != nil {
+		return err
+	}
+
 	// Open app database connection for counter
 	// Docker Compose healthchecks ensure MySQL is ready before service starts
 	appDSN := os.Getenv("MYSQL_DSN")
@@ -220,14 +227,18 @@ func run() error {
 	// so every non-nil error from a DLQ controller is forced retryable —
 	// reconciliation must redeliver on any failure because the DLQ
 	// subscriptions are final destinations (there is no further DLQ).
+	classifiers := []errs.Classifier{
+		genericerrs.Classifier,
+		// Storage (submitqueue/extension/storage/mysql) and queue (platform/extension/messagequeue/mysql)
+		// both run on the same MySQL driver, so a single classifier covers
+		// errors surfaced from either backend.
+		mysqlerrs.Classifier,
+	}
+	if sqsimRuntime != nil {
+		classifiers = append(classifiers, model.Classifier)
+	}
 	primaryConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
-		errs.NewClassifierProcessor(
-			genericerrs.Classifier,
-			// Storage (submitqueue/extension/storage/mysql) and queue (platform/extension/messagequeue/mysql)
-			// both run on the same MySQL driver, so a single classifier covers
-			// errors surfaced from either backend.
-			mysqlerrs.Classifier,
-		),
+		errs.NewClassifierProcessor(classifiers...),
 	)
 	dlqConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer-dlq"), registry,
 		errs.AlwaysRetryableProcessor,
@@ -238,7 +249,8 @@ func run() error {
 	// back to a baseline profile for queues without an explicit entry. This is
 	// the single place queue topology is known; the extension packages stay
 	// queue-agnostic.
-	queues, err := newQueueRegistry(logger, scope, changeset.New(store.GetRequestStore(), store.GetChangeStore()))
+	resolver := changeset.New(store.GetRequestStore(), store.GetChangeStore())
+	queues, err := newQueueRegistry(logger, scope, resolver, sqsimRuntime)
 	if err != nil {
 		return fmt.Errorf("failed to build queue registry: %w", err)
 	}
@@ -893,7 +905,7 @@ const defaultPrioritizationLimit = 1000
 // conflict analyzer. Queues without an explicit profile fall back to the
 // baseline. This is the one place queue topology lives; extension packages stay
 // queue-agnostic.
-func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.Resolver) (queueRegistry, error) {
+func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.Resolver, sqsimRuntime *model.Runtime) (queueRegistry, error) {
 	cp, err := newChangeProvider(logger, scope)
 	if err != nil {
 		return queueRegistry{}, fmt.Errorf("failed to create change provider: %w", err)
@@ -969,6 +981,14 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.
 	fileOverlapQueue := base
 	fileOverlapQueue.analyzer = fileoverlap.New(resolver)
 
+	// sqsim: maximum request-level parallelism for scenario and load runs. The
+	// modeled Build Runner is selected only when an explicit profile is loaded.
+	sqsimQueue := base
+	sqsimQueue.analyzer = none.New()
+	if sqsimRuntime != nil {
+		sqsimQueue.buildRunner = simbuildrunner.New(sqsimRuntime, resolver, "sqsim")
+	}
+
 	return queueRegistry{
 		def: base,
 		byQueue: map[string]queueExtensions{
@@ -976,6 +996,22 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.
 			"e2e-test-queue":           e2eQueue,
 			"e2e-conflict-error-queue": conflictErrQueue,
 			"file-overlap-queue":       fileOverlapQueue,
+			"sqsim":                    sqsimQueue,
 		},
 	}, nil
+}
+
+func loadSQSimRuntime(path string) (*model.Runtime, error) {
+	if path == "" {
+		return nil, nil
+	}
+	profile, err := model.Load(path)
+	if err != nil {
+		return nil, fmt.Errorf("load SQSim profile: %w", err)
+	}
+	runtime, err := model.NewRuntime(profile, model.RealClock{})
+	if err != nil {
+		return nil, fmt.Errorf("initialize SQSim runtime: %w", err)
+	}
+	return runtime, nil
 }

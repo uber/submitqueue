@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_binary", "go_library")
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 go_library(
     name = "go_default_library",
@@ -19,6 +19,8 @@ go_library(
         "//runway/controller/mergeconflictcheck:go_default_library",
         "//runway/extension/merger:go_default_library",
         "//runway/extension/merger/noop:go_default_library",
+        "//sqsim/adapter/merger:go_default_library",
+        "//sqsim/model:go_default_library",
         "@com_github_go_sql_driver_mysql//:go_default_library",
         "@com_github_uber_go_tally//:go_default_library",
         "@org_golang_google_grpc//:go_default_library",
@@ -31,4 +33,17 @@ go_binary(
     name = "runway",
     embed = [":go_default_library"],
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["main_test.go"],
+    embed = [":go_default_library"],
+    deps = [
+        "//runway/extension/merger:go_default_library",
+        "//sqsim/model:go_default_library",
+        "//sqsim/scenarios:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+    ],
 )
