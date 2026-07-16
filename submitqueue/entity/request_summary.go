@@ -14,6 +14,18 @@
 
 package entity
 
+// GetRequestSummaryByIDRequest identifies one request summary by sqid.
+type GetRequestSummaryByIDRequest struct {
+	// ID is the globally unique identifier of the request. Format: "<queue>/<counter_value>".
+	ID string
+}
+
+// GetRequestSummaryByChangeURIRequest identifies request summaries by an exact pinned change URI.
+type GetRequestSummaryByChangeURIRequest struct {
+	// ChangeURI is the exact change URI supplied in a Land request.
+	ChangeURI string
+}
+
 // RequestSummary is the gateway-owned materialized current view of a request.
 // RequestID is exposed as sqid by the gateway API.
 type RequestSummary struct {

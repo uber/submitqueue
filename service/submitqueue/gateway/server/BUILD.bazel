@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_binary", "go_library")
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 exports_files(
     ["docker-compose.yml"],
@@ -39,4 +39,16 @@ go_binary(
     name = "gateway",
     embed = [":gateway_lib"],
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["main_test.go"],
+    embed = [":gateway_lib"],  # keep
+    deps = [
+        "//submitqueue/gateway/controller:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@org_golang_google_grpc//codes:go_default_library",
+        "@org_golang_google_grpc//status:go_default_library",
+    ],
 )

@@ -5,7 +5,9 @@ go_library(
     srcs = [
         "cancel.go",
         "land.go",
-        "status.go",
+        "list.go",
+        "request_history.go",
+        "request_summary.go",
     ],
     importpath = "github.com/uber/submitqueue/service/submitqueue/gateway/server/mapper",
     visibility = ["//visibility:public"],
@@ -14,7 +16,6 @@ go_library(
         "//api/submitqueue/gateway/protopb:go_default_library",
         "//platform/base/change:go_default_library",
         "//platform/base/mergestrategy:go_default_library",
-        "//submitqueue/core/request:go_default_library",
         "//submitqueue/entity:go_default_library",
     ],
 )
@@ -24,7 +25,9 @@ go_test(
     srcs = [
         "cancel_test.go",
         "land_test.go",
-        "status_test.go",
+        "list_test.go",
+        "request_history_test.go",
+        "request_summary_test.go",
     ],
     embed = [":go_default_library"],
     deps = [
@@ -33,7 +36,6 @@ go_test(
         "//api/submitqueue/gateway/protopb:go_default_library",
         "//platform/base/change:go_default_library",
         "//platform/base/mergestrategy:go_default_library",
-        "//submitqueue/core/request:go_default_library",
         "//submitqueue/entity:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
