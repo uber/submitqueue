@@ -12,7 +12,7 @@ The orchestrator's example `main.go` (`example/submitqueue/orchestrator/server/m
 
 Adding a new queue today requires changes in **three places**: YAML config (`queues.yaml`), Go code (`newQueueRegistry`), and a recompile. Adding a new pipeline stage requires **two coordinated edits** (topic list + controller registration). The topic → subscription → DLQ subscription → DLQ controller linkage is maintained by copy-paste across 12 stages, where forgetting any half creates a silent failure.
 
-The [TODO on line 477](../../example/submitqueue/orchestrator/server/main.go) already flags the queue-registry pattern as a candidate for promotion into the domain layer, contingent on a trigger: a second consumer needing the same wiring, data-driven config, or lifecycle requirements.
+The [TODO on line 475](../../../service/submitqueue/orchestrator/server/main.go) already flags the queue-registry pattern as a candidate for promotion into the domain layer, contingent on a trigger: a second consumer needing the same wiring, data-driven config, or lifecycle requirements.
 
 ## Vocabulary
 
@@ -640,7 +640,7 @@ Profile selection (which scorer/conflict/build-runner a queue uses) deserves sep
 
 ### Current role of QueueConfig
 
-`QueueConfig` today is a single-field entity (`Name string`). Its sole consumer is the gateway's `LandController`, which calls `queueconfig.Store.Get(ctx, queue)` to reject requests targeting unknown queues — a pure name-validation gate. The orchestrator does not import `queueconfig` at all; it maintains its own hardcoded `queueRegistry` with no programmatic link to the YAML config. The TODO on line 477 of the orchestrator example envisions bridging the two ("see also queueconfig.Store, which holds the per-queue data half"), but that bridge does not exist today.
+`QueueConfig` today is a single-field entity (`Name string`). Its sole consumer is the gateway's `LandController`, which calls `queueconfig.Store.Get(ctx, queue)` to reject requests targeting unknown queues — a pure name-validation gate. The orchestrator does not import `queueconfig` at all; it maintains its own hardcoded `queueRegistry` with no programmatic link to the YAML config. The TODO on line 475 of the orchestrator example envisions bridging the two ("see also queueconfig.Store, which holds the per-queue data half"), but that bridge does not exist today.
 
 ### Three options for per-queue extension selection
 
