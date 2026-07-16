@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//sqsim/runner:go_default_library",
         "//sqsim/scenarios:go_default_library",
+        "//sqsim/tui:go_default_library",
     ],
 )
 
@@ -23,6 +24,7 @@ go_test(
     embed = [":go_default_library"],
     deps = [
         "//sqsim/runner:go_default_library",
+        "//sqsim/tui:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
     ],
 )
