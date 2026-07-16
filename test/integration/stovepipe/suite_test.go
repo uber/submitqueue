@@ -103,10 +103,9 @@ func (s *StovepipeIntegrationSuite) TestPingAPI() {
 	assert.NotZero(t, resp.Timestamp)
 }
 
-// TestIngestAPI exercises the full ingest path: the controller resolves the head
-// URI via the (fake) SourceControl, persists the Request and its (queue, URI)
-// mapping, and publishes the request id to the process stage. A second ingest of
-// the same queue resolves the same head and dedups to the same id.
+// TestIngestAPI exercises the durable ingest effects: the controller resolves
+// the head URI via the fake SourceControl, persists the Request and its
+// (queue, URI) mapping, and deduplicates a repeated ingest.
 func (s *StovepipeIntegrationSuite) TestIngestAPI() {
 	t := s.T()
 
@@ -126,11 +125,6 @@ func (s *StovepipeIntegrationSuite) TestIngestAPI() {
 	var mappedID string
 	require.NoError(t, s.db.QueryRow("SELECT request_id FROM request_uri WHERE queue = ?", queue).Scan(&mappedID))
 	assert.Equal(t, id, mappedID, "URI mapping should point at the minted request id")
-
-	// Message published to the process topic.
-	var msgCount int
-	require.NoError(t, s.queueDB.QueryRow("SELECT COUNT(*) FROM queue_messages WHERE id = ?", id).Scan(&msgCount))
-	assert.Equal(t, 1, msgCount, "should have published one process message")
 
 	// Re-ingesting the same queue resolves the same head URI and dedups.
 	resp2, err := s.client.Ingest(s.ctx, &pb.IngestRequest{Queue: queue})

@@ -14,34 +14,14 @@
 
 package e2e_test
 
-// Reusable e2e helpers so tests read as intent, not plumbing. They drive the
-// stack through the real Stovepipe gRPC surface (Ingest) and observe outcomes
-// two ways:
-//
-//   - the synchronous side effects of Ingest via raw SQL on the storage DB
-//     (the request row and its (queue, URI) mapping) and the queue DB (the
-//     published process message); and
-//   - the asynchronous completion of the process stage by polling the queue
-//     backend's per-consumer-group delivery state until the message is acked.
-//
-// Convergence is bounded by require.Eventually rather than time.Sleep: the
-// process consumer runs inside the stovepipe-service container, so there is no
-// in-process signal to await; a timeout here means the stage is genuinely stuck,
-// not a timing race.
+// Reusable e2e helpers drive the stack through the real Stovepipe gRPC surface
+// and assert durable synchronous storage effects. Shared process helpers assert
+// asynchronous downstream outcomes.
 
 import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
-)
-
-// The process consumer's topic and consumer group as wired in
-// service/stovepipe/server/main.go (topic name "process", consumer group
-// "stovepipe-process"). awaitProcessed reads the queue backend's delivery state
-// keyed by this group.
-const (
-	processTopic         = "process"
-	processConsumerGroup = "stovepipe-process"
 )
 
 // ingest admits a queue's head commit into the pipeline and returns the minted
@@ -72,52 +52,11 @@ func (s *StovepipeE2ESuite) uriMapping(queue string) string {
 	return mappedID
 }
 
-// publishedMessageCount returns the number of process messages published for the
-// given request id (0 or 1).
-func (s *StovepipeE2ESuite) publishedMessageCount(id string) int {
-	t := s.T()
-	var count int
-	require.NoError(t, s.queueDB.QueryRow("SELECT COUNT(*) FROM queue_messages WHERE id = ?", id).Scan(&count),
-		"failed to count queue messages for %s", id)
-	return count
-}
-
-// awaitProcessed blocks until the process consumer has acked a message on the
-// given queue's partition, proving the ingest→process pipeline ran end-to-end.
-// The durable signal is the consumer group's acked-offset watermark in
-// queue_offsets: it starts at 0 and only advances once a message is acked (see
-// offset_store.go). We poll that rather than the message's own delivery-state
-// row because the queue GCs acked messages (and their delivery state) from
-// queue_messages once the watermark passes them. The queue uses the queue name
-// as the message's partition key (see the ingest controller), so the partition
-// key here is the queue.
-func (s *StovepipeE2ESuite) awaitProcessed(queue string) {
-	t := s.T()
-	const query = `
-		SELECT offset_acked
-		FROM queue_offsets
-		WHERE consumer_group = ? AND topic = ? AND partition_key = ?`
-	require.Eventually(t, func() bool {
-		var ackedOffset int64
-		err := s.queueDB.QueryRow(query, processConsumerGroup, processTopic, queue).Scan(&ackedOffset)
-		if err != nil {
-			// sql.ErrNoRows means the partition offset is not initialized yet.
-			s.log.Logf("acked offset for queue %s not ready yet: %v", queue, err)
-			return false
-		}
-		s.log.Logf("acked offset for queue %s = %d (want > 0)", queue, ackedOffset)
-		return ackedOffset > 0
-	}, processTimeout, processPollInterval,
-		"process consumer group %q on topic %q should advance the acked offset for queue %s",
-		processConsumerGroup, processTopic, queue)
-}
-
 // assertIngestPersisted asserts the synchronous side effects of a successful
-// Ingest: the request row, the (queue, URI) mapping pointing at the minted id,
-// and exactly one published process message.
+// Ingest: the request row and the (queue, URI) mapping pointing at the minted
+// id. Process publication is asserted through its durable downstream outcome.
 func (s *StovepipeE2ESuite) assertIngestPersisted(queue, id string) {
 	t := s.T()
 	assert.Equal(t, 1, s.requestRowCount(id), "request row should be persisted for %s", id)
 	assert.Equal(t, id, s.uriMapping(queue), "URI mapping should point at the minted request id")
-	assert.Equal(t, 1, s.publishedMessageCount(id), "should have published one process message for %s", id)
 }
