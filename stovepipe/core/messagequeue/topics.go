@@ -41,4 +41,10 @@ const (
 	// Partitioned by build id, so each build's poll loop is an independent
 	// partition.
 	TopicKeyBuildSignal TopicKey = "buildsignal"
+
+	// TopicKeyRecord carries a build's terminal status from buildsignal to the
+	// record stage. The buildsignal controller publishes a Record (the build
+	// id) here once, and only once, a build reaches a terminal status;
+	// non-terminal polls never publish here. Partitioned by request id.
+	TopicKeyRecord TopicKey = "record"
 )
