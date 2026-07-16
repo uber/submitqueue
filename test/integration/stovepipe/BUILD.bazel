@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "go_default_test",
-    srcs = ["suite_test.go"],
+    srcs = [
+        "process_test.go",
+        "suite_test.go",
+    ],
     data = [
         "//:MODULE.bazel",
         "//:go.mod",
@@ -16,7 +19,9 @@ go_test(
     ],
     deps = [
         "//api/stovepipe/protopb:go_default_library",
+        "//stovepipe/entity:go_default_library",
         "//test/testutil:go_default_library",
+        "//test/testutil/stovepipe:go_default_library",
         "@com_github_go_sql_driver_mysql//:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
