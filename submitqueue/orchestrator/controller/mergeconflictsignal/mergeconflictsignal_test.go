@@ -61,20 +61,21 @@ func TestProcess_MergeablePublishesToBatch(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 
-	var gotTopic string
-	var gotPayload []byte
+	published := make(map[string][]byte)
 	pub := queuemock.NewMockPublisher(ctrl)
 	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, topic string, msg entityqueue.Message) error {
-			gotTopic = topic
-			gotPayload = msg.Payload
+			published[topic] = msg.Payload
 			return nil
 		},
-	)
+	).Times(2)
 	q := queuemock.NewMockQueue(ctrl)
 	q.EXPECT().Publisher().Return(pub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: topickey.TopicKeyBatch, Name: "batch", Queue: q}},
+		[]consumer.TopicConfig{
+			{Key: topickey.TopicKeyBatch, Name: "batch", Queue: q},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: q},
+		},
 	)
 	require.NoError(t, err)
 
@@ -85,8 +86,12 @@ func TestProcess_MergeablePublishesToBatch(t *testing.T) {
 	msg := entityqueue.NewMessage(testRequestID, resultPayload(t, res), testQueue, nil)
 	require.NoError(t, controller.Process(context.Background(), newDelivery(ctrl, msg)))
 
-	assert.Equal(t, "batch", gotTopic)
-	rid, err := entity.RequestIDFromBytes(gotPayload)
+	logEntry, err := entity.RequestLogFromBytes(published["log"])
+	require.NoError(t, err)
+	assert.Equal(t, entity.RequestStatusValidated, logEntry.Status)
+	assert.Equal(t, "mergeconflictsignal", logEntry.Metadata["controller"])
+
+	rid, err := entity.RequestIDFromBytes(published["batch"])
 	require.NoError(t, err)
 	assert.Equal(t, testRequestID, rid.ID)
 }

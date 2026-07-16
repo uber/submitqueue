@@ -35,6 +35,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
@@ -140,6 +141,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to build merge request for batch %s: %w", batch.ID, err)
+	}
+
+	if err := corerequest.PublishBatchLogs(ctx, c.registry, batch.Contains, entity.RequestStatusLanding, map[string]string{
+		"batch_id":   batch.ID,
+		"controller": "merge",
+	}); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "log_publish_errors", 1)
+		return fmt.Errorf("failed to publish landing request logs for batch %s: %w", batch.ID, err)
 	}
 
 	if err := c.publish(ctx, c.runwayTopicKey, req, batch.Queue); err != nil {

@@ -23,6 +23,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
@@ -135,6 +136,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "trigger_errors", 1)
 		return fmt.Errorf("failed to trigger build for batch %s: %w", batch.ID, err)
+	}
+
+	if err := corerequest.PublishBatchLogs(ctx, c.registry, batch.Contains, entity.RequestStatusBuilding, map[string]string{
+		"batch_id":   batch.ID,
+		"build_id":   buildID.ID,
+		"controller": "build",
+	}); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "log_publish_errors", 1)
+		return fmt.Errorf("failed to publish building request logs for batch %s: %w", batch.ID, err)
 	}
 
 	build := entity.Build{

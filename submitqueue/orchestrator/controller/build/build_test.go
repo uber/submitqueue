@@ -102,7 +102,10 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: topickey.TopicKeyBuildSignal, Name: "buildsignal", Queue: mockQ}},
+		[]consumer.TopicConfig{
+			{Key: topickey.TopicKeyBuildSignal, Name: "buildsignal", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
+		},
 	)
 	require.NoError(t, err)
 
@@ -179,22 +182,31 @@ func TestController_Process_TriggersWithBaseAndHead(t *testing.T) {
 	// base is the dependency batches (identity); head is this batch.
 	br.EXPECT().Trigger(gomock.Any(), []entity.Batch{depBatch}, headBatch, gomock.Nil()).Return(entity.BuildID{ID: "build-xyz"}, nil)
 
-	var publishedTopic string
 	var published entity.BuildID
+	var buildingLogs []entity.RequestLog
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, topic string, msg entityqueue.Message) error {
-			publishedTopic = topic
-			bid, err := entity.BuildIDFromBytes(msg.Payload)
-			require.NoError(t, err)
-			published = bid
+			switch topic {
+			case "buildsignal":
+				bid, err := entity.BuildIDFromBytes(msg.Payload)
+				require.NoError(t, err)
+				published = bid
+			case "log":
+				logEntry, err := entity.RequestLogFromBytes(msg.Payload)
+				require.NoError(t, err)
+				buildingLogs = append(buildingLogs, logEntry)
+			}
 			return nil
 		},
-	)
+	).Times(3)
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: topickey.TopicKeyBuildSignal, Name: "buildsignal", Queue: mockQ}},
+		[]consumer.TopicConfig{
+			{Key: topickey.TopicKeyBuildSignal, Name: "buildsignal", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
+		},
 	)
 	require.NoError(t, err)
 
@@ -207,9 +219,13 @@ func TestController_Process_TriggersWithBaseAndHead(t *testing.T) {
 
 	require.NoError(t, controller.Process(context.Background(), delivery))
 
-	// Only the build ID is published to buildsignal.
-	assert.Equal(t, "buildsignal", publishedTopic)
 	assert.Equal(t, "build-xyz", published.ID)
+	require.Len(t, buildingLogs, 2)
+	assert.Equal(t, entity.RequestStatusBuilding, buildingLogs[0].Status)
+	assert.Equal(t, headBatch.Contains[0], buildingLogs[0].RequestID)
+	assert.Equal(t, "build-xyz", buildingLogs[0].Metadata["build_id"])
+	assert.Equal(t, entity.RequestStatusBuilding, buildingLogs[1].Status)
+	assert.Equal(t, headBatch.Contains[1], buildingLogs[1].RequestID)
 
 	// The full Build is persisted to storage (the source of truth the poll
 	// loop reloads), and its ID matches what was published.
@@ -252,7 +268,10 @@ func TestController_Process_BuildStoreAlreadyExistsIsSwallowed(t *testing.T) {
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: topickey.TopicKeyBuildSignal, Name: "buildsignal", Queue: mockQ}},
+		[]consumer.TopicConfig{
+			{Key: topickey.TopicKeyBuildSignal, Name: "buildsignal", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
+		},
 	)
 	require.NoError(t, err)
 	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, staticBuildRunnerFactory{r: br}, registry, topickey.TopicKeyBuild, "orchestrator-build")

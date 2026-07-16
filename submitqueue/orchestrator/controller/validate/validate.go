@@ -29,6 +29,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	coremetrics "github.com/uber/submitqueue/platform/metrics"
+	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -190,6 +191,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	if err := c.claimChanges(ctx, request, changeInfos); err != nil {
 		coremetrics.NamedCounter(c.metricsScope, "process", "change_store_errors", 1)
 		return fmt.Errorf("failed to claim change records for request %s: %w", request.ID, err)
+	}
+
+	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusValidating, request.Version, "", map[string]string{
+		"controller": "validate",
+	})
+	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID); err != nil {
+		coremetrics.NamedCounter(c.metricsScope, "process", "log_publish_errors", 1)
+		return fmt.Errorf("failed to publish validating request log for %s: %w", request.ID, err)
 	}
 
 	// Kick off the asynchronous merge-conflict check: hand the full check request

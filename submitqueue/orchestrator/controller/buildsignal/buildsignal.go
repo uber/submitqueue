@@ -30,6 +30,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
@@ -171,6 +172,17 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	if err := c.store.GetBuildStore().UpdateStatus(ctx, build.ID, status); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to update status for build %s: %w", build.ID, err)
+	}
+
+	if status == entity.BuildStatusSucceeded {
+		if err := corerequest.PublishBatchLogs(ctx, c.registry, batch.Contains, entity.RequestStatusBuilt, map[string]string{
+			"batch_id":   batch.ID,
+			"build_id":   build.ID,
+			"controller": "buildsignal",
+		}); err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "log_publish_errors", 1)
+			return fmt.Errorf("failed to publish built request logs for batch %s: %w", batch.ID, err)
+		}
 	}
 
 	// Re-evaluate the batch state machine with the latest build status.

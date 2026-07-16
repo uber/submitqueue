@@ -117,30 +117,45 @@ func TestProcess_PublishesFullPayloadToRunway(t *testing.T) {
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 
-	var gotTopic string
-	var gotPayload []byte
+	var landingLogs []entity.RequestLog
+	var mergePayload []byte
 	pub := queuemock.NewMockPublisher(ctrl)
 	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, topic string, msg entityqueue.Message) error {
-			gotTopic = topic
-			gotPayload = msg.Payload
+			switch topic {
+			case "log":
+				logEntry, err := entity.RequestLogFromBytes(msg.Payload)
+				require.NoError(t, err)
+				landingLogs = append(landingLogs, logEntry)
+			case "runway-merge":
+				mergePayload = msg.Payload
+			}
 			return nil
 		},
-	)
+	).Times(3)
 	q := queuemock.NewMockQueue(ctrl)
 	q.EXPECT().Publisher().Return(pub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "runway-merge", Queue: q}},
+		[]consumer.TopicConfig{
+			{Key: runwaymq.TopicKeyMerge, Name: "runway-merge", Queue: q},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: q},
+		},
 	)
 	require.NoError(t, err)
 
 	c := newController(t, store, registry)
 	require.NoError(t, c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue)))
 
+	require.Len(t, landingLogs, 2)
+	assert.Equal(t, entity.RequestStatusLanding, landingLogs[0].Status)
+	assert.Equal(t, req1.ID, landingLogs[0].RequestID)
+	assert.Equal(t, batch.ID, landingLogs[0].Metadata["batch_id"])
+	assert.Equal(t, entity.RequestStatusLanding, landingLogs[1].Status)
+	assert.Equal(t, req2.ID, landingLogs[1].RequestID)
+
 	// Full payload published to runway, keyed by the batch id (the correlation id).
-	assert.Equal(t, "runway-merge", gotTopic)
 	got := &runwaymq.MergeRequest{}
-	require.NoError(t, runwaymq.Unmarshal(gotPayload, got))
+	require.NoError(t, runwaymq.Unmarshal(mergePayload, got))
 	assert.Equal(t, batch.ID, got.Id)
 	assert.Equal(t, batch.Queue, got.QueueName)
 	require.Len(t, got.Steps, 2)
@@ -206,12 +221,20 @@ func TestProcess_PublishFailureReturnsError(t *testing.T) {
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 
-	pub := queuemock.NewMockPublisher(ctrl)
-	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("enqueue failed"))
-	q := queuemock.NewMockQueue(ctrl)
-	q.EXPECT().Publisher().Return(pub).AnyTimes()
+	logPub := queuemock.NewMockPublisher(ctrl)
+	logPub.EXPECT().Publish(gomock.Any(), "log", gomock.Any()).Return(nil)
+	logQ := queuemock.NewMockQueue(ctrl)
+	logQ.EXPECT().Publisher().Return(logPub).AnyTimes()
+
+	mergePub := queuemock.NewMockPublisher(ctrl)
+	mergePub.EXPECT().Publish(gomock.Any(), "runway-merge", gomock.Any()).Return(fmt.Errorf("enqueue failed"))
+	mergeQ := queuemock.NewMockQueue(ctrl)
+	mergeQ.EXPECT().Publisher().Return(mergePub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "runway-merge", Queue: q}},
+		[]consumer.TopicConfig{
+			{Key: runwaymq.TopicKeyMerge, Name: "runway-merge", Queue: mergeQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: logQ},
+		},
 	)
 	require.NoError(t, err)
 
