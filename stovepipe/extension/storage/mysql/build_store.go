@@ -40,7 +40,7 @@ func NewBuildStore(db *sql.DB, scope tally.Scope) storage.BuildStore {
 // Create persists a new build. Returns ErrAlreadyExists if the build ID already exists.
 func (b *buildStore) Create(ctx context.Context, build entity.Build) (retErr error) {
 	op := metrics.Begin(b.scope, "create")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	_, err := b.db.ExecContext(ctx,
 		`INSERT INTO build (id, request_id, status, version)
@@ -63,7 +63,7 @@ func (b *buildStore) Create(ctx context.Context, build entity.Build) (retErr err
 // Get retrieves a build by ID. Returns ErrNotFound if the build is not found.
 func (b *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retErr error) {
 	op := metrics.Begin(b.scope, "get")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	var build entity.Build
 	err := b.db.QueryRowContext(ctx,
@@ -93,7 +93,7 @@ func (b *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retE
 // caller owns version arithmetic.
 func (b *buildStore) Update(ctx context.Context, build entity.Build, oldVersion, newVersion int32) (retErr error) {
 	op := metrics.Begin(b.scope, "update")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	result, err := b.db.ExecContext(ctx,
 		`UPDATE build

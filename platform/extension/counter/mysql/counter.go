@@ -38,7 +38,7 @@ func NewCounter(db *sql.DB, scope tally.Scope) counter.Counter {
 // Uses MySQL's LAST_INSERT_ID() to set the value atomically and read the incremented value.
 func (c *mysqlCounter) Next(ctx context.Context, domain string) (ret int64, retErr error) {
 	op := metrics.Begin(c.scope, "next")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 	result, err := c.db.ExecContext(ctx,
 		"INSERT INTO counter (domain, value) VALUES (?, LAST_INSERT_ID(1)) ON DUPLICATE KEY UPDATE value = LAST_INSERT_ID(value + 1)",
 		domain,

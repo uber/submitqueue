@@ -96,7 +96,7 @@ func NewController(
 // ack (success) or an error to nack (retry) / reject (DLQ).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
 	op := metrics.Begin(c.metricsScope, _opName)
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.LongLatencyBuckets) }()
 
 	msg := delivery.Message()
 

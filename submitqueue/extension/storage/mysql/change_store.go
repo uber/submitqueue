@@ -42,7 +42,7 @@ func NewChangeStore(db *sql.DB, scope tally.Scope) storage.ChangeStore {
 // queue-redelivery of the same request is a no-op.
 func (s *changeStore) Create(ctx context.Context, record entity.ChangeRecord) (retErr error) {
 	op := metrics.Begin(s.scope, "create")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	detailsJSON, err := marshalDetails(record.Details)
 	if err != nil {
@@ -62,7 +62,7 @@ func (s *changeStore) Create(ctx context.Context, record entity.ChangeRecord) (r
 // clause to align with the (queue, uri, request_id) PK so this is a PK-prefix scan.
 func (s *changeStore) GetByURI(ctx context.Context, queue string, uri string) (ret []entity.ChangeRecord, retErr error) {
 	op := metrics.Begin(s.scope, "get_by_uri")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	const query = "SELECT uri, request_id, queue, details, created_at, updated_at, version FROM `change` WHERE queue = ? AND uri = ?"
 	rows, err := s.db.QueryContext(ctx, query, queue, uri)

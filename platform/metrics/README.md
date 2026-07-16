@@ -1,12 +1,12 @@
 # Metrics Utilities (`platform/metrics`)
 
-The `metrics` package provides reusable helpers for emitting counters, timers, histograms, and gauges on a `tally.Scope`. It standardizes metric names across controllers and integrates with `platform/errs` for automatic error classification tags.
+The `metrics` package provides reusable helpers for emitting counters, histograms, and gauges on a `tally.Scope`. It standardizes metric names across controllers and integrates with `platform/errs` for automatic error classification tags.
 
 ## Design
 
 **Free functions on `tally.Scope`** — no wrapper types. Existing constructors accept `tally.Scope` and don't need to change.
 
-**Operation lifecycle** — `Begin` and `Complete` tie the full metrics lifecycle together. `Begin` captures the start time and emits `{name}.called`; `Complete` emits succeeded/failed counters, a latency timer, and a latency histogram. This prevents mismatched or forgotten metrics calls.
+**Operation lifecycle** — `Begin` and `Complete` tie the full metrics lifecycle together. `Begin` captures the start time and emits `{name}.called`; `Complete` emits succeeded/failed counters and a latency histogram. This prevents mismatched or forgotten metrics calls.
 
 **Error-aware tagging** — `ErrorTags` integrates with `platform/errs` to produce `error_origin=user|infra`, `retryable=true|false`, and `dependency=true` tags automatically. `Complete` uses these to tag latency metrics on failure.
 
@@ -19,13 +19,15 @@ For any operation with a clear start/end, use `Begin`/`Complete`:
 | Function | Emits |
 |----------|-------|
 | `Begin(scope, name, ...tags)` | `{name}.called` counter +1, returns `Op` |
-| `op.Complete(err)` | `{name}.succeeded` or `{name}.failed` counter, `{name}.latency` timer, `{name}.latency_histogram` histogram — all tagged with `result=success\|error` and error classification tags on failure |
+| `op.Complete(err, buckets)` | `{name}.succeeded` or `{name}.failed` counter, `{name}.latency` histogram (recorded with the given `buckets`) — tagged with `result=success\|error` and error classification tags on failure |
+
+`buckets` is required — there is no default. Operations differ widely in expected latency, so the caller passes the bucket set (see [Latency Buckets](#latency-buckets)) that matches the operation.
 
 ```go
 // RPC controller
 func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (resp *pb.LandResponse, retErr error) {
     op := metrics.Begin(c.scope, "land")
-    defer func() { op.Complete(retErr) }()
+    defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
     // ... business logic ...
     return &pb.LandResponse{Sqid: request.ID}, nil
@@ -34,7 +36,7 @@ func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (resp *p
 // Queue controller
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
     op := metrics.Begin(c.scope, "process")
-    defer func() { op.Complete(retErr) }()
+    defer func() { op.Complete(retErr, metrics.LongLatencyBuckets) }()
 
     // ... business logic ...
     return nil
@@ -43,13 +45,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 On success, `Complete` emits:
 - `{name}.succeeded` counter +1
-- `{name}.latency` timer tagged `result=success`
-- `{name}.latency_histogram` histogram tagged `result=success`
+- `{name}.latency` histogram tagged `result=success`
 
 On failure, `Complete` emits:
 - `{name}.failed` counter +1
-- `{name}.latency` timer tagged `result=error`, `error_origin=user|infra`, `retryable=true|false`, and optionally `dependency=true`
-- `{name}.latency_histogram` histogram with the same tags
+- `{name}.latency` histogram tagged `result=error`, `error_origin=user|infra`, `retryable=true|false`, and optionally `dependency=true`
 
 ## Named Helpers
 
@@ -58,7 +58,6 @@ For ad-hoc metrics that don't fit the Begin/Complete lifecycle. All follow the `
 | Function | Emits | Example |
 |----------|-------|---------|
 | `NamedCounter(scope, name, counter, value, ...tags)` | `{name}.{counter}` counter | `publish.attempts` |
-| `NamedTimer(scope, name, timer, duration, ...tags)` | `{name}.{timer}` timer | `publish.queue_latency` |
 | `NamedHistogram(scope, name, histogram, buckets, ...tags)` | `{name}.{histogram}` histogram | `process.duration` |
 | `NamedGauge(scope, name, gauge, value, ...tags)` | `{name}.{gauge}` gauge | `consumer.pending_messages` |
 
@@ -66,16 +65,20 @@ For ad-hoc metrics that don't fit the Begin/Complete lifecycle. All follow the `
 // Count a specific sub-event
 metrics.NamedCounter(c.scope, "publish", "attempts", 1)
 
-// Record a specific sub-latency
-metrics.NamedTimer(c.scope, "publish", "queue_latency", elapsed)
+// Record a one-shot sub-latency as a histogram (pass the bucket set that fits)
+metrics.NamedHistogram(c.scope, "publish", "queue_latency", metrics.StorageLatencyBuckets).RecordDuration(elapsed)
 
 // Track current queue depth (goes up and down)
 metrics.NamedGauge(c.scope, "consumer", "pending_messages", float64(len(pending)))
 
-// Create a reusable histogram (store on struct, call RecordDuration per invocation)
-h := metrics.NamedHistogram(c.scope, "process", "duration", tally.DurationBuckets{...})
+// Reuse a histogram on a hot path (store on struct, call RecordDuration per invocation)
+h := metrics.NamedHistogram(c.scope, "process", "duration", metrics.FastLatencyBuckets)
 h.RecordDuration(elapsed)
 ```
+
+### Why histograms, not timers
+
+Durations are recorded as **histograms**, never timers. A timer ships raw durations and the monitoring backend derives percentiles (p50/p99/max) **per time series** — one series per unique combination of metric name and tag values, so each distinct tag value (region, zone, …) multiplies the series count. The moment a dashboard or alert spans more than one series — rolling up a tag you didn't pin to a single value — the backend has to combine already-aggregated per-series statistics, and timer percentiles don't combine: the p99 across N series is not the average, max, or any function of each series' p99. Only the (count-weighted) mean survives, so precision degrades as the number of aggregated series grows — and high-cardinality tags make it worse. The rollups you reach for during an incident ("p99 across the whole region") are exactly the imprecise ones. Bucketed histograms merge exactly: summing per-series bucket counts reconstructs the true combined distribution, so every percentile stays accurate at any aggregation level and over any time window.
 
 ## Error Tags
 
@@ -101,21 +104,25 @@ Use `NewTag` to pass additional dimensional tags to any helper:
 
 ```go
 op := metrics.Begin(c.scope, "process", metrics.NewTag("queue", req.Queue))
-defer func() { op.Complete(retErr) }()
+defer func() { op.Complete(retErr, metrics.LongLatencyBuckets) }()
 
 metrics.NamedCounter(c.scope, "publish", "attempts", 1, metrics.NewTag("topic", c.topic))
 ```
 
 ## Latency Buckets
 
-`Complete` uses default latency buckets (5ms to 4h) automatically, suitable for both fast RPCs and long-running operations like builds and merges:
+There is **no default** bucket set: operations range from sub-millisecond in-memory work to multi-hour builds, and one set can't serve all of them well. Both `Op.Complete` and `NamedHistogram` require the caller to pass buckets, so resolution concentrates where the operation's latency actually lands and buckets far outside that range don't waste series cardinality. The package exports three common sets:
 
-```
-5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s, 30s, 1m, 2m, 5m, 10m, 30m, 1h, 2h, 4h
-```
+| Set | Range | Use for |
+|-----|-------|---------|
+| `FastLatencyBuckets` | ~100µs – 5s | Fast in-process work: scoring, cache lookups, CPU-bound operations |
+| `StorageLatencyBuckets` | ~1ms – 1m | Storage and message-queue round-trips: DB reads/writes, publish/consume, RPC handlers |
+| `LongLatencyBuckets` | ~5ms – 4h | Long-running pipeline work and external calls: builds, merges, git pushes, provider calls |
 
-For custom histograms, pass your own buckets to `NamedHistogram`:
+Pass one of these, or your own `tally.DurationBuckets` when none fits:
 
 ```go
-h := metrics.NamedHistogram(c.scope, "build", "duration", tally.DurationBuckets{...})
+defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+
+h := metrics.NamedHistogram(c.scope, "build", "duration", tally.DurationBuckets{ /* custom */ })
 ```

@@ -46,7 +46,7 @@ func newSubscriberHeartbeatStore(db *sql.DB, logger *zap.SugaredLogger, scope ta
 // Heartbeat registers or renews a subscriber's heartbeat.
 func (s *sqlSubscriberHeartbeatStore) Heartbeat(ctx context.Context, topic string, subscriberName string, consumerGroup string) (retErr error) {
 	op := metrics.Begin(s.scope, "heartbeat")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	now := s.nowFunc().UnixMilli()
 
@@ -66,7 +66,7 @@ func (s *sqlSubscriberHeartbeatStore) Heartbeat(ctx context.Context, topic strin
 // ActiveSubscribers returns the names of subscribers with a heartbeat newer than the stale threshold.
 func (s *sqlSubscriberHeartbeatStore) ActiveSubscribers(ctx context.Context, topic string, consumerGroup string, staleDurationMs int64) (_ []string, retErr error) {
 	op := metrics.Begin(s.scope, "active_subscribers")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	staleThreshold := s.nowFunc().UnixMilli() - staleDurationMs
 
@@ -105,7 +105,7 @@ func (s *sqlSubscriberHeartbeatStore) ActiveSubscribers(ctx context.Context, top
 // Idempotent: no-op if already deregistered.
 func (s *sqlSubscriberHeartbeatStore) Deregister(ctx context.Context, topic string, subscriberName string, consumerGroup string) (retErr error) {
 	op := metrics.Begin(s.scope, "deregister")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	now := s.nowFunc().UnixMilli()
 

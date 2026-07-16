@@ -376,7 +376,7 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 		}
 	}
 
-	metrics.NamedTimer(controllerScope, opName, "controller_latency", elapsed, metrics.NewTag("success", successTag))
+	metrics.NamedHistogram(controllerScope, opName, "controller_latency", metrics.LongLatencyBuckets, metrics.NewTag("success", successTag)).RecordDuration(elapsed)
 
 	if err != nil {
 		// Single explicit classification pass through the configured
@@ -443,10 +443,10 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 			metrics.NamedCounter(controllerScope, opName, "nack_errors", 1)
 		} else {
 			metrics.NamedCounter(controllerScope, opName, "nack_count", 1)
-			metrics.NamedTimer(controllerScope, opName, "ack_nack_latency", time.Since(nackStart),
+			metrics.NamedHistogram(controllerScope, opName, "ack_nack_latency", metrics.StorageLatencyBuckets,
 				metrics.NewTag("operation", "nack"),
 				metrics.NewTag("success", "true"),
-			)
+			).RecordDuration(time.Since(nackStart))
 		}
 		return
 	}
@@ -461,19 +461,19 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 			"error", ackErr,
 		)
 		metrics.NamedCounter(controllerScope, opName, "ack_errors", 1)
-		metrics.NamedTimer(controllerScope, opName, "ack_nack_latency", time.Since(ackStart),
+		metrics.NamedHistogram(controllerScope, opName, "ack_nack_latency", metrics.StorageLatencyBuckets,
 			metrics.NewTag("operation", "ack"),
 			metrics.NewTag("success", "false"),
-		)
+		).RecordDuration(time.Since(ackStart))
 		return
 	}
 
 	metrics.NamedCounter(controllerScope, opName, "messages_processed", 1)
 	metrics.NamedCounter(controllerScope, opName, "ack_count", 1)
-	metrics.NamedTimer(controllerScope, opName, "ack_nack_latency", time.Since(ackStart),
+	metrics.NamedHistogram(controllerScope, opName, "ack_nack_latency", metrics.StorageLatencyBuckets,
 		metrics.NewTag("operation", "ack"),
 		metrics.NewTag("success", "true"),
-	)
+	).RecordDuration(time.Since(ackStart))
 
 	m.logger.Debugw("message processed successfully",
 		"controller", controller.Name(),

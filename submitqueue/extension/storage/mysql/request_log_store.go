@@ -44,7 +44,7 @@ func NewRequestLogStore(db *sql.DB, scope tally.Scope) storage.RequestLogStore {
 // without requiring the caller to manage deduplication.
 func (r *requestLogStore) Insert(ctx context.Context, log entity.RequestLog) (retErr error) {
 	op := metrics.Begin(r.scope, "insert")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	metadataJSON, err := json.Marshal(log.Metadata)
 	if err != nil {
@@ -72,7 +72,7 @@ func (r *requestLogStore) Insert(ctx context.Context, log entity.RequestLog) (re
 // timestamp, but it is not included in the SELECT columns and never returned to callers.
 func (r *requestLogStore) List(ctx context.Context, requestID string) (ret []entity.RequestLog, retErr error) {
 	op := metrics.Begin(r.scope, "list")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
 
 	rows, err := r.db.QueryContext(ctx,
 		"SELECT request_id, timestamp_ms, status, request_version, last_error, metadata FROM request_log WHERE request_id = ? ORDER BY timestamp_ms ASC, salt ASC",

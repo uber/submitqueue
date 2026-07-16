@@ -136,7 +136,7 @@ func NewPusher(params Params) pusher.Pusher {
 // Push fulfils the pusher.Pusher contract.
 func (p *gitPusher) Push(ctx context.Context, batches []entity.Batch) (ret entity.PushResult, retErr error) {
 	op := coremetrics.Begin(p.metricsScope, "push")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, coremetrics.LongLatencyBuckets) }()
 
 	// Resolve each batch's changes, keeping per-batch counts so the flat
 	// outcomes can be regrouped per batch on success.

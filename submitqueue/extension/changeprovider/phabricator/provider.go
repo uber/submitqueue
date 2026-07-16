@@ -49,7 +49,7 @@ func NewProvider(params Params) changeprovider.ChangeProvider {
 // Returns one ChangeInfo per URI.
 func (p *provider) Get(ctx context.Context, request entity.Request) (_ []entity.ChangeInfo, retErr error) {
 	op := coremetrics.Begin(p.metricsScope, "get")
-	defer func() { op.Complete(retErr) }()
+	defer func() { op.Complete(retErr, coremetrics.LongLatencyBuckets) }()
 
 	change := request.Change
 
