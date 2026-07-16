@@ -76,6 +76,9 @@ services:
       # Queue infrastructure connection (separate database)
       - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
       - HOSTNAME=orchestrator-dev
+      - SQSIM_SCENARIO_PATH=${SQSIM_SCENARIO_PATH:-}
+    volumes:
+      - ${SQSIM_PROFILE_DIR:-../../sqsim}:/sqsim:ro
     depends_on:
       mysql-app:
         condition: service_healthy
@@ -98,6 +101,9 @@ services:
       # Queue infrastructure connection (shared with the orchestrator)
       - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
       - HOSTNAME=runway-dev
+      - SQSIM_SCENARIO_PATH=${SQSIM_SCENARIO_PATH:-}
+    volumes:
+      - ${SQSIM_PROFILE_DIR:-../../sqsim}:/sqsim:ro
     depends_on:
       mysql-queue:
         condition: service_healthy

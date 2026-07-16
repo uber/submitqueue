@@ -41,6 +41,8 @@ import (
 	"github.com/uber/submitqueue/runway/controller/mergeconflictcheck"
 	"github.com/uber/submitqueue/runway/extension/merger"
 	"github.com/uber/submitqueue/runway/extension/merger/noop"
+	simmerger "github.com/uber/submitqueue/sqsim/adapter/merger"
+	"github.com/uber/submitqueue/sqsim/model"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -115,6 +117,11 @@ func run() error {
 		metricsWgDone.Wait()
 	}()
 
+	sqsimRuntime, err := loadSQSimRuntime(os.Getenv("SQSIM_SCENARIO_PATH"))
+	if err != nil {
+		return err
+	}
+
 	queueDSN := os.Getenv("QUEUE_MYSQL_DSN")
 	if queueDSN == "" {
 		return fmt.Errorf("QUEUE_MYSQL_DSN environment variable is required")
@@ -147,14 +154,18 @@ func run() error {
 		return fmt.Errorf("failed to create topic registry: %w", err)
 	}
 
+	classifiers := []errs.Classifier{
+		genericerrs.Classifier,
+		mysqlerrs.Classifier,
+	}
+	if sqsimRuntime != nil {
+		classifiers = append(classifiers, model.Classifier)
+	}
 	primaryConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
-		errs.NewClassifierProcessor(
-			genericerrs.Classifier,
-			mysqlerrs.Classifier,
-		),
+		errs.NewClassifierProcessor(classifiers...),
 	)
 
-	mergerFactory := newMergerFactory()
+	mergerFactory := newMergerFactory(sqsimRuntime)
 
 	mergeConflictCheckController := mergeconflictcheck.NewController(mergeconflictcheck.Params{
 		Logger:        logger.Sugar(),
@@ -245,14 +256,38 @@ func run() error {
 
 // newMergerFactory returns a merger.Factory for the example server. The noop
 // implementation always succeeds; a real deployment wires a VCS-backed factory.
-func newMergerFactory() merger.Factory {
-	return &noopMergerFactory{}
+func newMergerFactory(sqsimRuntime *model.Runtime) merger.Factory {
+	factory := &routingMergerFactory{}
+	if sqsimRuntime != nil {
+		factory.sqsim = simmerger.New(sqsimRuntime, "sqsim")
+	}
+	return factory
 }
 
-type noopMergerFactory struct{}
+type routingMergerFactory struct {
+	sqsim merger.Merger
+}
 
-func (f *noopMergerFactory) For(_ merger.Config) (merger.Merger, error) {
+func (f *routingMergerFactory) For(cfg merger.Config) (merger.Merger, error) {
+	if cfg.QueueName == "sqsim" && f.sqsim != nil {
+		return f.sqsim, nil
+	}
 	return noop.New(), nil
+}
+
+func loadSQSimRuntime(path string) (*model.Runtime, error) {
+	if path == "" {
+		return nil, nil
+	}
+	profile, err := model.Load(path)
+	if err != nil {
+		return nil, fmt.Errorf("load SQSim profile: %w", err)
+	}
+	runtime, err := model.NewRuntime(profile, model.RealClock{})
+	if err != nil {
+		return nil, fmt.Errorf("initialize SQSim runtime: %w", err)
+	}
+	return runtime, nil
 }
 
 // newTopicRegistry builds the TopicRegistry for Runway's merge queues. Inbound

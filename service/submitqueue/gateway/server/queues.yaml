@@ -4,6 +4,7 @@
 # VCS configuration lives in the extension factory implementations wired in the
 # server, not here.
 queues:
+  - name: sqsim
   - name: test-queue
   - name: e2e-test-queue
   - name: e2e-cancel-queue

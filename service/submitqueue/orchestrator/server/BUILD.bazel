@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_binary", "go_library")
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 exports_files(
     ["docker-compose.yml"],
@@ -6,7 +6,7 @@ exports_files(
 )
 
 go_library(
-    name = "orchestrator_lib",
+    name = "go_default_library",
     srcs = ["main.go"],
     importpath = "github.com/uber/submitqueue/service/submitqueue/orchestrator/server",
     visibility = ["//visibility:private"],
@@ -22,6 +22,8 @@ go_library(
         "//platform/extension/messagequeue:go_default_library",
         "//platform/extension/messagequeue/mysql:go_default_library",
         "//platform/http:go_default_library",
+        "//sqsim/adapter/buildrunner:go_default_library",
+        "//sqsim/model:go_default_library",
         "//submitqueue/core/changeset:go_default_library",
         "//submitqueue/core/topickey:go_default_library",
         "//submitqueue/entity:go_default_library",
@@ -73,6 +75,18 @@ go_library(
 
 go_binary(
     name = "orchestrator",
-    embed = [":orchestrator_lib"],
+    embed = [":go_default_library"],
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["main_test.go"],
+    embed = [":go_default_library"],
+    deps = [
+        "//sqsim/model:go_default_library",
+        "//sqsim/scenarios:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+    ],
 )
