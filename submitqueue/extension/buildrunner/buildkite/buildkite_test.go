@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/platform/base/change"
+	platformbuildkite "github.com/uber/submitqueue/platform/extension/buildrunner/buildkite"
 	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	changesetfake "github.com/uber/submitqueue/submitqueue/core/changeset/fake"
@@ -49,7 +50,7 @@ func newTestRunner(t *testing.T, handler http.Handler, resolver ...changeset.Res
 	}
 	return newRunner(
 		buildrunner.Config{QueueName: "my-queue"},
-		&client{httpClient: c},
+		platformbuildkite.NewClient(c),
 		r,
 		zap.NewNop().Sugar(),
 	)
@@ -62,7 +63,7 @@ func buildJSON(number int, state, webURL string) []byte {
 
 // buildJSONWithEnv encodes fields into a Buildkite build JSON response including env vars.
 func buildJSONWithEnv(number int, state, webURL string, env map[string]string) []byte {
-	b, _ := json.Marshal(buildResponse{Number: number, State: state, WebURL: webURL, Env: env})
+	b, _ := json.Marshal(platformbuildkite.BuildResponse{Number: number, State: state, WebURL: webURL, Env: env})
 	return b
 }
 
@@ -70,7 +71,7 @@ func buildJSONWithEnv(number int, state, webURL string, env map[string]string) [
 
 func TestNew_ImplementsInterface(t *testing.T) {
 	r, err := NewBuildRunner(Params{Logger: zap.NewNop().Sugar()})
-	require.Error(t, err, "http client is required")
+	require.Error(t, err, "buildkite client is required")
 	var _ buildrunner.BuildRunner = r
 }
 
@@ -93,11 +94,11 @@ func TestTrigger_SubmitsCorrectPayloadAndReturnsBuildkiteNumber(t *testing.T) {
 
 	id, err := r.Trigger(context.Background(), []entity.Batch{{ID: "base-batch"}}, entity.Batch{ID: "head-batch"}, nil)
 	require.NoError(t, err)
-	assert.Equal(t, encodeBuildNumber(42), id.ID)
+	assert.Equal(t, platformbuildkite.EncodeBuildNumber(42), id.ID)
 
 	assert.Equal(t, http.MethodPost, capturedMethod)
 
-	var req createBuildRequest
+	var req platformbuildkite.CreateBuildRequest
 	require.NoError(t, json.Unmarshal(capturedBody, &req))
 	assert.Equal(t, `["github://github.example.com/org/repo/pull/1/aaa111"]`, req.Env[EnvKeyBaseURIs])
 	assert.Equal(t, `["github://github.example.com/org/repo/pull/2/bbb222"]`, req.Env[EnvKeyHeadURIs])
@@ -116,7 +117,7 @@ func TestTrigger_EmptyBase_ProducesJSONArray(t *testing.T) {
 	_, err := r.Trigger(context.Background(), nil, entity.Batch{ID: "head-batch"}, nil)
 	require.NoError(t, err)
 
-	var req createBuildRequest
+	var req platformbuildkite.CreateBuildRequest
 	require.NoError(t, json.Unmarshal(capturedBody, &req))
 	// nil base must produce [] in JSON, not null.
 	assert.Equal(t, "[]", req.Env[EnvKeyBaseURIs])
@@ -137,7 +138,7 @@ func TestTrigger_MultipleChangesFlattened(t *testing.T) {
 	_, err := r.Trigger(context.Background(), nil, entity.Batch{ID: "head-batch"}, nil)
 	require.NoError(t, err)
 
-	var req createBuildRequest
+	var req platformbuildkite.CreateBuildRequest
 	require.NoError(t, json.Unmarshal(capturedBody, &req))
 	assert.Equal(t,
 		`["github://github.example.com/org/repo/pull/1/aaa","github://github.example.com/org/repo/pull/2/bbb","github://github.example.com/org/repo/pull/3/ccc"]`,
@@ -167,7 +168,7 @@ func TestTrigger_WithMetadata_SetsEnvVar(t *testing.T) {
 	_, err := r.Trigger(context.Background(), nil, entity.Batch{ID: "head-batch"}, metadata)
 	require.NoError(t, err)
 
-	var req createBuildRequest
+	var req platformbuildkite.CreateBuildRequest
 	require.NoError(t, json.Unmarshal(capturedBody, &req))
 	require.Contains(t, req.Env, EnvKeyMetadata)
 
@@ -188,7 +189,7 @@ func TestTrigger_NilMetadata_NoMetadataEnvVar(t *testing.T) {
 	_, err := r.Trigger(context.Background(), nil, entity.Batch{ID: "head-batch"}, nil)
 	require.NoError(t, err)
 
-	var req createBuildRequest
+	var req platformbuildkite.CreateBuildRequest
 	require.NoError(t, json.Unmarshal(capturedBody, &req))
 	assert.NotContains(t, req.Env, EnvKeyMetadata)
 }
@@ -228,7 +229,7 @@ func TestStatus_ReturnsLiveBuildkiteState(t *testing.T) {
 		_, _ = w.Write(buildJSON(7, "running", "https://buildkite.com/test-org/my-pipeline/builds/7"))
 	}))
 
-	status, meta, err := r.Status(context.Background(), entity.BuildID{ID: encodeBuildNumber(7)})
+	status, meta, err := r.Status(context.Background(), entity.BuildID{ID: platformbuildkite.EncodeBuildNumber(7)})
 	require.NoError(t, err)
 	assert.Equal(t, entity.BuildStatusRunning, status)
 	assert.Equal(t, "https://buildkite.com/test-org/my-pipeline/builds/7", meta["url"])
@@ -239,7 +240,7 @@ func TestStatus_BuildkiteNotFound(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 
-	_, _, err := r.Status(context.Background(), entity.BuildID{ID: encodeBuildNumber(99)})
+	_, _, err := r.Status(context.Background(), entity.BuildID{ID: platformbuildkite.EncodeBuildNumber(99)})
 	require.Error(t, err)
 }
 
@@ -254,7 +255,7 @@ func TestStatus_EchosCallerMetadata(t *testing.T) {
 		))
 	}))
 
-	_, meta, err := r.Status(context.Background(), entity.BuildID{ID: encodeBuildNumber(7)})
+	_, meta, err := r.Status(context.Background(), entity.BuildID{ID: platformbuildkite.EncodeBuildNumber(7)})
 	require.NoError(t, err)
 	assert.Equal(t, "alice", meta["requester"])
 	assert.Equal(t, "SQ-42", meta["ticket"])
@@ -267,7 +268,7 @@ func TestStatus_NoMetadata_ReturnsOnlyURL(t *testing.T) {
 		_, _ = w.Write(buildJSON(8, "running", "https://buildkite.com/test-org/my-pipeline/builds/8"))
 	}))
 
-	_, meta, err := r.Status(context.Background(), entity.BuildID{ID: encodeBuildNumber(8)})
+	_, meta, err := r.Status(context.Background(), entity.BuildID{ID: platformbuildkite.EncodeBuildNumber(8)})
 	require.NoError(t, err)
 	assert.Equal(t, entity.BuildMetadata{"url": "https://buildkite.com/test-org/my-pipeline/builds/8"}, meta)
 }
@@ -282,7 +283,7 @@ func TestCancel_CallsBuildkite(t *testing.T) {
 		_, _ = w.Write(buildJSON(5, "canceled", ""))
 	}))
 
-	require.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: encodeBuildNumber(5)}))
+	require.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: platformbuildkite.EncodeBuildNumber(5)}))
 	assert.True(t, cancelCalled)
 }
 
@@ -292,25 +293,5 @@ func TestCancel_AlreadyTerminal_Noop(t *testing.T) {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 	}))
 
-	require.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: encodeBuildNumber(5)}))
-}
-
-// --- Internal helpers ---
-
-func TestEncodeParseBuildNumber_RoundTrip(t *testing.T) {
-	for _, n := range []int{1, 9999, 0} {
-		id := encodeBuildNumber(n)
-		got, err := parseBuildNumber(id)
-		require.NoError(t, err)
-		assert.Equal(t, n, got)
-	}
-}
-
-func TestParseBuildNumber_Invalid(t *testing.T) {
-	for _, id := range []string{"", "notanumber", "org/pipeline/1"} {
-		t.Run(id, func(t *testing.T) {
-			_, err := parseBuildNumber(id)
-			require.Error(t, err)
-		})
-	}
+	require.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: platformbuildkite.EncodeBuildNumber(5)}))
 }
