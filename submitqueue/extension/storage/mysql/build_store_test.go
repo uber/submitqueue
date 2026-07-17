@@ -42,10 +42,9 @@ func setupBuildStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.BuildS
 
 func TestBuildStore_Get(t *testing.T) {
 	want := entity.Build{
-		ID:                "bk-1001",
-		BatchID:           "monorepo/batch/1",
-		Status:            entity.BuildStatusRunning,
-		SpeculationPathID: "path-1",
+		ID:      "bk-1001",
+		BatchID: "monorepo/batch/1",
+		Status:  entity.BuildStatusRunning,
 	}
 
 	tests := []struct {
@@ -60,9 +59,9 @@ func TestBuildStore_Get(t *testing.T) {
 			name: "found",
 			id:   want.ID,
 			setup: func(mock sqlmock.Sqlmock) {
-				rows := sqlmock.NewRows([]string{"id", "batch_id", "status", "speculation_path_id"}).
-					AddRow(want.ID, want.BatchID, string(want.Status), want.SpeculationPathID)
-				mock.ExpectQuery("SELECT id, batch_id, status, speculation_path_id").
+				rows := sqlmock.NewRows([]string{"id", "batch_id", "status"}).
+					AddRow(want.ID, want.BatchID, string(want.Status))
+				mock.ExpectQuery("SELECT id, batch_id, status").
 					WithArgs(want.ID).
 					WillReturnRows(rows)
 			},
@@ -72,7 +71,7 @@ func TestBuildStore_Get(t *testing.T) {
 			name: "not found",
 			id:   "missing",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery("SELECT id, batch_id, status, speculation_path_id").
+				mock.ExpectQuery("SELECT id, batch_id, status").
 					WithArgs("missing").
 					WillReturnError(sql.ErrNoRows)
 			},
@@ -83,7 +82,7 @@ func TestBuildStore_Get(t *testing.T) {
 			name: "query error",
 			id:   "bad",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery("SELECT id, batch_id, status, speculation_path_id").
+				mock.ExpectQuery("SELECT id, batch_id, status").
 					WithArgs("bad").
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
@@ -115,10 +114,9 @@ func TestBuildStore_Get(t *testing.T) {
 
 func TestBuildStore_Create(t *testing.T) {
 	build := entity.Build{
-		ID:                "bk-1001",
-		BatchID:           "monorepo/batch/1",
-		Status:            entity.BuildStatusAccepted,
-		SpeculationPathID: "path-1",
+		ID:      "bk-1001",
+		BatchID: "monorepo/batch/1",
+		Status:  entity.BuildStatusAccepted,
 	}
 
 	tests := []struct {
@@ -131,7 +129,7 @@ func TestBuildStore_Create(t *testing.T) {
 			name: "success",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO build").
-					WithArgs(build.ID, build.BatchID, build.Status, build.SpeculationPathID).
+					WithArgs(build.ID, build.BatchID, build.Status).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -139,7 +137,7 @@ func TestBuildStore_Create(t *testing.T) {
 			name: "duplicate id returns ErrAlreadyExists",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO build").
-					WithArgs(build.ID, build.BatchID, build.Status, build.SpeculationPathID).
+					WithArgs(build.ID, build.BatchID, build.Status).
 					WillReturnError(&mysql.MySQLError{Number: mysqlErrDuplicateEntry})
 			},
 			wantErr:   true,
@@ -149,7 +147,7 @@ func TestBuildStore_Create(t *testing.T) {
 			name: "other exec error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO build").
-					WithArgs(build.ID, build.BatchID, build.Status, build.SpeculationPathID).
+					WithArgs(build.ID, build.BatchID, build.Status).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,

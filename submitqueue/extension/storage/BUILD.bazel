@@ -12,8 +12,6 @@ go_library(
         "request_store.go",
         "request_summary_store.go",
         "request_uri_store.go",
-        "speculation_path_build_store.go",
-        "speculation_tree_store.go",
         "storage.go",
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/extension/storage",

@@ -28,35 +28,31 @@ import (
 const mysqlErrDuplicateEntry = 1062
 
 type mysqlStorage struct {
-	db                        *sql.DB
-	requestStore              storage.RequestStore
-	changeStore               storage.ChangeStore
-	batchStore                storage.BatchStore
-	batchDependentStore       storage.BatchDependentStore
-	buildStore                storage.BuildStore
-	speculationPathBuildStore storage.SpeculationPathBuildStore
-	speculationTreeStore      storage.SpeculationTreeStore
-	requestLogStore           storage.RequestLogStore
-	requestSummaryStore       storage.RequestSummaryStore
-	requestQueueStore         storage.RequestQueueSummaryStore
-	requestURIStore           storage.RequestURIStore
+	db                  *sql.DB
+	requestStore        storage.RequestStore
+	changeStore         storage.ChangeStore
+	batchStore          storage.BatchStore
+	batchDependentStore storage.BatchDependentStore
+	buildStore          storage.BuildStore
+	requestLogStore     storage.RequestLogStore
+	requestSummaryStore storage.RequestSummaryStore
+	requestQueueStore   storage.RequestQueueSummaryStore
+	requestURIStore     storage.RequestURIStore
 }
 
 // NewStorage creates a new MySQL storage.
 func NewStorage(db *sql.DB, scope tally.Scope) (storage.Storage, error) {
 	return &mysqlStorage{
-		db:                        db,
-		requestStore:              NewRequestStore(db, scope.SubScope("request_store")),
-		changeStore:               NewChangeStore(db, scope.SubScope("change_store")),
-		batchStore:                NewBatchStore(db, scope.SubScope("batch_store")),
-		batchDependentStore:       NewBatchDependentStore(db, scope.SubScope("batch_dependent_store")),
-		buildStore:                NewBuildStore(db, scope.SubScope("build_store")),
-		speculationPathBuildStore: NewSpeculationPathBuildStore(db, scope.SubScope("speculation_path_build_store")),
-		speculationTreeStore:      NewSpeculationTreeStore(db, scope.SubScope("speculation_tree_store")),
-		requestLogStore:           NewRequestLogStore(db, scope.SubScope("request_log_store")),
-		requestSummaryStore:       NewRequestSummaryStore(db, scope.SubScope("request_summary_store")),
-		requestQueueStore:         NewRequestQueueSummaryStore(db, scope.SubScope("request_queue_summary_store")),
-		requestURIStore:           NewRequestURIStore(db, scope.SubScope("request_uri_store")),
+		db:                  db,
+		requestStore:        NewRequestStore(db, scope.SubScope("request_store")),
+		changeStore:         NewChangeStore(db, scope.SubScope("change_store")),
+		batchStore:          NewBatchStore(db, scope.SubScope("batch_store")),
+		batchDependentStore: NewBatchDependentStore(db, scope.SubScope("batch_dependent_store")),
+		buildStore:          NewBuildStore(db, scope.SubScope("build_store")),
+		requestLogStore:     NewRequestLogStore(db, scope.SubScope("request_log_store")),
+		requestSummaryStore: NewRequestSummaryStore(db, scope.SubScope("request_summary_store")),
+		requestQueueStore:   NewRequestQueueSummaryStore(db, scope.SubScope("request_queue_summary_store")),
+		requestURIStore:     NewRequestURIStore(db, scope.SubScope("request_uri_store")),
 	}, nil
 }
 
@@ -83,16 +79,6 @@ func (f *mysqlStorage) GetBatchDependentStore() storage.BatchDependentStore {
 // GetBuildStore returns the MySQL-backed BuildStore.
 func (f *mysqlStorage) GetBuildStore() storage.BuildStore {
 	return f.buildStore
-}
-
-// GetSpeculationPathBuildStore returns the MySQL-backed SpeculationPathBuildStore.
-func (f *mysqlStorage) GetSpeculationPathBuildStore() storage.SpeculationPathBuildStore {
-	return f.speculationPathBuildStore
-}
-
-// GetSpeculationTreeStore returns the MySQL-backed SpeculationTreeStore.
-func (f *mysqlStorage) GetSpeculationTreeStore() storage.SpeculationTreeStore {
-	return f.speculationTreeStore
 }
 
 // GetRequestLogStore returns the MySQL-backed RequestLogStore.
