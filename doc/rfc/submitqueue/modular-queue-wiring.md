@@ -321,7 +321,7 @@ Two APIs serve different deployer needs. The core engine (`pipeline.Construct`) 
 | Single orchestrator, handful of queues | Fluent builder | Reads top-to-bottom; no boilerplate |
 | Multiple services in one process | Core engine | Compose multiple `lifecycle.Component`s into a `lifecycle.Group` |
 | fx / custom DI integration | Core engine | `Construct` returns a `lifecycle.Component` that slots into `fx.Hook` |
-| Custom `pipeline.Option`s (classifiers, extra components) | Either | Fluent builder exposes `WithOption()`; core engine takes variadic `Option`s directly |
+| Custom `pipeline.Option`s (classifiers, extra components) | Either | Fluent builder exposes `Option()`; core engine takes variadic `Option`s directly |
 | Integration / e2e tests | Either | Both produce a `lifecycle.Component` with `Start`/`Stop` |
 
 ### Core engine — complete example
@@ -450,26 +450,26 @@ func run(ctx context.Context) error {
     mq := mqmysql.New(cfg.QueueDB, logger, scope)
 
     app, err := submitqueue.New().
-        WithLogger(logger).
-        WithScope(scope).
-        WithStorage(store).
-        WithMessageQueue(mq).
-        WithQueue(
-            submitqueue.Queue("go-code").
-                WithChangeProvider(github.New(cfg.GitHub)).
-                WithBuildRunner(buildkite.New(cfg.CI)).
-                WithScorer(heuristic.New()).
-                WithConflictAnalyzer(tango.New(cfg.Tango)),
+        Logger(logger).
+        Scope(scope).
+        Storage(store).
+        MessageQueue(mq).
+        Queue(
+            submitqueue.NewQueue("go-code").
+                ChangeProvider(github.New(cfg.GitHub)).
+                BuildRunner(buildkite.New(cfg.CI)).
+                Scorer(heuristic.New()).
+                ConflictAnalyzer(tango.New(cfg.Tango)),
         ).
-        WithQueue(
-            submitqueue.Queue("monorepo/exp").
-                WithChangeProvider(github.New(cfg.GitHub)).
-                WithBuildRunner(local.New()).
-                WithScorer(heuristic.New()).
-                WithConflictAnalyzer(fileoverlap.New()),
+        Queue(
+            submitqueue.NewQueue("monorepo/exp").
+                ChangeProvider(github.New(cfg.GitHub)).
+                BuildRunner(local.New()).
+                Scorer(heuristic.New()).
+                ConflictAnalyzer(fileoverlap.New()),
         ).
-        WithOption(pipeline.TopicNames(cfg.TopicNames)).
-        WithOption(pipeline.Classifiers(backendClassifiers())).
+        Option(pipeline.TopicNames(cfg.TopicNames)).
+        Option(pipeline.Classifiers(backendClassifiers())).
         Create()
     if err != nil { return err }
 
@@ -483,25 +483,25 @@ func run(ctx context.Context) error {
 
 ```go
 // Common baseline: every queue uses GitHub and heuristic scoring.
-base := submitqueue.Queue("").
-    WithChangeProvider(github.New(cfg.GitHub)).
-    WithScorer(heuristic.New())
+base := submitqueue.NewQueue("").
+    ChangeProvider(github.New(cfg.GitHub)).
+    Scorer(heuristic.New())
 
 app, err := submitqueue.New().
-    WithStorage(store).
-    WithMessageQueue(mq).
+    Storage(store).
+    MessageQueue(mq).
     // Override only what differs per queue:
-    WithQueue(base.Named("go-code").
-        WithBuildRunner(buildkite.New(cfg.CI)).
-        WithConflictAnalyzer(tango.New(cfg.Tango)),
+    Queue(base.Named("go-code").
+        BuildRunner(buildkite.New(cfg.CI)).
+        ConflictAnalyzer(tango.New(cfg.Tango)),
     ).
-    WithQueue(base.Named("monorepo/exp").
-        WithBuildRunner(local.New()).
-        WithConflictAnalyzer(fileoverlap.New()),
+    Queue(base.Named("monorepo/exp").
+        BuildRunner(local.New()).
+        ConflictAnalyzer(fileoverlap.New()),
     ).
-    WithQueue(base.Named("monorepo/test").
-        WithBuildRunner(noop.New()).
-        WithConflictAnalyzer(noop.NewAnalyzer()),
+    Queue(base.Named("monorepo/test").
+        BuildRunner(noop.New()).
+        ConflictAnalyzer(noop.NewAnalyzer()),
     ).
     Create()
 ```
@@ -514,14 +514,14 @@ func TestOrchestrator(t *testing.T) {
     mq := inmemory.NewQueues()
 
     app, err := submitqueue.New().
-        WithStorage(store).
-        WithMessageQueue(mq).
-        WithQueue(
-            submitqueue.Queue("test-queue").
-                WithChangeProvider(fake.NewChangeProvider()).
-                WithBuildRunner(fake.NewBuildRunner()).
-                WithScorer(constant.New(1.0)).
-                WithConflictAnalyzer(noop.NewAnalyzer()),
+        Storage(store).
+        MessageQueue(mq).
+        Queue(
+            submitqueue.NewQueue("test-queue").
+                ChangeProvider(fake.NewChangeProvider()).
+                BuildRunner(fake.NewBuildRunner()).
+                Scorer(constant.New(1.0)).
+                ConflictAnalyzer(noop.NewAnalyzer()),
         ).
         Create()
     require.NoError(t, err)
@@ -562,22 +562,22 @@ type Builder struct {
 
 func New() *Builder { return &Builder{perQueue: map[string]Profile{}} }
 
-func (b *Builder) WithLogger(l *zap.SugaredLogger) *Builder { b.logger = l; return b }
-func (b *Builder) WithScope(s tally.Scope) *Builder         { b.scope = s; return b }
+func (b *Builder) Logger(l *zap.SugaredLogger) *Builder { b.logger = l; return b }
+func (b *Builder) Scope(s tally.Scope) *Builder         { b.scope = s; return b }
 
-func (b *Builder) WithStorage(s storage.Storage) *Builder {
+func (b *Builder) Storage(s storage.Storage) *Builder {
     b.storage = s; return b
 }
 
-func (b *Builder) WithMessageQueue(q messagequeue.Stores) *Builder {
+func (b *Builder) MessageQueue(q messagequeue.Stores) *Builder {
     b.queues = q; return b
 }
 
-func (b *Builder) WithQueue(qb QueueBuilder) *Builder {
+func (b *Builder) Queue(qb QueueBuilder) *Builder {
     b.perQueue[qb.name] = qb.profile; return b
 }
 
-func (b *Builder) WithOption(o pipeline.Option) *Builder {
+func (b *Builder) Option(o pipeline.Option) *Builder {
     b.opts = append(b.opts, o); return b
 }
 
@@ -601,27 +601,27 @@ type QueueBuilder struct {
     profile Profile
 }
 
-func Queue(name string) QueueBuilder { return QueueBuilder{name: name} }
+func NewQueue(name string) QueueBuilder { return QueueBuilder{name: name} }
 
 // Named returns a copy of this builder with a different queue name.
-// Use with template reuse: base := Queue("").WithScorer(...); base.Named("q1")
+// Use with template reuse: base := NewQueue("").Scorer(...); base.Named("q1")
 func (q QueueBuilder) Named(name string) QueueBuilder {
     q.name = name; return q
 }
 
-func (q QueueBuilder) WithChangeProvider(cp changeprovider.ChangeProvider) QueueBuilder {
+func (q QueueBuilder) ChangeProvider(cp changeprovider.ChangeProvider) QueueBuilder {
     q.profile.ChangeProvider = cp; return q
 }
 
-func (q QueueBuilder) WithBuildRunner(br buildrunner.BuildRunner) QueueBuilder {
+func (q QueueBuilder) BuildRunner(br buildrunner.BuildRunner) QueueBuilder {
     q.profile.BuildRunner = br; return q
 }
 
-func (q QueueBuilder) WithScorer(s scorer.Scorer) QueueBuilder {
+func (q QueueBuilder) Scorer(s scorer.Scorer) QueueBuilder {
     q.profile.Scorer = s; return q
 }
 
-func (q QueueBuilder) WithConflictAnalyzer(a conflict.Analyzer) QueueBuilder {
+func (q QueueBuilder) ConflictAnalyzer(a conflict.Analyzer) QueueBuilder {
     q.profile.Analyzer = a; return q
 }
 ```
@@ -629,7 +629,7 @@ func (q QueueBuilder) WithConflictAnalyzer(a conflict.Analyzer) QueueBuilder {
 ### Design constraints
 
 - **Convenience, not replacement.** The builder calls `pipeline.Construct` — it does not bypass or duplicate the engine. Deployers who need full control (custom `Option`s, multi-service composition, fx integration) use the engine directly.
-- **Compile-time type safety.** Each `With*` method takes the concrete extension interface, not a string hint. A missing or mistyped extension is a compile error.
+- **Compile-time type safety.** Each fluent method takes the concrete extension interface, not a string hint. A missing or mistyped extension is a compile error.
 - **`QueueBuilder` is a value type.** The fluent chain returns copies, not pointers, so partial builders are safe to reuse as templates (e.g. a `baseQueue` with defaults that each real queue overrides — see the template-reuse example above).
 - **`Create()` validates eagerly.** Missing required fields (no storage, no queues, zero queue profiles) produce a clear error at build time, not a nil-pointer panic at runtime.
 - **No global state.** `New()` returns an isolated builder. Multiple orchestrator apps can coexist in the same process (useful for integration tests).
