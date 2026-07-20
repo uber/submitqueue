@@ -106,7 +106,7 @@ func newRunner(cfg buildrunner.Config, c *platformbuildkite.Client, logger *zap.
 // Trigger calls the Buildkite API to create the build and returns the
 // Buildkite build number as the build ID. Errors are propagated to the
 // caller so the queue consumer can nack and retry.
-func (r *runner) Trigger(ctx context.Context, headURI, baseURI string, metadata entity.BuildMetadata) (entity.BuildID, error) {
+func (r *runner) Trigger(ctx context.Context, baseURI, headURI string, metadata entity.BuildMetadata) (entity.BuildID, error) {
 	env := map[string]string{
 		EnvKeyHeadURI: headURI,
 		EnvKeyBaseURI: baseURI,

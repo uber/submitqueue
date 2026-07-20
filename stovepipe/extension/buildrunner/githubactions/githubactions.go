@@ -126,7 +126,7 @@ func newRunner(cfg buildrunner.Config, ref string, extraInputs map[string]string
 // Trigger dispatches the configured GitHub Actions workflow and returns the
 // GitHub workflow run ID as the build ID. Errors are propagated to the caller
 // so the queue consumer can nack and retry.
-func (r *runner) Trigger(ctx context.Context, headURI, baseURI string, metadata entity.BuildMetadata) (entity.BuildID, error) {
+func (r *runner) Trigger(ctx context.Context, baseURI, headURI string, metadata entity.BuildMetadata) (entity.BuildID, error) {
 	inputs := make(map[string]string, len(r.extraInputs)+4)
 	for k, v := range r.extraInputs {
 		inputs[k] = v
