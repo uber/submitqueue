@@ -43,6 +43,7 @@ import (
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
+	submitqueueerrs "github.com/uber/submitqueue/submitqueue/core/errs"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
@@ -222,6 +223,7 @@ func run() error {
 	// subscriptions are final destinations (there is no further DLQ).
 	primaryConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
 		errs.NewClassifierProcessor(
+			submitqueueerrs.Classifier,
 			genericerrs.Classifier,
 			// Storage (submitqueue/extension/storage/mysql) and queue (platform/extension/messagequeue/mysql)
 			// both run on the same MySQL driver, so a single classifier covers

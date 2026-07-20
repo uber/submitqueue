@@ -16,6 +16,7 @@ package score
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/uber-go/tally"
@@ -104,10 +105,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"partition_key", msg.PartitionKey,
 	)
 
-	// Short-circuit when the batch is in BatchStateCancelling — the cancel
-	// controller has handed the batch off to speculate, which owns the terminal
-	// write to Cancelled and the downstream dependent / conclude publishes. We
-	// must not race it to conclude (conclude requires terminal). Silently ack.
+	var batchScore float64
+	// Short-circuit when the batch is in BatchStateCancelling. The cancel
+	// controller has handed the batch off to speculate, which owns the
+	// terminal write and downstream fanout.
 	if batch.State == entity.BatchStateCancelling {
 		c.metricsScope.Counter("skipped_cancelling").Inc(1)
 		c.logger.Infow("skipping score for cancelling batch",
@@ -116,12 +117,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return nil
 	}
 
-	// Short-circuit if the batch is already terminal. Score never writes a
-	// terminal state, so it owns no recovery here: whichever controller wrote
-	// the terminal state (speculate.cancelBatch / failOnDependency, or merge)
-	// already published to conclude, and speculate's terminal self-heal
-	// republishes conclude on every redelivery of a terminal batch. Silently
-	// ack — same pattern as build / buildsignal on halted.
+	// Score owns no terminal-state recovery. The controller that wrote the
+	// terminal state owns its remaining fanout.
 	if batch.State.IsTerminal() {
 		c.metricsScope.Counter("skipped_terminal").Inc(1)
 		c.logger.Infow("skipping score for terminal batch",
@@ -131,25 +128,56 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return nil
 	}
 
-	// Score the batch. The scorer resolves the batch's changes itself.
-	batchScore, err := c.scoreBatch(ctx, batch)
-	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "scorer_errors", 1)
-		return fmt.Errorf("failed to score batch %s: %w", batch.ID, err)
-	}
+	switch batch.State {
+	case entity.BatchStateCreated:
+		// Score the batch. The scorer resolves the batch's changes itself.
+		batchScore, err = c.scoreBatch(ctx, batch)
+		if err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "scorer_errors", 1)
+			return fmt.Errorf("failed to score batch %s: %w", batch.ID, err)
+		}
 
-	// Atomically update score and state to "scored" in the database
-	newVersion := batch.Version + 1
-	if err := c.store.GetBatchStore().UpdateScoreAndState(ctx, batch.ID, batch.Version, newVersion, batchScore, entity.BatchStateScored); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to update score for batch %s: %w", batch.ID, err)
-	}
-	batch.Version = newVersion
+		newVersion := batch.Version + 1
+		err = c.store.GetBatchStore().UpdateScoreAndState(
+			ctx,
+			batch.ID,
+			batch.Version,
+			newVersion,
+			batchScore,
+			entity.BatchStateScored,
+		)
+		if errors.Is(err, storage.ErrVersionMismatch) {
+			c.metricsScope.Counter("version_conflicts").Inc(1)
+		}
+		if err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return fmt.Errorf("failed to update score for batch %s: %w", batch.ID, err)
+		}
 
-	c.logger.Infow("scored batch",
-		"batch_id", batch.ID,
-		"score", batchScore,
-	)
+		batch.Version = newVersion
+		batch.Score = batchScore
+		batch.State = entity.BatchStateScored
+		c.logger.Infow("scored batch",
+			"batch_id", batch.ID,
+			"score", batchScore,
+		)
+
+	case entity.BatchStateScored:
+		// The durable transition already happened, but its fanout may be
+		// incomplete. Preserve the committed score and replay all outputs.
+		batchScore = batch.Score
+		c.metricsScope.Counter("replayed_scored").Inc(1)
+
+	case entity.BatchStateSpeculating, entity.BatchStateMerging:
+		// A downstream controller consumed the handoff, so this score
+		// delivery is stale and must not regress the batch to Scored.
+		c.metricsScope.Counter("skipped_downstream").Inc(1)
+		return nil
+
+	default:
+		c.metricsScope.Counter("unexpected_state").Inc(1)
+		return fmt.Errorf("unexpected batch state %q for batch %s", batch.State, batch.ID)
+	}
 
 	// Publish request log entries for all requests in the batch
 	if err := corerequest.PublishBatchLogs(ctx, c.registry, batch.Contains, entity.RequestStatusScored, map[string]string{

@@ -23,6 +23,7 @@ go_library(
         "//platform/extension/messagequeue/mysql:go_default_library",
         "//platform/http:go_default_library",
         "//submitqueue/core/changeset:go_default_library",
+        "//submitqueue/core/errs:go_default_library",
         "//submitqueue/core/topickey:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/buildrunner:go_default_library",
