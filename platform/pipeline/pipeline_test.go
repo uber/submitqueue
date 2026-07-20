@@ -62,8 +62,8 @@ func TestConstruct_SingleStage_NoDLQ(t *testing.T) {
 			Key:           "start",
 			Name:          "start",
 			ConsumerGroup: "orchestrator-start",
-			New: func(d testDeps) (consumer.Controller, error) {
-				return &fakeController{key: "start", group: "orchestrator-start"}, nil
+			New: func(d testDeps, sc StageContext) (consumer.Controller, error) {
+				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
 			},
 		},
 	}
@@ -85,11 +85,11 @@ func TestConstruct_WithDLQ(t *testing.T) {
 			Key:           "start",
 			Name:          "start",
 			ConsumerGroup: "orchestrator-start",
-			New: func(d testDeps) (consumer.Controller, error) {
-				return &fakeController{key: "start", group: "orchestrator-start"}, nil
+			New: func(d testDeps, sc StageContext) (consumer.Controller, error) {
+				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
 			},
-			DLQ: func(d testDeps) (consumer.Controller, error) {
-				return &fakeController{key: "start_dlq", group: "orchestrator-start-dlq"}, nil
+			DLQ: func(d testDeps, sc StageContext) (consumer.Controller, error) {
+				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
 			},
 		},
 	}
@@ -111,19 +111,19 @@ func TestConstruct_MultipleStages(t *testing.T) {
 			Key:           "start",
 			Name:          "start",
 			ConsumerGroup: "orchestrator-start",
-			New: func(d testDeps) (consumer.Controller, error) {
-				return &fakeController{key: "start", group: "orchestrator-start"}, nil
+			New: func(d testDeps, sc StageContext) (consumer.Controller, error) {
+				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
 			},
 		},
 		{
 			Key:           "validate",
 			Name:          "validate",
 			ConsumerGroup: "orchestrator-validate",
-			New: func(d testDeps) (consumer.Controller, error) {
-				return &fakeController{key: "validate", group: "orchestrator-validate"}, nil
+			New: func(d testDeps, sc StageContext) (consumer.Controller, error) {
+				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
 			},
-			DLQ: func(d testDeps) (consumer.Controller, error) {
-				return &fakeController{key: "validate_dlq", group: "orchestrator-validate-dlq"}, nil
+			DLQ: func(d testDeps, sc StageContext) (consumer.Controller, error) {
+				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
 			},
 		},
 	}
@@ -155,7 +155,7 @@ func TestConstruct_ControllerCreationFailure(t *testing.T) {
 			Key:           "start",
 			Name:          "start",
 			ConsumerGroup: "orchestrator-start",
-			New: func(d testDeps) (consumer.Controller, error) {
+			New: func(d testDeps, sc StageContext) (consumer.Controller, error) {
 				return nil, fmt.Errorf("missing dependency")
 			},
 		},
@@ -179,10 +179,10 @@ func TestConstruct_DLQControllerCreationFailure(t *testing.T) {
 			Key:           "start",
 			Name:          "start",
 			ConsumerGroup: "orchestrator-start",
-			New: func(d testDeps) (consumer.Controller, error) {
-				return &fakeController{key: "start", group: "orchestrator-start"}, nil
+			New: func(d testDeps, sc StageContext) (consumer.Controller, error) {
+				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
 			},
-			DLQ: func(d testDeps) (consumer.Controller, error) {
+			DLQ: func(d testDeps, sc StageContext) (consumer.Controller, error) {
 				return nil, fmt.Errorf("dlq dependency missing")
 			},
 		},
@@ -206,8 +206,8 @@ func TestConstruct_WithPublishOnly(t *testing.T) {
 			Key:           "start",
 			Name:          "start",
 			ConsumerGroup: "orchestrator-start",
-			New: func(d testDeps) (consumer.Controller, error) {
-				return &fakeController{key: "start", group: "orchestrator-start"}, nil
+			New: func(d testDeps, sc StageContext) (consumer.Controller, error) {
+				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
 			},
 		},
 	}
@@ -234,8 +234,8 @@ func TestConstruct_WithTopicNameOverrides(t *testing.T) {
 			Key:           "start",
 			Name:          "start",
 			ConsumerGroup: "orchestrator-start",
-			New: func(d testDeps) (consumer.Controller, error) {
-				return &fakeController{key: "start", group: "orchestrator-start"}, nil
+			New: func(d testDeps, sc StageContext) (consumer.Controller, error) {
+				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
 			},
 		},
 	}
@@ -247,6 +247,46 @@ func TestConstruct_WithTopicNameOverrides(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.NotNil(t, comp)
+}
+
+func TestConstruct_StageContext_Populated(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	q := mqmock.NewMockQueue(ctrl)
+	q.EXPECT().Subscriber().Return(mqmock.NewMockSubscriber(ctrl)).AnyTimes()
+	q.EXPECT().Publisher().Return(mqmock.NewMockPublisher(ctrl)).AnyTimes()
+
+	deps := testDeps{logger: newTestLogger()}
+
+	var primarySC, dlqSC StageContext
+	stages := []Stage[testDeps]{
+		{
+			Key:           "start",
+			Name:          "start",
+			ConsumerGroup: "orchestrator-start",
+			New: func(d testDeps, sc StageContext) (consumer.Controller, error) {
+				primarySC = sc
+				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
+			},
+			DLQ: func(d testDeps, sc StageContext) (consumer.Controller, error) {
+				dlqSC = sc
+				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
+			},
+		},
+	}
+
+	_, err := Construct(deps.logger, tally.NoopScope, q, "test-sub", deps, stages)
+	require.NoError(t, err)
+
+	// Primary StageContext should have the stage's own key and group.
+	assert.Equal(t, consumer.TopicKey("start"), primarySC.TopicKey)
+	assert.Equal(t, "orchestrator-start", primarySC.ConsumerGroup)
+
+	// DLQ StageContext should have the derived DLQ key and group.
+	assert.Equal(t, consumer.TopicKey("start_dlq"), dlqSC.TopicKey)
+	assert.Equal(t, "orchestrator-start-dlq", dlqSC.ConsumerGroup)
+
+	// Both should share the same registry.
+	assert.Equal(t, primarySC.Registry, dlqSC.Registry)
 }
 
 func TestResolveTopicName(t *testing.T) {
@@ -308,14 +348,14 @@ func TestBuildTopicConfigs(t *testing.T) {
 			Key:           "start",
 			Name:          "start",
 			ConsumerGroup: "orchestrator-start",
-			New:           func(d testDeps) (consumer.Controller, error) { return nil, nil },
-			DLQ:           func(d testDeps) (consumer.Controller, error) { return nil, nil },
+			New:           func(d testDeps, sc StageContext) (consumer.Controller, error) { return nil, nil },
+			DLQ:           func(d testDeps, sc StageContext) (consumer.Controller, error) { return nil, nil },
 		},
 		{
 			Key:           "validate",
 			Name:          "validate",
 			ConsumerGroup: "orchestrator-validate",
-			New:           func(d testDeps) (consumer.Controller, error) { return nil, nil },
+			New:           func(d testDeps, sc StageContext) (consumer.Controller, error) { return nil, nil },
 			// No DLQ for this stage.
 		},
 	}
