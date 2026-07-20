@@ -35,4 +35,22 @@ exports_files(
     visibility = ["//visibility:public"],
 )
 
+# Public proto API surface, vendored by Bazel consumers — go-code copies these
+# files via //idl/github.com/uber/submitqueue:update_proto_sources (its shepherd
+# refresh job fails when this list and its vendored manifest drift apart).
+# Contract per exported file:
+#   - path stays stable (moves/renames need a coordinated consumer change)
+#   - exactly one `option go_package = ...;` line (consumers rewrite its value)
+#   - the owning package exports_files() it with //:__pkg__ visibility
+filegroup(
+    name = "public_proto_sources",
+    srcs = [
+        "//api/base/change/proto:change.proto",
+        "//api/base/mergestrategy/proto:mergestrategy.proto",
+        "//api/stovepipe/proto:stovepipe.proto",
+        "//api/submitqueue/gateway/proto:gateway.proto",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 gazelle(name = "gazelle")
