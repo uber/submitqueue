@@ -119,7 +119,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		baseURI = request.BaseURI
 	}
 
-	buildID, err := buildRunner.Trigger(ctx, request.URI, baseURI, nil)
+	buildID, err := buildRunner.Trigger(ctx, baseURI, request.URI, nil)
 	if err != nil {
 		return fmt.Errorf("BuildController failed to trigger build for request %s: %w", request.ID, err)
 	}
