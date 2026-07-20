@@ -49,16 +49,33 @@ type Stage[D any] struct {
 	// (e.g. "orchestrator-start").
 	ConsumerGroup string
 
-	// New builds the stage's controller from the service's Deps. The engine
-	// calls it once, eagerly, inside Construct — so a nil/missing dependency
-	// fails at boot with the stage's name on it, never mid-delivery.
-	New func(D) (consumer.Controller, error)
+	// New builds the stage's controller from the service's Deps and engine-
+	// provided StageContext. The engine calls it once, eagerly, inside
+	// Construct — so a nil/missing dependency fails at boot with the stage's
+	// name on it, never mid-delivery.
+	New func(D, StageContext) (consumer.Controller, error)
 
 	// DLQ, when non-nil, declares "this stage dead-letters". The engine then
 	// derives the paired DLQ topic (<topic>_dlq, retry budget, DLQ-of-DLQ
 	// disabled) AND registers this reconciler on the DLQ consumer. Declaring
 	// one without getting the other is impossible — that's the invariant.
-	DLQ func(D) (consumer.Controller, error)
+	DLQ func(D, StageContext) (consumer.Controller, error)
+}
+
+// StageContext carries engine-produced values that controllers need at
+// construction time but the host does not own: the assembled topic
+// registry (for publishing to downstream stages), the stage's own topic
+// key, and its consumer group.
+type StageContext struct {
+	// Registry is the fully assembled TopicRegistry. Controllers use it to
+	// look up topic names and queue backends for publishing downstream.
+	Registry consumer.TopicRegistry
+
+	// TopicKey is this stage's logical topic key.
+	TopicKey consumer.TopicKey
+
+	// ConsumerGroup is this stage's consumer group name.
+	ConsumerGroup string
 }
 
 // PublishOnlyTopic declares a topic the service publishes to but does not
@@ -166,7 +183,13 @@ func Construct[D any](
 
 	// Eagerly construct and register all controllers.
 	for _, s := range stages {
-		ctl, err := s.New(deps)
+		sc := StageContext{
+			Registry:      registry,
+			TopicKey:      s.Key,
+			ConsumerGroup: s.ConsumerGroup,
+		}
+
+		ctl, err := s.New(deps, sc)
 		if err != nil {
 			return nil, fmt.Errorf("pipeline: stage %s: failed to create controller: %w", s.Key, err)
 		}
@@ -175,7 +198,12 @@ func Construct[D any](
 		}
 
 		if s.DLQ != nil {
-			rec, err := s.DLQ(deps)
+			dlqSC := StageContext{
+				Registry:      registry,
+				TopicKey:      dlqTopicKey(s.Key),
+				ConsumerGroup: s.ConsumerGroup + "-dlq",
+			}
+			rec, err := s.DLQ(deps, dlqSC)
 			if err != nil {
 				return nil, fmt.Errorf("pipeline: stage %s dlq: failed to create controller: %w", s.Key, err)
 			}
