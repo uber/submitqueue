@@ -71,7 +71,7 @@ func TestTrigger_DispatchesWorkflowAndReturnsRunID(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(platformgithubactions.DispatchWorkflowResponse{WorkflowRunID: 42})
 	}))
 
-	id, err := r.Trigger(context.Background(), "github://repo/head/aaa", "github://repo/base/bbb", nil)
+	id, err := r.Trigger(context.Background(), "github://repo/base/bbb", "github://repo/head/aaa", nil)
 	require.NoError(t, err)
 	assert.Equal(t, platformgithubactions.EncodeRunID(42), id.ID)
 
@@ -95,7 +95,7 @@ func TestTrigger_EmptyBaseURI_FullBuild(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(platformgithubactions.DispatchWorkflowResponse{WorkflowRunID: 1})
 	}))
 
-	_, err := r.Trigger(context.Background(), "github://repo/head/aaa", "", nil)
+	_, err := r.Trigger(context.Background(), "", "github://repo/head/aaa", nil)
 	require.NoError(t, err)
 
 	var req platformgithubactions.DispatchWorkflowRequest
@@ -108,7 +108,7 @@ func TestTrigger_DispatchError_ReturnsError(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 
-	_, err := r.Trigger(context.Background(), "github://repo/head/aaa", "", nil)
+	_, err := r.Trigger(context.Background(), "", "github://repo/head/aaa", nil)
 	require.Error(t, err)
 }
 
@@ -117,7 +117,7 @@ func TestTrigger_ErrorsWhenDispatchResponseHasNoRunID(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(platformgithubactions.DispatchWorkflowResponse{})
 	}))
 
-	_, err := r.Trigger(context.Background(), "github://repo/head/aaa", "", nil)
+	_, err := r.Trigger(context.Background(), "", "github://repo/head/aaa", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "response missing workflow_run_id")
 }
@@ -130,7 +130,7 @@ func TestTrigger_WithMetadata_SetsInput(t *testing.T) {
 	}))
 
 	metadata := entity.BuildMetadata{"requester": "alice", "ticket": "SQ-42"}
-	_, err := r.Trigger(context.Background(), "github://repo/head/aaa", "", metadata)
+	_, err := r.Trigger(context.Background(), "", "github://repo/head/aaa", metadata)
 	require.NoError(t, err)
 
 	var req platformgithubactions.DispatchWorkflowRequest
@@ -149,7 +149,7 @@ func TestTrigger_NilMetadata_NoMetadataInput(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(platformgithubactions.DispatchWorkflowResponse{WorkflowRunID: 11})
 	}))
 
-	_, err := r.Trigger(context.Background(), "github://repo/head/aaa", "", nil)
+	_, err := r.Trigger(context.Background(), "", "github://repo/head/aaa", nil)
 	require.NoError(t, err)
 
 	var req platformgithubactions.DispatchWorkflowRequest

@@ -79,7 +79,7 @@ func TestTrigger_SubmitsCorrectPayloadAndReturnsBuildkiteNumber(t *testing.T) {
 		_, _ = w.Write(buildJSON(42, "scheduled", "https://buildkite.com/test-org/my-pipeline/builds/42"))
 	}))
 
-	id, err := r.Trigger(context.Background(), "github://repo/head/aaa", "github://repo/base/bbb", nil)
+	id, err := r.Trigger(context.Background(), "github://repo/base/bbb", "github://repo/head/aaa", nil)
 	require.NoError(t, err)
 	assert.Equal(t, platformbuildkite.EncodeBuildNumber(42), id.ID)
 
@@ -100,7 +100,7 @@ func TestTrigger_EmptyBaseURI_FullBuild(t *testing.T) {
 		_, _ = w.Write(buildJSON(1, "scheduled", ""))
 	}))
 
-	_, err := r.Trigger(context.Background(), "github://repo/head/aaa", "", nil)
+	_, err := r.Trigger(context.Background(), "", "github://repo/head/aaa", nil)
 	require.NoError(t, err)
 
 	var req platformbuildkite.CreateBuildRequest
@@ -113,7 +113,7 @@ func TestTrigger_BuildkiteError_ReturnsError(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 
-	_, err := r.Trigger(context.Background(), "github://repo/head/aaa", "", nil)
+	_, err := r.Trigger(context.Background(), "", "github://repo/head/aaa", nil)
 	require.Error(t, err)
 }
 
@@ -126,7 +126,7 @@ func TestTrigger_WithMetadata_SetsEnvVar(t *testing.T) {
 	}))
 
 	metadata := entity.BuildMetadata{"requester": "alice", "ticket": "SQ-42"}
-	_, err := r.Trigger(context.Background(), "github://repo/head/aaa", "", metadata)
+	_, err := r.Trigger(context.Background(), "", "github://repo/head/aaa", metadata)
 	require.NoError(t, err)
 
 	var req platformbuildkite.CreateBuildRequest
@@ -146,7 +146,7 @@ func TestTrigger_NilMetadata_NoMetadataEnvVar(t *testing.T) {
 		_, _ = w.Write(buildJSON(11, "scheduled", ""))
 	}))
 
-	_, err := r.Trigger(context.Background(), "github://repo/head/aaa", "", nil)
+	_, err := r.Trigger(context.Background(), "", "github://repo/head/aaa", nil)
 	require.NoError(t, err)
 
 	var req platformbuildkite.CreateBuildRequest
