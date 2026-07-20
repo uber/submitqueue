@@ -123,7 +123,7 @@ func TestProcess(t *testing.T) {
 				req := processingRequest(entity.BuildStrategyIncrementalSinceGreen, testBaseURI)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(req, nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
-				m.runner.EXPECT().Trigger(gomock.Any(), testHeadURI, testBaseURI, entity.BuildMetadata(nil)).Return(entity.BuildID{ID: testBuildID}, nil)
+				m.runner.EXPECT().Trigger(gomock.Any(), testBaseURI, testHeadURI, entity.BuildMetadata(nil)).Return(entity.BuildID{ID: testBuildID}, nil)
 				build := entity.Build{
 					ID:        testBuildID,
 					RequestID: testID,
@@ -140,7 +140,7 @@ func TestProcess(t *testing.T) {
 				req := processingRequest(entity.BuildStrategyFull, testBaseURI)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(req, nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
-				m.runner.EXPECT().Trigger(gomock.Any(), testHeadURI, "", entity.BuildMetadata(nil)).Return(entity.BuildID{ID: testBuildID}, nil)
+				m.runner.EXPECT().Trigger(gomock.Any(), "", testHeadURI, entity.BuildMetadata(nil)).Return(entity.BuildID{ID: testBuildID}, nil)
 				build := entity.Build{
 					ID:        testBuildID,
 					RequestID: testID,
@@ -219,7 +219,7 @@ func TestProcess(t *testing.T) {
 				req := processingRequest(entity.BuildStrategyFull, "")
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(req, nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
-				m.runner.EXPECT().Trigger(gomock.Any(), testHeadURI, "", entity.BuildMetadata(nil)).Return(entity.BuildID{}, errors.New("runner down"))
+				m.runner.EXPECT().Trigger(gomock.Any(), "", testHeadURI, entity.BuildMetadata(nil)).Return(entity.BuildID{}, errors.New("runner down"))
 			},
 		},
 		{
@@ -228,7 +228,7 @@ func TestProcess(t *testing.T) {
 				req := processingRequest(entity.BuildStrategyFull, "")
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(req, nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
-				m.runner.EXPECT().Trigger(gomock.Any(), testHeadURI, "", entity.BuildMetadata(nil)).Return(entity.BuildID{ID: testBuildID}, nil)
+				m.runner.EXPECT().Trigger(gomock.Any(), "", testHeadURI, entity.BuildMetadata(nil)).Return(entity.BuildID{ID: testBuildID}, nil)
 				m.buildStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
 				m.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).Return(nil)
 			},
@@ -241,7 +241,7 @@ func TestProcess(t *testing.T) {
 				req := processingRequest(entity.BuildStrategyFull, "")
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(req, nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
-				m.runner.EXPECT().Trigger(gomock.Any(), testHeadURI, "", entity.BuildMetadata(nil)).Return(entity.BuildID{ID: testBuildID}, nil)
+				m.runner.EXPECT().Trigger(gomock.Any(), "", testHeadURI, entity.BuildMetadata(nil)).Return(entity.BuildID{ID: testBuildID}, nil)
 				m.buildStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(errors.New("db down"))
 			},
 		},
@@ -253,7 +253,7 @@ func TestProcess(t *testing.T) {
 				req := processingRequest(entity.BuildStrategyFull, "")
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(req, nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
-				m.runner.EXPECT().Trigger(gomock.Any(), testHeadURI, "", entity.BuildMetadata(nil)).Return(entity.BuildID{ID: testBuildID}, nil)
+				m.runner.EXPECT().Trigger(gomock.Any(), "", testHeadURI, entity.BuildMetadata(nil)).Return(entity.BuildID{ID: testBuildID}, nil)
 				m.buildStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 				m.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).Return(errors.New("queue down"))
 			},
