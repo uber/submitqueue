@@ -1,8 +1,0 @@
-load("@rules_go//go:def.bzl", "go_library")
-
-go_library(
-    name = "go_default_library",
-    srcs = ["dependencylimit.go"],
-    importpath = "github.com/uber/submitqueue/submitqueue/extension/speculation/dependencylimit",
-    visibility = ["//visibility:public"],
-)

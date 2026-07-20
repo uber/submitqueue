@@ -59,12 +59,6 @@ type Storage interface {
 	// GetBuildStore returns the BuildStore instance.
 	GetBuildStore() BuildStore
 
-	// GetSpeculationPathBuildStore returns the SpeculationPathBuildStore instance.
-	GetSpeculationPathBuildStore() SpeculationPathBuildStore
-
-	// GetSpeculationTreeStore returns the SpeculationTreeStore instance.
-	GetSpeculationTreeStore() SpeculationTreeStore
-
 	// GetRequestLogStore returns the RequestLogStore instance.
 	GetRequestLogStore() RequestLogStore
 
