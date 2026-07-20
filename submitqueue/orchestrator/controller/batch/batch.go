@@ -90,7 +90,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("failed to deserialize request ID: %w", err)
 	}
 
-	// Fetch request from storage
 	request, err := c.store.GetRequestStore().Get(ctx, rid.ID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
@@ -106,194 +105,65 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"partition_key", msg.PartitionKey,
 	)
 
-	// Short-circuit if the request has been halted — either it already reached a
-	// terminal state, or the cancel controller has recorded a cancellation intent
-	// (RequestStateCancelling). A halted request must never spawn a new batch.
-	if entity.IsRequestStateHalted(request.State) {
-		c.metricsScope.Counter("skipped_halted").Inc(1)
-		c.logger.Infow("skipping batch for halted request",
-			"request_id", request.ID,
-			"state", string(request.State),
-		)
+	progress, err := classifyRequest(request.State)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "unexpected_state_errors", 1)
+		return fmt.Errorf("cannot batch request %s: %w", request.ID, err)
+	}
+	switch progress {
+	case requestDownstreamProgressed:
+		metrics.NamedCounter(c.metricsScope, opName, "downstream_progressed", 1)
+		return nil
+	case requestSuperseded:
+		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1)
 		return nil
 	}
 
-	// TODO: if capacity is full, wait here for other requests to accumulate to batch them together, or include a request into an existing batch if it's not too late.
-
-	// Generate a globally unique batch ID.
-	seq, err := c.counter.Next(ctx, "batch/"+request.Queue)
+	requestBatch, assignmentExisted, err := c.resolveRequestBatch(ctx, request)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "counter_errors", 1)
-		return fmt.Errorf("failed to generate batch ID for queue=%s: %w", request.Queue, err)
+		metrics.NamedCounter(c.metricsScope, opName, "request_batch_store_errors", 1)
+		return err
 	}
 
-	batch := entity.Batch{
-		ID:       fmt.Sprintf("%s/batch/%d", request.Queue, seq),
-		Queue:    request.Queue,
-		Contains: []string{request.ID},
-		State:    entity.BatchStateCreated,
-		Version:  1,
-	}
-
-	// Get active batches for this queue and ask the conflict analyzer which
-	// of them the new batch must serialize behind. The dependency set drives
-	// the speculation graph downstream.
-	activeBatches, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, entity.DependencyBatchStates())
-	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
-		return fmt.Errorf("failed to get active batches for queue=%s: %w", request.Queue, err)
-	}
-
-	// Dedupe by batch ID since a single (analyzed, in-flight) pair may be
-	// reported with multiple Conflict entries when different conflict types
-	// apply; the dependency graph only tracks the relation.
-	analyzer, err := c.analyzers.For(conflict.Config{QueueName: batch.Queue})
-	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "conflict_analyzer_errors", 1)
-		return fmt.Errorf("failed to build conflict analyzer for queue=%s: %w", batch.Queue, err)
-	}
-	conflicts, err := analyzer.Analyze(ctx, batch, activeBatches)
-	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "conflict_analyzer_errors", 1)
-		return fmt.Errorf("failed to analyze conflicts for batchID=%s: %w", batch.ID, err)
-	}
-
-	seen := make(map[string]struct{}, len(conflicts))
-	conflictingIDs := make([]string, 0, len(conflicts))
-	for _, cf := range conflicts {
-		if _, ok := seen[cf.BatchID]; ok {
-			continue
+	if progress == requestNeedsTransition {
+		newVersion := request.Version + 1
+		if err := c.store.GetRequestStore().UpdateState(ctx, request.ID, request.Version, newVersion, entity.RequestStateBatched); err != nil {
+			if errors.Is(err, storage.ErrVersionMismatch) {
+				metrics.NamedCounter(c.metricsScope, opName, "request_claim_conflicts", 1)
+			}
+			metrics.NamedCounter(c.metricsScope, opName, "request_claim_errors", 1)
+			return fmt.Errorf("failed to claim request %s for batch %s: %w", request.ID, requestBatch.BatchID, err)
 		}
-		seen[cf.BatchID] = struct{}{}
-		conflictingIDs = append(conflictingIDs, cf.BatchID)
+		request.Version = newVersion
+		request.State = entity.RequestStateBatched
 	}
 
-	batch.Dependencies = conflictingIDs
-
-	// Update reverse index for each conflicting batch (BatchDependent =
-	// "batches that depend on me"). One UpdateDependents call per conflict.
-	for _, depID := range conflictingIDs {
-		existing, err := c.store.GetBatchDependentStore().Get(ctx, depID)
-		if err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1)
-			return fmt.Errorf("failed to get batch dependent for batchID=%s: %w", depID, err)
-		}
-
-		dependents := append(existing.Dependents, batch.ID)
-
-		newVersion := existing.Version + 1
-		if err := c.store.GetBatchDependentStore().UpdateDependents(ctx, depID, existing.Version, newVersion, dependents); err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1)
-			return fmt.Errorf("failed to update batch dependent index for existing batchID=%s and new batchID=%s: %w", depID, batch.ID, err)
-		}
+	batch, err := c.reconcileBatch(ctx, request, requestBatch, assignmentExisted)
+	if err != nil {
+		return err
 	}
 
-	// Create new reverse index entry for the new batch. It would be empty for now, but will be updated as new batches are created that conflict with this batch.
-	bd := entity.BatchDependent{
-		BatchID:    batch.ID,
-		Dependents: []string{},
-		Version:    1,
+	switch batch.State {
+	case entity.BatchStateCreated:
+		// This controller owns the Created batch fanout. Replay all of it
+		// because an earlier delivery may have stopped after any write or
+		// publish.
+	case entity.BatchStateScored, entity.BatchStateSpeculating, entity.BatchStateMerging:
+		metrics.NamedCounter(c.metricsScope, opName, "batch_downstream_progressed", 1)
+		return nil
+	case entity.BatchStateCancelling, entity.BatchStateSucceeded, entity.BatchStateFailed, entity.BatchStateCancelled:
+		metrics.NamedCounter(c.metricsScope, opName, "batch_superseded", 1)
+		return nil
+	default:
+		metrics.NamedCounter(c.metricsScope, opName, "unexpected_batch_state_errors", 1)
+		return fmt.Errorf("batch %s has invalid state %q for batch reconciliation", batch.ID, batch.State)
 	}
 
-	if err := c.store.GetBatchDependentStore().Create(ctx, bd); err != nil {
+	if err := c.reconcileBatchDependents(ctx, batch); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1)
-		return fmt.Errorf("failed to create batch dependent index for new batchID=%s: %w", batch.ID, err)
+		return err
 	}
 
-	// Claim the request for this batch with a CAS-write that transitions the
-	// request to RequestStateBatched. This CAS is the serialization point
-	// between the batch controller and the cancel controller — without it, the
-	// two would race over an empty interleaving and produce an orphan batch
-	// containing a cancelled request.
-	//
-	// Concrete race that this CAS closes (T1..T7 are wall-clock orderings of
-	// independent batch- and cancel-controller goroutines):
-	//
-	//   T1 batch.Get(R)                       → R{State: Validated, Version: 1}
-	//   T2 cancel.Get(R)                      → R{State: Validated, Version: 1}
-	//   T3 cancel.markCancelling CAS 1→2      → R{State: Cancelling, Version: 2}
-	//   T4 cancel.findActiveBatch(R)          → none (batch has not been Created yet)
-	//   T5 cancel.cancelRequest CAS 2→3       → R{State: Cancelled,  Version: 3}
-	//   T6 batch.IsRequestStateHalted(R)      → false (stale in-memory copy from T1)
-	//   T7 batch.BatchStore.Create(B{[R]})    → orphan batch containing a cancelled R
-	//
-	// After T7 the orphan batch flows through score → speculate → merge → conclude;
-	// conclude does NOT gate on the source request state when writing the terminal
-	// state, so it would CAS the request from Cancelled back to Landed, silently
-	// undoing the user's cancel.
-	//
-	// The CAS below collapses that window. Whichever of batch.UpdateState(...,
-	// RequestStateBatched) and cancel.markCancelling(... RequestStateCancelling)
-	// reaches storage first wins; the loser sees storage.ErrVersionMismatch:
-	//   - If cancel won: this CAS fails. We ack the message (cancel will drive R
-	//     to its terminal state on its own; no batch is needed). The reverse-index
-	//     entry above becomes a dangling BatchDependent — tolerated per the
-	//     "downstream should handle stale entries" contract on this store.
-	//   - If batch won: cancel.markCancelling will fail with ErrVersionMismatch
-	//     on its next attempt, re-fetch R, observe RequestStateBatched, and take
-	//     the batch-cancellation branch (which terminates the whole batch).
-	//
-	// Note on re-delivery: a retry of a batch message that already CAS'd R to
-	// Batched but failed before/after BatchStore.Create lands in this code with
-	// R already in RequestStateBatched. The top-level IsRequestStateHalted check
-	// does NOT include Batched (Batched is forward-progress, not halted), so we
-	// reach here and re-CAS Batched → Batched (a version-only bump). The bump
-	// keeps the same serialization invariant on every attempt — if cancel sneaks
-	// in between our Get and this CAS, our version is stale and we abandon, just
-	// like the first-delivery case. The cost is an extra batch (the previous
-	// attempt may have already created one) which is tolerated per the comment
-	// on BatchStore.Create below.
-	//
-	// Residual window: a thin race remains between this CAS and BatchStore.Create.
-	// During that window cancel.findActiveBatch can still observe R in Batched
-	// with no batch yet persisted, and take the request-only cancel path — which
-	// then leaves R in Cancelled and the batch we are about to create orphaned.
-	// Fully closing this requires cancel-side wait/retry when its pre-CAS
-	// observation was RequestStateBatched; deferred to a follow-up since the
-	// window is narrow (one storage round-trip) and the user-visible outcome
-	// (request cancelled) is still correct — the orphan batch just gets
-	// reconciled by conclude as if it had no requests to act on.
-	newRequestVersion := request.Version + 1
-	if err := c.store.GetRequestStore().UpdateState(ctx, request.ID, request.Version, newRequestVersion, entity.RequestStateBatched); err != nil {
-		// ErrVersionMismatch == cancel (or another writer) advanced R first. Ack
-		// the message: there is nothing for us to do, and retrying would not help
-		// since the new state of R is now visible to the cancel pipeline.
-		if errors.Is(err, storage.ErrVersionMismatch) {
-			c.metricsScope.Counter("request_claim_lost_race").Inc(1)
-			c.logger.Infow("abandoning batch creation; request advanced concurrently (likely cancel)",
-				"request_id", request.ID,
-				"request_version", request.Version,
-				"unused_batch_id", batch.ID,
-			)
-			return nil
-		}
-		c.metricsScope.Counter("request_claim_errors").Inc(1)
-		return fmt.Errorf("failed to claim request %s for batch %s: %w", request.ID, batch.ID, err)
-	}
-	request.Version = newRequestVersion
-	request.State = entity.RequestStateBatched
-
-	// Persist batch to storage.
-	// This is the final operation that concludes the batch creation process. If it fails, BatchDependents will be pointing to a batch id that does not exist.
-	// We do not reuse batch ids, a retry of this operation will create a new batch with a new ID. The downstream logic that operates on BatchDependent should be able to handle stale entries.
-	if err := c.store.GetBatchStore().Create(ctx, batch); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
-		return fmt.Errorf("failed to create batch in batch store: %w", err)
-	}
-
-	c.logger.Infow("batch created",
-		"batch_id", batch.ID,
-		"request_id", request.ID,
-		"queue", request.Queue,
-		"dependency_count", len(batch.Dependencies),
-	)
-
-	// Record the "batched" status in the request log. This status corresponds to
-	// the RequestStateBatched transition CAS'd above, so it carries the request
-	// version for reconciliation (unlike the batch-level "scored" status). The
-	// message ID is scoped to (requestID, status), so a redelivery that creates a
-	// fresh batch re-emits "batched" with a different batch_id but is deduped to
-	// the first entry — acceptable, the request is batched either way.
 	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusBatched, request.Version, "", map[string]string{
 		"batch_id": batch.ID,
 	})
@@ -302,9 +172,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("failed to publish request log for request %s: %w", request.ID, err)
 	}
 
-	// Publish to score topic for further processing.
-	// If it fails and the controller retries, a new batch will be created with the new batch ID but the same request ID.
-	// The downstream logic should be able to handle stale entries by looking at the state of the batch.
 	if err := c.publish(ctx, topickey.TopicKeyScore, batch.ID, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish batch ID to score topic: %w", err)
@@ -314,8 +181,256 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		"batch_id", batch.ID,
 		"topic_key", topickey.TopicKeyScore,
 	)
+	return nil
+}
 
-	return nil // Success - message will be acked
+type requestProgress int
+
+const (
+	requestNeedsTransition requestProgress = iota
+	requestTransitionApplied
+	requestDownstreamProgressed
+	requestSuperseded
+)
+
+func classifyRequest(state entity.RequestState) (requestProgress, error) {
+	switch state {
+	case entity.RequestStateStarted, entity.RequestStateValidated:
+		return requestNeedsTransition, nil
+	case entity.RequestStateBatched:
+		return requestTransitionApplied, nil
+	case entity.RequestStateProcessing:
+		return requestDownstreamProgressed, nil
+	case entity.RequestStateCancelling, entity.RequestStateLanded, entity.RequestStateError, entity.RequestStateCancelled:
+		return requestSuperseded, nil
+	default:
+		return requestNeedsTransition, fmt.Errorf("unexpected request state %q", state)
+	}
+}
+
+// resolveRequestBatch returns the durable assignment for this logical batch
+// operation. A new assignment is written before the request CAS so every retry
+// can reconstruct the same batch ID.
+func (c *Controller) resolveRequestBatch(ctx context.Context, request entity.Request) (entity.RequestBatch, bool, error) {
+	store := c.store.GetRequestBatchStore()
+	requestBatch, err := store.Get(ctx, request.ID)
+	if err == nil {
+		if err := validateRequestBatch(request, requestBatch); err != nil {
+			return entity.RequestBatch{}, false, err
+		}
+		return requestBatch, true, nil
+	}
+	if !errors.Is(err, storage.ErrNotFound) {
+		return entity.RequestBatch{}, false, fmt.Errorf("failed to get batch assignment for request %s: %w", request.ID, err)
+	}
+
+	// request_batch predates this controller contract. Recover an active legacy
+	// batch once rather than assigning a second batch to an already-batched
+	// request.
+	if request.State == entity.RequestStateBatched {
+		batch, found, err := c.findLegacyBatch(ctx, request)
+		if err != nil {
+			return entity.RequestBatch{}, false, err
+		}
+		if !found {
+			return entity.RequestBatch{}, false, fmt.Errorf("batched request %s has no durable batch assignment or active batch", request.ID)
+		}
+		requestBatch = entity.RequestBatch{RequestID: request.ID, BatchID: batch.ID, Version: 1}
+		if err := store.Create(ctx, requestBatch); err != nil {
+			if !errors.Is(err, storage.ErrAlreadyExists) {
+				return entity.RequestBatch{}, false, fmt.Errorf("failed to recover batch assignment for request %s: %w", request.ID, err)
+			}
+			requestBatch, err = store.Get(ctx, request.ID)
+			if err != nil {
+				return entity.RequestBatch{}, false, fmt.Errorf("failed to reload concurrent batch assignment for request %s: %w", request.ID, err)
+			}
+			if err := validateRequestBatch(request, requestBatch); err != nil {
+				return entity.RequestBatch{}, false, err
+			}
+		}
+		return requestBatch, true, nil
+	}
+
+	seq, err := c.counter.Next(ctx, "batch/"+request.Queue)
+	if err != nil {
+		return entity.RequestBatch{}, false, fmt.Errorf("failed to generate batch ID for queue=%s: %w", request.Queue, err)
+	}
+	requestBatch = entity.RequestBatch{
+		RequestID: request.ID,
+		BatchID:   fmt.Sprintf("%s/batch/%d", request.Queue, seq),
+		Version:   1,
+	}
+	if err := store.Create(ctx, requestBatch); err == nil {
+		return requestBatch, false, nil
+	} else if !errors.Is(err, storage.ErrAlreadyExists) {
+		return entity.RequestBatch{}, false, fmt.Errorf("failed to reserve batch assignment for request %s: %w", request.ID, err)
+	}
+
+	requestBatch, err = store.Get(ctx, request.ID)
+	if err != nil {
+		return entity.RequestBatch{}, false, fmt.Errorf("failed to reload concurrent batch assignment for request %s: %w", request.ID, err)
+	}
+	if err := validateRequestBatch(request, requestBatch); err != nil {
+		return entity.RequestBatch{}, false, err
+	}
+	return requestBatch, true, nil
+}
+
+func validateRequestBatch(request entity.Request, requestBatch entity.RequestBatch) error {
+	if requestBatch.RequestID != request.ID {
+		return fmt.Errorf("batch assignment key mismatch: requested %s, got %s", request.ID, requestBatch.RequestID)
+	}
+	if requestBatch.BatchID == "" {
+		return fmt.Errorf("batch assignment for request %s has an empty batch ID", request.ID)
+	}
+	return nil
+}
+
+func (c *Controller) findLegacyBatch(ctx context.Context, request entity.Request) (entity.Batch, bool, error) {
+	batches, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, entity.ActiveBatchStates())
+	if err != nil {
+		return entity.Batch{}, false, fmt.Errorf("failed to find legacy batch for request %s: %w", request.ID, err)
+	}
+
+	var found entity.Batch
+	for _, batch := range batches {
+		if !contains(batch.Contains, request.ID) {
+			continue
+		}
+		if found.ID != "" {
+			return entity.Batch{}, false, fmt.Errorf("request %s belongs to multiple active batches: %s and %s", request.ID, found.ID, batch.ID)
+		}
+		found = batch
+	}
+	return found, found.ID != "", nil
+}
+
+func (c *Controller) reconcileBatch(ctx context.Context, request entity.Request, requestBatch entity.RequestBatch, assignmentExisted bool) (entity.Batch, error) {
+	if assignmentExisted {
+		batch, err := c.store.GetBatchStore().Get(ctx, requestBatch.BatchID)
+		if err == nil {
+			if err := validateBatch(request, requestBatch, batch); err != nil {
+				return entity.Batch{}, err
+			}
+			return batch, nil
+		}
+		if !errors.Is(err, storage.ErrNotFound) {
+			return entity.Batch{}, fmt.Errorf("failed to get assigned batch %s: %w", requestBatch.BatchID, err)
+		}
+	}
+
+	batch := entity.Batch{
+		ID:       requestBatch.BatchID,
+		Queue:    request.Queue,
+		Contains: []string{request.ID},
+		State:    entity.BatchStateCreated,
+		Version:  1,
+	}
+
+	activeBatches, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, entity.DependencyBatchStates())
+	if err != nil {
+		return entity.Batch{}, fmt.Errorf("failed to get active batches for queue=%s: %w", request.Queue, err)
+	}
+	analyzer, err := c.analyzers.For(conflict.Config{QueueName: batch.Queue})
+	if err != nil {
+		return entity.Batch{}, fmt.Errorf("failed to build conflict analyzer for queue=%s: %w", batch.Queue, err)
+	}
+	conflicts, err := analyzer.Analyze(ctx, batch, activeBatches)
+	if err != nil {
+		return entity.Batch{}, fmt.Errorf("failed to analyze conflicts for batchID=%s: %w", batch.ID, err)
+	}
+
+	seen := make(map[string]struct{}, len(conflicts))
+	for _, conflict := range conflicts {
+		if _, ok := seen[conflict.BatchID]; ok {
+			continue
+		}
+		seen[conflict.BatchID] = struct{}{}
+		batch.Dependencies = append(batch.Dependencies, conflict.BatchID)
+	}
+
+	if err := c.store.GetBatchStore().Create(ctx, batch); err != nil {
+		if !errors.Is(err, storage.ErrAlreadyExists) {
+			return entity.Batch{}, fmt.Errorf("failed to create batch %s: %w", batch.ID, err)
+		}
+		batch, err = c.store.GetBatchStore().Get(ctx, batch.ID)
+		if err != nil {
+			return entity.Batch{}, fmt.Errorf("failed to reload concurrent batch %s: %w", requestBatch.BatchID, err)
+		}
+		if err := validateBatch(request, requestBatch, batch); err != nil {
+			return entity.Batch{}, err
+		}
+	}
+
+	c.logger.Infow("batch reconciled",
+		"batch_id", batch.ID,
+		"request_id", request.ID,
+		"queue", request.Queue,
+		"dependency_count", len(batch.Dependencies),
+	)
+	return batch, nil
+}
+
+func validateBatch(request entity.Request, requestBatch entity.RequestBatch, batch entity.Batch) error {
+	if batch.ID != requestBatch.BatchID {
+		return fmt.Errorf("assigned batch ID mismatch for request %s: expected %s, got %s", request.ID, requestBatch.BatchID, batch.ID)
+	}
+	if batch.Queue != request.Queue {
+		return fmt.Errorf("assigned batch %s has queue %s, expected %s", batch.ID, batch.Queue, request.Queue)
+	}
+	if !contains(batch.Contains, request.ID) {
+		return fmt.Errorf("assigned batch %s does not contain request %s", batch.ID, request.ID)
+	}
+	return nil
+}
+
+func (c *Controller) reconcileBatchDependents(ctx context.Context, batch entity.Batch) error {
+	store := c.store.GetBatchDependentStore()
+	own := entity.BatchDependent{
+		BatchID:    batch.ID,
+		Dependents: []string{},
+		Version:    1,
+	}
+	if err := store.Create(ctx, own); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+		return fmt.Errorf("failed to create dependent index for batch %s: %w", batch.ID, err)
+	}
+
+	for _, dependencyID := range batch.Dependencies {
+		if err := c.ensureDependent(ctx, dependencyID, batch.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Controller) ensureDependent(ctx context.Context, dependencyID, dependentID string) error {
+	store := c.store.GetBatchDependentStore()
+	existing, err := store.Get(ctx, dependencyID)
+	if err != nil {
+		return fmt.Errorf("failed to get dependent index for batch %s: %w", dependencyID, err)
+	}
+	if contains(existing.Dependents, dependentID) {
+		return nil
+	}
+
+	dependents := append(append([]string(nil), existing.Dependents...), dependentID)
+	newVersion := existing.Version + 1
+	if err := store.UpdateDependents(ctx, dependencyID, existing.Version, newVersion, dependents); err != nil {
+		if errors.Is(err, storage.ErrVersionMismatch) {
+			c.metricsScope.Counter("dependent_version_conflicts").Inc(1)
+		}
+		return fmt.Errorf("failed to add dependent %s to batch %s: %w", dependentID, dependencyID, err)
+	}
+	return nil
+}
+
+func contains(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
 }
 
 // publish publishes a batch ID to the specified topic key.

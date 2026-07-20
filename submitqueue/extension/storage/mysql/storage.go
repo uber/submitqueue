@@ -32,6 +32,7 @@ type mysqlStorage struct {
 	requestStore              storage.RequestStore
 	changeStore               storage.ChangeStore
 	batchStore                storage.BatchStore
+	requestBatchStore         storage.RequestBatchStore
 	batchDependentStore       storage.BatchDependentStore
 	buildStore                storage.BuildStore
 	speculationPathBuildStore storage.SpeculationPathBuildStore
@@ -49,6 +50,7 @@ func NewStorage(db *sql.DB, scope tally.Scope) (storage.Storage, error) {
 		requestStore:              NewRequestStore(db, scope.SubScope("request_store")),
 		changeStore:               NewChangeStore(db, scope.SubScope("change_store")),
 		batchStore:                NewBatchStore(db, scope.SubScope("batch_store")),
+		requestBatchStore:         NewRequestBatchStore(db, scope.SubScope("request_batch_store")),
 		batchDependentStore:       NewBatchDependentStore(db, scope.SubScope("batch_dependent_store")),
 		buildStore:                NewBuildStore(db, scope.SubScope("build_store")),
 		speculationPathBuildStore: NewSpeculationPathBuildStore(db, scope.SubScope("speculation_path_build_store")),
@@ -73,6 +75,11 @@ func (f *mysqlStorage) GetChangeStore() storage.ChangeStore {
 // GetBatchStore returns the MySQL-backed BatchStore.
 func (f *mysqlStorage) GetBatchStore() storage.BatchStore {
 	return f.batchStore
+}
+
+// GetRequestBatchStore returns the MySQL-backed RequestBatchStore.
+func (f *mysqlStorage) GetRequestBatchStore() storage.RequestBatchStore {
+	return f.requestBatchStore
 }
 
 // GetBatchDependentStore returns the MySQL-backed BatchDependentStore.

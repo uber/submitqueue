@@ -53,6 +53,9 @@ type Storage interface {
 	// GetBatchStore returns the BatchStore instance.
 	GetBatchStore() BatchStore
 
+	// GetRequestBatchStore returns the RequestBatchStore instance.
+	GetRequestBatchStore() RequestBatchStore
+
 	// GetBatchDependentStore returns the BatchDependentStore instance.
 	GetBatchDependentStore() BatchDependentStore
 
