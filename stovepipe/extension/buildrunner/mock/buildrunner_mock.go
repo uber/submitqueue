@@ -73,18 +73,18 @@ func (mr *MockBuildRunnerMockRecorder) Status(ctx, buildID any) *gomock.Call {
 }
 
 // Trigger mocks base method.
-func (m *MockBuildRunner) Trigger(ctx context.Context, headURI, baseURI string, metadata entity.BuildMetadata) (entity.BuildID, error) {
+func (m *MockBuildRunner) Trigger(ctx context.Context, baseURI, headURI string, metadata entity.BuildMetadata) (entity.BuildID, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Trigger", ctx, headURI, baseURI, metadata)
+	ret := m.ctrl.Call(m, "Trigger", ctx, baseURI, headURI, metadata)
 	ret0, _ := ret[0].(entity.BuildID)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Trigger indicates an expected call of Trigger.
-func (mr *MockBuildRunnerMockRecorder) Trigger(ctx, headURI, baseURI, metadata any) *gomock.Call {
+func (mr *MockBuildRunnerMockRecorder) Trigger(ctx, baseURI, headURI, metadata any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Trigger", reflect.TypeOf((*MockBuildRunner)(nil).Trigger), ctx, headURI, baseURI, metadata)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Trigger", reflect.TypeOf((*MockBuildRunner)(nil).Trigger), ctx, baseURI, headURI, metadata)
 }
 
 // MockFactory is a mock of Factory interface.

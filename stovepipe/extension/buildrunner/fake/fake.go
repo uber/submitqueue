@@ -71,7 +71,7 @@ func New() buildrunner.BuildRunner {
 // returns a unique BuildID that encodes the terminal outcome the build should
 // report at Status time (decided from the headURI marker). baseURI and metadata
 // are ignored.
-func (r runner) Trigger(_ context.Context, headURI, _ string, _ entity.BuildMetadata) (entity.BuildID, error) {
+func (r runner) Trigger(_ context.Context, _, headURI string, _ entity.BuildMetadata) (entity.BuildID, error) {
 	outcome := outcomeOK
 	switch marker(headURI) {
 	case tokenTriggerError:

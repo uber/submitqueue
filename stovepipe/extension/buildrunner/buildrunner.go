@@ -43,13 +43,13 @@ import (
 //     platform/errs.
 type BuildRunner interface {
 	// Trigger starts a new build every call and mints the build's identity —
-	// there is no caller-supplied dedup input. headURI is the commit under
-	// validation; baseURI is the incremental baseline, empty for a full
-	// build; both are opaque tokens owned by SourceControl. metadata is
+	// there is no caller-supplied dedup input. baseURI is the incremental
+	// baseline, empty for a full build; headURI is the commit under
+	// validation; both are opaque tokens owned by SourceControl. metadata is
 	// caller-supplied annotation the runner may echo back via Status but must
 	// not depend on. Trigger is async: it must return promptly with the
 	// runner-assigned id, not an outcome — callers learn progress via Status.
-	Trigger(ctx context.Context, headURI, baseURI string, metadata entity.BuildMetadata) (entity.BuildID, error)
+	Trigger(ctx context.Context, baseURI, headURI string, metadata entity.BuildMetadata) (entity.BuildID, error)
 
 	// Status returns the build's current status and any provider metadata for
 	// the id Trigger returned. Unlike Trigger, Status may round-trip to the

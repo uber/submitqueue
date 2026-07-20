@@ -42,7 +42,7 @@ func TestTrigger(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			id, err := New().Trigger(context.Background(), tt.headURI, "", nil)
+			id, err := New().Trigger(context.Background(), "", tt.headURI, nil)
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.Empty(t, id.ID)
@@ -55,9 +55,9 @@ func TestTrigger(t *testing.T) {
 }
 
 func TestTrigger_UniqueIDs(t *testing.T) {
-	a, err := New().Trigger(context.Background(), "git://repo/ref/deadbeef", "", nil)
+	a, err := New().Trigger(context.Background(), "", "git://repo/ref/deadbeef", nil)
 	require.NoError(t, err)
-	b, err := New().Trigger(context.Background(), "git://repo/ref/deadbeef", "", nil)
+	b, err := New().Trigger(context.Background(), "", "git://repo/ref/deadbeef", nil)
 	require.NoError(t, err)
 	assert.NotEqual(t, a.ID, b.ID)
 }
@@ -75,7 +75,7 @@ func TestStatus(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			id, err := New().Trigger(context.Background(), tt.headURI, "", nil)
+			id, err := New().Trigger(context.Background(), "", tt.headURI, nil)
 			require.NoError(t, err)
 
 			status, metadata, err := New().Status(context.Background(), id)
@@ -98,7 +98,7 @@ func TestStatus_UnrecognizedIDSucceeds(t *testing.T) {
 }
 
 func TestStatus_StatelessAcrossInstances(t *testing.T) {
-	id, err := New().Trigger(context.Background(), "git://repo/ref/deadbeef?buildrunner-fake=build-fail", "", nil)
+	id, err := New().Trigger(context.Background(), "", "git://repo/ref/deadbeef?buildrunner-fake=build-fail", nil)
 	require.NoError(t, err)
 
 	status, _, err := New().Status(context.Background(), id)
