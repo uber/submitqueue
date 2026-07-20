@@ -20,17 +20,18 @@ import "api/base/messagequeue/proto/messagequeue.proto";
 
 option go_package = "github.com/uber/submitqueue/stovepipe/core/messagequeue/protopb";
 option java_multiple_files = true;
-option java_outer_classname = "BuildProto";
+option java_outer_classname = "BuildSignalProto";
 option java_package = "com.uber.submitqueue.stovepipe.messagequeue";
 
-// BuildRequest is the payload process/analyze publishes to the build stage once
-// the request's build scope (BuildStrategy/BaseURI) has been decided: only the
-// request id travels on the queue. build reloads the full Request from storage
-// by this id (producer and consumer share the store, so the id is enough and
-// redelivery stays idempotent). See doc/rfc/stovepipe/steps/build.md.
-message BuildRequest {
-    option (uber.base.messagequeue.topic_keys) = "build";
+// BuildSignal is the payload build publishes to the buildsignal stage, and
+// buildsignal re-publishes to itself while polling: only the build id travels
+// on the queue. buildsignal reloads the full Build from storage by this id
+// (producer and consumer share the store, so the id is enough and redelivery
+// stays idempotent). See doc/rfc/stovepipe/steps/buildsignal.md.
+message BuildSignal {
+    option (uber.base.messagequeue.topic_keys) = "buildsignal";
 
-    // id is the request id to build. Format: "request/<queue>/<counter>".
+    // id is the build id to poll: the runner-assigned id minted by
+    // BuildRunner.Trigger (entity.Build.ID / entity.BuildID.ID).
     string id = 1;
 }
