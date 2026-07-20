@@ -28,8 +28,17 @@ const (
 	// controller consumes it, reloads the Request, and decides the build strategy.
 	TopicKeyProcess TopicKey = "process"
 
-	// TopicKeyBuild carries admitted requests from process to build. process
-	// publishes a BuildRequest (the request id) after it persists the strategy
-	// and baseline; build reloads the Request from storage.
+	// TopicKeyBuild carries requests whose build scope has been decided from
+	// process/analyze to the build stage. The producer publishes a BuildRequest
+	// (the request id) here; the build controller consumes it, reloads the
+	// Request, and triggers the build. Partitioned by request id.
 	TopicKeyBuild TopicKey = "build"
+
+	// TopicKeyBuildSignal carries builds to poll from build to the buildsignal
+	// stage, and from buildsignal back to itself between polls. Producers
+	// publish a BuildSignal (the build id) here; the buildsignal controller
+	// consumes it, polls the build runner, and records terminal status.
+	// Partitioned by build id, so each build's poll loop is an independent
+	// partition.
+	TopicKeyBuildSignal TopicKey = "buildsignal"
 )
