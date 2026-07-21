@@ -8,6 +8,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 - [Message Queue Contract](messagequeue-contract.md) - How queue payloads are defined (Protobuf, serialized as protobuf JSON), located by audience (external in `api/{domain}/messagequeue/`, internal in `{domain}/core/messagequeue/`), bound to topics (the `topics` proto option), and enforced by Bazel visibility
 - [Consumer Gate](consumer-gate.md) - Stopping and starting individual queue controllers at runtime via consumer middleware: parked deliveries held in-flight with visibility extension, gate state as a separate extension with a file-based first implementation shared by tests and operators
 - [Change URIs](change-uri.md) - Identity of a code change: `scheme://{host[:port]}/{path}` per provider (GitHub PR, Phabricator Diff, git ref/commit) and canonical-form rules
+- [Shared Platform Errors](shared-platform-errors.md) - Cross-domain error identities with common classification only where recovery behavior is universal
 
 ## SubmitQueue
 
