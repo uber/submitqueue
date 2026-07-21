@@ -68,23 +68,23 @@ func (c *ListController) List(ctx context.Context, req entity.ListRequest) (resu
 	defer func() { op.Complete(retErr) }()
 
 	if err := validateStoredIdentifier("queue", req.Queue); err != nil {
-		return entity.ListResult{}, fmt.Errorf("ListController invalid queue: %w", err)
+		return entity.ListResult{}, fmt.Errorf("invalid queue: %w", err)
 	}
 	if _, err := c.queueConfigs.Get(ctx, req.Queue); err != nil {
 		if errors.Is(err, queueconfig.ErrNotFound) {
 			return entity.ListResult{}, errs.NewUserError(&UnrecognizedQueueError{Queue: req.Queue})
 		}
-		return entity.ListResult{}, fmt.Errorf("ListController failed to look up queue %q: %w", req.Queue, err)
+		return entity.ListResult{}, fmt.Errorf("failed to look up queue %q: %w", req.Queue, err)
 	}
 	if req.ReceivedAtOrAfterMs >= req.ReceivedBeforeMs {
-		return entity.ListResult{}, fmt.Errorf("ListController requires received_at_or_after_ms < received_before_ms: %w", ErrInvalidRequest)
+		return entity.ListResult{}, fmt.Errorf("requires received_at_or_after_ms < received_before_ms: %w", ErrInvalidRequest)
 	}
 	pageSize := int(req.PageSize)
 	if pageSize == 0 {
 		pageSize = defaultListPageSize
 	}
 	if pageSize < 0 || pageSize > maxListPageSize {
-		return entity.ListResult{}, fmt.Errorf("ListController page_size must be between 0 and %d: %w", maxListPageSize, ErrInvalidRequest)
+		return entity.ListResult{}, fmt.Errorf("page_size must be between 0 and %d: %w", maxListPageSize, ErrInvalidRequest)
 	}
 
 	query := storage.RequestQueueSummaryQuery{
@@ -96,10 +96,10 @@ func (c *ListController) List(ctx context.Context, req entity.ListRequest) (resu
 	if req.PageToken != "" {
 		token, err := decodeListPageToken(req.PageToken)
 		if err != nil {
-			return entity.ListResult{}, fmt.Errorf("ListController invalid page token: %w", ErrInvalidRequest)
+			return entity.ListResult{}, fmt.Errorf("invalid page token: %w", ErrInvalidRequest)
 		}
 		if token.Queue != req.Queue || token.ReceivedAtOrAfterMs != req.ReceivedAtOrAfterMs || token.ReceivedBeforeMs != req.ReceivedBeforeMs {
-			return entity.ListResult{}, fmt.Errorf("ListController page token does not match query: %w", ErrInvalidRequest)
+			return entity.ListResult{}, fmt.Errorf("page token does not match query: %w", ErrInvalidRequest)
 		}
 		query.HasCursor = true
 		query.Cursor = storage.RequestQueueSummaryCursor{ReceivedAtMs: token.LastReceivedAtMs, RequestID: token.LastRequestID}
@@ -107,7 +107,7 @@ func (c *ListController) List(ctx context.Context, req entity.ListRequest) (resu
 
 	summaries, err := c.requestQueueSummaryStore.List(ctx, query)
 	if err != nil {
-		return entity.ListResult{}, fmt.Errorf("ListController failed to list queue=%s: %w", req.Queue, err)
+		return entity.ListResult{}, fmt.Errorf("failed to list queue=%s: %w", req.Queue, err)
 	}
 
 	visible := summaries

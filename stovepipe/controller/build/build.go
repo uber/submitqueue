@@ -107,7 +107,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	buildRunner, err := c.buildRunners.For(buildrunner.Config{QueueName: request.Queue})
 	if err != nil {
 		// A queue with no registered builder is a config error.
-		return fmt.Errorf("BuildController failed to resolve build runner for queue %s: %w", request.Queue, err)
+		return fmt.Errorf("failed to resolve build runner for queue %s: %w", request.Queue, err)
 	}
 
 	// process decided the scope; build never re-derives incremental-vs-full.
@@ -122,7 +122,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	buildID, err := buildRunner.Trigger(ctx, baseURI, request.URI, nil)
 	if err != nil {
-		return fmt.Errorf("BuildController failed to trigger build for request %s: %w", request.ID, err)
+		return fmt.Errorf("failed to trigger build for request %s: %w", request.ID, err)
 	}
 
 	build := entity.Build{
@@ -132,11 +132,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		Version:   1,
 	}
 	if err := c.store.GetBuildStore().Create(ctx, build); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
-		return fmt.Errorf("BuildController failed to persist build %s: %w", build.ID, err)
+		return fmt.Errorf("failed to persist build %s: %w", build.ID, err)
 	}
 
 	if err := c.publishBuildSignal(ctx, build.ID); err != nil {
-		return fmt.Errorf("BuildController failed to publish build signal for %s: %w", build.ID, err)
+		return fmt.Errorf("failed to publish build signal for %s: %w", build.ID, err)
 	}
 
 	c.logger.Debugw("triggered build",
@@ -150,7 +150,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 // loadRequest returns the request for id.
 func (c *Controller) loadRequest(ctx context.Context, id string) (entity.Request, error) {
-	return loader.ByID(ctx, id, c.store.GetRequestStore().Get, "BuildController", "request")
+	return loader.ByID(ctx, id, c.store.GetRequestStore().Get, "request")
 }
 
 // publishBuildSignal publishes buildID to the buildsignal stage, partitioned by
