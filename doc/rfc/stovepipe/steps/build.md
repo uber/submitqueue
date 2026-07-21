@@ -22,7 +22,7 @@ For a delivery carrying request id `R`:
 
 ```
 1. Load Request R from the request store.
-   - ErrNotFound       -> retryable (process/analyze write not visible yet; redelivery converges).
+   - ErrNotFound       -> return raw; non-retryable (storage is read-after-write consistent; see [storage README](stovepipe/extension/storage/README.md)).
    - other store error -> return raw; classifier decides.
 
 2. If R.State is terminal (superseded / recorded-green / recorded-not-green): ack and return.
@@ -75,7 +75,8 @@ For a delivery carrying request id `R`:
 
 Every branch is safe under at-least-once redelivery — with SubmitQueue's posture on duplicates adopted wholesale: `build` has no pre-trigger dedup check (there is no caller-derivable key to check by; see [Alternatives considered](#alternatives-considered-for-the-build-identity)), so a redelivery that reaches step 5 starts a second, independent build, and safety comes from downstream idempotency rather than from preventing the duplicate:
 
-- **Request not found / strategy not yet visible** — retryable; the producing stage's write is not visible on this reader yet.
+- **Request not found** — non-retryable; storage's read-after-write guarantee means a miss here is a storage defect, not a lag condition to retry through.
+- **Strategy not yet visible** — retryable; the producing stage's write is not visible on this reader yet.
 - **Request already terminal** (step 2) — ack, no build. A redelivery after `record` finished, or after `process` superseded the head, never starts a stale build.
 - **Redelivery while the Request is still in flight** (crash or failure anywhere in steps 5–8) — the redelivery re-runs from step 1, `Trigger` mints a fresh id, `Create` persists a second `Build` row, and a second poll loop starts. Harmless, in three layers: both builds target the identical `(headURI, baseURI)` scope; each `Build` polls in its own partition and `buildsignal` short-circuits the moment the Request goes terminal (its step 3); and `record`'s terminal transition is CAS-guarded, so the second verdict is a no-op. A build triggered but never persisted (crash between steps 5 and 6) is the same story minus the row: an orphan the runner finishes and nobody ever reads. Wasted CI compute, not a correctness risk — the same accepted trade as SubmitQueue.
 - **Trigger / publish / other store failure** — nothing durable is left half-written that a redelivery can't reconcile; the error rejects to DLQ, and the fail-closed reconciler drives the Request terminal (see [workflow.md](doc/rfc/stovepipe/workflow.md#fail-closed-on-unprocessable-work)).
@@ -101,8 +102,10 @@ Per `platform/errs`'s non-retryable-by-default rule (see [platform/errs/README.m
 
 | Failure | Disposition | Why |
 |---|---|---|
-| `Request` not found (`storage.ErrNotFound`) | retryable (`errs.NewRetryableError`) | On a primary-only read this shouldn't happen in practice — `process` commits before it publishes — but the check costs nothing when the row is already visible and gives free convergence on the rare chance it isn't, same posture as `process.go`. |
+| `BuildStrategy` not yet visible (step 4) | retryable (`errs.NewRetryableError`) | The producing stage's write (`process`'s CAS) may not be visible on this reader yet; redelivery converges. |
 | `Trigger` | raw error; classifier decides | Deliberately left open rather than fixed either way — a runner timeout/connection is transient, a bad URI is permanent, and only a backend classifier can tell them apart. |
+
+`Request` not found (`storage.ErrNotFound`) is **not** in this table: storage is required to be read-after-write consistent (see [storage README](stovepipe/extension/storage/README.md)), so a miss here is already the correct default (non-retryable, straight to DLQ) rather than a departure worth overriding.
 
 Everything else — factory lookup, a malformed message, a build-store error other than `ErrAlreadyExists`, and the publish to `buildsignal` — is returned raw with no override, because the default is already correct: none of them are worth automatically replaying (a queue with no registered builder is a config error, a broken payload will never parse, and storage/queue and publish failures dead-letter and let DLQ reconciliation recover).
 
