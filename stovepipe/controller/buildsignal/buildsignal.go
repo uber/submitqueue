@@ -192,30 +192,22 @@ func (c *Controller) reconcile(ctx context.Context, build entity.Build, status e
 	return status, nil
 }
 
-// loadBuild returns the build for id. A not-yet-visible row is retryable.
+// loadBuild returns the build for id.
 func (c *Controller) loadBuild(ctx context.Context, id string) (entity.Build, error) {
 	got, err := c.store.GetBuildStore().Get(ctx, id)
-	if err == nil {
-		return got, nil
+	if err != nil {
+		return entity.Build{}, fmt.Errorf("BuildSignalController failed to load build %s: %w", id, err)
 	}
-	if errors.Is(err, storage.ErrNotFound) {
-		return entity.Build{}, errs.NewRetryableError(fmt.Errorf("build %s not found yet: %w", id, err))
-	}
-	return entity.Build{}, fmt.Errorf("BuildSignalController failed to load build %s: %w", id, err)
+	return got, nil
 }
 
-// loadRequest returns the request for id. A miss here is almost certainly a
-// lagging read behind the Build that referenced it, so it is retryable; a
-// genuinely orphaned Build still dead-letters at MaxAttempts.
+// loadRequest returns the request for id.
 func (c *Controller) loadRequest(ctx context.Context, id string) (entity.Request, error) {
 	got, err := c.store.GetRequestStore().Get(ctx, id)
-	if err == nil {
-		return got, nil
+	if err != nil {
+		return entity.Request{}, fmt.Errorf("BuildSignalController failed to load request %s: %w", id, err)
 	}
-	if errors.Is(err, storage.ErrNotFound) {
-		return entity.Request{}, errs.NewRetryableError(fmt.Errorf("request %s not found yet: %w", id, err))
-	}
-	return entity.Request{}, fmt.Errorf("BuildSignalController failed to load request %s: %w", id, err)
+	return got, nil
 }
 
 // pollDelay returns the delay before the next Status call for a non-terminal status.

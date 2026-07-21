@@ -124,9 +124,9 @@ func TestProcess(t *testing.T) {
 		wantRetry bool
 	}{
 		{
-			name:      "build not found is retryable",
+			name:      "build not found is not retryable",
 			wantErr:   true,
-			wantRetry: true,
+			wantRetry: false,
 			setup: func(m buildsignalMocks) {
 				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(entity.Build{}, storage.ErrNotFound)
 			},
@@ -140,9 +140,9 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name:      "request not found is retryable",
+			name:      "request not found is not retryable",
 			wantErr:   true,
-			wantRetry: true,
+			wantRetry: false,
 			setup: func(m buildsignalMocks) {
 				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusAccepted, 1), nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{}, storage.ErrNotFound)
