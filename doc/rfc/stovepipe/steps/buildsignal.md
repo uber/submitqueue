@@ -20,14 +20,12 @@ For a delivery carrying build id `B`:
 
 ```
 1. Load Build B from the build store.
-   - ErrNotFound       -> retryable (build's Create not visible yet; redelivery converges).
+   - ErrNotFound       -> return raw; non-retryable (storage is read-after-write consistent; see [storage README](stovepipe/extension/storage/README.md)).
    - other store error -> return raw; classifier decides.
 
 2. Load Request R = store.Get(Build.RequestID) — needed for R.Queue to resolve the build-runner.
-   - ErrNotFound -> retryable, like step 1: the Build's existence proves the Request write is older,
-     so a miss here is almost certainly a lagging read; redelivery converges. A genuinely orphaned
-     Build (integrity fault) still dead-letters at MaxAttempts — the same terminal outcome, without
-     rejecting straight to DLQ on a stale read.
+   - ErrNotFound -> return raw; non-retryable, same as step 1 — the Build's existence proves the
+     Request write is already committed, so a miss here is a storage defect, not a lagging read.
 
 3. If R.State is terminal (superseded / recorded-green / recorded-not-green): ack and return.
    - the Request is done (record already ran, or the head was superseded); stop polling.
@@ -102,11 +100,11 @@ Per `platform/errs`'s non-retryable-by-default rule (see [platform/errs/README.m
 
 | Failure | Disposition | Why |
 |---|---|---|
-| `Build` not found | retryable (`errs.NewRetryableError`) | `build`'s `Create` not visible yet; redelivery converges. |
-| `Request` not found | retryable (`errs.NewRetryableError`) | The Build's existence proves the Request write is older, so a miss is a stale read; a genuine orphan still dead-letters at `MaxAttempts`. |
 | `Status` call | raw error; classifier decides | Deliberately left open rather than fixed either way — runner timeout/connection is transient, "runner not deployed for this queue" is not, and only a backend classifier can tell them apart. |
 | `Update` CAS conflict (`ErrVersionMismatch`) | retryable | A concurrent (redelivered) writer moved the row; reload and re-check converges. |
 | `PublishAfter` re-poll | retryable | The poll heartbeat; it runs only after status/persist/record all succeeded, so a transient enqueue blip is worth replaying to `MaxAttempts` before dead-lettering. |
+
+`Build`/`Request` not found (`storage.ErrNotFound`) are **not** in this table: storage is required to be read-after-write consistent (see [storage README](stovepipe/extension/storage/README.md)), so a miss here is already the correct default (non-retryable, straight to DLQ) rather than a departure worth overriding.
 
 Everything else — factory lookup, an `Update` store error other than a CAS conflict, and the publish to `record` — is returned raw with no override, because the default is already correct: a queue with no registered runner is a config error, and storage/queue failures dead-letter and let DLQ reconciliation recover.
 
@@ -114,7 +112,7 @@ Everything else — factory lookup, an `Update` store error other than a CAS con
 
 Every branch is safe under at-least-once redelivery:
 
-- **Build not found** — retryable; converges as the row becomes visible.
+- **Build not found** — non-retryable; storage's read-after-write guarantee means a miss here is a storage defect, not a lag condition to retry through.
 - **Status already persisted** — a redelivery re-runs the whole algorithm from step 1, including a redundant `Status` poll (harmless — the runner reports the same thing); step 6 no-ops on the unchanged status, and the delivery proceeds to re-schedule the poll (non-terminal) or republish to `record` (terminal, idempotent). No corruption.
 - **Terminal already published** — a redelivery reloads, re-polls, no-ops at step 6, republishes the same terminal signal to `record` (idempotent), and acks. Harmless.
 - **`PublishAfter` failed, then retried** — the nacked delivery re-runs from step 1; there is no way to resume mid-algorithm, so it re-polls the runner too, but the row already carries the non-terminal status and step 6 no-ops. Only the final enqueue does new work.
