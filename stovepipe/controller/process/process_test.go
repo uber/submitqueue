@@ -743,17 +743,17 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name:      "request not found is retryable",
+			name:      "request not found is not retryable",
 			wantErr:   true,
-			wantRetry: true,
+			wantRetry: false,
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{}, storage.ErrNotFound)
 			},
 		},
 		{
-			name:      "queue not found is retryable",
+			name:      "queue not found is not retryable",
 			wantErr:   true,
-			wantRetry: true,
+			wantRetry: false,
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{}, storage.ErrNotFound)

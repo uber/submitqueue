@@ -186,9 +186,9 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name:      "request not found is retryable",
+			name:      "request not found is not retryable",
 			wantErr:   true,
-			wantRetry: true,
+			wantRetry: false,
 			setup: func(m buildMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{}, storage.ErrNotFound)
 			},
