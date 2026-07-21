@@ -111,7 +111,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	// process decided the scope; build never re-derives incremental-vs-full.
 	if request.BuildStrategy == entity.BuildStrategyUnknown {
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "strategy_not_visible", 1)
 		return errs.NewRetryableError(fmt.Errorf("request %s has no build strategy yet", request.ID))
 	}
 	baseURI := ""
