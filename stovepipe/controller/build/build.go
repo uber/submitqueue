@@ -138,7 +138,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("BuildController failed to publish build signal for %s: %w", build.ID, err)
 	}
 
-	c.logger.Infow("triggered build",
+	c.logger.Debugw("triggered build",
 		"request_id", request.ID,
 		"build_id", build.ID,
 		"queue", request.Queue,
