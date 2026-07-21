@@ -147,16 +147,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	return nil
 }
 
-// loadRequest returns the request for id. A not-yet-visible row is retryable.
+// loadRequest returns the request for id.
 func (c *Controller) loadRequest(ctx context.Context, id string) (entity.Request, error) {
 	got, err := c.store.GetRequestStore().Get(ctx, id)
-	if err == nil {
-		return got, nil
+	if err != nil {
+		return entity.Request{}, fmt.Errorf("BuildController failed to load request %s: %w", id, err)
 	}
-	if errors.Is(err, storage.ErrNotFound) {
-		return entity.Request{}, errs.NewRetryableError(fmt.Errorf("request %s not found yet: %w", id, err))
-	}
-	return entity.Request{}, fmt.Errorf("BuildController failed to load request %s: %w", id, err)
+	return got, nil
 }
 
 // publishBuildSignal publishes buildID to the buildsignal stage, partitioned by
