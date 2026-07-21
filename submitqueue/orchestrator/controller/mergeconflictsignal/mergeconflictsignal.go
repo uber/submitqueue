@@ -121,8 +121,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 			"request_id", request.ID,
 			"reason", result.Reason,
 		)
-		// Expected terminal outcome, not a failure: mark the request Error inline
-		// and ack.
 		if err := c.failRequest(ctx, request, result.Reason); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "fail_errors", 1)
 			return fmt.Errorf("failed to fail request %s: %w", request.ID, err)
@@ -130,12 +128,27 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return nil
 	}
 
+	// Advance the request to Validated now that the merge-conflict check passed.
+	newVersion := request.Version + 1
+	if err := c.store.GetRequestStore().UpdateState(ctx, request.ID, request.Version, newVersion, entity.RequestStateValidated); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "state_errors", 1)
+		return fmt.Errorf("failed to update request %s state to validated: %w", request.ID, err)
+	}
+	request.Version = newVersion
+	request.State = entity.RequestStateValidated
+
+	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusValidated, request.Version, "", nil)
+	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "log_errors", 1)
+		return fmt.Errorf("failed to publish request log for %s: %w", request.ID, err)
+	}
+
 	if err := c.publishRequestID(ctx, topickey.TopicKeyBatch, request.ID, request.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to batch: %w", err)
 	}
 
-	c.logger.Infow("published request to batch",
+	c.logger.Infow("request validated and published to batch",
 		"request_id", request.ID,
 		"topic_key", topickey.TopicKeyBatch,
 	)
