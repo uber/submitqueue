@@ -10,6 +10,7 @@ go_library(
         "//platform/consumer:go_default_library",
         "//platform/errs:go_default_library",
         "//platform/metrics:go_default_library",
+        "//stovepipe/core/loader:go_default_library",
         "//stovepipe/core/messagequeue:go_default_library",
         "//stovepipe/entity:go_default_library",
         "//stovepipe/extension/queueconfig:go_default_library",

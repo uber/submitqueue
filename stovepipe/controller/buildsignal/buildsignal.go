@@ -29,6 +29,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
@@ -194,20 +195,12 @@ func (c *Controller) reconcile(ctx context.Context, build entity.Build, status e
 
 // loadBuild returns the build for id.
 func (c *Controller) loadBuild(ctx context.Context, id string) (entity.Build, error) {
-	got, err := c.store.GetBuildStore().Get(ctx, id)
-	if err != nil {
-		return entity.Build{}, fmt.Errorf("BuildSignalController failed to load build %s: %w", id, err)
-	}
-	return got, nil
+	return loader.ByID(ctx, id, c.store.GetBuildStore().Get, "BuildSignalController", "build")
 }
 
 // loadRequest returns the request for id.
 func (c *Controller) loadRequest(ctx context.Context, id string) (entity.Request, error) {
-	got, err := c.store.GetRequestStore().Get(ctx, id)
-	if err != nil {
-		return entity.Request{}, fmt.Errorf("BuildSignalController failed to load request %s: %w", id, err)
-	}
-	return got, nil
+	return loader.ByID(ctx, id, c.store.GetRequestStore().Get, "BuildSignalController", "request")
 }
 
 // pollDelay returns the delay before the next Status call for a non-terminal status.
