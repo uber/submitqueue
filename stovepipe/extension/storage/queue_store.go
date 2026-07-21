@@ -28,11 +28,11 @@ type QueueStore interface {
 	// if a row with the same name already exists.
 	Create(ctx context.Context, queue entity.Queue) error
 
-	// Get retrieves a queue by name. Returns ErrNotFound if the queue is not found.
+	// Get retrieves a queue by name. Returns errs.ErrNotFound if the queue is not found.
 	Get(ctx context.Context, name string) (entity.Queue, error)
 
 	// Update persists the mutable fields of queue if the stored version matches
-	// oldVersion, writing newVersion. Returns ErrVersionMismatch if the stored
+	// oldVersion, writing newVersion. Returns errs.ErrVersionMismatch if the stored
 	// version does not match (including when the queue does not exist).
 	//
 	// Version arithmetic is owned by the caller: it computes newVersion (typically

@@ -53,7 +53,6 @@ go_test(
         "//platform/extension/messagequeue/mock:go_default_library",
         "//submitqueue/core/topickey:go_default_library",
         "//submitqueue/entity:go_default_library",
-        "//submitqueue/extension/queueconfig:go_default_library",
         "//submitqueue/extension/queueconfig/mock:go_default_library",
         "//submitqueue/extension/storage:go_default_library",
         "//submitqueue/extension/storage/mock:go_default_library",

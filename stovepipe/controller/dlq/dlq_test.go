@@ -23,10 +23,10 @@ import (
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
-	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
@@ -133,7 +133,7 @@ func TestProcess(t *testing.T) {
 		{
 			name: "request not found is a no-op",
 			setup: func(m dlqMocks) {
-				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{}, storage.ErrNotFound)
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{}, errs.ErrNotFound)
 			},
 		},
 		{
@@ -142,7 +142,7 @@ func TestProcess(t *testing.T) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateAccepted), nil)
 				updated := requestWithState(entity.RequestStateAccepted)
 				updated.State = entity.RequestStateRecordedNotGreen
-				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(storage.ErrVersionMismatch)
+				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(errs.ErrVersionMismatch)
 			},
 			wantErr: true,
 		},
@@ -155,7 +155,7 @@ func TestProcess(t *testing.T) {
 				}, nil)
 				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
 					Name: testQueue, InFlightCount: 0, Version: 5,
-				}, int32(5), int32(6)).Return(storage.ErrVersionMismatch)
+				}, int32(5), int32(6)).Return(errs.ErrVersionMismatch)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
 					Name: testQueue, InFlightCount: 1, Version: 6,
 				}, nil)

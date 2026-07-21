@@ -28,12 +28,12 @@ import (
 // The batch-creation flow always calls Create here before creating the Batch itself, so every active
 // Batch is guaranteed to have a corresponding BatchDependent row. Lookups via Get are only performed
 // for batch IDs returned from the active-batch set, meaning a missing row indicates data corruption or
-// out-of-band manipulation rather than a normal "not found" outcome. ErrNotFound is therefore part of
+// out-of-band manipulation rather than a normal "not found" outcome. errs.ErrNotFound is therefore part of
 // the contract for completeness but is not expected to be returned in steady-state operation.
 type BatchDependentStore interface {
 	// Get retrieves the batch dependent by batch ID.
 	// If the batch contains no dependents, the returned BatchDependent will have an empty Dependents list.
-	// Returns ErrNotFound if the batch itself is not found, which should never happen in steady-state system and
+	// Returns errs.ErrNotFound if the batch itself is not found, which should never happen in steady-state system and
 	// therefore does not need a special handling.
 	Get(ctx context.Context, batchID string) (entity.BatchDependent, error)
 
@@ -42,7 +42,7 @@ type BatchDependentStore interface {
 	Create(ctx context.Context, batchDependent entity.BatchDependent) error
 
 	// UpdateDependents updates the dependents of a batch dependent and the version to newVersion
-	// if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
+	// if the current persisted version matches oldVersion. If versions do not match, returns errs.ErrVersionMismatch.
 	// Version arithmetic is owned by the caller; the store performs a pure conditional write.
 	UpdateDependents(ctx context.Context, batchID string, oldVersion, newVersion int32, dependents []string) error
 }

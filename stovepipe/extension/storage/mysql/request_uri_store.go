@@ -22,6 +22,7 @@ import (
 
 	"github.com/uber-go/tally"
 
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
@@ -61,7 +62,7 @@ func (r *requestURIStore) Create(ctx context.Context, queue, uri, id string) (re
 	return nil
 }
 
-// GetIDByURI returns the id of the request validating (queue, uri). Returns ErrNotFound if absent.
+// GetIDByURI returns the id of the request validating (queue, uri). Returns errs.ErrNotFound if absent.
 func (r *requestURIStore) GetIDByURI(ctx context.Context, queue, uri string) (ret string, retErr error) {
 	op := metrics.Begin(r.scope, "get_id_by_uri")
 	defer func() { op.Complete(retErr) }()
@@ -73,7 +74,7 @@ func (r *requestURIStore) GetIDByURI(ctx context.Context, queue, uri string) (re
 	).Scan(&id)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", storage.WrapNotFound(err)
+		return "", fmt.Errorf("%w: %w", errs.ErrNotFound, err)
 	}
 	if err != nil {
 		return "", fmt.Errorf("failed to get request id for queue=%s uri=%s from the database: %w", queue, uri, err)

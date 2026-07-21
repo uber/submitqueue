@@ -20,7 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/uber/submitqueue/stovepipe/extension/queueconfig"
+	"github.com/uber/submitqueue/platform/errs"
 )
 
 func TestStore_Get(t *testing.T) {
@@ -36,7 +36,7 @@ func TestStore_Get(t *testing.T) {
 
 	t.Run("empty name is not found", func(t *testing.T) {
 		_, err := store.Get(context.Background(), "")
-		require.ErrorIs(t, err, queueconfig.ErrNotFound)
+		require.ErrorIs(t, err, errs.ErrNotFound)
 	})
 }
 

@@ -215,7 +215,7 @@ func (c *Controller) admitLatestHead(ctx context.Context, request entity.Request
 		if err == nil {
 			break
 		}
-		if !errors.Is(err, storage.ErrVersionMismatch) {
+		if !errors.Is(err, errs.ErrVersionMismatch) {
 			return err
 		}
 		// claimBuildSlot reloaded queueRow. Re-coalesce: supersede if a newer head arrived,
@@ -298,13 +298,13 @@ func (c *Controller) claimBuildSlot(ctx context.Context, queueRow *entity.Queue)
 	updated.InFlightCount = queueRow.InFlightCount + 1
 	newVersion := queueRow.Version + 1
 	if err := queueStore.Update(ctx, updated, queueRow.Version, newVersion); err != nil {
-		if errors.Is(err, storage.ErrVersionMismatch) {
+		if errors.Is(err, errs.ErrVersionMismatch) {
 			got, getErr := queueStore.Get(ctx, queueRow.Name)
 			if getErr != nil {
 				return fmt.Errorf("ProcessController failed to reload queue %s after version mismatch: %w", queueRow.Name, getErr)
 			}
 			*queueRow = got
-			return storage.ErrVersionMismatch
+			return errs.ErrVersionMismatch
 		}
 		return fmt.Errorf("ProcessController failed to claim build slot for queue %s: %w", queueRow.Name, err)
 	}
@@ -332,7 +332,7 @@ func (c *Controller) markProcessing(ctx context.Context, request *entity.Request
 		updated.BaseURI = baseURI
 		newVersion := request.Version + 1
 		if err := reqStore.Update(ctx, updated, request.Version, newVersion); err != nil {
-			if errors.Is(err, storage.ErrVersionMismatch) {
+			if errors.Is(err, errs.ErrVersionMismatch) {
 				got, getErr := reqStore.Get(ctx, request.ID)
 				if getErr != nil {
 					return false, fmt.Errorf("ProcessController failed to reload request %s after version mismatch: %w", request.ID, getErr)
@@ -371,7 +371,7 @@ func (c *Controller) releaseBuildSlot(ctx context.Context, queueName string) {
 		updated.InFlightCount = queueRow.InFlightCount - 1
 		newVersion := queueRow.Version + 1
 		if err := queueStore.Update(ctx, updated, queueRow.Version, newVersion); err != nil {
-			if errors.Is(err, storage.ErrVersionMismatch) {
+			if errors.Is(err, errs.ErrVersionMismatch) {
 				continue
 			}
 			c.logger.Errorw("failed to release claimed build slot",
@@ -398,7 +398,7 @@ func (c *Controller) supersedeRequest(ctx context.Context, request entity.Reques
 		updated.State = entity.RequestStateSuperseded
 		newVersion := request.Version + 1
 		if err := reqStore.Update(ctx, updated, request.Version, newVersion); err != nil {
-			if errors.Is(err, storage.ErrVersionMismatch) {
+			if errors.Is(err, errs.ErrVersionMismatch) {
 				got, getErr := reqStore.Get(ctx, request.ID)
 				if getErr != nil {
 					return fmt.Errorf("ProcessController failed to reload request %s after version mismatch: %w", request.ID, getErr)
@@ -459,7 +459,7 @@ func (c *Controller) loadRequest(ctx context.Context, id string) (entity.Request
 	if err == nil {
 		return got, nil
 	}
-	if errors.Is(err, storage.ErrNotFound) {
+	if errors.Is(err, errs.ErrNotFound) {
 		return entity.Request{}, errs.NewRetryableError(fmt.Errorf("request %s not found yet: %w", id, err))
 	}
 	return entity.Request{}, fmt.Errorf("ProcessController failed to load request %s: %w", id, err)
@@ -471,7 +471,7 @@ func (c *Controller) loadQueue(ctx context.Context, name string) (entity.Queue, 
 	if err == nil {
 		return got, nil
 	}
-	if errors.Is(err, storage.ErrNotFound) {
+	if errors.Is(err, errs.ErrNotFound) {
 		return entity.Queue{}, errs.NewRetryableError(fmt.Errorf("queue %s not found yet: %w", name, err))
 	}
 	return entity.Queue{}, fmt.Errorf("ProcessController failed to load queue %s: %w", name, err)

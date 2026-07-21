@@ -12,6 +12,7 @@ go_test(
         "integration",
     ],
     deps = [
+        "//platform/errs:go_default_library",
         "//stovepipe/entity:go_default_library",
         "//stovepipe/extension/storage:go_default_library",
         "//stovepipe/extension/storage/mysql:go_default_library",

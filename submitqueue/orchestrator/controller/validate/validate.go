@@ -249,7 +249,7 @@ func (c *Controller) checkDuplicate(ctx context.Context, request entity.Request)
 			seenOwners[rec.RequestID] = struct{}{}
 
 			owner, err := c.store.GetRequestStore().Get(ctx, rec.RequestID)
-			if errors.Is(err, storage.ErrNotFound) {
+			if errors.Is(err, errs.ErrNotFound) {
 				continue
 			}
 			if err != nil {

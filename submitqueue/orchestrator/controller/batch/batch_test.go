@@ -28,6 +28,7 @@ import (
 	"github.com/uber/submitqueue/platform/base/mergestrategy"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
 	countermock "github.com/uber/submitqueue/platform/extension/counter/mock"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
@@ -35,7 +36,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/all"
 	conflictmock "github.com/uber/submitqueue/submitqueue/extension/conflict/mock"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
@@ -477,7 +477,7 @@ func TestController_Process_HaltedShortCircuit(t *testing.T) {
 
 // Race-lost path: the cancel controller's markCancelling CAS landed first,
 // so the batch controller's request-claim CAS (Validated → Batched) fails
-// with storage.ErrVersionMismatch. The controller must ack the message (the
+// with errs.ErrVersionMismatch. The controller must ack the message (the
 // cancel pipeline now owns the request) and must NOT call BatchStore.Create
 // or publish to the score topic.
 //
@@ -503,7 +503,7 @@ func TestController_Process_CASLostToCancel(t *testing.T) {
 	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
 	mockReqStore.EXPECT().UpdateState(
 		gomock.Any(), request.ID, request.Version, request.Version+1, entity.RequestStateBatched,
-	).Return(fmt.Errorf("cas: %w", storage.ErrVersionMismatch))
+	).Return(fmt.Errorf("cas: %w", errs.ErrVersionMismatch))
 
 	mockStorage := storagemock.NewMockStorage(ctrl)
 	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()

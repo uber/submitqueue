@@ -31,6 +31,6 @@ type RequestURIStore interface {
 	Create(ctx context.Context, queue, uri, id string) error
 
 	// GetIDByURI returns the id of the request validating (queue, uri).
-	// Returns ErrNotFound if no request is mapped to that commit.
+	// Returns errs.ErrNotFound if no request is mapped to that commit.
 	GetIDByURI(ctx context.Context, queue, uri string) (string, error)
 }

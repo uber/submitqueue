@@ -18,6 +18,13 @@ import (
 	"errors"
 )
 
+// ErrNotFound indicates that a requested resource does not exist.
+var ErrNotFound = errors.New("not found")
+
+// ErrVersionMismatch indicates that an optimistic conditional update failed
+// because the persisted version no longer matches the expected version.
+var ErrVersionMismatch = errors.New("version mismatch")
+
 // userError represents an error caused by invalid user input or actions.
 // User errors are never retryable — only infrastructure errors can be retryable.
 // Use NewUserError to wrap an underlying cause.

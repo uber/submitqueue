@@ -21,9 +21,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
@@ -83,7 +83,7 @@ func TestDLQBuildSignalController_Process_BuildNotFoundIsNoOp(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
-	buildStore.EXPECT().Get(gomock.Any(), "build-1").Return(entity.Build{}, storage.ErrNotFound)
+	buildStore.EXPECT().Get(gomock.Any(), "build-1").Return(entity.Build{}, errs.ErrNotFound)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()

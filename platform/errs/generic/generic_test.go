@@ -24,8 +24,20 @@ import (
 	"github.com/uber/submitqueue/platform/errs"
 )
 
-func TestClassifier_ContextCanceled(t *testing.T) {
-	assert.Equal(t, errs.InfraRetryable, Classifier.Classify(context.Canceled))
+func TestClassifier_Retryable(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{"context canceled", context.Canceled},
+		{"version mismatch", errs.ErrVersionMismatch},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, errs.InfraRetryable, Classifier.Classify(tt.err))
+		})
+	}
 }
 
 func TestClassifier_Unknown(t *testing.T) {
@@ -37,6 +49,8 @@ func TestClassifier_Unknown(t *testing.T) {
 		// context.Canceled; the surrounding classifier-processor walk will
 		// reach the inner node and ask Classifier again there.
 		{"wrapped context.Canceled", fmt.Errorf("op: %w", context.Canceled)},
+		{"wrapped version mismatch", fmt.Errorf("op: %w", errs.ErrVersionMismatch)},
+		{"not found", errs.ErrNotFound},
 		{"deadline exceeded", context.DeadlineExceeded},
 		{"plain error", errors.New("anything")},
 		{"nil", nil},
@@ -63,6 +77,18 @@ func TestClassifier_AppliedViaProcessor(t *testing.T) {
 		wrapped := fmt.Errorf("process: %w", context.Canceled)
 		out := p.Process(wrapped)
 		assert.True(t, errs.IsRetryable(out))
+	})
+
+	t.Run("wrapped version mismatch becomes retryable infra", func(t *testing.T) {
+		wrapped := fmt.Errorf("update: %w", errs.ErrVersionMismatch)
+		out := p.Process(wrapped)
+		assert.True(t, errs.IsRetryable(out))
+	})
+
+	t.Run("not found remains non-retryable", func(t *testing.T) {
+		out := p.Process(fmt.Errorf("get: %w", errs.ErrNotFound))
+		assert.False(t, errs.IsRetryable(out))
+		assert.ErrorIs(t, out, errs.ErrNotFound)
 	})
 
 	t.Run("framework wrap in chain wins", func(t *testing.T) {

@@ -28,7 +28,6 @@ import (
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
@@ -339,7 +338,7 @@ func TestController_Process(t *testing.T) {
 				mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/1").Return(entity.Request{
 					ID: "test-queue/1", Version: 2, State: entity.RequestStateProcessing,
 				}, nil)
-				mockRequestStore.EXPECT().UpdateState(gomock.Any(), "test-queue/1", int32(2), int32(3), entity.RequestStateLanded).Return(storage.ErrVersionMismatch)
+				mockRequestStore.EXPECT().UpdateState(gomock.Any(), "test-queue/1", int32(2), int32(3), entity.RequestStateLanded).Return(errs.ErrVersionMismatch)
 
 				mockStorage := storagemock.NewMockStorage(ctrl)
 				mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()

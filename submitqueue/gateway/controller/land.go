@@ -104,7 +104,7 @@ func (c *LandController) Land(ctx context.Context, req entity.LandRequest) (resu
 
 	queue := req.Queue
 	if _, err := c.queueConfigs.Get(ctx, queue); err != nil {
-		if errors.Is(err, queueconfig.ErrNotFound) {
+		if errors.Is(err, errs.ErrNotFound) {
 			return entity.LandResult{}, errs.NewUserError(&UnrecognizedQueueError{Queue: queue})
 		}
 		return entity.LandResult{}, fmt.Errorf("LandController failed to look up queue %q: %w", queue, err)

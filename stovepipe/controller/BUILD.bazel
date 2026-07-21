@@ -34,6 +34,7 @@ go_test(
     deps = [
         "//api/stovepipe/protopb:go_default_library",
         "//platform/consumer:go_default_library",
+        "//platform/errs:go_default_library",
         "//platform/extension/counter/mock:go_default_library",
         "//platform/extension/messagequeue/mock:go_default_library",
         "//stovepipe/core/messagequeue:go_default_library",

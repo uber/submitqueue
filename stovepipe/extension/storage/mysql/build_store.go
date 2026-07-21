@@ -22,6 +22,7 @@ import (
 
 	"github.com/uber-go/tally"
 
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -60,7 +61,7 @@ func (b *buildStore) Create(ctx context.Context, build entity.Build) (retErr err
 	return nil
 }
 
-// Get retrieves a build by ID. Returns ErrNotFound if the build is not found.
+// Get retrieves a build by ID. Returns errs.ErrNotFound if the build is not found.
 func (b *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retErr error) {
 	op := metrics.Begin(b.scope, "get")
 	defer func() { op.Complete(retErr) }()
@@ -78,7 +79,7 @@ func (b *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retE
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		return entity.Build{}, storage.WrapNotFound(err)
+		return entity.Build{}, fmt.Errorf("%w: %w", errs.ErrNotFound, err)
 	}
 	if err != nil {
 		return entity.Build{}, fmt.Errorf("failed to get build entity id=%s from the database: %w", id, err)
@@ -88,7 +89,7 @@ func (b *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retE
 }
 
 // Update persists the mutable fields of build (status) if the stored version matches
-// oldVersion, writing newVersion. Returns ErrVersionMismatch if the stored version does not
+// oldVersion, writing newVersion. Returns errs.ErrVersionMismatch if the stored version does not
 // match (including when the build does not exist). This is a pure conditional write; the
 // caller owns version arithmetic.
 func (b *buildStore) Update(ctx context.Context, build entity.Build, oldVersion, newVersion int32) (retErr error) {
@@ -122,7 +123,7 @@ func (b *buildStore) Update(ctx context.Context, build entity.Build, oldVersion,
 	if rowsAffected != 1 {
 		return fmt.Errorf(
 			"version mismatch for build update: id=%q expected_version=%d: %w",
-			build.ID, oldVersion, storage.ErrVersionMismatch,
+			build.ID, oldVersion, errs.ErrVersionMismatch,
 		)
 	}
 

@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/stovepipe/extension/storage/mysql"
@@ -114,7 +115,7 @@ func (s *MySQLRequestStoreSuite) TestCreateAndGetWithProcessFields() {
 
 func (s *MySQLRequestStoreSuite) TestGetNotFound() {
 	_, err := s.store.Get(s.ctx, "request/monorepo/main/does-not-exist")
-	require.True(s.T(), storage.IsNotFound(err))
+	require.ErrorIs(s.T(), err, errs.ErrNotFound)
 }
 
 func (s *MySQLRequestStoreSuite) TestUpdateCAS() {
@@ -142,13 +143,13 @@ func (s *MySQLRequestStoreSuite) TestUpdateCAS() {
 
 	// Stale CAS: oldVersion 1 no longer matches the stored version (2).
 	err = s.store.Update(s.ctx, updated, 1, 2)
-	require.ErrorIs(s.T(), err, storage.ErrVersionMismatch)
+	require.ErrorIs(s.T(), err, errs.ErrVersionMismatch)
 }
 
 func (s *MySQLRequestStoreSuite) TestUpdateNotFoundIsVersionMismatch() {
 	missing := entity.Request{ID: "request/monorepo/main/missing", State: entity.RequestStateAccepted}
 	err := s.store.Update(s.ctx, missing, 1, 2)
-	require.ErrorIs(s.T(), err, storage.ErrVersionMismatch)
+	require.ErrorIs(s.T(), err, errs.ErrVersionMismatch)
 }
 
 func (s *MySQLRequestStoreSuite) TestCreateDuplicateID() {
@@ -179,7 +180,7 @@ func (s *MySQLRequestStoreSuite) TestURIMappingCreateAndGet() {
 
 func (s *MySQLRequestStoreSuite) TestGetIDByURINotFound() {
 	_, err := s.uriStore.GetIDByURI(s.ctx, "monorepo/main", "git://remote/monorepo/main/unmapped")
-	require.True(s.T(), storage.IsNotFound(err))
+	require.ErrorIs(s.T(), err, errs.ErrNotFound)
 }
 
 func (s *MySQLRequestStoreSuite) TestURIMappingDuplicate() {

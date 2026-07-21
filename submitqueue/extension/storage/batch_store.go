@@ -24,7 +24,7 @@ import (
 
 // BatchStore is an interface that defines methods for managing batches in the database.
 type BatchStore interface {
-	// Get retrieves a batch by ID. Returns ErrNotFound if the batch is not found.
+	// Get retrieves a batch by ID. Returns errs.ErrNotFound if the batch is not found.
 	Get(ctx context.Context, id string) (entity.Batch, error)
 
 	// Create creates a new batch. The batch must have a unique ID already assigned.
@@ -32,12 +32,12 @@ type BatchStore interface {
 	Create(ctx context.Context, batch entity.Batch) error
 
 	// UpdateState updates the state of a batch to newState and the version to newVersion
-	// if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
+	// if the current persisted version matches oldVersion. If versions do not match, returns errs.ErrVersionMismatch.
 	// Version arithmetic is owned by the caller; the store performs a pure conditional write.
 	UpdateState(ctx context.Context, id string, oldVersion, newVersion int32, newState entity.BatchState) error
 
 	// UpdateScoreAndState atomically updates the score and state of a batch and the version to newVersion
-	// if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
+	// if the current persisted version matches oldVersion. If versions do not match, returns errs.ErrVersionMismatch.
 	// Version arithmetic is owned by the caller; the store performs a pure conditional write.
 	UpdateScoreAndState(ctx context.Context, id string, oldVersion, newVersion int32, score float64, newState entity.BatchState) error
 

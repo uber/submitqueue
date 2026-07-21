@@ -22,6 +22,7 @@ import (
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
@@ -224,7 +225,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	//
 	// The CAS below collapses that window. Whichever of batch.UpdateState(...,
 	// RequestStateBatched) and cancel.markCancelling(... RequestStateCancelling)
-	// reaches storage first wins; the loser sees storage.ErrVersionMismatch:
+	// reaches storage first wins; the loser sees errs.ErrVersionMismatch:
 	//   - If cancel won: this CAS fails. We ack the message (cancel will drive R
 	//     to its terminal state on its own; no batch is needed). The reverse-index
 	//     entry above becomes a dangling BatchDependent — tolerated per the
@@ -258,7 +259,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		// ErrVersionMismatch == cancel (or another writer) advanced R first. Ack
 		// the message: there is nothing for us to do, and retrying would not help
 		// since the new state of R is now visible to the cancel pipeline.
-		if errors.Is(err, storage.ErrVersionMismatch) {
+		if errors.Is(err, errs.ErrVersionMismatch) {
 			c.metricsScope.Counter("request_claim_lost_race").Inc(1)
 			c.logger.Infow("abandoning batch creation; request advanced concurrently (likely cancel)",
 				"request_id", request.ID,

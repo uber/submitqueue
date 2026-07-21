@@ -21,8 +21,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 )
@@ -68,7 +68,7 @@ func TestMaterializer_PersistLog(t *testing.T) {
 		store, summaryStore, queueStore, _, logStore := materializerStores(ctrl)
 		logStore.EXPECT().Insert(gomock.Any(), log).Return(nil)
 		summaryStore.EXPECT().Get(gomock.Any(), "q/1").Return(base, nil)
-		summaryStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(storage.ErrVersionMismatch)
+		summaryStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(errs.ErrVersionMismatch)
 		advanced := base
 		advanced.Status = entity.RequestStatusLanded
 		advanced.RequestVersion = 2
@@ -106,7 +106,7 @@ func TestMaterializer_PersistLog(t *testing.T) {
 		activated.RequestVersion = 2
 		activated.StatusTimestampMs = 20
 		activated.Version = 2
-		queueStore.EXPECT().Get(gomock.Any(), "q", int64(10), "q/1").Return(entity.RequestQueueSummary{}, storage.ErrNotFound)
+		queueStore.EXPECT().Get(gomock.Any(), "q", int64(10), "q/1").Return(entity.RequestQueueSummary{}, errs.ErrNotFound)
 		uriStore.EXPECT().Create(gomock.Any(), entity.RequestURI{ChangeURI: "uri/1", ReceivedAtMs: 10, RequestID: "q/1"}).Return(nil)
 		uriStore.EXPECT().Create(gomock.Any(), entity.RequestURI{ChangeURI: "uri/2", ReceivedAtMs: 10, RequestID: "q/1"}).Return(nil)
 		queueStore.EXPECT().Create(gomock.Any(), queueSummaryFromSummary(activated)).Return(nil)
@@ -135,7 +135,7 @@ func TestMaterializer_PersistLog(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		store, summaryStore, _, _, logStore := materializerStores(ctrl)
 		logStore.EXPECT().Insert(gomock.Any(), log).Return(nil)
-		summaryStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.RequestSummary{}, storage.ErrNotFound)
+		summaryStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.RequestSummary{}, errs.ErrNotFound)
 		require.Error(t, NewMaterializer(store).PersistLog(context.Background(), log))
 	})
 

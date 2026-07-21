@@ -16,6 +16,7 @@ go_library(
     deps = [
         "//api/runway/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
+        "//platform/errs:go_default_library",
         "//platform/metrics:go_default_library",
         "//submitqueue/core/request:go_default_library",
         "//submitqueue/entity:go_default_library",
@@ -47,7 +48,6 @@ go_test(
         "//platform/extension/messagequeue/mock:go_default_library",
         "//submitqueue/core/topickey:go_default_library",
         "//submitqueue/entity:go_default_library",
-        "//submitqueue/extension/storage:go_default_library",
         "//submitqueue/extension/storage/mock:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",

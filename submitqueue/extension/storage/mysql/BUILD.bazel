@@ -17,6 +17,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/extension/storage/mysql",
     visibility = ["//visibility:public"],
     deps = [
+        "//platform/errs:go_default_library",
         "//platform/metrics:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/storage:go_default_library",
@@ -43,6 +44,7 @@ go_test(
     deps = [
         "//platform/base/change:go_default_library",
         "//platform/base/mergestrategy:go_default_library",
+        "//platform/errs:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/storage:go_default_library",
         "@com_github_data_dog_go_sqlmock//:go_default_library",

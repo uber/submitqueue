@@ -24,7 +24,7 @@ import (
 
 // BuildStore is an interface that defines methods for managing builds in the database.
 type BuildStore interface {
-	// Get retrieves a build by ID. Returns ErrNotFound if the build is not found.
+	// Get retrieves a build by ID. Returns errs.ErrNotFound if the build is not found.
 	Get(ctx context.Context, id string) (entity.Build, error)
 
 	// Create creates a new build. The build must have a unique ID already assigned.

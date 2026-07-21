@@ -22,6 +22,7 @@ import (
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -287,7 +288,7 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 // terminal self-heal branch, which re-runs the dependent fan-out and the
 // conclude publish for already-Cancelled batches.
 //
-// storage.ErrVersionMismatch on the terminal CAS is returned as-is for the
+// errs.ErrVersionMismatch on the terminal CAS is returned as-is for the
 // base controller to classify as retryable; the redelivery will land in the
 // self-heal branch and complete the fan-out.
 func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error {
@@ -339,7 +340,7 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 func (c *Controller) cancelBuild(ctx context.Context, batch entity.Batch) error {
 	build, err := c.store.GetBuildStore().Get(ctx, batch.ID)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, errs.ErrNotFound) {
 			metrics.NamedCounter(c.metricsScope, opName, "cancel_build_not_found", 1)
 			return nil
 		}

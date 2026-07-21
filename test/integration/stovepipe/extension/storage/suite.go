@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"github.com/uber/submitqueue/test/testutil"
@@ -122,7 +123,7 @@ func (s *QueueStoreContractSuite) TestQueueStore_GetNotFound() {
 	t := s.T()
 
 	_, err := s.queueStore.Get(s.ctx, "contract/does-not-exist")
-	assert.True(t, storage.IsNotFound(err))
+	assert.ErrorIs(t, err, errs.ErrNotFound)
 
 	s.log.Logf("GetNotFound passed")
 }
@@ -149,7 +150,7 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateCAS() {
 	assert.Equal(t, int32(2), got.Version)
 
 	err = s.queueStore.Update(s.ctx, updated, 1, 2)
-	assert.ErrorIs(t, err, storage.ErrVersionMismatch)
+	assert.ErrorIs(t, err, errs.ErrVersionMismatch)
 
 	s.log.Logf("UpdateCAS passed: queue %s", name)
 }
@@ -159,7 +160,7 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateNotFoundIsVersionMismatch
 	t := s.T()
 
 	err := s.queueStore.Update(s.ctx, entity.Queue{Name: "contract/missing"}, 1, 2)
-	assert.ErrorIs(t, err, storage.ErrVersionMismatch)
+	assert.ErrorIs(t, err, errs.ErrVersionMismatch)
 
 	s.log.Logf("UpdateNotFoundIsVersionMismatch passed")
 }
@@ -263,7 +264,7 @@ func (s *BuildStoreContractSuite) TestBuildStore_GetNotFound() {
 	t := s.T()
 
 	_, err := s.buildStore.Get(s.ctx, "contract/does-not-exist")
-	assert.True(t, storage.IsNotFound(err))
+	assert.ErrorIs(t, err, errs.ErrNotFound)
 
 	s.log.Logf("GetNotFound passed")
 }
@@ -291,7 +292,7 @@ func (s *BuildStoreContractSuite) TestBuildStore_UpdateCAS() {
 	assert.Equal(t, int32(2), got.Version)
 
 	err = s.buildStore.Update(s.ctx, updated, 1, 2)
-	assert.ErrorIs(t, err, storage.ErrVersionMismatch)
+	assert.ErrorIs(t, err, errs.ErrVersionMismatch)
 
 	s.log.Logf("UpdateCAS passed: build %s", id)
 }
@@ -301,7 +302,7 @@ func (s *BuildStoreContractSuite) TestBuildStore_UpdateNotFoundIsVersionMismatch
 	t := s.T()
 
 	err := s.buildStore.Update(s.ctx, entity.Build{ID: "contract/missing"}, 1, 2)
-	assert.ErrorIs(t, err, storage.ErrVersionMismatch)
+	assert.ErrorIs(t, err, errs.ErrVersionMismatch)
 
 	s.log.Logf("UpdateNotFoundIsVersionMismatch passed")
 }

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
@@ -68,7 +69,7 @@ func newControllerStorageFixture(ctrl *gomock.Controller) *controllerStorageFixt
 		defer fixture.mu.Unlock()
 		summary, ok := fixture.summaries[requestID]
 		if !ok {
-			return entity.RequestSummary{}, storage.ErrNotFound
+			return entity.RequestSummary{}, errs.ErrNotFound
 		}
 		return summary, nil
 	}).AnyTimes()
@@ -77,10 +78,10 @@ func newControllerStorageFixture(ctrl *gomock.Controller) *controllerStorageFixt
 		defer fixture.mu.Unlock()
 		current, ok := fixture.summaries[summary.RequestID]
 		if !ok {
-			return storage.ErrNotFound
+			return errs.ErrNotFound
 		}
 		if current.Version != oldVersion {
-			return storage.ErrVersionMismatch
+			return errs.ErrVersionMismatch
 		}
 		summary.Version = newVersion
 		fixture.summaries[summary.RequestID] = summary
@@ -102,7 +103,7 @@ func newControllerStorageFixture(ctrl *gomock.Controller) *controllerStorageFixt
 		defer fixture.mu.Unlock()
 		summary, ok := fixture.queueSummaries[queueSummaryTestKey(queue, receivedAtMs, requestID)]
 		if !ok {
-			return entity.RequestQueueSummary{}, storage.ErrNotFound
+			return entity.RequestQueueSummary{}, errs.ErrNotFound
 		}
 		return summary, nil
 	}).AnyTimes()
@@ -112,10 +113,10 @@ func newControllerStorageFixture(ctrl *gomock.Controller) *controllerStorageFixt
 		key := queueSummaryTestKey(summary.Queue, summary.ReceivedAtMs, summary.RequestID)
 		current, ok := fixture.queueSummaries[key]
 		if !ok {
-			return storage.ErrNotFound
+			return errs.ErrNotFound
 		}
 		if current.Version != oldVersion {
-			return storage.ErrVersionMismatch
+			return errs.ErrVersionMismatch
 		}
 		summary.Version = newVersion
 		fixture.queueSummaries[key] = summary

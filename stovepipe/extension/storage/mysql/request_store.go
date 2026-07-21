@@ -23,6 +23,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
 
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -68,7 +69,7 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) (retE
 	return nil
 }
 
-// Get retrieves a request by ID. Returns ErrNotFound if the request is not found.
+// Get retrieves a request by ID. Returns errs.ErrNotFound if the request is not found.
 func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, retErr error) {
 	op := metrics.Begin(r.scope, "get")
 	defer func() { op.Complete(retErr) }()
@@ -89,7 +90,7 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		return entity.Request{}, storage.WrapNotFound(err)
+		return entity.Request{}, fmt.Errorf("%w: %w", errs.ErrNotFound, err)
 	}
 	if err != nil {
 		return entity.Request{}, fmt.Errorf("failed to get request entity id=%s from the database: %w", id, err)
@@ -99,7 +100,7 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 }
 
 // Update persists the mutable fields of request (uri, state, build_strategy, base_uri) if the
-// oldVersion, writing newVersion. Returns ErrVersionMismatch if the stored version does not match
+// oldVersion, writing newVersion. Returns errs.ErrVersionMismatch if the stored version does not match
 // (including when the request does not exist). This is a pure conditional write; the caller owns
 // version arithmetic.
 func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVersion, newVersion int32) (retErr error) {
@@ -136,7 +137,7 @@ func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVe
 	if rowsAffected != 1 {
 		return fmt.Errorf(
 			"version mismatch for request update: id=%q expected_version=%d: %w",
-			request.ID, oldVersion, storage.ErrVersionMismatch,
+			request.ID, oldVersion, errs.ErrVersionMismatch,
 		)
 	}
 

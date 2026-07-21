@@ -23,6 +23,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
 
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -38,7 +39,7 @@ func NewBuildStore(db *sql.DB, scope tally.Scope) storage.BuildStore {
 	return &buildStore{db: db, scope: scope}
 }
 
-// Get retrieves a build by ID. Returns ErrNotFound if the build is not found.
+// Get retrieves a build by ID. Returns errs.ErrNotFound if the build is not found.
 func (s *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retErr error) {
 	op := metrics.Begin(s.scope, "get")
 	defer func() { op.Complete(retErr) }()
@@ -51,7 +52,7 @@ func (s *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retE
 	).Scan(&build.ID, &build.BatchID, &build.Status)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		return entity.Build{}, storage.WrapNotFound(err)
+		return entity.Build{}, fmt.Errorf("%w: %w", errs.ErrNotFound, err)
 	}
 	if err != nil {
 		return entity.Build{}, fmt.Errorf("failed to get build entity id=%s from the database: %w", id, err)
@@ -80,7 +81,7 @@ func (s *buildStore) Create(ctx context.Context, build entity.Build) (retErr err
 	return nil
 }
 
-// UpdateStatus updates the status of a build. Returns ErrNotFound if the build is not found.
+// UpdateStatus updates the status of a build. Returns errs.ErrNotFound if the build is not found.
 func (s *buildStore) UpdateStatus(ctx context.Context, id string, newStatus entity.BuildStatus) (retErr error) {
 	op := metrics.Begin(s.scope, "update_status")
 	defer func() { op.Complete(retErr) }()
@@ -99,7 +100,7 @@ func (s *buildStore) UpdateStatus(ctx context.Context, id string, newStatus enti
 	}
 
 	if rowsAffected != 1 {
-		return storage.WrapNotFound(fmt.Errorf("build entity id=%s", id))
+		return fmt.Errorf("build entity id=%s: %w", id, errs.ErrNotFound)
 	}
 
 	return nil

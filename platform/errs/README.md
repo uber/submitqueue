@@ -12,7 +12,7 @@ Errors are classified along two axes:
 | **Infra**     | *(any unclassified error)* | `NewRetryableError`           |
 | **Infra dep** | `NewDependencyError`    | `NewRetryableDependencyError`    |
 
-**Non-retryable by default.** A plain `fmt.Errorf(...)` is treated as a non-retryable infra error. Retryability must be explicitly opted into by wrapping with `NewRetryableError`. This prevents accidental infinite retry loops from unclassified errors.
+**Non-retryable by default.** A plain `fmt.Errorf(...)` is treated as a non-retryable infra error. Retryability must be explicitly recognized by a registered classifier or framework wrapper. This prevents accidental infinite retry loops from unclassified errors.
 
 **Only infra errors can be retryable.** User errors are never retryable — if a user action caused the failure, retrying the same operation will produce the same result. If an error is retryable, it is by definition an infrastructure issue.
 
@@ -58,7 +58,9 @@ Two implementations ship in this package:
 
 ## Adding a Backend-Specific Classifier
 
-Backend classifiers live alongside the extension they classify, under `platform/errs/<backend>/`. The canonical examples are `platform/errs/mysql` (MySQL driver errors) and `platform/errs/generic` (transport-agnostic concerns such as `context.Canceled`).
+Backend classifiers live alongside the extension they classify, under `platform/errs/<backend>/`. The canonical examples are `platform/errs/mysql` (MySQL driver errors) and `platform/errs/generic` (backend-independent errors such as `context.Canceled` and `errs.ErrVersionMismatch`).
+
+`platform/errs` also owns shared error identities whose meaning is stable across domains. Identity and classification are separate: `ErrVersionMismatch` is classified as retryable, while `ErrNotFound` remains unclassified and therefore non-retryable by default.
 
 A classifier:
 
@@ -110,7 +112,7 @@ Because pass 1 short-circuits on the first framework wrap it finds, **an explici
 
 ```go
 result, err := c.storage.Get(ctx, id)
-if errors.Is(err, storage.ErrNotFound) {
+if errors.Is(err, errs.ErrNotFound) {
     // This caller treats "not found" as a user error: the user asked for an
     // unknown resource. The mysql classifier never gets a vote because the
     // framework wrap short-circuits pass 1.
@@ -131,26 +133,23 @@ Two practical rules fall out of the short-circuit semantics:
 
 ### When *not* to classify in a controller
 
-The controller-override path is for the rare case where the controller has certain knowledge a classifier cannot derive from the error value alone — typically a sentinel (`storage.ErrNotFound`) that means "the user asked for something missing" *in this specific call site*. The default and overwhelmingly common case is the opposite: the controller returns the raw error (`return fmt.Errorf("...: %w", err)`) and lets the consumer's `ErrorProcessor` classify it.
+The controller-override path is for the rare case where the controller has certain knowledge a classifier cannot derive from the error value alone, such as `errs.ErrNotFound` meaning "the user asked for something missing" in this specific call site. The default and overwhelmingly common case is the opposite: the controller returns the raw error (`return fmt.Errorf("...: %w", err)`) and lets the consumer's `ErrorProcessor` classify it.
 
 In particular, **do not reach for `NewRetryableError` just because replaying the message would be convenient.** A failed queue publish, a failed enqueue, a "the hand-off that keeps this alive" step — these are *not* a license to mark the error retryable. Whether such a failure is transient is exactly what a classifier exists to decide: a transport-level classifier wraps genuine connection/timeout blips as retryable, while a malformed-request or permission failure stays non-retryable and dead-letters instead of replaying forever. Blanket `NewRetryableError` on a publish path defeats that and turns every permanent failure into an infinite retry loop.
 
 ## Extensions Return Plain Go Errors
 
-Extension interfaces (`MergeChecker`, `Storage`, `Publisher`) return standard `error` values. They may define their own domain-specific sentinel errors (e.g. `storage.ErrNotFound`, `storage.ErrVersionMismatch`) but they do **not** classify errors as user or infra — that is the controller's (and the consumer's `ErrorProcessor`'s) job.
+Extension interfaces (`MergeChecker`, `Storage`, `Publisher`) return standard `error` values. They use shared platform errors directly when the meaning is stable across domains, and may define domain-specific sentinels for domain-specific conditions. Extensions do **not** classify errors as user or infra. That is the controller's and the consumer's `ErrorProcessor`'s job.
 
-This separation keeps extensions reusable across contexts. The same `storage.ErrNotFound` might be a user error in one controller (user requested a non-existent resource) and an infra error in another (expected record is missing).
+This separation keeps extensions reusable across contexts. The same `errs.ErrNotFound` might be a user error in one controller (the user requested a missing resource) and an infra error in another (an expected record is missing).
 
 ## Error Chain Compatibility
 
 Framework types preserve the full error chain. Extensions can wrap their own custom errors, and both framework-level and cause-level matching work through `errors.Is`/`errors.As`:
 
 ```go
-// Extension defines a domain error
-var ErrNotFound = errors.New("record not found")
-
-// Extension implementation wraps it
-return fmt.Errorf("request id=%s: %w", id, ErrNotFound)
+// Extension implementation wraps a shared error
+return fmt.Errorf("request id=%s: %w", id, errs.ErrNotFound)
 
 // Controller classifies and wraps again
 return errs.NewUserError(fmt.Errorf("lookup failed: %w", extensionErr))
@@ -158,7 +157,7 @@ return errs.NewUserError(fmt.Errorf("lookup failed: %w", extensionErr))
 // All of these work on the resulting error:
 errs.IsUserError(err)             // true — framework classification
 errs.IsRetryable(err)             // false — user errors are never retryable
-errors.Is(err, ErrNotFound)       // true — cause is in the chain
+errors.Is(err, errs.ErrNotFound)  // true: cause is in the chain
 ```
 
 ## Helpers

@@ -39,6 +39,7 @@ import (
 	"fmt"
 
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
@@ -73,7 +74,7 @@ func TopicKey(main consumer.TopicKey) consumer.TopicKey {
 func failRequest(ctx context.Context, store storage.Storage, logger *zap.SugaredLogger, requestID string) error {
 	request, err := store.GetRequestStore().Get(ctx, requestID)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, errs.ErrNotFound) {
 			logger.Warnw("dlq reconcile: request not found, skipping",
 				"request_id", requestID,
 			)
@@ -117,7 +118,7 @@ func releaseSlot(ctx context.Context, store storage.Storage, logger *zap.Sugared
 	for {
 		queueRow, err := queueStore.Get(ctx, queueName)
 		if err != nil {
-			if errors.Is(err, storage.ErrNotFound) {
+			if errors.Is(err, errs.ErrNotFound) {
 				logger.Warnw("dlq reconcile: queue not found, skipping slot release",
 					"queue", queueName,
 				)
@@ -137,7 +138,7 @@ func releaseSlot(ctx context.Context, store storage.Storage, logger *zap.Sugared
 		updated.InFlightCount--
 		newVersion := queueRow.Version + 1
 		if err := queueStore.Update(ctx, updated, queueRow.Version, newVersion); err != nil {
-			if errors.Is(err, storage.ErrVersionMismatch) {
+			if errors.Is(err, errs.ErrVersionMismatch) {
 				continue
 			}
 			return fmt.Errorf("failed to release slot for queue %s: %w", queueName, err)

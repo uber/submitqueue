@@ -29,6 +29,6 @@ type RequestLogStore interface {
 	Insert(ctx context.Context, log entity.RequestLog) error
 
 	// List retrieves all request log records for a given request ID, ordered by timestamp ascending.
-	// Returns ErrNotFound if no records exist for the given request ID.
+	// Returns errs.ErrNotFound if no records exist for the given request ID.
 	List(ctx context.Context, requestID string) ([]entity.RequestLog, error)
 }

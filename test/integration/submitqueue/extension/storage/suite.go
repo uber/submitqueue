@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/platform/base/mergestrategy"
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"github.com/uber/submitqueue/test/testutil"
@@ -182,7 +183,7 @@ func (s *StorageContractSuite) TestStorage_OptimisticLocking() {
 	// Try to update with stale version (should fail)
 	err = s.storage.GetRequestStore().UpdateState(ctx, request.ID, 1, 2, entity.RequestStateLanded)
 	assert.Error(t, err, "update with stale version should fail")
-	assert.ErrorIs(t, err, storage.ErrVersionMismatch, "should return ErrVersionMismatch")
+	assert.ErrorIs(t, err, errs.ErrVersionMismatch, "should return ErrVersionMismatch")
 
 	// Verify state wasn't changed by stale update
 	retrieved, err := s.storage.GetRequestStore().Get(ctx, request.ID)
@@ -201,7 +202,7 @@ func (s *StorageContractSuite) TestStorage_NotFound() {
 	// Try to get non-existent request
 	_, err := s.storage.GetRequestStore().Get(ctx, "test/nonexistent")
 	assert.Error(t, err, "getting non-existent request should return error")
-	assert.ErrorIs(t, err, storage.ErrNotFound, "should return ErrNotFound")
+	assert.ErrorIs(t, err, errs.ErrNotFound, "should return ErrNotFound")
 
 	s.log.Logf("NotFound test passed: correctly returned ErrNotFound")
 }
@@ -422,7 +423,7 @@ func (s *StorageContractSuite) TestStorage_RequestSummaryCreateGetAndCAS() {
 	assert.NotNil(t, got.ChangeURIs)
 	assert.NotNil(t, got.Metadata)
 	_, err = s.storage.GetRequestSummaryStore().Get(ctx, "summary/missing")
-	require.ErrorIs(t, err, storage.ErrNotFound)
+	require.ErrorIs(t, err, errs.ErrNotFound)
 
 	got.Status = entity.RequestStatusLanded
 	got.RequestVersion = 2
@@ -430,7 +431,7 @@ func (s *StorageContractSuite) TestStorage_RequestSummaryCreateGetAndCAS() {
 	got.LastError = "terminal detail"
 	got.Metadata = map[string]string{"source": "test"}
 	require.NoError(t, s.storage.GetRequestSummaryStore().Update(ctx, got, 1, 2))
-	require.ErrorIs(t, s.storage.GetRequestSummaryStore().Update(ctx, got, 1, 3), storage.ErrVersionMismatch)
+	require.ErrorIs(t, s.storage.GetRequestSummaryStore().Update(ctx, got, 1, 3), errs.ErrVersionMismatch)
 
 	updated, err := s.storage.GetRequestSummaryStore().Get(ctx, summary.RequestID)
 	require.NoError(t, err)
@@ -459,13 +460,13 @@ func (s *StorageContractSuite) TestStorage_RequestQueueSummaryListAndCursor() {
 	assert.NotNil(t, got.ChangeURIs)
 	assert.NotNil(t, got.Metadata)
 	_, err = store.Get(ctx, "queue-summary", 999, "queue-summary/missing")
-	require.ErrorIs(t, err, storage.ErrNotFound)
+	require.ErrorIs(t, err, errs.ErrNotFound)
 
 	got.Status = entity.RequestStatusLanded
 	got.LastError = "done"
 	got.Metadata = map[string]string{"result": "landed"}
 	require.NoError(t, store.Update(ctx, got, 1, 2))
-	require.ErrorIs(t, store.Update(ctx, got, 1, 3), storage.ErrVersionMismatch)
+	require.ErrorIs(t, store.Update(ctx, got, 1, 3), errs.ErrVersionMismatch)
 	updated, err := store.Get(ctx, got.Queue, got.ReceivedAtMs, got.RequestID)
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), updated.Version)

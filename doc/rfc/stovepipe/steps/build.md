@@ -101,7 +101,7 @@ Per `platform/errs`'s non-retryable-by-default rule (see [platform/errs/README.m
 
 | Failure | Disposition | Why |
 |---|---|---|
-| `Request` not found (`storage.ErrNotFound`) | retryable (`errs.NewRetryableError`) | On a primary-only read this shouldn't happen in practice — `process` commits before it publishes — but the check costs nothing when the row is already visible and gives free convergence on the rare chance it isn't, same posture as `process.go`. |
+| `Request` not found (`errs.ErrNotFound`) | retryable (`errs.NewRetryableError`) | On a primary-only read this should not happen in practice because `process` commits before it publishes, but the check costs nothing when the row is already visible and gives free convergence on the rare chance it is not, matching `process.go`. |
 | `Trigger` | raw error; classifier decides | Deliberately left open rather than fixed either way — a runner timeout/connection is transient, a bad URI is permanent, and only a backend classifier can tell them apart. |
 
 Everything else — factory lookup, a malformed message, a build-store error other than `ErrAlreadyExists`, and the publish to `buildsignal` — is returned raw with no override, because the default is already correct: none of them are worth automatically replaying (a queue with no registered builder is a config error, a broken payload will never parse, and storage/queue and publish failures dead-letter and let DLQ reconciliation recover).

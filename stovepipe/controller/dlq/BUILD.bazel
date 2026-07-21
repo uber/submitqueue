@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//platform/consumer:go_default_library",
+        "//platform/errs:go_default_library",
         "//platform/metrics:go_default_library",
         "//stovepipe/core/messagequeue:go_default_library",
         "//stovepipe/entity:go_default_library",
@@ -26,10 +27,10 @@ go_test(
     deps = [
         "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
+        "//platform/errs:go_default_library",
         "//platform/extension/messagequeue/mock:go_default_library",
         "//stovepipe/core/messagequeue:go_default_library",
         "//stovepipe/entity:go_default_library",
-        "//stovepipe/extension/storage:go_default_library",
         "//stovepipe/extension/storage/mock:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",

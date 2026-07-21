@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -59,7 +60,7 @@ func (q *queueStore) Create(ctx context.Context, queue entity.Queue) (retErr err
 	return nil
 }
 
-// Get retrieves a queue by name. Returns ErrNotFound if the queue is not found.
+// Get retrieves a queue by name. Returns errs.ErrNotFound if the queue is not found.
 func (q *queueStore) Get(ctx context.Context, name string) (ret entity.Queue, retErr error) {
 	op := metrics.Begin(q.scope, "get")
 	defer func() { op.Complete(retErr) }()
@@ -77,7 +78,7 @@ func (q *queueStore) Get(ctx context.Context, name string) (ret entity.Queue, re
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		return entity.Queue{}, storage.WrapNotFound(err)
+		return entity.Queue{}, fmt.Errorf("%w: %w", errs.ErrNotFound, err)
 	}
 	if err != nil {
 		return entity.Queue{}, fmt.Errorf("failed to get queue name=%s from the database: %w", name, err)
@@ -87,7 +88,7 @@ func (q *queueStore) Get(ctx context.Context, name string) (ret entity.Queue, re
 }
 
 // Update persists the mutable fields of queue if the stored version matches oldVersion,
-// writing newVersion. Returns ErrVersionMismatch if the stored version does not match.
+// writing newVersion. Returns errs.ErrVersionMismatch if the stored version does not match.
 func (q *queueStore) Update(ctx context.Context, queue entity.Queue, oldVersion, newVersion int32) (retErr error) {
 	op := metrics.Begin(q.scope, "update")
 	defer func() { op.Complete(retErr) }()
@@ -121,7 +122,7 @@ func (q *queueStore) Update(ctx context.Context, queue entity.Queue, oldVersion,
 	if rowsAffected != 1 {
 		return fmt.Errorf(
 			"version mismatch for queue update: name=%q expected_version=%d: %w",
-			queue.Name, oldVersion, storage.ErrVersionMismatch,
+			queue.Name, oldVersion, errs.ErrVersionMismatch,
 		)
 	}
 

@@ -28,10 +28,10 @@ type RequestSummaryStore interface {
 	// The caller owns retry identity and decides whether an existing row is an identical retry or a conflict.
 	Create(ctx context.Context, summary entity.RequestSummary) error
 
-	// Get returns the summary for requestID, or ErrNotFound when absent.
+	// Get returns the summary for requestID, or errs.ErrNotFound when absent.
 	Get(ctx context.Context, requestID string) (entity.RequestSummary, error)
 
 	// Update conditionally replaces the mutable status fields when the persisted projection version equals oldVersion.
-	// The store writes newVersion exactly as supplied and returns ErrVersionMismatch when the guard does not match.
+	// The store writes newVersion exactly as supplied and returns errs.ErrVersionMismatch when the guard does not match.
 	Update(ctx context.Context, summary entity.RequestSummary, oldVersion, newVersion int32) error
 }

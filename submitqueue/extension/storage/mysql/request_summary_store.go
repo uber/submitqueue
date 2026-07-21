@@ -24,6 +24,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
 
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -87,7 +88,7 @@ func (s *requestSummaryStore) Get(ctx context.Context, requestID string) (ret en
 		&ret.LastError, &metadataJSON,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return entity.RequestSummary{}, storage.WrapNotFound(err)
+		return entity.RequestSummary{}, fmt.Errorf("%w: %w", errs.ErrNotFound, err)
 	}
 	if err != nil {
 		return entity.RequestSummary{}, fmt.Errorf("failed to get request summary request_id=%s: %w", requestID, err)
@@ -126,7 +127,7 @@ func (s *requestSummaryStore) Update(ctx context.Context, summary entity.Request
 		return fmt.Errorf("failed to get request summary update rows request_id=%s: %w", summary.RequestID, err)
 	}
 	if rowsAffected != 1 {
-		return fmt.Errorf("request summary request_id=%s expected_version=%d: %w", summary.RequestID, oldVersion, storage.ErrVersionMismatch)
+		return fmt.Errorf("request summary request_id=%s expected_version=%d: %w", summary.RequestID, oldVersion, errs.ErrVersionMismatch)
 	}
 
 	return nil

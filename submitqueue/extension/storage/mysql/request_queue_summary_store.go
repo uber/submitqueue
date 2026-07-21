@@ -24,6 +24,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
 
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -78,7 +79,7 @@ func (s *requestQueueSummaryStore) Get(ctx context.Context, queue string, receiv
 		WHERE queue = ? AND received_at_ms = ? AND request_id = ?`, queue, receivedAtMs, requestID,
 	).Scan(&ret.Queue, &ret.ReceivedAtMs, &ret.RequestID, &changeURIsJSON, &ret.Status, &ret.Version, &ret.LastError, &metadataJSON)
 	if errors.Is(err, sql.ErrNoRows) {
-		return entity.RequestQueueSummary{}, storage.WrapNotFound(err)
+		return entity.RequestQueueSummary{}, fmt.Errorf("%w: %w", errs.ErrNotFound, err)
 	}
 	if err != nil {
 		return entity.RequestQueueSummary{}, fmt.Errorf("failed to get queue summary queue=%s received_at_ms=%d request_id=%s: %w", queue, receivedAtMs, requestID, err)
@@ -112,7 +113,7 @@ func (s *requestQueueSummaryStore) Update(ctx context.Context, summary entity.Re
 		return fmt.Errorf("failed to get queue summary update rows request_id=%s: %w", summary.RequestID, err)
 	}
 	if rowsAffected != 1 {
-		return fmt.Errorf("queue summary request_id=%s expected_version=%d: %w", summary.RequestID, oldVersion, storage.ErrVersionMismatch)
+		return fmt.Errorf("queue summary request_id=%s expected_version=%d: %w", summary.RequestID, oldVersion, errs.ErrVersionMismatch)
 	}
 	return nil
 }

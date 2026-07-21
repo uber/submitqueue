@@ -158,7 +158,7 @@ func (c *IngestController) resolveID(ctx context.Context, queue, uri string) (st
 
 	if id, err := uriStore.GetIDByURI(ctx, queue, uri); err == nil {
 		return id, nil
-	} else if !errors.Is(err, storage.ErrNotFound) {
+	} else if !errors.Is(err, errs.ErrNotFound) {
 		return "", fmt.Errorf("IngestController failed to look up existing request for queue=%s: %w", queue, err)
 	}
 
@@ -193,7 +193,7 @@ func (c *IngestController) ensureRequest(ctx context.Context, id, queue, uri str
 	if err == nil {
 		return got, nil
 	}
-	if !errors.Is(err, storage.ErrNotFound) {
+	if !errors.Is(err, errs.ErrNotFound) {
 		return entity.Request{}, fmt.Errorf("IngestController failed to load request %s: %w", id, err)
 	}
 
@@ -223,7 +223,7 @@ func (c *IngestController) ensureQueue(ctx context.Context, name string) (entity
 	if err == nil {
 		return got, nil
 	}
-	if !errors.Is(err, storage.ErrNotFound) {
+	if !errors.Is(err, errs.ErrNotFound) {
 		return entity.Queue{}, fmt.Errorf("IngestController failed to load queue %s: %w", name, err)
 	}
 
@@ -265,7 +265,7 @@ func (c *IngestController) advanceQueueLatestRequestID(ctx context.Context, queu
 		updated.LatestRequestID = id
 		newVersion := queueRow.Version + 1
 		if err := queueStore.Update(ctx, updated, queueRow.Version, newVersion); err != nil {
-			if errors.Is(err, storage.ErrVersionMismatch) {
+			if errors.Is(err, errs.ErrVersionMismatch) {
 				continue
 			}
 			return fmt.Errorf("IngestController failed to update queue %s latest_request_id: %w", queue, err)

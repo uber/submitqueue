@@ -24,6 +24,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
 
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -39,7 +40,7 @@ func NewBatchDependentStore(db *sql.DB, scope tally.Scope) storage.BatchDependen
 	return &batchDependentStore{db: db, scope: scope}
 }
 
-// Get retrieves the batch dependent by batch ID. Returns ErrNotFound if the batch dependent is not found.
+// Get retrieves the batch dependent by batch ID. Returns errs.ErrNotFound if the batch dependent is not found.
 func (s *batchDependentStore) Get(ctx context.Context, batchID string) (ret entity.BatchDependent, retErr error) {
 	op := metrics.Begin(s.scope, "get")
 	defer func() { op.Complete(retErr) }()
@@ -53,7 +54,7 @@ func (s *batchDependentStore) Get(ctx context.Context, batchID string) (ret enti
 	).Scan(&bd.BatchID, &dependentsJSON, &bd.Version)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		return entity.BatchDependent{}, storage.WrapNotFound(err)
+		return entity.BatchDependent{}, fmt.Errorf("%w: %w", errs.ErrNotFound, err)
 	}
 	if err != nil {
 		return entity.BatchDependent{}, fmt.Errorf("failed to get batch dependent entity batchID=%s from the database: %w", batchID, err)
@@ -92,7 +93,7 @@ func (s *batchDependentStore) Create(ctx context.Context, batchDependent entity.
 }
 
 // UpdateDependents updates the dependents of a batch dependent and the version to newVersion
-// if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
+// if the current persisted version matches oldVersion. If versions do not match, returns errs.ErrVersionMismatch.
 // Version arithmetic is owned by the caller; this is a pure conditional write.
 func (s *batchDependentStore) UpdateDependents(ctx context.Context, batchID string, oldVersion, newVersion int32, dependents []string) (retErr error) {
 	op := metrics.Begin(s.scope, "update_dependents")
@@ -125,7 +126,7 @@ func (s *batchDependentStore) UpdateDependents(ctx context.Context, batchID stri
 	if rowsAffected != 1 {
 		return fmt.Errorf(
 			"version mismatch for batch dependent update: batchID=%q expected_version=%d: %w",
-			batchID, oldVersion, storage.ErrVersionMismatch,
+			batchID, oldVersion, errs.ErrVersionMismatch,
 		)
 	}
 

@@ -21,6 +21,7 @@ import (
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -97,7 +98,7 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 
 	build, err := c.store.GetBuildStore().Get(ctx, bid.ID)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, errs.ErrNotFound) {
 			// The build was never persisted (e.g. the build controller crashed
 			// before Create). There is no batch to reconcile from this signal —
 			// any associated batch should be reconciled from its own DLQ.

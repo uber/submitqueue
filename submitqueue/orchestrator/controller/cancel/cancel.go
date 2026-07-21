@@ -46,10 +46,10 @@
 // Cancelling batch re-publishes to TopicKeySpeculate (a cheap no-op nudge
 // the speculate controller absorbs).
 //
-// Concurrent producers surface as storage.ErrVersionMismatch; the controller
+// Concurrent producers surface as errs.ErrVersionMismatch; the controller
 // returns the wrapped error as-is and relies on the base controller layer to
 // classify it as retryable so the next attempt sees the new state and takes
-// the other branch. storage.ErrNotFound on the initial Get (the start
+// the other branch. errs.ErrNotFound on the initial Get (the start
 // controller has not yet persisted the request) is returned as-is for the
 // same reason.
 package cancel
@@ -160,7 +160,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // version and state) on success, or the original request on the idempotent path
 // where the prior delivery already wrote Cancelling.
 //
-// storage.ErrVersionMismatch (a concurrent writer — most likely conclude
+// errs.ErrVersionMismatch (a concurrent writer, most likely conclude
 // observing a batch transition) is returned as-is for the base controller to
 // classify and retry; the next attempt re-fetches and re-evaluates (it may now
 // be terminal, in which case the top-level terminal-check acks).
@@ -210,7 +210,7 @@ func (c *Controller) findActiveBatch(ctx context.Context, request entity.Request
 
 // cancelRequest performs the terminal CAS (Cancelling → Cancelled) for a request
 // that is not part of any active batch, and emits the RequestStatusCancelled log
-// entry. storage.ErrVersionMismatch here means a concurrent writer (typically
+// entry. errs.ErrVersionMismatch here means a concurrent writer (typically
 // conclude after a racing batch terminal transition) advanced the request between
 // our mark-cancelling CAS and this terminal CAS — returned as-is for the base
 // controller to classify and retry; the next pass will observe the new state
@@ -267,7 +267,7 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 		newVersion := batch.Version + 1
 		if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateCancelling); err != nil {
 			c.metricsScope.Counter("batch_update_errors").Inc(1)
-			// storage.ErrVersionMismatch here means the batch advanced concurrently
+			// errs.ErrVersionMismatch here means the batch advanced concurrently
 			// (e.g. speculate / merge progressed). Returned as-is for the base
 			// controller to classify and retry; the re-fetch will see the new state
 			// and either short-circuit (already terminal) or attempt the transition

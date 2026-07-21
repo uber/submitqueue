@@ -16,6 +16,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -58,7 +59,7 @@ func (c *RequestHistoryController) GetRequestHistoryByID(ctx context.Context, re
 
 	logs, err := c.requestLogStore.List(ctx, req.ID)
 	if err != nil {
-		if storage.IsNotFound(err) {
+		if errors.Is(err, errs.ErrNotFound) {
 			return nil, errs.NewUserError(&RequestNotFoundError{Sqid: req.ID})
 		}
 		return nil, fmt.Errorf("GetRequestHistoryByID failed to list request logs sqid=%s: %w", req.ID, err)
@@ -95,7 +96,7 @@ func (c *RequestHistoryController) GetRequestHistoryByChangeURI(ctx context.Cont
 	for _, mapping := range mappings {
 		logs, err := c.requestLogStore.List(ctx, mapping.RequestID)
 		if err != nil {
-			if storage.IsNotFound(err) {
+			if errors.Is(err, errs.ErrNotFound) {
 				continue
 			}
 			return nil, fmt.Errorf("GetRequestHistoryByChangeURI failed to list request logs change_uri=%s sqid=%s: %w", req.ChangeURI, mapping.RequestID, err)

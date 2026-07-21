@@ -51,11 +51,11 @@ type RequestQueueSummaryStore interface {
 	// Create inserts summary and returns ErrAlreadyExists when its full primary key already exists.
 	Create(ctx context.Context, summary entity.RequestQueueSummary) error
 
-	// Get returns the row identified by its full primary key, or ErrNotFound when absent.
+	// Get returns the row identified by its full primary key, or errs.ErrNotFound when absent.
 	Get(ctx context.Context, queue string, receivedAtMs int64, requestID string) (entity.RequestQueueSummary, error)
 
 	// Update conditionally replaces mutable fields when the persisted projection version equals oldVersion.
-	// The store writes newVersion exactly as supplied and returns ErrVersionMismatch when the guard does not match.
+	// The store writes newVersion exactly as supplied and returns errs.ErrVersionMismatch when the guard does not match.
 	Update(ctx context.Context, summary entity.RequestQueueSummary, oldVersion, newVersion int32) error
 
 	// List returns at most query.Limit rows ordered by received_at_ms descending, then request_id descending.

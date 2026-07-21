@@ -25,6 +25,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
 
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -40,7 +41,7 @@ func NewBatchStore(db *sql.DB, scope tally.Scope) storage.BatchStore {
 	return &batchStore{db: db, scope: scope}
 }
 
-// Get retrieves a batch by ID. Returns ErrNotFound if the batch is not found.
+// Get retrieves a batch by ID. Returns errs.ErrNotFound if the batch is not found.
 func (s *batchStore) Get(ctx context.Context, id string) (ret entity.Batch, retErr error) {
 	op := metrics.Begin(s.scope, "get")
 	defer func() { op.Complete(retErr) }()
@@ -55,7 +56,7 @@ func (s *batchStore) Get(ctx context.Context, id string) (ret entity.Batch, retE
 	).Scan(&batch.ID, &batch.Queue, &containsJSON, &dependenciesJSON, &batch.Score, &batch.State, &batch.Version)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		return entity.Batch{}, storage.WrapNotFound(err)
+		return entity.Batch{}, fmt.Errorf("%w: %w", errs.ErrNotFound, err)
 	}
 	if err != nil {
 		return entity.Batch{}, fmt.Errorf("failed to get batch entity id=%s from the database: %w", id, err)
@@ -103,7 +104,7 @@ func (s *batchStore) Create(ctx context.Context, batch entity.Batch) (retErr err
 }
 
 // UpdateState updates the state of a batch to newState and the version to newVersion
-// if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
+// if the current persisted version matches oldVersion. If versions do not match, returns errs.ErrVersionMismatch.
 // Version arithmetic is owned by the caller; this is a pure conditional write.
 func (s *batchStore) UpdateState(ctx context.Context, id string, oldVersion, newVersion int32, newState entity.BatchState) (retErr error) {
 	op := metrics.Begin(s.scope, "update_state")
@@ -131,7 +132,7 @@ func (s *batchStore) UpdateState(ctx context.Context, id string, oldVersion, new
 	if rowsAffected != 1 {
 		return fmt.Errorf(
 			"version mismatch for batch update: id=%q expected_version=%d newState=%v: %w",
-			id, oldVersion, newState, storage.ErrVersionMismatch,
+			id, oldVersion, newState, errs.ErrVersionMismatch,
 		)
 	}
 
@@ -139,7 +140,7 @@ func (s *batchStore) UpdateState(ctx context.Context, id string, oldVersion, new
 }
 
 // UpdateScoreAndState atomically updates the score and state of a batch and the version to newVersion
-// if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
+// if the current persisted version matches oldVersion. If versions do not match, returns errs.ErrVersionMismatch.
 // Version arithmetic is owned by the caller; this is a pure conditional write.
 func (s *batchStore) UpdateScoreAndState(ctx context.Context, id string, oldVersion, newVersion int32, score float64, newState entity.BatchState) (retErr error) {
 	op := metrics.Begin(s.scope, "update_score_and_state")
@@ -167,7 +168,7 @@ func (s *batchStore) UpdateScoreAndState(ctx context.Context, id string, oldVers
 	if rowsAffected != 1 {
 		return fmt.Errorf(
 			"version mismatch for batch update score and state: id=%q expected_version=%d score=%f newState=%v: %w",
-			id, oldVersion, score, newState, storage.ErrVersionMismatch,
+			id, oldVersion, score, newState, errs.ErrVersionMismatch,
 		)
 	}
 

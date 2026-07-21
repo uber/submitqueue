@@ -4,7 +4,7 @@ Pluggable persistence interfaces for SubmitQueue entities (requests, batches, de
 
 ## Optimistic locking contract
 
-Entities that support concurrent mutation carry an `int32 Version` field. Updates are conditional on the version: the write only succeeds if the persisted version matches the caller's expected version. On mismatch, the implementation returns `storage.ErrVersionMismatch`.
+Entities that support concurrent mutation carry an `int32 Version` field. Updates are conditional on the version: the write only succeeds if the persisted version matches the caller's expected version. On mismatch, the implementation returns `errs.ErrVersionMismatch`.
 
 **Version arithmetic is owned by the controller, not the store.** Update methods take both `oldVersion` (the where-clause guard) and `newVersion` (the value to write):
 

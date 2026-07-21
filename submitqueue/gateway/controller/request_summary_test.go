@@ -24,7 +24,6 @@ import (
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
@@ -109,7 +108,7 @@ func TestStatusErrors(t *testing.T) {
 		{
 			name: "sqid not found",
 			setup: func(summaryStore *storagemock.MockRequestSummaryStore, _ *storagemock.MockRequestURIStore) {
-				summaryStore.EXPECT().Get(gomock.Any(), "missing/1").Return(entity.RequestSummary{}, storage.ErrNotFound)
+				summaryStore.EXPECT().Get(gomock.Any(), "missing/1").Return(entity.RequestSummary{}, errs.ErrNotFound)
 			},
 			call: func(c *RequestSummaryController) error {
 				_, err := c.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "missing/1"})
@@ -171,7 +170,7 @@ func TestStatusErrors(t *testing.T) {
 			name: "mapped summary missing",
 			setup: func(summaryStore *storagemock.MockRequestSummaryStore, uriStore *storagemock.MockRequestURIStore) {
 				uriStore.EXPECT().ListByURI(gomock.Any(), "uri", 101).Return([]entity.RequestURI{{RequestID: "missing/1"}}, nil)
-				summaryStore.EXPECT().Get(gomock.Any(), "missing/1").Return(entity.RequestSummary{}, storage.ErrNotFound)
+				summaryStore.EXPECT().Get(gomock.Any(), "missing/1").Return(entity.RequestSummary{}, errs.ErrNotFound)
 			},
 			call: func(c *RequestSummaryController) error {
 				_, err := c.GetRequestSummaryByChangeURI(context.Background(), entity.GetRequestSummaryByChangeURIRequest{ChangeURI: "uri"})

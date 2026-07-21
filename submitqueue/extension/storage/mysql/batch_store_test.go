@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
@@ -85,7 +86,7 @@ func TestBatchStore_Get(t *testing.T) {
 					WillReturnError(sql.ErrNoRows)
 			},
 			wantErr:   true,
-			wantErrIs: storage.ErrNotFound,
+			wantErrIs: errs.ErrNotFound,
 		},
 		{
 			name: "query error",
@@ -227,7 +228,7 @@ func TestBatchStore_UpdateState(t *testing.T) {
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
 			wantErr:   true,
-			wantErrIs: storage.ErrVersionMismatch,
+			wantErrIs: errs.ErrVersionMismatch,
 		},
 		{
 			name: "exec error",
@@ -298,7 +299,7 @@ func TestBatchStore_UpdateScoreAndState(t *testing.T) {
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
 			wantErr:   true,
-			wantErrIs: storage.ErrVersionMismatch,
+			wantErrIs: errs.ErrVersionMismatch,
 		},
 		{
 			name: "exec error",

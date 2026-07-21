@@ -71,7 +71,7 @@ func (c *ListController) List(ctx context.Context, req entity.ListRequest) (resu
 		return entity.ListResult{}, fmt.Errorf("ListController invalid queue: %w", err)
 	}
 	if _, err := c.queueConfigs.Get(ctx, req.Queue); err != nil {
-		if errors.Is(err, queueconfig.ErrNotFound) {
+		if errors.Is(err, errs.ErrNotFound) {
 			return entity.ListResult{}, errs.NewUserError(&UnrecognizedQueueError{Queue: req.Queue})
 		}
 		return entity.ListResult{}, fmt.Errorf("ListController failed to look up queue %q: %w", req.Queue, err)

@@ -39,6 +39,10 @@ type classifier struct{}
 // must not call errors.Is / errors.As — the classifier-processor owns the
 // chain walk.
 func (classifier) Classify(err error) errs.Verdict {
+	if err == errs.ErrVersionMismatch {
+		return errs.InfraRetryable
+	}
+
 	// Cancellation signals that the caller aborted the work in flight
 	// (process shutdown, deadline on the inbound RPC, parent operation gone) —
 	// it is not a statement about the work itself being invalid. The same

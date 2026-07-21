@@ -20,8 +20,8 @@ package defaultconfig
 import (
 	"context"
 
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/stovepipe/entity"
-	"github.com/uber/submitqueue/stovepipe/extension/queueconfig"
 )
 
 const (
@@ -40,7 +40,7 @@ func NewStore() Store {
 // Get returns the default configuration for any non-empty queue name.
 func (Store) Get(_ context.Context, name string) (entity.QueueConfig, error) {
 	if name == "" {
-		return entity.QueueConfig{}, queueconfig.ErrNotFound
+		return entity.QueueConfig{}, errs.ErrNotFound
 	}
 	return entity.QueueConfig{
 		Name:            name,

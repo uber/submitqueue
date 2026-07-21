@@ -31,11 +31,11 @@ type BuildStore interface {
 	// Returns ErrAlreadyExists if a build with the same ID already exists.
 	Create(ctx context.Context, build entity.Build) error
 
-	// Get retrieves a build by ID. Returns ErrNotFound if the build is not found.
+	// Get retrieves a build by ID. Returns errs.ErrNotFound if the build is not found.
 	Get(ctx context.Context, id string) (entity.Build, error)
 
 	// Update persists the mutable fields of build if the currently stored version matches
-	// oldVersion, writing newVersion as the new version. Returns ErrVersionMismatch if the
+	// oldVersion, writing newVersion as the new version. Returns errs.ErrVersionMismatch if the
 	// stored version does not match (including when the build does not exist).
 	//
 	// Version arithmetic is owned by the caller: it computes newVersion (typically oldVersion+1)

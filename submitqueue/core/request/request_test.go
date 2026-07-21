@@ -23,8 +23,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 )
 
@@ -110,11 +110,11 @@ func TestGetCurrentStateFromRequestLog(t *testing.T) {
 func TestGetCurrentStateFromRequestLog_NoRecords(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockStore := storagemock.NewMockRequestLogStore(ctrl)
-	mockStore.EXPECT().List(gomock.Any(), "q/1").Return(nil, storage.ErrNotFound)
+	mockStore.EXPECT().List(gomock.Any(), "q/1").Return(nil, errs.ErrNotFound)
 
 	_, err := GetCurrentStateFromRequestLog(context.Background(), mockStore, "q/1")
 	assert.Error(t, err)
-	assert.True(t, storage.IsNotFound(err))
+	assert.ErrorIs(t, err, errs.ErrNotFound)
 }
 
 func TestGetCurrentStateFromRequestLog_StoreError(t *testing.T) {

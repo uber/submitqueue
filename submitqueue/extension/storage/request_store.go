@@ -24,7 +24,7 @@ import (
 
 // RequestStore is an interface that defines methods for managing land requests in the database.
 type RequestStore interface {
-	// Get retrieves a land request by ID. Returns ErrNotFound if the request is not found.
+	// Get retrieves a land request by ID. Returns errs.ErrNotFound if the request is not found.
 	Get(ctx context.Context, id string) (entity.Request, error)
 
 	// Create creates a new land request. The request must have a unique ID already assigned.
@@ -32,7 +32,7 @@ type RequestStore interface {
 	Create(ctx context.Context, request entity.Request) error
 
 	// UpdateState updates the state of a land request to newState and the version to newVersion
-	// if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
+	// if the current persisted version matches oldVersion. If versions do not match, returns errs.ErrVersionMismatch.
 	// Version arithmetic is owned by the caller; the store performs a pure conditional write.
 	UpdateState(ctx context.Context, id string, oldVersion, newVersion int32, newState entity.RequestState) error
 }

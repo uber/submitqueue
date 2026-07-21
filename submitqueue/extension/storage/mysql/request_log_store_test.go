@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
@@ -131,7 +132,7 @@ func TestRequestLogStore_List(t *testing.T) {
 					WillReturnRows(rows)
 			},
 			wantErr:   true,
-			wantErrIs: storage.ErrNotFound,
+			wantErrIs: errs.ErrNotFound,
 		},
 		{
 			name:      "query error",

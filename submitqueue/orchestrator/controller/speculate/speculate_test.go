@@ -28,7 +28,6 @@ import (
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
@@ -455,7 +454,7 @@ func TestController_Process_CancellingNoBuildYet(t *testing.T) {
 	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
-	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
+	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, errs.ErrNotFound)
 	// No UpdateStatus expected.
 
 	depStore := storagemock.NewMockBatchDependentStore(ctrl)
@@ -485,7 +484,7 @@ func TestController_Process_CancellingNoDependents(t *testing.T) {
 	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
-	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
+	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, errs.ErrNotFound)
 
 	depStore := storagemock.NewMockBatchDependentStore(ctrl)
 	depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{BatchID: batch.ID, Dependents: []string{}, Version: 1}, nil)
@@ -514,7 +513,7 @@ func TestController_Process_CancellingNoDependents(t *testing.T) {
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
 }
 
-// storage.ErrVersionMismatch on the terminal CAS must surface as an error
+// errs.ErrVersionMismatch on the terminal CAS must surface as an error
 // with the underlying sentinel in the chain so the base controller can
 // classify it as retryable. The dependent fan-out and conclude publish must
 // NOT run if the terminal CAS failed — on redelivery the self-heal branch
@@ -526,10 +525,10 @@ func TestController_Process_CancellingTerminalCASVersionMismatch(t *testing.T) {
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
 	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).
-		Return(storage.ErrVersionMismatch)
+		Return(errs.ErrVersionMismatch)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
-	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
+	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, errs.ErrNotFound)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -554,7 +553,7 @@ func TestController_Process_CancellingTerminalCASVersionMismatch(t *testing.T) {
 
 	err = runProcess(t, ctrl, controller, batch.ID)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, storage.ErrVersionMismatch)
+	assert.ErrorIs(t, err, errs.ErrVersionMismatch)
 }
 
 // An unrecognized state must surface as an error so the message is nacked

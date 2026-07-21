@@ -32,7 +32,6 @@ import (
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/queueconfig"
 	qcmock "github.com/uber/submitqueue/submitqueue/extension/queueconfig/mock"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
@@ -272,7 +271,7 @@ func TestLand_ReturnsUnrecognizedQueueWhenStoreReportsNotFound(t *testing.T) {
 
 	cnt := countermock.NewMockCounter(ctrl)
 	qcs := qcmock.NewMockStore(ctrl)
-	qcs.EXPECT().Get(gomock.Any(), "missing-queue").Return(entity.QueueConfig{}, queueconfig.ErrNotFound)
+	qcs.EXPECT().Get(gomock.Any(), "missing-queue").Return(entity.QueueConfig{}, errs.ErrNotFound)
 
 	controller := NewLandController(zap.NewNop().Sugar(), tally.NoopScope, cnt, noopStorage(ctrl), qcs, newTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
@@ -365,7 +364,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 		),
 		queueStore.EXPECT().Get(gomock.Any(), "test-queue", gomock.Any(), "test-queue/123").DoAndReturn(
 			func(context.Context, string, int64, string) (entity.RequestQueueSummary, error) {
-				return entity.RequestQueueSummary{}, storage.ErrNotFound
+				return entity.RequestQueueSummary{}, errs.ErrNotFound
 			},
 		),
 		uriStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(

@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//platform/base/change:go_default_library",
         "//platform/base/mergestrategy:go_default_library",
+        "//platform/errs:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/storage:go_default_library",
         "//test/testutil:go_default_library",

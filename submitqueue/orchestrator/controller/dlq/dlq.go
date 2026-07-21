@@ -39,6 +39,7 @@ import (
 	"fmt"
 
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
 	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -75,7 +76,7 @@ func TopicKey(main consumer.TopicKey) consumer.TopicKey {
 func failRequest(ctx context.Context, store storage.Storage, registry consumer.TopicRegistry, logger *zap.SugaredLogger, requestID, lastError string) error {
 	request, err := store.GetRequestStore().Get(ctx, requestID)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, errs.ErrNotFound) {
 			logger.Warnw("dlq reconcile: request not found, skipping",
 				"request_id", requestID,
 			)
@@ -138,7 +139,7 @@ func failRequest(ctx context.Context, store storage.Storage, registry consumer.T
 func failBatch(ctx context.Context, store storage.Storage, registry consumer.TopicRegistry, logger *zap.SugaredLogger, batchID, lastError string) error {
 	batch, err := store.GetBatchStore().Get(ctx, batchID)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, errs.ErrNotFound) {
 			logger.Warnw("dlq reconcile: batch not found, skipping",
 				"batch_id", batchID,
 			)

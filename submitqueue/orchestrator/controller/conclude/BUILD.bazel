@@ -27,7 +27,6 @@ go_test(
         "//platform/extension/messagequeue/mock:go_default_library",
         "//submitqueue/core/topickey:go_default_library",
         "//submitqueue/entity:go_default_library",
-        "//submitqueue/extension/storage:go_default_library",
         "//submitqueue/extension/storage/mock:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",

@@ -23,6 +23,7 @@ import (
 
 	"github.com/uber-go/tally"
 
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -105,7 +106,7 @@ func (r *requestLogStore) List(ctx context.Context, requestID string) (ret []ent
 	}
 
 	if len(logs) == 0 {
-		return nil, fmt.Errorf("no request log records for request_id=%s: %w", requestID, storage.ErrNotFound)
+		return nil, fmt.Errorf("no request log records for request_id=%s: %w", requestID, errs.ErrNotFound)
 	}
 
 	return logs, nil

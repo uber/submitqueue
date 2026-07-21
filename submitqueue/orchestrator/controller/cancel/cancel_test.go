@@ -24,6 +24,7 @@ import (
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -111,7 +112,7 @@ func TestProcess_RequestNotFound_Retryable(t *testing.T) {
 	registry, _ := newRegistry(t, ctrl)
 
 	reqStore := storagemock.NewMockRequestStore(ctrl)
-	reqStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.Request{}, storage.ErrNotFound)
+	reqStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.Request{}, errs.ErrNotFound)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
@@ -119,7 +120,7 @@ func TestProcess_RequestNotFound_Retryable(t *testing.T) {
 	controller := newController(t, store, registry)
 	err := controller.Process(context.Background(), newDelivery(t, ctrl, cancelPayload(t, "q/1", ""), "q/1"))
 	require.Error(t, err)
-	assert.ErrorIs(t, err, storage.ErrNotFound)
+	assert.ErrorIs(t, err, errs.ErrNotFound)
 }
 
 func TestProcess_CancelsUnbatchedRequest(t *testing.T) {
@@ -188,7 +189,7 @@ func TestProcess_AlreadyCancelling_SkipsMarkCancelling(t *testing.T) {
 
 // TestProcess_MarkCancellingVersionMismatch_Retryable covers the case where the
 // first CAS (mark-cancelling) loses to a concurrent writer. The underlying
-// storage.ErrVersionMismatch must be preserved in the error chain so the base
+// errs.ErrVersionMismatch must be preserved in the error chain so the base
 // controller can classify it as retryable; the next pass re-fetches and
 // re-evaluates (possibly observing a terminal state and acking).
 func TestProcess_MarkCancellingVersionMismatch_Retryable(t *testing.T) {
@@ -201,7 +202,7 @@ func TestProcess_MarkCancellingVersionMismatch_Retryable(t *testing.T) {
 		ID: "q/1", Queue: "q", State: entity.RequestStateStarted, Version: 2,
 	}, nil)
 	reqStore.EXPECT().UpdateState(gomock.Any(), "q/1", int32(2), int32(3), entity.RequestStateCancelling).
-		Return(storage.ErrVersionMismatch)
+		Return(errs.ErrVersionMismatch)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
@@ -209,7 +210,7 @@ func TestProcess_MarkCancellingVersionMismatch_Retryable(t *testing.T) {
 	controller := newController(t, store, registry)
 	err := controller.Process(context.Background(), newDelivery(t, ctrl, cancelPayload(t, "q/1", ""), "q/1"))
 	require.Error(t, err)
-	assert.ErrorIs(t, err, storage.ErrVersionMismatch)
+	assert.ErrorIs(t, err, errs.ErrVersionMismatch)
 }
 
 func TestProcess_UnbatchedVersionMismatch_Retryable(t *testing.T) {
@@ -224,7 +225,7 @@ func TestProcess_UnbatchedVersionMismatch_Retryable(t *testing.T) {
 	gomock.InOrder(
 		reqStore.EXPECT().UpdateState(gomock.Any(), "q/1", int32(2), int32(3), entity.RequestStateCancelling).Return(nil),
 		reqStore.EXPECT().UpdateState(gomock.Any(), "q/1", int32(3), int32(4), entity.RequestStateCancelled).
-			Return(storage.ErrVersionMismatch),
+			Return(errs.ErrVersionMismatch),
 	)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
@@ -237,7 +238,7 @@ func TestProcess_UnbatchedVersionMismatch_Retryable(t *testing.T) {
 	controller := newController(t, store, registry)
 	err := controller.Process(context.Background(), newDelivery(t, ctrl, cancelPayload(t, "q/1", ""), "q/1"))
 	require.Error(t, err)
-	assert.ErrorIs(t, err, storage.ErrVersionMismatch)
+	assert.ErrorIs(t, err, errs.ErrVersionMismatch)
 }
 
 // TestProcess_BatchPath_HandsOffToSpeculate asserts the entire batch path:
@@ -341,7 +342,7 @@ func TestProcess_BatchAlreadyCancelling_RepublishesToSpeculate(t *testing.T) {
 
 // TestProcess_BatchIntentVersionMismatch_Retryable covers the case where the
 // intent CAS (mark batch Cancelling) loses to a concurrent batch state
-// transition (e.g. speculate just advanced it). storage.ErrVersionMismatch
+// transition (e.g. speculate just advanced it). errs.ErrVersionMismatch
 // must be preserved so the base controller can classify the failure as
 // retryable.
 func TestProcess_BatchIntentVersionMismatch_Retryable(t *testing.T) {
@@ -358,7 +359,7 @@ func TestProcess_BatchIntentVersionMismatch_Retryable(t *testing.T) {
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().GetByQueueAndStates(gomock.Any(), "q", gomock.Any()).Return([]entity.Batch{batch}, nil)
 	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelling).
-		Return(storage.ErrVersionMismatch)
+		Return(errs.ErrVersionMismatch)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
@@ -367,7 +368,7 @@ func TestProcess_BatchIntentVersionMismatch_Retryable(t *testing.T) {
 	controller := newController(t, store, registry)
 	err := controller.Process(context.Background(), newDelivery(t, ctrl, cancelPayload(t, "q/1", ""), "q/1"))
 	require.Error(t, err)
-	assert.ErrorIs(t, err, storage.ErrVersionMismatch)
+	assert.ErrorIs(t, err, errs.ErrVersionMismatch)
 }
 
 func TestProcess_DeserializeError(t *testing.T) {

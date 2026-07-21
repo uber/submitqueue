@@ -21,6 +21,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
@@ -61,7 +62,7 @@ func (m *Materializer) PersistLog(ctx context.Context, log entity.RequestLog) er
 			updated.Metadata = cloneMetadata(log.Metadata)
 
 			if err := m.store.GetRequestSummaryStore().Update(ctx, updated, oldVersion, newVersion); err != nil {
-				if errors.Is(err, storage.ErrVersionMismatch) {
+				if errors.Is(err, errs.ErrVersionMismatch) {
 					continue
 				}
 				return fmt.Errorf("failed to update request summary request_id=%s: %w", log.RequestID, err)
@@ -83,7 +84,7 @@ func (m *Materializer) repairPublicProjections(ctx context.Context, authoritativ
 	desired := queueSummaryFromSummary(authoritative)
 	for {
 		current, err := m.store.GetRequestQueueSummaryStore().Get(ctx, desired.Queue, desired.ReceivedAtMs, desired.RequestID)
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, errs.ErrNotFound) {
 			if err := m.createURIMappings(ctx, authoritative); err != nil {
 				return err
 			}
@@ -106,7 +107,7 @@ func (m *Materializer) repairPublicProjections(ctx context.Context, authoritativ
 			return nil
 		}
 		if err := m.store.GetRequestQueueSummaryStore().Update(ctx, desired, current.Version, desired.Version); err != nil {
-			if errors.Is(err, storage.ErrVersionMismatch) {
+			if errors.Is(err, errs.ErrVersionMismatch) {
 				continue
 			}
 			return fmt.Errorf("failed to update queue summary request_id=%s: %w", desired.RequestID, err)

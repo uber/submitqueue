@@ -24,6 +24,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
 
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -39,7 +40,7 @@ func NewRequestStore(db *sql.DB, scope tally.Scope) storage.RequestStore {
 	return &requestStore{db: db, scope: scope}
 }
 
-// Get retrieves a land request by ID. Returns ErrNotFound if the request is not found.
+// Get retrieves a land request by ID. Returns errs.ErrNotFound if the request is not found.
 func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, retErr error) {
 	op := metrics.Begin(r.scope, "get")
 	defer func() { op.Complete(retErr) }()
@@ -53,7 +54,7 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 	).Scan(&req.ID, &req.Queue, &changeURIsJSON, &req.LandStrategy, &req.State, &req.Version)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		return entity.Request{}, storage.WrapNotFound(err)
+		return entity.Request{}, fmt.Errorf("%w: %w", errs.ErrNotFound, err)
 	}
 	if err != nil {
 		return entity.Request{}, fmt.Errorf("failed to get request entity id=%s from the database: %w", id, err)
@@ -94,7 +95,7 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) (retE
 }
 
 // UpdateState updates the state of a land request to newState and the version to newVersion
-// if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
+// if the current persisted version matches oldVersion. If versions do not match, returns errs.ErrVersionMismatch.
 // Version arithmetic is owned by the caller; this is a pure conditional write.
 func (r *requestStore) UpdateState(ctx context.Context, id string, oldVersion, newVersion int32, newState entity.RequestState) (retErr error) {
 	op := metrics.Begin(r.scope, "update_state")
@@ -122,7 +123,7 @@ func (r *requestStore) UpdateState(ctx context.Context, id string, oldVersion, n
 	if rowsAffected != 1 {
 		return fmt.Errorf(
 			"version mismatch for request update: id=%q expected_version=%d newState=%v: %w",
-			id, oldVersion, newState, storage.ErrVersionMismatch,
+			id, oldVersion, newState, errs.ErrVersionMismatch,
 		)
 	}
 

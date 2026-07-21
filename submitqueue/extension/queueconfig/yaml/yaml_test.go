@@ -23,7 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/uber/submitqueue/submitqueue/extension/queueconfig"
+	"github.com/uber/submitqueue/platform/errs"
 )
 
 func writeTempYAML(t *testing.T, contents string) string {
@@ -136,7 +136,7 @@ func TestStore_Get(t *testing.T) {
 	t.Run("unknown queue returns ErrNotFound", func(t *testing.T) {
 		_, err := store.Get(context.Background(), "nope")
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, queueconfig.ErrNotFound))
+		assert.True(t, errors.Is(err, errs.ErrNotFound))
 	})
 }
 

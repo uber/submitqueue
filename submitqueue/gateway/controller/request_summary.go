@@ -16,6 +16,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/uber-go/tally"
@@ -55,7 +56,7 @@ func (c *RequestSummaryController) GetRequestSummaryByID(ctx context.Context, re
 
 	summary, err := c.requestSummaryStore.Get(ctx, req.ID)
 	if err != nil {
-		if storage.IsNotFound(err) {
+		if errors.Is(err, errs.ErrNotFound) {
 			return entity.RequestSummary{}, errs.NewUserError(&RequestNotFoundError{Sqid: req.ID})
 		}
 		return entity.RequestSummary{}, fmt.Errorf("GetRequestSummaryByID failed to get request summary sqid=%s: %w", req.ID, err)
@@ -95,7 +96,7 @@ func (c *RequestSummaryController) GetRequestSummaryByChangeURI(ctx context.Cont
 	for _, mapping := range mappings {
 		summary, err := c.requestSummaryStore.Get(ctx, mapping.RequestID)
 		if err != nil {
-			if storage.IsNotFound(err) {
+			if errors.Is(err, errs.ErrNotFound) {
 				return nil, &InternalConsistencyError{Message: fmt.Sprintf("request summary missing for mapped change URI %q and sqid %q", req.ChangeURI, mapping.RequestID)}
 			}
 			return nil, fmt.Errorf("GetRequestSummaryByChangeURI failed to get request summary change_uri=%s sqid=%s: %w", req.ChangeURI, mapping.RequestID, err)

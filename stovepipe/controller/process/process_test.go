@@ -31,7 +31,6 @@ import (
 	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	sourcecontrolmock "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/mock"
-	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
@@ -397,7 +396,7 @@ func TestProcessRederivesStrategyAfterQueueReload(t *testing.T) {
 			if tt.initialLastGreen != "" {
 				m.sourceControl.EXPECT().IsAncestor(gomock.Any(), tt.initialLastGreen, testURI).Return(true, nil)
 			}
-			m.queueStore.EXPECT().Update(gomock.Any(), initialClaim, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
+			m.queueStore.EXPECT().Update(gomock.Any(), initialClaim, int32(1), int32(2)).Return(errs.ErrVersionMismatch)
 			m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(reloadedQueue, nil)
 			m.sourceControl.EXPECT().IsAncestor(gomock.Any(), reloadedLastGreen, testURI).Return(true, nil)
 			m.queueStore.EXPECT().Update(gomock.Any(), claimedQueue, int32(2), int32(3)).Return(nil)
@@ -554,7 +553,7 @@ func TestProcess(t *testing.T) {
 					LatestRequestID: testID,
 					InFlightCount:   1,
 					Version:         1,
-				}, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
+				}, int32(1), int32(2)).Return(errs.ErrVersionMismatch)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
 					Name:            testQueue,
 					LatestRequestID: testID,
@@ -576,7 +575,7 @@ func TestProcess(t *testing.T) {
 				// First claim CAS loses to a concurrent writer.
 				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
 					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, Version: 1,
-				}, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
+				}, int32(1), int32(2)).Return(errs.ErrVersionMismatch)
 				// Reload: still latest, slot still free (version advanced by an unrelated field).
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
 					Name: testQueue, LatestRequestID: testID, Version: 2,
@@ -601,7 +600,7 @@ func TestProcess(t *testing.T) {
 				}, nil)
 				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
 					Name: testQueue, LatestRequestID: testID, InFlightCount: 1, Version: 1,
-				}, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
+				}, int32(1), int32(2)).Return(errs.ErrVersionMismatch)
 				// Reload: ingest stamped a newer head — our head is no longer latest.
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
 					Name: testQueue, LatestRequestID: "request/monorepo/main/9", Version: 2,
@@ -630,7 +629,7 @@ func TestProcess(t *testing.T) {
 				firstAttempt.State = entity.RequestStateProcessing
 				firstAttempt.BuildStrategy = entity.BuildStrategyIncrementalSinceGreen
 				firstAttempt.BaseURI = lastGreenURI
-				m.reqStore.EXPECT().Update(gomock.Any(), firstAttempt, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
+				m.reqStore.EXPECT().Update(gomock.Any(), firstAttempt, int32(1), int32(2)).Return(errs.ErrVersionMismatch)
 
 				reloaded := acceptedRequest(testID)
 				reloaded.Version = 2
@@ -659,7 +658,7 @@ func TestProcess(t *testing.T) {
 				updatedReq := acceptedRequest(testID)
 				updatedReq.State = entity.RequestStateProcessing
 				updatedReq.BuildStrategy = entity.BuildStrategyFull
-				m.reqStore.EXPECT().Update(gomock.Any(), updatedReq, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
+				m.reqStore.EXPECT().Update(gomock.Any(), updatedReq, int32(1), int32(2)).Return(errs.ErrVersionMismatch)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
 					ID: testID, Queue: testQueue, State: entity.RequestStateProcessing, Version: 2,
 				}, nil)
@@ -723,7 +722,7 @@ func TestProcess(t *testing.T) {
 				}, nil)
 				updated := acceptedRequest(testOlderID)
 				updated.State = entity.RequestStateSuperseded
-				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
+				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(errs.ErrVersionMismatch)
 				m.reqStore.EXPECT().Get(gomock.Any(), testOlderID).Return(entity.Request{
 					ID: testOlderID, Queue: testQueue, State: entity.RequestStateSuperseded, Version: 2,
 				}, nil)
@@ -747,7 +746,7 @@ func TestProcess(t *testing.T) {
 			wantErr:   true,
 			wantRetry: true,
 			setup: func(m processMocks) {
-				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{}, storage.ErrNotFound)
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{}, errs.ErrNotFound)
 			},
 		},
 		{
@@ -756,7 +755,7 @@ func TestProcess(t *testing.T) {
 			wantRetry: true,
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
-				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{}, storage.ErrNotFound)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{}, errs.ErrNotFound)
 			},
 		},
 		{

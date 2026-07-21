@@ -16,6 +16,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -83,7 +84,7 @@ func (c *CancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 
 	// Verify the sqid exists before recording intent or publishing.
 	if _, err := c.requestSummaryStore.Get(ctx, req.ID); err != nil {
-		if storage.IsNotFound(err) {
+		if errors.Is(err, errs.ErrNotFound) {
 			c.metricsScope.Counter("cancel_request_not_found").Inc(1)
 			return errs.NewUserError(&RequestNotFoundError{Sqid: req.ID})
 		}

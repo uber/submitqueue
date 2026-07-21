@@ -39,7 +39,6 @@ go_test(
         "//submitqueue/core/topickey:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/changeprovider/mock:go_default_library",
-        "//submitqueue/extension/storage:go_default_library",
         "//submitqueue/extension/storage/mock:go_default_library",
         "//submitqueue/extension/validator:go_default_library",
         "//submitqueue/extension/validator/mock:go_default_library",

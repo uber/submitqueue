@@ -30,11 +30,11 @@ type RequestStore interface {
 	// Returns ErrAlreadyExists if a request with the same ID already exists.
 	Create(ctx context.Context, request entity.Request) error
 
-	// Get retrieves a request by ID. Returns ErrNotFound if the request is not found.
+	// Get retrieves a request by ID. Returns errs.ErrNotFound if the request is not found.
 	Get(ctx context.Context, id string) (entity.Request, error)
 
 	// Update persists the mutable fields of request if the currently stored version matches
-	// oldVersion, writing newVersion as the new version. Returns ErrVersionMismatch if the
+	// oldVersion, writing newVersion as the new version. Returns errs.ErrVersionMismatch if the
 	// stored version does not match (including when the request does not exist).
 	//
 	// Version arithmetic is owned by the caller: it computes newVersion (typically oldVersion+1)

@@ -33,7 +33,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	changeprovidermock "github.com/uber/submitqueue/submitqueue/extension/changeprovider/mock"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"github.com/uber/submitqueue/submitqueue/extension/validator"
 	validatormock "github.com/uber/submitqueue/submitqueue/extension/validator/mock"
@@ -458,7 +457,7 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 				mockReqStore.EXPECT().Get(gomock.Any(), id).Return(req, nil)
 			}
 			for id := range tt.ownerNotFound {
-				mockReqStore.EXPECT().Get(gomock.Any(), id).Return(entity.Request{}, storage.WrapNotFound(fmt.Errorf("missing")))
+				mockReqStore.EXPECT().Get(gomock.Any(), id).Return(entity.Request{}, fmt.Errorf("%w: missing", errs.ErrNotFound))
 			}
 			for id, e := range tt.ownerErr {
 				mockReqStore.EXPECT().Get(gomock.Any(), id).Return(entity.Request{}, e)

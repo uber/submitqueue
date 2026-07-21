@@ -22,8 +22,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/queueconfig"
 	yamlv3 "gopkg.in/yaml.v3"
 )
 
@@ -73,11 +73,11 @@ func NewStore(path string) (Store, error) {
 	return Store{byName: byName, all: all}, nil
 }
 
-// Get returns the configuration for the named queue, or queueconfig.ErrNotFound.
+// Get returns the configuration for the named queue, or errs.ErrNotFound.
 func (s Store) Get(_ context.Context, name string) (entity.QueueConfig, error) {
 	cfg, ok := s.byName[name]
 	if !ok {
-		return entity.QueueConfig{}, queueconfig.ErrNotFound
+		return entity.QueueConfig{}, errs.ErrNotFound
 	}
 	return cfg, nil
 }
