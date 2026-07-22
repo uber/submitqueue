@@ -19,6 +19,8 @@ package storage
 import (
 	"errors"
 	"fmt"
+
+	"github.com/uber/submitqueue/platform/errs"
 )
 
 // ErrNotFound is returned by storage implementations when the requested record is not found in the database.
@@ -39,8 +41,8 @@ var ErrAlreadyExists = errors.New("record already exists")
 
 // ErrVersionMismatch is returned by storage implementations when a conditional (CAS) update finds that
 // the stored version does not match the expected version. It backs optimistic locking, letting callers
-// retry or converge instead of overwriting a concurrent change.
-var ErrVersionMismatch = errors.New("version mismatch")
+// retry or converge instead of overwriting a concurrent change. It is intrinsically a retryable infrastructure error.
+var ErrVersionMismatch = errs.NewRetryableError(errors.New("version mismatch"))
 
 // Storage is a factory interface that aggregates all entity stores into a single injectable dependency.
 type Storage interface {

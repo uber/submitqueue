@@ -47,7 +47,7 @@ For a delivery carrying build id `B`:
      continue with the STORED status as authoritative (see Edge cases).
    - otherwise persist via BuildStore.Update(ctx, Build{...Status: status}, oldVersion, newVersion):
      - newVersion = Build.Version + 1; assign Build.Version = newVersion only on success.
-     - ErrVersionMismatch -> retryable (a concurrent writer moved the row; reload and re-check).
+     - ErrVersionMismatch -> return with its declaration-level retryable classification (a concurrent writer moved the row; reload and re-check).
      - with the write-once rule, accepted -> running -> {succeeded|failed|cancelled} is monotonic
        by mechanism, not by assumption about the backend.
 
@@ -66,7 +66,7 @@ For a delivery carrying build id `B`:
 
 **Why `record` hears only terminal signals**: `record` has no non-terminal work — by its own contract a non-terminal signal would be a pure no-op — and step 7 already branches on terminality to decide whether to keep polling, so gating the publish costs nothing and spares `record` a no-op delivery on every poll tick of every running build. Crash-safety is unaffected: a crash between the terminal `Update` and the publish redelivers the message; step 5 re-polls (the runner reports the same terminal status), step 6 no-ops, step 7 publishes. This is a deliberate divergence from SubmitQueue, whose buildsignal republishes to `speculate` on every tick — sound there because speculate is a state machine that may act on any signal; stovepipe has no such consumer.
 
-**Why step 6 guards on status and makes terminal write-once**: an unchanged status skips the CAS write entirely, so a long build being polled every couple of seconds doesn't churn `Build.Version` on every tick — the version only advances on a real state transition. The write-once rule exists because CAS alone cannot provide it: optimistic locking defends against *concurrent* writers, but a later delivery that polls a flaky backend and sees a different terminal status would CAS cleanly against the current version and overwrite (see Edge cases). A given `Build` has a single poll partition (see [Partitioning](doc/rfc/stovepipe/steps/build.md#partitioning)), so the only writer racing the CAS is a redelivery of the same message (e.g. after a lapsed visibility lease); `ErrVersionMismatch` there is handled as retryable and converges.
+**Why step 6 guards on status and makes terminal write-once**: an unchanged status skips the CAS write entirely, so a long build being polled every couple of seconds doesn't churn `Build.Version` on every tick — the version only advances on a real state transition. The write-once rule exists because CAS alone cannot provide it: optimistic locking defends against *concurrent* writers, but a later delivery that polls a flaky backend and sees a different terminal status would CAS cleanly against the current version and overwrite (see Edge cases). A given `Build` has a single poll partition (see [Partitioning](doc/rfc/stovepipe/steps/build.md#partitioning)), so the only writer racing the CAS is a redelivery of the same message (e.g. after a lapsed visibility lease); `ErrVersionMismatch` carries a retryable classification and converges on redelivery.
 
 ## Status: shaped like SubmitQueue's, not shared code
 
@@ -101,7 +101,7 @@ Per `platform/errs`'s non-retryable-by-default rule (see [platform/errs/README.m
 | Failure | Disposition | Why |
 |---|---|---|
 | `Status` call | raw error; classifier decides | Deliberately left open rather than fixed either way — runner timeout/connection is transient, "runner not deployed for this queue" is not, and only a backend classifier can tell them apart. |
-| `Update` CAS conflict (`ErrVersionMismatch`) | retryable | A concurrent (redelivered) writer moved the row; reload and re-check converges. |
+| `Update` CAS conflict (`ErrVersionMismatch`) | declaration-level retryable | A concurrent (redelivered) writer moved the row; reload and re-check converges. |
 | `PublishAfter` re-poll | retryable | The poll heartbeat; it runs only after status/persist/record all succeeded, so a transient enqueue blip is worth replaying to `MaxAttempts` before dead-lettering. |
 
 `Build`/`Request` not found (`storage.ErrNotFound`) are **not** in this table: storage is required to be read-after-write consistent (see [storage README](stovepipe/extension/storage/README.md)), so a miss here is already the correct default (non-retryable, straight to DLQ) rather than a departure worth overriding.

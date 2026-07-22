@@ -515,8 +515,8 @@ func TestController_Process_CancellingNoDependents(t *testing.T) {
 }
 
 // storage.ErrVersionMismatch on the terminal CAS must surface as an error
-// with the underlying sentinel in the chain so the base controller can
-// classify it as retryable. The dependent fan-out and conclude publish must
+// with the underlying sentinel in the chain so its intrinsic retryable
+// classification survives. The dependent fan-out and conclude publish must
 // NOT run if the terminal CAS failed — on redelivery the self-heal branch
 // will pick up the (now-terminal) state and complete the fan-out.
 func TestController_Process_CancellingTerminalCASVersionMismatch(t *testing.T) {

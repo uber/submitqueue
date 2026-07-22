@@ -317,7 +317,7 @@ func TestController_Process(t *testing.T) {
 			retryable: false,
 		},
 		{
-			name: "request store update failure returns error",
+			name: "request store version mismatch is retryable",
 			batch: entity.Batch{
 				ID:       "test-queue/batch/6",
 				Queue:    "test-queue",
@@ -347,7 +347,7 @@ func TestController_Process(t *testing.T) {
 				return mockStorage
 			},
 			wantErr:   true,
-			retryable: false,
+			retryable: true,
 		},
 		{
 			name: "empty contains list succeeds",
