@@ -20,7 +20,21 @@ go_library(
 go_test(
     name = "go_default_test",
     srcs = ["git_pusher_test.go"],
+    data = [
+        "@git",
+        "@git//:git-remote-http",
+        "@git//:git_receive_pack",
+        "@git//:git_remote_https",
+        "@git//:git_upload_archive",
+        "@git//:git_upload_pack",
+        "@git//:templates",
+        "@git//:templates/description",
+    ],
     embed = [":go_default_library"],
+    env = {
+        "SUBMITQUEUE_TEST_GIT": "$(location @git//:git)",
+        "SUBMITQUEUE_TEST_GIT_TEMPLATE_DESCRIPTION": "$(location @git//:templates/description)",
+    },
     deps = [
         "//platform/base/change:go_default_library",
         "//submitqueue/core/changeset/fake:go_default_library",

@@ -54,7 +54,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -74,6 +76,17 @@ import (
 // pathologically busy remote.
 const defaultMaxPushAttempts = 10
 
+// GitRuntime identifies the explicitly provided Git runtime used by the Pusher.
+type GitRuntime struct {
+	// Executable is the absolute path to the Git executable.
+	Executable string
+	// ExecPath is the absolute directory containing Git's helper executables.
+	ExecPath string
+	// TemplateDir is the absolute directory containing Git's repository
+	// templates.
+	TemplateDir string
+}
+
 // Params holds the dependencies for the git Pusher.
 type Params struct {
 	// CheckoutPath is the absolute path to an existing git checkout that the
@@ -90,6 +103,8 @@ type Params struct {
 	Logger *zap.SugaredLogger
 	// MetricsScope is the metrics scope for instrumentation.
 	MetricsScope tally.Scope
+	// Runtime is the pinned Git runtime used for every invocation.
+	Runtime GitRuntime
 	// MaxPushAttempts caps how many times Push retries the full
 	// fetch/reset/cherry-pick/push cycle when the remote tip moves under
 	// it. Defaults to defaultMaxPushAttempts when zero or negative.
@@ -105,6 +120,7 @@ type gitPusher struct {
 	resolver        changeset.Resolver
 	logger          *zap.SugaredLogger
 	metricsScope    tally.Scope
+	runtime         GitRuntime
 	maxPushAttempts int
 
 	// mu serializes concurrent Push calls — the underlying checkout cannot
@@ -117,7 +133,11 @@ var _ pusher.Pusher = (*gitPusher)(nil)
 
 // NewPusher constructs a new git-backed Pusher operating against the given
 // checkout. The checkout must already exist and have the configured remote.
-func NewPusher(params Params) pusher.Pusher {
+// Runtime paths must be absolute.
+func NewPusher(params Params) (pusher.Pusher, error) {
+	if err := params.Runtime.validate(); err != nil {
+		return nil, err
+	}
 	maxAttempts := params.MaxPushAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = defaultMaxPushAttempts
@@ -129,8 +149,25 @@ func NewPusher(params Params) pusher.Pusher {
 		resolver:        params.Resolver,
 		logger:          params.Logger.Named("git_pusher"),
 		metricsScope:    params.MetricsScope.SubScope("git_pusher"),
+		runtime:         params.Runtime,
 		maxPushAttempts: maxAttempts,
+	}, nil
+}
+
+func (r GitRuntime) validate() error {
+	for name, path := range map[string]string{
+		"executable":   r.Executable,
+		"exec path":    r.ExecPath,
+		"template dir": r.TemplateDir,
+	} {
+		if path == "" {
+			return fmt.Errorf("git runtime %s is required", name)
+		}
+		if !filepath.IsAbs(path) {
+			return fmt.Errorf("git runtime %s must be absolute: %q", name, path)
+		}
 	}
+	return nil
 }
 
 // Push fulfils the pusher.Pusher contract.
@@ -431,8 +468,7 @@ func (p *gitPusher) push(ctx context.Context) error {
 // run executes a `git` command in the checkout. Returns captured stdout and
 // an error that includes captured stderr for diagnostics.
 func (p *gitPusher) run(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = p.checkoutPath
+	cmd := newGitCommand(ctx, p.runtime, p.checkoutPath, args...)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
@@ -449,12 +485,41 @@ func (p *gitPusher) run(ctx context.Context, stdin []byte, args ...string) ([]by
 // and failure. Used when the caller needs to inspect git's diagnostic
 // output (e.g., to detect "previous cherry-pick is now empty").
 func (p *gitPusher) runCombined(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = p.checkoutPath
+	cmd := newGitCommand(ctx, p.runtime, p.checkoutPath, args...)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
 	return cmd.CombinedOutput()
+}
+
+// newGitCommand constructs a Git command without inheriting the caller's
+// environment. The executable and helper paths come from the pinned runtime;
+// repository-local configuration remains an intentional input.
+func newGitCommand(ctx context.Context, runtime GitRuntime, dir string, args ...string) *exec.Cmd {
+	gitArgs := make([]string, 0, len(args)+3)
+	gitArgs = append(gitArgs,
+		"--exec-path="+runtime.ExecPath,
+		"-c", "init.templateDir="+runtime.TemplateDir,
+	)
+	gitArgs = append(gitArgs, args...)
+
+	cmd := exec.CommandContext(ctx, runtime.Executable, gitArgs...)
+	cmd.Dir = dir
+	cmd.Env = []string{
+		"HOME=" + filepath.Join(dir, ".submitqueue-git-home"),
+		"XDG_CONFIG_HOME=" + filepath.Join(dir, ".submitqueue-git-home", "xdg"),
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL=" + os.DevNull,
+		"GIT_ATTR_NOSYSTEM=1",
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_PAGER=cat",
+		"GIT_EDITOR=:",
+		"GIT_EXEC_PATH=" + runtime.ExecPath,
+		"GIT_TEMPLATE_DIR=" + runtime.TemplateDir,
+		"LC_ALL=C",
+		"LANG=C",
+	}
+	return cmd
 }
 
 // isRedundantCherryPick reports whether git's cherry-pick output indicates
