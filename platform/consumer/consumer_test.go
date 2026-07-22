@@ -47,6 +47,14 @@ type testController struct {
 	processFunc   func(context.Context, Delivery) error
 }
 
+type testClassifier struct {
+	verdict errs.Verdict
+}
+
+func (c testClassifier) Classify(error) errs.Verdict {
+	return c.verdict
+}
+
 func (c *testController) Process(ctx context.Context, delivery Delivery) error {
 	if c.processFunc == nil {
 		return nil
@@ -431,21 +439,46 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 		name           string
 		handlerError   error
 		nackError      error
-		expectSuccess  bool
+		processor      errs.ErrorProcessor
+		expectedTags   map[string]string
 		expectAckCount bool
 	}{
 		{
 			name:           "success with ack",
 			handlerError:   nil,
 			nackError:      nil,
-			expectSuccess:  true,
+			processor:      errs.NewClassifierProcessor(),
+			expectedTags:   map[string]string{"result": "success"},
 			expectAckCount: true,
 		},
 		{
-			name:           "failure with nack",
-			handlerError:   errs.NewRetryableError(fmt.Errorf("handler failed")),
-			nackError:      nil,
-			expectSuccess:  false,
+			name:         "classified failure with nack",
+			handlerError: fmt.Errorf("handler failed"),
+			nackError:    nil,
+			processor: errs.NewClassifierProcessor(testClassifier{
+				verdict: errs.InfraDependencyRetryable,
+			}),
+			expectedTags: map[string]string{
+				"result":       "error",
+				"error_origin": "infra",
+				"retryable":    "true",
+				"dependency":   "true",
+			},
+			expectAckCount: false,
+		},
+		{
+			name:         "classified cancellation with nack",
+			handlerError: context.Canceled,
+			nackError:    nil,
+			processor: errs.NewClassifierProcessor(testClassifier{
+				verdict: errs.InfraRetryable,
+			}),
+			expectedTags: map[string]string{
+				"result":       "cancel",
+				"error_origin": "infra",
+				"retryable":    "true",
+				"dependency":   "false",
+			},
 			expectAckCount: false,
 		},
 	}
@@ -465,7 +498,7 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 
 			reg := newRegistry(t, mockQ, testTopicKeyStart, "test-group")
 
-			testC := New(logger, testScope, reg, errs.NewClassifierProcessor())
+			testC := New(logger, testScope, reg, tt.processor)
 
 			handler := &testController{}
 			setupController(handler, "test-handler", testTopicKeyStart, "test-group",
@@ -500,11 +533,10 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 				if strings.Contains(histogram.Name(), "controller_latency") {
 					foundLatency = true
 					tags := histogram.Tags()
-					if tt.expectSuccess {
-						assert.Equal(t, "true", tags["success"])
-					} else {
-						assert.Equal(t, "false", tags["success"])
+					for key, value := range tt.expectedTags {
+						assert.Equal(t, value, tags[key])
 					}
+					assert.NotContains(t, tags, "success")
 				}
 			}
 			assert.True(t, foundLatency, "Should have controller_latency metric")
@@ -522,6 +554,59 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 			}
 
 			_ = testC.Stop(30000)
+		})
+	}
+}
+
+func TestControllerResultTags(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected map[string]string
+	}{
+		{
+			name:     "success",
+			expected: map[string]string{"result": "success"},
+		},
+		{
+			name: "user error",
+			err:  errs.NewUserError(fmt.Errorf("invalid request")),
+			expected: map[string]string{
+				"result":       "error",
+				"error_origin": "user",
+				"retryable":    "false",
+				"dependency":   "false",
+			},
+		},
+		{
+			name: "retryable dependency error",
+			err:  errs.NewRetryableDependencyError(fmt.Errorf("database unavailable")),
+			expected: map[string]string{
+				"result":       "error",
+				"error_origin": "infra",
+				"retryable":    "true",
+				"dependency":   "true",
+			},
+		},
+		{
+			name: "cancellation",
+			err:  errs.NewRetryableError(context.Canceled),
+			expected: map[string]string{
+				"result":       "cancel",
+				"error_origin": "infra",
+				"retryable":    "true",
+				"dependency":   "false",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := make(map[string]string)
+			for _, tag := range controllerResultTags(tt.err) {
+				actual[tag.Key] = tag.Value
+			}
+			assert.Equal(t, tt.expected, actual)
 		})
 	}
 }
