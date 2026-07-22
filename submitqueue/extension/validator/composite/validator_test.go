@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package composite_test
+package composite
 
 import (
 	"context"
@@ -23,7 +23,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/validator"
-	"github.com/uber/submitqueue/submitqueue/extension/validator/composite"
 	validatormock "github.com/uber/submitqueue/submitqueue/extension/validator/mock"
 	"go.uber.org/mock/gomock"
 )
@@ -91,7 +90,7 @@ func TestNew(t *testing.T) {
 			v2 := validatormock.NewMockValidator(ctrl)
 			validators := tt.setup(v1, v2)
 
-			v := composite.New(validators)
+			v := New(validators)
 
 			err := v.Validate(context.Background(), entity.Request{})
 			if len(tt.wantErrs) == 0 {

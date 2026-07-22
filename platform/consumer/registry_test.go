@@ -12,17 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package consumer_test
+package consumer
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/uber/submitqueue/platform/consumer"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
-	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"go.uber.org/mock/gomock"
 )
 
@@ -30,10 +28,10 @@ func TestNewTopicRegistry(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockQ := queuemock.NewMockQueue(ctrl)
 
-	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{
+	registry, err := NewTopicRegistry(
+		[]TopicConfig{
 			{
-				Key:   topickey.TopicKeyStart,
+				Key:   testTopicKeyStart,
 				Name:  "request",
 				Queue: mockQ,
 				Subscription: extqueue.DefaultSubscriptionConfig(
@@ -44,15 +42,15 @@ func TestNewTopicRegistry(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	q, ok := registry.Queue(topickey.TopicKeyStart)
+	q, ok := registry.Queue(testTopicKeyStart)
 	require.True(t, ok)
 	assert.Equal(t, mockQ, q)
 
-	name, ok := registry.TopicName(topickey.TopicKeyStart)
+	name, ok := registry.TopicName(testTopicKeyStart)
 	require.True(t, ok)
 	assert.Equal(t, "request", name)
 
-	cfg, ok := registry.SubscriptionConfig(topickey.TopicKeyStart, "group-a")
+	cfg, ok := registry.SubscriptionConfig(testTopicKeyStart, "group-a")
 	require.True(t, ok)
 	assert.Equal(t, "group-a", cfg.ConsumerGroup)
 }
@@ -86,9 +84,9 @@ func TestNewTopicRegistry_InvalidTopicName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := consumer.NewTopicRegistry(
-				[]consumer.TopicConfig{
-					{Key: topickey.TopicKeyStart, Name: tt.topicName},
+			_, err := NewTopicRegistry(
+				[]TopicConfig{
+					{Key: testTopicKeyStart, Name: tt.topicName},
 				},
 			)
 			require.Error(t, err)
@@ -99,55 +97,55 @@ func TestNewTopicRegistry_InvalidTopicName(t *testing.T) {
 func TestTopicRegistry_SubscriptionConfig(t *testing.T) {
 	tests := []struct {
 		name          string
-		configs       []consumer.TopicConfig
-		lookupKey     consumer.TopicKey
+		configs       []TopicConfig
+		lookupKey     TopicKey
 		lookupGroup   string
 		expectFound   bool
 		expectedGroup string
 	}{
 		{
 			name: "found group-a",
-			configs: []consumer.TopicConfig{
+			configs: []TopicConfig{
 				{
-					Key:  topickey.TopicKeyStart,
+					Key:  testTopicKeyStart,
 					Name: "request",
 					Subscription: extqueue.DefaultSubscriptionConfig(
 						"worker-1", "group-a",
 					),
 				},
 			},
-			lookupKey:     topickey.TopicKeyStart,
+			lookupKey:     testTopicKeyStart,
 			lookupGroup:   "group-a",
 			expectFound:   true,
 			expectedGroup: "group-a",
 		},
 		{
 			name: "not found by group",
-			configs: []consumer.TopicConfig{
+			configs: []TopicConfig{
 				{
-					Key:  topickey.TopicKeyStart,
+					Key:  testTopicKeyStart,
 					Name: "request",
 					Subscription: extqueue.DefaultSubscriptionConfig(
 						"worker-1", "group-a",
 					),
 				},
 			},
-			lookupKey:   topickey.TopicKeyStart,
+			lookupKey:   testTopicKeyStart,
 			lookupGroup: "nonexistent",
 			expectFound: false,
 		},
 		{
 			name: "not found by topic key",
-			configs: []consumer.TopicConfig{
+			configs: []TopicConfig{
 				{
-					Key:  topickey.TopicKeyStart,
+					Key:  testTopicKeyStart,
 					Name: "request",
 					Subscription: extqueue.DefaultSubscriptionConfig(
 						"worker-1", "group-a",
 					),
 				},
 			},
-			lookupKey:   consumer.TopicKey("other"),
+			lookupKey:   TopicKey("other"),
 			lookupGroup: "group-a",
 			expectFound: false,
 		},
@@ -155,7 +153,7 @@ func TestTopicRegistry_SubscriptionConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			registry, err := consumer.NewTopicRegistry(tt.configs)
+			registry, err := NewTopicRegistry(tt.configs)
 			require.NoError(t, err)
 			config, ok := registry.SubscriptionConfig(tt.lookupKey, tt.lookupGroup)
 
@@ -174,40 +172,40 @@ func TestTopicRegistry_Queue_PerTopic(t *testing.T) {
 	mockQ1 := queuemock.NewMockQueue(ctrl)
 	mockQ2 := queuemock.NewMockQueue(ctrl)
 
-	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{
-			{Key: topickey.TopicKeyStart, Name: "request", Queue: mockQ1},
-			{Key: topickey.TopicKeyValidate, Name: "validate", Queue: mockQ2},
+	registry, err := NewTopicRegistry(
+		[]TopicConfig{
+			{Key: testTopicKeyStart, Name: "request", Queue: mockQ1},
+			{Key: testTopicKeyValidate, Name: "validate", Queue: mockQ2},
 		},
 	)
 	require.NoError(t, err)
 
-	q1, ok := registry.Queue(topickey.TopicKeyStart)
+	q1, ok := registry.Queue(testTopicKeyStart)
 	require.True(t, ok)
 	assert.Equal(t, mockQ1, q1)
 
-	q2, ok := registry.Queue(topickey.TopicKeyValidate)
+	q2, ok := registry.Queue(testTopicKeyValidate)
 	require.True(t, ok)
 	assert.Equal(t, mockQ2, q2)
 
-	_, ok = registry.Queue(consumer.TopicKey("nonexistent"))
+	_, ok = registry.Queue(TopicKey("nonexistent"))
 	assert.False(t, ok)
 }
 
 func TestTopicKey_String(t *testing.T) {
 	tests := []struct {
 		name     string
-		key      consumer.TopicKey
+		key      TopicKey
 		expected string
 	}{
 		{
 			name:     "predefined topic key",
-			key:      topickey.TopicKeyStart,
+			key:      testTopicKeyStart,
 			expected: "start",
 		},
 		{
 			name:     "custom topic key",
-			key:      consumer.TopicKey("custom"),
+			key:      TopicKey("custom"),
 			expected: "custom",
 		},
 	}
@@ -223,18 +221,18 @@ func TestTopicRegistry_TopicName(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockQ := queuemock.NewMockQueue(ctrl)
 
-	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{
-			{Key: topickey.TopicKeyStart, Name: "my-custom-request", Queue: mockQ},
+	registry, err := NewTopicRegistry(
+		[]TopicConfig{
+			{Key: testTopicKeyStart, Name: "my-custom-request", Queue: mockQ},
 		},
 	)
 	require.NoError(t, err)
 
-	name, ok := registry.TopicName(topickey.TopicKeyStart)
+	name, ok := registry.TopicName(testTopicKeyStart)
 	require.True(t, ok)
 	assert.Equal(t, "my-custom-request", name)
 
-	_, ok = registry.TopicName(consumer.TopicKey("nonexistent"))
+	_, ok = registry.TopicName(TopicKey("nonexistent"))
 	assert.False(t, ok)
 }
 
@@ -258,7 +256,7 @@ func TestValidateTopicName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := consumer.ValidateTopicName(tt.topic)
+			err := ValidateTopicName(tt.topic)
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
