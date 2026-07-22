@@ -30,6 +30,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	scorermock "github.com/uber/submitqueue/submitqueue/extension/scorer/mock"
+	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
@@ -329,7 +330,7 @@ func TestController_InterfaceImplementation(t *testing.T) {
 
 // A batch already in a terminal state (e.g. cancelled while the score message
 // was in flight) must be short-circuited: no scoring, no UpdateScoreAndState,
-// and no fan-out — score owns no terminal write, so it owns no recovery; the
+// and no fan-out. Score owns no terminal write, so it owns no recovery; the
 // controller that wrote the terminal state already published to conclude, and
 // speculate's terminal self-heal republishes on redelivery.
 func TestController_Process_TerminalShortCircuit(t *testing.T) {
@@ -351,13 +352,13 @@ func TestController_Process_TerminalShortCircuit(t *testing.T) {
 			mockStorage := storagemock.NewMockStorage(ctrl)
 			mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
 
-			// Scorer with no EXPECTs — must not be called.
+			// The scorer has no expectations and must not be called.
 			mockScorer := scorermock.NewMockScorer(ctrl)
 
 			logger := zaptest.NewLogger(t).Sugar()
 			scope := tally.NoopScope
 
-			// Publisher with no EXPECTs — must not be called (no fan-out on terminal).
+			// The publisher has no expectations and must not be called for a terminal batch.
 			mockPub := queuemock.NewMockPublisher(ctrl)
 
 			mockQ := queuemock.NewMockQueue(ctrl)
@@ -389,7 +390,7 @@ func TestController_Process_TerminalShortCircuit(t *testing.T) {
 // A batch in BatchStateCancelling must be silently acked: no scoring, no
 // UpdateScoreAndState, and crucially NO conclude publish (speculate owns the
 // terminal write to Cancelled and the downstream dependent / conclude
-// publishes — conclude would also error on a non-terminal Cancelling batch).
+// publishes because conclude would also error on a non-terminal Cancelling batch).
 func TestController_Process_CancellingShortCircuit(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
@@ -402,13 +403,13 @@ func TestController_Process_CancellingShortCircuit(t *testing.T) {
 	mockStorage := storagemock.NewMockStorage(ctrl)
 	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
 
-	// Scorer with no EXPECTs — must not be called.
+	// The scorer has no expectations and must not be called.
 	mockScorer := scorermock.NewMockScorer(ctrl)
 
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
 
-	// Publisher with no EXPECTs — must not be called (no fan-out for Cancelling).
+	// The publisher has no expectations and must not be called for a cancelling batch.
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
@@ -430,6 +431,145 @@ func TestController_Process_CancellingShortCircuit(t *testing.T) {
 	delivery := queuemock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	require.NoError(t, controller.Process(context.Background(), delivery))
+}
+
+func TestController_Process_DownstreamStateDoesNotRegress(t *testing.T) {
+	for _, state := range []entity.BatchState{
+		entity.BatchStateSpeculating,
+		entity.BatchStateMerging,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+
+			batch := testBatch()
+			batch.State = state
+
+			batchStore := storagemock.NewMockBatchStore(ctrl)
+			batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+
+			store := storagemock.NewMockStorage(ctrl)
+			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+
+			// No scorer, state update, or publisher calls are expected. A score
+			// delivery observed after downstream progress is only a stale poke.
+			scorerFactory := scorermock.NewMockFactory(ctrl)
+			controller := NewController(
+				zaptest.NewLogger(t).Sugar(),
+				tally.NoopScope,
+				store,
+				scorerFactory,
+				consumer.TopicRegistry{},
+				topickey.TopicKeyScore,
+				"orchestrator-score",
+			)
+
+			msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
+			delivery := queuemock.NewMockDelivery(ctrl)
+			delivery.EXPECT().Message().Return(msg).AnyTimes()
+			delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+			require.NoError(t, controller.Process(context.Background(), delivery))
+		})
+	}
+}
+
+func TestController_Process_VersionConflictReturnsForRedelivery(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	batch := testBatch()
+	const losingScore = 0.25
+
+	batchStore := storagemock.NewMockBatchStore(ctrl)
+	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+	batchStore.EXPECT().UpdateScoreAndState(
+		gomock.Any(),
+		batch.ID,
+		batch.Version,
+		batch.Version+1,
+		losingScore,
+		entity.BatchStateScored,
+	).Return(storage.ErrVersionMismatch)
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+
+	mockScorer := scorermock.NewMockScorer(ctrl)
+	mockScorer.EXPECT().Score(gomock.Any(), batch).Return(losingScore, nil)
+
+	scorerFactory := scorermock.NewMockFactory(ctrl)
+	scorerFactory.EXPECT().For(gomock.Any()).Return(mockScorer, nil)
+
+	controller := NewController(
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+		store,
+		scorerFactory,
+		consumer.TopicRegistry{},
+		topickey.TopicKeyScore,
+		"orchestrator-score",
+	)
+
+	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	err := controller.Process(context.Background(), delivery)
+	require.ErrorIs(t, err, storage.ErrVersionMismatch)
+	assert.True(t, errs.IsRetryable(err))
+}
+
+func TestController_Process_ScoredReplaysFanout(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	batch := testBatch()
+	batch.State = entity.BatchStateScored
+	batch.Score = 0.9
+
+	batchStore := storagemock.NewMockBatchStore(ctrl)
+	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+
+	mockPub := queuemock.NewMockPublisher(ctrl)
+	gomock.InOrder(
+		mockPub.EXPECT().Publish(gomock.Any(), "log", gomock.Any()).DoAndReturn(
+			func(_ context.Context, _ string, msg entityqueue.Message) error {
+				logEntry, err := entity.RequestLogFromBytes(msg.Payload)
+				require.NoError(t, err)
+				assert.Equal(t, "0.9000", logEntry.Metadata["score"])
+				return nil
+			},
+		),
+		mockPub.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).Return(nil),
+	)
+
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
+		{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
+	})
+	require.NoError(t, err)
+
+	controller := NewController(
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+		store,
+		scorermock.NewMockFactory(ctrl),
+		registry,
+		topickey.TopicKeyScore,
+		"orchestrator-score",
+	)
+
+	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(2).AnyTimes()
 
 	require.NoError(t, controller.Process(context.Background(), delivery))
 }
