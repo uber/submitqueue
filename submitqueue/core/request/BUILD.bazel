@@ -6,6 +6,7 @@ go_library(
         "log.go",
         "materializer.go",
         "request.go",
+        "terminal.go",
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/core/request",
     visibility = ["//visibility:public"],
@@ -24,6 +25,7 @@ go_test(
         "log_test.go",
         "materializer_test.go",
         "request_test.go",
+        "terminal_test.go",
     ],
     embed = [":go_default_library"],
     deps = [

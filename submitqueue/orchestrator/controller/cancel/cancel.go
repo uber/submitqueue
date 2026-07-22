@@ -40,18 +40,16 @@
 // its terminal state.
 //
 // The controller is idempotent: re-delivery of the same CancelRequest after
-// the terminal request transition is a no-op; re-delivery after the
-// Cancelling write skips the mark-cancelling step and proceeds straight to
-// the batch lookup. On the batch path, re-delivery against an already
-// Cancelling batch re-publishes to TopicKeySpeculate (a cheap no-op nudge
-// the speculate controller absorbs).
+// the terminal request transition republishes the terminal log without another
+// state write; re-delivery after the Cancelling write skips the mark-cancelling
+// step and proceeds straight to the batch lookup. On the batch path,
+// re-delivery against an already Cancelling batch re-publishes to
+// TopicKeySpeculate.
 //
 // Concurrent producers surface as the intrinsically retryable
 // storage.ErrVersionMismatch; the controller returns the wrapped error as-is
 // so the next attempt sees the new state and takes the other branch.
-// storage.ErrNotFound on the initial Get (the start
-// controller has not yet persisted the request) is returned as-is for the
-// same reason.
+// storage.ErrNotFound on the initial Get is returned for classifier handling.
 package cancel
 
 import (
@@ -208,28 +206,28 @@ func (c *Controller) findActiveBatch(ctx context.Context, request entity.Request
 	return entity.Batch{}, false, nil
 }
 
-// cancelRequest performs the terminal CAS (Cancelling → Cancelled) for a request
-// that is not part of any active batch, and emits the RequestStatusCancelled log
-// entry. storage.ErrVersionMismatch here means a concurrent writer (typically
-// conclude after a racing batch terminal transition) advanced the request between
-// our mark-cancelling CAS and this terminal CAS — returned as-is because the
-// sentinel is intrinsically retryable; the next pass will observe the new state
-// (likely terminal) and ack via the top-level terminal-check.
+// cancelRequest reconciles an unbatched request to Cancelled and emits the
+// matching terminal log. A redelivery that observes an already-Cancelled request
+// republishes the log without another state write.
 func (c *Controller) cancelRequest(ctx context.Context, request entity.Request, reason string) error {
-	newVersion := request.Version + 1
-	if err := c.store.GetRequestStore().UpdateState(ctx, request.ID, request.Version, newVersion, entity.RequestStateCancelled); err != nil {
-		c.metricsScope.Counter("request_update_errors").Inc(1)
-		return fmt.Errorf("failed to cancel request %s: %w", request.ID, err)
-	}
-
 	metadata := map[string]string{}
 	if reason != "" {
 		metadata["reason"] = reason
 	}
-	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusCancelled, newVersion, "", metadata)
-	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID); err != nil {
-		c.metricsScope.Counter("log_publish_errors").Inc(1)
-		return fmt.Errorf("failed to publish cancel log for request %s: %w", request.ID, err)
+
+	_, err := corerequest.ReconcileTerminalState(
+		ctx,
+		c.store.GetRequestStore(),
+		c.registry,
+		request,
+		corerequest.TerminalOutcome{
+			State:    entity.RequestStateCancelled,
+			Metadata: metadata,
+		},
+	)
+	if err != nil {
+		c.metricsScope.Counter("request_reconcile_errors").Inc(1)
+		return fmt.Errorf("failed to reconcile cancelled request %s: %w", request.ID, err)
 	}
 
 	c.logger.Infow("request cancelled (not batched)",

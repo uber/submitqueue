@@ -121,7 +121,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 			"request_id", request.ID,
 			"reason", result.Reason,
 		)
-		if err := c.failRequest(ctx, request, result.Reason); err != nil {
+		if _, err := corerequest.ReconcileTerminalState(
+			ctx,
+			c.store.GetRequestStore(),
+			c.registry,
+			request,
+			corerequest.TerminalOutcome{
+				State:     entity.RequestStateError,
+				LastError: result.Reason,
+			},
+		); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "fail_errors", 1)
 			return fmt.Errorf("failed to fail request %s: %w", request.ID, err)
 		}
@@ -154,41 +163,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	)
 
 	return nil // Success - message will be acked
-}
-
-// failRequest drives the request to terminal RequestStateError and records the
-// conflict reason on the request log. A not-mergeable verdict is an expected
-// terminal outcome of the check, so the request is concluded here directly.
-//
-// Idempotent under at-least-once delivery: a redelivery whose request is already
-// in Error skips the state CAS but still publishes the log (so a prior attempt
-// that flipped the state but failed before logging is repaired); a request that
-// reached a different terminal state (e.g. a racing cancel) is left untouched.
-func (c *Controller) failRequest(ctx context.Context, request entity.Request, reason string) error {
-	switch {
-	case request.State == entity.RequestStateError:
-		// Idempotent retry: a prior delivery already wrote Error. Fall through to
-		// the log publish.
-	case entity.IsRequestStateTerminal(request.State):
-		c.logger.Warnw("request already in different terminal state, skipping fail",
-			"request_id", request.ID,
-			"state", string(request.State),
-		)
-		return nil
-	default:
-		newVersion := request.Version + 1
-		if err := c.store.GetRequestStore().UpdateState(ctx, request.ID, request.Version, newVersion, entity.RequestStateError); err != nil {
-			return fmt.Errorf("failed to update request %s state to error: %w", request.ID, err)
-		}
-		request.Version = newVersion
-		request.State = entity.RequestStateError
-	}
-
-	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusError, request.Version, reason, nil)
-	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID); err != nil {
-		return fmt.Errorf("failed to publish request log for %s: %w", request.ID, err)
-	}
-	return nil
 }
 
 // publishRequestID publishes a request ID to the given topic key, partitioned by queue.
