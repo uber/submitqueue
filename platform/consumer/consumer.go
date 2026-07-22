@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -363,27 +364,28 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 
 	elapsed := time.Since(start)
 
-	// By convention, Controller can only return context.Canceled if it is cancelled by the context, i.e. when consumer is stopped or application is shutting down
-	isCanceled := errors.Is(err, context.Canceled)
-
-	// Track latency with success/failure tags
-	successTag := "true"
-	if err != nil {
-		if isCanceled {
-			successTag = "cancel"
-		} else {
-			successTag = "false"
-		}
-	}
-
-	metrics.NamedHistogram(controllerScope, opName, "controller_latency", metrics.LongLatencyBuckets, metrics.NewTag("success", successTag)).RecordDuration(elapsed)
-
 	if err != nil {
 		// Single explicit classification pass through the configured
 		// ErrorProcessor. Primary consumers use a classifier-based processor
 		// (preserves controller framework wraps); DLQ consumers use the
 		// always-retryable processor (forces redelivery on any error).
 		err = m.processor.Process(err)
+	}
+
+	// Record controller latency only after classification so error dimensions
+	// reflect the verdict used for ack/nack/reject behavior.
+	metrics.NamedHistogram(
+		controllerScope,
+		opName,
+		"controller_latency",
+		metrics.LongLatencyBuckets,
+		controllerResultTags(err)...,
+	).RecordDuration(elapsed)
+
+	if err != nil {
+		// By convention, Controller can only return context.Canceled if it is
+		// cancelled by the processing context during shutdown.
+		isCanceled := errors.Is(err, context.Canceled)
 
 		// Check if the error is non-retryable (poison pill message)
 		if !errs.IsRetryable(err) {
@@ -483,6 +485,30 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 		"attempt", delivery.Attempt(),
 		"elapsed_ms", elapsed.Milliseconds(),
 	)
+}
+
+func controllerResultTags(err error) []metrics.Tag {
+	result := "success"
+	if err == nil {
+		return []metrics.Tag{metrics.NewTag("result", result)}
+	}
+
+	result = "error"
+	if errors.Is(err, context.Canceled) {
+		result = "cancel"
+	}
+
+	origin := "infra"
+	if errs.IsUserError(err) {
+		origin = "user"
+	}
+
+	return []metrics.Tag{
+		metrics.NewTag("result", result),
+		metrics.NewTag("error_origin", origin),
+		metrics.NewTag("retryable", strconv.FormatBool(errs.IsRetryable(err))),
+		metrics.NewTag("dependency", strconv.FormatBool(errs.IsDependencyError(err))),
+	}
 }
 
 // Stop gracefully shuts down all handlers with the specified timeout.
