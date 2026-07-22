@@ -411,13 +411,6 @@ func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueu
 
 	s.subscriptions[subKey] = sub
 
-	// Track active subscription
-	s.scope.
-		Tagged(map[string]string{"topic": topic}).
-		SubScope("subscribe").
-		Gauge("active_subscriptions").
-		Update(1)
-
 	// Start the supervisor goroutine. It will discover partitions, acquire
 	// leases, and spawn per-partition worker goroutines. The supervisor runs
 	// until the subscription context is cancelled (via Close or explicit cancel).
@@ -1134,13 +1127,6 @@ func (s *subscriber) Close() (retErr error) {
 				"consumer_group", sub.config.ConsumerGroup,
 			)
 		}
-
-		// Update metrics
-		s.scope.
-			Tagged(map[string]string{"topic": sub.topic}).
-			SubScope("subscribe").
-			Gauge("active_subscriptions").
-			Update(0)
 	}
 
 	s.subscriptions = make(map[string]*subscription)
