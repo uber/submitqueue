@@ -135,11 +135,11 @@ The controller-override path is for the rare case where the controller has certa
 
 In particular, **do not reach for `NewRetryableError` just because replaying the message would be convenient.** A failed queue publish, a failed enqueue, a "the hand-off that keeps this alive" step — these are *not* a license to mark the error retryable. Whether such a failure is transient is exactly what a classifier exists to decide: a transport-level classifier wraps genuine connection/timeout blips as retryable, while a malformed-request or permission failure stays non-retryable and dead-letters instead of replaying forever. Blanket `NewRetryableError` on a publish path defeats that and turns every permanent failure into an infinite retry loop.
 
-## Extensions Return Plain Go Errors
+## Extensions Return Go Errors
 
-Extension interfaces (`MergeChecker`, `Storage`, `Publisher`) return standard `error` values. They may define their own domain-specific sentinel errors (e.g. `storage.ErrNotFound`, `storage.ErrVersionMismatch`) but they do **not** classify errors as user or infra — that is the controller's (and the consumer's `ErrorProcessor`'s) job.
+Extension interfaces (`MergeChecker`, `Storage`, `Publisher`) return `error` values and may define domain-specific sentinels. Most sentinels remain unclassified because their meaning depends on the call site; for example, `storage.ErrNotFound` might be a user error in one controller and an infrastructure error in another. A sentinel whose classification is intrinsic in every context may carry that classification at its declaration. `storage.ErrVersionMismatch`, for example, is always a retryable infrastructure error because it reports a lost optimistic-concurrency race.
 
-This separation keeps extensions reusable across contexts. The same `storage.ErrNotFound` might be a user error in one controller (user requested a non-existent resource) and an infra error in another (expected record is missing).
+Controllers should return intrinsically classified sentinels without adding another framework wrapper. The declaration remains reusable across implementations while every caller observes the same classification.
 
 ## Error Chain Compatibility
 

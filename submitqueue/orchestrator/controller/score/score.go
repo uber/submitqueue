@@ -16,13 +16,11 @@ package score
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
-	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
@@ -147,12 +145,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 			batchScore,
 			entity.BatchStateScored,
 		)
-		if errors.Is(err, storage.ErrVersionMismatch) {
-			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-			return errs.NewRetryableError(
-				fmt.Errorf("failed to update score for batch %s: %w", batch.ID, err),
-			)
-		}
 		if err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 			return fmt.Errorf("failed to update score for batch %s: %w", batch.ID, err)

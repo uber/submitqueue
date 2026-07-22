@@ -21,7 +21,6 @@ package buildsignal
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/uber-go/tally"
@@ -185,9 +184,6 @@ func (c *Controller) reconcile(ctx context.Context, build entity.Build, status e
 	updated := build
 	updated.Status = status
 	if err := c.store.GetBuildStore().Update(ctx, updated, build.Version, newVersion); err != nil {
-		if errors.Is(err, storage.ErrVersionMismatch) {
-			return "", errs.NewRetryableError(fmt.Errorf("build %s version conflict: %w", build.ID, err))
-		}
 		return "", fmt.Errorf("failed to persist status for build %s: %w", build.ID, err)
 	}
 	return status, nil
