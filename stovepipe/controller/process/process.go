@@ -29,6 +29,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/queueconfig"
@@ -455,20 +456,12 @@ func (c *Controller) rescheduleProcess(ctx context.Context, request entity.Reque
 
 // loadRequest returns the request for id.
 func (c *Controller) loadRequest(ctx context.Context, id string) (entity.Request, error) {
-	got, err := c.store.GetRequestStore().Get(ctx, id)
-	if err != nil {
-		return entity.Request{}, fmt.Errorf("ProcessController failed to load request %s: %w", id, err)
-	}
-	return got, nil
+	return loader.ByID(ctx, id, c.store.GetRequestStore().Get, "ProcessController", "request")
 }
 
 // loadQueue returns the queue row for name.
 func (c *Controller) loadQueue(ctx context.Context, name string) (entity.Queue, error) {
-	got, err := c.store.GetQueueStore().Get(ctx, name)
-	if err != nil {
-		return entity.Queue{}, fmt.Errorf("ProcessController failed to load queue %s: %w", name, err)
-	}
-	return got, nil
+	return loader.ByID(ctx, name, c.store.GetQueueStore().Get, "ProcessController", "queue")
 }
 
 // publishBuild publishes the admitted request ID to the build stage. The build

@@ -38,6 +38,7 @@ import (
 	"github.com/uber/submitqueue/service/stovepipe/server/mapper"
 	"github.com/uber/submitqueue/stovepipe/controller"
 	"github.com/uber/submitqueue/stovepipe/controller/build"
+	"github.com/uber/submitqueue/stovepipe/controller/buildsignal"
 	"github.com/uber/submitqueue/stovepipe/controller/dlq"
 	"github.com/uber/submitqueue/stovepipe/controller/process"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
@@ -382,6 +383,12 @@ func registerPrimaryControllers(
 	}
 	count++
 
+	buildSignalController := buildsignal.NewController(logger, scope, store, brf, registry, stovepipemq.TopicKeyBuildSignal, "stovepipe-buildsignal")
+	if err := c.Register(buildSignalController); err != nil {
+		return count, fmt.Errorf("failed to register buildsignal controller: %w", err)
+	}
+	count++
+
 	return count, nil
 }
 
@@ -407,8 +414,10 @@ func registerDLQControllers(
 
 // newTopicRegistry builds the TopicRegistry for Stovepipe's internal pipeline queues. ingest
 // publishes to the process topic and the process consumer subscribes to it; process publishes
-// to the build topic and the build consumer subscribes to it. The buildsignal topic is added
-// once the buildsignal controller lands to consume it.
+// to the build topic and the build consumer subscribes to it; build publishes to the buildsignal
+// topic and the buildsignal consumer subscribes to it, and also republishes to itself while
+// polling. buildsignal publishes to the record topic once a build reaches a terminal status; it
+// has no Subscription yet since no consumer for it exists until the record stage lands.
 func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRegistry, error) {
 	return consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{
@@ -426,6 +435,19 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Subscription: extqueue.DefaultSubscriptionConfig(
 				subscriberName, "stovepipe-build",
 			),
+		},
+		{
+			Key:   stovepipemq.TopicKeyBuildSignal,
+			Name:  "buildsignal",
+			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "stovepipe-buildsignal",
+			),
+		},
+		{
+			Key:   stovepipemq.TopicKeyRecord,
+			Name:  "record",
+			Queue: q,
 		},
 		{
 			Key:          dlq.TopicKey(stovepipemq.TopicKeyProcess),

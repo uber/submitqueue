@@ -28,6 +28,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
@@ -149,11 +150,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 // loadRequest returns the request for id.
 func (c *Controller) loadRequest(ctx context.Context, id string) (entity.Request, error) {
-	got, err := c.store.GetRequestStore().Get(ctx, id)
-	if err != nil {
-		return entity.Request{}, fmt.Errorf("BuildController failed to load request %s: %w", id, err)
-	}
-	return got, nil
+	return loader.ByID(ctx, id, c.store.GetRequestStore().Get, "BuildController", "request")
 }
 
 // publishBuildSignal publishes buildID to the buildsignal stage, partitioned by
