@@ -102,6 +102,10 @@ func TestDLQRequestController_Process_RequestIDPayload(t *testing.T) {
 
 	registry := newTestLogRegistry(t, ctrl, 1, func(log entity.RequestLog) error {
 		assert.Equal(t, "boom", log.LastError)
+		assert.Equal(t, map[string]string{
+			"dlq.original_topic": "validate",
+			"dlq.failure_count":  "3",
+		}, log.Metadata)
 		return nil
 	})
 

@@ -86,7 +86,7 @@ func (c *mergeSignalController) Process(ctx context.Context, delivery consumer.D
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
 
-	if err := failBatch(ctx, c.store, c.registry, c.logger, result.Id, dmeta["dlq.last_error"]); err != nil {
+	if err := failBatch(ctx, c.store, c.registry, c.logger, result.Id, dmeta); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
 		return err
 	}

@@ -26,24 +26,19 @@ import (
 	"go.uber.org/zap"
 )
 
-// batchController is the DLQ reconciler for batch-scoped pipeline stages
-// (score, speculate, build, merge, conclude). All five topics carry a
-// BatchID payload, so this controller is registered five times — one per
-// topic, each with the matching DLQ topic key and consumer group.
-//
-// On each delivery the controller decodes the BatchID, transitions the batch
-// to BatchStateFailed (idempotent if already halted), and fans out by
-// transitioning each member request to RequestStateError. The fan-out exists
-// because conclude — which normally drives request state from batch state —
-// will not run for a DLQ'd batch.
+// batchController handles DLQ messages whose payload is a BatchID. Its
+// reconciler selects failure handling or conclude fanout repair.
 type batchController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	store         storage.Storage
 	registry      consumer.TopicRegistry
+	reconcile     batchReconciler
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
+
+type batchReconciler func(context.Context, storage.Storage, consumer.TopicRegistry, *zap.SugaredLogger, string, map[string]string) error
 
 // Verify batchController implements consumer.Controller at compile time.
 var _ consumer.Controller = (*batchController)(nil)
@@ -58,12 +53,38 @@ func NewDLQBatchController(
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) consumer.Controller {
+	return newBatchController(logger, scope, store, registry, topicKey, consumerGroup, failBatch)
+}
+
+// NewDLQConcludeController builds a controller that preserves the batch's
+// terminal outcome while repairing request fanout.
+func NewDLQConcludeController(
+	logger *zap.SugaredLogger,
+	scope tally.Scope,
+	store storage.Storage,
+	registry consumer.TopicRegistry,
+	topicKey consumer.TopicKey,
+	consumerGroup string,
+) consumer.Controller {
+	return newBatchController(logger, scope, store, registry, topicKey, consumerGroup, concludeBatch)
+}
+
+func newBatchController(
+	logger *zap.SugaredLogger,
+	scope tally.Scope,
+	store storage.Storage,
+	registry consumer.TopicRegistry,
+	topicKey consumer.TopicKey,
+	consumerGroup string,
+	reconcile batchReconciler,
+) consumer.Controller {
 	name := string(topicKey) + "_controller"
 	return &batchController{
 		logger:        logger.Named(name),
 		metricsScope:  scope.SubScope(name),
 		store:         store,
 		registry:      registry,
+		reconcile:     reconcile,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
@@ -97,7 +118,7 @@ func (c *batchController) Process(ctx context.Context, delivery consumer.Deliver
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
 
-	if err := failBatch(ctx, c.store, c.registry, c.logger, bid.ID, dmeta["dlq.last_error"]); err != nil {
+	if err := c.reconcile(ctx, c.store, c.registry, c.logger, bid.ID, dmeta); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
 		return err
 	}
