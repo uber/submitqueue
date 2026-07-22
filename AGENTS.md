@@ -299,6 +299,7 @@ deps = [
 
 ### Testing
 
+- **Unit test package naming** — unit tests must use the same package name as the code under test (not a `*_test` package) so tests can access implementation details when needed.
 - **Table-driven tests** — prefer table-driven tests with `t.Run` subtests over individual test functions.
 - **Avoid asserting on error messages** — assert on error type or check the error with `require.Error`, do not `assert.Contains(t, err.Error(), message)`
 - **No change detector tests** — don't assert on default values, internal structure, or implementation details that can change without affecting behavior. Test what the code *does*, not how it's constructed.
