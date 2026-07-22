@@ -48,8 +48,8 @@ func NewProvider(params Params) changeprovider.ChangeProvider {
 // Get retrieves change information from Phabricator for the request's change.
 // Returns one ChangeInfo per URI.
 func (p *provider) Get(ctx context.Context, request entity.Request) (_ []entity.ChangeInfo, retErr error) {
-	op := coremetrics.Begin(p.metricsScope, "get")
-	defer func() { op.Complete(retErr, coremetrics.LongLatencyBuckets) }()
+	op := coremetrics.Begin(p.metricsScope, "get", coremetrics.LongLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	change := request.Change
 

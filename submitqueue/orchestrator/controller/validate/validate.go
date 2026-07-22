@@ -89,8 +89,8 @@ func NewController(
 // asynchronous merge-conflict check by publishing the full check request to runway.
 // Returns nil to ack (success or non-retryable rejection), error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := coremetrics.Begin(c.metricsScope, "process")
-	defer func() { op.Complete(retErr, coremetrics.LongLatencyBuckets) }()
+	op := coremetrics.Begin(c.metricsScope, "process", coremetrics.LongLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 

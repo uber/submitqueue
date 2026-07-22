@@ -39,8 +39,8 @@ func NewRequestURIStore(db *sql.DB, scope tally.Scope) storage.RequestURIStore {
 }
 
 func (s *requestURIStore) Create(ctx context.Context, mapping entity.RequestURI) (retErr error) {
-	op := metrics.Begin(s.scope, "create")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	_, err := s.db.ExecContext(ctx,
 		"INSERT INTO change_uri_request_mapping (change_uri, received_at_ms, request_id) VALUES (?, ?, ?)",
@@ -57,8 +57,8 @@ func (s *requestURIStore) Create(ctx context.Context, mapping entity.RequestURI)
 }
 
 func (s *requestURIStore) ListByURI(ctx context.Context, changeURI string, limit int) (ret []entity.RequestURI, retErr error) {
-	op := metrics.Begin(s.scope, "list_by_uri")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "list_by_uri", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT change_uri, received_at_ms, request_id

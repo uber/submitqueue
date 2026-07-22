@@ -69,8 +69,8 @@ func New(resolver changeset.Resolver, buckets []Bucket, valueFunc ValueFunc, sco
 // score for the first bucket whose range [Min, Max] contains the value. Returns an error
 // if no bucket matches.
 func (s *heuristicScorer) Score(ctx context.Context, batch entity.Batch) (ret float64, retErr error) {
-	op := metrics.Begin(s.scope, "score")
-	defer func() { op.Complete(retErr, metrics.FastLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "score", metrics.FastLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 	changes, err := s.resolver.DetailedForBatch(ctx, batch)
 	if err != nil {
 		return 0, err

@@ -44,8 +44,8 @@ func newPartitionLeaseStore(db *sql.DB, logger *zap.SugaredLogger, scope tally.S
 
 // TryAcquireLease attempts to acquire or renew a lease for a partition
 func (s *sqlpartitionLeaseStore) TryAcquireLease(ctx context.Context, topic string, partitionKey string, subscriberName string, consumerGroup string, leaseDurationMs int64) (_ bool, retErr error) {
-	op := metrics.Begin(s.scope, "try_acquire_lease", metrics.NewTag("topic", topic))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "try_acquire_lease", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
 
 	now := currentTimeMillis()
 	staleThreshold := now - leaseDurationMs
@@ -93,8 +93,8 @@ func (s *sqlpartitionLeaseStore) TryAcquireLease(ctx context.Context, topic stri
 
 // RenewLease renews the lease for a partition owned by this worker
 func (s *sqlpartitionLeaseStore) RenewLease(ctx context.Context, topic string, partitionKey string, subscriberName string, consumerGroup string, leaseDurationMs int64) (retErr error) {
-	op := metrics.Begin(s.scope, "renew_lease", metrics.NewTag("topic", topic))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "renew_lease", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
 
 	now := currentTimeMillis()
 
@@ -127,8 +127,8 @@ func (s *sqlpartitionLeaseStore) RenewLease(ctx context.Context, topic string, p
 
 // ReleaseLease releases the lease for a partition owned by this worker
 func (s *sqlpartitionLeaseStore) ReleaseLease(ctx context.Context, topic string, partitionKey string, subscriberName string, consumerGroup string) (retErr error) {
-	op := metrics.Begin(s.scope, "release_lease", metrics.NewTag("topic", topic))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "release_lease", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
 
 	result, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		DELETE FROM %s
@@ -162,8 +162,8 @@ func (s *sqlpartitionLeaseStore) ReleaseLease(ctx context.Context, topic string,
 
 // GetLeasedPartitions returns all partitions currently leased by this worker
 func (s *sqlpartitionLeaseStore) GetLeasedPartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string) (_ []string, retErr error) {
-	op := metrics.Begin(s.scope, "get_leased_partitions", metrics.NewTag("topic", topic))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "get_leased_partitions", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
 
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT partition_key FROM %s
@@ -200,8 +200,8 @@ func (s *sqlpartitionLeaseStore) GetLeasedPartitions(ctx context.Context, topic 
 // Returns the number of new leases acquired and the full list of discovered partitions.
 // maxPartitions limits how many total partitions this subscriber can own (0 = unlimited)
 func (s *sqlpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string, leaseDurationMs int64, maxPartitions int) (_ int, _ []string, retErr error) {
-	op := metrics.Begin(s.scope, "discover_and_acquire", metrics.NewTag("topic", topic))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "discover_and_acquire", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
 
 	// Query distinct partition_keys from messages table.
 	// No LIMIT is applied because all partitions must be discoverable for fair

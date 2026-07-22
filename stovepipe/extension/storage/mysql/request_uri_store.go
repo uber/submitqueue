@@ -44,8 +44,8 @@ func NewRequestURIStore(db *sql.DB, scope tally.Scope) storage.RequestURIStore {
 // Create records the (queue, uri) -> id reverse index. Returns ErrAlreadyExists if (queue, uri)
 // is already mapped to a request.
 func (r *requestURIStore) Create(ctx context.Context, queue, uri, id string) (retErr error) {
-	op := metrics.Begin(r.scope, "create")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(r.scope, "create", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	_, err := r.db.ExecContext(ctx,
 		"INSERT INTO request_uri (queue, uri, request_id, version) VALUES (?, ?, ?, ?)",
@@ -63,8 +63,8 @@ func (r *requestURIStore) Create(ctx context.Context, queue, uri, id string) (re
 
 // GetIDByURI returns the id of the request validating (queue, uri). Returns ErrNotFound if absent.
 func (r *requestURIStore) GetIDByURI(ctx context.Context, queue, uri string) (ret string, retErr error) {
-	op := metrics.Begin(r.scope, "get_id_by_uri")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(r.scope, "get_id_by_uri", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	var id string
 	err := r.db.QueryRowContext(ctx,

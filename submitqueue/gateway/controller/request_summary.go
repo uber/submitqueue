@@ -46,8 +46,8 @@ func NewRequestSummaryController(logger *zap.SugaredLogger, scope tally.Scope, r
 
 // GetRequestSummaryByID returns the current materialized view of one request.
 func (c *RequestSummaryController) GetRequestSummaryByID(ctx context.Context, req entity.GetRequestSummaryByIDRequest) (summary entity.RequestSummary, retErr error) {
-	op := metrics.Begin(c.metricsScope, "get_by_id")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(c.metricsScope, "get_by_id", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	if err := validateStoredIdentifier("sqid", req.ID); err != nil {
 		return entity.RequestSummary{}, fmt.Errorf("GetRequestSummaryByID invalid request: %w", err)
@@ -73,8 +73,8 @@ func (c *RequestSummaryController) GetRequestSummaryByID(ctx context.Context, re
 
 // GetRequestSummaryByChangeURI returns current materialized views for an exact pinned change URI.
 func (c *RequestSummaryController) GetRequestSummaryByChangeURI(ctx context.Context, req entity.GetRequestSummaryByChangeURIRequest) (summaries []entity.RequestSummary, retErr error) {
-	op := metrics.Begin(c.metricsScope, "get_by_change_uri")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(c.metricsScope, "get_by_change_uri", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	if err := validateStoredIdentifier("change URI", req.ChangeURI); err != nil {
 		return nil, fmt.Errorf("GetRequestSummaryByChangeURI invalid request: %w", err)

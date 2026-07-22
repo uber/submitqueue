@@ -40,8 +40,8 @@ func NewRequestQueueSummaryStore(db *sql.DB, scope tally.Scope) storage.RequestQ
 }
 
 func (s *requestQueueSummaryStore) Create(ctx context.Context, summary entity.RequestQueueSummary) (retErr error) {
-	op := metrics.Begin(s.scope, "create")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	changeURIsJSON, metadataJSON, err := marshalSummaryJSON(summary.ChangeURIs, summary.Metadata)
 	if err != nil {
@@ -66,8 +66,8 @@ func (s *requestQueueSummaryStore) Create(ctx context.Context, summary entity.Re
 }
 
 func (s *requestQueueSummaryStore) Get(ctx context.Context, queue string, receivedAtMs int64, requestID string) (ret entity.RequestQueueSummary, retErr error) {
-	op := metrics.Begin(s.scope, "get")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "get", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	var changeURIsJSON []byte
 	var metadataJSON []byte
@@ -90,8 +90,8 @@ func (s *requestQueueSummaryStore) Get(ctx context.Context, queue string, receiv
 }
 
 func (s *requestQueueSummaryStore) Update(ctx context.Context, summary entity.RequestQueueSummary, oldVersion, newVersion int32) (retErr error) {
-	op := metrics.Begin(s.scope, "update")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "update", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	metadataJSON, err := json.Marshal(normalizeMetadata(summary.Metadata))
 	if err != nil {
@@ -118,8 +118,8 @@ func (s *requestQueueSummaryStore) Update(ctx context.Context, summary entity.Re
 }
 
 func (s *requestQueueSummaryStore) List(ctx context.Context, query storage.RequestQueueSummaryQuery) (ret []entity.RequestQueueSummary, retErr error) {
-	op := metrics.Begin(s.scope, "list")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "list", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	statement := `
 		SELECT queue, received_at_ms, request_id, change_uris, status,

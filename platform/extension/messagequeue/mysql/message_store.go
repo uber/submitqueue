@@ -62,8 +62,8 @@ func (s *sqlmessageStore) Insert(ctx context.Context, topic string, messages []e
 // second Cancel RPC for the same request) without surfacing 1062 duplicate-key
 // errors.
 func (s *sqlmessageStore) InsertDelayed(ctx context.Context, topic string, messages []entityqueue.Message, visibleAfterMs int64) (retErr error) {
-	op := metrics.Begin(s.scope, "insert", metrics.NewTag("topic", topic))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "insert", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
 
 	if len(messages) == 0 {
 		return nil
@@ -132,8 +132,8 @@ func (s *sqlmessageStore) InsertDelayed(ctx context.Context, topic string, messa
 
 // Delete deletes a message by topic, partition key, and ID
 func (s *sqlmessageStore) Delete(ctx context.Context, topic string, partitionKey string, messageID string) (retErr error) {
-	op := metrics.Begin(s.scope, "delete", metrics.NewTag("topic", topic))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "delete", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
 
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		DELETE FROM %s WHERE topic = ? AND partition_key = ? AND id = ?
@@ -151,8 +151,8 @@ func (s *sqlmessageStore) Delete(ctx context.Context, topic string, partitionKey
 // (published via InsertDelayed) that should not yet be surfaced to subscribers.
 // Messages are fetched from the immutable log; no per-message mutation occurs.
 func (s *sqlmessageStore) FetchByOffset(ctx context.Context, topic string, partitionKey string, currentOffset int64, nowMs int64, limit int) (_ []messageRow, retErr error) {
-	op := metrics.Begin(s.scope, "fetch", metrics.NewTag("topic", topic))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "fetch", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
 
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT offset, id, payload, metadata, partition_key, published_at, failed_at, failure_count, last_error, original_topic
@@ -227,8 +227,8 @@ func (s *sqlmessageStore) FetchByOffset(ctx context.Context, topic string, parti
 // The message is inserted back into queue_messages table with the DLQ topic (original + suffix)
 // This allows DLQ messages to be consumed using the normal subscriber
 func (s *sqlmessageStore) MoveToDLQ(ctx context.Context, topic string, partitionKey string, messageID string, failureCount int, lastError string, dlqTopicSuffix string) (retErr error) {
-	op := metrics.Begin(s.scope, "move_to_dlq", metrics.NewTag("topic", topic))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "move_to_dlq", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
 
 	// Construct DLQ topic name
 	dlqTopic := topic + dlqTopicSuffix
@@ -300,8 +300,8 @@ func (s *sqlmessageStore) MoveToDLQ(ctx context.Context, topic string, partition
 // free of cross-table queries.
 // Returns the number of rows deleted.
 func (s *sqlmessageStore) GarbageCollect(ctx context.Context, topic string, partitionKey string, minAckedOffset int64) (_ int64, retErr error) {
-	op := metrics.Begin(s.scope, "gc", metrics.NewTag("topic", topic))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "gc", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
 
 	if minAckedOffset == 0 {
 		return 0, nil
@@ -342,8 +342,8 @@ func (s *sqlmessageStore) GarbageCollect(ctx context.Context, topic string, part
 
 // GetOffsetsAbove returns message offsets above afterOffset for a partition, ordered ascending.
 func (s *sqlmessageStore) GetOffsetsAbove(ctx context.Context, topic string, partitionKey string, afterOffset int64, limit int) (_ []int64, retErr error) {
-	op := metrics.Begin(s.scope, "get_offsets_above", metrics.NewTag("topic", topic))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "get_offsets_above", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
 
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT offset FROM %s

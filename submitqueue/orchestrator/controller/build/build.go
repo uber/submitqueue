@@ -73,8 +73,8 @@ func NewController(
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
 	const opName = "process"
 
-	op := metrics.Begin(c.metricsScope, opName)
-	defer func() { op.Complete(retErr, metrics.LongLatencyBuckets) }()
+	op := metrics.Begin(c.metricsScope, opName, metrics.LongLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 

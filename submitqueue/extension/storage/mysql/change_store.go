@@ -41,8 +41,8 @@ func NewChangeStore(db *sql.DB, scope tally.Scope) storage.ChangeStore {
 // (queue, uri, request_id) is silently ignored via INSERT IGNORE, so
 // queue-redelivery of the same request is a no-op.
 func (s *changeStore) Create(ctx context.Context, record entity.ChangeRecord) (retErr error) {
-	op := metrics.Begin(s.scope, "create")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	detailsJSON, err := marshalDetails(record.Details)
 	if err != nil {
@@ -61,8 +61,8 @@ func (s *changeStore) Create(ctx context.Context, record entity.ChangeRecord) (r
 // GetByURI returns every ChangeRecord for (queue, uri). queue leads the WHERE
 // clause to align with the (queue, uri, request_id) PK so this is a PK-prefix scan.
 func (s *changeStore) GetByURI(ctx context.Context, queue string, uri string) (ret []entity.ChangeRecord, retErr error) {
-	op := metrics.Begin(s.scope, "get_by_uri")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "get_by_uri", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	const query = "SELECT uri, request_id, queue, details, created_at, updated_at, version FROM `change` WHERE queue = ? AND uri = ?"
 	rows, err := s.db.QueryContext(ctx, query, queue, uri)

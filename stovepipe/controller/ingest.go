@@ -89,8 +89,8 @@ func NewIngestController(
 func (c *IngestController) Ingest(ctx context.Context, req entity.IngestRequest) (result entity.IngestResult, retErr error) {
 	const opName = "ingest"
 
-	op := metrics.Begin(c.metricsScope, opName)
-	defer func() { op.Complete(retErr, metrics.LongLatencyBuckets) }()
+	op := metrics.Begin(c.metricsScope, opName, metrics.LongLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	if req.Queue == "" {
 		return entity.IngestResult{}, fmt.Errorf("requires the request to have a queue name specified: %w", ErrInvalidRequest)
