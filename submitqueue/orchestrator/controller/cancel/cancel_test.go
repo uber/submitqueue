@@ -188,8 +188,8 @@ func TestProcess_AlreadyCancelling_SkipsMarkCancelling(t *testing.T) {
 
 // TestProcess_MarkCancellingVersionMismatch_Retryable covers the case where the
 // first CAS (mark-cancelling) loses to a concurrent writer. The underlying
-// storage.ErrVersionMismatch must be preserved in the error chain so the base
-// controller can classify it as retryable; the next pass re-fetches and
+// storage.ErrVersionMismatch must be preserved in the error chain so its
+// intrinsic retryable classification survives; the next pass re-fetches and
 // re-evaluates (possibly observing a terminal state and acking).
 func TestProcess_MarkCancellingVersionMismatch_Retryable(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -342,8 +342,7 @@ func TestProcess_BatchAlreadyCancelling_RepublishesToSpeculate(t *testing.T) {
 // TestProcess_BatchIntentVersionMismatch_Retryable covers the case where the
 // intent CAS (mark batch Cancelling) loses to a concurrent batch state
 // transition (e.g. speculate just advanced it). storage.ErrVersionMismatch
-// must be preserved so the base controller can classify the failure as
-// retryable.
+// must be preserved so its intrinsic retryable classification survives.
 func TestProcess_BatchIntentVersionMismatch_Retryable(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	registry, _ := newRegistry(t, ctrl)

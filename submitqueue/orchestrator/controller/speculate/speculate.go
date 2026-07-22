@@ -287,8 +287,8 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 // terminal self-heal branch, which re-runs the dependent fan-out and the
 // conclude publish for already-Cancelled batches.
 //
-// storage.ErrVersionMismatch on the terminal CAS is returned as-is for the
-// base controller to classify as retryable; the redelivery will land in the
+// storage.ErrVersionMismatch on the terminal CAS is returned as-is because it
+// is intrinsically retryable; the redelivery will land in the
 // self-heal branch and complete the fan-out.
 func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error {
 	metrics.NamedCounter(c.metricsScope, opName, "cancel_batch", 1)
