@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"sync"
 	"time"
 
@@ -342,9 +341,6 @@ func (m *consumer) processPartition(ctx context.Context, controller Controller, 
 func (m *consumer) processDelivery(ctx context.Context, controller Controller, delivery extqueue.Delivery, controllerScope tally.Scope) {
 	const opName = "process"
 
-	start := time.Now()
-	metrics.NamedCounter(controllerScope, opName, "messages_received", 1)
-
 	msg := delivery.Message()
 	topicKey := controller.TopicKey()
 
@@ -360,27 +356,25 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 	wrapped := &deliveryWrapper{delivery: delivery}
 
 	// Call controller with wrapped delivery
+	start := time.Now()
+	op := metrics.Begin(controllerScope, opName, metrics.LongLatencyBuckets)
 	err := controller.Process(ctx, wrapped)
 
 	elapsed := time.Since(start)
 
+	var completionTags []metrics.Tag
 	if err != nil {
 		// Single explicit classification pass through the configured
 		// ErrorProcessor. Primary consumers use a classifier-based processor
 		// (preserves controller framework wraps); DLQ consumers use the
 		// always-retryable processor (forces redelivery on any error).
 		err = m.processor.Process(err)
+		completionTags = controllerClassificationTags(err)
 	}
 
-	// Record controller latency only after classification so error dimensions
-	// reflect the verdict used for ack/nack/reject behavior.
-	metrics.NamedHistogram(
-		controllerScope,
-		opName,
-		"controller_latency",
-		metrics.LongLatencyBuckets,
-		controllerResultTags(err)...,
-	).RecordDuration(elapsed)
+	// Complete only after classification so the finish histogram carries the
+	// verdict used for ack/nack/reject behavior.
+	op.Complete(err, completionTags...)
 
 	if err != nil {
 		// By convention, Controller can only return context.Canceled if it is
@@ -398,8 +392,6 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 				"error", err,
 				"elapsed_ms", elapsed.Milliseconds(),
 			)
-
-			metrics.NamedCounter(controllerScope, opName, "non_retryable_errors", 1)
 
 			// Reject moves to DLQ (or acks if DLQ disabled)
 			if rejectErr := delivery.Reject(ctx, err.Error()); rejectErr != nil {
@@ -430,8 +422,6 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 			"error", err,
 			"elapsed_ms", elapsed.Milliseconds(),
 		)
-
-		metrics.NamedCounter(controllerScope, opName, "controller_errors", 1)
 
 		// Nack with no delay - let visibility timeout handle retry delay
 		nackStart := time.Now()
@@ -470,7 +460,6 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 		return
 	}
 
-	metrics.NamedCounter(controllerScope, opName, "messages_processed", 1)
 	metrics.NamedCounter(controllerScope, opName, "ack_count", 1)
 	metrics.NamedHistogram(controllerScope, opName, "ack_nack_latency", metrics.StorageLatencyBuckets,
 		metrics.NewTag("operation", "ack"),
@@ -487,27 +476,22 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 	)
 }
 
-func controllerResultTags(err error) []metrics.Tag {
-	result := "success"
-	if err == nil {
-		return []metrics.Tag{metrics.NewTag("result", result)}
-	}
-
-	result = "error"
-	if errors.Is(err, context.Canceled) {
-		result = "cancel"
-	}
-
+func controllerClassificationTags(err error) []metrics.Tag {
 	origin := "infra"
-	if errs.IsUserError(err) {
+	if errs.IsRetryable(err) {
+		origin = "infra_retryable"
+	} else if errs.IsUserError(err) {
 		origin = "user"
 	}
 
+	dependency := "no"
+	if errs.IsDependencyError(err) {
+		dependency = "yes"
+	}
+
 	return []metrics.Tag{
-		metrics.NewTag("result", result),
-		metrics.NewTag("error_origin", origin),
-		metrics.NewTag("retryable", strconv.FormatBool(errs.IsRetryable(err))),
-		metrics.NewTag("dependency", strconv.FormatBool(errs.IsDependencyError(err))),
+		metrics.NewTag("origin", origin),
+		metrics.NewTag("dependency", dependency),
 	}
 }
 

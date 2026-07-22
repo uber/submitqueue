@@ -141,9 +141,10 @@ func Begin(scope tally.Scope, name string, buckets tally.Buckets, tags ...Tag) O
 }
 
 // Complete records elapsed time on the {name}.finish histogram, tagged with
-// result=success|error|cancel. The histogram records both duration and count.
-// Cancellation is detected through the error chain.
-func (o Op) Complete(err error) {
+// result=success|error|cancel and any additional tags accumulated while the
+// operation ran. The histogram records both duration and count. Cancellation
+// is detected through the error chain.
+func (o Op) Complete(err error, tags ...Tag) {
 	result := "success"
 	if err != nil {
 		result = "error"
@@ -152,7 +153,7 @@ func (o Op) Complete(err error) {
 		}
 	}
 
-	o.scope.
+	tagged(o.scope, tags).
 		Tagged(map[string]string{"result": result}).
 		Histogram("finish", o.buckets).
 		RecordDuration(time.Since(o.start))

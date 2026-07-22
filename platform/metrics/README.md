@@ -8,7 +8,7 @@ The `metrics` package provides reusable helpers for emitting counters and histog
 
 **Operation lifecycle** — `Begin` and `Complete` tie operation metrics together. `Begin` captures the start time and emits `{name}.start`; `Complete` records duration and count on `{name}.finish`.
 
-**Result tagging** — the finish histogram is tagged with `result=success`, `result=error`, or `result=cancel`. Cancellation is detected with `errors.Is(err, context.Canceled)`. Error classification tags are intentionally omitted because many call sites complete before classification occurs.
+**Result tagging** — the finish histogram is tagged with `result=success`, `result=error`, or `result=cancel`. Cancellation is detected with `errors.Is(err, context.Canceled)`. Callers that accumulate tags while the operation runs can pass them to `Complete`.
 
 **Consistent naming** — named helpers follow the `{name}.{sub}` sub-scope pattern, producing metric paths such as `process.start` and `publish.attempts`.
 
@@ -19,7 +19,7 @@ For any operation with a clear start and end, use `Begin` and `Complete`:
 | Function | Emits |
 |----------|-------|
 | `Begin(scope, name, buckets, ...tags)` | `{name}.start` counter +1 and returns an `Op` |
-| `op.Complete(err)` | `{name}.finish` histogram tagged with `result=success\|error\|cancel` |
+| `op.Complete(err, ...tags)` | `{name}.finish` histogram tagged with `result=success\|error\|cancel` and any completion tags |
 
 `buckets` is required at `Begin` because operations differ widely in expected latency. The finish histogram records both the duration distribution and the number of completed operations, so `Complete` does not emit a separate counter.
 
@@ -31,6 +31,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
     // ... business logic ...
     return nil
 }
+```
+
+Tags passed to `Begin` apply to both lifecycle metrics. Tags known only after execution, such as an error classification, can be attached to the finish histogram:
+
+```go
+err := controller.Process(ctx, delivery)
+err = classifier.Process(err)
+op.Complete(err, metrics.NewTag("origin", "infra_retryable"))
 ```
 
 ## Named Helpers
