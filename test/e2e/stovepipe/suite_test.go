@@ -52,12 +52,9 @@ import (
 // suite can only observe its completion black-box through the queue backend's
 // delivery-state table — there is no in-process signal to await across the
 // container boundary. A bounded poll is the deterministic-enough analog:
-// processTimeout is a safety net (a failure here means the stage is genuinely
-// stuck, not a timing race) and processPollInterval bounds re-query frequency.
-const (
-	processTimeout      = 30 * time.Second
-	processPollInterval = 500 * time.Millisecond
-)
+// processPollInterval bounds re-query frequency; Bazel's test timeout is the
+// only convergence deadline.
+const processPollInterval = 500 * time.Millisecond
 
 type StovepipeE2ESuite struct {
 	suite.Suite

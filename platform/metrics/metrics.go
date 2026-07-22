@@ -34,10 +34,10 @@ func NewTag(key, value string) Tag {
 	return Tag{Key: key, Value: value}
 }
 
-// defaultLatencyBuckets provides pre-defined duration buckets for common latency histograms.
+// DefaultLatencyBuckets provides pre-defined duration buckets for common latency histograms.
 // Covers sub-millisecond to multi-hour ranges suitable for RPC calls, queue processing,
 // and long-running operations like builds and merges.
-var defaultLatencyBuckets = tally.DurationBuckets{
+var DefaultLatencyBuckets = tally.DurationBuckets{
 	5 * time.Millisecond,
 	10 * time.Millisecond,
 	25 * time.Millisecond,
@@ -89,7 +89,7 @@ func Begin(scope tally.Scope, name string, tags ...Tag) Op {
 // Complete records the outcome of the operation. It emits a {name}.succeeded or
 // {name}.failed counter based on err, and records elapsed time on both
 // {name}.latency (timer) and {name}.latency_histogram (histogram with
-// defaultLatencyBuckets for percentile distributions), tagged with result=success|error.
+// DefaultLatencyBuckets for percentile distributions), tagged with result=success|error.
 // On failure, error classification tags (error_origin, retryable, dependency)
 // are added to both the timer and histogram.
 func (o Op) Complete(err error) {
@@ -99,7 +99,7 @@ func (o Op) Complete(err error) {
 		o.scope.Counter("succeeded").Inc(1)
 		s := o.scope.Tagged(map[string]string{"result": "success"})
 		s.Timer("latency").Record(elapsed)
-		s.Histogram("latency_histogram", defaultLatencyBuckets).RecordDuration(elapsed)
+		s.Histogram("latency_histogram", DefaultLatencyBuckets).RecordDuration(elapsed)
 		return
 	}
 
@@ -111,7 +111,7 @@ func (o Op) Complete(err error) {
 	}
 	s := o.scope.Tagged(latencyTags)
 	s.Timer("latency").Record(elapsed)
-	s.Histogram("latency_histogram", defaultLatencyBuckets).RecordDuration(elapsed)
+	s.Histogram("latency_histogram", DefaultLatencyBuckets).RecordDuration(elapsed)
 }
 
 // NamedCounter increments the {name}.{counter} counter by value.

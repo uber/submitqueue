@@ -37,6 +37,8 @@ import (
 	"github.com/uber/submitqueue/platform/errs"
 	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
 	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
+	"github.com/uber/submitqueue/platform/extension/consumergate"
+	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	mysqlcounter "github.com/uber/submitqueue/platform/extension/counter/mysql"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
@@ -216,6 +218,11 @@ func run() error {
 	// so every non-nil error from a DLQ controller is forced retryable —
 	// reconciliation must redeliver on any failure because the DLQ
 	// subscriptions are final destinations (there is no further DLQ).
+	// Consumer gate: both consumers are gated uniformly — the gate keys on
+	// consumer group, so a DLQ stage is paused by its own group name just
+	// like a primary stage.
+	gate := newConsumerGate(logger)
+
 	primaryConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
 		errs.NewClassifierProcessor(
 			genericerrs.Classifier,
@@ -224,9 +231,11 @@ func run() error {
 			// errors surfaced from either backend.
 			mysqlerrs.Classifier,
 		),
+		gate,
 	)
 	dlqConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer-dlq"), registry,
 		errs.AlwaysRetryableProcessor,
+		gate,
 	)
 
 	// Build the per-queue extension registry: each queue resolves to its own
@@ -735,6 +744,18 @@ func getEnv(key, defaultVal string) string {
 		return val
 	}
 	return defaultVal
+}
+
+// defaultConsumerGateDir is the path the compose stack bind-mounts for gate
+// state files. A missing directory simply means every gate is open.
+const defaultConsumerGateDir = "/var/submitqueue/consumergate"
+
+// newConsumerGate returns a file-backed consumer gate rooted at the directory
+// from CONSUMER_GATE_DIR (defaulting to defaultConsumerGateDir).
+func newConsumerGate(logger *zap.Logger) consumergate.Gate {
+	dir := getEnv("CONSUMER_GATE_DIR", defaultConsumerGateDir)
+	logger.Info("consumer gate configured", zap.String("dir", dir))
+	return consumergatefile.New(dir, consumergate.DefaultConfig())
 }
 
 // parseTimeout parses a duration from environment variable with fallback to default.

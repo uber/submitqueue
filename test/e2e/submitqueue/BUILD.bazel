@@ -18,12 +18,19 @@ go_test(
         "e2e",
         "external",
         "integration",
+        # The suite bind-mounts a host /tmp directory (consumer-gate state) into
+        # the compose services. Bazel's hermetic sandbox /tmp is invisible to
+        # the Docker daemon, so this test must run unsandboxed.
+        "no-sandbox",
     ],
     deps = [
         "//api/base/change/protopb:go_default_library",
         "//api/base/mergestrategy/protopb:go_default_library",
+        "//api/runway/messagequeue:go_default_library",
         "//api/submitqueue/gateway/protopb:go_default_library",
         "//api/submitqueue/orchestrator/protopb:go_default_library",
+        "//platform/extension/consumergate:go_default_library",
+        "//platform/extension/consumergate/file:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/storage:go_default_library",
         "//submitqueue/extension/storage/mysql:go_default_library",

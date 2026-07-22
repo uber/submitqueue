@@ -11,6 +11,7 @@ go_library(
         "//platform/errs:go_default_library",
         "//platform/errs/generic:go_default_library",
         "//platform/errs/mysql:go_default_library",
+        "//platform/extension/consumergate/noop:go_default_library",
         "//platform/extension/messagequeue:go_default_library",
         "//platform/extension/messagequeue/mysql:go_default_library",
         "//service/stovepipe/server/mapper:go_default_library",

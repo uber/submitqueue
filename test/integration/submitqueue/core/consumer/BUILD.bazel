@@ -15,6 +15,7 @@ go_test(
         "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
         "//platform/errs:go_default_library",
+        "//platform/extension/consumergate/noop:go_default_library",
         "//platform/extension/messagequeue:go_default_library",
         "//platform/extension/messagequeue/mysql:go_default_library",
         "//test/testutil:go_default_library",

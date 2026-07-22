@@ -33,6 +33,7 @@ import (
 	"github.com/uber/submitqueue/platform/errs"
 	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
 	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
+	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/service/stovepipe/server/mapper"
@@ -228,15 +229,18 @@ func run() error {
 	// uses AlwaysRetryableProcessor so every non-nil error from a DLQ controller is
 	// forced retryable — reconciliation must redeliver on any failure because the DLQ
 	// subscription is a final destination (DLQ.Enabled is false on it, so there is no
-	// further DLQ to fall back on).
+	// further DLQ to fall back on). Stovepipe has no gated deployment yet, so both
+	// consumers use the no-op gate.
 	primaryConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
 		errs.NewClassifierProcessor(
 			genericerrs.Classifier,
 			mysqlerrs.Classifier,
 		),
+		consumergatenoop.New(),
 	)
 	dlqConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer-dlq"), registry,
 		errs.AlwaysRetryableProcessor,
+		consumergatenoop.New(),
 	)
 
 	// Each factory is constructed once and threaded through every consumer of

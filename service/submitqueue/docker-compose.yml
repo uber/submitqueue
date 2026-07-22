@@ -7,6 +7,16 @@
 #
 # Quick start:
 #   make e2e-test
+#
+# Consumer gate: every service shares one host directory (bind-mounted at
+# /var/submitqueue/consumergate) so tests and operators can stop/start
+# individual queue controllers by writing/removing gate files from the host.
+# Override the host side with SQ_CONSUMER_GATE_DIR (the e2e suite points it at
+# a per-run temp dir); it defaults to /tmp/sq-consumergate for local runs.
+# SQ_CONTAINER_USER controls the UID:GID of the application services that write
+# parked records into that bind mount. It defaults to root for normal local
+# usage; the e2e suite selects the host user for rootful Docker and root for
+# rootless Docker, where container root maps to the host user.
 
 services:
   # Application Database - Stores business data (requests, counters, etc.)
@@ -45,6 +55,7 @@ services:
     build:
       context: ${REPO_ROOT}
       dockerfile: service/submitqueue/gateway/server/Dockerfile
+    user: "${SQ_CONTAINER_USER:-0:0}"
     ports:
       - "8080" # Random ephemeral port to avoid conflicts
     environment:
@@ -54,9 +65,13 @@ services:
       # Queue infrastructure connection (separate database)
       - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
       # Path to YAML queue configuration baked into the image
-      - QUEUE_CONFIG_PATH=/root/queues.yaml
+      - QUEUE_CONFIG_PATH=/app/queues.yaml
       # Stable subscriber name for the request-log consumer
       - HOSTNAME=gateway-dev
+      # Consumer-gate state shared with the host (see header comment)
+      - CONSUMER_GATE_DIR=/var/submitqueue/consumergate
+    volumes:
+      - ${SQ_CONSUMER_GATE_DIR:-/tmp/sq-consumergate}:/var/submitqueue/consumergate
     depends_on:
       mysql-app:
         condition: service_healthy
@@ -67,6 +82,7 @@ services:
     build:
       context: ${REPO_ROOT}
       dockerfile: service/submitqueue/orchestrator/server/Dockerfile
+    user: "${SQ_CONTAINER_USER:-0:0}"
     ports:
       - "8080" # Random ephemeral port to avoid conflicts
     environment:
@@ -76,6 +92,10 @@ services:
       # Queue infrastructure connection (separate database)
       - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
       - HOSTNAME=orchestrator-dev
+      # Consumer-gate state shared with the host (see header comment)
+      - CONSUMER_GATE_DIR=/var/submitqueue/consumergate
+    volumes:
+      - ${SQ_CONSUMER_GATE_DIR:-/tmp/sq-consumergate}:/var/submitqueue/consumergate
     depends_on:
       mysql-app:
         condition: service_healthy
@@ -91,6 +111,7 @@ services:
     build:
       context: ${REPO_ROOT}
       dockerfile: service/runway/server/Dockerfile
+    user: "${SQ_CONTAINER_USER:-0:0}"
     ports:
       - "8080" # Random ephemeral port to avoid conflicts
     environment:
@@ -98,6 +119,10 @@ services:
       # Queue infrastructure connection (shared with the orchestrator)
       - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
       - HOSTNAME=runway-dev
+      # Consumer-gate state shared with the host (see header comment)
+      - CONSUMER_GATE_DIR=/var/submitqueue/consumergate
+    volumes:
+      - ${SQ_CONSUMER_GATE_DIR:-/tmp/sq-consumergate}:/var/submitqueue/consumergate
     depends_on:
       mysql-queue:
         condition: service_healthy

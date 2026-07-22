@@ -17,6 +17,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
+	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/test/testutil"
@@ -147,7 +148,7 @@ func (s *ConsumerIntegrationSuite) newConsumer(t *testing.T, q extqueue.Queue, t
 	})
 	require.NoError(t, err)
 
-	return consumer.New(logger, tally.NoopScope, registry, errs.NewClassifierProcessor())
+	return consumer.New(logger, tally.NoopScope, registry, errs.NewClassifierProcessor(), consumergatenoop.New())
 }
 
 func (s *ConsumerIntegrationSuite) TestConsumerPerPartitionIsolation() {
