@@ -26,6 +26,12 @@ entity.Version = newVersion // only after the write succeeded
 
 The post-success assignment matters whenever the entity is read again later in the same flow. Pre-incrementing in memory before the call is a bug pattern: if the call fails and the caller swallows the error, the in-memory version is now ahead of the database and subsequent updates will fail with `ErrVersionMismatch` for non-obvious reasons.
 
+## Read-after-write consistency
+
+A `Get` immediately following a successful write (`Create`/`Update`) — by the same caller, or a causally-dependent one such as a queue consumer processing a message published after the write committed — must return that write. This is a requirement on every storage implementation, not a condition callers negotiate around: a MySQL primary (including after a promotion) satisfies it, and any other backend (KV, document, etc.) must too.
+
+**Controllers must not treat `ErrNotFound` as "not visible yet, retry."** The store interface is intentionally general enough to run over any backend, so a controller has no way to know whether a missing row will appear shortly or does not exist at all — retrying on that assumption just reintroduces, in business logic, the consistency gap the storage contract exists to close. If a `Get` misses a row that a causally-prior write should already have produced, that is a storage implementation defect: let the error surface as a normal (non-retryable, per `platform/errs`'s default) failure rather than absorbing it with a retryable wrapper.
+
 ## Key-value contract
 
 Store interfaces are designed for the storage technology *space*, not for SQL (see the Extensions section of the repo `CLAUDE.md`): every method must be satisfiable by a plain key-value backend (DynamoDB, Bigtable, an in-memory map) as cheaply as by MySQL. Concretely, a store exposes only get/put/conditional-update **by primary key**. No lookups by other attributes, no listings filtered server-side, no joins.
