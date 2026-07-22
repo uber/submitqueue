@@ -366,8 +366,8 @@ func (s *subscriber) advanceWatermark(ctx context.Context, consumerGroup, topic,
 
 // Subscribe starts consuming messages from the specified topic
 func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueue.SubscriptionConfig) (_ <-chan extqueue.Delivery, retErr error) {
-	op := metrics.Begin(s.scope, "subscribe", metrics.NewTag("topic", topic))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "subscribe", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
 
 	s.mu.RLock()
 	closed := s.closed
@@ -412,7 +412,11 @@ func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueu
 	s.subscriptions[subKey] = sub
 
 	// Track active subscription
-	metrics.NamedGauge(s.scope, "subscribe", "active_subscriptions", 1, metrics.NewTag("topic", topic))
+	s.scope.
+		Tagged(map[string]string{"topic": topic}).
+		SubScope("subscribe").
+		Gauge("active_subscriptions").
+		Update(1)
 
 	// Start the supervisor goroutine. It will discover partitions, acquire
 	// leases, and spawn per-partition worker goroutines. The supervisor runs
@@ -1088,8 +1092,8 @@ func (s *subscriber) fairShareCap(ctx context.Context, sub *subscription, owned 
 //  3. managePartitions internally handles stopping workers and closing deliveryCh
 //     (see managePartitions shutdown sequence)
 func (s *subscriber) Close() (retErr error) {
-	op := metrics.Begin(s.scope, "close")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "close", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1132,7 +1136,11 @@ func (s *subscriber) Close() (retErr error) {
 		}
 
 		// Update metrics
-		metrics.NamedGauge(s.scope, "subscribe", "active_subscriptions", 0, metrics.NewTag("topic", sub.topic))
+		s.scope.
+			Tagged(map[string]string{"topic": sub.topic}).
+			SubScope("subscribe").
+			Gauge("active_subscriptions").
+			Update(0)
 	}
 
 	s.subscriptions = make(map[string]*subscription)

@@ -91,8 +91,8 @@ func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter cou
 func (c *LandController) Land(ctx context.Context, req entity.LandRequest) (result entity.LandResult, retErr error) {
 	const opName = "land"
 
-	op := metrics.Begin(c.metricsScope, opName)
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(c.metricsScope, opName, metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	// Validate provider-agnostic request constraints before allocating an sqid.
 	if err := validateQueueIdentifier(req.Queue); err != nil {

@@ -40,11 +40,11 @@ func newOffsetStore(db *sql.DB, scope tally.Scope) offsetStore {
 
 // Initialize creates an offset entry for a topic+partition if it doesn't exist
 func (s *sqloffsetStore) Initialize(ctx context.Context, topic string, partitionKey string, consumerGroup string) (retErr error) {
-	op := metrics.Begin(s.scope, "initialize",
+	op := metrics.Begin(s.scope, "initialize", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("partition_key", partitionKey),
 		metrics.NewTag("consumer_group", consumerGroup))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	defer func() { op.Complete(retErr) }()
 
 	now := time.Now().UnixMilli()
 
@@ -63,11 +63,11 @@ func (s *sqloffsetStore) Initialize(ctx context.Context, topic string, partition
 
 // GetAckedOffset returns the current acked offset for a topic+partition
 func (s *sqloffsetStore) GetAckedOffset(ctx context.Context, topic string, partitionKey string, consumerGroup string) (_ int64, retErr error) {
-	op := metrics.Begin(s.scope, "get_acked_offset",
+	op := metrics.Begin(s.scope, "get_acked_offset", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("partition_key", partitionKey),
 		metrics.NewTag("consumer_group", consumerGroup))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	defer func() { op.Complete(retErr) }()
 
 	var offset int64
 	err := s.db.QueryRowContext(ctx, fmt.Sprintf(`
@@ -88,11 +88,11 @@ func (s *sqloffsetStore) GetAckedOffset(ctx context.Context, topic string, parti
 
 // UpdateAckedOffset updates the offset_acked for a topic+partition (only if new offset is greater)
 func (s *sqloffsetStore) UpdateAckedOffset(ctx context.Context, topic string, partitionKey string, offset int64, consumerGroup string) (retErr error) {
-	op := metrics.Begin(s.scope, "update_acked_offset",
+	op := metrics.Begin(s.scope, "update_acked_offset", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("partition_key", partitionKey),
 		metrics.NewTag("consumer_group", consumerGroup))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	defer func() { op.Complete(retErr) }()
 
 	now := time.Now().UnixMilli()
 
@@ -112,10 +112,10 @@ func (s *sqloffsetStore) UpdateAckedOffset(ctx context.Context, topic string, pa
 // GetMinAckedOffset returns the minimum offset_acked across all consumer groups
 // for a topic+partition. Returns (0, false, nil) if no offset rows exist.
 func (s *sqloffsetStore) GetMinAckedOffset(ctx context.Context, topic string, partitionKey string) (_ int64, _ bool, retErr error) {
-	op := metrics.Begin(s.scope, "get_min_acked_offset",
+	op := metrics.Begin(s.scope, "get_min_acked_offset", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("partition_key", partitionKey))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	defer func() { op.Complete(retErr) }()
 
 	var minOffset int64
 	err := s.db.QueryRowContext(ctx, fmt.Sprintf(`

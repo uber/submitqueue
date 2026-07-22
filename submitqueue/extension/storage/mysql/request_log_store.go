@@ -43,8 +43,8 @@ func NewRequestLogStore(db *sql.DB, scope tally.Scope) storage.RequestLogStore {
 // millisecond-precision collisions), so a random salt is generated to guarantee uniqueness
 // without requiring the caller to manage deduplication.
 func (r *requestLogStore) Insert(ctx context.Context, log entity.RequestLog) (retErr error) {
-	op := metrics.Begin(r.scope, "insert")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(r.scope, "insert", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	metadataJSON, err := json.Marshal(log.Metadata)
 	if err != nil {
@@ -71,8 +71,8 @@ func (r *requestLogStore) Insert(ctx context.Context, log entity.RequestLog) (re
 // Salt is used as a secondary sort key to provide stable ordering for entries that share a
 // timestamp, but it is not included in the SELECT columns and never returned to callers.
 func (r *requestLogStore) List(ctx context.Context, requestID string) (ret []entity.RequestLog, retErr error) {
-	op := metrics.Begin(r.scope, "list")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(r.scope, "list", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	rows, err := r.db.QueryContext(ctx,
 		"SELECT request_id, timestamp_ms, status, request_version, last_error, metadata FROM request_log WHERE request_id = ? ORDER BY timestamp_ms ASC, salt ASC",

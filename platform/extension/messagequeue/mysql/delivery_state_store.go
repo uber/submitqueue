@@ -49,11 +49,11 @@ func newDeliveryStateStore(db *sql.DB, logger *zap.SugaredLogger, scope tally.Sc
 // — only the lease holder calls MarkDelivered for a given partition, so no concurrent
 // mutation can occur between the two statements.
 func (s *sqldeliveryStateStore) MarkDelivered(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64, visibilityTimeoutMs int64) (_ int, retErr error) {
-	op := metrics.Begin(s.scope, "mark_delivered",
+	op := metrics.Begin(s.scope, "mark_delivered", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup),
 		metrics.NewTag("partition_key", partitionKey))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	defer func() { op.Complete(retErr) }()
 
 	now := time.Now().UnixMilli()
 	invisibleUntil := now + visibilityTimeoutMs
@@ -90,11 +90,11 @@ func (s *sqldeliveryStateStore) MarkDelivered(ctx context.Context, consumerGroup
 // ExtendVisibility extends the visibility timeout for an in-flight message
 // without incrementing retry_count. Used by ExtendVisibilityTimeout.
 func (s *sqldeliveryStateStore) ExtendVisibility(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64, visibilityTimeoutMs int64) (retErr error) {
-	op := metrics.Begin(s.scope, "extend_visibility",
+	op := metrics.Begin(s.scope, "extend_visibility", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup),
 		metrics.NewTag("partition_key", partitionKey))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	defer func() { op.Complete(retErr) }()
 
 	now := time.Now().UnixMilli()
 	invisibleUntil := now + visibilityTimeoutMs
@@ -124,11 +124,11 @@ func (s *sqldeliveryStateStore) ExtendVisibility(ctx context.Context, consumerGr
 
 // MarkAcked sets acked = TRUE to indicate this group has processed the message.
 func (s *sqldeliveryStateStore) MarkAcked(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64) (retErr error) {
-	op := metrics.Begin(s.scope, "mark_acked",
+	op := metrics.Begin(s.scope, "mark_acked", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup),
 		metrics.NewTag("partition_key", partitionKey))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	defer func() { op.Complete(retErr) }()
 
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (consumer_group, topic, partition_key, message_offset, acked, invisible_until, retry_count)
@@ -147,11 +147,11 @@ func (s *sqldeliveryStateStore) MarkAcked(ctx context.Context, consumerGroup, to
 // MarkNacked sets invisible_until = now + delay to schedule redelivery.
 // retry_count is NOT incremented here — it is incremented by MarkDelivered on redelivery.
 func (s *sqldeliveryStateStore) MarkNacked(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64, delayMs int64) (retErr error) {
-	op := metrics.Begin(s.scope, "mark_nacked",
+	op := metrics.Begin(s.scope, "mark_nacked", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup),
 		metrics.NewTag("partition_key", partitionKey))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	defer func() { op.Complete(retErr) }()
 
 	now := time.Now().UnixMilli()
 	invisibleUntil := now + delayMs
@@ -174,11 +174,11 @@ func (s *sqldeliveryStateStore) MarkNacked(ctx context.Context, consumerGroup, t
 // GetDeliveryState returns the full delivery state for a message offset.
 // Returns (state, found, error). found=false means no row (never delivered).
 func (s *sqldeliveryStateStore) GetDeliveryState(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64) (_ DeliveryState, _ bool, retErr error) {
-	op := metrics.Begin(s.scope, "get_delivery_state",
+	op := metrics.Begin(s.scope, "get_delivery_state", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup),
 		metrics.NewTag("partition_key", partitionKey))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	defer func() { op.Complete(retErr) }()
 
 	var state DeliveryState
 	err := s.db.QueryRowContext(ctx, fmt.Sprintf(`
@@ -201,11 +201,11 @@ func (s *sqldeliveryStateStore) GetDeliveryState(ctx context.Context, consumerGr
 // offsets are the actual message offsets above the current watermark (from messageStore).
 // Returns the new watermark (highest contiguous acked offset from currentWatermark).
 func (s *sqldeliveryStateStore) AdvanceWatermark(ctx context.Context, consumerGroup, topic, partitionKey string, currentWatermark int64, offsets []int64) (_ int64, retErr error) {
-	op := metrics.Begin(s.scope, "advance_watermark",
+	op := metrics.Begin(s.scope, "advance_watermark", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup),
 		metrics.NewTag("partition_key", partitionKey))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	defer func() { op.Complete(retErr) }()
 
 	if len(offsets) == 0 {
 		return currentWatermark, nil
