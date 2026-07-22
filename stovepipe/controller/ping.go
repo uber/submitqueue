@@ -43,8 +43,8 @@ func NewPingController(logger *zap.Logger, scope tally.Scope) *PingController {
 func (c *PingController) Ping(ctx context.Context, req *pb.PingRequest) (resp *pb.PingResponse, retErr error) {
 	const opName = "ping"
 
-	op := metrics.Begin(c.metricsScope, opName)
-	defer func() { op.Complete(retErr, metrics.FastLatencyBuckets) }()
+	op := metrics.Begin(c.metricsScope, opName, metrics.FastLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	message := "pong!"
 	isEcho := false

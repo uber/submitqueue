@@ -90,8 +90,8 @@ func NewController(
 // Process advances a batch one step along the naive happy-path.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := metrics.Begin(c.metricsScope, opName)
-	defer func() { op.Complete(retErr, metrics.LongLatencyBuckets) }()
+	op := metrics.Begin(c.metricsScope, opName, metrics.LongLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 

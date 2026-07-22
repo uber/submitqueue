@@ -84,8 +84,8 @@ func NewController(
 // Process reloads the request referenced by the delivery, coalesces older heads,
 // and admits the latest when a slot is open. Returns nil to ack (success) or an error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := metrics.Begin(c.metricsScope, _opName)
-	defer func() { op.Complete(retErr, metrics.LongLatencyBuckets) }()
+	op := metrics.Begin(c.metricsScope, _opName, metrics.LongLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 

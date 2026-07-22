@@ -38,8 +38,8 @@ func NewQueueStore(db *sql.DB, scope tally.Scope) storage.QueueStore {
 
 // Create persists a new queue row. Returns ErrAlreadyExists if the name already exists.
 func (q *queueStore) Create(ctx context.Context, queue entity.Queue) (retErr error) {
-	op := metrics.Begin(q.scope, "create")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(q.scope, "create", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	_, err := q.db.ExecContext(ctx,
 		`INSERT INTO queue (name, last_green_uri, in_flight_count, latest_request_id, version)
@@ -61,8 +61,8 @@ func (q *queueStore) Create(ctx context.Context, queue entity.Queue) (retErr err
 
 // Get retrieves a queue by name. Returns ErrNotFound if the queue is not found.
 func (q *queueStore) Get(ctx context.Context, name string) (ret entity.Queue, retErr error) {
-	op := metrics.Begin(q.scope, "get")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(q.scope, "get", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	var queue entity.Queue
 	err := q.db.QueryRowContext(ctx,
@@ -89,8 +89,8 @@ func (q *queueStore) Get(ctx context.Context, name string) (ret entity.Queue, re
 // Update persists the mutable fields of queue if the stored version matches oldVersion,
 // writing newVersion. Returns ErrVersionMismatch if the stored version does not match.
 func (q *queueStore) Update(ctx context.Context, queue entity.Queue, oldVersion, newVersion int32) (retErr error) {
-	op := metrics.Begin(q.scope, "update")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(q.scope, "update", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	result, err := q.db.ExecContext(ctx,
 		`UPDATE queue

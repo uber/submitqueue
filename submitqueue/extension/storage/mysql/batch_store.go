@@ -42,8 +42,8 @@ func NewBatchStore(db *sql.DB, scope tally.Scope) storage.BatchStore {
 
 // Get retrieves a batch by ID. Returns ErrNotFound if the batch is not found.
 func (s *batchStore) Get(ctx context.Context, id string) (ret entity.Batch, retErr error) {
-	op := metrics.Begin(s.scope, "get")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "get", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	var batch entity.Batch
 	var containsJSON []byte
@@ -74,8 +74,8 @@ func (s *batchStore) Get(ctx context.Context, id string) (ret entity.Batch, retE
 
 // Create creates a new batch. The batch must have a unique ID already assigned. Returns ErrAlreadyExists if the batch ID already exists.
 func (s *batchStore) Create(ctx context.Context, batch entity.Batch) (retErr error) {
-	op := metrics.Begin(s.scope, "create")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	containsJSON, err := json.Marshal(batch.Contains)
 	if err != nil {
@@ -106,8 +106,8 @@ func (s *batchStore) Create(ctx context.Context, batch entity.Batch) (retErr err
 // if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
 // Version arithmetic is owned by the caller; this is a pure conditional write.
 func (s *batchStore) UpdateState(ctx context.Context, id string, oldVersion, newVersion int32, newState entity.BatchState) (retErr error) {
-	op := metrics.Begin(s.scope, "update_state")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "update_state", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	result, err := s.db.ExecContext(ctx,
 		"UPDATE batch SET state = ?, version = ? WHERE id = ? AND version = ?",
@@ -142,8 +142,8 @@ func (s *batchStore) UpdateState(ctx context.Context, id string, oldVersion, new
 // if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
 // Version arithmetic is owned by the caller; this is a pure conditional write.
 func (s *batchStore) UpdateScoreAndState(ctx context.Context, id string, oldVersion, newVersion int32, score float64, newState entity.BatchState) (retErr error) {
-	op := metrics.Begin(s.scope, "update_score_and_state")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "update_score_and_state", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	result, err := s.db.ExecContext(ctx,
 		"UPDATE batch SET score = ?, state = ?, version = ? WHERE id = ? AND version = ?",
@@ -176,8 +176,8 @@ func (s *batchStore) UpdateScoreAndState(ctx context.Context, id string, oldVers
 
 // GetByQueueAndStates retrieves all batches that belong to the given queue and are in the given states.
 func (s *batchStore) GetByQueueAndStates(ctx context.Context, queue string, states []entity.BatchState) (ret []entity.Batch, retErr error) {
-	op := metrics.Begin(s.scope, "get_by_queue_and_states")
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(s.scope, "get_by_queue_and_states", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	if len(states) == 0 {
 		return nil, nil

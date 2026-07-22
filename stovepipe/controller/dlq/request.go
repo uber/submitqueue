@@ -67,8 +67,8 @@ func NewController(
 // wired with errs.AlwaysRetryableProcessor so a transient reconcile failure retries
 // instead of dead-lettering the DLQ message itself.
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := metrics.Begin(c.metricsScope, _opName)
-	defer func() { op.Complete(retErr, metrics.LongLatencyBuckets) }()
+	op := metrics.Begin(c.metricsScope, _opName, metrics.LongLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 

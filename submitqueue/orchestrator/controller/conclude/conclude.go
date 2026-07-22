@@ -65,8 +65,8 @@ func NewController(
 // Deserializes the batch and completes the pipeline processing.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := metrics.Begin(c.metricsScope, "process")
-	defer func() { op.Complete(retErr, metrics.LongLatencyBuckets) }()
+	op := metrics.Begin(c.metricsScope, "process", metrics.LongLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 

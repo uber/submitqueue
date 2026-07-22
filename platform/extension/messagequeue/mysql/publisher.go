@@ -46,8 +46,8 @@ func NewPublisher(logger *zap.SugaredLogger, scope tally.Scope, messageStore mes
 
 // Publish sends a message to the specified topic
 func (p *publisher) Publish(ctx context.Context, topic string, message entityqueue.Message) (retErr error) {
-	op := metrics.Begin(p.scope, "publish", metrics.NewTag("topic", topic))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(p.scope, "publish", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
 
 	// Check if closed (under lock)
 	p.mu.RLock()
@@ -72,8 +72,8 @@ func (p *publisher) Publish(ctx context.Context, topic string, message entityque
 // now + delayMs; FetchByOffset skips it until that timestamp.
 // delayMs <= 0 is equivalent to Publish.
 func (p *publisher) PublishAfter(ctx context.Context, topic string, message entityqueue.Message, delayMs int64) (retErr error) {
-	op := metrics.Begin(p.scope, "publish_after", metrics.NewTag("topic", topic))
-	defer func() { op.Complete(retErr, metrics.StorageLatencyBuckets) }()
+	op := metrics.Begin(p.scope, "publish_after", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
 
 	p.mu.RLock()
 	closed := p.closed
