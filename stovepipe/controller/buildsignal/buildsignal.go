@@ -129,12 +129,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	buildRunner, err := c.buildRunners.For(buildrunner.Config{QueueName: request.Queue})
 	if err != nil {
 		// A queue with no registered builder is a config error.
-		return fmt.Errorf("BuildSignalController failed to resolve build runner for queue %s: %w", request.Queue, err)
+		return fmt.Errorf("failed to resolve build runner for queue %s: %w", request.Queue, err)
 	}
 
 	status, _, err := buildRunner.Status(ctx, entity.BuildID{ID: build.ID})
 	if err != nil {
-		return fmt.Errorf("BuildSignalController failed to poll status for build %s: %w", build.ID, err)
+		return fmt.Errorf("failed to poll status for build %s: %w", build.ID, err)
 	}
 
 	effective, err := c.reconcile(ctx, build, status)
@@ -144,7 +144,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	if effective.IsTerminal() {
 		if err := c.publishRecord(ctx, build.ID, request.ID); err != nil {
-			return fmt.Errorf("BuildSignalController failed to publish record for build %s: %w", build.ID, err)
+			return fmt.Errorf("failed to publish record for build %s: %w", build.ID, err)
 		}
 		c.logger.Infow("build reached terminal status",
 			"build_id", build.ID,
@@ -156,7 +156,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	delayMs := pollDelay(effective)
 	if err := c.publishBuildSignal(ctx, build.ID, delayMs); err != nil {
-		return errs.NewRetryableError(fmt.Errorf("BuildSignalController failed to reschedule poll for build %s: %w", build.ID, err))
+		return errs.NewRetryableError(fmt.Errorf("failed to reschedule poll for build %s: %w", build.ID, err))
 	}
 	c.logger.Debugw("rescheduled build status poll",
 		"build_id", build.ID,
@@ -188,19 +188,19 @@ func (c *Controller) reconcile(ctx context.Context, build entity.Build, status e
 		if errors.Is(err, storage.ErrVersionMismatch) {
 			return "", errs.NewRetryableError(fmt.Errorf("build %s version conflict: %w", build.ID, err))
 		}
-		return "", fmt.Errorf("BuildSignalController failed to persist status for build %s: %w", build.ID, err)
+		return "", fmt.Errorf("failed to persist status for build %s: %w", build.ID, err)
 	}
 	return status, nil
 }
 
 // loadBuild returns the build for id.
 func (c *Controller) loadBuild(ctx context.Context, id string) (entity.Build, error) {
-	return loader.ByID(ctx, id, c.store.GetBuildStore().Get, "BuildSignalController", "build")
+	return loader.ByID(ctx, id, c.store.GetBuildStore().Get, "build")
 }
 
 // loadRequest returns the request for id.
 func (c *Controller) loadRequest(ctx context.Context, id string) (entity.Request, error) {
-	return loader.ByID(ctx, id, c.store.GetRequestStore().Get, "BuildSignalController", "request")
+	return loader.ByID(ctx, id, c.store.GetRequestStore().Get, "request")
 }
 
 // pollDelay returns the delay before the next Status call for a non-terminal status.

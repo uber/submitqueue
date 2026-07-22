@@ -73,7 +73,7 @@ func (c *CancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 	c.metricsScope.Counter("cancel_request_count").Inc(1)
 
 	if req.ID == "" {
-		return fmt.Errorf("CancelController requires the request to have a sqid specified: %w", ErrInvalidRequest)
+		return fmt.Errorf("requires the request to have a sqid specified: %w", ErrInvalidRequest)
 	}
 
 	c.logger.Debugw("cancel request received",
@@ -87,7 +87,7 @@ func (c *CancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 			c.metricsScope.Counter("cancel_request_not_found").Inc(1)
 			return errs.NewUserError(&RequestNotFoundError{Sqid: req.ID})
 		}
-		return fmt.Errorf("CancelController failed to look up request summary for sqid=%s: %w", req.ID, err)
+		return fmt.Errorf("failed to look up request summary for sqid=%s: %w", req.ID, err)
 	}
 
 	// Record the user's intent in the request log before publishing. Writing direct to the
@@ -99,11 +99,11 @@ func (c *CancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 	}
 	logEntry := entity.NewRequestLog(req.ID, entity.RequestStatusCancelling, 0, "", metadata)
 	if err := c.materializer.PersistLog(ctx, logEntry); err != nil {
-		return fmt.Errorf("CancelController failed to insert cancelling log for sqid=%s: %w", req.ID, err)
+		return fmt.Errorf("failed to insert cancelling log for sqid=%s: %w", req.ID, err)
 	}
 
 	if err := c.publishToQueue(ctx, req); err != nil {
-		return fmt.Errorf("CancelController failed to publish cancel request to queue: %w", err)
+		return fmt.Errorf("failed to publish cancel request to queue: %w", err)
 	}
 
 	c.logger.Infow("cancel request published to queue",

@@ -33,7 +33,7 @@ func TestByID(t *testing.T) {
 			return widget{Name: id}, nil
 		}
 
-		got, err := ByID(context.Background(), "abc", get, "TestController", "widget")
+		got, err := ByID(context.Background(), "abc", get, "widget")
 
 		require.NoError(t, err)
 		assert.Equal(t, widget{Name: "abc"}, got)
@@ -45,7 +45,7 @@ func TestByID(t *testing.T) {
 			return widget{}, sentinel
 		}
 
-		got, err := ByID(context.Background(), "abc", get, "TestController", "widget")
+		got, err := ByID(context.Background(), "abc", get, "widget")
 
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, sentinel))
