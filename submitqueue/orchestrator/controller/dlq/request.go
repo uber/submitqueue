@@ -137,7 +137,7 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
 
-	if err := failRequest(ctx, c.store, c.registry, c.logger, requestID, dmeta["dlq.last_error"]); err != nil {
+	if err := reconcileRequest(ctx, c.store, c.registry, c.logger, requestID, dlqFailureOutcome(dmeta)); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
 		return err
 	}

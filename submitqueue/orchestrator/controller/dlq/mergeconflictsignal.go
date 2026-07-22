@@ -29,7 +29,7 @@ import (
 // mergeConflictSignalController is the DLQ reconciler for the
 // mergeconflictsignal topic. Its payload carries a runway
 // MergeResult whose id is the request id echoed back, so
-// reconciliation fails that request directly via failRequest.
+// reconciliation fails that request directly via reconcileRequest.
 type mergeConflictSignalController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
@@ -87,7 +87,7 @@ func (c *mergeConflictSignalController) Process(ctx context.Context, delivery co
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
 
-	if err := failRequest(ctx, c.store, c.registry, c.logger, result.Id, dmeta["dlq.last_error"]); err != nil {
+	if err := reconcileRequest(ctx, c.store, c.registry, c.logger, result.Id, dlqFailureOutcome(dmeta)); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
 		return err
 	}

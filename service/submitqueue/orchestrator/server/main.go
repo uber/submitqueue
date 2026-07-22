@@ -695,10 +695,8 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 	return count, nil
 }
 
-// registerDLQControllers creates one DLQ reconciler per primary stage and
-// registers them with the DLQ consumer. Each reconciler drives the affected
-// request or batch into a terminal Error/Failed state so the gateway stops
-// reporting it as stuck-in-progress.
+// registerDLQControllers creates one reconciler per primary stage. Normal DLQs
+// fail the affected entity; conclude DLQ repairs its existing terminal outcome.
 func registerDLQControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, store storage.Storage) (int, error) {
 	dlqScope := scope.SubScope("dlq")
 	dlqRegs := []struct {
@@ -716,7 +714,7 @@ func registerDLQControllers(c consumer.Consumer, logger *zap.SugaredLogger, scop
 		{"buildsignal_dlq", dlq.NewDLQBuildSignalController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")},
 		{"merge_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")},
 		{"mergesignal_dlq", dlq.NewDLQMergeSignalController(logger, dlqScope, store, registry, dlq.TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-mergesignal-dlq")},
-		{"conclude_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeyConclude), "orchestrator-conclude-dlq")},
+		{"conclude_dlq", dlq.NewDLQConcludeController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeyConclude), "orchestrator-conclude-dlq")},
 	}
 	var count int
 	for _, reg := range dlqRegs {

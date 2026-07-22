@@ -14,7 +14,7 @@
 
 // Package dlq contains controllers that consume messages from per-topic
 // dead-letter queues and reconcile the affected request and batch entities
-// into a terminal failed state.
+// into terminal states.
 //
 // Background. The consumer framework moves a message to its DLQ after the
 // controller for the original topic returns a non-retryable error or exhausts
@@ -26,11 +26,10 @@
 // Reconciliation strategy. Each DLQ topic carries the same payload as its
 // originating topic (the queue framework preserves the bytes verbatim under a
 // new `{topic}_dlq` name). The DLQ controllers decode that payload to recover
-// the affected request or batch, then transition it to a terminal failed
-// state — Error for requests, Failed for batches — with an idempotent
-// optimistic-locking write so concurrent activity (a late merge, a cancel
-// race) wins cleanly. Batch failures also fan out to the member requests so
-// the gateway no longer reports them as in-progress.
+// the affected request or batch. Normal pipeline DLQs reconcile requests to
+// Error and batches to Failed. The conclude DLQ preserves the terminal batch
+// outcome while repairing request fanout. Optimistic locking and idempotent log
+// publication let concurrent activity win cleanly.
 package dlq
 
 import (
@@ -61,19 +60,37 @@ func TopicKey(main consumer.TopicKey) consumer.TopicKey {
 	return consumer.TopicKey(string(main) + topicSuffix)
 }
 
-// failRequest transitions a non-terminal request to RequestStateError and
-// appends the matching RequestStatusError log. Redelivery for an existing Error
-// state repeats materialization to repair a previous partial attempt. A
-// different terminal outcome is left unchanged.
-// lastError is the failure reason preserved by the queue in DLQ delivery
-// metadata and is exposed through Status and History for diagnosis.
+func dlqFailureOutcome(metadata map[string]string) requestcore.TerminalOutcome {
+	logMetadata := make(map[string]string, 3)
+	for _, key := range []string{"dlq.original_topic", "dlq.failure_count", "dlq.failed_at"} {
+		if value := metadata[key]; value != "" {
+			logMetadata[key] = value
+		}
+	}
+	return requestcore.TerminalOutcome{
+		State:     entity.RequestStateError,
+		LastError: metadata["dlq.last_error"],
+		Metadata:  logMetadata,
+	}
+}
+
+// reconcileRequest converges a request on the caller-selected terminal outcome.
+// Redelivery for the same terminal state republishes the log to repair a
+// previous partial attempt. A different terminal outcome is left unchanged.
 //
-// A request in RequestStateCancelling is reconciled to RequestStateError, not
-// left in place: DLQ means the pipeline failed to converge, so we cannot
-// confirm the cancel completed cleanly. Writing Error is the honest signal and
-// keeps the request from being stuck in a non-terminal state forever.
-func failRequest(ctx context.Context, store storage.Storage, registry consumer.TopicRegistry, logger *zap.SugaredLogger, requestID, lastError string) error {
-	request, err := store.GetRequestStore().Get(ctx, requestID)
+// Normal pipeline DLQs select RequestStateError for a request in
+// RequestStateCancelling because the failed pipeline cannot confirm that
+// cancellation completed cleanly.
+func reconcileRequest(
+	ctx context.Context,
+	store storage.Storage,
+	registry consumer.TopicRegistry,
+	logger *zap.SugaredLogger,
+	requestID string,
+	outcome requestcore.TerminalOutcome,
+) error {
+	requestStore := store.GetRequestStore()
+	request, err := requestStore.Get(ctx, requestID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			logger.Warnw("dlq reconcile: request not found, skipping",
@@ -84,37 +101,22 @@ func failRequest(ctx context.Context, store storage.Storage, registry consumer.T
 		return fmt.Errorf("failed to get request %s: %w", requestID, err)
 	}
 
-	logVersion := request.Version
-	switch request.State {
-	case entity.RequestStateError:
-		logger.Infow("dlq reconcile: request already failed, republishing terminal log",
-			"request_id", requestID,
-		)
-	case entity.RequestStateLanded, entity.RequestStateCancelled:
+	reconciled, err := requestcore.ReconcileTerminalState(
+		ctx,
+		requestStore,
+		registry,
+		request,
+		outcome,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to reconcile request %s: %w", requestID, err)
+	}
+	if !reconciled {
 		logger.Infow("dlq reconcile: request has a different terminal outcome, skipping",
 			"request_id", requestID,
 			"state", string(request.State),
+			"target_state", string(outcome.State),
 		)
-		return nil
-	default:
-		newVersion := request.Version + 1
-		if err := store.GetRequestStore().UpdateState(ctx, requestID, request.Version, newVersion, entity.RequestStateError); err != nil {
-			return fmt.Errorf("failed to update request %s state to error: %w", requestID, err)
-		}
-		logVersion = newVersion
-		logger.Infow("dlq reconcile: request marked terminal error",
-			"request_id", requestID,
-			"previous_state", string(request.State),
-		)
-	}
-
-	// Publish the terminal Error status through the log topic so Gateway remains
-	// the sole writer of request logs and public projections. An existing Error
-	// state republishes the same logical event so a previous attempt that changed
-	// the entity but failed to publish can be repaired.
-	logEntry := entity.NewRequestLog(requestID, entity.RequestStatusError, logVersion, lastError, nil)
-	if err := requestcore.PublishLog(ctx, registry, logEntry, requestID); err != nil {
-		return fmt.Errorf("failed to publish request log for %s: %w", requestID, err)
 	}
 
 	return nil
@@ -124,18 +126,24 @@ func failRequest(ctx context.Context, store storage.Storage, registry consumer.T
 // terminal state, then fans out by transitioning each member request to
 // RequestStateError. The fan-out mirrors what the conclude controller would do
 // for a normally-completed batch, but skips re-publishing to the conclude
-// topic — for DLQ messages there is no guarantee that conclude would ever run,
-// so the reconciliation has to drive each request directly.
+// topic. For DLQ messages there is no guarantee that conclude would ever run,
+// so reconciliation drives each request directly.
 //
-// A batch in BatchStateCancelling is reconciled to BatchStateFailed for the
-// same reason failRequest reconciles Cancelling requests: DLQ means we cannot
-// confirm the cancel completed, so the batch must reach a terminal state.
+// A batch in BatchStateCancelling is reconciled to BatchStateFailed because the
+// failed pipeline cannot confirm that cancellation completed cleanly.
 //
 // Idempotency: an existing Failed batch repeats fan-out because a previous
 // attempt may have crashed after updating the batch. Succeeded and Cancelled
 // are different terminal outcomes and do not fan out errors.
-// lastError is propagated to each member request's terminal Error log.
-func failBatch(ctx context.Context, store storage.Storage, registry consumer.TopicRegistry, logger *zap.SugaredLogger, batchID, lastError string) error {
+// outcome is propagated to each member request's terminal Error log.
+func failBatch(
+	ctx context.Context,
+	store storage.Storage,
+	registry consumer.TopicRegistry,
+	logger *zap.SugaredLogger,
+	batchID string,
+	metadata map[string]string,
+) error {
 	batch, err := store.GetBatchStore().Get(ctx, batchID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
@@ -169,10 +177,58 @@ func failBatch(ctx context.Context, store storage.Storage, registry consumer.Top
 		)
 	}
 
+	outcome := dlqFailureOutcome(metadata)
 	for _, requestID := range batch.Contains {
-		if err := failRequest(ctx, store, registry, logger, requestID, lastError); err != nil {
+		if err := reconcileRequest(ctx, store, registry, logger, requestID, outcome); err != nil {
 			return fmt.Errorf("fan-out for batch %s: %w", batchID, err)
 		}
 	}
 	return nil
+}
+
+// concludeBatch preserves a terminal batch outcome and repairs request fanout.
+func concludeBatch(
+	ctx context.Context,
+	store storage.Storage,
+	registry consumer.TopicRegistry,
+	logger *zap.SugaredLogger,
+	batchID string,
+	_ map[string]string,
+) error {
+	batch, err := store.GetBatchStore().Get(ctx, batchID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			logger.Warnw("dlq reconcile: batch not found, skipping", "batch_id", batchID)
+			return nil
+		}
+		return fmt.Errorf("failed to get batch %s: %w", batchID, err)
+	}
+
+	requestState, err := terminalRequestState(batch.State)
+	if err != nil {
+		return fmt.Errorf("cannot reconcile conclude dlq for batch %s: %w", batchID, err)
+	}
+	outcome := requestcore.TerminalOutcome{
+		State:    requestState,
+		Metadata: map[string]string{"batch_id": batch.ID},
+	}
+	for _, requestID := range batch.Contains {
+		if err := reconcileRequest(ctx, store, registry, logger, requestID, outcome); err != nil {
+			return fmt.Errorf("conclude fan-out for batch %s: %w", batchID, err)
+		}
+	}
+	return nil
+}
+
+func terminalRequestState(state entity.BatchState) (entity.RequestState, error) {
+	switch state {
+	case entity.BatchStateSucceeded:
+		return entity.RequestStateLanded, nil
+	case entity.BatchStateFailed:
+		return entity.RequestStateError, nil
+	case entity.BatchStateCancelled:
+		return entity.RequestStateCancelled, nil
+	default:
+		return entity.RequestStateUnknown, fmt.Errorf("batch state %s is not terminal", state)
+	}
 }
