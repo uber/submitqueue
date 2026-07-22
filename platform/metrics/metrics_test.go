@@ -106,6 +106,25 @@ func TestBegin_WithTags(t *testing.T) {
 	assert.True(t, ok, "expected tagged finish histogram, got keys: %v", histogramKeys(histograms))
 }
 
+func TestOp_CompleteWithTags(t *testing.T) {
+	scope := tally.NewTestScope("", nil)
+	op := Begin(scope, "process", FastLatencyBuckets)
+	op.Complete(
+		fmt.Errorf("failed"),
+		NewTag("origin", "infra_retryable"),
+		NewTag("dependency", "no"),
+	)
+
+	snapshot := scope.Snapshot()
+	counters := snapshot.Counters()
+	_, ok := counters["process.start+"]
+	assert.True(t, ok, "finish-only tags should not be applied to start")
+
+	histograms := snapshot.Histograms()
+	_, ok = histograms["process.finish+dependency=no,origin=infra_retryable,result=error"]
+	assert.True(t, ok, "expected finish-only tags, got keys: %v", histogramKeys(histograms))
+}
+
 func TestNamedCounter(t *testing.T) {
 	scope := tally.NewTestScope("", nil)
 	NamedCounter(scope, "publish", "attempts", 5)

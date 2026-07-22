@@ -459,10 +459,9 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 				verdict: errs.InfraDependencyRetryable,
 			}),
 			expectedTags: map[string]string{
-				"result":       "error",
-				"error_origin": "infra",
-				"retryable":    "true",
-				"dependency":   "true",
+				"result":     "error",
+				"origin":     "infra_retryable",
+				"dependency": "yes",
 			},
 			expectAckCount: false,
 		},
@@ -474,10 +473,9 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 				verdict: errs.InfraRetryable,
 			}),
 			expectedTags: map[string]string{
-				"result":       "cancel",
-				"error_origin": "infra",
-				"retryable":    "true",
-				"dependency":   "false",
+				"result":     "cancel",
+				"origin":     "infra_retryable",
+				"dependency": "no",
 			},
 			expectAckCount: false,
 		},
@@ -530,18 +528,27 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 
 			var foundLatency bool
 			for _, histogram := range histograms {
-				if strings.Contains(histogram.Name(), "controller_latency") {
+				if strings.Contains(histogram.Name(), "process.finish") {
 					foundLatency = true
 					tags := histogram.Tags()
 					for key, value := range tt.expectedTags {
 						assert.Equal(t, value, tags[key])
 					}
-					assert.NotContains(t, tags, "success")
 				}
 			}
-			assert.True(t, foundLatency, "Should have controller_latency metric")
+			assert.True(t, foundLatency, "Should have process.finish metric")
 
 			counters := snapshot.Counters()
+			for _, duplicate := range []string{
+				"messages_received",
+				"messages_processed",
+				"non_retryable_errors",
+				"controller_errors",
+			} {
+				for _, counter := range counters {
+					assert.NotContains(t, counter.Name(), duplicate)
+				}
+			}
 			if tt.expectAckCount {
 				var foundAck bool
 				for _, counter := range counters {
@@ -558,44 +565,42 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 	}
 }
 
-func TestControllerResultTags(t *testing.T) {
+func TestControllerClassificationTags(t *testing.T) {
 	tests := []struct {
 		name     string
 		err      error
 		expected map[string]string
 	}{
 		{
-			name:     "success",
-			expected: map[string]string{"result": "success"},
+			name: "infra error",
+			err:  fmt.Errorf("failed"),
+			expected: map[string]string{
+				"origin":     "infra",
+				"dependency": "no",
+			},
 		},
 		{
 			name: "user error",
 			err:  errs.NewUserError(fmt.Errorf("invalid request")),
 			expected: map[string]string{
-				"result":       "error",
-				"error_origin": "user",
-				"retryable":    "false",
-				"dependency":   "false",
+				"origin":     "user",
+				"dependency": "no",
 			},
 		},
 		{
 			name: "retryable dependency error",
 			err:  errs.NewRetryableDependencyError(fmt.Errorf("database unavailable")),
 			expected: map[string]string{
-				"result":       "error",
-				"error_origin": "infra",
-				"retryable":    "true",
-				"dependency":   "true",
+				"origin":     "infra_retryable",
+				"dependency": "yes",
 			},
 		},
 		{
 			name: "cancellation",
 			err:  errs.NewRetryableError(context.Canceled),
 			expected: map[string]string{
-				"result":       "cancel",
-				"error_origin": "infra",
-				"retryable":    "true",
-				"dependency":   "false",
+				"origin":     "infra_retryable",
+				"dependency": "no",
 			},
 		},
 	}
@@ -603,7 +608,7 @@ func TestControllerResultTags(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			actual := make(map[string]string)
-			for _, tag := range controllerResultTags(tt.err) {
+			for _, tag := range controllerClassificationTags(tt.err) {
 				actual[tag.Key] = tag.Value
 			}
 			assert.Equal(t, tt.expected, actual)
