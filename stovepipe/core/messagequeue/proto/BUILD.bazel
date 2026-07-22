@@ -3,6 +3,7 @@ exports_files(
         "build.proto",
         "buildsignal.proto",
         "process.proto",
+        "record.proto",
     ],
     visibility = ["//tool/proto:__pkg__"],
 )

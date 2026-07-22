@@ -6,6 +6,7 @@ go_library(
         "build.pb.go",
         "buildsignal.pb.go",
         "process.pb.go",
+        "record.pb.go",
     ],
     importpath = "github.com/uber/submitqueue/stovepipe/core/messagequeue/protopb",
     visibility = ["//visibility:public"],

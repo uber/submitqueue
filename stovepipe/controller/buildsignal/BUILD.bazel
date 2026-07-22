@@ -2,8 +2,8 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "go_default_library",
-    srcs = ["process.go"],
-    importpath = "github.com/uber/submitqueue/stovepipe/controller/process",
+    srcs = ["buildsignal.go"],
+    importpath = "github.com/uber/submitqueue/stovepipe/controller/buildsignal",
     visibility = ["//visibility:public"],
     deps = [
         "//platform/base/messagequeue:go_default_library",
@@ -13,8 +13,7 @@ go_library(
         "//stovepipe/core/loader:go_default_library",
         "//stovepipe/core/messagequeue:go_default_library",
         "//stovepipe/entity:go_default_library",
-        "//stovepipe/extension/queueconfig:go_default_library",
-        "//stovepipe/extension/sourcecontrol:go_default_library",
+        "//stovepipe/extension/buildrunner:go_default_library",
         "//stovepipe/extension/storage:go_default_library",
         "@com_github_uber_go_tally//:go_default_library",
         "@org_uber_go_zap//:go_default_library",
@@ -23,7 +22,7 @@ go_library(
 
 go_test(
     name = "go_default_test",
-    srcs = ["process_test.go"],
+    srcs = ["buildsignal_test.go"],
     embed = [":go_default_library"],
     deps = [
         "//platform/base/messagequeue:go_default_library",
@@ -32,9 +31,8 @@ go_test(
         "//platform/extension/messagequeue/mock:go_default_library",
         "//stovepipe/core/messagequeue:go_default_library",
         "//stovepipe/entity:go_default_library",
-        "//stovepipe/extension/queueconfig/default:go_default_library",
-        "//stovepipe/extension/sourcecontrol:go_default_library",
-        "//stovepipe/extension/sourcecontrol/mock:go_default_library",
+        "//stovepipe/extension/buildrunner:go_default_library",
+        "//stovepipe/extension/buildrunner/mock:go_default_library",
         "//stovepipe/extension/storage:go_default_library",
         "//stovepipe/extension/storage/mock:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
