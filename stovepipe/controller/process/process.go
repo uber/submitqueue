@@ -106,7 +106,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	case entity.RequestStateProcessing:
 		if err := c.publishBuild(ctx, request.ID); err != nil {
 			metrics.NamedCounter(c.metricsScope, _opName, "publish_errors", 1)
-			return fmt.Errorf("ProcessController failed to publish request %s to build: %w", request.ID, err)
+			return fmt.Errorf("failed to publish request %s to build: %w", request.ID, err)
 		}
 		return nil
 	case entity.RequestStateSuperseded:
@@ -152,7 +152,7 @@ func (c *Controller) processAccepted(ctx context.Context, request entity.Request
 	if err != nil {
 		// TODO(queueconfig): decide retryability when a real config store lands — is a
 		// missing queue "drop" (non-retryable) or "retry until configured"?
-		return fmt.Errorf("ProcessController failed to load queue config for %s: %w", request.Queue, err)
+		return fmt.Errorf("failed to load queue config for %s: %w", request.Queue, err)
 	}
 
 	return c.admitLatestHead(ctx, request, queueRow, cfg)
@@ -164,7 +164,7 @@ func (c *Controller) processAccepted(ctx context.Context, request entity.Request
 func (c *Controller) coalesce(ctx context.Context, request entity.Request, latestRequestID string) (bool, error) {
 	cmp, err := entity.CompareRequestID(request.Queue, request.ID, latestRequestID)
 	if err != nil {
-		return false, fmt.Errorf("ProcessController failed to compare request ids for queue %s: %w", request.Queue, err)
+		return false, fmt.Errorf("failed to compare request ids for queue %s: %w", request.Queue, err)
 	}
 	if cmp >= 0 {
 		return false, nil
@@ -203,7 +203,7 @@ func (c *Controller) admitLatestHead(ctx context.Context, request entity.Request
 				metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
 					metrics.NewTag("stage", "resolve"),
 				)
-				return fmt.Errorf("ProcessController failed to resolve source control for queue %s: %w", request.Queue, err)
+				return fmt.Errorf("failed to resolve source control for queue %s: %w", request.Queue, err)
 			}
 		}
 
@@ -242,7 +242,7 @@ func (c *Controller) admitLatestHead(ctx context.Context, request entity.Request
 
 	if err := c.publishBuild(ctx, request.ID); err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "publish_errors", 1)
-		return fmt.Errorf("ProcessController failed to publish request %s to build: %w", request.ID, err)
+		return fmt.Errorf("failed to publish request %s to build: %w", request.ID, err)
 	}
 
 	metrics.NamedCounter(c.metricsScope, _opName, "admitted", 1,
@@ -281,7 +281,7 @@ func (c *Controller) deriveBuildStrategy(ctx context.Context, sc sourcecontrol.S
 		metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
 			metrics.NewTag("stage", "ancestry"),
 		)
-		return entity.BuildStrategyUnknown, "", fmt.Errorf("ProcessController failed to check ancestry for queue %s: %w", request.Queue, err)
+		return entity.BuildStrategyUnknown, "", fmt.Errorf("failed to check ancestry for queue %s: %w", request.Queue, err)
 	}
 
 	if isAncestor {
@@ -302,12 +302,12 @@ func (c *Controller) claimBuildSlot(ctx context.Context, queueRow *entity.Queue)
 		if errors.Is(err, storage.ErrVersionMismatch) {
 			got, getErr := queueStore.Get(ctx, queueRow.Name)
 			if getErr != nil {
-				return fmt.Errorf("ProcessController failed to reload queue %s after version mismatch: %w", queueRow.Name, getErr)
+				return fmt.Errorf("failed to reload queue %s after version mismatch: %w", queueRow.Name, getErr)
 			}
 			*queueRow = got
 			return storage.ErrVersionMismatch
 		}
-		return fmt.Errorf("ProcessController failed to claim build slot for queue %s: %w", queueRow.Name, err)
+		return fmt.Errorf("failed to claim build slot for queue %s: %w", queueRow.Name, err)
 	}
 	updated.Version = newVersion
 	*queueRow = updated
@@ -336,12 +336,12 @@ func (c *Controller) markProcessing(ctx context.Context, request *entity.Request
 			if errors.Is(err, storage.ErrVersionMismatch) {
 				got, getErr := reqStore.Get(ctx, request.ID)
 				if getErr != nil {
-					return false, fmt.Errorf("ProcessController failed to reload request %s after version mismatch: %w", request.ID, getErr)
+					return false, fmt.Errorf("failed to reload request %s after version mismatch: %w", request.ID, getErr)
 				}
 				*request = got
 				continue
 			}
-			return false, fmt.Errorf("ProcessController failed to mark request %s processing: %w", request.ID, err)
+			return false, fmt.Errorf("failed to mark request %s processing: %w", request.ID, err)
 		}
 		updated.Version = newVersion
 		*request = updated
@@ -402,12 +402,12 @@ func (c *Controller) supersedeRequest(ctx context.Context, request entity.Reques
 			if errors.Is(err, storage.ErrVersionMismatch) {
 				got, getErr := reqStore.Get(ctx, request.ID)
 				if getErr != nil {
-					return fmt.Errorf("ProcessController failed to reload request %s after version mismatch: %w", request.ID, getErr)
+					return fmt.Errorf("failed to reload request %s after version mismatch: %w", request.ID, getErr)
 				}
 				request = got
 				continue
 			}
-			return fmt.Errorf("ProcessController failed to supersede request %s: %w", request.ID, err)
+			return fmt.Errorf("failed to supersede request %s: %w", request.ID, err)
 		}
 		return nil
 	}
@@ -418,12 +418,12 @@ func (c *Controller) supersedeRequest(ctx context.Context, request entity.Reques
 func (c *Controller) rescheduleProcess(ctx context.Context, request entity.Request, inFlightCount int32, delayMs int64) error {
 	if delayMs <= 0 {
 		metrics.NamedCounter(c.metricsScope, _opName, "config_errors", 1)
-		return fmt.Errorf("ProcessController requires a positive gate wait delay for queue %s, got %dms", request.Queue, delayMs)
+		return fmt.Errorf("requires a positive gate wait delay for queue %s, got %dms", request.Queue, delayMs)
 	}
 
 	payload, err := stovepipemq.Marshal(&stovepipemq.ProcessRequest{Id: request.ID})
 	if err != nil {
-		return fmt.Errorf("ProcessController failed to serialize process request %s: %w", request.ID, err)
+		return fmt.Errorf("failed to serialize process request %s: %w", request.ID, err)
 	}
 
 	// Suffix the message id with the publish time so the reschedule can't collide with
@@ -442,7 +442,7 @@ func (c *Controller) rescheduleProcess(ctx context.Context, request entity.Reque
 
 	if err := q.Publisher().PublishAfter(ctx, topicName, msg, delayMs); err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "publish_errors", 1)
-		return fmt.Errorf("ProcessController failed to reschedule process request %s: %w", request.ID, err)
+		return fmt.Errorf("failed to reschedule process request %s: %w", request.ID, err)
 	}
 	c.logger.Infow("rescheduled latest head awaiting build slot",
 		"request_id", request.ID,
@@ -456,12 +456,12 @@ func (c *Controller) rescheduleProcess(ctx context.Context, request entity.Reque
 
 // loadRequest returns the request for id.
 func (c *Controller) loadRequest(ctx context.Context, id string) (entity.Request, error) {
-	return loader.ByID(ctx, id, c.store.GetRequestStore().Get, "ProcessController", "request")
+	return loader.ByID(ctx, id, c.store.GetRequestStore().Get, "request")
 }
 
 // loadQueue returns the queue row for name.
 func (c *Controller) loadQueue(ctx context.Context, name string) (entity.Queue, error) {
-	return loader.ByID(ctx, name, c.store.GetQueueStore().Get, "ProcessController", "queue")
+	return loader.ByID(ctx, name, c.store.GetQueueStore().Get, "queue")
 }
 
 // publishBuild publishes the admitted request ID to the build stage. The build

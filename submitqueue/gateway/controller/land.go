@@ -96,10 +96,10 @@ func (c *LandController) Land(ctx context.Context, req entity.LandRequest) (resu
 
 	// Validate provider-agnostic request constraints before allocating an sqid.
 	if err := validateQueueIdentifier(req.Queue); err != nil {
-		return entity.LandResult{}, fmt.Errorf("LandController invalid queue: %w", err)
+		return entity.LandResult{}, fmt.Errorf("invalid queue: %w", err)
 	}
 	if err := validateChangeURIs(req.Change.URIs); err != nil {
-		return entity.LandResult{}, fmt.Errorf("LandController invalid change URIs: %w", err)
+		return entity.LandResult{}, fmt.Errorf("invalid change URIs: %w", err)
 	}
 
 	queue := req.Queue
@@ -107,18 +107,18 @@ func (c *LandController) Land(ctx context.Context, req entity.LandRequest) (resu
 		if errors.Is(err, queueconfig.ErrNotFound) {
 			return entity.LandResult{}, errs.NewUserError(&UnrecognizedQueueError{Queue: queue})
 		}
-		return entity.LandResult{}, fmt.Errorf("LandController failed to look up queue %q: %w", queue, err)
+		return entity.LandResult{}, fmt.Errorf("failed to look up queue %q: %w", queue, err)
 	}
 
 	// Generate a globally unique request ID for the land request.
 	// The inbound entity arrives with an empty ID; the controller owns minting it.
 	seq, err := c.counter.Next(ctx, "request/"+queue)
 	if err != nil {
-		return entity.LandResult{}, fmt.Errorf("LandController failed to generate request ID for queue=%s: %w", queue, err)
+		return entity.LandResult{}, fmt.Errorf("failed to generate request ID for queue=%s: %w", queue, err)
 	}
 	req.ID = fmt.Sprintf("%s/%d", queue, seq)
 	if err := validateStoredIdentifier("generated sqid", req.ID); err != nil {
-		return entity.LandResult{}, fmt.Errorf("LandController generated invalid request ID for queue=%s: %w", queue, err)
+		return entity.LandResult{}, fmt.Errorf("generated invalid request ID for queue=%s: %w", queue, err)
 	}
 
 	receivedAtMs := time.Now().UnixMilli()
@@ -133,13 +133,13 @@ func (c *LandController) Land(ctx context.Context, req entity.LandRequest) (resu
 		Metadata:          map[string]string{},
 	}
 	if err := c.store.GetRequestSummaryStore().Create(ctx, summary); err != nil {
-		return entity.LandResult{}, fmt.Errorf("LandController failed to create request receipt sqid=%s: %w", req.ID, err)
+		return entity.LandResult{}, fmt.Errorf("failed to create request receipt sqid=%s: %w", req.ID, err)
 	}
 
 	// Publish before exposing the request as accepted. A failed publish leaves an
 	// internal accepting receipt that public read APIs do not expose.
 	if err := c.publishToQueue(ctx, req); err != nil {
-		return entity.LandResult{}, fmt.Errorf("LandController failed to publish request to queue: %w", err)
+		return entity.LandResult{}, fmt.Errorf("failed to publish request to queue: %w", err)
 	}
 
 	logEntry := entity.RequestLog{

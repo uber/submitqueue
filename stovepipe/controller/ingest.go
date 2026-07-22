@@ -93,7 +93,7 @@ func (c *IngestController) Ingest(ctx context.Context, req entity.IngestRequest)
 	defer func() { op.Complete(retErr) }()
 
 	if req.Queue == "" {
-		return entity.IngestResult{}, fmt.Errorf("IngestController requires the request to have a queue name specified: %w", ErrInvalidRequest)
+		return entity.IngestResult{}, fmt.Errorf("requires the request to have a queue name specified: %w", ErrInvalidRequest)
 	}
 	queue := req.Queue
 
@@ -101,14 +101,14 @@ func (c *IngestController) Ingest(ctx context.Context, req entity.IngestRequest)
 	// An unresolvable queue/ref is a caller error (unknown queue), not infrastructure.
 	sc, err := c.sourceControl.For(sourcecontrol.Config{QueueName: queue})
 	if err != nil {
-		return entity.IngestResult{}, fmt.Errorf("IngestController failed to resolve source control for queue=%s: %w", queue, err)
+		return entity.IngestResult{}, fmt.Errorf("failed to resolve source control for queue=%s: %w", queue, err)
 	}
 	uri, err := sc.Latest(ctx)
 	if err != nil {
 		if sourcecontrol.IsNotFound(err) {
-			return entity.IngestResult{}, fmt.Errorf("IngestController could not resolve head for queue=%s: %w: %w", queue, err, ErrInvalidRequest)
+			return entity.IngestResult{}, fmt.Errorf("could not resolve head for queue=%s: %w: %w", queue, err, ErrInvalidRequest)
 		}
-		return entity.IngestResult{}, fmt.Errorf("IngestController failed to resolve head for queue=%s: %w", queue, err)
+		return entity.IngestResult{}, fmt.Errorf("failed to resolve head for queue=%s: %w", queue, err)
 	}
 
 	// The (queue, URI) mapping is the dedup gate and the source of truth for "does this head
@@ -135,7 +135,7 @@ func (c *IngestController) Ingest(ctx context.Context, req entity.IngestRequest)
 	// process advances the request past Accepted, ingest stops re-publishing.
 	if request.State == entity.RequestStateAccepted {
 		if err := c.publishProcess(ctx, id, queue); err != nil {
-			return entity.IngestResult{}, fmt.Errorf("IngestController failed to publish request %s to process: %w", id, err)
+			return entity.IngestResult{}, fmt.Errorf("failed to publish request %s to process: %w", id, err)
 		}
 	}
 
@@ -159,7 +159,7 @@ func (c *IngestController) resolveID(ctx context.Context, queue, uri string) (st
 	if id, err := uriStore.GetIDByURI(ctx, queue, uri); err == nil {
 		return id, nil
 	} else if !errors.Is(err, storage.ErrNotFound) {
-		return "", fmt.Errorf("IngestController failed to look up existing request for queue=%s: %w", queue, err)
+		return "", fmt.Errorf("failed to look up existing request for queue=%s: %w", queue, err)
 	}
 
 	// Mint a globally unique request ID namespaced by the queue. The counter domain
@@ -167,7 +167,7 @@ func (c *IngestController) resolveID(ctx context.Context, queue, uri string) (st
 	domain := "request/" + queue
 	seq, err := c.counter.Next(ctx, domain)
 	if err != nil {
-		return "", fmt.Errorf("IngestController failed to generate request ID for queue=%s: %w", queue, err)
+		return "", fmt.Errorf("failed to generate request ID for queue=%s: %w", queue, err)
 	}
 	id := fmt.Sprintf("%s/%d", domain, seq)
 
@@ -175,11 +175,11 @@ func (c *IngestController) resolveID(ctx context.Context, queue, uri string) (st
 		if errors.Is(err, storage.ErrAlreadyExists) {
 			existing, getErr := uriStore.GetIDByURI(ctx, queue, uri)
 			if getErr != nil {
-				return "", fmt.Errorf("IngestController failed to resolve raced request for queue=%s: %w", queue, getErr)
+				return "", fmt.Errorf("failed to resolve raced request for queue=%s: %w", queue, getErr)
 			}
 			return existing, nil
 		}
-		return "", fmt.Errorf("IngestController failed to map URI for queue=%s: %w", queue, err)
+		return "", fmt.Errorf("failed to map URI for queue=%s: %w", queue, err)
 	}
 	return id, nil
 }
@@ -194,7 +194,7 @@ func (c *IngestController) ensureRequest(ctx context.Context, id, queue, uri str
 		return got, nil
 	}
 	if !errors.Is(err, storage.ErrNotFound) {
-		return entity.Request{}, fmt.Errorf("IngestController failed to load request %s: %w", id, err)
+		return entity.Request{}, fmt.Errorf("failed to load request %s: %w", id, err)
 	}
 
 	request := entity.Request{
@@ -206,7 +206,7 @@ func (c *IngestController) ensureRequest(ctx context.Context, id, queue, uri str
 	}
 	if err := reqStore.Create(ctx, request); err != nil {
 		if !errors.Is(err, storage.ErrAlreadyExists) {
-			return entity.Request{}, fmt.Errorf("IngestController failed to persist request %s: %w", id, err)
+			return entity.Request{}, fmt.Errorf("failed to persist request %s: %w", id, err)
 		}
 		// Raced with a concurrent creator; read the canonical row.
 		return reqStore.Get(ctx, id)
@@ -224,7 +224,7 @@ func (c *IngestController) ensureQueue(ctx context.Context, name string) (entity
 		return got, nil
 	}
 	if !errors.Is(err, storage.ErrNotFound) {
-		return entity.Queue{}, fmt.Errorf("IngestController failed to load queue %s: %w", name, err)
+		return entity.Queue{}, fmt.Errorf("failed to load queue %s: %w", name, err)
 	}
 
 	queue := entity.Queue{
@@ -233,7 +233,7 @@ func (c *IngestController) ensureQueue(ctx context.Context, name string) (entity
 	}
 	if err := queueStore.Create(ctx, queue); err != nil {
 		if !errors.Is(err, storage.ErrAlreadyExists) {
-			return entity.Queue{}, fmt.Errorf("IngestController failed to persist queue %s: %w", name, err)
+			return entity.Queue{}, fmt.Errorf("failed to persist queue %s: %w", name, err)
 		}
 		// Raced with a concurrent creator; read the canonical row.
 		return queueStore.Get(ctx, name)
@@ -254,7 +254,7 @@ func (c *IngestController) advanceQueueLatestRequestID(ctx context.Context, queu
 		if queueRow.LatestRequestID != "" {
 			cmp, err := entity.CompareRequestID(queue, id, queueRow.LatestRequestID)
 			if err != nil {
-				return fmt.Errorf("IngestController failed to compare request ids for queue %s: %w", queue, err)
+				return fmt.Errorf("failed to compare request ids for queue %s: %w", queue, err)
 			}
 			if cmp <= 0 {
 				return nil
@@ -268,7 +268,7 @@ func (c *IngestController) advanceQueueLatestRequestID(ctx context.Context, queu
 			if errors.Is(err, storage.ErrVersionMismatch) {
 				continue
 			}
-			return fmt.Errorf("IngestController failed to update queue %s latest_request_id: %w", queue, err)
+			return fmt.Errorf("failed to update queue %s latest_request_id: %w", queue, err)
 		}
 		return nil
 	}

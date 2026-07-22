@@ -22,9 +22,8 @@ import (
 )
 
 // ByID loads one entity by id via get, returning it unwrapped on success. On
-// failure it wraps the error as "<controllerName> failed to load <entityName>
-// <id>: <cause>" so every stovepipe controller reports load failures in the
-// same shape.
+// failure it wraps the error as "failed to load <entityName> <id>: <cause>"
+// so every stovepipe controller reports load failures in the same shape.
 //
 // get is typically a store's Get method value passed directly (e.g.
 // c.store.GetRequestStore().Get), which fixes T through inference so callers
@@ -36,11 +35,11 @@ import (
 // causally-prior write should already have produced is a storage
 // implementation defect, not a lag condition worth retrying through. It
 // surfaces as a plain error, non-retryable by platform/errs's default.
-func ByID[T any](ctx context.Context, id string, get func(context.Context, string) (T, error), controllerName, entityName string) (T, error) {
+func ByID[T any](ctx context.Context, id string, get func(context.Context, string) (T, error), entityName string) (T, error) {
 	got, err := get(ctx, id)
 	if err != nil {
 		var zero T
-		return zero, fmt.Errorf("%s failed to load %s %s: %w", controllerName, entityName, id, err)
+		return zero, fmt.Errorf("failed to load %s %s: %w", entityName, id, err)
 	}
 	return got, nil
 }
