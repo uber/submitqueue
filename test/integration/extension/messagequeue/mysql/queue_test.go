@@ -291,6 +291,40 @@ func waitForCondition(t *testing.T, signalCh <-chan queueMySQL.HookSignal, condi
 	}
 }
 
+// waitForLag waits for subscriber polls until the selected consumer lag
+// converges to expected. Lag must not advance past the expected value.
+func waitForLag(
+	t *testing.T,
+	ctx context.Context,
+	admin *queueAdmin.AdminStore,
+	signalCh <-chan queueMySQL.HookSignal,
+	topic string,
+	consumerGroup string,
+	partitionKey string,
+	expected int64,
+) int64 {
+	t.Helper()
+
+	for {
+		lags, err := admin.ConsumerLag(ctx, topic)
+		require.NoError(t, err)
+
+		var actual int64 = -1
+		for _, lag := range lags {
+			if lag.ConsumerGroup == consumerGroup && lag.PartitionKey == partitionKey {
+				actual = lag.Lag
+				break
+			}
+		}
+
+		require.GreaterOrEqual(t, actual, expected, "watermark advanced past expected lag")
+		if actual == expected {
+			return actual
+		}
+		waitForSignal(t, signalCh, queueMySQL.SignalDeliveryCheck)
+	}
+}
+
 func (s *SQLQueueIntegrationSuite) TestPublishAndSubscribe() {
 	t := s.T()
 
@@ -2396,18 +2430,9 @@ func (s *SQLQueueIntegrationSuite) TestWatermarkAdvancesContiguously() {
 
 	admin := queueAdmin.NewAdminStore(s.db)
 
-	// Helper to get consumer lag
-	getLag := func() int64 {
-		lags, err := admin.ConsumerLag(s.ctx, topic)
-		require.NoError(t, err)
-		for _, lag := range lags {
-			if lag.ConsumerGroup == "watermark-cg" && lag.PartitionKey == "wm-part" {
-				return lag.Lag
-			}
-		}
-		return -1
-	}
-
+	// Watermark advancement is incremental and runs in the subscriber poll loop.
+	// A delivery-check signal proves one poll completed, but the watermark may
+	// need another poll to converge after several acknowledgements.
 	// Ack message 3 first (out of order)
 	require.NoError(t, deliveries["wm-msg-3"].Ack(s.ctx))
 	t.Logf("Acked msg-3")
@@ -2417,11 +2442,8 @@ func (s *SQLQueueIntegrationSuite) TestWatermarkAdvancesContiguously() {
 	require.NoError(t, deliveries["wm-msg-2"].Ack(s.ctx))
 	t.Logf("Acked msg-1 and msg-2")
 
-	// Wait for poll loop to advance watermark
-	waitForSignal(t, signalCh, queueMySQL.SignalDeliveryCheck)
-
 	// After acking 1,2,3: watermark should advance to 3, lag should be 2 (msg-4, msg-5)
-	lag := getLag()
+	lag := waitForLag(t, s.ctx, admin, signalCh, topic, "watermark-cg", "wm-part", 2)
 	assert.Equal(t, int64(2), lag, "lag should be 2 after acking 1,2,3 (4 and 5 remain)")
 	t.Logf("After acking 1,2,3: lag=%d", lag)
 
@@ -2429,9 +2451,7 @@ func (s *SQLQueueIntegrationSuite) TestWatermarkAdvancesContiguously() {
 	require.NoError(t, deliveries["wm-msg-5"].Ack(s.ctx))
 	t.Logf("Acked msg-5 (skipping msg-4)")
 
-	waitForSignal(t, signalCh, queueMySQL.SignalDeliveryCheck)
-
-	lag = getLag()
+	lag = waitForLag(t, s.ctx, admin, signalCh, topic, "watermark-cg", "wm-part", 2)
 	assert.Equal(t, int64(2), lag, "lag should still be 2 after acking 5 but not 4")
 	t.Logf("After acking 5 (not 4): lag=%d", lag)
 
@@ -2439,9 +2459,7 @@ func (s *SQLQueueIntegrationSuite) TestWatermarkAdvancesContiguously() {
 	require.NoError(t, deliveries["wm-msg-4"].Ack(s.ctx))
 	t.Logf("Acked msg-4")
 
-	waitForSignal(t, signalCh, queueMySQL.SignalDeliveryCheck)
-
-	lag = getLag()
+	lag = waitForLag(t, s.ctx, admin, signalCh, topic, "watermark-cg", "wm-part", 0)
 	assert.Equal(t, int64(0), lag, "lag should be 0 after acking all 5 messages")
 	t.Logf("After acking all 5: lag=%d", lag)
 
