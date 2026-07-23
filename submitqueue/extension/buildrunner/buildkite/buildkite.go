@@ -124,8 +124,14 @@ func (r *runner) Trigger(ctx context.Context, base []entity.Batch, head entity.B
 		return entity.BuildID{}, fmt.Errorf("buildkite: resolve head: %w", err)
 	}
 
-	baseJSON, _ := json.Marshal(flattenURIs(baseChanges))
-	headJSON, _ := json.Marshal(flattenURIs(headChanges))
+	baseJSON, err := json.Marshal(flattenURIs(baseChanges))
+	if err != nil {
+		return entity.BuildID{}, fmt.Errorf("buildkite: marshal base URIs: %w", err)
+	}
+	headJSON, err := json.Marshal(flattenURIs(headChanges))
+	if err != nil {
+		return entity.BuildID{}, fmt.Errorf("buildkite: marshal head URIs: %w", err)
+	}
 
 	env := map[string]string{
 		EnvKeyBaseURIs: string(baseJSON),
@@ -133,7 +139,10 @@ func (r *runner) Trigger(ctx context.Context, base []entity.Batch, head entity.B
 		EnvKeyQueue:    r.cfg.QueueName,
 	}
 	if len(metadata) > 0 {
-		metaJSON, _ := json.Marshal(metadata)
+		metaJSON, err := json.Marshal(metadata)
+		if err != nil {
+			return entity.BuildID{}, fmt.Errorf("buildkite: marshal metadata: %w", err)
+		}
 		env[EnvKeyMetadata] = string(metaJSON)
 	}
 
