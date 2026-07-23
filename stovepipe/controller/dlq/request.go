@@ -66,10 +66,7 @@ func NewController(
 // (success) or an error to nack (retry) — pair this controller only with a consumer
 // wired with errs.AlwaysRetryableProcessor so a transient reconcile failure retries
 // instead of dead-lettering the DLQ message itself.
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := metrics.Begin(c.metricsScope, _opName, metrics.LongLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
-
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
 	pr := &stovepipemq.ProcessRequest{}
@@ -105,7 +102,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return err
 	}
 
-	metrics.NamedCounter(c.metricsScope, _opName, "reconciled", 1)
 	return nil
 }
 

@@ -17,12 +17,12 @@ package controller
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
+	"github.com/uber/submitqueue/platform/metrics"
 	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -64,13 +64,11 @@ func NewCancelController(logger *zap.SugaredLogger, scope tally.Scope, store sto
 // completion before the cancel propagates may still land. The RequestStatusCancelling
 // entry written here records the user's intent; the terminal outcome is reflected by a
 // later RequestStatusCancelled (orchestrator side) or RequestStatusLanded entry.
-func (c *CancelController) Cancel(ctx context.Context, req entity.CancelRequest) error {
-	start := time.Now()
-	defer func() {
-		c.metricsScope.Timer("cancel_request_latency").Record(time.Since(start))
-	}()
+func (c *CancelController) Cancel(ctx context.Context, req entity.CancelRequest) (retErr error) {
+	const opName = "cancel"
 
-	c.metricsScope.Counter("cancel_request_count").Inc(1)
+	op := metrics.Begin(c.metricsScope, opName, metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	if req.ID == "" {
 		return fmt.Errorf("requires the request to have a sqid specified: %w", ErrInvalidRequest)
@@ -84,7 +82,7 @@ func (c *CancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 	// Verify the sqid exists before recording intent or publishing.
 	if _, err := c.requestSummaryStore.Get(ctx, req.ID); err != nil {
 		if storage.IsNotFound(err) {
-			c.metricsScope.Counter("cancel_request_not_found").Inc(1)
+			metrics.NamedCounter(c.metricsScope, opName, "not_found", 1)
 			return errs.NewUserError(&RequestNotFoundError{Sqid: req.ID})
 		}
 		return fmt.Errorf("failed to look up request summary for sqid=%s: %w", req.ID, err)
@@ -110,7 +108,6 @@ func (c *CancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 		"sqid", req.ID,
 		"topic_key", topickey.TopicKeyCancel,
 	)
-	c.metricsScope.Counter("cancel_publish_success").Inc(1)
 
 	return nil
 }

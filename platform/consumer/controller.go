@@ -89,6 +89,7 @@ func (d *deliveryWrapper) Metadata() map[string]string {
 // The Controller interface enables clean separation of concerns:
 // - Controller focuses on business logic (deserialize, process, return error status)
 // - Consumer handles infrastructure (subscription, ack/nack, metrics, lifecycle)
+// Controllers may emit domain event counters, but must not duplicate the consumer-owned Process lifecycle metrics.
 // The implementation of the controller should be idempotent and stateless. The controller is expected to be retried for the same message multiple times and should process side effects gracefully.
 // The implementation must be thread-safe.
 type Controller interface {

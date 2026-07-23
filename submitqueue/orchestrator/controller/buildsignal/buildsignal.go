@@ -101,11 +101,8 @@ func NewController(
 // so a transient enqueue blip nacks and replays (up to MaxAttempts) rather
 // than silently stalling the build, then still falls through to DLQ if it
 // persists.
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName, metrics.LongLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 

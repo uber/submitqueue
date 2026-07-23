@@ -19,7 +19,6 @@ import (
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/consumer"
-	"github.com/uber/submitqueue/platform/metrics"
 	"go.uber.org/zap"
 )
 
@@ -57,12 +56,7 @@ func NewDLQLogController(
 }
 
 // Process records that a log message landed in the DLQ and acks it.
-func (c *logController) Process(_ context.Context, delivery consumer.Delivery) (retErr error) {
-	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName, metrics.LongLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
-
+func (c *logController) Process(_ context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 	dmeta := delivery.Metadata()
 	c.logger.Warnw("log message dropped to dlq",
@@ -72,7 +66,6 @@ func (c *logController) Process(_ context.Context, delivery consumer.Delivery) (
 		"dlq_failure_count", dmeta["dlq.failure_count"],
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
-	metrics.NamedCounter(c.metricsScope, opName, "dropped", 1)
 	return nil
 }
 

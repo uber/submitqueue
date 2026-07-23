@@ -43,7 +43,8 @@ func TestPing_DefaultMessage(t *testing.T) {
 }
 
 func TestPing_CustomMessage(t *testing.T) {
-	controller := NewPingController(zap.NewNop(), tally.NoopScope)
+	scope := tally.NewTestScope("gateway", nil)
+	controller := NewPingController(zap.NewNop(), scope)
 	ctx := context.Background()
 
 	testCases := []struct {
@@ -65,6 +66,29 @@ func TestPing_CustomMessage(t *testing.T) {
 			assert.Equal(t, tc.expected, resp.Message)
 		})
 	}
+
+	snapshot := scope.Snapshot()
+	var foundStart, foundEcho bool
+	for _, counter := range snapshot.Counters() {
+		switch counter.Name() {
+		case "gateway.ping.start":
+			foundStart = true
+		case "gateway.ping.echo_requests":
+			foundEcho = true
+		}
+		assert.NotContains(t, counter.Name(), "requests_total")
+	}
+	assert.True(t, foundStart)
+	assert.True(t, foundEcho)
+
+	var foundFinish bool
+	for _, histogram := range snapshot.Histograms() {
+		if histogram.Name() == "gateway.ping.finish" {
+			foundFinish = true
+			assert.Equal(t, "success", histogram.Tags()["result"])
+		}
+	}
+	assert.True(t, foundFinish)
 }
 
 func TestPing_ServiceName(t *testing.T) {

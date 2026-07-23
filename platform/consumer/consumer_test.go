@@ -117,6 +117,10 @@ func setupDelivery(del *queuemock.MockDelivery, msg entityqueue.Message, ackErr,
 		close(done)
 		return nackErr
 	}).MaxTimes(1)
+	del.EXPECT().Reject(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, reason string) error {
+		close(done)
+		return nil
+	}).MaxTimes(1)
 	return done
 }
 
@@ -436,20 +440,20 @@ func TestConsumer_Stop(t *testing.T) {
 
 func TestConsumer_ObservabilityTags(t *testing.T) {
 	tests := []struct {
-		name           string
-		handlerError   error
-		nackError      error
-		processor      errs.ErrorProcessor
-		expectedTags   map[string]string
-		expectAckCount bool
+		name         string
+		handlerError error
+		nackError    error
+		processor    errs.ErrorProcessor
+		expectedTags map[string]string
+		transport    string
 	}{
 		{
-			name:           "success with ack",
-			handlerError:   nil,
-			nackError:      nil,
-			processor:      errs.NewClassifierProcessor(),
-			expectedTags:   map[string]string{"result": "success"},
-			expectAckCount: true,
+			name:         "success with ack",
+			handlerError: nil,
+			nackError:    nil,
+			processor:    errs.NewClassifierProcessor(),
+			expectedTags: map[string]string{"result": "success"},
+			transport:    "ack",
 		},
 		{
 			name:         "classified failure with nack",
@@ -463,7 +467,7 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 				"origin":     "infra_retryable",
 				"dependency": "yes",
 			},
-			expectAckCount: false,
+			transport: "nack",
 		},
 		{
 			name:         "classified cancellation with nack",
@@ -477,7 +481,18 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 				"origin":     "infra_retryable",
 				"dependency": "no",
 			},
-			expectAckCount: false,
+			transport: "nack",
+		},
+		{
+			name:         "user failure with reject",
+			handlerError: errs.NewUserError(fmt.Errorf("invalid request")),
+			processor:    errs.NewClassifierProcessor(),
+			expectedTags: map[string]string{
+				"result":     "error",
+				"origin":     "user",
+				"dependency": "no",
+			},
+			transport: "reject",
 		},
 	}
 
@@ -528,6 +543,7 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 
 			var foundLatency bool
 			for _, histogram := range histograms {
+				assert.NotContains(t, histogram.Name(), "consumer.consumer")
 				if strings.Contains(histogram.Name(), "process.finish") {
 					foundLatency = true
 					tags := histogram.Tags()
@@ -538,26 +554,31 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 			}
 			assert.True(t, foundLatency, "Should have process.finish metric")
 
+			var foundTransport bool
+			for _, histogram := range histograms {
+				if strings.Contains(histogram.Name(), tt.transport+".finish") {
+					foundTransport = true
+					assert.Equal(t, "success", histogram.Tags()["result"])
+				}
+				assert.NotContains(t, histogram.Name(), "ack_nack_latency")
+			}
+			assert.True(t, foundTransport, "Should have %s.finish metric", tt.transport)
+
 			counters := snapshot.Counters()
 			for _, duplicate := range []string{
 				"messages_received",
 				"messages_processed",
 				"non_retryable_errors",
 				"controller_errors",
+				"ack_count",
+				"ack_errors",
+				"nack_count",
+				"nack_errors",
+				"reject_errors",
 			} {
 				for _, counter := range counters {
 					assert.NotContains(t, counter.Name(), duplicate)
 				}
-			}
-			if tt.expectAckCount {
-				var foundAck bool
-				for _, counter := range counters {
-					if strings.Contains(counter.Name(), "ack_count") {
-						foundAck = true
-						assert.Greater(t, counter.Value(), int64(0))
-					}
-				}
-				assert.True(t, foundAck, "Should have ack_count metric")
 			}
 
 			_ = testC.Stop(30000)
@@ -616,7 +637,7 @@ func TestControllerClassificationTags(t *testing.T) {
 	}
 }
 
-func TestConsumer_AckNackLatencyTracking(t *testing.T) {
+func TestConsumer_AckLifecycleMetrics(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NewTestScope("consumer", nil)
@@ -654,14 +675,21 @@ func TestConsumer_AckNackLatencyTracking(t *testing.T) {
 	<-done
 
 	snapshot := scope.Snapshot()
-	assert.NotEmpty(t, snapshot.Histograms(), "Should have histogram metrics for latency tracking")
-	assert.NotEmpty(t, snapshot.Counters(), "Should have counter metrics")
+	histograms := snapshot.Histograms()
+	var foundAck bool
+	for _, histogram := range histograms {
+		if strings.Contains(histogram.Name(), "ack.finish") {
+			foundAck = true
+			assert.Equal(t, "success", histogram.Tags()["result"])
+		}
+	}
+	assert.True(t, foundAck, "Should have successful ack.finish metric")
 
 	err = c.Stop(30000)
 	require.NoError(t, err)
 }
 
-func TestConsumer_ErrorMetrics(t *testing.T) {
+func TestConsumer_NackLifecycleMetrics(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NewTestScope("consumer", nil)
@@ -701,16 +729,15 @@ func TestConsumer_ErrorMetrics(t *testing.T) {
 	<-done
 
 	snapshot := scope.Snapshot()
-	counters := snapshot.Counters()
-
-	var hasErrorMetrics bool
-	for _, counter := range counters {
-		if strings.Contains(counter.Name(), "errors") {
-			hasErrorMetrics = true
-			break
+	histograms := snapshot.Histograms()
+	var foundNackError bool
+	for _, histogram := range histograms {
+		if strings.Contains(histogram.Name(), "nack.finish") {
+			foundNackError = true
+			assert.Equal(t, "error", histogram.Tags()["result"])
 		}
 	}
-	assert.True(t, hasErrorMetrics, "Should track error metrics")
+	assert.True(t, foundNackError, "Should have failed nack.finish metric")
 
 	err = c.Stop(30000)
 	require.NoError(t, err)

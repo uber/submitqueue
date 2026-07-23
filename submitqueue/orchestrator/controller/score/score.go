@@ -47,6 +47,8 @@ type Controller struct {
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
 
+const opName = "process"
+
 // NewController creates a new score controller for the orchestrator.
 func NewController(
 	logger *zap.SugaredLogger,
@@ -73,12 +75,7 @@ func NewController(
 // persists the minimum score, publishes request log entries,
 // and publishes to the speculate topic.
 // Returns nil to ack (success), or error to nack (retry).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName, metrics.LongLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
-
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
 	// Deserialize batch ID from payload
@@ -109,7 +106,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// controller has handed the batch off to speculate, which owns the
 	// terminal write and downstream fanout.
 	if batch.State == entity.BatchStateCancelling {
-		c.metricsScope.Counter("skipped_cancelling").Inc(1)
+		metrics.NamedCounter(c.metricsScope, opName, "skipped_cancelling", 1)
 		c.logger.Infow("skipping score for cancelling batch",
 			"batch_id", batch.ID,
 		)
@@ -119,7 +116,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// Score owns no terminal-state recovery. The controller that wrote the
 	// terminal state owns its remaining fanout.
 	if batch.State.IsTerminal() {
-		c.metricsScope.Counter("skipped_terminal").Inc(1)
+		metrics.NamedCounter(c.metricsScope, opName, "skipped_terminal", 1)
 		c.logger.Infow("skipping score for terminal batch",
 			"batch_id", batch.ID,
 			"state", string(batch.State),
@@ -168,11 +165,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		// published to speculate before its acknowledgement was recorded.
 		// Downstream processing has already advanced the batch, so this stale
 		// delivery is satisfied and must not regress the batch to Scored.
-		c.metricsScope.Counter("skipped_downstream").Inc(1)
+		metrics.NamedCounter(c.metricsScope, opName, "skipped_downstream", 1)
 		return nil
 
 	default:
-		c.metricsScope.Counter("unexpected_state").Inc(1)
+		metrics.NamedCounter(c.metricsScope, opName, "unexpected_state", 1)
 		return fmt.Errorf("unexpected batch state %q for batch %s", batch.State, batch.ID)
 	}
 

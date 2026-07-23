@@ -70,11 +70,8 @@ func NewController(
 // Process processes a build delivery from the queue.
 // Deserializes the batch, triggers a build, and publishes a build entity to the build signal topic.
 // Returns nil to ack (success), or error to nack (retry).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName, metrics.LongLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 

@@ -70,11 +70,8 @@ func NewController(
 // Process processes a request delivery from the queue.
 // Persists the request and publishes to validate. Returns nil to ack (success),
 // or error to nack (retry).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName, metrics.LongLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 

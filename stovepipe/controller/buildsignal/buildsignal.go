@@ -94,10 +94,7 @@ func NewController(
 // the latest status, persists a real transition, and either reschedules a
 // poll or, once terminal, publishes the build id to record. Returns nil to
 // ack (success) or an error to nack (retry) / reject (DLQ).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := metrics.Begin(c.metricsScope, _opName, metrics.LongLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
-
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
 	sig := &stovepipemq.BuildSignal{}
