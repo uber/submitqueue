@@ -5,6 +5,8 @@ go_test(
     srcs = ["consumer_test.go"],
     data = [
         "docker-compose.yml",
+        "//:MODULE.bazel",
+        "//:go.mod",
         "//platform/extension/messagequeue/mysql/schema",
     ],
     tags = [

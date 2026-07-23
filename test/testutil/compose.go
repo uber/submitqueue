@@ -16,6 +16,7 @@ package testutil
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"os"
@@ -39,6 +40,7 @@ type ComposeStack struct {
 	log         *TestLogger
 	ctx         context.Context
 	composeCmd  []string  // docker-compose command (either ["docker-compose"] or ["docker", "compose"])
+	composeEnv  []string  // environment shared by compose commands
 	logCmd      *exec.Cmd // background "docker compose logs -f" process
 }
 
@@ -79,6 +81,7 @@ func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, compose
 		log:         log,
 		ctx:         ctx,
 		composeCmd:  getDockerComposeCommand(),
+		composeEnv:  composeEnvironment(t, absPath),
 	}
 
 	// Register cleanup
@@ -89,7 +92,7 @@ func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, compose
 			log.Logf("SKIP_CLEANUP=true - keeping containers for inspection")
 			log.Logf("Container prefix: %s", projectName)
 			composeCmd := strings.Join(stack.composeCmd, " ")
-			log.Logf("Clean up manually: %s -f %s -p %s down -v --rmi local", composeCmd, absPath, projectName)
+			log.Logf("Clean up manually: %s -f %s -p %s down -v", composeCmd, absPath, projectName)
 			return
 		}
 
@@ -108,6 +111,7 @@ func (s *ComposeStack) Up() error {
 
 	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName, "up", "-d", "--build", "--wait")
 	cmd := exec.CommandContext(s.ctx, s.composeCmd[0], args...)
+	cmd.Env = s.composeEnv
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -120,13 +124,15 @@ func (s *ComposeStack) Up() error {
 	return nil
 }
 
-// down stops and removes all services in the compose stack.
-// Also removes locally built images to prevent accumulation.
+// down stops and removes all services and volumes in the compose stack.
+// Locally built images use stable per-worktree names and remain cached for
+// subsequent test runs.
 func (s *ComposeStack) down() {
-	s.log.Logf("Stopping compose stack and removing images")
+	s.log.Logf("Stopping compose stack")
 
-	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName, "down", "-v", "--rmi", "local")
+	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName, "down", "-v")
 	cmd := exec.CommandContext(s.ctx, s.composeCmd[0], args...)
+	cmd.Env = s.composeEnv
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -141,6 +147,7 @@ func (s *ComposeStack) down() {
 func (s *ComposeStack) tailLogs() {
 	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName, "logs", "-f")
 	cmd := exec.Command(s.composeCmd[0], args...)
+	cmd.Env = s.composeEnv
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 
@@ -165,6 +172,7 @@ func (s *ComposeStack) ServicePort(serviceName string, containerPort int) (int, 
 
 	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName, "port", serviceName, fmt.Sprintf("%d", containerPort))
 	cmd := exec.CommandContext(s.ctx, s.composeCmd[0], args...)
+	cmd.Env = s.composeEnv
 
 	output, err := cmd.Output()
 	if err != nil {
@@ -293,6 +301,7 @@ func (s *ComposeStack) StopService(serviceName string, timeoutSec int) error {
 	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName,
 		"stop", "-t", fmt.Sprintf("%d", timeoutSec), serviceName)
 	cmd := exec.CommandContext(s.ctx, s.composeCmd[0], args...)
+	cmd.Env = s.composeEnv
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -313,6 +322,7 @@ func (s *ComposeStack) ServiceExitCode(serviceName string) (int, error) {
 	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName,
 		"ps", "-a", "-q", serviceName)
 	cmd := exec.CommandContext(s.ctx, s.composeCmd[0], args...)
+	cmd.Env = s.composeEnv
 	output, err := cmd.Output()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get container ID for service %s: %w", serviceName, err)
@@ -348,6 +358,51 @@ func setupDockerEnv(t *testing.T) {
 	// Ensure HOME is set for Docker config
 	if os.Getenv("HOME") == "" {
 		t.Setenv("HOME", t.TempDir())
+	}
+}
+
+// composeEnvironment returns the environment used by every compose command.
+// The image prefix is stable within a worktree so --build can reuse images
+// between test runs, but differs across worktrees to avoid stale cross-checkout
+// images when multiple changes are tested on the same Docker daemon.
+func composeEnvironment(t *testing.T, composeFile string) []string {
+	t.Helper()
+
+	repoRoot := composeRepoRoot(t, composeFile)
+	sum := sha256.Sum256([]byte(repoRoot))
+	imagePrefix := fmt.Sprintf("sq-test-%x", sum[:6])
+
+	env := os.Environ()
+	env = append(env, "SQ_DOCKER_IMAGE_PREFIX="+imagePrefix)
+	env = append(env, "SQ_MYSQL_DATA_MOUNT_TYPE=tmpfs")
+	env = append(env, "SQ_MYSQL_INITDB_SKIP_TZINFO=1")
+	return env
+}
+
+// composeRepoRoot resolves the repository containing composeFile. Bazel exposes
+// repository markers as runfile symlinks, so resolving a marker identifies the
+// source checkout without invoking a host-provided Git executable.
+func composeRepoRoot(t *testing.T, composeFile string) string {
+	t.Helper()
+
+	if repoRoot := os.Getenv("REPO_ROOT"); repoRoot != "" {
+		return repoRoot
+	}
+
+	dir := filepath.Dir(composeFile)
+	for {
+		for _, marker := range []string{"MODULE.bazel", "go.mod"} {
+			markerPath := filepath.Join(dir, marker)
+			if realMarker, err := filepath.EvalSymlinks(markerPath); err == nil {
+				return filepath.Dir(realMarker)
+			}
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("repository root not found")
+		}
+		dir = parent
 	}
 }
 

@@ -5,6 +5,8 @@ go_test(
     srcs = ["storage_test.go"],
     data = [
         "docker-compose.yml",
+        "//:MODULE.bazel",
+        "//:go.mod",
         "//submitqueue/extension/storage/mysql/schema",
     ],
     tags = [
