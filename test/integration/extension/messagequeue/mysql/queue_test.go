@@ -148,6 +148,73 @@ func receiveNWithTimeout(
 	}
 }
 
+// receiveConcurrentlyWithTimeout collects deliveries across workers until the
+// expected number of unique messages has been acknowledged. Completion or a
+// worker error cancels every receiver immediately; the timeout is only a
+// safety net for a genuinely stuck test.
+func receiveConcurrentlyWithTimeout(
+	t *testing.T,
+	ctx context.Context,
+	deliveryChans []<-chan extqueue.Delivery,
+	expected int,
+) map[string]int {
+	t.Helper()
+
+	receiveCtx, cancel := context.WithTimeout(ctx, testTimeout)
+	defer cancel()
+
+	allMessages := make(map[string]int)
+	workerErrors := make(chan error, len(deliveryChans))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	wg.Add(len(deliveryChans))
+	for workerID, deliveryChan := range deliveryChans {
+		go func() {
+			defer wg.Done()
+
+			for {
+				select {
+				case <-receiveCtx.Done():
+					return
+				case delivery, ok := <-deliveryChan:
+					if !ok {
+						workerErrors <- fmt.Errorf("worker %d delivery channel closed", workerID)
+						cancel()
+						return
+					}
+					if err := delivery.Ack(ctx); err != nil {
+						workerErrors <- fmt.Errorf("worker %d ack delivery: %w", workerID, err)
+						cancel()
+						return
+					}
+
+					msgID := delivery.Message().ID
+					mu.Lock()
+					allMessages[msgID]++
+					totalReceived := len(allMessages)
+					mu.Unlock()
+
+					t.Logf("Worker %d received: %s (total unique: %d)", workerID, msgID, totalReceived)
+					if totalReceived == expected {
+						cancel()
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(workerErrors)
+
+	for err := range workerErrors {
+		require.NoError(t, err)
+	}
+	require.Len(t, allMessages, expected, "received all messages before timeout")
+	return allMessages
+}
+
 // drainSignals drains all buffered signals from the channel.
 func drainSignals(ch <-chan queueMySQL.HookSignal) {
 	for {
@@ -860,57 +927,12 @@ func (s *SQLQueueIntegrationSuite) TestMultipleWorkersInConsumerGroup() {
 	t.Logf("Published %d messages to topic across multiple partitions", numMessages)
 
 	// Collect messages from both workers concurrently
-	allMessages := make(map[string]int) // msgID -> count (should be 1 for each)
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-
-	wg.Add(2)
-
-	// Worker 1 receiver
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case delivery := <-deliveryChan1:
-				msgID := delivery.Message().ID
-				mu.Lock()
-				allMessages[msgID]++
-				mu.Unlock()
-				t.Logf("Worker 1 received: %s (total received: %d)", msgID, len(allMessages))
-				require.NoError(t, delivery.Ack(s.ctx))
-
-				if len(allMessages) == numMessages {
-					return
-				}
-			case <-time.After(testTimeout):
-				return
-			}
-		}
-	}()
-
-	// Worker 2 receiver
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case delivery := <-deliveryChan2:
-				msgID := delivery.Message().ID
-				mu.Lock()
-				allMessages[msgID]++
-				mu.Unlock()
-				t.Logf("Worker 2 received: %s (total received: %d)", msgID, len(allMessages))
-				require.NoError(t, delivery.Ack(s.ctx))
-
-				if len(allMessages) == numMessages {
-					return
-				}
-			case <-time.After(testTimeout):
-				return
-			}
-		}
-	}()
-
-	wg.Wait()
+	allMessages := receiveConcurrentlyWithTimeout(
+		t,
+		s.ctx,
+		[]<-chan extqueue.Delivery{deliveryChan1, deliveryChan2},
+		numMessages,
+	)
 
 	// Verify all messages received exactly once
 	assert.Equal(t, numMessages, len(allMessages), "Should receive all messages")
@@ -983,41 +1005,7 @@ func (s *SQLQueueIntegrationSuite) TestConcurrentSubscribers() {
 	t.Logf("Published %d messages", totalMessages)
 
 	// Collect messages from all subscribers concurrently
-	allMessages := make(map[string]int) // msgID -> count
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-
-	for i, deliveryChan := range deliveryChans {
-		wg.Add(1)
-		go func(workerID int, ch <-chan extqueue.Delivery) {
-			defer wg.Done()
-			workerMessages := 0
-			for {
-				select {
-				case delivery := <-ch:
-					msgID := delivery.Message().ID
-					mu.Lock()
-					allMessages[msgID]++
-					totalReceived := len(allMessages)
-					mu.Unlock()
-
-					t.Logf("Worker %d received: %s (total unique: %d)", workerID, msgID, totalReceived)
-					require.NoError(t, delivery.Ack(s.ctx))
-					workerMessages++
-
-					if totalReceived >= totalMessages {
-						t.Logf("Worker %d processed %d messages", workerID, workerMessages)
-						return
-					}
-				case <-time.After(testTimeout):
-					t.Logf("Worker %d timeout after processing %d messages", workerID, workerMessages)
-					return
-				}
-			}
-		}(i, deliveryChan)
-	}
-
-	wg.Wait()
+	allMessages := receiveConcurrentlyWithTimeout(t, s.ctx, deliveryChans, totalMessages)
 
 	// Verify all messages received exactly once
 	assert.Equal(t, totalMessages, len(allMessages), "Should receive all messages")
