@@ -30,54 +30,77 @@ import (
 	"github.com/uber/submitqueue/test/testutil"
 )
 
-// MySQLRequestStoreSuite exercises the MySQL-backed RequestStore against a real MySQL instance
-// started via docker-compose.
-type MySQLRequestStoreSuite struct {
-	suite.Suite
-	stack    *testutil.ComposeStack
-	db       *sql.DB
-	log      *testutil.TestLogger
-	ctx      context.Context
-	store    storage.RequestStore
-	uriStore storage.RequestURIStore
-}
-
-func TestMySQLRequestStore(t *testing.T) {
-	suite.Run(t, new(MySQLRequestStoreSuite))
-}
-
-func (s *MySQLRequestStoreSuite) SetupSuite() {
-	t := s.T()
-	s.ctx = context.Background()
-	s.log = testutil.NewTestLogger(t)
-
-	s.stack = testutil.NewComposeStack(
+func TestMySQLStorage(t *testing.T) {
+	ctx := context.Background()
+	log := testutil.NewTestLogger(t)
+	stack := testutil.NewComposeStack(
 		t,
-		s.log,
-		s.ctx,
+		log,
+		ctx,
 		"docker-compose.yml",
 		"ext-stovepipe-storage-mysql",
 	)
 
-	err := s.stack.Up()
+	err := stack.Up()
 	require.NoError(t, err, "failed to start compose stack")
 
-	s.db, err = s.stack.ConnectMySQLService("mysql")
+	db, err := stack.ConnectMySQLService("mysql")
 	require.NoError(t, err, "failed to connect to MySQL")
 
 	schemaDir := testutil.SchemaDir("stovepipe/extension/storage/mysql/schema")
-	testutil.ApplySchema(t, s.log, s.db, schemaDir)
+	testutil.ApplySchema(t, log, db, schemaDir)
 
-	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
+	store, err := mysqlstorage.NewStorage(db, tally.NoopScope)
 	require.NoError(t, err, "failed to create storage")
-	s.store = store.GetRequestStore()
-	s.uriStore = store.GetRequestURIStore()
 
-	t.Cleanup(func() {
-		if s.db != nil {
-			s.db.Close()
-		}
+	t.Run("RequestStore", func(t *testing.T) {
+		resetStorage(t, db)
+		suite.Run(t, &MySQLRequestStoreSuite{
+			ctx:      ctx,
+			store:    store.GetRequestStore(),
+			uriStore: store.GetRequestURIStore(),
+		})
 	})
+
+	t.Run("QueueStore", func(t *testing.T) {
+		resetStorage(t, db)
+		testSuite := new(MySQLQueueStoreSuite)
+		testSuite.SetContext(ctx)
+		testSuite.SetQueueStore(store.GetQueueStore())
+		testSuite.SetLogger(testutil.NewTestLogger(t))
+		suite.Run(t, testSuite)
+	})
+
+	t.Run("BuildStore", func(t *testing.T) {
+		resetStorage(t, db)
+		testSuite := new(MySQLBuildStoreSuite)
+		testSuite.SetContext(ctx)
+		testSuite.SetBuildStore(store.GetBuildStore())
+		testSuite.SetLogger(testutil.NewTestLogger(t))
+		suite.Run(t, testSuite)
+	})
+}
+
+func resetStorage(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	for _, statement := range []string{
+		"TRUNCATE TABLE request_uri",
+		"TRUNCATE TABLE request",
+		"TRUNCATE TABLE build",
+		"TRUNCATE TABLE queue",
+	} {
+		_, err := db.ExecContext(context.Background(), statement)
+		require.NoError(t, err)
+	}
+}
+
+// MySQLRequestStoreSuite exercises the MySQL-backed RequestStore against a real MySQL instance.
+type MySQLRequestStoreSuite struct {
+	suite.Suite
+	ctx      context.Context
+	store    storage.RequestStore
+	uriStore storage.RequestURIStore
 }
 
 func (s *MySQLRequestStoreSuite) TestCreateAndGet() {
@@ -211,95 +234,9 @@ func (s *MySQLRequestStoreSuite) TestURIMappingDistinctAcrossQueues() {
 // MySQLQueueStoreSuite exercises the MySQL-backed QueueStore by embedding the shared contract suite.
 type MySQLQueueStoreSuite struct {
 	storagesuite.QueueStoreContractSuite
-	stack *testutil.ComposeStack
-	db    *sql.DB
-	log   *testutil.TestLogger
-}
-
-func TestMySQLQueueStore(t *testing.T) {
-	suite.Run(t, new(MySQLQueueStoreSuite))
-}
-
-func (s *MySQLQueueStoreSuite) SetupSuite() {
-	t := s.T()
-	ctx := context.Background()
-	s.log = testutil.NewTestLogger(t)
-
-	s.stack = testutil.NewComposeStack(
-		t,
-		s.log,
-		ctx,
-		"docker-compose.yml",
-		"ext-stovepipe-storage-mysql",
-	)
-
-	err := s.stack.Up()
-	require.NoError(t, err, "failed to start compose stack")
-
-	s.db, err = s.stack.ConnectMySQLService("mysql")
-	require.NoError(t, err, "failed to connect to MySQL")
-
-	schemaDir := testutil.SchemaDir("stovepipe/extension/storage/mysql/schema")
-	testutil.ApplySchema(t, s.log, s.db, schemaDir)
-
-	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
-	require.NoError(t, err, "failed to create storage")
-
-	s.SetContext(ctx)
-	s.SetQueueStore(store.GetQueueStore())
-	s.SetLogger(s.log)
-
-	t.Cleanup(func() {
-		if s.db != nil {
-			s.db.Close()
-		}
-	})
 }
 
 // MySQLBuildStoreSuite exercises the MySQL-backed BuildStore by embedding the shared contract suite.
 type MySQLBuildStoreSuite struct {
 	storagesuite.BuildStoreContractSuite
-	stack *testutil.ComposeStack
-	db    *sql.DB
-	log   *testutil.TestLogger
-}
-
-func TestMySQLBuildStore(t *testing.T) {
-	suite.Run(t, new(MySQLBuildStoreSuite))
-}
-
-func (s *MySQLBuildStoreSuite) SetupSuite() {
-	t := s.T()
-	ctx := context.Background()
-	s.log = testutil.NewTestLogger(t)
-
-	s.stack = testutil.NewComposeStack(
-		t,
-		s.log,
-		ctx,
-		"docker-compose.yml",
-		"ext-stovepipe-storage-mysql",
-	)
-
-	err := s.stack.Up()
-	require.NoError(t, err, "failed to start compose stack")
-
-	s.db, err = s.stack.ConnectMySQLService("mysql")
-	require.NoError(t, err, "failed to connect to MySQL")
-
-	schemaDir := testutil.SchemaDir("stovepipe/extension/storage/mysql/schema")
-	testutil.ApplySchema(t, s.log, s.db, schemaDir)
-
-	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
-	require.NoError(t, err, "failed to create storage")
-
-	s.SetContext(ctx)
-	s.SetBuildStore(store.GetBuildStore())
-	s.SetLogger(s.log)
-
-	t.Cleanup(func() {
-		if s.db != nil {
-			s.db.Close()
-		}
-	})
 }
