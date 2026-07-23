@@ -70,7 +70,9 @@ type runner struct {
 
 var _ buildrunner.BuildRunner = (*runner)(nil)
 
-// Params holds the dependencies for a Buildkite BuildRunner.
+// Params holds the dependencies for a Buildkite BuildRunner. The wiring layer
+// is responsible for supplying non-nil fields; a nil Client or Logger panics
+// on first use rather than being validated here.
 type Params struct {
 	// Config holds the per-queue identity for this BuildRunner.
 	Config buildrunner.Config
@@ -84,14 +86,8 @@ type Params struct {
 
 // NewBuildRunner constructs a Buildkite-backed BuildRunner bound to a single
 // pipeline.
-func NewBuildRunner(params Params) (buildrunner.BuildRunner, error) {
-	if params.Client == nil {
-		return nil, fmt.Errorf("buildkite client is required")
-	}
-	if params.Logger == nil {
-		return nil, fmt.Errorf("logger is required")
-	}
-	return newRunner(params.Config, params.Client, params.Logger.Named("buildkite_buildrunner")), nil
+func NewBuildRunner(params Params) buildrunner.BuildRunner {
+	return newRunner(params.Config, params.Client, params.Logger.Named("buildkite_buildrunner"))
 }
 
 // newRunner constructs a runner. Used by NewBuildRunner and by tests.
