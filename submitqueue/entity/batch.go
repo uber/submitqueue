@@ -32,8 +32,6 @@ const (
 	BatchStateSucceeded BatchState = "succeeded"
 	// BatchStateFailed is the terminal state of a batch that has failed.
 	BatchStateFailed BatchState = "failed"
-	// BatchStateScored is the state of a batch that has been scored for build success probability.
-	BatchStateScored BatchState = "scored"
 	// BatchStateCancelling is the non-terminal intent state set when a cancel has been requested but the
 	// batch has not yet been transitioned to BatchStateCancelled. A batch in this state may still reach
 	// BatchStateSucceeded or BatchStateFailed if a concurrent merge wins the race (e.g. the push had
@@ -75,7 +73,6 @@ func IsBatchStateHalted(s BatchState) bool {
 func ActiveBatchStates() []BatchState {
 	return []BatchState{
 		BatchStateCreated,
-		BatchStateScored,
 		BatchStateSpeculating,
 		BatchStateMerging,
 		BatchStateCancelling,
@@ -95,7 +92,6 @@ func ActiveBatchStates() []BatchState {
 func DependencyBatchStates() []BatchState {
 	return []BatchState{
 		BatchStateCreated,
-		BatchStateScored,
 		BatchStateSpeculating,
 		BatchStateMerging,
 	}

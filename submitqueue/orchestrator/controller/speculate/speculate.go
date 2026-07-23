@@ -36,7 +36,7 @@ import (
 // Per invocation, the controller advances the batch one step in the
 // state machine:
 //
-//   - Created or Scored → publish to build, transition to Speculating.
+//   - Created → publish to build, transition to Speculating.
 //   - Speculating       → if all deps are Succeeded, publish to merge and
 //     transition to Merging; otherwise no-op (or fail-fast if a dep is
 //     in a non-succeeding terminal state).
@@ -133,7 +133,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	switch batch.State {
-	case entity.BatchStateCreated, entity.BatchStateScored:
+	case entity.BatchStateCreated:
 		return c.startSpeculation(ctx, batch)
 	case entity.BatchStateSpeculating:
 		return c.tryFinalize(ctx, batch)
