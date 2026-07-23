@@ -38,12 +38,15 @@ func newTestClient(t *testing.T, handler http.Handler) *Client {
 	return NewClient(c)
 }
 
-func buildJSON(number int, state, webURL string) []byte {
-	return buildJSONWithEnv(number, state, webURL, nil)
+func buildJSON(t *testing.T, number int, state, webURL string) []byte {
+	t.Helper()
+	return buildJSONWithEnv(t, number, state, webURL, nil)
 }
 
-func buildJSONWithEnv(number int, state, webURL string, env map[string]string) []byte {
-	b, _ := json.Marshal(BuildResponse{Number: number, State: state, WebURL: webURL, Env: env})
+func buildJSONWithEnv(t *testing.T, number int, state, webURL string, env map[string]string) []byte {
+	t.Helper()
+	b, err := json.Marshal(BuildResponse{Number: number, State: state, WebURL: webURL, Env: env})
+	require.NoError(t, err)
 	return b
 }
 
@@ -56,7 +59,7 @@ func TestCreateBuild_SubmitsPayloadAndReturnsResponse(t *testing.T) {
 		capturedMethod = req.Method
 		capturedBody, _ = io.ReadAll(req.Body)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(buildJSON(42, "scheduled", "https://buildkite.com/test-org/my-pipeline/builds/42"))
+		_, _ = w.Write(buildJSON(t, 42, "scheduled", "https://buildkite.com/test-org/my-pipeline/builds/42"))
 	}))
 
 	resp, err := c.CreateBuild(context.Background(), CreateBuildRequest{
@@ -91,7 +94,7 @@ func TestGetBuild_ReturnsResponse(t *testing.T) {
 		assert.Equal(t, http.MethodGet, req.Method)
 		assert.Equal(t, "/builds/7", req.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(buildJSON(7, "running", "https://buildkite.com/test-org/my-pipeline/builds/7"))
+		_, _ = w.Write(buildJSON(t, 7, "running", "https://buildkite.com/test-org/my-pipeline/builds/7"))
 	}))
 
 	resp, err := c.GetBuild(context.Background(), 7)
@@ -111,7 +114,7 @@ func TestGetBuild_NotFound_ReturnsError(t *testing.T) {
 func TestGetBuild_EchoesEnv(t *testing.T) {
 	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(buildJSONWithEnv(7, "passed", "", map[string]string{"FOO": "bar"}))
+		_, _ = w.Write(buildJSONWithEnv(t, 7, "passed", "", map[string]string{"FOO": "bar"}))
 	}))
 
 	resp, err := c.GetBuild(context.Background(), 7)
