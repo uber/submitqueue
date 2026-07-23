@@ -82,13 +82,34 @@ func TestNewCancelController(t *testing.T) {
 
 func TestCancel_HappyPath(t *testing.T) {
 	ctrl := gomock.NewController(t)
+	scope := tally.NewTestScope("gateway", nil)
 
-	controller := NewCancelController(zap.NewNop().Sugar(), tally.NoopScope, newCancelStorageFixture(ctrl, "test-queue/42").storage, newCancelTestRegistryWithNoopPublisher(t, ctrl))
+	controller := NewCancelController(zap.NewNop().Sugar(), scope, newCancelStorageFixture(ctrl, "test-queue/42").storage, newCancelTestRegistryWithNoopPublisher(t, ctrl))
 	ctx := context.Background()
 
 	err := controller.Cancel(ctx, testCancelRequest("test-queue/42", "user changed their mind"))
 
 	require.NoError(t, err)
+
+	snapshot := scope.Snapshot()
+	var foundStart bool
+	for _, counter := range snapshot.Counters() {
+		if counter.Name() == "gateway.cancel.start" {
+			foundStart = true
+		}
+		assert.NotContains(t, counter.Name(), "cancel_request_count")
+		assert.NotContains(t, counter.Name(), "cancel_publish_success")
+	}
+	assert.True(t, foundStart)
+
+	var foundFinish bool
+	for _, histogram := range snapshot.Histograms() {
+		if histogram.Name() == "gateway.cancel.finish" {
+			foundFinish = true
+			assert.Equal(t, "success", histogram.Tags()["result"])
+		}
+	}
+	assert.True(t, foundFinish)
 }
 
 func TestCancel_ReturnsErrorOnEmptySqid(t *testing.T) {

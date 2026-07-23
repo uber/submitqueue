@@ -14,7 +14,7 @@
 
 // Package changeset resolves batch identity into the changes a batch contains.
 // It is the single place the orchestrator walks batch -> requests -> changes,
-// consolidating what the build, merge, and score controllers each did privately.
+// consolidating what the build and merge controllers each did privately.
 // Decision/action extensions (scorer, buildrunner, pusher, and future
 // detail-aware conflict analyzers) take thin identity entities and resolve their
 // granular content through an injected Resolver instead of being handed
@@ -46,7 +46,7 @@ type Resolver interface {
 	// one entity.ChangeInfo per claimed URI (URI plus the provider details read
 	// from the change store), aggregated across every request in the batch. For
 	// each URI it selects the record owned by the request, since the change store
-	// returns rows for all requests that ever claimed the URI. Used by the score
-	// stage and detail-aware analyzers.
+	// returns rows for all requests that ever claimed the URI. Used by the scorer
+	// and detail-aware analyzers.
 	DetailedForBatch(ctx context.Context, batch entity.Batch) (entity.BatchChanges, error)
 }

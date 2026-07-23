@@ -27,8 +27,8 @@ import (
 )
 
 // batchController is the DLQ reconciler for batch-scoped pipeline stages
-// (score, speculate, build, merge, conclude). All five topics carry a
-// BatchID payload, so this controller is registered five times — one per
+// (speculate, build, merge, conclude). All four topics carry a
+// BatchID payload, so this controller is registered four times — one per
 // topic, each with the matching DLQ topic key and consumer group.
 //
 // On each delivery the controller decodes the BatchID, transitions the batch
@@ -70,11 +70,8 @@ func NewDLQBatchController(
 }
 
 // Process reconciles a single DLQ delivery for a batch-scoped topic.
-func (c *batchController) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+func (c *batchController) Process(ctx context.Context, delivery consumer.Delivery) error {
 	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName, metrics.LongLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
@@ -102,7 +99,6 @@ func (c *batchController) Process(ctx context.Context, delivery consumer.Deliver
 		return err
 	}
 
-	metrics.NamedCounter(c.metricsScope, opName, "reconciled", 1)
 	return nil
 }
 

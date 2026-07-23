@@ -89,10 +89,7 @@ func NewController(
 
 // Process advances a batch one step along the naive happy-path.
 // Returns nil to ack (success), or error to nack (retry).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := metrics.Begin(c.metricsScope, opName, metrics.LongLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
-
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
 	bid, err := entity.BatchIDFromBytes(msg.Payload)
@@ -196,7 +193,7 @@ func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error 
 		case entity.BatchStateCancelled:
 			// Out-of-the-way: the cancelled batch will never land, so it can
 			// no longer conflict. Drop it from the chain and continue.
-			c.metricsScope.Counter("dependency_cancelled_skipped").Inc(1)
+			metrics.NamedCounter(c.metricsScope, opName, "dependency_cancelled_skipped", 1)
 			c.logger.Infow("dependency cancelled; dropping from speculation chain",
 				"batch_id", batch.ID,
 				"dependency_id", d.ID,

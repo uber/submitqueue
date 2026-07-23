@@ -33,7 +33,7 @@ import (
 )
 
 // Controller handles batch queue messages.
-// It consumes validated requests, groups them into batches, and publishes to the score stage.
+// It consumes validated requests, groups them into batches, and publishes to the speculate stage.
 // Implements consumer.Controller interface for integration with the consumer.
 type Controller struct {
 	logger        *zap.SugaredLogger
@@ -48,6 +48,8 @@ type Controller struct {
 
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
+
+const opName = "process"
 
 // NewController creates a new batch controller for the orchestrator.
 func NewController(
@@ -73,14 +75,9 @@ func NewController(
 }
 
 // Process processes a batch delivery from the queue.
-// Deserializes the request, groups into batch, and publishes to the score topic.
+// Deserializes the request, groups into batch, and publishes to the speculate topic.
 // Returns nil to ack (success), or error to nack (retry).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName, metrics.LongLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
-
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
 	// Deserialize request ID from payload
@@ -110,7 +107,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// terminal state, or the cancel controller has recorded a cancellation intent
 	// (RequestStateCancelling). A halted request must never spawn a new batch.
 	if entity.IsRequestStateHalted(request.State) {
-		c.metricsScope.Counter("skipped_halted").Inc(1)
+		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1)
 		c.logger.Infow("skipping batch for halted request",
 			"request_id", request.ID,
 			"state", string(request.State),
@@ -217,7 +214,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	//   T6 batch.IsRequestStateHalted(R)      → false (stale in-memory copy from T1)
 	//   T7 batch.BatchStore.Create(B{[R]})    → orphan batch containing a cancelled R
 	//
-	// After T7 the orphan batch flows through score → speculate → merge → conclude;
+	// After T7 the orphan batch flows through speculate → merge → conclude;
 	// conclude does NOT gate on the source request state when writing the terminal
 	// state, so it would CAS the request from Cancelled back to Landed, silently
 	// undoing the user's cancel.
@@ -259,7 +256,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		// the message: there is nothing for us to do, and retrying would not help
 		// since the new state of R is now visible to the cancel pipeline.
 		if errors.Is(err, storage.ErrVersionMismatch) {
-			c.metricsScope.Counter("request_claim_lost_race").Inc(1)
+			metrics.NamedCounter(c.metricsScope, opName, "request_claim_lost_race", 1)
 			c.logger.Infow("abandoning batch creation; request advanced concurrently (likely cancel)",
 				"request_id", request.ID,
 				"request_version", request.Version,
@@ -267,7 +264,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 			)
 			return nil
 		}
-		c.metricsScope.Counter("request_claim_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, opName, "request_claim_errors", 1)
 		return fmt.Errorf("failed to claim request %s for batch %s: %w", request.ID, batch.ID, err)
 	}
 	request.Version = newRequestVersion
@@ -290,10 +287,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	// Record the "batched" status in the request log. This status corresponds to
 	// the RequestStateBatched transition CAS'd above, so it carries the request
-	// version for reconciliation (unlike the batch-level "scored" status). The
-	// message ID is scoped to (requestID, status), so a redelivery that creates a
-	// fresh batch re-emits "batched" with a different batch_id but is deduped to
-	// the first entry — acceptable, the request is batched either way.
+	// version for reconciliation. The message ID is scoped to (requestID, status),
+	// so a redelivery that creates a fresh batch re-emits "batched" with a
+	// different batch_id but is deduped to the first entry — acceptable, the
+	// request is batched either way.
 	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusBatched, request.Version, "", map[string]string{
 		"batch_id": batch.ID,
 	})
@@ -302,17 +299,17 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return fmt.Errorf("failed to publish request log for request %s: %w", request.ID, err)
 	}
 
-	// Publish to score topic for further processing.
+	// Publish to speculate topic for further processing.
 	// If it fails and the controller retries, a new batch will be created with the new batch ID but the same request ID.
 	// The downstream logic should be able to handle stale entries by looking at the state of the batch.
-	if err := c.publish(ctx, topickey.TopicKeyScore, batch.ID, batch.Queue); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeySpeculate, batch.ID, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
-		return fmt.Errorf("failed to publish batch ID to score topic: %w", err)
+		return fmt.Errorf("failed to publish batch ID to speculate topic: %w", err)
 	}
 
-	c.logger.Infow("published batch to score topic",
+	c.logger.Infow("published batch to speculate topic",
 		"batch_id", batch.ID,
-		"topic_key", topickey.TopicKeyScore,
+		"topic_key", topickey.TopicKeySpeculate,
 	)
 
 	return nil // Success - message will be acked

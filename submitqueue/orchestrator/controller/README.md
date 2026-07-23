@@ -73,20 +73,20 @@ If a process fails after recording the checkpoint, redelivery observes the check
 
 Optimistic locking answers whether an entity changed since it was read. It does not decide whether a lifecycle transition is valid.
 
-A controller must write only from states it owns. For example, score may transition `Created` to `Scored`; it must not load `Speculating` and write it back to `Scored`.
+A controller must write only from states it owns. For example, speculate may transition `Created` to `Speculating`; it must not load `Merging` and write it back to `Speculating`.
 
 Version arithmetic follows the [storage optimistic-locking contract](../../extension/storage/README.md): compute the new version in the controller and update the in-memory entity only after the write succeeds.
 
-## Example: score
+## Example: speculate
 
 | Batch state | Behavior |
 |---|---|
-| `Created` | Compute the score and conditionally record `Scored`. |
-| `Scored` | Preserve the durable score and replay logs plus `speculate`. |
-| `Speculating`, `Merging` | Acknowledge without regressing the batch. |
+| `Created` | Start speculation: publish to `build`, then record `Speculating`. |
+| `Speculating` | Once dependencies resolve, publish to `merge` and record `Merging`. |
+| `Merging` | Acknowledge without regressing the batch; the merge controller owns recovery. |
 | `Cancelling`, terminal | The transition was superseded or another controller owns recovery. |
 
-If publishing fails after the batch reaches `Scored`, the controller returns an error. Redelivery reloads `Scored`, skips rescoring, and republishes the fanout with stable message identities.
+Each row writes only from a state `speculate` owns; states owned by other controllers (such as `Merging`) are acknowledged, never rewritten. If a publish fails after a state transition is recorded, redelivery reloads the batch, skips the completed transition, and republishes the fanout with stable message identities.
 
 ## External effects
 

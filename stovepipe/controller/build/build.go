@@ -79,10 +79,7 @@ func NewController(
 // Process reloads the request referenced by the delivery, triggers a build for
 // its decided scope, and publishes the build id to buildsignal. Returns nil to
 // ack (success) or an error to nack (retry) / reject (DLQ).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := metrics.Begin(c.metricsScope, _opName, metrics.LongLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
-
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
 	br := &stovepipemq.BuildRequest{}

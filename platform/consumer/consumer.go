@@ -83,12 +83,14 @@ type activeSubscription struct {
 // consumers (per-node classifier walk that preserves controller-attached
 // framework wraps), or errs.AlwaysRetryableProcessor for narrowly-scoped
 // consumers such as DLQ reconciliation that must redeliver on any failure.
-// processor must not be nil; callers that genuinely want no transformation
-// can pass errs.NewClassifierProcessor() with no classifiers.
+// scope is used as provided so wiring can distinguish primary and DLQ consumers
+// without introducing duplicate consumer sub-scopes. processor must not be nil;
+// callers that genuinely want no transformation can pass
+// errs.NewClassifierProcessor() with no classifiers.
 func New(logger *zap.SugaredLogger, scope tally.Scope, registry TopicRegistry, processor errs.ErrorProcessor) Consumer {
 	return &consumer{
 		logger:        logger,
-		metricsScope:  scope.SubScope("consumer"),
+		metricsScope:  scope,
 		registry:      registry,
 		processor:     processor,
 		subscriptions: make(map[TopicKey]*activeSubscription),
@@ -394,14 +396,16 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 			)
 
 			// Reject moves to DLQ (or acks if DLQ disabled)
-			if rejectErr := delivery.Reject(ctx, err.Error()); rejectErr != nil {
+			rejectOp := metrics.Begin(controllerScope, "reject", metrics.StorageLatencyBuckets)
+			rejectErr := delivery.Reject(ctx, err.Error())
+			rejectOp.Complete(rejectErr)
+			if rejectErr != nil {
 				m.logger.Errorw("failed to reject non-retryable message",
 					"controller", controller.Name(),
 					"topic_key", controller.TopicKey(),
 					"message_id", msg.ID,
 					"error", rejectErr,
 				)
-				metrics.NamedCounter(controllerScope, opName, "reject_errors", 1)
 			}
 			return
 		}
@@ -424,47 +428,33 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 		)
 
 		// Nack with no delay - let visibility timeout handle retry delay
-		nackStart := time.Now()
-		if nackErr := delivery.Nack(ctx, 0); nackErr != nil {
+		nackOp := metrics.Begin(controllerScope, "nack", metrics.StorageLatencyBuckets)
+		nackErr := delivery.Nack(ctx, 0)
+		nackOp.Complete(nackErr)
+		if nackErr != nil {
 			m.logger.Errorw("failed to nack message",
 				"controller", controller.Name(),
 				"topic_key", topicKey,
 				"message_id", msg.ID,
 				"error", nackErr,
 			)
-			metrics.NamedCounter(controllerScope, opName, "nack_errors", 1)
-		} else {
-			metrics.NamedCounter(controllerScope, opName, "nack_count", 1)
-			metrics.NamedHistogram(controllerScope, opName, "ack_nack_latency", metrics.StorageLatencyBuckets,
-				metrics.NewTag("operation", "nack"),
-				metrics.NewTag("success", "true"),
-			).RecordDuration(time.Since(nackStart))
 		}
 		return
 	}
 
 	// Controller succeeded - ack message
-	ackStart := time.Now()
-	if ackErr := delivery.Ack(ctx); ackErr != nil {
+	ackOp := metrics.Begin(controllerScope, "ack", metrics.StorageLatencyBuckets)
+	ackErr := delivery.Ack(ctx)
+	ackOp.Complete(ackErr)
+	if ackErr != nil {
 		m.logger.Errorw("failed to ack message",
 			"controller", controller.Name(),
 			"topic_key", topicKey,
 			"message_id", msg.ID,
 			"error", ackErr,
 		)
-		metrics.NamedCounter(controllerScope, opName, "ack_errors", 1)
-		metrics.NamedHistogram(controllerScope, opName, "ack_nack_latency", metrics.StorageLatencyBuckets,
-			metrics.NewTag("operation", "ack"),
-			metrics.NewTag("success", "false"),
-		).RecordDuration(time.Since(ackStart))
 		return
 	}
-
-	metrics.NamedCounter(controllerScope, opName, "ack_count", 1)
-	metrics.NamedHistogram(controllerScope, opName, "ack_nack_latency", metrics.StorageLatencyBuckets,
-		metrics.NewTag("operation", "ack"),
-		metrics.NewTag("success", "true"),
-	).RecordDuration(time.Since(ackStart))
 
 	m.logger.Debugw("message processed successfully",
 		"controller", controller.Name(),

@@ -174,7 +174,6 @@ func (c *LandController) Land(ctx context.Context, req entity.LandRequest) (resu
 		"sqid", req.ID,
 		"topic_key", topickey.TopicKeyStart,
 	)
-	metrics.NamedCounter(c.metricsScope, opName, "publish_success", 1)
 
 	return entity.LandResult{ID: req.ID}, nil
 }

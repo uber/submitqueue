@@ -88,10 +88,7 @@ func NewController(
 // Runs duplicate detection, change metadata fetch, and change claiming, then kicks off the
 // asynchronous merge-conflict check by publishing the full check request to runway.
 // Returns nil to ack (success or non-retryable rejection), error to nack (retry).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := coremetrics.Begin(c.metricsScope, "process", coremetrics.LongLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
-
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
 	// Deserialize request ID from payload

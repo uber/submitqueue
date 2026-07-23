@@ -57,11 +57,7 @@ h := metrics.NamedHistogram(c.scope, "process", "duration", metrics.FastLatencyB
 h.RecordDuration(elapsed)
 ```
 
-Use `tally.Scope` directly for gauges:
-
-```go
-c.scope.SubScope("consumer").Gauge("pending_messages").Update(float64(len(pending)))
-```
+Do not emit gauges or timers. Represent operation latency and completion count with lifecycle histograms, and represent instantaneous quantities as sampled histogram values when needed.
 
 ### Why histograms, not timers
 
