@@ -304,6 +304,7 @@ deps = [
 - **Avoid asserting on error messages** — assert on error type or check the error with `require.Error`, do not `assert.Contains(t, err.Error(), message)`
 - **No change detector tests** — don't assert on default values, internal structure, or implementation details that can change without affecting behavior. Test what the code *does*, not how it's constructed.
 - **No `time.Sleep` for synchronization** — use channels, callbacks, condition variables.
+- **No hardcoded test timeouts** — do not add timeouts to tests or synchronization helpers; rely on the upstream test runner's timeout (for example, Bazel's test timeout).
 - **Use testify** — `assert`/`require` instead of `t.Fatal()`.
 
 **Integration tests** use Docker Compose via `testutil.ComposeStack`:
