@@ -49,6 +49,8 @@ type Controller struct {
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
 
+const opName = "process"
+
 // NewController creates a new batch controller for the orchestrator.
 func NewController(
 	logger *zap.SugaredLogger,
@@ -75,12 +77,7 @@ func NewController(
 // Process processes a batch delivery from the queue.
 // Deserializes the request, groups into batch, and publishes to the score topic.
 // Returns nil to ack (success), or error to nack (retry).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName, metrics.LongLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
-
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
 	// Deserialize request ID from payload
@@ -110,7 +107,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	// terminal state, or the cancel controller has recorded a cancellation intent
 	// (RequestStateCancelling). A halted request must never spawn a new batch.
 	if entity.IsRequestStateHalted(request.State) {
-		c.metricsScope.Counter("skipped_halted").Inc(1)
+		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1)
 		c.logger.Infow("skipping batch for halted request",
 			"request_id", request.ID,
 			"state", string(request.State),
@@ -259,7 +256,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		// the message: there is nothing for us to do, and retrying would not help
 		// since the new state of R is now visible to the cancel pipeline.
 		if errors.Is(err, storage.ErrVersionMismatch) {
-			c.metricsScope.Counter("request_claim_lost_race").Inc(1)
+			metrics.NamedCounter(c.metricsScope, opName, "request_claim_lost_race", 1)
 			c.logger.Infow("abandoning batch creation; request advanced concurrently (likely cancel)",
 				"request_id", request.ID,
 				"request_version", request.Version,
@@ -267,7 +264,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 			)
 			return nil
 		}
-		c.metricsScope.Counter("request_claim_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, opName, "request_claim_errors", 1)
 		return fmt.Errorf("failed to claim request %s for batch %s: %w", request.ID, batch.ID, err)
 	}
 	request.Version = newRequestVersion
