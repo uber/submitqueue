@@ -59,7 +59,8 @@ func TestCreateBuild_SubmitsPayloadAndReturnsResponse(t *testing.T) {
 		capturedMethod = req.Method
 		capturedBody, _ = io.ReadAll(req.Body)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(buildJSON(t, 42, "scheduled", "https://buildkite.com/test-org/my-pipeline/builds/42"))
+		_, err := w.Write(buildJSON(t, 42, "scheduled", "https://buildkite.com/test-org/my-pipeline/builds/42"))
+		require.NoError(t, err)
 	}))
 
 	resp, err := c.CreateBuild(context.Background(), CreateBuildRequest{
