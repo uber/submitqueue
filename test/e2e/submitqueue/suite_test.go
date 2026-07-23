@@ -201,7 +201,6 @@ func (s *E2EIntegrationSuite) TestLand_HappyPath_ReachesLanded() {
 		entity.RequestStatusAccepted,
 		entity.RequestStatusStarted,
 		entity.RequestStatusBatched,
-		entity.RequestStatusScored,
 		entity.RequestStatusLanded,
 	)
 

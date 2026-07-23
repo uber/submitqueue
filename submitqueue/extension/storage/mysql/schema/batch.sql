@@ -3,7 +3,6 @@ CREATE TABLE IF NOT EXISTS batch (
     queue VARCHAR(255) NOT NULL,
     contains JSON NOT NULL,
     dependencies JSON NOT NULL,
-    score DOUBLE NOT NULL,
     state VARCHAR(255) NOT NUll,
     version INT NOT NULL,
     PRIMARY KEY (id),
