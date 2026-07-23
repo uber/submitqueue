@@ -35,7 +35,7 @@
 // it (cancelling builds, respeculating dependents) live in the same controller
 // — speculate is the single writer of every non-Cancelling batch state and is
 // already wired with the build/dependent stores. Forward-progress controllers
-// (score, build, buildsignal, merge) observe BatchStateCancelling via
+// (build, buildsignal, merge) observe BatchStateCancelling via
 // IsBatchStateHalted and short-circuit while speculate drives the batch to
 // its terminal state.
 //

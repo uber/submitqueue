@@ -74,7 +74,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/merge"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/mergeconflictsignal"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/mergesignal"
-	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/score"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/speculate"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/start"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/validate"
@@ -242,11 +241,10 @@ func run() error {
 	// Per-extension factories all resolve against the registry by queue name.
 	cpf := changeProviderFactory{queues}
 	brf := buildRunnerFactory{queues}
-	scf := scorerFactory{queues}
 	cof := analyzerFactory{queues}
 
 	// Register controllers
-	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, registry, cpf, brf, scf, cof, cnt, store)
+	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, registry, cpf, brf, cof, cnt, store)
 	if err != nil {
 		return err
 	}
@@ -378,7 +376,6 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 		{topickey.TopicKeyValidate, "validate", "orchestrator-validate"},
 		{runwaymq.TopicKeyMergeConflictCheckSignal, "merge-conflict-check-signal", "orchestrator-mergeconflictsignal"},
 		{topickey.TopicKeyBatch, "batch", "orchestrator-batch"},
-		{topickey.TopicKeyScore, "score", "orchestrator-score"},
 		{topickey.TopicKeySpeculate, "speculate", "orchestrator-speculate"},
 		{topickey.TopicKeyBuild, "build", "orchestrator-build"},
 		{topickey.TopicKeyBuildSignal, "buildsignal", "orchestrator-buildsignal"},
@@ -447,11 +444,11 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 // registerPrimaryControllers creates all pipeline controllers and registers
 // them with the primary consumer. Pipeline:
 //
-//	request → validate ⇢ (runway) ⇢ mergeconflictsignal → batch → score → speculate → build → buildsignal ─┐
-//	                                                              ↑     ↘             ↻ poll       │
-//	                                                              │      merge → conclude          │
-//	                                                              │        │                       │
-//	                                                              └────────┴───────────────────────┘
+//	request → validate ⇢ (runway) ⇢ mergeconflictsignal → batch → speculate → build → buildsignal ─┐
+//	                                                                ↑     ↘           ↻ poll        │
+//	                                                                │      merge → conclude         │
+//	                                                                │        │                      │
+//	                                                                └────────┴──────────────────────┘
 //
 // The merge-conflict check is asynchronous and crosses a service boundary:
 // validate publishes the full check request to the runway-owned
@@ -478,8 +475,12 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 type queueExtensions struct {
 	changeProvider changeprovider.ChangeProvider
 	buildRunner    buildrunner.BuildRunner
-	scorer         scorer.Scorer
-	analyzer       conflict.Analyzer
+	// scorer holds each queue's scoring profile. The dedicated score stage was
+	// removed; scoring is being folded into the speculator, so the per-queue
+	// profiles are retained here (unwired to a consumer for now) until that
+	// integration lands.
+	scorer   scorer.Scorer
+	analyzer conflict.Analyzer
 }
 
 // queueRegistry maps a queue name to its extensions, falling back to a default
@@ -513,19 +514,13 @@ func (f buildRunnerFactory) For(cfg buildrunner.Config) (buildrunner.BuildRunner
 	return f.reg.get(cfg.QueueName).buildRunner, nil
 }
 
-type scorerFactory struct{ reg queueRegistry }
-
-func (f scorerFactory) For(cfg scorer.Config) (scorer.Scorer, error) {
-	return f.reg.get(cfg.QueueName).scorer, nil
-}
-
 type analyzerFactory struct{ reg queueRegistry }
 
 func (f analyzerFactory) For(cfg conflict.Config) (conflict.Analyzer, error) {
 	return f.reg.get(cfg.QueueName).analyzer, nil
 }
 
-func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, cpf changeprovider.Factory, brf buildrunner.Factory, scf scorer.Factory, cof conflict.Factory, cnt counter.Counter, store storage.Storage) (int, error) {
+func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, cpf changeprovider.Factory, brf buildrunner.Factory, cof conflict.Factory, cnt counter.Counter, store storage.Storage) (int, error) {
 	var count int
 	requestController := start.NewController(
 		logger,
@@ -594,20 +589,6 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 	)
 	if err := c.Register(batchController); err != nil {
 		return count, fmt.Errorf("failed to register batch controller: %w", err)
-	}
-	count++
-
-	scoreController := score.NewController(
-		logger,
-		scope,
-		store,
-		scf,
-		registry,
-		topickey.TopicKeyScore,
-		"orchestrator-score",
-	)
-	if err := c.Register(scoreController); err != nil {
-		return count, fmt.Errorf("failed to register score controller: %w", err)
 	}
 	count++
 
@@ -710,7 +691,6 @@ func registerDLQControllers(c consumer.Consumer, logger *zap.SugaredLogger, scop
 		{"validate_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, registry, dlq.DecodeRequestID, dlq.TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")},
 		{"mergeconflictsignal_dlq", dlq.NewDLQMergeConflictSignalController(logger, dlqScope, store, registry, dlq.TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-mergeconflictsignal-dlq")},
 		{"batch_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, registry, dlq.DecodeRequestID, dlq.TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")},
-		{"score_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeyScore), "orchestrator-score-dlq")},
 		{"speculate_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeySpeculate), "orchestrator-speculate-dlq")},
 		{"build_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeyBuild), "orchestrator-build-dlq")},
 		{"buildsignal_dlq", dlq.NewDLQBuildSignalController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")},

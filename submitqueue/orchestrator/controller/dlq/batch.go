@@ -27,8 +27,8 @@ import (
 )
 
 // batchController is the DLQ reconciler for batch-scoped pipeline stages
-// (score, speculate, build, merge, conclude). All five topics carry a
-// BatchID payload, so this controller is registered five times — one per
+// (speculate, build, merge, conclude). All four topics carry a
+// BatchID payload, so this controller is registered four times — one per
 // topic, each with the matching DLQ topic key and consumer group.
 //
 // On each delivery the controller decodes the BatchID, transitions the batch
