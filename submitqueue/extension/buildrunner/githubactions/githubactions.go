@@ -49,7 +49,9 @@ const (
 	defaultRef = "main"
 )
 
-// Params holds the dependencies for a GitHub Actions BuildRunner.
+// Params holds the dependencies for a GitHub Actions BuildRunner. The wiring
+// layer is responsible for supplying non-nil Client/Logger; a nil value
+// panics on first use rather than being validated here.
 type Params struct {
 	// Config holds the per-queue identity for this BuildRunner.
 	Config buildrunner.Config
@@ -83,13 +85,7 @@ var _ buildrunner.BuildRunner = (*runner)(nil)
 
 // NewBuildRunner constructs a GitHub Actions-backed BuildRunner bound to one
 // repository/workflow and one queue config.
-func NewBuildRunner(params Params) (buildrunner.BuildRunner, error) {
-	if params.Client == nil {
-		return nil, fmt.Errorf("github actions client is required")
-	}
-	if params.Logger == nil {
-		return nil, fmt.Errorf("logger is required")
-	}
+func NewBuildRunner(params Params) buildrunner.BuildRunner {
 	ref := params.Ref
 	if ref == "" {
 		ref = defaultRef
@@ -102,7 +98,7 @@ func NewBuildRunner(params Params) (buildrunner.BuildRunner, error) {
 		params.Client,
 		params.Resolver,
 		params.Logger.Named("githubactions_buildrunner"),
-	), nil
+	)
 }
 
 func newRunner(cfg buildrunner.Config, ref string, extraInputs map[string]string, c *platformgithubactions.Client, resolver changeset.Resolver, logger *zap.SugaredLogger) *runner {

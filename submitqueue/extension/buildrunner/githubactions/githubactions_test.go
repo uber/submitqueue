@@ -60,21 +60,24 @@ func newTestRunner(t *testing.T, handler http.Handler, resolver ...changeset.Res
 	)
 }
 
-func TestNewBuildRunner_ValidatesConfig(t *testing.T) {
-	_, err := NewBuildRunner(Params{Logger: zap.NewNop().Sugar()})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "github actions client is required")
+func TestNewBuildRunner_DefaultsRef(t *testing.T) {
+	br := NewBuildRunner(Params{
+		Client: platformgithubactions.NewClient(http.DefaultClient, "uber", "submitqueue", "submitqueue-ci.yml"),
+		Logger: zap.NewNop().Sugar(),
+	})
+
+	r := br.(*runner)
+	assert.Equal(t, "main", r.ref)
 }
 
 func TestNewBuildRunner_BindsQueueConfigAndExtraInputs(t *testing.T) {
-	br, err := NewBuildRunner(Params{
+	br := NewBuildRunner(Params{
 		Config:      buildrunner.Config{QueueName: "queue-a"},
 		Client:      platformgithubactions.NewClient(http.DefaultClient, "uber", "submitqueue", "submitqueue-ci.yml"),
 		Logger:      zap.NewNop().Sugar(),
 		Ref:         "main",
 		ExtraInputs: map[string]string{"runner": "ubuntu-latest"},
 	})
-	require.NoError(t, err)
 
 	r := br.(*runner)
 	assert.Equal(t, "queue-a", r.cfg.QueueName)
