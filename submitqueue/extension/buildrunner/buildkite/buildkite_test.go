@@ -69,10 +69,14 @@ func buildJSONWithEnv(number int, state, webURL string, env map[string]string) [
 
 // --- Interface / constructor ---
 
-func TestNew_ImplementsInterface(t *testing.T) {
-	r, err := NewBuildRunner(Params{Logger: zap.NewNop().Sugar()})
-	require.Error(t, err, "buildkite client is required")
-	var _ buildrunner.BuildRunner = r
+func TestNewBuildRunner_ImplementsInterface(t *testing.T) {
+	c, err := phttp.NewClient("http://example.com")
+	require.NoError(t, err)
+	var _ buildrunner.BuildRunner = NewBuildRunner(Params{
+		Client:   platformbuildkite.NewClient(c),
+		Resolver: changesetfake.New(),
+		Logger:   zap.NewNop().Sugar(),
+	})
 }
 
 // --- Trigger ---
