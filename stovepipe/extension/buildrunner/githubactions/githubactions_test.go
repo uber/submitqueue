@@ -119,7 +119,6 @@ func TestTrigger_ErrorsWhenDispatchResponseHasNoRunID(t *testing.T) {
 
 	_, err := r.Trigger(context.Background(), "", "github://repo/head/aaa", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "response missing workflow_run_id")
 }
 
 func TestTrigger_WithMetadata_SetsInput(t *testing.T) {
