@@ -62,7 +62,7 @@ func (s BatchState) IsTerminal() bool {
 }
 
 // IsBatchStateHalted returns true if the batch is either terminal or in the process of being cancelled.
-// Forward-progress controllers (score, build, buildsignal, speculate, merge) use this to short-circuit
+// Forward-progress controllers (build, buildsignal, speculate, merge) use this to short-circuit
 // work for batches that the user has asked to cancel — even though Cancelling is non-terminal, no
 // further pipeline work should start (cancel will write the terminal state and fan out).
 func IsBatchStateHalted(s BatchState) bool {
@@ -134,10 +134,6 @@ type Batch struct {
 	// - queueA/batch/2 will contain queueA/batch/1
 	// - queueA/batch/3 will contain queueA/batch/1
 	Dependencies []string
-
-	// Score is the predicted probability of build success for this batch, ranging from 0.0 to 1.0.
-	// Set during the scoring phase. Zero value means the batch has not been scored yet.
-	Score float64
 
 	// The state of the batch lifecycle this batch is in. Updateable field with Version for optimistic locking.
 	State BatchState

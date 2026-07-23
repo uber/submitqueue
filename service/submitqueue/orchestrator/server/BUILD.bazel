@@ -54,7 +54,6 @@ go_library(
         "//submitqueue/orchestrator/controller/merge:go_default_library",
         "//submitqueue/orchestrator/controller/mergeconflictsignal:go_default_library",
         "//submitqueue/orchestrator/controller/mergesignal:go_default_library",
-        "//submitqueue/orchestrator/controller/score:go_default_library",
         "//submitqueue/orchestrator/controller/speculate:go_default_library",
         "//submitqueue/orchestrator/controller/start:go_default_library",
         "//submitqueue/orchestrator/controller/validate:go_default_library",
