@@ -23,14 +23,14 @@
 package githubactions
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
+
+	phttp "github.com/uber/submitqueue/platform/http"
 )
 
 const githubAPIVersion = "2026-03-10"
@@ -125,20 +125,12 @@ func (c *Client) GetRun(ctx context.Context, runID int64) (WorkflowRun, error) {
 // run is already terminal or otherwise not cancellable (HTTP 409/422) — the
 // BuildRunner contract treats that as a no-op.
 func (c *Client) CancelRun(ctx context.Context, runID int64) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.runPath(runID)+"/cancel", nil)
+	status, _, err := phttp.SendRequest(ctx, c.httpClient, http.MethodPost, c.runPath(runID)+"/cancel", nil, c.setHeaders)
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+		return err
 	}
-	c.setHeaders(req)
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("send request: %w", err)
-	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
-
-	switch resp.StatusCode {
+	switch status {
 	case http.StatusAccepted, http.StatusOK, http.StatusCreated, http.StatusNoContent:
 		return nil
 	case http.StatusConflict, http.StatusUnprocessableEntity:
@@ -148,7 +140,7 @@ func (c *Client) CancelRun(ctx context.Context, runID int64) error {
 	case http.StatusNotFound:
 		return fmt.Errorf("workflow run not found")
 	default:
-		return fmt.Errorf("unexpected status %d from cancel", resp.StatusCode)
+		return fmt.Errorf("unexpected status %d from cancel", status)
 	}
 }
 
@@ -175,33 +167,16 @@ func (c *Client) runPath(runID int64) string {
 }
 
 func (c *Client) do(ctx context.Context, method, rawURL string, body []byte, out any) error {
-	var bodyReader io.Reader
-	if body != nil {
-		bodyReader = bytes.NewReader(body)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, method, rawURL, bodyReader)
+	status, respBody, err := phttp.SendRequest(ctx, c.httpClient, method, rawURL, body, c.setHeaders)
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	c.setHeaders(req)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("read response: %w", err)
+		return err
 	}
 
-	if resp.StatusCode == http.StatusNotFound {
+	if status == http.StatusNotFound {
 		return fmt.Errorf("GitHub API returned 404 for %s %s", method, rawURL)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("API returned status %d: %s", resp.StatusCode, respBody)
+	if status < 200 || status >= 300 {
+		return fmt.Errorf("API returned status %d: %s", status, respBody)
 	}
 
 	if out != nil && len(respBody) > 0 {

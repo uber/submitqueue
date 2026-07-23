@@ -23,14 +23,19 @@
 package buildkite
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
+
+	phttp "github.com/uber/submitqueue/platform/http"
 )
+
+// ErrNotFound is returned when the Buildkite API responds with 404 to a
+// request for a resource by ID (e.g. GetBuild on an unknown build number).
+var ErrNotFound = errors.New("buildkite: resource not found")
 
 // Client is a thin wrapper around the Buildkite REST endpoints a BuildRunner
 // needs: create, get, and cancel a build.
@@ -88,61 +93,36 @@ func (c *Client) GetBuild(ctx context.Context, number int) (BuildResponse, error
 // non-cancellable build, which the BuildRunner contract treats as a no-op.
 func (c *Client) CancelBuild(ctx context.Context, number int) error {
 	u := fmt.Sprintf("/builds/%d/cancel", number)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, nil)
+	status, respBody, err := phttp.SendRequest(ctx, c.httpClient, http.MethodPut, u, nil, c.setHeaders)
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+		return err
 	}
-	c.setHeaders(req)
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("send request: %w", err)
-	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
-
-	switch resp.StatusCode {
+	switch status {
 	case http.StatusOK:
 		return nil
 	case http.StatusUnprocessableEntity:
 		// Already terminal — no-op per BuildRunner.Cancel contract.
 		return nil
 	default:
-		return fmt.Errorf("unexpected status %d from cancel", resp.StatusCode)
+		return fmt.Errorf("unexpected status %d from cancel: %s", status, respBody)
 	}
 }
 
 // do sends an HTTP request with the standard Buildkite headers and, on a 2xx
-// response, decodes the body into out (when non-nil). A 404 is reported as a
-// "build not found" error per the BuildRunner contract.
+// response, decodes the body into out (when non-nil). A 404 is reported as
+// ErrNotFound so callers can distinguish it from other failures.
 func (c *Client) do(ctx context.Context, method, rawURL string, body []byte, out any) error {
-	var bodyReader io.Reader
-	if body != nil {
-		bodyReader = bytes.NewReader(body)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, method, rawURL, bodyReader)
+	status, respBody, err := phttp.SendRequest(ctx, c.httpClient, method, rawURL, body, c.setHeaders)
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	c.setHeaders(req)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("read response: %w", err)
+		return err
 	}
 
-	if resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("build not found")
+	if status == http.StatusNotFound {
+		return ErrNotFound
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("API returned status %d: %s", resp.StatusCode, respBody)
+	if status < 200 || status >= 300 {
+		return fmt.Errorf("API returned status %d: %s", status, respBody)
 	}
 
 	if out != nil {

@@ -5,6 +5,7 @@ go_library(
     srcs = ["client.go"],
     importpath = "github.com/uber/submitqueue/platform/extension/buildrunner/githubactions",
     visibility = ["//visibility:public"],
+    deps = ["//platform/http:go_default_library"],
 )
 
 go_test(
