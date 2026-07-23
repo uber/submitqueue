@@ -37,10 +37,6 @@ import (
 	"github.com/uber/submitqueue/test/testutil"
 )
 
-// testTimeout is the safety-net duration for channel waits in integration tests.
-// If this fires, something is genuinely stuck — not a timing race.
-const testTimeout = 10 * time.Second
-
 type SQLQueueIntegrationSuite struct {
 	suite.Suite
 	ctx   context.Context
@@ -114,45 +110,33 @@ func testSubConfig(subscriberName, consumerGroup string) extqueue.SubscriptionCo
 	return cfg
 }
 
-// receiveWithTimeout receives a single delivery from the channel with testTimeout.
-// Returns the delivery or fails the test on timeout.
-func receiveWithTimeout(t *testing.T, deliveryChan <-chan extqueue.Delivery) extqueue.Delivery {
+// receive waits for a single delivery. Bazel's test timeout is the safety net
+// if the delivery never arrives.
+func receive(t *testing.T, deliveryChan <-chan extqueue.Delivery) extqueue.Delivery {
 	t.Helper()
-	select {
-	case delivery := <-deliveryChan:
-		require.NotNil(t, delivery, "received nil delivery")
-		return delivery
-	case <-time.After(testTimeout):
-		require.Fail(t, "Timeout waiting for delivery", "no delivery after %v", testTimeout)
-		return nil
-	}
+	delivery, ok := <-deliveryChan
+	require.True(t, ok, "delivery channel closed")
+	require.NotNil(t, delivery, "received nil delivery")
+	return delivery
 }
 
-// receiveNWithTimeout receives N deliveries from the channel with testTimeout.
-// Calls the provided handler for each delivery.
-func receiveNWithTimeout(
+// receiveN waits for N deliveries and calls the provided handler for each one.
+func receiveN(
 	t *testing.T,
 	deliveryChan <-chan extqueue.Delivery,
 	count int,
 	handler func(delivery extqueue.Delivery, index int),
 ) {
 	t.Helper()
-	deadline := time.After(testTimeout)
 	for i := 0; i < count; i++ {
-		select {
-		case delivery := <-deliveryChan:
-			handler(delivery, i)
-		case <-deadline:
-			require.Fail(t, "Timeout waiting for message", "%d/%d after %v", i+1, count, testTimeout)
-		}
+		handler(receive(t, deliveryChan), i)
 	}
 }
 
-// receiveConcurrentlyWithTimeout collects deliveries across workers until the
-// expected number of unique messages has been acknowledged. Completion or a
-// worker error cancels every receiver immediately; the timeout is only a
-// safety net for a genuinely stuck test.
-func receiveConcurrentlyWithTimeout(
+// receiveConcurrently collects deliveries across workers until the expected
+// number of unique messages has been acknowledged. Completion or a worker
+// error cancels every receiver immediately.
+func receiveConcurrently(
 	t *testing.T,
 	ctx context.Context,
 	deliveryChans []<-chan extqueue.Delivery,
@@ -160,7 +144,7 @@ func receiveConcurrentlyWithTimeout(
 ) map[string]int {
 	t.Helper()
 
-	receiveCtx, cancel := context.WithTimeout(ctx, testTimeout)
+	receiveCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	allMessages := make(map[string]int)
@@ -211,7 +195,7 @@ func receiveConcurrentlyWithTimeout(
 	for err := range workerErrors {
 		require.NoError(t, err)
 	}
-	require.Len(t, allMessages, expected, "received all messages before timeout")
+	require.Len(t, allMessages, expected, "received all messages")
 	return allMessages
 }
 
@@ -234,16 +218,12 @@ func drainSignals(ch <-chan queueMySQL.HookSignal) {
 func waitForSignal(t *testing.T, signalCh <-chan queueMySQL.HookSignal, want queueMySQL.HookSignal) {
 	t.Helper()
 	drainSignals(signalCh)
-	for {
-		select {
-		case sig := <-signalCh:
-			if sig == want {
-				return
-			}
-		case <-time.After(testTimeout):
-			require.Fail(t, "Signal did not arrive", "signal %d", want)
+	for sig := range signalCh {
+		if sig == want {
+			return
 		}
 	}
+	require.Fail(t, "signal channel closed", "waiting for signal %d", want)
 }
 
 // assertNoDelivery drains stale signals, waits for N signals of the given type,
@@ -252,16 +232,12 @@ func waitForSignal(t *testing.T, signalCh <-chan queueMySQL.HookSignal, want que
 func assertNoDelivery(t *testing.T, deliveryChan <-chan extqueue.Delivery, signalCh <-chan queueMySQL.HookSignal, want queueMySQL.HookSignal, cycles int) {
 	t.Helper()
 	drainSignals(signalCh)
-	deadline := time.After(testTimeout)
 	received := 0
 	for received < cycles {
-		select {
-		case sig := <-signalCh:
-			if sig == want {
-				received++
-			}
-		case <-deadline:
-			t.Fatalf("signal %d did not arrive during assertNoDelivery (%d/%d)", want, received, cycles)
+		sig, ok := <-signalCh
+		require.True(t, ok, "signal channel closed while waiting for signal %d (%d/%d)", want, received, cycles)
+		if sig == want {
+			received++
 		}
 	}
 	select {
@@ -277,13 +253,9 @@ func assertNoDelivery(t *testing.T, deliveryChan <-chan extqueue.Delivery, signa
 func waitForCondition(t *testing.T, signalCh <-chan queueMySQL.HookSignal, condition func() bool, msg string) {
 	t.Helper()
 	drainSignals(signalCh)
-	deadline := time.After(testTimeout)
 	for !condition() {
-		select {
-		case <-signalCh:
-		case <-deadline:
-			t.Fatalf("condition not met within %v: %s", testTimeout, msg)
-		}
+		_, ok := <-signalCh
+		require.True(t, ok, "signal channel closed before condition was met: %s", msg)
 	}
 }
 
@@ -327,7 +299,7 @@ func (s *SQLQueueIntegrationSuite) TestPublishAndSubscribe() {
 	t.Logf("Published 2 messages")
 
 	// Receive and ack messages
-	receiveNWithTimeout(t, deliveryChan, 2, func(delivery extqueue.Delivery, index int) {
+	receiveN(t, deliveryChan, 2, func(delivery extqueue.Delivery, index int) {
 		msg := delivery.Message()
 		t.Logf("Received message: id=%s payload=%s", msg.ID, string(msg.Payload))
 
@@ -388,13 +360,13 @@ func (s *SQLQueueIntegrationSuite) TestSubscriberPerPartitionIsolation() {
 	t.Logf("Published 1 message to partition-a and 1 to partition-b")
 
 	// Receive first delivery — hold it without acking (simulates slow processing)
-	first := receiveWithTimeout(t, deliveryChan)
+	first := receive(t, deliveryChan)
 	t.Logf("First delivery received: partition=%s id=%s (holding without ack)",
 		first.Message().PartitionKey, first.Message().ID)
 
 	// Receive second delivery — should arrive promptly even though first is unacked.
 	// If subscriber had head-of-line blocking, this would time out.
-	second := receiveWithTimeout(t, deliveryChan)
+	second := receive(t, deliveryChan)
 	t.Logf("Second delivery received: partition=%s id=%s",
 		second.Message().PartitionKey, second.Message().ID)
 
@@ -448,7 +420,7 @@ func (s *SQLQueueIntegrationSuite) TestSubscriberPartitionOrderPreserved() {
 	require.NoError(t, err)
 
 	receivedIDs := make([]string, 0, numMessages)
-	receiveNWithTimeout(t, deliveryChan, numMessages, func(delivery extqueue.Delivery, index int) {
+	receiveN(t, deliveryChan, numMessages, func(delivery extqueue.Delivery, index int) {
 		msgID := delivery.Message().ID
 		receivedIDs = append(receivedIDs, msgID)
 		t.Logf("Received: %s", msgID)
@@ -501,7 +473,7 @@ func (s *SQLQueueIntegrationSuite) TestMultiplePartitions() {
 	t.Logf("Published %d messages across %d partitions", expectedCount, len(partitions))
 
 	// Receive all messages
-	receiveNWithTimeout(t, deliveryChan, expectedCount, func(delivery extqueue.Delivery, index int) {
+	receiveN(t, deliveryChan, expectedCount, func(delivery extqueue.Delivery, index int) {
 		msg := delivery.Message()
 		t.Logf("Received: partition=%s id=%s", msg.PartitionKey, msg.ID)
 		require.NoError(t, delivery.Ack(s.ctx))
@@ -543,7 +515,7 @@ func (s *SQLQueueIntegrationSuite) TestVisibilityTimeoutAndRetry() {
 
 	// Test 1: ExtendVisibilityTimeout allows longer processing time
 	t.Logf("Test 1: ExtendVisibilityTimeout")
-	firstDelivery := receiveWithTimeout(t, deliveryChan)
+	firstDelivery := receive(t, deliveryChan)
 	t.Logf("First delivery: attempt=%d", firstDelivery.Attempt())
 	assert.Equal(t, 1, firstDelivery.Attempt())
 
@@ -575,14 +547,14 @@ func (s *SQLQueueIntegrationSuite) TestVisibilityTimeoutAndRetry() {
 	require.NoError(t, publisher.Publish(s.ctx, topic, msg2))
 
 	// Receive first time
-	secondDelivery := receiveWithTimeout(t, deliveryChan)
+	secondDelivery := receive(t, deliveryChan)
 	t.Logf("Second message delivery: attempt=%d", secondDelivery.Attempt())
 	assert.Equal(t, 1, secondDelivery.Attempt())
 	// Don't ack - let it become visible again after visibility timeout expires
 
 	// Receive second time (retry) — subscriber polls and finds msg visible after 2s
 	t.Logf("Waiting for visibility timeout to expire...")
-	thirdDelivery := receiveWithTimeout(t, deliveryChan)
+	thirdDelivery := receive(t, deliveryChan)
 	t.Logf("Retry delivery: attempt=%d", thirdDelivery.Attempt())
 	assert.Greater(t, thirdDelivery.Attempt(), 1, "retry count should increase")
 	assert.Equal(t, "retry-msg-2", thirdDelivery.Message().ID)
@@ -620,13 +592,13 @@ func (s *SQLQueueIntegrationSuite) TestNackWithDelay() {
 	// Receive and Nack with delay
 	nackDelay := 2 * time.Second
 
-	delivery := receiveWithTimeout(t, deliveryChan)
+	delivery := receive(t, deliveryChan)
 	t.Logf("Received message, nacking with %s delay", nackDelay)
 	nackErr := delivery.Nack(s.ctx, int64(nackDelay.Milliseconds()))
 	require.NoError(t, nackErr)
 
 	// Should receive again after nack delay — subscriber polls and finds msg visible
-	delivery2 := receiveWithTimeout(t, deliveryChan)
+	delivery2 := receive(t, deliveryChan)
 	t.Logf("Received message again after nack delay")
 	assert.Equal(t, "nack-msg", delivery2.Message().ID)
 	require.NoError(t, delivery2.Ack(s.ctx))
@@ -671,7 +643,7 @@ func (s *SQLQueueIntegrationSuite) TestIdempotentPublish() {
 	t.Logf("Published same message twice - second attempt silently deduped by queue")
 
 	// Should only receive once
-	delivery := receiveWithTimeout(t, deliveryChan)
+	delivery := receive(t, deliveryChan)
 	t.Logf("Received message: %s", delivery.Message().ID)
 	require.NoError(t, delivery.Ack(s.ctx))
 
@@ -729,7 +701,7 @@ func (s *SQLQueueIntegrationSuite) TestConcurrentPublishers() {
 	t.Logf("Published %d messages concurrently", totalMessages)
 
 	// Receive all messages
-	receiveNWithTimeout(t, deliveryChan, totalMessages, func(delivery extqueue.Delivery, index int) {
+	receiveN(t, deliveryChan, totalMessages, func(delivery extqueue.Delivery, index int) {
 		require.NoError(t, delivery.Ack(s.ctx))
 	})
 
@@ -763,7 +735,7 @@ func (s *SQLQueueIntegrationSuite) TestCrashRecovery() {
 	require.NoError(t, publisher.Publish(s.ctx, topic, msg))
 
 	// Worker 1 receives but doesn't ack (simulating crash)
-	delivery1 := receiveWithTimeout(t, deliveryChan1)
+	delivery1 := receive(t, deliveryChan1)
 	t.Logf("Worker 1 received message but crashing without ack")
 	assert.Equal(t, "crash-msg", delivery1.Message().ID)
 
@@ -789,7 +761,7 @@ func (s *SQLQueueIntegrationSuite) TestCrashRecovery() {
 	require.NoError(t, err)
 
 	// Worker 2 should receive the same message (recovery) after lease + visibility expire
-	delivery2 := receiveWithTimeout(t, deliveryChan2)
+	delivery2 := receive(t, deliveryChan2)
 	t.Logf("Worker 2 recovered message: attempt=%d", delivery2.Attempt())
 	assert.Equal(t, "crash-msg", delivery2.Message().ID)
 	assert.Greater(t, delivery2.Attempt(), 1, "should be a retry after crash")
@@ -850,7 +822,7 @@ func (s *SQLQueueIntegrationSuite) TestMultipleConsumerGroups() {
 	group2Messages := make(map[string]bool)
 
 	// Receive from group A
-	receiveNWithTimeout(t, deliveryChan1, numMessages, func(delivery extqueue.Delivery, index int) {
+	receiveN(t, deliveryChan1, numMessages, func(delivery extqueue.Delivery, index int) {
 		msgID := delivery.Message().ID
 		t.Logf("Group A received: %s", msgID)
 		group1Messages[msgID] = true
@@ -858,7 +830,7 @@ func (s *SQLQueueIntegrationSuite) TestMultipleConsumerGroups() {
 	})
 
 	// Receive from group B
-	receiveNWithTimeout(t, deliveryChan2, numMessages, func(delivery extqueue.Delivery, index int) {
+	receiveN(t, deliveryChan2, numMessages, func(delivery extqueue.Delivery, index int) {
 		msgID := delivery.Message().ID
 		t.Logf("Group B received: %s", msgID)
 		group2Messages[msgID] = true
@@ -927,7 +899,7 @@ func (s *SQLQueueIntegrationSuite) TestMultipleWorkersInConsumerGroup() {
 	t.Logf("Published %d messages to topic across multiple partitions", numMessages)
 
 	// Collect messages from both workers concurrently
-	allMessages := receiveConcurrentlyWithTimeout(
+	allMessages := receiveConcurrently(
 		t,
 		s.ctx,
 		[]<-chan extqueue.Delivery{deliveryChan1, deliveryChan2},
@@ -1005,7 +977,7 @@ func (s *SQLQueueIntegrationSuite) TestConcurrentSubscribers() {
 	t.Logf("Published %d messages", totalMessages)
 
 	// Collect messages from all subscribers concurrently
-	allMessages := receiveConcurrentlyWithTimeout(t, s.ctx, deliveryChans, totalMessages)
+	allMessages := receiveConcurrently(t, s.ctx, deliveryChans, totalMessages)
 
 	// Verify all messages received exactly once
 	assert.Equal(t, totalMessages, len(allMessages), "Should receive all messages")
@@ -1059,7 +1031,7 @@ func (s *SQLQueueIntegrationSuite) TestDeadLetterQueue() {
 	// Each iteration: receive the message, nack with 0 delay, then wait for
 	// the visibility timeout to expire so the message becomes deliverable again.
 	for attempt := 1; attempt <= subConfig.Retry.MaxAttempts; attempt++ {
-		delivery := receiveWithTimeout(t, deliveryChan)
+		delivery := receive(t, deliveryChan)
 		t.Logf("Attempt %d: received message, nacking", delivery.Attempt())
 		assert.Equal(t, attempt, delivery.Attempt())
 		assert.Equal(t, "poison-msg", delivery.Message().ID)
@@ -1084,7 +1056,7 @@ func (s *SQLQueueIntegrationSuite) TestDeadLetterQueue() {
 	require.NoError(t, err)
 
 	// Receive the message from DLQ
-	dlqDelivery := receiveWithTimeout(t, dlqDeliveryChan)
+	dlqDelivery := receive(t, dlqDeliveryChan)
 	assert.Equal(t, "poison-msg", dlqDelivery.Message().ID)
 	assert.Equal(t, []byte("poison"), dlqDelivery.Message().Payload)
 	assert.Equal(t, "partition-1", dlqDelivery.Message().PartitionKey)
@@ -1147,7 +1119,7 @@ func (s *SQLQueueIntegrationSuite) TestMessageOrderingWithinPartition() {
 
 	// Receive and verify ordering
 	receivedOrder := make([]string, 0, numMessages)
-	receiveNWithTimeout(t, deliveryChan, numMessages, func(delivery extqueue.Delivery, index int) {
+	receiveN(t, deliveryChan, numMessages, func(delivery extqueue.Delivery, index int) {
 		msgID := delivery.Message().ID
 		receivedOrder = append(receivedOrder, msgID)
 		t.Logf("Received in order: %s", msgID)
@@ -1199,7 +1171,7 @@ func (s *SQLQueueIntegrationSuite) TestLateSubscriber() {
 
 	// Late subscriber should receive all messages
 	receivedMessages := make(map[string]bool)
-	receiveNWithTimeout(t, deliveryChan, numMessages, func(delivery extqueue.Delivery, index int) {
+	receiveN(t, deliveryChan, numMessages, func(delivery extqueue.Delivery, index int) {
 		msgID := delivery.Message().ID
 		receivedMessages[msgID] = true
 		t.Logf("Late subscriber received: %s", msgID)
@@ -1251,7 +1223,7 @@ func (s *SQLQueueIntegrationSuite) TestEmptyTopicSubscribe() {
 	t.Logf("Published message to previously-empty topic")
 
 	// Should now receive the message
-	delivery := receiveWithTimeout(t, deliveryChan)
+	delivery := receive(t, deliveryChan)
 	assert.Equal(t, "late-msg", delivery.Message().ID)
 	require.NoError(t, delivery.Ack(s.ctx))
 
@@ -1287,7 +1259,7 @@ func (s *SQLQueueIntegrationSuite) TestGracefulShutdownDuringProcessing() {
 	t.Logf("Published %d messages", numMessages)
 
 	// Receive one message but don't ack yet (in-flight)
-	delivery := receiveWithTimeout(t, deliveryChan)
+	delivery := receive(t, deliveryChan)
 	inFlightMsgID := delivery.Message().ID
 	t.Logf("Received in-flight message: %s (not acked yet)", inFlightMsgID)
 
@@ -1297,26 +1269,15 @@ func (s *SQLQueueIntegrationSuite) TestGracefulShutdownDuringProcessing() {
 	require.NoError(t, err)
 	t.Logf("Queue closed successfully")
 
-	// Drain any buffered messages from the channel without acking them
-	// These messages were already fetched and marked invisible
+	// Drain any buffered messages from the channel without acking them.
+	// Queue shutdown closes the channel after the buffered deliveries.
 	drained := 0
-drainLoop:
-	for {
-		select {
-		case msg, ok := <-deliveryChan:
-			if !ok {
-				// Channel closed - this is expected
-				t.Logf("Delivery channel closed after draining %d buffered messages (not acked)", drained)
-				break drainLoop
-			}
-			drained++
-			// Don't ack - let them become visible again after timeout
-			t.Logf("Drained buffered message (not acked): %s", msg.Message().ID)
-		case <-time.After(1 * time.Second):
-			t.Logf("Delivery channel not closed after draining %d messages, may still be open", drained)
-			break drainLoop
-		}
+	for msg := range deliveryChan {
+		drained++
+		// Don't ack - let them become visible again after timeout
+		t.Logf("Drained buffered message (not acked): %s", msg.Message().ID)
 	}
+	t.Logf("Delivery channel closed after draining %d buffered messages (not acked)", drained)
 
 	// Start new subscriber to verify all messages are redelivered.
 	// Messages become visible after visibility timeout expires in DB.
@@ -1339,17 +1300,12 @@ drainLoop:
 	// the in-flight message. The subscriber polls continuously and will find
 	// messages as they become visible.
 	receivedIDs := make(map[string]bool)
-	deadline := time.After(testTimeout)
 	for !receivedIDs[inFlightMsgID] {
-		select {
-		case delivery := <-deliveryChan2:
-			msgID := delivery.Message().ID
-			receivedIDs[msgID] = true
-			t.Logf("Recovered message: %s (total=%d)", msgID, len(receivedIDs))
-			require.NoError(t, delivery.Ack(s.ctx))
-		case <-deadline:
-			t.Fatalf("timed out waiting for in-flight message %s to be recovered", inFlightMsgID)
-		}
+		delivery := receive(t, deliveryChan2)
+		msgID := delivery.Message().ID
+		receivedIDs[msgID] = true
+		t.Logf("Recovered message: %s (total=%d)", msgID, len(receivedIDs))
+		require.NoError(t, delivery.Ack(s.ctx))
 	}
 
 	// Verify the in-flight message was redelivered
@@ -1512,7 +1468,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_ConsumerLagAfterPartialAck() {
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
-	receiveNWithTimeout(t, deliveryChan, 2, func(delivery extqueue.Delivery, index int) {
+	receiveN(t, deliveryChan, 2, func(delivery extqueue.Delivery, index int) {
 		require.NoError(t, delivery.Ack(s.ctx))
 	})
 
@@ -1562,7 +1518,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_LeasesAndOffsets() {
 	require.NoError(t, err)
 
 	// Ack the message to create offset entries
-	delivery := receiveWithTimeout(t, deliveryChan)
+	delivery := receive(t, deliveryChan)
 	require.NoError(t, delivery.Ack(s.ctx))
 
 	// Wait for poll loop to advance the watermark (deferred from Ack).
@@ -1570,20 +1526,16 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_LeasesAndOffsets() {
 	admin := queueAdmin.NewAdminStore(s.db)
 
 	drainSignals(signalCh)
-	deadline := time.After(testTimeout)
 	var offsetAdvanced bool
 	for !offsetAdvanced {
-		select {
-		case <-signalCh:
-			offsets, err := admin.ListOffsets(s.ctx, consumerGroup)
-			require.NoError(t, err)
-			for _, o := range offsets {
-				if o.Topic == topic && o.OffsetAcked > 0 {
-					offsetAdvanced = true
-				}
+		_, ok := <-signalCh
+		require.True(t, ok, "signal channel closed before offset advanced")
+		offsets, err := admin.ListOffsets(s.ctx, consumerGroup)
+		require.NoError(t, err)
+		for _, o := range offsets {
+			if o.Topic == topic && o.OffsetAcked > 0 {
+				offsetAdvanced = true
 			}
-		case <-deadline:
-			t.Fatal("offset did not advance after ack")
 		}
 	}
 
@@ -1641,7 +1593,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_ResetOffsetAndReleaseLease() {
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
-	delivery := receiveWithTimeout(t, deliveryChan)
+	delivery := receive(t, deliveryChan)
 	require.NoError(t, delivery.Ack(s.ctx))
 
 	admin := queueAdmin.NewAdminStore(s.db)
@@ -2018,18 +1970,18 @@ func (s *SQLQueueIntegrationSuite) TestNackDoesNotBlockOtherMessages() {
 	}
 
 	// Receive first message and nack it with a long delay
-	d1 := receiveWithTimeout(t, deliveryCh)
+	d1 := receive(t, deliveryCh)
 	assert.Equal(t, "msg-1", d1.Message().ID)
 	require.NoError(t, d1.Nack(s.ctx, 30000)) // 30s delay — won't come back during test
 	t.Logf("Nacked msg-1 with 30s delay")
 
 	// Messages 2 and 3 should still be deliverable despite msg-1 being nacked
-	d2 := receiveWithTimeout(t, deliveryCh)
+	d2 := receive(t, deliveryCh)
 	assert.Equal(t, "msg-2", d2.Message().ID)
 	require.NoError(t, d2.Ack(s.ctx))
 	t.Logf("Received and acked msg-2")
 
-	d3 := receiveWithTimeout(t, deliveryCh)
+	d3 := receive(t, deliveryCh)
 	assert.Equal(t, "msg-3", d3.Message().ID)
 	require.NoError(t, d3.Ack(s.ctx))
 	t.Logf("Received and acked msg-3")
@@ -2071,7 +2023,7 @@ func (s *SQLQueueIntegrationSuite) TestBatchSizeOneStrictSerialization() {
 
 	// Receive each message strictly in order, acking before receiving next
 	for i := 1; i <= 5; i++ {
-		delivery := receiveWithTimeout(t, deliveryCh)
+		delivery := receive(t, deliveryCh)
 		assert.Equal(t, fmt.Sprintf("serial-%d", i), delivery.Message().ID,
 			"expected message %d but got %s", i, delivery.Message().ID)
 		require.NoError(t, delivery.Ack(s.ctx))
@@ -2121,29 +2073,29 @@ func (s *SQLQueueIntegrationSuite) TestMultipleConsumerGroupsIndependentState() 
 	}
 
 	// CG-alpha: nack msg-1, ack msg-2
-	d1a := receiveWithTimeout(t, ch1)
+	d1a := receive(t, ch1)
 	assert.Equal(t, "shared-1", d1a.Message().ID)
 	require.NoError(t, d1a.Nack(s.ctx, 200)) // short nack delay
 	t.Logf("cg-alpha nacked shared-1")
 
-	d2a := receiveWithTimeout(t, ch1)
+	d2a := receive(t, ch1)
 	assert.Equal(t, "shared-2", d2a.Message().ID)
 	require.NoError(t, d2a.Ack(s.ctx))
 	t.Logf("cg-alpha acked shared-2")
 
 	// CG-beta: ack both messages immediately (independent state)
-	d1b := receiveWithTimeout(t, ch2)
+	d1b := receive(t, ch2)
 	assert.Equal(t, "shared-1", d1b.Message().ID)
 	require.NoError(t, d1b.Ack(s.ctx))
 	t.Logf("cg-beta acked shared-1")
 
-	d2b := receiveWithTimeout(t, ch2)
+	d2b := receive(t, ch2)
 	assert.Equal(t, "shared-2", d2b.Message().ID)
 	require.NoError(t, d2b.Ack(s.ctx))
 	t.Logf("cg-beta acked shared-2")
 
 	// CG-alpha should get shared-1 redelivered after nack delay
-	d1aRetry := receiveWithTimeout(t, ch1)
+	d1aRetry := receive(t, ch1)
 	assert.Equal(t, "shared-1", d1aRetry.Message().ID)
 	require.Greater(t, d1aRetry.Attempt(), 1, "should be a retry attempt")
 	require.NoError(t, d1aRetry.Ack(s.ctx))
@@ -2189,7 +2141,7 @@ func (s *SQLQueueIntegrationSuite) TestCrashAfterRejectDoesNotLoseMessages() {
 
 	// Receive all 3 messages
 	deliveries := make(map[string]extqueue.Delivery)
-	receiveNWithTimeout(t, deliveryChan1, 3, func(d extqueue.Delivery, _ int) {
+	receiveN(t, deliveryChan1, 3, func(d extqueue.Delivery, _ int) {
 		deliveries[d.Message().ID] = d
 		t.Logf("Received %s", d.Message().ID)
 	})
@@ -2228,7 +2180,7 @@ func (s *SQLQueueIntegrationSuite) TestCrashAfterRejectDoesNotLoseMessages() {
 	require.NoError(t, err)
 
 	// Worker-2 MUST receive msg-C (it must NOT be lost)
-	delivery := receiveWithTimeout(t, deliveryChan2)
+	delivery := receive(t, deliveryChan2)
 	assert.Equal(t, "msg-C", delivery.Message().ID, "msg-C must be recovered after crash")
 	require.NoError(t, delivery.Ack(s.ctx))
 	t.Logf("Worker-2 recovered msg-C (attempt=%d)", delivery.Attempt())
@@ -2243,7 +2195,7 @@ func (s *SQLQueueIntegrationSuite) TestCrashAfterRejectDoesNotLoseMessages() {
 	dlqChan, err := q2.Subscriber().Subscribe(s.ctx, dlqTopic, dlqConfig)
 	require.NoError(t, err)
 
-	dlqDelivery := receiveWithTimeout(t, dlqChan)
+	dlqDelivery := receive(t, dlqChan)
 	assert.Equal(t, "msg-B", dlqDelivery.Message().ID, "msg-B should be in DLQ")
 	require.NoError(t, dlqDelivery.Ack(s.ctx))
 
@@ -2298,7 +2250,7 @@ func (s *SQLQueueIntegrationSuite) TestCrashAfterRetryLimitDoesNotLoseMessages()
 
 	// Receive all 3 messages
 	deliveries := make(map[string]extqueue.Delivery)
-	receiveNWithTimeout(t, deliveryChan1, 3, func(d extqueue.Delivery, _ int) {
+	receiveN(t, deliveryChan1, 3, func(d extqueue.Delivery, _ int) {
 		deliveries[d.Message().ID] = d
 		t.Logf("Received %s (attempt=%d)", d.Message().ID, d.Attempt())
 	})
@@ -2317,7 +2269,7 @@ func (s *SQLQueueIntegrationSuite) TestCrashAfterRetryLimitDoesNotLoseMessages()
 	// The poll loop picks up msg-B after 100ms nack delay, sees retry_count >= MaxAttempts, moves to DLQ.
 	// We just need to wait long enough for that to happen before crashing.
 	// A short sleep is acceptable here as we're waiting for the subscriber's
-	// internal processing, not for a test condition. But let's use receiveWithTimeout
+	// internal processing, not for a test condition. But let's use receive
 	// to see if B comes back (it shouldn't, since auto-DLQ handles it internally).
 
 	// Give the poll loop time to process the nack and auto-DLQ msg-B
@@ -2354,7 +2306,7 @@ func (s *SQLQueueIntegrationSuite) TestCrashAfterRetryLimitDoesNotLoseMessages()
 	// The key invariant: all unacked messages are recoverable after crash.
 	recovered := make(map[string]bool)
 	for !recovered["msg-C"] {
-		delivery := receiveWithTimeout(t, deliveryChan2)
+		delivery := receive(t, deliveryChan2)
 		recovered[delivery.Message().ID] = true
 		require.NoError(t, delivery.Ack(s.ctx))
 		t.Logf("Worker-2 recovered %s (attempt=%d)", delivery.Message().ID, delivery.Attempt())
@@ -2405,7 +2357,7 @@ func (s *SQLQueueIntegrationSuite) TestWatermarkAdvancesContiguously() {
 
 	// Receive all 5
 	deliveries := make(map[string]extqueue.Delivery)
-	receiveNWithTimeout(t, deliveryChan, 5, func(d extqueue.Delivery, _ int) {
+	receiveN(t, deliveryChan, 5, func(d extqueue.Delivery, _ int) {
 		deliveries[d.Message().ID] = d
 		t.Logf("Received %s", d.Message().ID)
 	})
