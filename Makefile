@@ -38,8 +38,8 @@ GOIMPORTS_VERSION ?= v0.33.0
 # contracts); all generated stubs land in the same protopb/ dir.
 PROTO_PACKAGES = api/base/change api/base/mergestrategy api/base/messagequeue api/runway/messagequeue api/runway api/submitqueue/gateway api/submitqueue/orchestrator api/stovepipe stovepipe/core/messagequeue
 
-# Set REPO_ROOT for docker-compose
-export REPO_ROOT := $(shell pwd)
+# Local Compose builds use the repository checkout as their build context.
+export SQ_DOCKER_BUILD_CONTEXT := $(shell pwd)
 
 # Fails if git working tree is dirty. Usage: $(call assert_clean,fix command)
 define assert_clean
@@ -132,7 +132,7 @@ clean-proto: ## Clean generated proto files
 deps: tidy-go ## Download and tidy Go dependencies
 	@echo "Dependencies installed!"
 
-e2e-test: build-all-linux ## Run end-to-end tests (hermetic, auto-builds binaries; runs in parallel)
+e2e-test: ## Run end-to-end tests (Bazel builds declared Docker inputs; runs in parallel)
 	@echo "Running end-to-end tests (parallel)..."
 	@$(BAZEL) test //test/e2e/... --test_output=errors
 
@@ -147,7 +147,7 @@ gazelle: ## Update BUILD.bazel files
 	@echo "Running Gazelle to update BUILD files..."
 	@$(BAZEL) run //:gazelle
 
-integration-test: build-all-linux ## Run all integration tests (auto-builds binaries; runs in parallel)
+integration-test: ## Run all integration tests (Bazel builds declared Docker inputs; runs in parallel)
 	@echo "Running all integration tests (parallel)..."
 	@$(BAZEL) test //test/integration/... --test_output=errors
 
@@ -159,11 +159,11 @@ integration-test-extensions: ## Run extension integration tests (runs in paralle
 	@echo "Running extension integration tests (parallel)..."
 	@$(BAZEL) test //test/integration/submitqueue/extension/... //test/integration/extension/... --test_output=errors
 
-integration-test-submitqueue-gateway: build-submitqueue-gateway-linux ## Run Gateway integration tests (auto-builds binary)
+integration-test-submitqueue-gateway: ## Run Gateway integration tests (Bazel builds declared Docker inputs)
 	@echo "Running Gateway integration tests..."
 	@$(BAZEL) test //test/integration/submitqueue/gateway:go_default_test --test_output=streamed
 
-integration-test-submitqueue-orchestrator: build-submitqueue-orchestrator-linux ## Run Orchestrator integration tests (auto-builds binary)
+integration-test-submitqueue-orchestrator: ## Run Orchestrator integration tests (Bazel builds declared Docker inputs)
 	@echo "Running Orchestrator integration tests..."
 	@$(BAZEL) test //test/integration/submitqueue/orchestrator:go_default_test --test_output=streamed
 

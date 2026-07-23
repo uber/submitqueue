@@ -4,16 +4,16 @@ go_test(
     name = "go_default_test",
     srcs = ["suite_test.go"],
     data = [
-        "//:MODULE.bazel",
-        "//:go.mod",
         "//platform/extension/counter/mysql/schema",
         "//platform/extension/messagequeue/mysql/schema",
         "//service/submitqueue/gateway/server:docker-compose.yml",
+        "//service/submitqueue/gateway/server:docker_test_context",
         "//submitqueue/extension/storage/mysql/schema",
     ],
     tags = [
         "external",
         "integration",
+        "requires-network",
     ],
     deps = [
         "//api/base/change/protopb:go_default_library",

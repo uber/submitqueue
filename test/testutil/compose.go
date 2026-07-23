@@ -19,9 +19,13 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
+	"hash"
+	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +35,22 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
+// DockerBuildContextFile maps a declared Bazel runfile into a Docker build context.
+type DockerBuildContextFile struct {
+	// Runfile is the workspace-relative path of a file declared in the test's data.
+	Runfile string
+	// Path is the relative destination path inside the staged Docker build context.
+	Path string
+}
+
+// ComposeConfig declares every file a Docker Compose test needs from Bazel runfiles.
+type ComposeConfig struct {
+	// ComposeFile is the workspace-relative path of the Compose file.
+	ComposeFile string
+	// DockerBuildContext contains the files needed by services with build directives.
+	DockerBuildContext []DockerBuildContextFile
+}
 
 // ComposeStack manages a docker-compose stack for testing.
 type ComposeStack struct {
@@ -44,30 +64,32 @@ type ComposeStack struct {
 	logCmd      *exec.Cmd // background "docker compose logs -f" process
 }
 
-// getDockerComposeCommand returns the docker-compose command to use.
-// Tries "docker-compose" first (V1), falls back to "docker compose" (V2).
+// getDockerComposeCommand returns the Docker Compose command to use.
+// Compose V2 supports the --wait lifecycle used by the test harness.
 func getDockerComposeCommand() []string {
-	// Try docker-compose (V1)
+	if _, err := exec.LookPath("docker"); err == nil {
+		return []string{"docker", "compose"}
+	}
+
 	if _, err := exec.LookPath("docker-compose"); err == nil {
 		return []string{"docker-compose"}
 	}
 
-	// Fall back to docker compose (V2)
 	return []string{"docker", "compose"}
 }
 
-// NewComposeStack creates a new compose stack from the given docker-compose file.
+// NewComposeStack creates a new compose stack from declared Bazel runfiles.
 // Automatically registers cleanup to tear down the stack.
 // testContext should describe what's being tested (e.g., "gateway", "storage", "e2e-submitqueue").
-func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, composeFile, testContext string) *ComposeStack {
+func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, config ComposeConfig, testContext string) *ComposeStack {
 	t.Helper()
 
-	// Setup Docker environment
 	setupDockerEnv(t)
 
-	// Get absolute path to compose file
-	absPath, err := filepath.Abs(composeFile)
-	require.NoError(t, err, "failed to get absolute path to compose file")
+	composeFile := resolveRunfile(t, config.ComposeFile)
+	inputHash := sha256.New()
+	hashFile(t, inputHash, config.ComposeFile, composeFile)
+	buildContext := stageDockerBuildContext(t, inputHash, config.DockerBuildContext)
 
 	// Generate meaningful project name: sq-test-{context}-{short-timestamp}
 	// Results in container names like: sq-test-gateway-a1b2c3d-mysql-app-1
@@ -75,13 +97,13 @@ func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, compose
 	projectName := fmt.Sprintf("sq-test-%s-%s", testContext, timestamp)
 
 	stack := &ComposeStack{
-		composeFile: absPath,
+		composeFile: composeFile,
 		projectName: projectName,
 		t:           t,
 		log:         log,
 		ctx:         ctx,
 		composeCmd:  getDockerComposeCommand(),
-		composeEnv:  composeEnvironment(t, absPath),
+		composeEnv:  composeEnvironment(inputHash.Sum(nil), buildContext),
 	}
 
 	// Register cleanup
@@ -92,7 +114,7 @@ func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, compose
 			log.Logf("SKIP_CLEANUP=true - keeping containers for inspection")
 			log.Logf("Container prefix: %s", projectName)
 			composeCmd := strings.Join(stack.composeCmd, " ")
-			log.Logf("Clean up manually: %s -f %s -p %s down -v", composeCmd, absPath, projectName)
+			log.Logf("Clean up manually: %s -f %s -p %s down -v", composeCmd, composeFile, projectName)
 			return
 		}
 
@@ -101,6 +123,83 @@ func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, compose
 	})
 
 	return stack
+}
+
+func resolveRunfile(t *testing.T, runfile string) string {
+	t.Helper()
+
+	if filepath.IsAbs(runfile) {
+		require.FileExists(t, runfile, "runfile does not exist")
+		return runfile
+	}
+
+	if testSrcDir := os.Getenv("TEST_SRCDIR"); testSrcDir != "" {
+		workspace := os.Getenv("TEST_WORKSPACE")
+		if workspace == "" {
+			workspace = "_main"
+		}
+		resolved := filepath.Join(testSrcDir, workspace, filepath.FromSlash(runfile))
+		require.FileExists(t, resolved, "Bazel runfile does not exist")
+		return resolved
+	}
+
+	resolved, err := filepath.Abs(runfile)
+	require.NoError(t, err, "failed to resolve file %s", runfile)
+	require.FileExists(t, resolved, "file does not exist")
+	return resolved
+}
+
+func stageDockerBuildContext(t *testing.T, inputHash hash.Hash, files []DockerBuildContextFile) string {
+	t.Helper()
+
+	if len(files) == 0 {
+		return ""
+	}
+
+	files = append([]DockerBuildContextFile(nil), files...)
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Path < files[j].Path
+	})
+
+	contextDir := t.TempDir()
+	for _, file := range files {
+		require.True(t, filepath.IsLocal(file.Path), "Docker build context path must be relative: %s", file.Path)
+
+		source := resolveRunfile(t, file.Runfile)
+		destination := filepath.Join(contextDir, filepath.FromSlash(file.Path))
+		require.NoError(t, os.MkdirAll(filepath.Dir(destination), 0o755), "failed to create Docker build context directory")
+
+		sourceFile, err := os.Open(source)
+		require.NoError(t, err, "failed to open Docker build context runfile %s", file.Runfile)
+
+		info, err := sourceFile.Stat()
+		require.NoError(t, err, "failed to stat Docker build context runfile %s", file.Runfile)
+
+		destinationFile, err := os.OpenFile(destination, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+		require.NoError(t, err, "failed to create Docker build context file %s", file.Path)
+
+		_, _ = io.WriteString(inputHash, file.Path)
+		_, _ = inputHash.Write([]byte{0})
+		_, err = io.Copy(io.MultiWriter(destinationFile, inputHash), sourceFile)
+		require.NoError(t, err, "failed to stage Docker build context file %s", file.Path)
+		require.NoError(t, destinationFile.Close(), "failed to close Docker build context file %s", file.Path)
+		require.NoError(t, sourceFile.Close(), "failed to close Docker build context runfile %s", file.Runfile)
+	}
+
+	return contextDir
+}
+
+func hashFile(t *testing.T, inputHash hash.Hash, logicalPath, file string) {
+	t.Helper()
+
+	_, _ = io.WriteString(inputHash, logicalPath)
+	_, _ = inputHash.Write([]byte{0})
+
+	f, err := os.Open(file)
+	require.NoError(t, err, "failed to open declared input %s", logicalPath)
+	_, err = io.Copy(inputHash, f)
+	require.NoError(t, err, "failed to hash declared input %s", logicalPath)
+	require.NoError(t, f.Close(), "failed to close declared input %s", logicalPath)
 }
 
 // Up starts all services in the compose stack.
@@ -125,8 +224,8 @@ func (s *ComposeStack) Up() error {
 }
 
 // down stops and removes all services and volumes in the compose stack.
-// Locally built images use stable per-worktree names and remain cached for
-// subsequent test runs.
+// Locally built images use declared-input hashes and remain cached for
+// subsequent runs with the same build context.
 func (s *ComposeStack) down() {
 	s.log.Logf("Stopping compose stack")
 
@@ -359,90 +458,42 @@ func setupDockerEnv(t *testing.T) {
 	if os.Getenv("HOME") == "" {
 		t.Setenv("HOME", t.TempDir())
 	}
+
+	// Bazel may replace HOME with a sandbox directory. Preserve access to the
+	// host Docker CLI configuration and user-installed Compose plugin without
+	// exposing the source checkout.
+	if os.Getenv("DOCKER_CONFIG") == "" {
+		currentUser, err := user.Current()
+		if err == nil {
+			dockerConfig := filepath.Join(currentUser.HomeDir, ".docker")
+			if info, statErr := os.Stat(dockerConfig); statErr == nil && info.IsDir() {
+				t.Setenv("DOCKER_CONFIG", dockerConfig)
+			}
+		}
+	}
 }
 
 // composeEnvironment returns the environment used by every compose command.
-// The image prefix is stable within a worktree so --build can reuse images
-// between test runs, but differs across worktrees to avoid stale cross-checkout
-// images when multiple changes are tested on the same Docker daemon.
-func composeEnvironment(t *testing.T, composeFile string) []string {
-	t.Helper()
-
-	repoRoot := composeRepoRoot(t, composeFile)
-	sum := sha256.Sum256([]byte(repoRoot))
-	imagePrefix := fmt.Sprintf("sq-test-%x", sum[:6])
-
+// The image prefix is derived from declared inputs so identical contexts reuse
+// images without sharing stale images across different source revisions.
+func composeEnvironment(inputHash []byte, buildContext string) []string {
 	env := os.Environ()
-	env = append(env, "SQ_DOCKER_IMAGE_PREFIX="+imagePrefix)
-	env = append(env, "SQ_MYSQL_DATA_MOUNT_TYPE=tmpfs")
-	env = append(env, "SQ_MYSQL_INITDB_SKIP_TZINFO=1")
+	env = setEnvironment(env, "SQ_DOCKER_IMAGE_PREFIX", fmt.Sprintf("sq-test-%x", inputHash[:6]))
+	env = setEnvironment(env, "SQ_MYSQL_DATA_MOUNT_TYPE", "tmpfs")
+	env = setEnvironment(env, "SQ_MYSQL_INITDB_SKIP_TZINFO", "1")
+	if buildContext != "" {
+		env = setEnvironment(env, "SQ_DOCKER_BUILD_CONTEXT", buildContext)
+	}
 	return env
 }
 
-// composeRepoRoot resolves the repository containing composeFile. Bazel exposes
-// repository markers as runfile symlinks, so resolving a marker identifies the
-// source checkout without invoking a host-provided Git executable.
-func composeRepoRoot(t *testing.T, composeFile string) string {
-	t.Helper()
-
-	if repoRoot := os.Getenv("REPO_ROOT"); repoRoot != "" {
-		return repoRoot
-	}
-
-	dir := filepath.Dir(composeFile)
-	for {
-		for _, marker := range []string{"MODULE.bazel", "go.mod"} {
-			markerPath := filepath.Join(dir, marker)
-			if realMarker, err := filepath.EvalSymlinks(markerPath); err == nil {
-				return filepath.Dir(realMarker)
-			}
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatalf("repository root not found")
-		}
-		dir = parent
-	}
-}
-
-// FindRepoRoot finds the repository root.
-// Checks REPO_ROOT env var, then git, then walks up to find marker files.
-func FindRepoRoot(t *testing.T) string {
-	t.Helper()
-
-	// Check if REPO_ROOT is set (from .envrc or test environment)
-	if repoRoot := os.Getenv("REPO_ROOT"); repoRoot != "" {
-		return repoRoot
-	}
-
-	// Try git (works outside Bazel sandbox)
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-	if output, err := cmd.Output(); err == nil {
-		if repoRoot := strings.TrimSpace(string(output)); repoRoot != "" {
-			return repoRoot
+func setEnvironment(env []string, key, value string) []string {
+	prefix := key + "="
+	filtered := env[:0]
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, prefix) {
+			filtered = append(filtered, entry)
 		}
 	}
-
-	// Walk up from current directory to find marker files
-	// In Bazel sandbox, marker files are symlinks - resolve them to get source location
-	dir, err := os.Getwd()
-	require.NoError(t, err, "failed to get working directory")
-
-	for {
-		// Try to find and resolve marker file symlinks
-		for _, marker := range []string{"MODULE.bazel", "go.mod"} {
-			markerPath := filepath.Join(dir, marker)
-			if realMarker, err := filepath.EvalSymlinks(markerPath); err == nil {
-				return filepath.Dir(realMarker)
-			}
-		}
-
-		// Move up one directory
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatalf("repository root not found")
-		}
-		dir = parent
-	}
+	return append(filtered, prefix+value)
 }

@@ -5,13 +5,12 @@ go_test(
     srcs = ["counter_test.go"],
     data = [
         "docker-compose.yml",
-        "//:MODULE.bazel",
-        "//:go.mod",
         "//platform/extension/counter/mysql/schema",
     ],
     tags = [
         "external",
         "integration",
+        "requires-network",
     ],
     deps = [
         "//platform/extension/counter/mysql:go_default_library",

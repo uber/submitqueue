@@ -37,7 +37,7 @@ func TestMySQLStorage(t *testing.T) {
 		t,
 		log,
 		ctx,
-		"docker-compose.yml",
+		testutil.ComposeConfig{ComposeFile: "test/integration/stovepipe/extension/storage/mysql/docker-compose.yml"},
 		"ext-stovepipe-storage-mysql",
 	)
 

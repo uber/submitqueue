@@ -16,16 +16,15 @@ package e2e_test
 
 // E2E Integration Tests
 //
-// These tests use docker-compose from service/submitqueue/docker-compose.yml
-// which requires pre-built Linux binaries.
+// These tests use docker-compose from service/submitqueue/docker-compose.yml.
+// Bazel cross-compiles and declares every Docker build-context input.
 //
-// Run with make target (builds binaries + runs test):
+// Run with:
 //   make e2e-test
 
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -76,14 +75,18 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 
 	s.log.Logf("Starting E2E integration test suite using docker-compose")
 
-	// Set REPO_ROOT for docker-compose volume mounts and build context
-	repoRoot := testutil.FindRepoRoot(t)
-	t.Setenv("REPO_ROOT", repoRoot)
-
-	// Use docker-compose from service/submitqueue (full stack)
-	// NOTE: Assumes Linux binaries are pre-built via make target
-	composeFile := filepath.Join(repoRoot, "service/submitqueue/docker-compose.yml")
-	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "e2e-submitqueue")
+	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, testutil.ComposeConfig{
+		ComposeFile: "service/submitqueue/docker-compose.yml",
+		DockerBuildContext: []testutil.DockerBuildContextFile{
+			{Runfile: "service/submitqueue/gateway/server/gateway_linux_amd64", Path: ".docker-bin/gateway"},
+			{Runfile: "service/submitqueue/gateway/server/Dockerfile", Path: "service/submitqueue/gateway/server/Dockerfile"},
+			{Runfile: "service/submitqueue/gateway/server/queues.yaml", Path: "service/submitqueue/gateway/server/queues.yaml"},
+			{Runfile: "service/submitqueue/orchestrator/server/orchestrator_linux_amd64", Path: ".docker-bin/orchestrator"},
+			{Runfile: "service/submitqueue/orchestrator/server/Dockerfile", Path: "service/submitqueue/orchestrator/server/Dockerfile"},
+			{Runfile: "service/runway/server/runway_linux_amd64", Path: ".docker-bin/runway"},
+			{Runfile: "service/runway/server/Dockerfile", Path: "service/runway/server/Dockerfile"},
+		},
+	}, "e2e-submitqueue")
 
 	// Start the compose stack (Gateway + Orchestrator + 2 MySQL DBs)
 	err := s.stack.Up()

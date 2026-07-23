@@ -26,13 +26,4 @@ load("@gazelle//:def.bzl", "gazelle")
 #     native.java_proto_library).
 # gazelle:proto disable_global
 
-# Export marker files for test data dependencies (used by FindRepoRoot in tests)
-exports_files(
-    [
-        "MODULE.bazel",
-        "go.mod",
-    ],
-    visibility = ["//visibility:public"],
-)
-
 gazelle(name = "gazelle")

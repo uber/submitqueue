@@ -53,7 +53,7 @@ func (s *MySQLStorageIntegrationSuite) SetupSuite() {
 		t,
 		s.log,
 		ctx,
-		"docker-compose.yml",
+		testutil.ComposeConfig{ComposeFile: "test/integration/submitqueue/extension/storage/mysql/docker-compose.yml"},
 		"ext-submitqueue-storage-mysql", // Test context for meaningful container names
 	)
 

@@ -53,7 +53,7 @@ func (s *MySQLCounterIntegrationSuite) SetupSuite() {
 		t,
 		s.log,
 		ctx,
-		"docker-compose.yml",
+		testutil.ComposeConfig{ComposeFile: "test/integration/extension/counter/mysql/docker-compose.yml"},
 		"ext-counter-mysql", // Test context for meaningful container names
 	)
 

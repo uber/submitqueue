@@ -76,7 +76,7 @@ func (s *ConsumerIntegrationSuite) SetupSuite() {
 		t,
 		s.log,
 		s.ctx,
-		"docker-compose.yml",
+		testutil.ComposeConfig{ComposeFile: "test/integration/submitqueue/core/consumer/docker-compose.yml"},
 		"core-submitqueue-consumer",
 	)
 
