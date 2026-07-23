@@ -25,6 +25,7 @@ package githubactions
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -34,6 +35,11 @@ import (
 )
 
 const githubAPIVersion = "2026-03-10"
+
+// ErrNotFound is returned when the GitHub Actions API responds with 404 to a
+// request for a resource by ID (e.g. GetRun on an unknown run, or CancelRun
+// on an already-deleted run).
+var ErrNotFound = errors.New("githubactions: resource not found")
 
 // Client is a thin wrapper around the GitHub Actions REST endpoints a
 // BuildRunner needs: workflow dispatch, get workflow run, and cancel run. It
@@ -138,7 +144,7 @@ func (c *Client) CancelRun(ctx context.Context, runID int64) error {
 		// BuildRunner.Cancel contract.
 		return nil
 	case http.StatusNotFound:
-		return fmt.Errorf("workflow run not found")
+		return ErrNotFound
 	default:
 		return fmt.Errorf("unexpected status %d from cancel", status)
 	}
@@ -166,6 +172,9 @@ func (c *Client) runPath(runID int64) string {
 	)
 }
 
+// do sends an HTTP request with the standard GitHub Actions headers and, on a
+// 2xx response, decodes the body into out (when non-nil). A 404 is reported
+// as ErrNotFound so callers can distinguish it from other failures.
 func (c *Client) do(ctx context.Context, method, rawURL string, body []byte, out any) error {
 	status, respBody, err := phttp.SendRequest(ctx, c.httpClient, method, rawURL, body, c.setHeaders)
 	if err != nil {
@@ -173,7 +182,7 @@ func (c *Client) do(ctx context.Context, method, rawURL string, body []byte, out
 	}
 
 	if status == http.StatusNotFound {
-		return fmt.Errorf("GitHub API returned 404 for %s %s", method, rawURL)
+		return ErrNotFound
 	}
 	if status < 200 || status >= 300 {
 		return fmt.Errorf("API returned status %d: %s", status, respBody)
