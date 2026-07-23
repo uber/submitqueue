@@ -64,11 +64,8 @@ func NewDLQMergeConflictSignalController(
 }
 
 // Process reconciles a single DLQ delivery for the mergeconflictsignal topic.
-func (c *mergeConflictSignalController) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+func (c *mergeConflictSignalController) Process(ctx context.Context, delivery consumer.Delivery) error {
 	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName, metrics.LongLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
@@ -92,7 +89,6 @@ func (c *mergeConflictSignalController) Process(ctx context.Context, delivery co
 		return err
 	}
 
-	metrics.NamedCounter(c.metricsScope, opName, "reconciled", 1)
 	return nil
 }
 

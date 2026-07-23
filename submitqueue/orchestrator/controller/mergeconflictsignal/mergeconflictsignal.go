@@ -76,11 +76,8 @@ func NewController(
 // infrastructure faults — deserialize, storage, the terminal transition, and the
 // batch publish — return an error and reject to the DLQ, where the request is
 // reconciled to Error.
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName, metrics.LongLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 

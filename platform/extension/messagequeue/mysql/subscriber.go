@@ -747,12 +747,17 @@ func (w *partitionWorker) run(ctx context.Context) {
 // Partition leasing guarantees a single writer, so the TOCTOU gap between
 // GetDeliveryState and MarkDelivered cannot cause incorrect behavior — no other
 // worker can mutate the same (consumer_group, topic, partition_key, offset).
-func (w *partitionWorker) pollAndDeliver(ctx context.Context) error {
-	start := time.Now()
+func (w *partitionWorker) pollAndDeliver(ctx context.Context) (retErr error) {
 	s := w.subscriber
 	sub := w.sub
 	cfg := sub.config
 	partitionKey := w.partitionKey
+
+	op := metrics.Begin(s.scope, "poll", metrics.StorageLatencyBuckets,
+		metrics.NewTag("topic", sub.topic),
+		metrics.NewTag("partition_key", partitionKey),
+	)
+	defer func() { op.Complete(retErr) }()
 
 	// Initialize offset for this partition once per worker lifetime
 	if !w.offsetInitialized {
@@ -912,15 +917,10 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) error {
 
 	// Record poll metrics
 	if messageCount > 0 {
-		elapsed := time.Since(start)
 		metrics.NamedCounter(s.scope, "poll", "messages_delivered", int64(messageCount),
 			metrics.NewTag("topic", sub.topic),
 			metrics.NewTag("partition_key", partitionKey),
 		)
-		metrics.NamedHistogram(s.scope, "poll", "latency", metrics.StorageLatencyBuckets,
-			metrics.NewTag("topic", sub.topic),
-			metrics.NewTag("partition_key", partitionKey),
-		).RecordDuration(elapsed)
 	}
 
 	return nil

@@ -460,10 +460,11 @@ func TestSubscriber_PartitionWorkerPollAndDeliver(t *testing.T) {
 	mockOffsetStore := NewMockoffsetStore(ctrl)
 	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
 	mockDeliveryState := NewMockdeliveryStateStore(ctrl)
+	metricsScope := tally.NewTestScope("test", nil)
 
 	s := NewSubscriber(
 		zaptest.NewLogger(t).Sugar(),
-		tally.NoopScope,
+		metricsScope,
 		mockMessageStore,
 		mockOffsetStore,
 		mockLeaseStore,
@@ -512,7 +513,7 @@ func TestSubscriber_PartitionWorkerPollAndDeliver(t *testing.T) {
 		done:         make(chan struct{}),
 	}
 
-	w.pollAndDeliver(ctx)
+	require.NoError(t, w.pollAndDeliver(ctx))
 
 	// Verify message was delivered
 	select {
@@ -524,6 +525,29 @@ func TestSubscriber_PartitionWorkerPollAndDeliver(t *testing.T) {
 
 	// Verify offset was initialized only once
 	assert.True(t, w.offsetInitialized)
+
+	snapshot := metricsScope.Snapshot()
+	var foundStart bool
+	for _, counter := range snapshot.Counters() {
+		if counter.Name() == "test.subscriber.poll.start" {
+			foundStart = true
+			assert.Equal(t, "test_topic", counter.Tags()["topic"])
+			assert.Equal(t, "part-1", counter.Tags()["partition_key"])
+		}
+	}
+	assert.True(t, foundStart, "expected poll.start counter")
+
+	var foundFinish bool
+	for _, histogram := range snapshot.Histograms() {
+		if histogram.Name() == "test.subscriber.poll.finish" {
+			foundFinish = true
+			assert.Equal(t, "success", histogram.Tags()["result"])
+			assert.Equal(t, "test_topic", histogram.Tags()["topic"])
+			assert.Equal(t, "part-1", histogram.Tags()["partition_key"])
+		}
+		assert.NotContains(t, histogram.Name(), "poll.latency")
+	}
+	assert.True(t, foundFinish, "expected poll.finish histogram")
 }
 
 // TestSubscriber_StopAllWorkers tests that all workers are stopped gracefully.

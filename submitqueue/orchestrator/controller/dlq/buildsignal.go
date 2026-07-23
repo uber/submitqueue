@@ -68,11 +68,8 @@ func NewDLQBuildSignalController(
 }
 
 // Process reconciles a single DLQ delivery for the buildsignal topic.
-func (c *buildSignalController) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+func (c *buildSignalController) Process(ctx context.Context, delivery consumer.Delivery) error {
 	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName, metrics.LongLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 

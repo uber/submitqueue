@@ -21,6 +21,7 @@ import (
 
 	"github.com/uber-go/tally"
 	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
+	"github.com/uber/submitqueue/platform/metrics"
 	"go.uber.org/zap"
 )
 
@@ -39,20 +40,18 @@ func NewPingController(logger *zap.Logger, scope tally.Scope) *PingController {
 }
 
 // Ping handles the ping request and returns a response
-func (c *PingController) Ping(ctx context.Context, req *pb.PingRequest) (*pb.PingResponse, error) {
-	start := time.Now()
-	defer func() {
-		c.metricsScope.Timer("ping_latency").Record(time.Since(start))
-	}()
+func (c *PingController) Ping(ctx context.Context, req *pb.PingRequest) (resp *pb.PingResponse, retErr error) {
+	const opName = "ping"
 
-	c.metricsScope.Counter("ping_requests_total").Inc(1)
+	op := metrics.Begin(c.metricsScope, opName, metrics.FastLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	message := "pong!"
 	isEcho := false
 	if req.Message != "" {
 		message = "echo: " + req.Message
 		isEcho = true
-		c.metricsScope.Counter("echo_requests_total").Inc(1)
+		metrics.NamedCounter(c.metricsScope, opName, "echo_requests", 1)
 	}
 
 	hostname, _ := os.Hostname()

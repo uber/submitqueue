@@ -76,11 +76,8 @@ func NewController(p Params) *Controller {
 
 // Process deserializes the merge request, performs the committing merge, and
 // publishes the result. Returns nil to ack, or an error to nack.
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName, metrics.LongLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
