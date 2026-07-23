@@ -17,9 +17,9 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
-	"sync"
 	"testing"
 	"time"
 
@@ -133,6 +133,13 @@ func receiveN(
 	}
 }
 
+type concurrentReceiveResult struct {
+	workerID int
+	message  string
+	err      error
+	done     bool
+}
+
 // receiveConcurrently collects deliveries across workers until the expected
 // number of unique messages has been acknowledged. Completion or a worker
 // error cancels every receiver immediately.
@@ -148,53 +155,78 @@ func receiveConcurrently(
 	defer cancel()
 
 	allMessages := make(map[string]int)
-	workerErrors := make(chan error, len(deliveryChans))
-	var mu sync.Mutex
-	var wg sync.WaitGroup
+	results := make(chan concurrentReceiveResult)
 
-	wg.Add(len(deliveryChans))
 	for workerID, deliveryChan := range deliveryChans {
 		go func() {
-			defer wg.Done()
+			var workerErr error
+			defer func() {
+				results <- concurrentReceiveResult{
+					workerID: workerID,
+					err:      workerErr,
+					done:     true,
+				}
+			}()
 
 			for {
 				select {
 				case <-receiveCtx.Done():
+					workerErr = receiveCtx.Err()
 					return
 				case delivery, ok := <-deliveryChan:
 					if !ok {
-						workerErrors <- fmt.Errorf("worker %d delivery channel closed", workerID)
-						cancel()
+						workerErr = fmt.Errorf("worker %d delivery channel closed", workerID)
 						return
 					}
+					if delivery == nil {
+						workerErr = fmt.Errorf("worker %d received nil delivery", workerID)
+						return
+					}
+					message := delivery.Message()
 					if err := delivery.Ack(ctx); err != nil {
-						workerErrors <- fmt.Errorf("worker %d ack delivery: %w", workerID, err)
-						cancel()
+						workerErr = fmt.Errorf("worker %d ack delivery: %w", workerID, err)
 						return
 					}
 
-					msgID := delivery.Message().ID
-					mu.Lock()
-					allMessages[msgID]++
-					totalReceived := len(allMessages)
-					mu.Unlock()
-
-					t.Logf("Worker %d received: %s (total unique: %d)", workerID, msgID, totalReceived)
-					if totalReceived == expected {
-						cancel()
-						return
+					results <- concurrentReceiveResult{
+						workerID: workerID,
+						message:  message.ID,
 					}
 				}
 			}
 		}()
 	}
 
-	wg.Wait()
-	close(workerErrors)
-
-	for err := range workerErrors {
-		require.NoError(t, err)
+	completed := expected == 0
+	if completed {
+		cancel()
 	}
+
+	workersRemaining := len(deliveryChans)
+	var firstErr error
+	for workersRemaining > 0 {
+		result := <-results
+		if result.done {
+			workersRemaining--
+			if errors.Is(result.err, context.Canceled) && (completed || firstErr != nil) {
+				continue
+			}
+			if firstErr == nil {
+				firstErr = result.err
+				cancel()
+			}
+			continue
+		}
+
+		allMessages[result.message]++
+		t.Logf("Worker %d received: %s (total unique: %d)", result.workerID, result.message, len(allMessages))
+		if !completed && firstErr == nil && len(allMessages) == expected {
+			completed = true
+			cancel()
+		}
+	}
+
+	require.NoError(t, firstErr)
 	require.Len(t, allMessages, expected, "received all messages")
 	return allMessages
 }
