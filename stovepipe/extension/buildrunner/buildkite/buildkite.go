@@ -146,7 +146,7 @@ func (r *runner) Status(ctx context.Context, buildID entity.BuildID) (entity.Bui
 		return entity.BuildStatusUnknown, nil, fmt.Errorf("buildkite: get build: %w", err)
 	}
 
-	meta := decodeMetadata(resp.Env)
+	meta := r.decodeMetadata(resp.Env)
 	meta["url"] = resp.WebURL
 	return mapState(resp.State), meta, nil
 }
@@ -169,9 +169,16 @@ func (r *runner) Cancel(ctx context.Context, buildID entity.BuildID) error {
 }
 
 // decodeMetadata recovers the caller-supplied BuildMetadata from the env vars
-// Buildkite echoes back on the build object.
-func decodeMetadata(env map[string]string) entity.BuildMetadata {
-	return entity.BuildMetadata(platformbuildkite.DecodeMetadataEnv(env, EnvKeyMetadata))
+// Buildkite echoes back on the build object. Logs and degrades to an empty
+// map on a decode error rather than failing Status — a corrupt env var must
+// not block build-status polling.
+func (r *runner) decodeMetadata(env map[string]string) entity.BuildMetadata {
+	meta, err := platformbuildkite.DecodeMetadataEnv(env, EnvKeyMetadata)
+	if err != nil {
+		r.logger.Warnw("failed to decode build metadata", "error", err)
+		return entity.BuildMetadata{}
+	}
+	return entity.BuildMetadata(meta)
 }
 
 // mapState maps a Buildkite build state to a BuildStatus.

@@ -200,19 +200,21 @@ func TestParseState(t *testing.T) {
 
 func TestDecodeMetadataEnv_PresentAndValid(t *testing.T) {
 	env := map[string]string{"SQ_METADATA": `{"requester":"alice","ticket":"SQ-42"}`}
-	got := DecodeMetadataEnv(env, "SQ_METADATA")
+	got, err := DecodeMetadataEnv(env, "SQ_METADATA")
+	require.NoError(t, err)
 	assert.Equal(t, map[string]string{"requester": "alice", "ticket": "SQ-42"}, got)
 }
 
 func TestDecodeMetadataEnv_Absent_ReturnsEmptyMap(t *testing.T) {
-	got := DecodeMetadataEnv(map[string]string{}, "SQ_METADATA")
+	got, err := DecodeMetadataEnv(map[string]string{}, "SQ_METADATA")
+	require.NoError(t, err)
 	assert.Empty(t, got)
 	assert.NotNil(t, got)
 }
 
-func TestDecodeMetadataEnv_Malformed_ReturnsEmptyMap(t *testing.T) {
+func TestDecodeMetadataEnv_Malformed_ReturnsError(t *testing.T) {
 	env := map[string]string{"SQ_METADATA": "not json"}
-	got := DecodeMetadataEnv(env, "SQ_METADATA")
-	assert.Empty(t, got)
-	assert.NotNil(t, got)
+	got, err := DecodeMetadataEnv(env, "SQ_METADATA")
+	require.Error(t, err)
+	assert.Nil(t, got)
 }
