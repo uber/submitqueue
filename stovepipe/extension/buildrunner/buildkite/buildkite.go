@@ -109,7 +109,10 @@ func (r *runner) Trigger(ctx context.Context, baseURI, headURI string, metadata 
 		EnvKeyQueue:   r.cfg.QueueName,
 	}
 	if len(metadata) > 0 {
-		metaJSON, _ := json.Marshal(metadata)
+		metaJSON, err := json.Marshal(metadata)
+		if err != nil {
+			return entity.BuildID{}, fmt.Errorf("buildkite: marshal metadata: %w", err)
+		}
 		env[EnvKeyMetadata] = string(metaJSON)
 	}
 
