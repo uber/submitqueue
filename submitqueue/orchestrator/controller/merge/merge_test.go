@@ -146,12 +146,12 @@ func TestProcess_PublishesFullPayloadToRunway(t *testing.T) {
 	require.Len(t, got.Steps, 2)
 	// One step per member request, in Contains order, attributed by request id.
 	assert.Equal(t, req1.ID, got.Steps[0].StepId)
-	require.Len(t, got.Steps[0].Changes, 1)
-	assert.Equal(t, req1.Change.URIs, got.Steps[0].Changes[0].Uris)
+	require.NotNil(t, got.Steps[0].Change)
+	assert.Equal(t, req1.Change.URIs, got.Steps[0].Change.Uris)
 	assert.Equal(t, strategypb.Strategy_SQUASH_REBASE, got.Steps[0].Strategy)
 	assert.Equal(t, req2.ID, got.Steps[1].StepId)
-	require.Len(t, got.Steps[1].Changes, 1)
-	assert.Equal(t, req2.Change.URIs, got.Steps[1].Changes[0].Uris)
+	require.NotNil(t, got.Steps[1].Change)
+	assert.Equal(t, req2.Change.URIs, got.Steps[1].Change.Uris)
 	assert.Equal(t, strategypb.Strategy_REBASE, got.Steps[1].Strategy)
 }
 

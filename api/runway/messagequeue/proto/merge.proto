@@ -25,19 +25,21 @@ option java_multiple_files = true;
 option java_outer_classname = "MergeProto";
 option java_package = "com.uber.submitqueue.runway.messagequeue";
 
-// MergeStep is one step of an ordered merge: a single set of change(s) applied
-// with a strategy. Runway applies the steps of a request in order on top of the
-// merge target; the ordering encodes the base-layering (earlier steps are the
-// in-flight base, the last step is the candidate).
+// MergeStep is one step of an ordered merge: a single change applied with a
+// strategy. Runway applies the steps of a request in order on top of the merge
+// target; the ordering encodes the base-layering (earlier steps are the
+// in-flight base, the last step is the candidate). A change may contain
+// multiple URIs (e.g. stacked PRs that land together).
 message MergeStep {
     // step_id is an opaque, caller-assigned identifier for this step. Runway
     // treats it as an attribution token only -- it echoes it back per-step in
     // StepResult so a multi-step result is attributable -- and never interprets
     // its contents.
     string step_id = 1;
-    // changes are the code change(s) to apply for this step.
-    repeated uber.base.change.Change changes = 2;
-    // strategy is how this step's changes are integrated into the merge target.
+    // change is the code change to apply for this step. A change may carry
+    // multiple URIs when the step represents stacked or grouped changes.
+    uber.base.change.Change change = 2;
+    // strategy is how this step's change is integrated into the merge target.
     uber.base.mergestrategy.Strategy strategy = 3;
 }
 

@@ -95,10 +95,11 @@ func (Outcome) EnumDescriptor() ([]byte, []int) {
 	return file_merge_proto_rawDescGZIP(), []int{0}
 }
 
-// MergeStep is one step of an ordered merge: a single set of change(s) applied
-// with a strategy. Runway applies the steps of a request in order on top of the
-// merge target; the ordering encodes the base-layering (earlier steps are the
-// in-flight base, the last step is the candidate).
+// MergeStep is one step of an ordered merge: a single change applied with a
+// strategy. Runway applies the steps of a request in order on top of the merge
+// target; the ordering encodes the base-layering (earlier steps are the
+// in-flight base, the last step is the candidate). A change may contain
+// multiple URIs (e.g. stacked PRs that land together).
 type MergeStep struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// step_id is an opaque, caller-assigned identifier for this step. Runway
@@ -106,9 +107,10 @@ type MergeStep struct {
 	// StepResult so a multi-step result is attributable -- and never interprets
 	// its contents.
 	StepId string `protobuf:"bytes,1,opt,name=step_id,json=stepId,proto3" json:"step_id,omitempty"`
-	// changes are the code change(s) to apply for this step.
-	Changes []*protopb.Change `protobuf:"bytes,2,rep,name=changes,proto3" json:"changes,omitempty"`
-	// strategy is how this step's changes are integrated into the merge target.
+	// change is the code change to apply for this step. A change may carry
+	// multiple URIs when the step represents stacked or grouped changes.
+	Change *protopb.Change `protobuf:"bytes,2,opt,name=change,proto3" json:"change,omitempty"`
+	// strategy is how this step's change is integrated into the merge target.
 	Strategy      protopb1.Strategy `protobuf:"varint,3,opt,name=strategy,proto3,enum=uber.base.mergestrategy.Strategy" json:"strategy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -151,9 +153,9 @@ func (x *MergeStep) GetStepId() string {
 	return ""
 }
 
-func (x *MergeStep) GetChanges() []*protopb.Change {
+func (x *MergeStep) GetChange() *protopb.Change {
 	if x != nil {
-		return x.Changes
+		return x.Change
 	}
 	return nil
 }
@@ -439,10 +441,10 @@ var File_merge_proto protoreflect.FileDescriptor
 
 const file_merge_proto_rawDesc = "" +
 	"\n" +
-	"\vmerge.proto\x12\x18uber.runway.messagequeue\x1a\"api/base/change/proto/change.proto\x1a0api/base/mergestrategy/proto/mergestrategy.proto\x1a.api/base/messagequeue/proto/messagequeue.proto\"\x97\x01\n" +
+	"\vmerge.proto\x12\x18uber.runway.messagequeue\x1a\"api/base/change/proto/change.proto\x1a0api/base/mergestrategy/proto/mergestrategy.proto\x1a.api/base/messagequeue/proto/messagequeue.proto\"\x95\x01\n" +
 	"\tMergeStep\x12\x17\n" +
-	"\astep_id\x18\x01 \x01(\tR\x06stepId\x122\n" +
-	"\achanges\x18\x02 \x03(\v2\x18.uber.base.change.ChangeR\achanges\x12=\n" +
+	"\astep_id\x18\x01 \x01(\tR\x06stepId\x120\n" +
+	"\x06change\x18\x02 \x01(\v2\x18.uber.base.change.ChangeR\x06change\x12=\n" +
 	"\bstrategy\x18\x03 \x01(\x0e2!.uber.base.mergestrategy.StrategyR\bstrategy\"\xa2\x01\n" +
 	"\fMergeRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
@@ -495,7 +497,7 @@ var file_merge_proto_goTypes = []any{
 	(protopb1.Strategy)(0), // 7: uber.base.mergestrategy.Strategy
 }
 var file_merge_proto_depIdxs = []int32{
-	6, // 0: uber.runway.messagequeue.MergeStep.changes:type_name -> uber.base.change.Change
+	6, // 0: uber.runway.messagequeue.MergeStep.change:type_name -> uber.base.change.Change
 	7, // 1: uber.runway.messagequeue.MergeStep.strategy:type_name -> uber.base.mergestrategy.Strategy
 	1, // 2: uber.runway.messagequeue.MergeRequest.steps:type_name -> uber.runway.messagequeue.MergeStep
 	3, // 3: uber.runway.messagequeue.StepResult.outputs:type_name -> uber.runway.messagequeue.StepOutput

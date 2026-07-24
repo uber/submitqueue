@@ -200,7 +200,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		Steps: []*runwaymq.MergeStep{
 			{
 				StepId:   request.ID,
-				Changes:  []*changepb.Change{{Uris: request.Change.URIs}},
+				Change:   &changepb.Change{Uris: request.Change.URIs},
 				Strategy: toProtoStrategy(request.LandStrategy),
 			},
 		},
