@@ -22,11 +22,21 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 )
 
-// Scorer computes a success probability score for a batch based on its changes.
+// Scorer computes the probability that a batch ultimately succeeds, based on
+// its changes.
 type Scorer interface {
-	// Score returns a probability between 0.0 and 1.0 indicating the likelihood
-	// of a successful land for the given batch. It is handed the batch identity
-	// and resolves the batch's changes itself through an injected changeset.Resolver.
+	// Score returns a probability between 0.0 and 1.0 that the given batch
+	// ultimately succeeds — reaches its terminal Succeeded state with its
+	// changes landed, rather than Failed or Cancelled. A passing build is
+	// necessary but not sufficient: a batch whose build already passed can
+	// still fail to merge, so this is the probability of the final outcome,
+	// not of the build alone. It is handed the batch identity and resolves the
+	// batch's changes itself through an injected changeset.Resolver.
+	//
+	// Callers may score every batch a queue is waiting on, so implementations
+	// should be cheap: a speculation run scores each batch at most once, but it
+	// does not carry results over to the next run, so anything expensive to
+	// compute belongs behind the implementation's own cache.
 	Score(ctx context.Context, batch entity.Batch) (float64, error)
 }
 

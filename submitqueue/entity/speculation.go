@@ -196,8 +196,8 @@ type CandidatePath struct {
 	// Path is the candidate: a head plus one assumption per dependency.
 	Path SpeculationPath
 	// RankingScore is the score the Generator ranked this candidate by. Higher
-	// sorts first. The scale is the Generator's own — consumers order by it but
-	// do not interpret it — and it is meaningful only within the run that
-	// produced it, which is why it is never stored.
+	// sorts first within the Generator's own ranking. Consumers take candidates
+	// in iterator order and do not interpret the value. It is meaningful only
+	// within the run that produced it, which is why it is never stored.
 	RankingScore float64
 }
