@@ -220,8 +220,8 @@ func TestController_Process_PublishesCheckToRunway(t *testing.T) {
 	assert.Equal(t, request.Queue, got.QueueName)
 	require.Len(t, got.Steps, 1)
 	assert.Equal(t, request.ID, got.Steps[0].StepId)
-	require.Len(t, got.Steps[0].Changes, 1)
-	assert.Equal(t, request.Change.URIs, got.Steps[0].Changes[0].Uris)
+	require.NotNil(t, got.Steps[0].Change)
+	assert.Equal(t, request.Change.URIs, got.Steps[0].Change.Uris)
 	assert.Equal(t, strategypb.Strategy_REBASE, got.Steps[0].Strategy)
 }
 
