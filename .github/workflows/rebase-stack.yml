@@ -82,7 +82,10 @@ permissions:
 jobs:
   rebase-stack:
     name: Rebase Stack
-    if: github.event.pull_request.merged == true
+    # DISABLED: this workflow is turned off in favor of GitHub's native stacked
+    # PR support. The file is kept (not removed) so it can be re-enabled by
+    # restoring the condition below to `github.event.pull_request.merged == true`.
+    if: false && github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     # Scope the privileged PAT to a protected Environment restricted to `main`
     # so the secret cannot be used from any other ref/context.
