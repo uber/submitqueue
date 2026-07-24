@@ -103,14 +103,13 @@ func TestNewController(t *testing.T) {
 	var _ consumer.Controller = controller
 }
 
-// startSpeculation: Created/Scored should publish to build and CAS to Speculating with newVersion = oldVersion+1.
+// startSpeculation: Created should publish to build and CAS to Speculating with newVersion = oldVersion+1.
 func TestController_Process_StartSpeculation(t *testing.T) {
 	tests := []struct {
 		name  string
 		state entity.BatchState
 	}{
 		{name: "from_created", state: entity.BatchStateCreated},
-		{name: "from_scored", state: entity.BatchStateScored},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -593,7 +592,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 // Publish failure must not advance the batch state.
 func TestController_Process_PublishFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	batch := testBatch(entity.BatchStateScored)
+	batch := testBatch(entity.BatchStateCreated)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
