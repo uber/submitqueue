@@ -23,6 +23,9 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 
 - [Stovepipe Workflow](stovepipe/workflow.md) - Post-merge validation pipeline overview: ingest, process, build, record greenness, analyze projects, notify downstream
 - [Process stage](stovepipe/steps/process.md) - Build-strategy decision, per-queue concurrency gate, backlog coalescing, entity model, platform prerequisites
+- [Build stage](stovepipe/steps/build.md) - Trigger-only stage and Stovepipe's URI-based BuildRunner contract
+- [Buildsignal stage](stovepipe/steps/buildsignal.md) - Build polling, terminal status persistence, and the handoff to record
+- [Record stage](stovepipe/steps/record.md) - Immutable greenness facts, Queue coordination, Hooks notification, and the Phase 1 handoff to analyze
 
 ## Runway
 
