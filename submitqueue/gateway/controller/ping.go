@@ -26,21 +26,27 @@ import (
 )
 
 // PingController handles ping business logic for the gateway
-type PingController struct {
+type PingController interface {
+	Ping(ctx context.Context, req *pb.PingRequest) (*pb.PingResponse, error)
+}
+
+var _ PingController = (*pingController)(nil)
+
+type pingController struct {
 	logger       *zap.Logger
 	metricsScope tally.Scope
 }
 
 // NewPingController creates a new instance of the gateway ping controller
-func NewPingController(logger *zap.Logger, scope tally.Scope) *PingController {
-	return &PingController{
+func NewPingController(logger *zap.Logger, scope tally.Scope) PingController {
+	return &pingController{
 		logger:       logger,
 		metricsScope: scope,
 	}
 }
 
 // Ping handles the ping request and returns a response
-func (c *PingController) Ping(ctx context.Context, req *pb.PingRequest) (resp *pb.PingResponse, retErr error) {
+func (c *pingController) Ping(ctx context.Context, req *pb.PingRequest) (resp *pb.PingResponse, retErr error) {
 	const opName = "ping"
 
 	op := metrics.Begin(c.metricsScope, opName, metrics.FastLatencyBuckets)

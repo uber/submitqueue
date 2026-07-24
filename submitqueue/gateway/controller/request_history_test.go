@@ -85,7 +85,7 @@ func TestHistoryErrors(t *testing.T) {
 	backendErr := fmt.Errorf("backend down")
 	tests := []struct {
 		name         string
-		call         func(*RequestHistoryController) error
+		call         func(RequestHistoryController) error
 		setup        func(*storagemock.MockRequestLogStore, *storagemock.MockRequestURIStore)
 		wantInvalid  bool
 		wantNotFound bool
@@ -95,7 +95,7 @@ func TestHistoryErrors(t *testing.T) {
 	}{
 		{
 			name: "empty sqid",
-			call: func(c *RequestHistoryController) error {
+			call: func(c RequestHistoryController) error {
 				_, err := c.GetRequestHistoryByID(context.Background(), entity.GetRequestHistoryByIDRequest{})
 				return err
 			},
@@ -104,7 +104,7 @@ func TestHistoryErrors(t *testing.T) {
 		},
 		{
 			name: "empty change URI",
-			call: func(c *RequestHistoryController) error {
+			call: func(c RequestHistoryController) error {
 				_, err := c.GetRequestHistoryByChangeURI(context.Background(), entity.GetRequestHistoryByChangeURIRequest{})
 				return err
 			},
@@ -116,7 +116,7 @@ func TestHistoryErrors(t *testing.T) {
 			setup: func(logStore *storagemock.MockRequestLogStore, _ *storagemock.MockRequestURIStore) {
 				logStore.EXPECT().List(gomock.Any(), "missing/1").Return(nil, storage.ErrNotFound)
 			},
-			call: func(c *RequestHistoryController) error {
+			call: func(c RequestHistoryController) error {
 				_, err := c.GetRequestHistoryByID(context.Background(), entity.GetRequestHistoryByIDRequest{ID: "missing/1"})
 				return err
 			},
@@ -128,7 +128,7 @@ func TestHistoryErrors(t *testing.T) {
 			setup: func(logStore *storagemock.MockRequestLogStore, _ *storagemock.MockRequestURIStore) {
 				logStore.EXPECT().List(gomock.Any(), "queue/1").Return(nil, backendErr)
 			},
-			call: func(c *RequestHistoryController) error {
+			call: func(c RequestHistoryController) error {
 				_, err := c.GetRequestHistoryByID(context.Background(), entity.GetRequestHistoryByIDRequest{ID: "queue/1"})
 				return err
 			},
@@ -138,7 +138,7 @@ func TestHistoryErrors(t *testing.T) {
 			setup: func(_ *storagemock.MockRequestLogStore, uriStore *storagemock.MockRequestURIStore) {
 				uriStore.EXPECT().ListByURI(gomock.Any(), "uri", 101).Return(nil, nil)
 			},
-			call: func(c *RequestHistoryController) error {
+			call: func(c RequestHistoryController) error {
 				_, err := c.GetRequestHistoryByChangeURI(context.Background(), entity.GetRequestHistoryByChangeURIRequest{ChangeURI: "uri"})
 				return err
 			},
@@ -150,7 +150,7 @@ func TestHistoryErrors(t *testing.T) {
 			setup: func(_ *storagemock.MockRequestLogStore, uriStore *storagemock.MockRequestURIStore) {
 				uriStore.EXPECT().ListByURI(gomock.Any(), "uri", 101).Return(make([]entity.RequestURI, 101), nil)
 			},
-			call: func(c *RequestHistoryController) error {
+			call: func(c RequestHistoryController) error {
 				_, err := c.GetRequestHistoryByChangeURI(context.Background(), entity.GetRequestHistoryByChangeURIRequest{ChangeURI: "uri"})
 				return err
 			},
@@ -163,7 +163,7 @@ func TestHistoryErrors(t *testing.T) {
 				uriStore.EXPECT().ListByURI(gomock.Any(), "uri", 101).Return([]entity.RequestURI{{RequestID: "queue/1"}}, nil)
 				logStore.EXPECT().List(gomock.Any(), "queue/1").Return(nil, storage.ErrNotFound)
 			},
-			call: func(c *RequestHistoryController) error {
+			call: func(c RequestHistoryController) error {
 				_, err := c.GetRequestHistoryByChangeURI(context.Background(), entity.GetRequestHistoryByChangeURIRequest{ChangeURI: "uri"})
 				return err
 			},
@@ -176,7 +176,7 @@ func TestHistoryErrors(t *testing.T) {
 				uriStore.EXPECT().ListByURI(gomock.Any(), "uri", 101).Return([]entity.RequestURI{{RequestID: "malformed"}}, nil)
 				logStore.EXPECT().List(gomock.Any(), "malformed").Return([]entity.RequestLog{{RequestID: "malformed"}}, nil)
 			},
-			call: func(c *RequestHistoryController) error {
+			call: func(c RequestHistoryController) error {
 				_, err := c.GetRequestHistoryByChangeURI(context.Background(), entity.GetRequestHistoryByChangeURIRequest{ChangeURI: "uri"})
 				return err
 			},

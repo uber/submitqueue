@@ -30,7 +30,14 @@ import (
 )
 
 // RequestHistoryController handles retained request-log history lookups.
-type RequestHistoryController struct {
+type RequestHistoryController interface {
+	GetRequestHistoryByID(ctx context.Context, req entity.GetRequestHistoryByIDRequest) ([]entity.RequestLog, error)
+	GetRequestHistoryByChangeURI(ctx context.Context, req entity.GetRequestHistoryByChangeURIRequest) ([]entity.RequestHistory, error)
+}
+
+var _ RequestHistoryController = (*requestHistoryController)(nil)
+
+type requestHistoryController struct {
 	logger          *zap.SugaredLogger
 	metricsScope    tally.Scope
 	requestLogStore storage.RequestLogStore
@@ -38,8 +45,8 @@ type RequestHistoryController struct {
 }
 
 // NewRequestHistoryController creates a gateway request-history controller.
-func NewRequestHistoryController(logger *zap.SugaredLogger, scope tally.Scope, requestLogStore storage.RequestLogStore, requestURIStore storage.RequestURIStore) *RequestHistoryController {
-	return &RequestHistoryController{
+func NewRequestHistoryController(logger *zap.SugaredLogger, scope tally.Scope, requestLogStore storage.RequestLogStore, requestURIStore storage.RequestURIStore) RequestHistoryController {
+	return &requestHistoryController{
 		logger:          logger,
 		metricsScope:    scope.SubScope("request_history_controller"),
 		requestLogStore: requestLogStore,
@@ -48,7 +55,7 @@ func NewRequestHistoryController(logger *zap.SugaredLogger, scope tally.Scope, r
 }
 
 // GetRequestHistoryByID returns every retained request-log event for one sqid.
-func (c *RequestHistoryController) GetRequestHistoryByID(ctx context.Context, req entity.GetRequestHistoryByIDRequest) (logs []entity.RequestLog, retErr error) {
+func (c *requestHistoryController) GetRequestHistoryByID(ctx context.Context, req entity.GetRequestHistoryByIDRequest) (logs []entity.RequestLog, retErr error) {
 	op := metrics.Begin(c.metricsScope, "get_by_id", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
@@ -72,7 +79,7 @@ func (c *RequestHistoryController) GetRequestHistoryByID(ctx context.Context, re
 }
 
 // GetRequestHistoryByChangeURI returns retained histories for an exact pinned change URI.
-func (c *RequestHistoryController) GetRequestHistoryByChangeURI(ctx context.Context, req entity.GetRequestHistoryByChangeURIRequest) (result []entity.RequestHistory, retErr error) {
+func (c *requestHistoryController) GetRequestHistoryByChangeURI(ctx context.Context, req entity.GetRequestHistoryByChangeURIRequest) (result []entity.RequestHistory, retErr error) {
 	op := metrics.Begin(c.metricsScope, "get_by_change_uri", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
