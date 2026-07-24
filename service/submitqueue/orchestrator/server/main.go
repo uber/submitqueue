@@ -31,52 +31,22 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/uber-go/tally"
-	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	pb "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb"
-	"github.com/uber/submitqueue/platform/consumer"
-	"github.com/uber/submitqueue/platform/errs"
 	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
 	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
-	"github.com/uber/submitqueue/platform/extension/counter"
 	mysqlcounter "github.com/uber/submitqueue/platform/extension/counter/mysql"
-	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/platform/http"
+	"github.com/uber/submitqueue/platform/pipeline"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
-	"github.com/uber/submitqueue/submitqueue/core/topickey"
-	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
-	buildfake "github.com/uber/submitqueue/submitqueue/extension/buildrunner/fake"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	cpfake "github.com/uber/submitqueue/submitqueue/extension/changeprovider/fake"
 	githubprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/github"
 	phabprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/phabricator"
 	routingprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/routing"
-	"github.com/uber/submitqueue/submitqueue/extension/conflict"
-	"github.com/uber/submitqueue/submitqueue/extension/conflict/all"
-	conflictfake "github.com/uber/submitqueue/submitqueue/extension/conflict/fake"
-	"github.com/uber/submitqueue/submitqueue/extension/conflict/fileoverlap"
-	"github.com/uber/submitqueue/submitqueue/extension/conflict/none"
-	"github.com/uber/submitqueue/submitqueue/extension/scorer"
-	"github.com/uber/submitqueue/submitqueue/extension/scorer/composite"
-	scorerfake "github.com/uber/submitqueue/submitqueue/extension/scorer/fake"
-	"github.com/uber/submitqueue/submitqueue/extension/scorer/heuristic"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	validatorfake "github.com/uber/submitqueue/submitqueue/extension/validator/fake"
-	"github.com/uber/submitqueue/submitqueue/orchestrator/controller"
-	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/batch"
-	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/build"
-	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/buildsignal"
-	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/cancel"
-	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/conclude"
-	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/dlq"
-	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/merge"
-	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/mergeconflictsignal"
-	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/mergesignal"
-	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/speculate"
-	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/start"
-	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/validate"
+	"github.com/uber/submitqueue/submitqueue/orchestrator"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -85,12 +55,12 @@ import (
 // OrchestratorServer wraps the controller and implements the gRPC service interface
 type OrchestratorServer struct {
 	pb.UnimplementedSubmitQueueOrchestratorServer
-	controller *controller.PingController
+	controllers orchestrator.Controllers
 }
 
 // Ping delegates to the controller
 func (s *OrchestratorServer) Ping(ctx context.Context, req *pb.PingRequest) (*pb.PingResponse, error) {
-	return s.controller.Ping(ctx, req)
+	return s.controllers.Ping.Ping(ctx, req)
 }
 
 func main() {
@@ -198,93 +168,69 @@ func run() error {
 
 	logger.Info("initialized queue", zap.String("dsn", queueDSN))
 
-	// Create topic registry
+	// Subscriber name for consumer group identity
 	subscriberName := os.Getenv("HOSTNAME")
 	if subscriberName == "" {
 		subscriberName = fmt.Sprintf("orchestrator-%d", time.Now().Unix())
 	}
 
-	registry, err := newTopicRegistry(mysqlQueue, subscriberName)
+	// Build per-queue extension profiles (host-private). Each queue resolves
+	// to its own set of extension implementations (conflict analyzer, …),
+	// falling back to a baseline profile for queues without an explicit entry.
+	profiles, err := newProfiles(logger, scope, changeset.New(store.GetRequestStore(), store.GetChangeStore()))
 	if err != nil {
-		return fmt.Errorf("failed to create topic registry: %w", err)
+		return fmt.Errorf("failed to build profiles: %w", err)
 	}
 
-	// Two consumers share the topic registry but apply different error
-	// classification policies. The primary consumer runs the standard
-	// per-node classifier walk. The DLQ consumer uses the AlwaysRetryableProcessor
-	// so every non-nil error from a DLQ controller is forced retryable —
-	// reconciliation must redeliver on any failure because the DLQ
-	// subscriptions are final destinations (there is no further DLQ).
-	primaryConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
-		errs.NewClassifierProcessor(
+	// Populate the orchestrator's Deps — the library's public API. Factory
+	// fields are thin adapters that cross the host/library boundary via the
+	// existing Factory interfaces.
+	deps := orchestrator.Deps{
+		Logger:         logger.Sugar(),
+		Scope:          scope,
+		Storage:        store,
+		Counter:        cnt,
+		BuildRunner:    profiles.BuildRunnerFactory(),
+		ChangeProvider: profiles.ChangeProviderFactory(),
+		Analyzer:       profiles.AnalyzerFactory(),
+		Validator:      validatorfake.NewFactory(),
+	}
+
+	// Assemble the pipeline: one call builds the topic registry, creates
+	// primary and DLQ consumers, eagerly constructs all controllers, and
+	// returns a single lifecycle.Component the host drives with Start/Stop.
+	pl, err := pipeline.Construct(
+		logger.Sugar(),
+		scope,
+		mysqlQueue,
+		subscriberName,
+		deps,
+		orchestrator.Stages,
+		pipeline.PublishOnly(orchestrator.PublishOnlyTopics...),
+		pipeline.Classifiers(
 			genericerrs.Classifier,
-			// Storage (submitqueue/extension/storage/mysql) and queue (platform/extension/messagequeue/mysql)
-			// both run on the same MySQL driver, so a single classifier covers
-			// errors surfaced from either backend.
+			// Storage (submitqueue/extension/storage/mysql) and queue
+			// (platform/extension/messagequeue/mysql) both run on the same
+			// MySQL driver, so a single classifier covers errors surfaced
+			// from either backend.
 			mysqlerrs.Classifier,
 		),
 	)
-	dlqConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer-dlq"), registry,
-		errs.AlwaysRetryableProcessor,
-	)
-
-	// Build the per-queue extension registry: each queue resolves to its own
-	// set of extension implementations (scorer, conflict analyzer, …), falling
-	// back to a baseline profile for queues without an explicit entry. This is
-	// the single place queue topology is known; the extension packages stay
-	// queue-agnostic.
-	queues, err := newQueueRegistry(logger, scope, changeset.New(store.GetRequestStore(), store.GetChangeStore()))
 	if err != nil {
-		return fmt.Errorf("failed to build queue registry: %w", err)
+		return fmt.Errorf("failed to construct pipeline: %w", err)
 	}
 
-	// Per-extension factories all resolve against the registry by queue name.
-	cpf := changeProviderFactory{queues}
-	brf := buildRunnerFactory{queues}
-	cof := analyzerFactory{queues}
-
-	// Register controllers
-	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, registry, cpf, brf, cof, cnt, store)
-	if err != nil {
-		return err
+	// Start the pipeline (extra components → primary consumer → DLQ consumer).
+	if err := pl.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start pipeline: %w", err)
 	}
-	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, registry, store)
-	if err != nil {
-		return err
-	}
+	logger.Info("pipeline started")
 
-	logger.Info("controllers registered", zap.Int("primary", primaryCount), zap.Int("dlq", dlqCount))
-
-	// Start consumers. DLQ first because Start begins processing
-	// messages immediately; if the second (primary) consumer fails to
-	// start, the half we already started is the DLQ side, whose work
-	// is idempotent reconciliation and is safe to interrupt mid-flight
-	// for rollback.
-	if err := dlqConsumer.Start(ctx); err != nil {
-		// The error can also be a result of a context cancellation due to SIGINT or SIGTERM.
-		// This is expected, just propagate it.
-		return fmt.Errorf("failed to start dlq consumer: %w", err)
-	}
-	if err := primaryConsumer.Start(ctx); err != nil {
-		// Best-effort: stop the dlq consumer we just started so the
-		// caller does not need to know which half failed. Aggregate both
-		// errors with errors.Join so the operator sees the original cause.
-		stopErr := dlqConsumer.Stop(30000)
-		return errors.Join(
-			fmt.Errorf("failed to start primary consumer: %w", err),
-			stopErr,
-		)
-	}
-	logger.Info("consumers started")
-
-	// Create gRPC server
+	// Create gRPC server and wire RPC controllers
 	grpcServer := grpc.NewServer()
 
-	// Create ping controller and wrap it for gRPC
-	pingController := controller.NewPingController(logger, scope)
-	orchestratorServer := &OrchestratorServer{
-		controller: pingController,
-	}
+	ctls := orchestrator.NewControllers(deps)
+	orchestratorServer := &OrchestratorServer{controllers: ctls}
 	pb.RegisterSubmitQueueOrchestratorServer(grpcServer, orchestratorServer)
 
 	// Register reflection service for debugging with grpcurl
@@ -310,21 +256,15 @@ func run() error {
 	}()
 
 	// Wait for interrupt signal or server critical error
-	// If interruption is signaled, gracefully stop the server
-	// If server exits with an error, cancel the context to signal cancellation to the queue consumers
-	// After this, stop consumers
-	// If an error happens during shutdown, return the actual error, not the context cancellation error
 	var serverErr error
 	select {
 	case <-ctx.Done():
 		fmt.Println("Shutting down orchestrator server due to interruption signal...")
 
 		// Set the error to the context cancellation error to be surfaced as a desired exit code by the main function
-		// to indicate that the server was stopped as intended
-		// It may be overridden by the server error if any
 		err = ctx.Err()
 
-		// stop GRPC server and wait for it to exit
+		// Stop GRPC server and wait for it to exit
 		grpcServer.GracefulStop()
 		serverErr = <-serverErrCh
 	case serverErr = <-serverErrCh:
@@ -338,395 +278,23 @@ func run() error {
 		serverErr = fmt.Errorf("GRPC server exited with error: %w", serverErr)
 	}
 
-	// Stop consumers with 30s timeout in reverse start order: primary
-	// first, then DLQ. The primary pipeline writes the state that DLQ
-	// reconciliation reads, so draining primary first means in-flight
-	// DLQ reconciliation finishes against a settled primary rather than
-	// racing its shutdown.
-	primaryStopErr := primaryConsumer.Stop(30000)
-	dlqStopErr := dlqConsumer.Stop(30000)
-	errStop := errors.Join(primaryStopErr, dlqStopErr)
-	if errStop != nil {
-		errStop = fmt.Errorf("failed to stop consumers: %w", errStop)
+	// Stop the pipeline (DLQ consumer → primary consumer → extra components,
+	// reverse of start order). Use a fresh context with a 30s timeout so
+	// shutdown proceeds even after the parent context is cancelled.
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer stopCancel()
+	plStopErr := pl.Stop(stopCtx)
+	if plStopErr != nil {
+		plStopErr = fmt.Errorf("failed to stop pipeline: %w", plStopErr)
 	}
 
-	if errStop != nil || serverErr != nil {
+	if plStopErr != nil || serverErr != nil {
 		// Override context cancellation error with the shutdown error
-		err = errors.Join(errStop, serverErr)
+		err = errors.Join(plStopErr, serverErr)
 	}
 
 	// Return the error to be surfaced as a desired exit code by the main function
 	return err
-}
-
-// newTopicRegistry builds the TopicRegistry with all topic and subscription configs.
-func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRegistry, error) {
-	// primaryTopics enumerates the {key, name, group-suffix} for every primary
-	// pipeline topic. The DLQ topic for each is derived by appending "_dlq" to
-	// both the topic name and the consumer group; the topic-key suffix is
-	// owned by the dlq package (dlq.TopicKey).
-	type topicSpec struct {
-		key         consumer.TopicKey
-		name        string
-		groupSuffix string
-	}
-	primaryTopics := []topicSpec{
-		{topickey.TopicKeyStart, "start", "orchestrator-start"},
-		{topickey.TopicKeyCancel, "cancel", "orchestrator-cancel"},
-		{topickey.TopicKeyValidate, "validate", "orchestrator-validate"},
-		{runwaymq.TopicKeyMergeConflictCheckSignal, "merge-conflict-check-signal", "orchestrator-mergeconflictsignal"},
-		{topickey.TopicKeyBatch, "batch", "orchestrator-batch"},
-		{topickey.TopicKeySpeculate, "speculate", "orchestrator-speculate"},
-		{topickey.TopicKeyBuild, "build", "orchestrator-build"},
-		{topickey.TopicKeyBuildSignal, "buildsignal", "orchestrator-buildsignal"},
-		{topickey.TopicKeyMerge, "submitqueue-merge", "orchestrator-merge"},
-		{runwaymq.TopicKeyMergeSignal, "merge-signal", "orchestrator-mergesignal"},
-		{topickey.TopicKeyConclude, "conclude", "orchestrator-conclude"},
-	}
-
-	configs := make([]consumer.TopicConfig, 0, 2*len(primaryTopics))
-	for _, t := range primaryTopics {
-		configs = append(configs, consumer.TopicConfig{
-			Key:   t.key,
-			Name:  t.name,
-			Queue: q,
-			Subscription: extqueue.DefaultSubscriptionConfig(
-				subscriberName, t.groupSuffix,
-			),
-		})
-		// DLQ subscription for the same primary stage. DLQSubscriptionConfig
-		// disables the subscription's own DLQ (no "_dlq_dlq" cascade) and sets
-		// an effectively unlimited retry budget to pair with the
-		// AlwaysRetryableProcessor wired into the DLQ consumer.
-		configs = append(configs, consumer.TopicConfig{
-			Key:          dlq.TopicKey(t.key),
-			Name:         t.name + "_dlq",
-			Queue:        q,
-			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, t.groupSuffix+"-dlq"),
-		})
-	}
-
-	// Publish-only: the orchestrator emits request-log entries to the log topic.
-	// The gateway is the sole consumer and writer of request logs and public
-	// projections, so the orchestrator registers no consuming subscription.
-	configs = append(configs, consumer.TopicConfig{
-		Key:   topickey.TopicKeyLog,
-		Name:  "log",
-		Queue: q,
-	})
-
-	// Publish-only: the orchestrator hands merge-conflict check requests to
-	// runway via the runway-owned merge-conflict-check queue. Runway is the
-	// sole consumer, so the orchestrator registers no consuming subscription
-	// (and no DLQ) here — the inbound result arrives on the separate
-	// merge-conflict-check-signal queue, which is a consumed primary topic
-	// above.
-	configs = append(configs, consumer.TopicConfig{
-		Key:   runwaymq.TopicKeyMergeConflictCheck,
-		Name:  "merge-conflict-check",
-		Queue: q,
-	})
-
-	// Publish-only: the orchestrator hands merge requests to runway via the
-	// runway-owned merge queue. Runway is the sole consumer, so the
-	// orchestrator registers no consuming subscription (and no DLQ) here; the
-	// inbound result arrives on the separate merge-signal queue, which is a
-	// consumed primary topic above.
-	configs = append(configs, consumer.TopicConfig{
-		Key:   runwaymq.TopicKeyMerge,
-		Name:  "runway-merge",
-		Queue: q,
-	})
-
-	return consumer.NewTopicRegistry(configs)
-}
-
-// registerPrimaryControllers creates all pipeline controllers and registers
-// them with the primary consumer. Pipeline:
-//
-//	request → validate ⇢ (runway) ⇢ mergeconflictsignal → batch → speculate → build → buildsignal ─┐
-//	                                                                ↑     ↘           ↻ poll        │
-//	                                                                │      merge → conclude         │
-//	                                                                │        │                      │
-//	                                                                └────────┴──────────────────────┘
-//
-// The merge-conflict check is asynchronous and crosses a service boundary:
-// validate publishes the full check request to the runway-owned
-// merge-conflict-check queue (⇢); runway performs the merge attempt and
-// publishes the result to merge-conflict-check-signal, which mergeconflictsignal
-// consumes before fanning the request out to batch.
-
-// TODO(wiring abstraction): queueExtensions + queueRegistry currently live here
-// as example-local wiring. Evaluate promoting them into a defined abstraction in
-// the submitqueue domain layer (e.g. submitqueue/core/...) — not `submitqueue/extension/*`
-// and not `platform/*`, since the bundle names submitqueue-specific extensions.
-// Do this only when a trigger lands: (1) a second consumer needs the same wiring
-// (a real prod server, or an e2e harness building real per-queue profiles);
-// (2) per-queue config becomes data-driven (build profiles from queueconfig.Store
-// /queues.yaml instead of Go literals); or (3) the bundle grows lifecycle
-// (Close/health/hot-reload). Until then, keep it local — extracting now adds
-// indirection for one hardcoded consumer. See also queueconfig.Store, which holds
-// the per-queue *data* half; a promoted Registry would build impl bundles from it.
-//
-// queueExtensions is the full set of extension implementations for a single
-// queue. Grouping them per queue (rather than per extension) lets the wiring
-// read as "for this queue, here are its scorer, analyzer, change provider, …", and lets
-// a queue profile start from a baseline and override only what differs.
-type queueExtensions struct {
-	changeProvider changeprovider.ChangeProvider
-	buildRunner    buildrunner.BuildRunner
-	// scorer holds each queue's scoring profile. The dedicated score stage was
-	// removed; scoring is being folded into the speculator, so the per-queue
-	// profiles are retained here (unwired to a consumer for now) until that
-	// integration lands.
-	scorer   scorer.Scorer
-	analyzer conflict.Analyzer
-}
-
-// queueRegistry maps a queue name to its extensions, falling back to a default
-// profile for queues without an explicit entry. It is the single place that
-// knows the queue topology; the extension packages remain queue-agnostic.
-type queueRegistry struct {
-	byQueue map[string]queueExtensions
-	def     queueExtensions
-}
-
-// get returns the extensions for the named queue, or the default profile.
-func (r queueRegistry) get(queue string) queueExtensions {
-	if e, ok := r.byQueue[queue]; ok {
-		return e
-	}
-	return r.def
-}
-
-// The per-extension factories below are thin adapters: each satisfies its
-// extension's Factory contract by resolving the queue's profile from the
-// registry. All routing logic lives here in the wiring layer.
-type changeProviderFactory struct{ reg queueRegistry }
-
-func (f changeProviderFactory) For(cfg changeprovider.Config) (changeprovider.ChangeProvider, error) {
-	return f.reg.get(cfg.QueueName).changeProvider, nil
-}
-
-type buildRunnerFactory struct{ reg queueRegistry }
-
-func (f buildRunnerFactory) For(cfg buildrunner.Config) (buildrunner.BuildRunner, error) {
-	return f.reg.get(cfg.QueueName).buildRunner, nil
-}
-
-type analyzerFactory struct{ reg queueRegistry }
-
-func (f analyzerFactory) For(cfg conflict.Config) (conflict.Analyzer, error) {
-	return f.reg.get(cfg.QueueName).analyzer, nil
-}
-
-func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, cpf changeprovider.Factory, brf buildrunner.Factory, cof conflict.Factory, cnt counter.Counter, store storage.Storage) (int, error) {
-	var count int
-	requestController := start.NewController(
-		logger,
-		scope,
-		store,
-		registry,
-		topickey.TopicKeyStart,
-		"orchestrator-start",
-	)
-	if err := c.Register(requestController); err != nil {
-		return count, fmt.Errorf("failed to register request controller: %w", err)
-	}
-	count++
-
-	cancelController := cancel.NewController(
-		logger,
-		scope,
-		store,
-		registry,
-		topickey.TopicKeyCancel,
-		"orchestrator-cancel",
-	)
-	if err := c.Register(cancelController); err != nil {
-		return count, fmt.Errorf("failed to register cancel controller: %w", err)
-	}
-	count++
-
-	validateController := validate.NewController(
-		logger,
-		scope,
-		store,
-		registry,
-		cpf,
-		validatorfake.NewFactory(),
-		runwaymq.TopicKeyMergeConflictCheck,
-		topickey.TopicKeyValidate,
-		"orchestrator-validate",
-	)
-	if err := c.Register(validateController); err != nil {
-		return count, fmt.Errorf("failed to register validate controller: %w", err)
-	}
-	count++
-
-	mergeconflictsignalController := mergeconflictsignal.NewController(
-		logger,
-		scope,
-		store,
-		registry,
-		runwaymq.TopicKeyMergeConflictCheckSignal,
-		"orchestrator-mergeconflictsignal",
-	)
-	if err := c.Register(mergeconflictsignalController); err != nil {
-		return count, fmt.Errorf("failed to register mergeconflictsignal controller: %w", err)
-	}
-	count++
-
-	batchController := batch.NewController(
-		logger,
-		scope,
-		registry,
-		cnt,
-		store,
-		cof,
-		topickey.TopicKeyBatch,
-		"orchestrator-batch",
-	)
-	if err := c.Register(batchController); err != nil {
-		return count, fmt.Errorf("failed to register batch controller: %w", err)
-	}
-	count++
-
-	speculateController := speculate.NewController(
-		logger,
-		scope,
-		store,
-		registry,
-		topickey.TopicKeySpeculate,
-		"orchestrator-speculate",
-	)
-	if err := c.Register(speculateController); err != nil {
-		return count, fmt.Errorf("failed to register speculate controller: %w", err)
-	}
-	count++
-
-	buildController := build.NewController(
-		logger,
-		scope,
-		store,
-		brf,
-		registry,
-		topickey.TopicKeyBuild,
-		"orchestrator-build",
-	)
-	if err := c.Register(buildController); err != nil {
-		return count, fmt.Errorf("failed to register build controller: %w", err)
-	}
-	count++
-
-	buildsignalController := buildsignal.NewController(
-		logger,
-		scope,
-		store,
-		brf,
-		registry,
-		topickey.TopicKeyBuildSignal,
-		"orchestrator-buildsignal",
-	)
-	if err := c.Register(buildsignalController); err != nil {
-		return count, fmt.Errorf("failed to register buildsignal controller: %w", err)
-	}
-	count++
-
-	mergeController := merge.NewController(
-		logger,
-		scope,
-		store,
-		registry,
-		runwaymq.TopicKeyMerge,
-		topickey.TopicKeyMerge,
-		"orchestrator-merge",
-	)
-	if err := c.Register(mergeController); err != nil {
-		return count, fmt.Errorf("failed to register merge controller: %w", err)
-	}
-	count++
-
-	mergesignalController := mergesignal.NewController(
-		logger,
-		scope,
-		store,
-		registry,
-		runwaymq.TopicKeyMergeSignal,
-		"orchestrator-mergesignal",
-	)
-	if err := c.Register(mergesignalController); err != nil {
-		return count, fmt.Errorf("failed to register mergesignal controller: %w", err)
-	}
-	count++
-
-	concludeController := conclude.NewController(
-		logger,
-		scope,
-		store,
-		registry,
-		topickey.TopicKeyConclude,
-		"orchestrator-conclude",
-	)
-	if err := c.Register(concludeController); err != nil {
-		return count, fmt.Errorf("failed to register conclude controller: %w", err)
-	}
-	count++
-
-	return count, nil
-}
-
-// registerDLQControllers creates one DLQ reconciler per primary stage and
-// registers them with the DLQ consumer. Each reconciler drives the affected
-// request or batch into a terminal Error/Failed state so the gateway stops
-// reporting it as stuck-in-progress.
-func registerDLQControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, store storage.Storage) (int, error) {
-	dlqScope := scope.SubScope("dlq")
-	dlqRegs := []struct {
-		name string
-		ctl  consumer.Controller
-	}{
-		{"start_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, registry, dlq.DecodeLandRequestID, dlq.TopicKey(topickey.TopicKeyStart), "orchestrator-start-dlq")},
-		{"cancel_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, registry, dlq.DecodeCancelRequestID, dlq.TopicKey(topickey.TopicKeyCancel), "orchestrator-cancel-dlq")},
-		{"validate_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, registry, dlq.DecodeRequestID, dlq.TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")},
-		{"mergeconflictsignal_dlq", dlq.NewDLQMergeConflictSignalController(logger, dlqScope, store, registry, dlq.TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-mergeconflictsignal-dlq")},
-		{"batch_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, registry, dlq.DecodeRequestID, dlq.TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")},
-		{"speculate_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeySpeculate), "orchestrator-speculate-dlq")},
-		{"build_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeyBuild), "orchestrator-build-dlq")},
-		{"buildsignal_dlq", dlq.NewDLQBuildSignalController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")},
-		{"merge_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")},
-		{"mergesignal_dlq", dlq.NewDLQMergeSignalController(logger, dlqScope, store, registry, dlq.TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-mergesignal-dlq")},
-		{"conclude_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeyConclude), "orchestrator-conclude-dlq")},
-	}
-	var count int
-	for _, reg := range dlqRegs {
-		if err := c.Register(reg.ctl); err != nil {
-			return count, fmt.Errorf("failed to register %s controller: %w", reg.name, err)
-		}
-		count++
-	}
-
-	return count, nil
-}
-
-// getEnv returns environment variable value or default if not set.
-func getEnv(key, defaultVal string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
-	}
-	return defaultVal
-}
-
-// parseTimeout parses a duration from environment variable with fallback to default.
-// Returns defaultVal if envVal is empty or cannot be parsed.
-func parseTimeout(envVal string, defaultVal time.Duration) time.Duration {
-	if envVal == "" {
-		return defaultVal
-	}
-	if d, err := time.ParseDuration(envVal); err == nil {
-		return d
-	}
-	return defaultVal
 }
 
 // newChangeProvider creates a routing ChangeProvider containing GitHub and Phab ChangeProviders.
@@ -826,93 +394,22 @@ func newPhabChangeProvider(logger *zap.Logger, scope tally.Scope) (changeprovide
 	}), nil
 }
 
-// newQueueRegistry builds the per-queue extension profiles for the example.
-// Edge integrations (change provider) and the build
-// runner form a shared baseline; each per-queue profile starts from that
-// baseline and overrides only the extensions that differ — here the scorer and
-// conflict analyzer. Queues without an explicit profile fall back to the
-// baseline. This is the one place queue topology lives; extension packages stay
-// queue-agnostic.
-func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.Resolver) (queueRegistry, error) {
-	cp, err := newChangeProvider(logger, scope)
-	if err != nil {
-		return queueRegistry{}, fmt.Errorf("failed to create change provider: %w", err)
+// getEnv returns environment variable value or default if not set.
+func getEnv(key, defaultVal string) string {
+	if val := os.Getenv(key); val != "" {
+		return val
 	}
+	return defaultVal
+}
 
-	// batchLines buckets a batch by total lines changed across all its changes —
-	// larger batches are likelier to fail to land.
-	batchLines := func(_ context.Context, changes entity.BatchChanges) (int, error) {
-		return changes.TotalLinesChanged(), nil
+// parseTimeout parses a duration from environment variable with fallback to default.
+// Returns defaultVal if envVal is empty or cannot be parsed.
+func parseTimeout(envVal string, defaultVal time.Duration) time.Duration {
+	if envVal == "" {
+		return defaultVal
 	}
-
-	// Baseline profile: shared edge integrations + a fake build runner (every
-	// build succeeds unless a head URI carries a failure marker), plus permissive
-	// defaults for scorer and conflict. The build runner
-	// instance is shared by the build and buildsignal controllers (same
-	// profile, same instance) so a build's recorded outcome survives across
-	// their separate factory lookups.
-	//
-	// The scorer is wrapped by scorerfake so a change URI carrying
-	// "sq-fake=score-error" forces a scoring error end-to-end; it is a pure
-	// passthrough otherwise. The analyzer is wrapped by conflictfake with a nil
-	// predicate (passthrough) — swap the predicate (e.g. conflictfake.FailAlways)
-	// on a queue to exercise the analyzer error path, as e2e-conflict-error-queue
-	// below does.
-	base := queueExtensions{
-		changeProvider: cp,
-		buildRunner:    buildfake.New(resolver),
-		scorer: scorerfake.New(resolver, heuristic.New(
-			resolver,
-			[]heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.5}},
-			batchLines, scope.SubScope("scorer.default"),
-		)),
-		// TODO: replace the delegate with a real analyzer (e.g. Tango target
-		// analysis). "all" serializes the queue conservatively.
-		analyzer: conflictfake.New(all.New(), nil),
+	if d, err := time.ParseDuration(envVal); err == nil {
+		return d
 	}
-
-	// test-queue: bucketed heuristic scorer; conservative (serialized) conflicts
-	// inherited from the baseline.
-	testQueue := base
-	testQueue.scorer = scorerfake.New(resolver, heuristic.New(
-		resolver,
-		[]heuristic.Bucket{
-			{Min: 0, Max: 1, Score: 0.95},
-			{Min: 2, Max: 5, Score: 0.80},
-			{Min: 6, Max: 20, Score: 0.60},
-			{Min: 21, Max: 1<<31 - 1, Score: 0.40},
-		},
-		batchLines, scope.SubScope("scorer.test-queue"),
-	))
-
-	// e2e-test-queue: composite scorer; no conflicts (maximum parallelism).
-	e2eQueue := base
-	e2eQueue.analyzer = conflictfake.New(none.New(), nil)
-	e2eQueue.scorer = scorerfake.New(resolver, composite.New(
-		map[string]scorer.Scorer{
-			"size": heuristic.New(resolver, []heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.8}}, batchLines, scope),
-			"flat": heuristic.New(resolver, []heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.6}}, batchLines, scope),
-		},
-		composite.Avg, scope.SubScope("scorer.e2e-test-queue"),
-	))
-
-	// e2e-conflict-error-queue: every conflict analysis fails, exercising the
-	// analyzer error path. Scorer/edge integrations inherit the baseline.
-	conflictErrQueue := base
-	conflictErrQueue.analyzer = conflictfake.New(all.New(), conflictfake.FailAlways)
-
-	// file-overlap-queue: a real analyzer that serializes only batches sharing
-	// a changed file, resolving each batch's files itself via the resolver.
-	fileOverlapQueue := base
-	fileOverlapQueue.analyzer = fileoverlap.New(resolver)
-
-	return queueRegistry{
-		def: base,
-		byQueue: map[string]queueExtensions{
-			"test-queue":               testQueue,
-			"e2e-test-queue":           e2eQueue,
-			"e2e-conflict-error-queue": conflictErrQueue,
-			"file-overlap-queue":       fileOverlapQueue,
-		},
-	}, nil
+	return defaultVal
 }
