@@ -17,4 +17,4 @@ See [`doc/rfc/submitqueue/build-runner.md`](../../../doc/rfc/submitqueue/build-r
 - `githubactions`: proof-of-architecture backend that dispatches a GitHub
   Actions workflow. See [`githubactions/README.md`](githubactions/README.md)
   for the workflow inputs and example orchestrator environment variables.
-- `buildkite`: Buildkite-backed backend.
+- `buildkite`: Buildkite-backed backend. Its HTTP client and Buildkite-specific facts (state vocabulary, metadata env-var round-trip) live in [`platform/extension/buildrunner/buildkite`](../../../platform/extension/buildrunner/buildkite/README.md), shared with `stovepipe`'s own Buildkite backend.
