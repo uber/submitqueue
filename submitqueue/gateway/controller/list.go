@@ -45,7 +45,13 @@ type listPageToken struct {
 }
 
 // ListController handles bounded queue receipt-history queries.
-type ListController struct {
+type ListController interface {
+	List(ctx context.Context, req entity.ListRequest) (entity.ListResult, error)
+}
+
+var _ ListController = (*listController)(nil)
+
+type listController struct {
 	logger                   *zap.SugaredLogger
 	metricsScope             tally.Scope
 	requestQueueSummaryStore storage.RequestQueueSummaryStore
@@ -53,8 +59,8 @@ type ListController struct {
 }
 
 // NewListController creates a gateway list controller.
-func NewListController(logger *zap.SugaredLogger, scope tally.Scope, requestQueueSummaryStore storage.RequestQueueSummaryStore, queueConfigs queueconfig.Store) *ListController {
-	return &ListController{
+func NewListController(logger *zap.SugaredLogger, scope tally.Scope, requestQueueSummaryStore storage.RequestQueueSummaryStore, queueConfigs queueconfig.Store) ListController {
+	return &listController{
 		logger:                   logger,
 		metricsScope:             scope.SubScope("list_controller"),
 		requestQueueSummaryStore: requestQueueSummaryStore,
@@ -63,7 +69,7 @@ func NewListController(logger *zap.SugaredLogger, scope tally.Scope, requestQueu
 }
 
 // List returns one page of requests received for a queue in the supplied half-open time range.
-func (c *ListController) List(ctx context.Context, req entity.ListRequest) (result entity.ListResult, retErr error) {
+func (c *listController) List(ctx context.Context, req entity.ListRequest) (result entity.ListResult, retErr error) {
 	op := metrics.Begin(c.metricsScope, "list", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 

@@ -52,12 +52,12 @@ import (
 // GatewayServer wraps the controller and implements the gRPC service interface
 type GatewayServer struct {
 	pb.UnimplementedSubmitQueueGatewayServer
-	pingController           *controller.PingController
-	landController           *controller.LandController
-	cancelController         *controller.CancelController
-	requestSummaryController *controller.RequestSummaryController
-	listController           *controller.ListController
-	requestHistoryController *controller.RequestHistoryController
+	pingController           controller.PingController
+	landController           controller.LandController
+	cancelController         controller.CancelController
+	requestSummaryController controller.RequestSummaryController
+	listController           controller.ListController
+	requestHistoryController controller.RequestHistoryController
 }
 
 // Ping delegates to the controller

@@ -35,7 +35,13 @@ import (
 // and may still race a successful merge), publishes a CancelRequest to the cancel topic,
 // and returns a response. The orchestrator-side cancel controller performs the actual
 // state transitions and emits the terminal RequestStatusCancelled log entry.
-type CancelController struct {
+type CancelController interface {
+	Cancel(ctx context.Context, req entity.CancelRequest) error
+}
+
+var _ CancelController = (*cancelController)(nil)
+
+type cancelController struct {
 	logger              *zap.SugaredLogger
 	metricsScope        tally.Scope
 	requestSummaryStore storage.RequestSummaryStore
@@ -46,8 +52,8 @@ type CancelController struct {
 // NewCancelController creates a new instance of the gateway cancel controller.
 // The controller writes a RequestStatusCancelling log entry through the shared materializer and
 // publishes cancel requests to the topic registered under topickey.TopicKeyCancel.
-func NewCancelController(logger *zap.SugaredLogger, scope tally.Scope, store storage.Storage, registry consumer.TopicRegistry) *CancelController {
-	return &CancelController{
+func NewCancelController(logger *zap.SugaredLogger, scope tally.Scope, store storage.Storage, registry consumer.TopicRegistry) CancelController {
+	return &cancelController{
 		logger:              logger,
 		metricsScope:        scope,
 		requestSummaryStore: store.GetRequestSummaryStore(),
@@ -64,7 +70,7 @@ func NewCancelController(logger *zap.SugaredLogger, scope tally.Scope, store sto
 // completion before the cancel propagates may still land. The RequestStatusCancelling
 // entry written here records the user's intent; the terminal outcome is reflected by a
 // later RequestStatusCancelled (orchestrator side) or RequestStatusLanded entry.
-func (c *CancelController) Cancel(ctx context.Context, req entity.CancelRequest) (retErr error) {
+func (c *cancelController) Cancel(ctx context.Context, req entity.CancelRequest) (retErr error) {
 	const opName = "cancel"
 
 	op := metrics.Begin(c.metricsScope, opName, metrics.StorageLatencyBuckets)
@@ -113,7 +119,7 @@ func (c *CancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 }
 
 // publishToQueue publishes a cancel request to the cancel queue for async processing.
-func (c *CancelController) publishToQueue(ctx context.Context, cancelRequest entity.CancelRequest) error {
+func (c *cancelController) publishToQueue(ctx context.Context, cancelRequest entity.CancelRequest) error {
 	payload, err := cancelRequest.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize cancel request: %w", err)

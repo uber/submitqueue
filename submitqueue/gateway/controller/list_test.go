@@ -130,7 +130,7 @@ func TestList_Errors(t *testing.T) {
 	}
 }
 
-func newConfiguredListController(ctrl *gomock.Controller, store storage.RequestQueueSummaryStore) *ListController {
+func newConfiguredListController(ctrl *gomock.Controller, store storage.RequestQueueSummaryStore) ListController {
 	queueConfigs := qcmock.NewMockStore(ctrl)
 	queueConfigs.EXPECT().Get(gomock.Any(), "q").Return(entity.QueueConfig{}, nil)
 	return NewListController(zap.NewNop().Sugar(), tally.NoopScope, store, queueConfigs)

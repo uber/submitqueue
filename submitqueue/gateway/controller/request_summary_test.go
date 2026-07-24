@@ -80,7 +80,7 @@ func TestStatusErrors(t *testing.T) {
 	backendErr := fmt.Errorf("backend down")
 	tests := []struct {
 		name         string
-		call         func(*RequestSummaryController) error
+		call         func(RequestSummaryController) error
 		setup        func(*storagemock.MockRequestSummaryStore, *storagemock.MockRequestURIStore)
 		wantInvalid  bool
 		wantNotFound bool
@@ -90,7 +90,7 @@ func TestStatusErrors(t *testing.T) {
 	}{
 		{
 			name: "empty sqid",
-			call: func(c *RequestSummaryController) error {
+			call: func(c RequestSummaryController) error {
 				_, err := c.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{})
 				return err
 			},
@@ -99,7 +99,7 @@ func TestStatusErrors(t *testing.T) {
 		},
 		{
 			name: "empty change URI",
-			call: func(c *RequestSummaryController) error {
+			call: func(c RequestSummaryController) error {
 				_, err := c.GetRequestSummaryByChangeURI(context.Background(), entity.GetRequestSummaryByChangeURIRequest{})
 				return err
 			},
@@ -111,7 +111,7 @@ func TestStatusErrors(t *testing.T) {
 			setup: func(summaryStore *storagemock.MockRequestSummaryStore, _ *storagemock.MockRequestURIStore) {
 				summaryStore.EXPECT().Get(gomock.Any(), "missing/1").Return(entity.RequestSummary{}, storage.ErrNotFound)
 			},
-			call: func(c *RequestSummaryController) error {
+			call: func(c RequestSummaryController) error {
 				_, err := c.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "missing/1"})
 				return err
 			},
@@ -126,7 +126,7 @@ func TestStatusErrors(t *testing.T) {
 					Status:    entity.RequestStatusAccepting,
 				}, nil)
 			},
-			call: func(c *RequestSummaryController) error {
+			call: func(c RequestSummaryController) error {
 				_, err := c.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "queue/1"})
 				return err
 			},
@@ -138,7 +138,7 @@ func TestStatusErrors(t *testing.T) {
 			setup: func(summaryStore *storagemock.MockRequestSummaryStore, _ *storagemock.MockRequestURIStore) {
 				summaryStore.EXPECT().Get(gomock.Any(), "queue/1").Return(entity.RequestSummary{}, backendErr)
 			},
-			call: func(c *RequestSummaryController) error {
+			call: func(c RequestSummaryController) error {
 				_, err := c.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "queue/1"})
 				return err
 			},
@@ -148,7 +148,7 @@ func TestStatusErrors(t *testing.T) {
 			setup: func(_ *storagemock.MockRequestSummaryStore, uriStore *storagemock.MockRequestURIStore) {
 				uriStore.EXPECT().ListByURI(gomock.Any(), "uri", 101).Return([]entity.RequestURI{}, nil)
 			},
-			call: func(c *RequestSummaryController) error {
+			call: func(c RequestSummaryController) error {
 				_, err := c.GetRequestSummaryByChangeURI(context.Background(), entity.GetRequestSummaryByChangeURIRequest{ChangeURI: "uri"})
 				return err
 			},
@@ -160,7 +160,7 @@ func TestStatusErrors(t *testing.T) {
 			setup: func(_ *storagemock.MockRequestSummaryStore, uriStore *storagemock.MockRequestURIStore) {
 				uriStore.EXPECT().ListByURI(gomock.Any(), "uri", 101).Return(make([]entity.RequestURI, 101), nil)
 			},
-			call: func(c *RequestSummaryController) error {
+			call: func(c RequestSummaryController) error {
 				_, err := c.GetRequestSummaryByChangeURI(context.Background(), entity.GetRequestSummaryByChangeURIRequest{ChangeURI: "uri"})
 				return err
 			},
@@ -173,7 +173,7 @@ func TestStatusErrors(t *testing.T) {
 				uriStore.EXPECT().ListByURI(gomock.Any(), "uri", 101).Return([]entity.RequestURI{{RequestID: "missing/1"}}, nil)
 				summaryStore.EXPECT().Get(gomock.Any(), "missing/1").Return(entity.RequestSummary{}, storage.ErrNotFound)
 			},
-			call: func(c *RequestSummaryController) error {
+			call: func(c RequestSummaryController) error {
 				_, err := c.GetRequestSummaryByChangeURI(context.Background(), entity.GetRequestSummaryByChangeURIRequest{ChangeURI: "uri"})
 				return err
 			},

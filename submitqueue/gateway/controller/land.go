@@ -62,7 +62,13 @@ func IsUnrecognizedQueue(err error) bool {
 }
 
 // LandController handles land business logic for the gateway
-type LandController struct {
+type LandController interface {
+	Land(ctx context.Context, req entity.LandRequest) (entity.LandResult, error)
+}
+
+var _ LandController = (*landController)(nil)
+
+type landController struct {
 	logger       *zap.SugaredLogger
 	metricsScope tally.Scope
 	counter      counter.Counter
@@ -75,8 +81,8 @@ type LandController struct {
 // NewLandController creates a new instance of the gateway land controller.
 // The controller publishes land requests to the topic registered under
 // topickey.TopicKeyStart in the registry.
-func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter counter.Counter, store storage.Storage, queueConfigs queueconfig.Store, registry consumer.TopicRegistry) *LandController {
-	return &LandController{
+func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter counter.Counter, store storage.Storage, queueConfigs queueconfig.Store, registry consumer.TopicRegistry) LandController {
+	return &landController{
 		logger:       logger,
 		metricsScope: scope.SubScope("land_controller"),
 		counter:      counter,
@@ -88,7 +94,7 @@ func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter cou
 }
 
 // Land handles the land request and returns the ID assigned to the accepted request.
-func (c *LandController) Land(ctx context.Context, req entity.LandRequest) (result entity.LandResult, retErr error) {
+func (c *landController) Land(ctx context.Context, req entity.LandRequest) (result entity.LandResult, retErr error) {
 	const opName = "land"
 
 	op := metrics.Begin(c.metricsScope, opName, metrics.StorageLatencyBuckets)
@@ -179,7 +185,7 @@ func (c *LandController) Land(ctx context.Context, req entity.LandRequest) (resu
 }
 
 // publishToQueue publishes a land request to the request queue for async processing.
-func (c *LandController) publishToQueue(ctx context.Context, landRequest entity.LandRequest) error {
+func (c *landController) publishToQueue(ctx context.Context, landRequest entity.LandRequest) error {
 	// Serialize land request entity to JSON
 	payload, err := landRequest.ToBytes()
 	if err != nil {

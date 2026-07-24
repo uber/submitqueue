@@ -27,7 +27,14 @@ import (
 )
 
 // RequestSummaryController handles materialized request-summary lookups for the gateway.
-type RequestSummaryController struct {
+type RequestSummaryController interface {
+	GetRequestSummaryByID(ctx context.Context, req entity.GetRequestSummaryByIDRequest) (entity.RequestSummary, error)
+	GetRequestSummaryByChangeURI(ctx context.Context, req entity.GetRequestSummaryByChangeURIRequest) ([]entity.RequestSummary, error)
+}
+
+var _ RequestSummaryController = (*requestSummaryController)(nil)
+
+type requestSummaryController struct {
 	logger              *zap.SugaredLogger
 	metricsScope        tally.Scope
 	requestSummaryStore storage.RequestSummaryStore
@@ -35,8 +42,8 @@ type RequestSummaryController struct {
 }
 
 // NewRequestSummaryController creates a gateway request-summary controller.
-func NewRequestSummaryController(logger *zap.SugaredLogger, scope tally.Scope, requestSummaryStore storage.RequestSummaryStore, requestURIStore storage.RequestURIStore) *RequestSummaryController {
-	return &RequestSummaryController{
+func NewRequestSummaryController(logger *zap.SugaredLogger, scope tally.Scope, requestSummaryStore storage.RequestSummaryStore, requestURIStore storage.RequestURIStore) RequestSummaryController {
+	return &requestSummaryController{
 		logger:              logger,
 		metricsScope:        scope.SubScope("request_summary_controller"),
 		requestSummaryStore: requestSummaryStore,
@@ -45,7 +52,7 @@ func NewRequestSummaryController(logger *zap.SugaredLogger, scope tally.Scope, r
 }
 
 // GetRequestSummaryByID returns the current materialized view of one request.
-func (c *RequestSummaryController) GetRequestSummaryByID(ctx context.Context, req entity.GetRequestSummaryByIDRequest) (summary entity.RequestSummary, retErr error) {
+func (c *requestSummaryController) GetRequestSummaryByID(ctx context.Context, req entity.GetRequestSummaryByIDRequest) (summary entity.RequestSummary, retErr error) {
 	op := metrics.Begin(c.metricsScope, "get_by_id", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
@@ -72,7 +79,7 @@ func (c *RequestSummaryController) GetRequestSummaryByID(ctx context.Context, re
 }
 
 // GetRequestSummaryByChangeURI returns current materialized views for an exact pinned change URI.
-func (c *RequestSummaryController) GetRequestSummaryByChangeURI(ctx context.Context, req entity.GetRequestSummaryByChangeURIRequest) (summaries []entity.RequestSummary, retErr error) {
+func (c *requestSummaryController) GetRequestSummaryByChangeURI(ctx context.Context, req entity.GetRequestSummaryByChangeURIRequest) (summaries []entity.RequestSummary, retErr error) {
 	op := metrics.Begin(c.metricsScope, "get_by_change_uri", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
