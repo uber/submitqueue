@@ -27,7 +27,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
-	"github.com/uber/submitqueue/submitqueue/extension/scorer"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"github.com/uber/submitqueue/submitqueue/extension/validator"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller"
@@ -40,7 +39,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/merge"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/mergeconflictsignal"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/mergesignal"
-	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/score"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/speculate"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/start"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/validate"
@@ -70,9 +68,6 @@ type Deps struct {
 	// ChangeProvider resolves the change provider for each queue.
 	ChangeProvider changeprovider.Factory
 
-	// Scorer resolves the scorer for each queue.
-	Scorer scorer.Factory
-
 	// Analyzer resolves the conflict analyzer for each queue.
 	Analyzer conflict.Factory
 
@@ -85,11 +80,11 @@ type Deps struct {
 //
 // Pipeline:
 //
-//	start → cancel → validate ⇢ (runway) ⇢ mergeconflictsignal → batch → score → speculate → build → buildsignal ─┐
-//	                                                                       ↑     ↘             ↻ poll       │
-//	                                                                       │      merge → conclude          │
-//	                                                                       │        │                       │
-//	                                                                       └────────┴───────────────────────┘
+//	start → cancel → validate ⇢ (runway) ⇢ mergeconflictsignal → batch → speculate → build → buildsignal ─┐
+//	                                                                       ↑  ↘             ↻ poll       │
+//	                                                                       │   merge → conclude          │
+//	                                                                       │     │                       │
+//	                                                                       └─────┴───────────────────────┘
 var Stages = []pipeline.Stage[Deps]{
 	{
 		Key:           topickey.TopicKeyStart,
@@ -144,17 +139,6 @@ var Stages = []pipeline.Stage[Deps]{
 		},
 		DLQ: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
 			return dlq.NewDLQRequestController(d.Logger, d.Scope, d.Storage, sc.Registry, dlq.DecodeRequestID, sc.TopicKey, sc.ConsumerGroup), nil
-		},
-	},
-	{
-		Key:           topickey.TopicKeyScore,
-		Name:          "score",
-		ConsumerGroup: "orchestrator-score",
-		New: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
-			return score.NewController(d.Logger, d.Scope, d.Storage, d.Scorer, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
-		},
-		DLQ: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
-			return dlq.NewDLQBatchController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 	},
 	{
