@@ -7,17 +7,19 @@ go_test(
         "suite_test.go",
     ],
     data = [
-        "//:MODULE.bazel",
-        "//:go.mod",
         "//platform/extension/counter/mysql/schema",
         "//platform/extension/messagequeue/mysql/schema",
+        "//service/runway/server:docker_test_context",
         "//service/submitqueue:docker-compose.yml",
+        "//service/submitqueue/gateway/server:docker_test_context",
+        "//service/submitqueue/orchestrator/server:docker_test_context",
         "//submitqueue/extension/storage/mysql/schema",
     ],
     tags = [
         "e2e",
         "external",
         "integration",
+        "requires-network",
     ],
     deps = [
         "//api/base/change/protopb:go_default_library",

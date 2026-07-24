@@ -62,7 +62,7 @@ make e2e-test
 
 # Build
 make build                          # Build all targets
-make build-all-linux                # Build Linux binaries for Docker
+make build-all-linux                # Build Linux binaries for manual Compose workflows
 ```
 
 ### Testing Levels
@@ -88,10 +88,13 @@ make build-all-linux                # Build Linux binaries for Docker
 
 Tests use **docker-compose** via `ComposeStack` to spin up containers automatically:
 
-1. `NewComposeStack()` registers cleanup (stop log tailing, tear down containers)
-2. `Up()` starts containers, waits for healthchecks (`--wait`), and auto-tails container logs to stderr
-3. Tests run against those containers with **real-time log output**
-4. On cleanup, containers are torn down automatically (set `SKIP_CLEANUP=true` to keep them for inspection)
+1. Each `go_test` declares its Compose file, schemas, Dockerfiles, configuration, and cross-compiled Linux service binaries in Bazel `data`.
+2. `NewComposeStack()` resolves only those Bazel runfiles and stages the declared Docker build-context files in a temporary directory.
+3. `Up()` starts containers, waits for healthchecks (`--wait`), and auto-tails container logs to stderr.
+4. Tests run against those containers with **real-time log output**.
+5. On cleanup, containers are torn down automatically (set `SKIP_CLEANUP=true` to keep them for inspection).
+
+Automated Docker tests do not discover or mount the repository checkout. A test that adds a build-context input must add it to its Bazel `data` dependencies and its `ComposeConfig.DockerBuildContext` mapping.
 
 ---
 

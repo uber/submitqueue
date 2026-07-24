@@ -16,10 +16,10 @@ package orchestrator
 
 // Orchestrator Integration Tests
 //
-// These tests use docker-compose from service/submitqueue/orchestrator/server/docker-compose.yml
-// which requires pre-built Linux binaries.
+// These tests use docker-compose from service/submitqueue/orchestrator/server/docker-compose.yml.
+// Bazel cross-compiles and declares every Docker build-context input.
 //
-// Run with make target (builds binary + runs test):
+// Run with:
 //   make integration-test-orchestrator
 //
 // For manual testing with docker-compose:
@@ -28,7 +28,6 @@ package orchestrator
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -60,14 +59,13 @@ func (s *OrchestratorIntegrationSuite) SetupSuite() {
 
 	s.log.Logf("Starting Orchestrator integration test suite using docker-compose")
 
-	// Set REPO_ROOT for docker-compose volume mounts and build context
-	repoRoot := testutil.FindRepoRoot(t)
-	t.Setenv("REPO_ROOT", repoRoot)
-
-	// Use docker-compose from service/submitqueue/orchestrator/server
-	// NOTE: Assumes Linux binary is pre-built via make target
-	composeFile := filepath.Join(repoRoot, "service/submitqueue/orchestrator/server/docker-compose.yml")
-	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "svc-submitqueue-orchestrator")
+	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, testutil.ComposeConfig{
+		ComposeFile: "service/submitqueue/orchestrator/server/docker-compose.yml",
+		DockerBuildContext: []testutil.DockerBuildContextFile{
+			{Runfile: "service/submitqueue/orchestrator/server/orchestrator_linux_amd64", Path: ".docker-bin/orchestrator"},
+			{Runfile: "service/submitqueue/orchestrator/server/Dockerfile", Path: "service/submitqueue/orchestrator/server/Dockerfile"},
+		},
+	}, "svc-submitqueue-orchestrator")
 
 	// Start the compose stack (Orchestrator + 2 MySQL DBs)
 	err := s.stack.Up()

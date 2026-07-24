@@ -1,8 +1,19 @@
-load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+load("@rules_go//go:def.bzl", "go_binary", "go_cross_binary", "go_library", "go_test")
 
 exports_files(
     ["docker-compose.yml"],
     visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "docker_test_context",
+    testonly = True,
+    srcs = [
+        "Dockerfile",
+        "queues.yaml",
+        ":gateway_linux_amd64",
+    ],
+    visibility = ["//test:__subpackages__"],
 )
 
 go_library(
@@ -39,6 +50,12 @@ go_binary(
     name = "gateway",
     embed = [":gateway_lib"],
     visibility = ["//visibility:public"],
+)
+
+go_cross_binary(
+    name = "gateway_linux_amd64",
+    platform = "@rules_go//go/toolchain:linux_amd64",
+    target = ":gateway",
 )
 
 go_test(

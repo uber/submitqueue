@@ -1,4 +1,14 @@
-load("@rules_go//go:def.bzl", "go_binary", "go_library")
+load("@rules_go//go:def.bzl", "go_binary", "go_cross_binary", "go_library")
+
+filegroup(
+    name = "docker_test_context",
+    testonly = True,
+    srcs = [
+        "Dockerfile",
+        ":stovepipe_linux_amd64",
+    ],
+    visibility = ["//test:__subpackages__"],
+)
 
 go_library(
     name = "go_default_library",
@@ -39,4 +49,10 @@ go_binary(
     name = "stovepipe",
     embed = [":go_default_library"],
     visibility = ["//visibility:public"],
+)
+
+go_cross_binary(
+    name = "stovepipe_linux_amd64",
+    platform = "@rules_go//go/toolchain:linux_amd64",
+    target = ":stovepipe",
 )

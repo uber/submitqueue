@@ -59,7 +59,7 @@ services:
   stovepipe-service:
     image: ${SQ_DOCKER_IMAGE_PREFIX:-submitqueue}-stovepipe-service:latest
     build:
-      context: ${REPO_ROOT}
+      context: ${SQ_DOCKER_BUILD_CONTEXT}
       dockerfile: service/stovepipe/server/Dockerfile
     ports:
       - "8080" # Random ephemeral port to avoid conflicts

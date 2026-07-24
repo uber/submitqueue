@@ -16,10 +16,10 @@ package gateway
 
 // Gateway Integration Tests
 //
-// These tests use docker-compose from service/submitqueue/gateway/server/docker-compose.yml
-// which requires pre-built Linux binaries.
+// These tests use docker-compose from service/submitqueue/gateway/server/docker-compose.yml.
+// Bazel cross-compiles and declares every Docker build-context input.
 //
-// Run with make target (builds binary + runs test):
+// Run with:
 //   make integration-test-gateway
 //
 // For manual testing with docker-compose:
@@ -29,7 +29,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -85,14 +84,14 @@ func (s *GatewayIntegrationSuite) SetupSuite() {
 
 	s.log.Logf("Starting Gateway integration test suite using docker-compose")
 
-	// Set REPO_ROOT for docker-compose volume mounts and build context
-	repoRoot := testutil.FindRepoRoot(t)
-	t.Setenv("REPO_ROOT", repoRoot)
-
-	// Use docker-compose from service/submitqueue/gateway/server
-	// NOTE: Assumes Linux binary is pre-built via make target
-	composeFile := filepath.Join(repoRoot, "service/submitqueue/gateway/server/docker-compose.yml")
-	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "svc-submitqueue-gateway")
+	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, testutil.ComposeConfig{
+		ComposeFile: "service/submitqueue/gateway/server/docker-compose.yml",
+		DockerBuildContext: []testutil.DockerBuildContextFile{
+			{Runfile: "service/submitqueue/gateway/server/gateway_linux_amd64", Path: ".docker-bin/gateway"},
+			{Runfile: "service/submitqueue/gateway/server/Dockerfile", Path: "service/submitqueue/gateway/server/Dockerfile"},
+			{Runfile: "service/submitqueue/gateway/server/queues.yaml", Path: "service/submitqueue/gateway/server/queues.yaml"},
+		},
+	}, "svc-submitqueue-gateway")
 
 	// Start the compose stack (Gateway + 2 MySQL DBs)
 	err := s.stack.Up()

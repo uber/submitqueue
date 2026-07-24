@@ -61,7 +61,7 @@ func (s *SQLQueueIntegrationSuite) SetupSuite() {
 		t,
 		s.log,
 		s.ctx,
-		"docker-compose.yml",
+		testutil.ComposeConfig{ComposeFile: "test/integration/extension/messagequeue/mysql/docker-compose.yml"},
 		"ext-messagequeue-sql", // Test context for meaningful container names
 	)
 

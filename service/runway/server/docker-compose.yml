@@ -37,7 +37,7 @@ services:
   runway-service:
     image: ${SQ_DOCKER_IMAGE_PREFIX:-submitqueue}-runway-service:latest
     build:
-      context: ${REPO_ROOT}
+      context: ${SQ_DOCKER_BUILD_CONTEXT}
       dockerfile: service/runway/server/Dockerfile
     ports:
       - "8080" # Random ephemeral port to avoid conflicts
