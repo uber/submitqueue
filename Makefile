@@ -60,7 +60,9 @@ build: ## Build all services and examples
 	@$(BAZEL) build //...
 	@echo "Build complete!"
 
-# Build Linux binaries required for Docker containers
+# Build Linux binaries required for the local docker-compose flows (local-*).
+# Bazel-run integration/e2e tests do NOT need these: they build the service
+# binaries hermetically as data dependencies.
 build-all-linux: build-submitqueue-gateway-linux build-submitqueue-orchestrator-linux build-stovepipe-linux build-runway-linux ## Build all Linux binaries for Docker
 	@echo "All Linux binaries ready for Docker"
 
@@ -132,7 +134,7 @@ clean-proto: ## Clean generated proto files
 deps: tidy-go ## Download and tidy Go dependencies
 	@echo "Dependencies installed!"
 
-e2e-test: build-all-linux ## Run end-to-end tests (hermetic, auto-builds binaries; runs in parallel)
+e2e-test: ## Run end-to-end tests (hermetic; Bazel builds all inputs; runs in parallel)
 	@echo "Running end-to-end tests (parallel)..."
 	@$(BAZEL) test //test/e2e/... --test_output=errors
 
@@ -147,7 +149,7 @@ gazelle: ## Update BUILD.bazel files
 	@echo "Running Gazelle to update BUILD files..."
 	@$(BAZEL) run //:gazelle
 
-integration-test: build-all-linux ## Run all integration tests (auto-builds binaries; runs in parallel)
+integration-test: ## Run all integration tests (hermetic; Bazel builds all inputs; runs in parallel)
 	@echo "Running all integration tests (parallel)..."
 	@$(BAZEL) test //test/integration/... --test_output=errors
 
@@ -159,11 +161,11 @@ integration-test-extensions: ## Run extension integration tests (runs in paralle
 	@echo "Running extension integration tests (parallel)..."
 	@$(BAZEL) test //test/integration/submitqueue/extension/... //test/integration/extension/... --test_output=errors
 
-integration-test-submitqueue-gateway: build-submitqueue-gateway-linux ## Run Gateway integration tests (auto-builds binary)
+integration-test-submitqueue-gateway: ## Run Gateway integration tests
 	@echo "Running Gateway integration tests..."
 	@$(BAZEL) test //test/integration/submitqueue/gateway:go_default_test --test_output=streamed
 
-integration-test-submitqueue-orchestrator: build-submitqueue-orchestrator-linux ## Run Orchestrator integration tests (auto-builds binary)
+integration-test-submitqueue-orchestrator: ## Run Orchestrator integration tests
 	@echo "Running Orchestrator integration tests..."
 	@$(BAZEL) test //test/integration/submitqueue/orchestrator:go_default_test --test_output=streamed
 

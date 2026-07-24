@@ -16,19 +16,17 @@ package orchestrator
 
 // Orchestrator Integration Tests
 //
-// These tests use docker-compose from service/submitqueue/orchestrator/server/docker-compose.yml
-// which requires pre-built Linux binaries.
+// These tests use docker-compose from service/submitqueue/orchestrator/server/docker-compose.yml.
+// They are hermetic: the orchestrator image is built from a staged context
+// whose inputs (Bazel-built Linux binary, Dockerfile) are all declared data
+// dependencies of the test target.
 //
-// Run with make target (builds binary + runs test):
-//   make integration-test-orchestrator
-//
-// For manual testing with docker-compose:
-//   make docker-orchestrator
+// Run with:
+//   make integration-test-submitqueue-orchestrator
 
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -60,14 +58,15 @@ func (s *OrchestratorIntegrationSuite) SetupSuite() {
 
 	s.log.Logf("Starting Orchestrator integration test suite using docker-compose")
 
-	// Set REPO_ROOT for docker-compose volume mounts and build context
-	repoRoot := testutil.FindRepoRoot(t)
-	t.Setenv("REPO_ROOT", repoRoot)
-
-	// Use docker-compose from service/submitqueue/orchestrator/server
-	// NOTE: Assumes Linux binary is pre-built via make target
-	composeFile := filepath.Join(repoRoot, "service/submitqueue/orchestrator/server/docker-compose.yml")
-	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "svc-submitqueue-orchestrator")
+	// Use docker-compose from service/submitqueue/orchestrator/server,
+	// resolved from the test runfiles. The orchestrator image is built from a
+	// staged build context assembled entirely from declared data dependencies.
+	composeFile := testutil.Runfile("service/submitqueue/orchestrator/server/docker-compose.yml")
+	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "svc-submitqueue-orchestrator",
+		testutil.WithBuildContext(map[string]string{
+			".docker-bin/orchestrator":                           "service/submitqueue/orchestrator/server/orchestrator_linux",
+			"service/submitqueue/orchestrator/server/Dockerfile": "service/submitqueue/orchestrator/server/Dockerfile",
+		}))
 
 	// Start the compose stack (Orchestrator + 2 MySQL DBs)
 	err := s.stack.Up()
