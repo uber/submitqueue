@@ -62,7 +62,7 @@ make e2e-test
 
 # Build
 make build                          # Build all targets
-make build-all-linux                # Build Linux binaries for Docker
+make build-all-linux                # Build Linux binaries for the local docker-compose flows (tests build their own)
 ```
 
 ### Testing Levels

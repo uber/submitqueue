@@ -5,13 +5,11 @@ go_test(
     srcs = ["queue_test.go"],
     data = [
         "docker-compose.yml",
-        "//:MODULE.bazel",
-        "//:go.mod",
         "//platform/extension/messagequeue/mysql/schema",
     ],
     tags = [
-        "external",
         "integration",
+        "requires-network",
     ],
     deps = [
         "//platform/base/messagequeue:go_default_library",

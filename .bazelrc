@@ -4,3 +4,21 @@ common --repository_cache=~/.cache/bazel-repo-cache
 # Resolve protoc from a registered toolchain (toolchains_protoc provides a
 # prebuilt binary) instead of compiling protoc from source. Introduced in Bazel 7.
 common --incompatible_enable_proto_toolchain_resolution
+
+# Hermetic execution: actions and tests run with a static environment instead
+# of inheriting the client's, so results are reproducible and cache correctly
+# across shells and machines.
+common --incompatible_strict_action_env
+
+# Stricter sandbox: sandboxed actions get no network access by default (each
+# runs in its own network namespace with only a private loopback). Tests that
+# talk to the Docker daemon and connect to its published host ports opt back
+# in with tags = ["requires-network"].
+common --sandbox_default_allow_network=false
+
+# Docker-based tests are hermetic (all inputs are declared Bazel data deps),
+# but a few environment knobs are deliberately passed through when set:
+# DOCKER_HOST selects a non-default Docker daemon; SKIP_CLEANUP=true keeps
+# containers running after a failure for inspection.
+test --test_env=DOCKER_HOST
+test --test_env=SKIP_CLEANUP

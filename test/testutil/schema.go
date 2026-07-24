@@ -26,16 +26,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Runfile resolves a workspace-relative path (e.g.
+// "service/submitqueue/docker-compose.yml") to an absolute path inside the
+// Bazel runfiles tree. Every resolved path must be declared as a `data`
+// dependency of the test target — that is what keeps Docker-based tests
+// hermetic. Outside Bazel (plain `go test` from the repo root) the path is
+// returned unchanged.
+func Runfile(relativePath string) string {
+	if dir := os.Getenv("TEST_SRCDIR"); dir != "" {
+		return filepath.Join(dir, os.Getenv("TEST_WORKSPACE"), relativePath)
+	}
+	return relativePath
+}
+
 // SchemaDir returns the path to a schema directory.
 // It checks for both Bazel runfiles and direct go test paths.
 // relativePath should be like "submitqueue/extension/storage/mysql/schema" or "platform/extension/messagequeue/mysql/schema"
 func SchemaDir(relativePath string) string {
-	// Bazel runfiles path
-	if dir := os.Getenv("TEST_SRCDIR"); dir != "" {
-		return filepath.Join(dir, os.Getenv("TEST_WORKSPACE"), relativePath)
-	}
-	// Direct go test path (run from repo root)
-	return relativePath
+	return Runfile(relativePath)
 }
 
 // ApplySchema reads all .sql files from the schema directory and executes them on the database.
