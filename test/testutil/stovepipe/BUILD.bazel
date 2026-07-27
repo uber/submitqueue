@@ -1,0 +1,13 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["process.go"],
+    importpath = "github.com/uber/submitqueue/test/testutil/stovepipe",
+    visibility = ["//test:__subpackages__"],
+    deps = [
+        "//stovepipe/core/messagequeue:go_default_library",
+        "//stovepipe/entity:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+    ],
+)
