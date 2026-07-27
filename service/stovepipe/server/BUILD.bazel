@@ -1,4 +1,9 @@
-load("@rules_go//go:def.bzl", "go_binary", "go_library")
+load("@rules_go//go:def.bzl", "go_binary", "go_cross_binary", "go_library")
+
+exports_files(
+    ["Dockerfile"],
+    visibility = ["//visibility:public"],
+)
 
 go_library(
     name = "go_default_library",
@@ -38,5 +43,15 @@ go_library(
 go_binary(
     name = "stovepipe",
     embed = [":go_default_library"],
+    visibility = ["//visibility:public"],
+)
+
+# Linux binary consumed by the Docker image build. Docker-based tests depend on
+# this target as data so Bazel builds the exact binary that ends up in the
+# container image — no pre-built .docker-bin artifacts required.
+go_cross_binary(
+    name = "stovepipe_linux",
+    platform = "@rules_go//go/toolchain:linux_amd64",
+    target = ":stovepipe",
     visibility = ["//visibility:public"],
 )

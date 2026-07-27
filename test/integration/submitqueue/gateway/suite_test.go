@@ -16,20 +16,18 @@ package gateway
 
 // Gateway Integration Tests
 //
-// These tests use docker-compose from service/submitqueue/gateway/server/docker-compose.yml
-// which requires pre-built Linux binaries.
+// These tests use docker-compose from service/submitqueue/gateway/server/docker-compose.yml.
+// They are hermetic: the gateway image is built from a staged context whose
+// inputs (Bazel-built Linux binary, Dockerfile, queues.yaml) are all declared
+// data dependencies of the test target.
 //
-// Run with make target (builds binary + runs test):
-//   make integration-test-gateway
-//
-// For manual testing with docker-compose:
-//   make docker-gateway
+// Run with:
+//   make integration-test-submitqueue-gateway
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -85,14 +83,16 @@ func (s *GatewayIntegrationSuite) SetupSuite() {
 
 	s.log.Logf("Starting Gateway integration test suite using docker-compose")
 
-	// Set REPO_ROOT for docker-compose volume mounts and build context
-	repoRoot := testutil.FindRepoRoot(t)
-	t.Setenv("REPO_ROOT", repoRoot)
-
-	// Use docker-compose from service/submitqueue/gateway/server
-	// NOTE: Assumes Linux binary is pre-built via make target
-	composeFile := filepath.Join(repoRoot, "service/submitqueue/gateway/server/docker-compose.yml")
-	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "svc-submitqueue-gateway")
+	// Use docker-compose from service/submitqueue/gateway/server, resolved
+	// from the test runfiles. The gateway image is built from a staged build
+	// context assembled entirely from declared data dependencies.
+	composeFile := testutil.Runfile("service/submitqueue/gateway/server/docker-compose.yml")
+	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "svc-submitqueue-gateway",
+		testutil.WithBuildContext(map[string]string{
+			".docker-bin/gateway":                            "service/submitqueue/gateway/server/gateway_linux",
+			"service/submitqueue/gateway/server/Dockerfile":  "service/submitqueue/gateway/server/Dockerfile",
+			"service/submitqueue/gateway/server/queues.yaml": "service/submitqueue/gateway/server/queues.yaml",
+		}))
 
 	// Start the compose stack (Gateway + 2 MySQL DBs)
 	err := s.stack.Up()

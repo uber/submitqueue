@@ -16,13 +16,16 @@ package e2e_test
 
 // Stovepipe end-to-end tests.
 //
-// These tests use docker-compose from service/stovepipe/docker-compose.yml,
-// which requires a pre-built Linux binary. Run with the make target (builds
-// binaries + runs the test):
+// These tests use docker-compose from service/stovepipe/docker-compose.yml.
+// They are hermetic: the stovepipe image is built from a staged context whose
+// inputs (Bazel-built Linux binary, Dockerfile) are all declared data
+// dependencies of the test target.
+//
+// Run with:
 //
 //   make e2e-test
 //
-// or only this package (after building the binary):
+// or only this package:
 //
 //   bazel test //test/e2e/stovepipe:stovepipe_test
 //
@@ -35,7 +38,6 @@ package e2e_test
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -80,12 +82,15 @@ func (s *StovepipeE2ESuite) SetupSuite() {
 
 	s.log.Logf("Starting Stovepipe e2e test suite using docker-compose")
 
-	// Set REPO_ROOT for the docker-compose build context.
-	repoRoot := testutil.FindRepoRoot(t)
-	t.Setenv("REPO_ROOT", repoRoot)
-
-	composeFile := filepath.Join(repoRoot, "service/stovepipe/docker-compose.yml")
-	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "e2e-stovepipe")
+	// Compose file and image build inputs come from the test runfiles; the
+	// stovepipe image is built from a staged build context assembled entirely
+	// from declared data dependencies.
+	composeFile := testutil.Runfile("service/stovepipe/docker-compose.yml")
+	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "e2e-stovepipe",
+		testutil.WithBuildContext(map[string]string{
+			".docker-bin/stovepipe":               "service/stovepipe/server/stovepipe_linux",
+			"service/stovepipe/server/Dockerfile": "service/stovepipe/server/Dockerfile",
+		}))
 
 	err := s.stack.Up()
 	require.NoError(t, err, "failed to start compose stack")

@@ -4,15 +4,15 @@ go_test(
     name = "go_default_test",
     srcs = ["suite_test.go"],
     data = [
-        "//:MODULE.bazel",
-        "//:go.mod",
         "//platform/extension/messagequeue/mysql/schema",
         "//service/stovepipe:docker-compose.yml",
+        "//service/stovepipe/server:Dockerfile",
+        "//service/stovepipe/server:stovepipe_linux",
         "//stovepipe/extension/storage/mysql/schema",
     ],
     tags = [
-        "external",
         "integration",
+        "requires-network",
     ],
     deps = [
         "//api/stovepipe/protopb:go_default_library",

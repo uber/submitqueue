@@ -16,11 +16,11 @@ package stovepipe
 
 // Stovepipe integration tests
 //
-// These tests use compose from service/stovepipe/docker-compose.yml and require
-// a pre-built Linux binary (make integration-test runs //test/integration/...
-// and builds all Linux binaries via build-all-linux). The stack runs the
-// Stovepipe gRPC service plus a storage MySQL (request, request_uri) and a queue
-// MySQL (process stage).
+// These tests use compose from service/stovepipe/docker-compose.yml. They are
+// hermetic: the stovepipe image is built from a staged context whose inputs
+// (Bazel-built Linux binary, Dockerfile) are all declared data dependencies of
+// the test target. The stack runs the Stovepipe gRPC service plus a storage
+// MySQL (request, request_uri) and a queue MySQL (process stage).
 //
 // Run with:
 //   make integration-test
@@ -30,7 +30,6 @@ package stovepipe
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
 	"testing"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -63,11 +62,15 @@ func (s *StovepipeIntegrationSuite) SetupSuite() {
 
 	s.log.Logf("Starting Stovepipe integration test suite using compose")
 
-	repoRoot := testutil.FindRepoRoot(t)
-	t.Setenv("REPO_ROOT", repoRoot)
-
-	composeFile := filepath.Join(repoRoot, "service/stovepipe/docker-compose.yml")
-	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "svc-stovepipe")
+	// Compose file and image build inputs come from the test runfiles; the
+	// stovepipe image is built from a staged build context assembled entirely
+	// from declared data dependencies.
+	composeFile := testutil.Runfile("service/stovepipe/docker-compose.yml")
+	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "svc-stovepipe",
+		testutil.WithBuildContext(map[string]string{
+			".docker-bin/stovepipe":               "service/stovepipe/server/stovepipe_linux",
+			"service/stovepipe/server/Dockerfile": "service/stovepipe/server/Dockerfile",
+		}))
 
 	err := s.stack.Up()
 	require.NoError(t, err, "failed to start compose stack")
