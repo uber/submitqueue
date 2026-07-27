@@ -119,15 +119,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		}
 
 		switch res.Outcome {
-		case corerequest.TerminationReconciled:
+		case corerequest.TerminationOutcomeSuccess:
 			c.logger.Infow("updated request state",
 				"batch_id", batch.ID,
 				"request_id", requestID,
 				"new_state", string(res.AfterState),
 			)
-		case corerequest.TerminationAlreadyTerminal:
+		case corerequest.TerminationOutcomeAlreadyInTargetState:
 			metrics.NamedCounter(c.metricsScope, "process", "already_reconciled", 1)
-		case corerequest.TerminationDiverged:
+		case corerequest.TerminationOutcomeDiverged:
 			c.logger.Warnw("request already in different terminal state, skipping reconcile",
 				"batch_id", batch.ID,
 				"request_id", requestID,
@@ -135,7 +135,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 				"actual_state", string(res.BeforeState),
 			)
 			metrics.NamedCounter(c.metricsScope, "process", "terminal_state_divergence", 1)
-		case corerequest.TerminationNotFound:
+		case corerequest.TerminationOutcomeNotFound:
 			metrics.NamedCounter(c.metricsScope, "process", "request_store_errors", 1)
 			return fmt.Errorf("failed to get request %s for batch %s: %w", requestID, batch.ID, storage.ErrNotFound)
 		}
