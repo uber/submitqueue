@@ -1,10 +1,5 @@
 load("@rules_go//go:def.bzl", "go_binary", "go_cross_binary", "go_library")
 
-exports_files(
-    ["Dockerfile"],
-    visibility = ["//visibility:public"],
-)
-
 go_library(
     name = "go_default_library",
     srcs = ["main.go"],
@@ -53,5 +48,17 @@ go_cross_binary(
     name = "stovepipe_linux",
     platform = "@rules_go//go/toolchain:linux_amd64",
     target = ":stovepipe",
-    visibility = ["//visibility:public"],
+)
+
+# Everything a Docker-based test needs to build the stovepipe image from a
+# staged build context (see testutil.WithBuildContext). Test-only so the
+# cross-compiled binary cannot leak into production targets.
+filegroup(
+    name = "docker_test_context",
+    testonly = True,
+    srcs = [
+        "Dockerfile",
+        ":stovepipe_linux",
+    ],
+    visibility = ["//test:__subpackages__"],
 )

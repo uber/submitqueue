@@ -309,7 +309,7 @@ deps = [
 
 **Integration tests** use Docker Compose via `testutil.ComposeStack`:
 - Package naming: folder name as package (NOT `*_test` suffix)
-- Bazel: add `tags = ["integration", "requires-network"]` and `data = [...]` for every input the test reads (compose file, schema dirs, Dockerfiles, Bazel-built `*_linux` service binaries). Tests are hermetic: never resolve the repo root — resolve inputs from runfiles via `testutil.Runfile` and stage docker build contexts with `testutil.WithBuildContext`.
+- Bazel: add `tags = ["integration", "requires-network"]` and `data = [...]` for every input the test reads (compose file, schema dirs, and each service's `docker_test_context` filegroup bundling its Dockerfile, configs, and Bazel-built `*_linux` binary). Tests are hermetic: never resolve the repo root — resolve inputs from runfiles via `testutil.Runfile` and stage docker build contexts with `testutil.WithBuildContext`.
 - Use `testutil.NewComposeStack()` with meaningful context (e.g., `"ext-storage-mysql"`)
 
 See [doc/howto/TESTING.md](doc/howto/TESTING.md) for full testing guide.

@@ -1,11 +1,7 @@
 load("@rules_go//go:def.bzl", "go_binary", "go_cross_binary", "go_library", "go_test")
 
 exports_files(
-    [
-        "Dockerfile",
-        "docker-compose.yml",
-        "queues.yaml",
-    ],
+    ["docker-compose.yml"],
     visibility = ["//visibility:public"],
 )
 
@@ -52,7 +48,20 @@ go_cross_binary(
     name = "gateway_linux",
     platform = "@rules_go//go/toolchain:linux_amd64",
     target = ":gateway",
-    visibility = ["//visibility:public"],
+)
+
+# Everything a Docker-based test needs to build the gateway image from a staged
+# build context (see testutil.WithBuildContext). Test-only so the
+# cross-compiled binary cannot leak into production targets.
+filegroup(
+    name = "docker_test_context",
+    testonly = True,
+    srcs = [
+        "Dockerfile",
+        "queues.yaml",
+        ":gateway_linux",
+    ],
+    visibility = ["//test:__subpackages__"],
 )
 
 go_test(
