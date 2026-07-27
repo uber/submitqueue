@@ -6,8 +6,7 @@ go_test(
     data = [
         "//platform/extension/messagequeue/mysql/schema",
         "//service/stovepipe:docker-compose.yml",
-        "//service/stovepipe/server:Dockerfile",
-        "//service/stovepipe/server:stovepipe_linux",
+        "//service/stovepipe/server:docker_test_context",
         "//stovepipe/extension/storage/mysql/schema",
     ],
     tags = [

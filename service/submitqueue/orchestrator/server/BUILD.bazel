@@ -1,10 +1,7 @@
 load("@rules_go//go:def.bzl", "go_binary", "go_cross_binary", "go_library")
 
 exports_files(
-    [
-        "Dockerfile",
-        "docker-compose.yml",
-    ],
+    ["docker-compose.yml"],
     visibility = ["//visibility:public"],
 )
 
@@ -82,5 +79,17 @@ go_cross_binary(
     name = "orchestrator_linux",
     platform = "@rules_go//go/toolchain:linux_amd64",
     target = ":orchestrator",
-    visibility = ["//visibility:public"],
+)
+
+# Everything a Docker-based test needs to build the orchestrator image from a
+# staged build context (see testutil.WithBuildContext). Test-only so the
+# cross-compiled binary cannot leak into production targets.
+filegroup(
+    name = "docker_test_context",
+    testonly = True,
+    srcs = [
+        "Dockerfile",
+        ":orchestrator_linux",
+    ],
+    visibility = ["//test:__subpackages__"],
 )

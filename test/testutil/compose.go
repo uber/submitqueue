@@ -19,10 +19,13 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
+	"hash"
+	"io"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -99,9 +102,15 @@ func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, compose
 	absPath, err := filepath.Abs(composeFile)
 	require.NoError(t, err, "failed to get absolute path to compose file")
 
+	// The image prefix is derived from the content of the declared inputs, so
+	// the compose file participates in the hash alongside the staged build
+	// context files.
+	inputHash := sha256.New()
+	hashFile(t, inputHash, composeFile, absPath)
+
 	buildContextDir := ""
 	if len(options.buildContextFiles) > 0 {
-		buildContextDir = stageBuildContext(t, options.buildContextFiles)
+		buildContextDir = stageBuildContext(t, inputHash, options.buildContextFiles)
 	}
 
 	// Generate meaningful project name: sq-test-{context}-{short-timestamp}
@@ -116,7 +125,7 @@ func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, compose
 		log:         log,
 		ctx:         ctx,
 		composeCmd:  getDockerComposeCommand(),
-		composeEnv:  composeEnvironment(buildContextDir),
+		composeEnv:  composeEnvironment(inputHash.Sum(nil), buildContextDir),
 	}
 
 	// Register cleanup
@@ -160,8 +169,8 @@ func (s *ComposeStack) Up() error {
 }
 
 // down stops and removes all services and volumes in the compose stack.
-// Locally built images use stable per-worktree names and remain cached for
-// subsequent test runs.
+// Locally built images are named after the hash of their declared inputs and
+// remain cached for subsequent runs with the same build context.
 func (s *ComposeStack) down() {
 	s.log.Logf("Stopping compose stack")
 
@@ -411,38 +420,67 @@ func setupDockerEnv(t *testing.T) {
 }
 
 // stageBuildContext copies the given runfiles into a temporary directory that
-// serves as the docker build context. Runfiles are symlinks into Bazel's
-// output tree, and docker's context upload does not follow symlinks, so the
-// content is copied. Files are staged with the execute bit set because the
-// context contains service binaries; docker preserves the mode on COPY.
-func stageBuildContext(t *testing.T, files map[string]string) string {
+// serves as the docker build context, feeding each destination path and file
+// content into inputHash in deterministic (sorted) order. Runfiles are
+// symlinks into Bazel's output tree, and docker's context upload does not
+// follow symlinks, so the content is copied. Each staged file keeps its source
+// mode, so service binaries stay executable; docker preserves the mode on COPY.
+func stageBuildContext(t *testing.T, inputHash hash.Hash, files map[string]string) string {
 	t.Helper()
 
+	dests := make([]string, 0, len(files))
+	for dest := range files {
+		dests = append(dests, dest)
+	}
+	sort.Strings(dests)
+
 	dir := t.TempDir()
-	for dest, src := range files {
-		content, err := os.ReadFile(Runfile(src))
-		require.NoError(t, err, "failed to read build context input %s (is it declared as a data dependency?)", src)
+	for _, dest := range dests {
+		src := files[dest]
+		srcFile, err := os.Open(Runfile(src))
+		require.NoError(t, err, "failed to open build context input %s (is it declared as a data dependency?)", src)
+
+		info, err := srcFile.Stat()
+		require.NoError(t, err, "failed to stat build context input %s", src)
 
 		destPath := filepath.Join(dir, dest)
 		require.NoError(t, os.MkdirAll(filepath.Dir(destPath), 0o755), "failed to create build context dir for %s", dest)
-		require.NoError(t, os.WriteFile(destPath, content, 0o755), "failed to stage build context file %s", dest)
+
+		destFile, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+		require.NoError(t, err, "failed to create build context file %s", dest)
+
+		_, _ = io.WriteString(inputHash, dest)
+		_, _ = inputHash.Write([]byte{0})
+		_, err = io.Copy(io.MultiWriter(destFile, inputHash), srcFile)
+		require.NoError(t, err, "failed to stage build context file %s", dest)
+		require.NoError(t, destFile.Close(), "failed to close build context file %s", dest)
+		require.NoError(t, srcFile.Close(), "failed to close build context input %s", src)
 	}
 	return dir
 }
 
+// hashFile feeds a logical path marker and the content of the file at path
+// into inputHash.
+func hashFile(t *testing.T, inputHash hash.Hash, logicalPath, path string) {
+	t.Helper()
+
+	_, _ = io.WriteString(inputHash, logicalPath)
+	_, _ = inputHash.Write([]byte{0})
+
+	f, err := os.Open(path)
+	require.NoError(t, err, "failed to open declared input %s", logicalPath)
+	_, err = io.Copy(inputHash, f)
+	require.NoError(t, err, "failed to hash declared input %s", logicalPath)
+	require.NoError(t, f.Close(), "failed to close declared input %s", logicalPath)
+}
+
 // composeEnvironment returns the environment used by every compose command.
-// The image prefix is stable per test target so --build can reuse the docker
-// build cache between runs of the same test. Concurrent runs of the same
-// target against one daemon race on the tag, but every run rebuilds via
-// `up --build` from its own staged context, so a stale image is never used
-// for a completed run.
-func composeEnvironment(buildContextDir string) []string {
-	seed := os.Getenv("TEST_TARGET")
-	if seed == "" {
-		seed, _ = os.Getwd()
-	}
-	sum := sha256.Sum256([]byte(seed))
-	imagePrefix := fmt.Sprintf("sq-test-%x", sum[:6])
+// The image prefix is derived from the content of the declared inputs (compose
+// file plus staged build context), so runs with identical inputs reuse the
+// docker build cache while different revisions — including concurrent runs
+// from separate worktrees against one daemon — never collide on an image tag.
+func composeEnvironment(inputHash []byte, buildContextDir string) []string {
+	imagePrefix := fmt.Sprintf("sq-test-%x", inputHash[:6])
 
 	env := os.Environ()
 	env = append(env, "SQ_DOCKER_IMAGE_PREFIX="+imagePrefix)

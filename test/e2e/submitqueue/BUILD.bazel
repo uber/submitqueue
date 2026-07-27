@@ -9,14 +9,10 @@ go_test(
     data = [
         "//platform/extension/counter/mysql/schema",
         "//platform/extension/messagequeue/mysql/schema",
-        "//service/runway/server:Dockerfile",
-        "//service/runway/server:runway_linux",
+        "//service/runway/server:docker_test_context",
         "//service/submitqueue:docker-compose.yml",
-        "//service/submitqueue/gateway/server:Dockerfile",
-        "//service/submitqueue/gateway/server:gateway_linux",
-        "//service/submitqueue/gateway/server:queues.yaml",
-        "//service/submitqueue/orchestrator/server:Dockerfile",
-        "//service/submitqueue/orchestrator/server:orchestrator_linux",
+        "//service/submitqueue/gateway/server:docker_test_context",
+        "//service/submitqueue/orchestrator/server:docker_test_context",
         "//submitqueue/extension/storage/mysql/schema",
     ],
     tags = [
