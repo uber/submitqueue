@@ -40,6 +40,7 @@ import (
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/runway/controller"
+	"github.com/uber/submitqueue/runway/controller/dlq"
 	"github.com/uber/submitqueue/runway/controller/merge"
 	"github.com/uber/submitqueue/runway/controller/mergeconflictcheck"
 	"github.com/uber/submitqueue/runway/extension/merger"
@@ -150,12 +151,17 @@ func run() error {
 		return fmt.Errorf("failed to create topic registry: %w", err)
 	}
 
+	// One gate is shared by the primary and DLQ consumers: a subscription is
+	// gated by its own consumer group, so a DLQ stage is paused by its own
+	// group name just like a primary stage.
+	gate := newConsumerGate(logger)
+
 	primaryConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
 		errs.NewClassifierProcessor(
 			genericerrs.Classifier,
 			mysqlerrs.Classifier,
 		),
-		newConsumerGate(logger),
+		gate,
 	)
 
 	mergerFactory := newMergerFactory()
@@ -185,10 +191,47 @@ func run() error {
 	}
 	logger.Info("controllers registered", zap.Int("primary", 2))
 
+	// The DLQ consumer reconciles dead-lettered merge requests: it republishes a
+	// terminal FAILED result to the signal topic so the client's correlation id
+	// always resolves. It uses AlwaysRetryableProcessor so a transient publish
+	// failure retries forever rather than dead-lettering again.
+	dlqConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer-dlq"), registry,
+		errs.AlwaysRetryableProcessor,
+		gate,
+	)
+
+	mergeConflictCheckDLQController := dlq.NewController(dlq.Params{
+		Logger:         logger.Sugar(),
+		Scope:          scope,
+		Registry:       registry,
+		TopicKey:       dlq.TopicKey(runwaymq.TopicKeyMergeConflictCheck),
+		SignalTopicKey: runwaymq.TopicKeyMergeConflictCheckSignal,
+		ConsumerGroup:  "runway-mergeconflictcheck-dlq",
+	})
+	if err := dlqConsumer.Register(mergeConflictCheckDLQController); err != nil {
+		return fmt.Errorf("failed to register merge-conflict-check DLQ controller: %w", err)
+	}
+
+	mergeDLQController := dlq.NewController(dlq.Params{
+		Logger:         logger.Sugar(),
+		Scope:          scope,
+		Registry:       registry,
+		TopicKey:       dlq.TopicKey(runwaymq.TopicKeyMerge),
+		SignalTopicKey: runwaymq.TopicKeyMergeSignal,
+		ConsumerGroup:  "runway-merge-dlq",
+	})
+	if err := dlqConsumer.Register(mergeDLQController); err != nil {
+		return fmt.Errorf("failed to register merge DLQ controller: %w", err)
+	}
+	logger.Info("DLQ controllers registered", zap.Int("dlq", 2))
+
 	if err := primaryConsumer.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start primary consumer: %w", err)
 	}
-	logger.Info("consumer started")
+	if err := dlqConsumer.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start DLQ consumer: %w", err)
+	}
+	logger.Info("consumers started")
 
 	grpcServer := grpc.NewServer()
 
@@ -240,8 +283,13 @@ func run() error {
 		primaryStopErr = fmt.Errorf("failed to stop consumer: %w", primaryStopErr)
 	}
 
-	if primaryStopErr != nil || serverErr != nil {
-		err = errors.Join(primaryStopErr, serverErr)
+	dlqStopErr := dlqConsumer.Stop(30000)
+	if dlqStopErr != nil {
+		dlqStopErr = fmt.Errorf("failed to stop DLQ consumer: %w", dlqStopErr)
+	}
+
+	if primaryStopErr != nil || dlqStopErr != nil || serverErr != nil {
+		err = errors.Join(primaryStopErr, dlqStopErr, serverErr)
 	}
 
 	return err
@@ -289,6 +337,26 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Key:   runwaymq.TopicKeyMergeSignal,
 			Name:  "merge-signal",
 			Queue: q,
+		},
+		// DLQ topics: the reconciler consumes these and republishes a FAILED
+		// result to the corresponding signal topic. Names match the primary
+		// topic name plus the "_dlq" suffix the subscriber uses when
+		// dead-lettering (see dlq.TopicKey / DefaultSubscriptionConfig).
+		{
+			Key:   dlq.TopicKey(runwaymq.TopicKeyMergeConflictCheck),
+			Name:  "merge-conflict-check_dlq",
+			Queue: q,
+			Subscription: extqueue.DLQSubscriptionConfig(
+				subscriberName, "runway-mergeconflictcheck-dlq",
+			),
+		},
+		{
+			Key:   dlq.TopicKey(runwaymq.TopicKeyMerge),
+			Name:  "runway-merge_dlq",
+			Queue: q,
+			Subscription: extqueue.DLQSubscriptionConfig(
+				subscriberName, "runway-merge-dlq",
+			),
 		},
 	})
 }
