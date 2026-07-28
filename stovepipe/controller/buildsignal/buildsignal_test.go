@@ -47,6 +47,7 @@ const (
 type buildsignalMocks struct {
 	reqStore      *storagemock.MockRequestStore
 	buildStore    *storagemock.MockBuildStore
+	queueStore    *storagemock.MockQueueStore
 	runnerFactory *buildrunnermock.MockFactory
 	runner        *buildrunnermock.MockBuildRunner
 	publisher     *mqmock.MockPublisher
@@ -58,6 +59,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildsig
 	m := buildsignalMocks{
 		reqStore:      storagemock.NewMockRequestStore(ctrl),
 		buildStore:    storagemock.NewMockBuildStore(ctrl),
+		queueStore:    storagemock.NewMockQueueStore(ctrl),
 		runnerFactory: buildrunnermock.NewMockFactory(ctrl),
 		runner:        buildrunnermock.NewMockBuildRunner(ctrl),
 		publisher:     mqmock.NewMockPublisher(ctrl),
@@ -66,6 +68,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildsig
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(m.buildStore).AnyTimes()
+	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 
 	queue := mqmock.NewMockQueue(ctrl)
 	queue.EXPECT().Publisher().Return(m.publisher).AnyTimes()
@@ -113,6 +116,24 @@ func build(status entity.BuildStatus, version int32) entity.Build {
 		Status:    status,
 		Version:   version,
 	}
+}
+
+// queueRow returns the testQueue's row holding inFlight admitted validations.
+func queueRow(inFlight, version int32) entity.Queue {
+	return entity.Queue{
+		Name:          testQueue,
+		InFlightCount: inFlight,
+		Version:       version,
+	}
+}
+
+// expectFinish wires the slot release and outcome transition a terminal build
+// performs: the queue row is CAS-decremented, then the request is CAS-moved from
+// processing to state.
+func expectFinish(m buildsignalMocks, state entity.RequestState) {
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(1, 4), nil)
+	m.queueStore.EXPECT().Update(gomock.Any(), queueRow(0, 4), int32(4), int32(5)).Return(nil)
+	m.reqStore.EXPECT().Update(gomock.Any(), requestWithState(state), int32(1), int32(2)).Return(nil)
 }
 
 func TestProcess(t *testing.T) {
@@ -165,24 +186,13 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "succeeded request is a no-op",
+			// Neither state can reach the poll loop today — a build only exists once
+			// process admitted the request. The guard covers them anyway because
+			// finishRequest would release a build slot they never claimed.
+			name: "request that never claimed a slot is a no-op",
 			setup: func(m buildsignalMocks) {
 				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusRunning, 2), nil)
-				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateSucceeded), nil)
-			},
-		},
-		{
-			name: "failed request is a no-op",
-			setup: func(m buildsignalMocks) {
-				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusRunning, 2), nil)
-				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateFailed), nil)
-			},
-		},
-		{
-			name: "cancelled request is a no-op",
-			setup: func(m buildsignalMocks) {
-				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusRunning, 2), nil)
-				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateCancelled), nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateAccepted), nil)
 			},
 		},
 		{
@@ -229,14 +239,50 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "transition to terminal persists and publishes to record",
+			name: "succeeded build frees the slot, marks the request and publishes to record",
 			setup: func(m buildsignalMocks) {
 				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusRunning, 2), nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
-				updated := build(entity.BuildStatusSucceeded, 2)
-				m.buildStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
+				m.buildStore.EXPECT().Update(gomock.Any(), build(entity.BuildStatusSucceeded, 2), int32(2), int32(3)).Return(nil)
+				expectFinish(m, entity.RequestStateSucceeded)
+				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil)
+			},
+		},
+		{
+			name: "failed build marks the request failed",
+			setup: func(m buildsignalMocks) {
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusRunning, 2), nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
+				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusFailed, nil, nil)
+				m.buildStore.EXPECT().Update(gomock.Any(), build(entity.BuildStatusFailed, 2), int32(2), int32(3)).Return(nil)
+				expectFinish(m, entity.RequestStateFailed)
+				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil)
+			},
+		},
+		{
+			name: "cancelled build marks the request cancelled, not failed",
+			setup: func(m buildsignalMocks) {
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusRunning, 2), nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
+				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusCancelled, nil, nil)
+				m.buildStore.EXPECT().Update(gomock.Any(), build(entity.BuildStatusCancelled, 2), int32(2), int32(3)).Return(nil)
+				expectFinish(m, entity.RequestStateCancelled)
+				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil)
+			},
+		},
+		{
+			name: "redelivery of an already-stamped request republishes without touching the slot",
+			setup: func(m buildsignalMocks) {
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusSucceeded, 3), nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateSucceeded), nil)
+				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
+				// No build/queue/request write: the status is unchanged and the outcome
+				// is already recorded, so the slot must not be released a second time.
 				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil)
 			},
 		},
@@ -247,7 +293,9 @@ func TestProcess(t *testing.T) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusFailed, nil, nil)
-				// No Update call expected: a stored terminal status is write-once.
+				// No build Update: a stored terminal status is write-once. The stored
+				// status, not the poll, decides the request's outcome.
+				expectFinish(m, entity.RequestStateSucceeded)
 				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil)
 			},
 		},
@@ -276,6 +324,35 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
+			name:      "outcome write failure is not retryable",
+			wantErr:   true,
+			wantRetry: false,
+			setup: func(m buildsignalMocks) {
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusSucceeded, 3), nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
+				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(1, 4), nil)
+				m.queueStore.EXPECT().Update(gomock.Any(), queueRow(0, 4), int32(4), int32(5)).Return(nil)
+				m.reqStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(errors.New("db down"))
+			},
+		},
+		{
+			name:      "slot release failure leaves the request non-terminal",
+			wantErr:   true,
+			wantRetry: false,
+			setup: func(m buildsignalMocks) {
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusSucceeded, 3), nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
+				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{}, errors.New("db down"))
+				// No request Update and no record publish: marking the request terminal
+				// while it still holds a slot would strand the slot, since a terminal
+				// request is skipped by both redelivery and the DLQ reconciler.
+			},
+		},
+		{
 			name:      "publish to record failure is not retryable",
 			wantErr:   true,
 			wantRetry: false,
@@ -285,6 +362,7 @@ func TestProcess(t *testing.T) {
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
 				m.buildStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(2), int32(3)).Return(nil)
+				expectFinish(m, entity.RequestStateSucceeded)
 				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(errors.New("queue down"))
 			},
 		},
@@ -404,6 +482,24 @@ func TestNextPollMessageID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.expected, nextPollMessageID(testBuildID, tt.current))
+		})
+	}
+}
+
+func TestOutcomeState(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   entity.BuildStatus
+		expected entity.RequestState
+	}{
+		{name: "succeeded", status: entity.BuildStatusSucceeded, expected: entity.RequestStateSucceeded},
+		{name: "failed", status: entity.BuildStatusFailed, expected: entity.RequestStateFailed},
+		{name: "cancelled", status: entity.BuildStatusCancelled, expected: entity.RequestStateCancelled},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, outcomeState(tt.status))
 		})
 	}
 }
