@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -36,6 +35,8 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/pusher"
 )
+
+const pinnedGitVersion = "2.55.0"
 
 // gitFixture provides a bare "remote" repository plus a working checkout
 // that pushes to it. Tests run real `git` commands so we exercise the same
@@ -54,10 +55,6 @@ type gitFixture struct {
 
 func setupGitFixture(t *testing.T) gitFixture {
 	t.Helper()
-
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available on PATH")
-	}
 
 	root := t.TempDir()
 	remoteDir := filepath.Join(root, "remote.git")
@@ -86,6 +83,74 @@ func setupGitFixture(t *testing.T) gitFixture {
 		authorDir:   authorDir,
 		resolver:    fake.New(),
 	}
+}
+
+func TestGitRuntimeValidate(t *testing.T) {
+	abs, err := filepath.Abs("git")
+	require.NoError(t, err)
+	tests := []struct {
+		name    string
+		runtime GitRuntime
+		wantErr bool
+	}{
+		{
+			name: "valid",
+			runtime: GitRuntime{
+				Executable:  abs,
+				ExecPath:    abs,
+				TemplateDir: abs,
+			},
+		},
+		{
+			name: "missing executable",
+			runtime: GitRuntime{
+				ExecPath:    abs,
+				TemplateDir: abs,
+			},
+			wantErr: true,
+		},
+		{
+			name: "relative exec path",
+			runtime: GitRuntime{
+				Executable:  abs,
+				ExecPath:    "git-core",
+				TemplateDir: abs,
+			},
+			wantErr: true,
+		},
+		{
+			name: "relative template dir",
+			runtime: GitRuntime{
+				Executable:  abs,
+				ExecPath:    abs,
+				TemplateDir: "templates",
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.runtime.validate()
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestNewGitCommandDoesNotInheritEnvironment(t *testing.T) {
+	t.Setenv("SUBMITQUEUE_GIT_AMBIENT", "ambient")
+	runtime := testGitRuntime(t)
+
+	cmd := newGitCommand(context.Background(), runtime, t.TempDir(), "--version")
+
+	assert.Equal(t, runtime.Executable, cmd.Path)
+	assert.NotContains(t, cmd.Env, "SUBMITQUEUE_GIT_AMBIENT=ambient")
+	assert.Contains(t, cmd.Env, "GIT_CONFIG_NOSYSTEM=1")
+	assert.Contains(t, cmd.Env, "GIT_EXEC_PATH="+runtime.ExecPath)
 }
 
 // batchFor seeds the fixture resolver so batch id resolves to the given changes,
@@ -159,14 +224,17 @@ func uri(sha string) string {
 }
 
 func (f gitFixture) newPusher(t *testing.T) pusher.Pusher {
-	return NewPusher(Params{
+	p, err := NewPusher(Params{
 		CheckoutPath: f.checkoutDir,
 		Remote:       "origin",
 		Target:       "main",
 		Resolver:     f.resolver,
 		Logger:       zaptest.NewLogger(t).Sugar(),
 		MetricsScope: tally.NoopScope,
+		Runtime:      testGitRuntime(t),
 	})
+	require.NoError(t, err)
+	return p
 }
 
 // installRaceHook writes a pre-receive hook on the bare remote that
@@ -204,7 +272,7 @@ fi
 # Pre-receive runs in git's quarantine env; unset its markers so update-ref
 # is allowed to mutate the live ref store.
 unset GIT_QUARANTINE_PATH GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
-git update-ref refs/heads/main "$next_sha"
+"$GIT_EXEC_PATH/git" update-ref refs/heads/main "$next_sha"
 echo "race hook moved main to $next_sha and rejected push" >&2
 exit 1
 `
@@ -472,16 +540,18 @@ func TestPusher_Push_GivesUpAfterMaxAttempts(t *testing.T) {
 	featureSHA := f.pushPRCommit(t, "feature/a", "hello.txt", "hello\nearth\n", "tweak hello")
 	f.installRaceHook(t, raceSHAs)
 
-	p := NewPusher(Params{
+	p, err := NewPusher(Params{
 		CheckoutPath:    f.checkoutDir,
 		Remote:          "origin",
 		Target:          "main",
 		Resolver:        f.resolver,
 		Logger:          zaptest.NewLogger(t).Sugar(),
 		MetricsScope:    tally.NoopScope,
+		Runtime:         testGitRuntime(t),
 		MaxPushAttempts: 2,
 	})
-	_, err := p.Push(context.Background(), []entity.Batch{
+	require.NoError(t, err)
+	_, err = p.Push(context.Background(), []entity.Batch{
 		f.batchFor("b", change.Change{URIs: []string{uri(featureSHA)}}),
 	})
 	require.Error(t, err)
@@ -494,10 +564,14 @@ func TestPusher_Push_GivesUpAfterMaxAttempts(t *testing.T) {
 
 // --- helpers ---
 
+func TestPinnedGitVersion(t *testing.T) {
+	out := mustGitOutput(t, t.TempDir(), "--version")
+	assert.Equal(t, "git version "+pinnedGitVersion, strings.TrimSpace(string(out)))
+}
+
 func mustGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
+	cmd := newGitCommand(context.Background(), testGitRuntime(t), dir, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	require.NoError(t, cmd.Run(), "git %s: %s", strings.Join(args, " "), stderr.String())
@@ -505,13 +579,62 @@ func mustGit(t *testing.T, dir string, args ...string) {
 
 func mustGitOutput(t *testing.T, dir string, args ...string) []byte {
 	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
+	cmd := newGitCommand(context.Background(), testGitRuntime(t), dir, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	require.NoError(t, cmd.Run(), "git %s: %s", strings.Join(args, " "), stderr.String())
 	return stdout.Bytes()
+}
+
+func testGitRuntime(t *testing.T) GitRuntime {
+	t.Helper()
+	executable := absoluteTestPath(t, "SUBMITQUEUE_TEST_GIT")
+	templateDescription := absoluteTestPath(t, "SUBMITQUEUE_TEST_GIT_TEMPLATE_DESCRIPTION")
+	return GitRuntime{
+		Executable:  executable,
+		ExecPath:    filepath.Dir(executable),
+		TemplateDir: filepath.Dir(templateDescription),
+	}
+}
+
+func absoluteTestPath(t *testing.T, name string) string {
+	t.Helper()
+	path := os.Getenv(name)
+	require.NotEmpty(t, path)
+	if filepath.IsAbs(path) {
+		_, err := os.Stat(path)
+		require.NoError(t, err)
+		return path
+	}
+	if absolute, err := filepath.Abs(path); err == nil {
+		if _, err := os.Stat(absolute); err == nil {
+			return absolute
+		}
+	}
+
+	// rules_go expands $(location) to an execroot-relative path. Tests run
+	// from their main-repository runfiles directory, so translate an external
+	// output to its canonical repository path under TEST_SRCDIR.
+	const externalMarker = "/external/"
+	slashed := filepath.ToSlash(path)
+	externalPath := ""
+	if strings.HasPrefix(slashed, "external/") {
+		externalPath = strings.TrimPrefix(slashed, "external/")
+	} else if i := strings.Index(slashed, externalMarker); i >= 0 {
+		externalPath = slashed[i+len(externalMarker):]
+	}
+	if externalPath != "" {
+		runfilesRoot := os.Getenv("TEST_SRCDIR")
+		require.NotEmpty(t, runfilesRoot)
+		candidate := filepath.Join(runfilesRoot, filepath.FromSlash(externalPath))
+		_, err := os.Stat(candidate)
+		require.NoError(t, err)
+		return candidate
+	}
+
+	require.FailNowf(t, "resolve test path", "%s=%q is not a runfile", name, path)
+	return ""
 }
 
 func writeFile(path, contents string) error {

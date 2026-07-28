@@ -15,26 +15,39 @@
 package e2e_test
 
 // Reusable e2e helpers so tests read as intent, not plumbing. They drive the
-// stack through the real gateway gRPC surface (Land / Cancel / Status) and
+// stack through the real gateway gRPC surface (Land / Cancel / GetRequestSummaryByID) and
 // observe outcomes two ways:
 //
-//   - black-box, by polling the Status RPC to a target/terminal status; and
-//   - white-box, by reading the request_log timeline (RequestLogStore.List on
-//     mysql-app) to assert the ordered stage progression.
+//   - black-box, by polling the GetRequestSummaryByID RPC to a target/terminal status; and
+//   - black-box, by reading the ordered stage progression through GetRequestHistoryByID.
 //
-// Convergence is bounded by require.Eventually (persistTimeout /
-// persistPollInterval) rather than time.Sleep: the pipeline consumers run inside
-// containers, so there is no in-process signal to await; a timeout here means a
-// stage is genuinely stuck, not a timing race.
+// The pipeline consumers run inside containers, so there is no in-process
+// signal to await. Polling continues until the condition holds or Bazel's test
+// timeout terminates a genuinely stuck suite.
 
 import (
+	"fmt"
+	"time"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	changepb "github.com/uber/submitqueue/api/base/change/protopb"
 	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	gatewaypb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
+	"github.com/uber/submitqueue/platform/extension/consumergate"
 	"github.com/uber/submitqueue/submitqueue/entity"
 )
+
+func pollUntil(interval time.Duration, condition func() bool) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if condition() {
+			return
+		}
+		<-ticker.C
+	}
+}
 
 // land submits a request with the default REBASE strategy and returns its sqid.
 // URIs may carry "sq-fake=<token>" markers to steer negative paths (see
@@ -51,69 +64,64 @@ func (s *E2EIntegrationSuite) land(queue string, uris ...string) string {
 	return resp.Sqid
 }
 
-// currentStatus reads the request's current customer-facing status via the
-// Status RPC. A transport error is returned so callers can keep polling.
+// currentStatus reads the request's current customer-facing status via
+// GetRequestSummaryByID. A transport error is returned so callers can keep polling.
 func (s *E2EIntegrationSuite) currentStatus(sqid string) (entity.RequestStatus, error) {
-	resp, err := s.gatewayClient.Status(s.ctx, &gatewaypb.StatusRequest{Sqid: sqid})
+	resp, err := s.gatewayClient.GetRequestSummaryByID(s.ctx, &gatewaypb.GetRequestSummaryByIDRequest{Sqid: sqid})
 	if err != nil {
 		return entity.RequestStatusUnknown, err
 	}
-	return entity.RequestStatus(resp.Status), nil
+	if resp.Request == nil {
+		return entity.RequestStatusUnknown, fmt.Errorf("GetRequestSummaryByID(%s) returned no request", sqid)
+	}
+	return entity.RequestStatus(resp.Request.Status), nil
 }
 
-// awaitStatus polls Status until the request reaches exactly want.
+// awaitStatus polls GetRequestSummaryByID until the request reaches exactly want.
 func (s *E2EIntegrationSuite) awaitStatus(sqid string, want entity.RequestStatus) {
-	t := s.T()
-	require.Eventually(t, func() bool {
+	pollUntil(persistPollInterval, func() bool {
 		got, err := s.currentStatus(sqid)
 		if err != nil {
-			s.log.Logf("Status(%s) not ready yet: %v", sqid, err)
+			s.log.Logf("GetRequestSummaryByID(%s) not ready yet: %v", sqid, err)
 			return false
 		}
-		s.log.Logf("Status(%s) = %q (want %q)", sqid, got, want)
+		s.log.Logf("GetRequestSummaryByID(%s) = %q (want %q)", sqid, got, want)
 		return got == want
-	}, persistTimeout, persistPollInterval,
-		"request %s should reach status %q", sqid, want)
+	})
 }
 
-// awaitTerminal polls Status until the request reaches a terminal status
+// awaitTerminal polls GetRequestSummaryByID until the request reaches a terminal status
 // (landed, error, or cancelled) and returns it.
 func (s *E2EIntegrationSuite) awaitTerminal(sqid string) entity.RequestStatus {
-	t := s.T()
 	var last entity.RequestStatus
-	require.Eventually(t, func() bool {
+	pollUntil(persistPollInterval, func() bool {
 		got, err := s.currentStatus(sqid)
 		if err != nil {
-			s.log.Logf("Status(%s) not ready yet: %v", sqid, err)
+			s.log.Logf("GetRequestSummaryByID(%s) not ready yet: %v", sqid, err)
 			return false
 		}
 		last = got
-		s.log.Logf("Status(%s) = %q (awaiting terminal)", sqid, got)
+		s.log.Logf("GetRequestSummaryByID(%s) = %q (awaiting terminal)", sqid, got)
 		return isTerminalStatus(got)
-	}, persistTimeout, persistPollInterval,
-		"request %s should reach a terminal status", sqid)
+	})
 	return last
 }
 
-// timeline returns the ordered status history from the request_log (the audit
-// trail persisted by the gateway log consumer on mysql-app).
-// timeline returns the ordered status history from the request_log (the audit
-// trail persisted by the gateway log consumer on mysql-app). These are the
-// customer-facing RequestStatus values — the only ordered history in the system
-// (the internal RequestState is point-in-time, see terminalState).
+// timeline returns the ordered customer-facing status history through
+// GetRequestHistoryByID.
 func (s *E2EIntegrationSuite) timeline(sqid string) []entity.RequestStatus {
 	t := s.T()
-	logs, err := s.requestLog.List(s.ctx, sqid)
-	require.NoError(t, err, "failed to list request_log for %s", sqid)
-	statuses := make([]entity.RequestStatus, len(logs))
-	for i, l := range logs {
-		statuses[i] = l.Status
+	resp, err := s.gatewayClient.GetRequestHistoryByID(s.ctx, &gatewaypb.GetRequestHistoryByIDRequest{Sqid: sqid})
+	require.NoError(t, err, "GetRequestHistoryByID failed for %s", sqid)
+	statuses := make([]entity.RequestStatus, len(resp.Events))
+	for i, event := range resp.Events {
+		statuses[i] = entity.RequestStatus(event.Status)
 	}
 	return statuses
 }
 
 // assertStatusesInOrder asserts that want appears as an ordered subsequence of
-// the request_log status timeline. It tolerates intermediate statuses (so it is
+// the GetRequestHistoryByID status timeline. It tolerates intermediate statuses (so it is
 // not a change-detector), asserting only the relative order of the statuses that
 // matter.
 func (s *E2EIntegrationSuite) assertStatusesInOrder(sqid string, want ...entity.RequestStatus) {
@@ -126,8 +134,83 @@ func (s *E2EIntegrationSuite) assertStatusesInOrder(sqid string, want ...entity.
 		}
 	}
 	assert.Equalf(t, len(want), matched,
-		"request_log for %s should contain %v as an ordered subsequence; got %v",
+		"GetRequestHistoryByID for %s should contain %v as an ordered subsequence; got %v",
 		sqid, want, got)
+}
+
+// assertStatusesNever asserts that none of the banned statuses ever appeared
+// in the GetRequestHistoryByID status timeline.
+func (s *E2EIntegrationSuite) assertStatusesNever(sqid string, banned ...entity.RequestStatus) {
+	t := s.T()
+	got := s.timeline(sqid)
+	for _, b := range banned {
+		assert.NotContainsf(t, got, b,
+			"GetRequestHistoryByID for %s must never contain %q; got %v", sqid, b, got)
+	}
+}
+
+// closeGate closes the consumer gate for the consumer group, scoped to one
+// partition (the queue name for pipeline topics). The gate must be closed
+// before the message that must be caught is published — that makes the stop
+// exact by construction rather than a timing race.
+func (s *E2EIntegrationSuite) closeGate(consumerGroup, partitionKey, reason string) {
+	t := s.T()
+	key := consumergate.Key{ConsumerGroup: consumerGroup, PartitionKey: partitionKey}
+	require.NoError(t, s.gate.Close(s.ctx, key, consumergate.Metadata{
+		Reason:      reason,
+		CreatedBy:   "e2e-suite",
+		CreatedAtMs: time.Now().UnixMilli(),
+	}), "failed to close gate %+v", key)
+	s.log.Logf("Closed consumer gate %s (partition %q)", consumerGroup, partitionKey)
+}
+
+// openGate opens the consumer gate for the consumer group and partition.
+// Opening an already-open gate is a no-op, so it is safe to call from a defer
+// after an explicit open.
+func (s *E2EIntegrationSuite) openGate(consumerGroup, partitionKey string) {
+	t := s.T()
+	key := consumergate.Key{ConsumerGroup: consumerGroup, PartitionKey: partitionKey}
+	require.NoError(t, s.gate.Open(s.ctx, key), "failed to open gate %+v", key)
+	s.log.Logf("Opened consumer gate %s (partition %q)", consumerGroup, partitionKey)
+}
+
+// awaitParked polls the shared gate directory until the delivery identified by
+// (consumer group, topic key, message ID) has a parked record, and returns it.
+// The record is written by the gated service before it blocks, so observing it
+// proves the stopped controller is holding exactly this message — as opposed
+// to the message simply not having arrived yet.
+func (s *E2EIntegrationSuite) awaitParked(consumerGroup, topic, messageID string) consumergate.Parked {
+	t := s.T()
+	var found consumergate.Parked
+	pollUntil(persistPollInterval, func() bool {
+		records, err := s.gate.ListParked(s.ctx, consumerGroup)
+		require.NoError(t, err, "failed to list parked deliveries for gate %s", consumerGroup)
+		for _, r := range records {
+			if r.Topic == topic && r.MessageID == messageID {
+				found = r
+				return true
+			}
+		}
+		return false
+	})
+	return found
+}
+
+// awaitUnparked polls until the previously observed parked record is absent.
+// The gate removes the record before releasing the delivery, so disappearance
+// proves the delivery cleared the gate after it opened.
+func (s *E2EIntegrationSuite) awaitUnparked(consumerGroup, topic, messageID string) {
+	t := s.T()
+	pollUntil(persistPollInterval, func() bool {
+		records, err := s.gate.ListParked(s.ctx, consumerGroup)
+		require.NoError(t, err, "failed to list parked deliveries for gate %s", consumerGroup)
+		for _, r := range records {
+			if r.Topic == topic && r.MessageID == messageID {
+				return false
+			}
+		}
+		return true
+	})
 }
 
 // terminalState reads the request's current internal RequestState from the
@@ -141,13 +224,13 @@ func (s *E2EIntegrationSuite) terminalState(sqid string) entity.RequestState {
 	return req.State
 }
 
-// lastError returns the LastError reported by the Status RPC (populated on the
-// error path).
+// lastError returns the LastError reported by GetRequestSummaryByID.
 func (s *E2EIntegrationSuite) lastError(sqid string) string {
 	t := s.T()
-	resp, err := s.gatewayClient.Status(s.ctx, &gatewaypb.StatusRequest{Sqid: sqid})
-	require.NoError(t, err, "Status failed for %s", sqid)
-	return resp.LastError
+	resp, err := s.gatewayClient.GetRequestSummaryByID(s.ctx, &gatewaypb.GetRequestSummaryByIDRequest{Sqid: sqid})
+	require.NoError(t, err, "GetRequestSummaryByID failed for %s", sqid)
+	require.NotNil(t, resp.Request)
+	return resp.Request.LastError
 }
 
 // isTerminalStatus reports whether a customer-facing status is terminal.

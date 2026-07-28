@@ -34,7 +34,7 @@ const (
 	// TopicKeyMerge carries committing merge requests. A client publishes a
 	// MergeRequest here; Runway applies the steps, commits the result, and
 	// reports the revisions it produced.
-	TopicKeyMerge TopicKey = "merge"
+	TopicKeyMerge TopicKey = "runway-merge"
 	// TopicKeyMergeSignal carries committing merge results. Runway publishes a
 	// MergeResult here (with the produced revisions populated); the requesting
 	// client consumes it.

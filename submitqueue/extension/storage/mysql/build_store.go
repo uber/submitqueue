@@ -40,15 +40,15 @@ func NewBuildStore(db *sql.DB, scope tally.Scope) storage.BuildStore {
 
 // Get retrieves a build by ID. Returns ErrNotFound if the build is not found.
 func (s *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retErr error) {
-	op := metrics.Begin(s.scope, "get")
+	op := metrics.Begin(s.scope, "get", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	var build entity.Build
 
 	err := s.db.QueryRowContext(ctx,
-		"SELECT id, batch_id, status, speculation_path_id FROM build WHERE id = ?",
+		"SELECT id, batch_id, status FROM build WHERE id = ?",
 		id,
-	).Scan(&build.ID, &build.BatchID, &build.Status, &build.SpeculationPathID)
+	).Scan(&build.ID, &build.BatchID, &build.Status)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.Build{}, storage.WrapNotFound(err)
@@ -62,16 +62,16 @@ func (s *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retE
 
 // Create creates a new build. The build must have a unique ID already assigned. Returns ErrAlreadyExists if the build ID already exists.
 func (s *buildStore) Create(ctx context.Context, build entity.Build) (retErr error) {
-	op := metrics.Begin(s.scope, "create")
+	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	_, err := s.db.ExecContext(ctx,
-		"INSERT INTO build (id, batch_id, status, speculation_path_id) VALUES (?, ?, ?, ?)",
-		build.ID, build.BatchID, build.Status, build.SpeculationPathID,
+		"INSERT INTO build (id, batch_id, status) VALUES (?, ?, ?)",
+		build.ID, build.BatchID, build.Status,
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrDuplicateEntry {
 			return fmt.Errorf("build entity id=%s: %w", build.ID, storage.ErrAlreadyExists)
 		}
 		return fmt.Errorf("failed to insert build entity id=%s: %w", build.ID, err)
@@ -82,7 +82,7 @@ func (s *buildStore) Create(ctx context.Context, build entity.Build) (retErr err
 
 // UpdateStatus updates the status of a build. Returns ErrNotFound if the build is not found.
 func (s *buildStore) UpdateStatus(ctx context.Context, id string, newStatus entity.BuildStatus) (retErr error) {
-	op := metrics.Begin(s.scope, "update_status")
+	op := metrics.Begin(s.scope, "update_status", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	result, err := s.db.ExecContext(ctx,

@@ -12,7 +12,7 @@ Each domain has its own subdirectory with a dedicated README:
 
 | Service | Port | Domain | RPCs | Backing stores |
 |---------|------|--------|------|----------------|
-| **SubmitQueue Gateway** | 8081 | `submitqueue` | `Ping`, `Land` | MySQL app + queue |
+| **SubmitQueue Gateway** | 8081 | `submitqueue` | `Ping`, `Land`, `Cancel`, `GetRequestSummaryByID`, `GetRequestSummaryByChangeURI`, `List`, `GetRequestHistoryByID`, `GetRequestHistoryByChangeURI` | MySQL app + queue |
 | **SubmitQueue Orchestrator** | 8082 | `submitqueue` | `Ping` (+ consumes 9 pipeline topics) | MySQL app + queue |
 | **Stovepipe** | 8083 | `stovepipe` | `Ping`, `Ingest` (+ consumes the process topic) | MySQL storage + queue |
 | **Runway** | 8086 | `runway` | `Ping` (+ consumes merge-conflict-check & merge topics) | MySQL queue |
@@ -145,6 +145,14 @@ grpcurl -plaintext localhost:8081 describe uber.submitqueue.gateway.SubmitQueueG
 |--------|-------------|
 | `Ping` | Health check, returns service name and timestamp |
 | `Land` | Submit a land request for code changes |
+| `Cancel` | Record and publish a best-effort cancellation intent |
+| `GetRequestSummaryByID` | Read one authoritative current request summary by sqid |
+| `GetRequestSummaryByChangeURI` | Read authoritative current summaries for one exact pinned change URI |
+| `List` | Page through queue-scoped request receipt history |
+| `GetRequestHistoryByID` | Read every retained request-log event for one sqid |
+| `GetRequestHistoryByChangeURI` | Read retained request histories for one exact pinned change URI |
+
+The gateway owns request receipts, current-status projections, and request-log reads. `List` is ordered by immutable gateway receipt time. The queue projection may briefly lag the authoritative summaries returned by the request-summary methods while materialization converges.
 
 ### Orchestrator Service
 

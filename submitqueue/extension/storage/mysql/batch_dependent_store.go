@@ -41,7 +41,7 @@ func NewBatchDependentStore(db *sql.DB, scope tally.Scope) storage.BatchDependen
 
 // Get retrieves the batch dependent by batch ID. Returns ErrNotFound if the batch dependent is not found.
 func (s *batchDependentStore) Get(ctx context.Context, batchID string) (ret entity.BatchDependent, retErr error) {
-	op := metrics.Begin(s.scope, "get")
+	op := metrics.Begin(s.scope, "get", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	var bd entity.BatchDependent
@@ -68,7 +68,7 @@ func (s *batchDependentStore) Get(ctx context.Context, batchID string) (ret enti
 
 // Create creates a new batch dependent. Returns ErrAlreadyExists if the entry already exists.
 func (s *batchDependentStore) Create(ctx context.Context, batchDependent entity.BatchDependent) (retErr error) {
-	op := metrics.Begin(s.scope, "create")
+	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	dependentsJSON, err := json.Marshal(batchDependent.Dependents)
@@ -82,7 +82,7 @@ func (s *batchDependentStore) Create(ctx context.Context, batchDependent entity.
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrDuplicateEntry {
 			return fmt.Errorf("batch dependent entity batchID=%s: %w", batchDependent.BatchID, storage.ErrAlreadyExists)
 		}
 		return fmt.Errorf("failed to insert batch dependent entity batchID=%s: %w", batchDependent.BatchID, err)
@@ -95,7 +95,7 @@ func (s *batchDependentStore) Create(ctx context.Context, batchDependent entity.
 // if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
 // Version arithmetic is owned by the caller; this is a pure conditional write.
 func (s *batchDependentStore) UpdateDependents(ctx context.Context, batchID string, oldVersion, newVersion int32, dependents []string) (retErr error) {
-	op := metrics.Begin(s.scope, "update_dependents")
+	op := metrics.Begin(s.scope, "update_dependents", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	dependentsJSON, err := json.Marshal(dependents)

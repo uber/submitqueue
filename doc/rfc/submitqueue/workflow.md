@@ -44,12 +44,6 @@ The pipeline has two cycles: `speculate → build → buildsignal → speculate`
               |                 +----------------+-----------------+
               |                                  | BatchID
               |                                  v
-              |                 +----------------------------------+
-              +-----------------| score                            |
-              |   RequestLog*N  | Score the batch, persist score   |
-              |                 +----------------+-----------------+
-              |                                  | BatchID
-              |                                  v
               |            +----------------------------------+
               |       +--->| speculate  (stub)                |<----+
               |       |    | Decide CI verify vs. land        |     |
@@ -90,8 +84,7 @@ The pipeline has two cycles: `speculate → build → buildsignal → speculate`
 | **start** | LandRequest | validate, log | Persist Request and emit Started log |
 | **validate** | RequestID | merge-conflict-check (runway) | Dedup, fetch change metadata, claim changes, then publish the full check request to runway (keyed by the request id, the correlation id) |
 | **mergeconflictsignal** | MergeResult | batch | Correlate runway's result; advance if mergeable, fail if conflicted |
-| **batch** | RequestID | score | Group request into a Batch with dependencies |
-| **score** | BatchID | speculate, log | Score the batch (∏ per-request scores), persist score |
+| **batch** | RequestID | speculate | Group request into a Batch with dependencies |
 | **speculate** | BatchID | build, merge | (stub) Decide whether to verify via CI or land |
 | **build** | BatchID | buildsignal | Trigger CI build for the batch |
 | **buildsignal** | Build | speculate | Feed CI result back into speculation |

@@ -17,7 +17,7 @@ For a delivery carrying request id `R`:
 
 ```
 1. Load Request R from the request store.
-   - not found yet         -> retryable error (ingest write not visible; redelivery converges)
+   - not found -> non-retryable (storage is read-after-write consistent; see [storage README](../../../../stovepipe/extension/storage/README.md)).
 2. If R.State is terminal (superseded / recorded-green / recorded-not-green):
    - ack and return (idempotent no-op).
 3. If R.State is processing (strategy already recorded):
@@ -163,7 +163,7 @@ On a crash between admit and `record`, the Request stays non-terminal; visibilit
 - **Re-ingest of a superseded URI.** Ingest dedups on `(Queue, URI)` and returns the existing (now terminal `superseded`) id; `process` acks it as a no-op (step 2). Correct: a URI is only superseded for a *strictly newer* head, so re-validating it is never wanted.
 - **Gate closed, no newer head.** The single latest head waits for a slot until the in-flight validation completes — the steady state, not an error.
 - **Head equals last-green.** `IsAncestor(lastGreen, R.URI)` with `R.URI == lastGreen` is degenerate; treat as already-green, or (simpler) run an incremental build with an empty delta. Left to `build`.
-- **Queue row missing.** First head for a Queue: ingest get-or-creates the row with defaults (`in_flight_count = 0`, empty `last_green_uri`). `process` treats a missing row as retryable (ingest write not yet visible).
+- **Queue row missing.** First head for a Queue: ingest get-or-creates the row with defaults (`in_flight_count = 0`, empty `last_green_uri`). `process` treats a missing row as non-retryable — storage's read-after-write guarantee means ingest's write is already visible by the time `process` reads it, so a miss is a storage defect, not lag.
 
 ## Entity model
 

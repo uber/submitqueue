@@ -1,39 +1,31 @@
 # Metrics Utilities (`platform/metrics`)
 
-The `metrics` package provides reusable helpers for emitting counters, timers, histograms, and gauges on a `tally.Scope`. It standardizes metric names across controllers and integrates with `platform/errs` for automatic error classification tags.
+The `metrics` package provides reusable helpers for emitting counters and histograms on a `tally.Scope`.
 
 ## Design
 
-**Free functions on `tally.Scope`** — no wrapper types. Existing constructors accept `tally.Scope` and don't need to change.
+**Free functions on `tally.Scope`** — no wrapper types. Existing constructors accept `tally.Scope` and do not need to change.
 
-**Operation lifecycle** — `Begin` and `Complete` tie the full metrics lifecycle together. `Begin` captures the start time and emits `{name}.called`; `Complete` emits succeeded/failed counters, a latency timer, and a latency histogram. This prevents mismatched or forgotten metrics calls.
+**Operation lifecycle** — `Begin` and `Complete` tie operation metrics together. `Begin` captures the start time and emits `{name}.start`; `Complete` records duration and count on `{name}.finish`.
 
-**Error-aware tagging** — `ErrorTags` integrates with `platform/errs` to produce `error_origin=user|infra`, `retryable=true|false`, and `dependency=true` tags automatically. `Complete` uses these to tag latency metrics on failure.
+**Result tagging** — the finish histogram is tagged with `result=success`, `result=error`, or `result=cancel`. Cancellation is detected with `errors.Is(err, context.Canceled)`. Callers that accumulate tags while the operation runs can pass them to `Complete`.
 
-**Consistent naming** — all Named helpers follow the `{name}.{sub}` sub-scope pattern, producing structured metric paths like `process.called`, `publish.attempts`, `consumer.pending_messages`.
+**Consistent naming** — named helpers follow the `{name}.{sub}` sub-scope pattern, producing metric paths such as `process.start` and `publish.attempts`.
 
 ## Operation Lifecycle
 
-For any operation with a clear start/end, use `Begin`/`Complete`:
+For any operation with a clear start and end, use `Begin` and `Complete`:
 
 | Function | Emits |
 |----------|-------|
-| `Begin(scope, name, ...tags)` | `{name}.called` counter +1, returns `Op` |
-| `op.Complete(err)` | `{name}.succeeded` or `{name}.failed` counter, `{name}.latency` timer, `{name}.latency_histogram` histogram — all tagged with `result=success\|error` and error classification tags on failure |
+| `Begin(scope, name, buckets, ...tags)` | `{name}.start` counter +1 and returns an `Op` |
+| `op.Complete(err, ...tags)` | `{name}.finish` histogram tagged with `result=success\|error\|cancel` and any completion tags |
+
+`buckets` is required at `Begin` because operations differ widely in expected latency. The finish histogram records both the duration distribution and the number of completed operations, so `Complete` does not emit a separate counter.
 
 ```go
-// RPC controller
-func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (resp *pb.LandResponse, retErr error) {
-    op := metrics.Begin(c.scope, "land")
-    defer func() { op.Complete(retErr) }()
-
-    // ... business logic ...
-    return &pb.LandResponse{Sqid: request.ID}, nil
-}
-
-// Queue controller
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-    op := metrics.Begin(c.scope, "process")
+    op := metrics.Begin(c.scope, "process", metrics.LongLatencyBuckets)
     defer func() { op.Complete(retErr) }()
 
     // ... business logic ...
@@ -41,66 +33,42 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 }
 ```
 
-On success, `Complete` emits:
-- `{name}.succeeded` counter +1
-- `{name}.latency` timer tagged `result=success`
-- `{name}.latency_histogram` histogram tagged `result=success`
+Tags passed to `Begin` apply to both lifecycle metrics. Tags known only after execution, such as an error classification, can be attached to the finish histogram:
 
-On failure, `Complete` emits:
-- `{name}.failed` counter +1
-- `{name}.latency` timer tagged `result=error`, `error_origin=user|infra`, `retryable=true|false`, and optionally `dependency=true`
-- `{name}.latency_histogram` histogram with the same tags
+```go
+err := controller.Process(ctx, delivery)
+err = classifier.Process(err)
+op.Complete(err, metrics.NewTag("origin", "infra_retryable"))
+```
 
 ## Named Helpers
 
-For ad-hoc metrics that don't fit the Begin/Complete lifecycle. All follow the `{name}.{sub}` sub-scope pattern:
+For ad-hoc metrics that do not fit the operation lifecycle:
 
 | Function | Emits | Example |
 |----------|-------|---------|
 | `NamedCounter(scope, name, counter, value, ...tags)` | `{name}.{counter}` counter | `publish.attempts` |
-| `NamedTimer(scope, name, timer, duration, ...tags)` | `{name}.{timer}` timer | `publish.queue_latency` |
 | `NamedHistogram(scope, name, histogram, buckets, ...tags)` | `{name}.{histogram}` histogram | `process.duration` |
-| `NamedGauge(scope, name, gauge, value, ...tags)` | `{name}.{gauge}` gauge | `consumer.pending_messages` |
 
 ```go
-// Count a specific sub-event
 metrics.NamedCounter(c.scope, "publish", "attempts", 1)
 
-// Record a specific sub-latency
-metrics.NamedTimer(c.scope, "publish", "queue_latency", elapsed)
-
-// Track current queue depth (goes up and down)
-metrics.NamedGauge(c.scope, "consumer", "pending_messages", float64(len(pending)))
-
-// Create a reusable histogram (store on struct, call RecordDuration per invocation)
-h := metrics.NamedHistogram(c.scope, "process", "duration", tally.DurationBuckets{...})
+h := metrics.NamedHistogram(c.scope, "process", "duration", metrics.FastLatencyBuckets)
 h.RecordDuration(elapsed)
 ```
 
-## Error Tags
+Do not emit gauges or timers. Represent operation latency and completion count with lifecycle histograms, and represent instantaneous quantities as sampled histogram values when needed.
 
-`ErrorTags` classifies errors using `platform/errs` and returns tags for dimensional filtering:
+### Why histograms, not timers
 
-| Tag | Values | Source |
-|-----|--------|--------|
-| `error_origin` | `user`, `infra` | `errs.IsUserError` |
-| `retryable` | `true`, `false` | `errs.IsRetryable` |
-| `dependency` | `true` (only when applicable) | `errs.IsDependencyError` |
-
-```go
-tags := metrics.ErrorTags(err)
-// Generic error:     [{error_origin, infra}, {retryable, false}]
-// User error:        [{error_origin, user},  {retryable, false}]
-// Retryable error:   [{error_origin, infra}, {retryable, true}]
-// Dependency error:  [{error_origin, infra}, {retryable, false}, {dependency, true}]
-```
+Durations are recorded as histograms rather than timers. Timer percentiles cannot be combined accurately across time series, while bucketed histogram counts can be summed to reconstruct a combined distribution for correct aggregate percentiles.
 
 ## Tags
 
-Use `NewTag` to pass additional dimensional tags to any helper:
+Use `NewTag` to pass dimensional tags to a helper:
 
 ```go
-op := metrics.Begin(c.scope, "process", metrics.NewTag("queue", req.Queue))
+op := metrics.Begin(c.scope, "process", metrics.LongLatencyBuckets, metrics.NewTag("queue", req.Queue))
 defer func() { op.Complete(retErr) }()
 
 metrics.NamedCounter(c.scope, "publish", "attempts", 1, metrics.NewTag("topic", c.topic))
@@ -108,14 +76,12 @@ metrics.NamedCounter(c.scope, "publish", "attempts", 1, metrics.NewTag("topic", 
 
 ## Latency Buckets
 
-`Complete` uses default latency buckets (5ms to 4h) automatically, suitable for both fast RPCs and long-running operations like builds and merges:
+There is no default bucket set. The package exports three common sets:
 
-```
-5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s, 30s, 1m, 2m, 5m, 10m, 30m, 1h, 2h, 4h
-```
+| Set | Range | Use for |
+|-----|-------|---------|
+| `FastLatencyBuckets` | ~100µs – 5s | Fast in-process work such as scoring, cache lookups, and CPU-bound operations |
+| `StorageLatencyBuckets` | ~1ms – 1m | Storage and message-queue round trips such as database reads, writes, publishing, and consuming |
+| `LongLatencyBuckets` | ~5ms – 4h | Long-running pipeline work and external calls such as builds, merges, pushes, and provider calls |
 
-For custom histograms, pass your own buckets to `NamedHistogram`:
-
-```go
-h := metrics.NamedHistogram(c.scope, "build", "duration", tally.DurationBuckets{...})
-```
+Pass one of these sets or a custom `tally.DurationBuckets` to `Begin` or `NamedHistogram`.

@@ -37,6 +37,9 @@ import (
 	"github.com/uber/submitqueue/platform/errs"
 	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
 	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
+	"github.com/uber/submitqueue/platform/extension/consumergate"
+	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
+	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	mysqlcounter "github.com/uber/submitqueue/platform/extension/counter/mysql"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
@@ -74,7 +77,6 @@ import (
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/merge"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/mergeconflictsignal"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/mergesignal"
-	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/score"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/speculate"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/start"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/validate"
@@ -216,6 +218,11 @@ func run() error {
 	// so every non-nil error from a DLQ controller is forced retryable —
 	// reconciliation must redeliver on any failure because the DLQ
 	// subscriptions are final destinations (there is no further DLQ).
+	// Consumer gate: both consumers are gated uniformly — the gate keys on
+	// consumer group, so a DLQ stage is paused by its own group name just
+	// like a primary stage.
+	gate := newConsumerGate(logger)
+
 	primaryConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
 		errs.NewClassifierProcessor(
 			genericerrs.Classifier,
@@ -224,9 +231,11 @@ func run() error {
 			// errors surfaced from either backend.
 			mysqlerrs.Classifier,
 		),
+		gate,
 	)
 	dlqConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer-dlq"), registry,
 		errs.AlwaysRetryableProcessor,
+		gate,
 	)
 
 	// Build the per-queue extension registry: each queue resolves to its own
@@ -242,15 +251,14 @@ func run() error {
 	// Per-extension factories all resolve against the registry by queue name.
 	cpf := changeProviderFactory{queues}
 	brf := buildRunnerFactory{queues}
-	scf := scorerFactory{queues}
 	cof := analyzerFactory{queues}
 
 	// Register controllers
-	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, registry, cpf, brf, scf, cof, cnt, store)
+	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, registry, cpf, brf, cof, cnt, store)
 	if err != nil {
 		return err
 	}
-	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, store)
+	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, registry, store)
 	if err != nil {
 		return err
 	}
@@ -378,11 +386,10 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 		{topickey.TopicKeyValidate, "validate", "orchestrator-validate"},
 		{runwaymq.TopicKeyMergeConflictCheckSignal, "merge-conflict-check-signal", "orchestrator-mergeconflictsignal"},
 		{topickey.TopicKeyBatch, "batch", "orchestrator-batch"},
-		{topickey.TopicKeyScore, "score", "orchestrator-score"},
 		{topickey.TopicKeySpeculate, "speculate", "orchestrator-speculate"},
 		{topickey.TopicKeyBuild, "build", "orchestrator-build"},
 		{topickey.TopicKeyBuildSignal, "buildsignal", "orchestrator-buildsignal"},
-		{topickey.TopicKeyMerge, "merge", "orchestrator-merge"},
+		{topickey.TopicKeyMerge, "submitqueue-merge", "orchestrator-merge"},
 		{runwaymq.TopicKeyMergeSignal, "merge-signal", "orchestrator-mergesignal"},
 		{topickey.TopicKeyConclude, "conclude", "orchestrator-conclude"},
 	}
@@ -397,34 +404,21 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 				subscriberName, t.groupSuffix,
 			),
 		})
-		// DLQ subscription for the same primary stage. DLQ is disabled here
-		// to avoid a "_dlq_dlq" cascade: if DLQ reconciliation itself fails,
-		// the consumer retries forever and the failure is surfaced via logs
-		// and metrics rather than being moved to a second-level dead-letter
-		// topic that nobody consumes.
-		//
-		// MaxAttempts is bumped to a very high value so the per-message
-		// retry budget effectively never runs out — this pairs with the
-		// AlwaysRetryableProcessor wired into the DLQ consumer to guarantee
-		// reconciliation eventually converges instead of being silently
-		// dropped after the default retry count.
-		dlqSub := extqueue.DefaultSubscriptionConfig(
-			subscriberName, t.groupSuffix+"-dlq",
-		)
-		dlqSub.DLQ.Enabled = false
-		dlqSub.Retry.MaxAttempts = 1000
+		// DLQ subscription for the same primary stage. DLQSubscriptionConfig
+		// disables the subscription's own DLQ (no "_dlq_dlq" cascade) and sets
+		// an effectively unlimited retry budget to pair with the
+		// AlwaysRetryableProcessor wired into the DLQ consumer.
 		configs = append(configs, consumer.TopicConfig{
 			Key:          dlq.TopicKey(t.key),
 			Name:         t.name + "_dlq",
 			Queue:        q,
-			Subscription: dlqSub,
+			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, t.groupSuffix+"-dlq"),
 		})
 	}
 
-	// Publish-only: the orchestrator emits request log entries to the log
-	// topic but never persists them. The gateway is the sole consumer that
-	// writes the request log to storage, so the orchestrator registers no
-	// consuming subscription (and therefore no log DLQ) for this topic.
+	// Publish-only: the orchestrator emits request-log entries to the log topic.
+	// The gateway is the sole consumer and writer of request logs and public
+	// projections, so the orchestrator registers no consuming subscription.
 	configs = append(configs, consumer.TopicConfig{
 		Key:   topickey.TopicKeyLog,
 		Name:  "log",
@@ -450,7 +444,7 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 	// consumed primary topic above.
 	configs = append(configs, consumer.TopicConfig{
 		Key:   runwaymq.TopicKeyMerge,
-		Name:  "merge",
+		Name:  "runway-merge",
 		Queue: q,
 	})
 
@@ -460,11 +454,11 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 // registerPrimaryControllers creates all pipeline controllers and registers
 // them with the primary consumer. Pipeline:
 //
-//	request → validate ⇢ (runway) ⇢ mergeconflictsignal → batch → score → speculate → build → buildsignal ─┐
-//	                                                              ↑     ↘             ↻ poll       │
-//	                                                              │      merge → conclude          │
-//	                                                              │        │                       │
-//	                                                              └────────┴───────────────────────┘
+//	request → validate ⇢ (runway) ⇢ mergeconflictsignal → batch → speculate → build → buildsignal ─┐
+//	                                                                ↑     ↘           ↻ poll        │
+//	                                                                │      merge → conclude         │
+//	                                                                │        │                      │
+//	                                                                └────────┴──────────────────────┘
 //
 // The merge-conflict check is asynchronous and crosses a service boundary:
 // validate publishes the full check request to the runway-owned
@@ -491,8 +485,12 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 type queueExtensions struct {
 	changeProvider changeprovider.ChangeProvider
 	buildRunner    buildrunner.BuildRunner
-	scorer         scorer.Scorer
-	analyzer       conflict.Analyzer
+	// scorer holds each queue's scoring profile. The dedicated score stage was
+	// removed; scoring is being folded into the speculator, so the per-queue
+	// profiles are retained here (unwired to a consumer for now) until that
+	// integration lands.
+	scorer   scorer.Scorer
+	analyzer conflict.Analyzer
 }
 
 // queueRegistry maps a queue name to its extensions, falling back to a default
@@ -526,19 +524,13 @@ func (f buildRunnerFactory) For(cfg buildrunner.Config) (buildrunner.BuildRunner
 	return f.reg.get(cfg.QueueName).buildRunner, nil
 }
 
-type scorerFactory struct{ reg queueRegistry }
-
-func (f scorerFactory) For(cfg scorer.Config) (scorer.Scorer, error) {
-	return f.reg.get(cfg.QueueName).scorer, nil
-}
-
 type analyzerFactory struct{ reg queueRegistry }
 
 func (f analyzerFactory) For(cfg conflict.Config) (conflict.Analyzer, error) {
 	return f.reg.get(cfg.QueueName).analyzer, nil
 }
 
-func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, cpf changeprovider.Factory, brf buildrunner.Factory, scf scorer.Factory, cof conflict.Factory, cnt counter.Counter, store storage.Storage) (int, error) {
+func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, cpf changeprovider.Factory, brf buildrunner.Factory, cof conflict.Factory, cnt counter.Counter, store storage.Storage) (int, error) {
 	var count int
 	requestController := start.NewController(
 		logger,
@@ -607,20 +599,6 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 	)
 	if err := c.Register(batchController); err != nil {
 		return count, fmt.Errorf("failed to register batch controller: %w", err)
-	}
-	count++
-
-	scoreController := score.NewController(
-		logger,
-		scope,
-		store,
-		scf,
-		registry,
-		topickey.TopicKeyScore,
-		"orchestrator-score",
-	)
-	if err := c.Register(scoreController); err != nil {
-		return count, fmt.Errorf("failed to register score controller: %w", err)
 	}
 	count++
 
@@ -712,24 +690,23 @@ func registerPrimaryControllers(c consumer.Consumer, logger *zap.SugaredLogger, 
 // registers them with the DLQ consumer. Each reconciler drives the affected
 // request or batch into a terminal Error/Failed state so the gateway stops
 // reporting it as stuck-in-progress.
-func registerDLQControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, store storage.Storage) (int, error) {
+func registerDLQControllers(c consumer.Consumer, logger *zap.SugaredLogger, scope tally.Scope, registry consumer.TopicRegistry, store storage.Storage) (int, error) {
 	dlqScope := scope.SubScope("dlq")
 	dlqRegs := []struct {
 		name string
 		ctl  consumer.Controller
 	}{
-		{"start_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeLandRequestID, dlq.TopicKey(topickey.TopicKeyStart), "orchestrator-start-dlq")},
-		{"cancel_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeCancelRequestID, dlq.TopicKey(topickey.TopicKeyCancel), "orchestrator-cancel-dlq")},
-		{"validate_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeRequestID, dlq.TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")},
-		{"mergeconflictsignal_dlq", dlq.NewDLQMergeConflictSignalController(logger, dlqScope, store, dlq.TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-mergeconflictsignal-dlq")},
-		{"batch_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, dlq.DecodeRequestID, dlq.TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")},
-		{"score_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyScore), "orchestrator-score-dlq")},
-		{"speculate_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeySpeculate), "orchestrator-speculate-dlq")},
-		{"build_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyBuild), "orchestrator-build-dlq")},
-		{"buildsignal_dlq", dlq.NewDLQBuildSignalController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")},
-		{"merge_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")},
-		{"mergesignal_dlq", dlq.NewDLQMergeSignalController(logger, dlqScope, store, dlq.TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-mergesignal-dlq")},
-		{"conclude_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, dlq.TopicKey(topickey.TopicKeyConclude), "orchestrator-conclude-dlq")},
+		{"start_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, registry, dlq.DecodeLandRequestID, dlq.TopicKey(topickey.TopicKeyStart), "orchestrator-start-dlq")},
+		{"cancel_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, registry, dlq.DecodeCancelRequestID, dlq.TopicKey(topickey.TopicKeyCancel), "orchestrator-cancel-dlq")},
+		{"validate_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, registry, dlq.DecodeRequestID, dlq.TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")},
+		{"mergeconflictsignal_dlq", dlq.NewDLQMergeConflictSignalController(logger, dlqScope, store, registry, dlq.TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-mergeconflictsignal-dlq")},
+		{"batch_dlq", dlq.NewDLQRequestController(logger, dlqScope, store, registry, dlq.DecodeRequestID, dlq.TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")},
+		{"speculate_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeySpeculate), "orchestrator-speculate-dlq")},
+		{"build_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeyBuild), "orchestrator-build-dlq")},
+		{"buildsignal_dlq", dlq.NewDLQBuildSignalController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")},
+		{"merge_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")},
+		{"mergesignal_dlq", dlq.NewDLQMergeSignalController(logger, dlqScope, store, registry, dlq.TopicKey(runwaymq.TopicKeyMergeSignal), "orchestrator-mergesignal-dlq")},
+		{"conclude_dlq", dlq.NewDLQBatchController(logger, dlqScope, store, registry, dlq.TopicKey(topickey.TopicKeyConclude), "orchestrator-conclude-dlq")},
 	}
 	var count int
 	for _, reg := range dlqRegs {
@@ -748,6 +725,20 @@ func getEnv(key, defaultVal string) string {
 		return val
 	}
 	return defaultVal
+}
+
+// newConsumerGate enables the file-backed consumer gate only when
+// CONSUMER_GATE_DIR is explicitly configured. The file implementation is for
+// E2E and single-host development; normal service deployments use the no-op
+// implementation.
+func newConsumerGate(logger *zap.Logger) consumergate.Gate {
+	dir := os.Getenv("CONSUMER_GATE_DIR")
+	if dir == "" {
+		logger.Info("consumer gate disabled")
+		return consumergatenoop.New()
+	}
+	logger.Info("consumer gate configured", zap.String("dir", dir))
+	return consumergatefile.New(dir, consumergate.DefaultConfig())
 }
 
 // parseTimeout parses a duration from environment variable with fallback to default.
@@ -880,9 +871,10 @@ func newQueueRegistry(logger *zap.Logger, scope tally.Scope, resolver changeset.
 
 	// Baseline profile: shared edge integrations + a fake build runner (every
 	// build succeeds unless a head URI carries a failure marker), plus permissive
-	// defaults for scorer and conflict. The build runner instance is shared by
-	// the build and buildsignal controllers (same profile, same instance) so a
-	// build's recorded outcome survives across their separate factory lookups.
+	// defaults for scorer and conflict. The build runner
+	// instance is shared by the build and buildsignal controllers (same
+	// profile, same instance) so a build's recorded outcome survives across
+	// their separate factory lookups.
 	//
 	// The scorer is wrapped by scorerfake so a change URI carrying
 	// "sq-fake=score-error" forces a scoring error end-to-end; it is a pure

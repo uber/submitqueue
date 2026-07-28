@@ -36,7 +36,7 @@ import (
 // Per invocation, the controller advances the batch one step in the
 // state machine:
 //
-//   - Created or Scored → publish to build, transition to Speculating.
+//   - Created → publish to build, transition to Speculating.
 //   - Speculating       → if all deps are Succeeded, publish to merge and
 //     transition to Merging; otherwise no-op (or fail-fast if a dep is
 //     in a non-succeeding terminal state).
@@ -89,10 +89,7 @@ func NewController(
 
 // Process advances a batch one step along the naive happy-path.
 // Returns nil to ack (success), or error to nack (retry).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := metrics.Begin(c.metricsScope, opName)
-	defer func() { op.Complete(retErr) }()
-
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
 	bid, err := entity.BatchIDFromBytes(msg.Payload)
@@ -136,7 +133,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	switch batch.State {
-	case entity.BatchStateCreated, entity.BatchStateScored:
+	case entity.BatchStateCreated:
 		return c.startSpeculation(ctx, batch)
 	case entity.BatchStateSpeculating:
 		return c.tryFinalize(ctx, batch)
@@ -196,7 +193,7 @@ func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error 
 		case entity.BatchStateCancelled:
 			// Out-of-the-way: the cancelled batch will never land, so it can
 			// no longer conflict. Drop it from the chain and continue.
-			c.metricsScope.Counter("dependency_cancelled_skipped").Inc(1)
+			metrics.NamedCounter(c.metricsScope, opName, "dependency_cancelled_skipped", 1)
 			c.logger.Infow("dependency cancelled; dropping from speculation chain",
 				"batch_id", batch.ID,
 				"dependency_id", d.ID,
@@ -287,8 +284,8 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 // terminal self-heal branch, which re-runs the dependent fan-out and the
 // conclude publish for already-Cancelled batches.
 //
-// storage.ErrVersionMismatch on the terminal CAS is returned as-is for the
-// base controller to classify as retryable; the redelivery will land in the
+// storage.ErrVersionMismatch on the terminal CAS is returned as-is because it
+// is intrinsically retryable; the redelivery will land in the
 // self-heal branch and complete the fan-out.
 func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error {
 	metrics.NamedCounter(c.metricsScope, opName, "cancel_batch", 1)

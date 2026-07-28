@@ -82,22 +82,112 @@ message CancelRequest {
 message CancelResponse {
 }
 
-// StatusRequest defines a request to look up the current status of a previously submitted request.
-message StatusRequest {
-    // Globally unique identifier for the request, as returned by Land in the LandResponse.
+// RequestSummary is the gateway-owned materialized current view of one received request.
+message RequestSummary {
+    // Globally unique request identifier. This is request_id in internal storage.
+    string sqid = 1;
+    // Queue supplied when the request was received.
+    string queue = 2;
+    // Change URIs supplied when the request was received, in caller order.
+    repeated string change_uris = 3;
+    // Receipt time in Unix milliseconds.
+    int64 received_at_ms = 4;
+    // Current customer-friendly status of the request.
+    string status = 5;
+    // Last error associated with the current status. Empty when absent.
+    string last_error = 6;
+    // Display and debugging metadata associated with the current status.
+    map<string, string> metadata = 7;
+}
+
+// GetRequestSummaryByIDRequest selects one request by the sqid returned from Land.
+message GetRequestSummaryByIDRequest {
+    // Globally unique identifier for the request.
     string sqid = 1;
 }
 
-// StatusResponse defines the response to a status request.
-// The status is eventually consistent with the request store; it might take some time to converge, typically no more than a few seconds.
-message StatusResponse {
-    // Current customer-friendly status of the request (e.g. "accepted", "validating", "landed", "error").
-    // Status is a free-form string because the system may introduce new statuses without breaking existing clients.
-    string status = 1;
-    // Last error message associated with the current status. Empty string if there is no error.
-    string last_error = 2;
-    // Free-form key-value metadata associated with the current status, for display or debugging purposes. Empty if none.
-    map<string, string> metadata = 3;
+// GetRequestSummaryByIDResponse contains the current materialized request view.
+message GetRequestSummaryByIDResponse {
+    // Matching request.
+    RequestSummary request = 1;
+}
+
+// GetRequestSummaryByChangeURIRequest selects requests by an exact pinned change URI.
+message GetRequestSummaryByChangeURIRequest {
+    // Exact change URI supplied in a Land request.
+    string change_uri = 1;
+}
+
+// GetRequestSummaryByChangeURIResponse contains matching requests newest first.
+message GetRequestSummaryByChangeURIResponse {
+    // Matching requests ordered by receipt time descending, then sqid descending.
+    repeated RequestSummary requests = 1;
+}
+
+// ListRequest defines one bounded queue receipt-history query.
+message ListRequest {
+    // Exact queue to query.
+    string queue = 1;
+    // Inclusive lower receipt-time bound in Unix milliseconds.
+    int64 received_at_or_after_ms = 2;
+    // Exclusive upper receipt-time bound in Unix milliseconds.
+    int64 received_before_ms = 3;
+    // Maximum results to return. Zero selects the server default; values above the server maximum are invalid.
+    int32 page_size = 4;
+    // Opaque continuation token from a previous response. Empty selects the first page.
+    string page_token = 5;
+}
+
+// ListResponse defines one page of queue receipt history.
+message ListResponse {
+    // Requests ordered by receipt time descending, then sqid descending.
+    repeated RequestSummary requests = 1;
+    // Opaque continuation token. Empty when this is the last page.
+    string next_page_token = 2;
+}
+
+// GetRequestHistoryByIDRequest selects one retained request history by sqid.
+message GetRequestHistoryByIDRequest {
+    // Globally unique identifier for the request.
+    string sqid = 1;
+}
+
+// HistoryEvent is one retained append-only request-log event.
+message HistoryEvent {
+    // Time the request-log entry was created, in Unix milliseconds.
+    int64 timestamp_ms = 1;
+    // Customer-friendly request status recorded by the event.
+    string status = 2;
+    // Error message associated with the event. Empty when absent.
+    string last_error = 3;
+    // Display and debugging metadata associated with this event. Each lifecycle event carries its own values.
+    map<string, string> metadata = 4;
+}
+
+// GetRequestHistoryByIDResponse contains all retained events for one request.
+message GetRequestHistoryByIDResponse {
+    // Events ordered by timestamp ascending with a stable storage tie-breaker.
+    repeated HistoryEvent events = 1;
+}
+
+// GetRequestHistoryByChangeURIRequest selects retained histories by an exact pinned change URI.
+message GetRequestHistoryByChangeURIRequest {
+    // Exact change URI supplied in a Land request.
+    string change_uri = 1;
+}
+
+// RequestHistory groups retained events for one request.
+message RequestHistory {
+    // Globally unique request identifier.
+    string sqid = 1;
+    // Retained events ordered chronologically.
+    repeated HistoryEvent events = 2;
+}
+
+// GetRequestHistoryByChangeURIResponse contains retained histories ordered by numeric sqid counter ascending.
+message GetRequestHistoryByChangeURIResponse {
+    // Matching request histories.
+    repeated RequestHistory histories = 1;
 }
 
 // ***************
@@ -124,6 +214,8 @@ message RequestNotFoundError {
     Error error = 1;
     // The sqid that was not found.
     string sqid = 2;
+    // Exact change URI that was not found. Populated only for change-URI lookup.
+    string change_uri = 3;
 }
 
 // ***************
@@ -149,10 +241,21 @@ service SubmitQueueGateway {
     // Cancellation is NOT GUARANTEED: a request that has already merged, or that races to completion before the cancel
     // signal propagates through the pipeline, may still land (or end in an error). Callers must NOT assume that a
     // successful Cancel response means the request was cancelled — the actual terminal outcome (cancelled, landed, or
-    // error) must be checked through the separate status / request-log API.
+    // error) must be checked through the request-summary or request-history APIs.
     rpc Cancel(CancelRequest) returns (CancelResponse) {}
 
-    // Status returns the current status of a previously submitted request, identified by its sqid.
-    // The status is eventually consistent with the request store and reconciled from the append-only request log.
-    rpc Status(StatusRequest) returns (StatusResponse) {}
+    // GetRequestSummaryByID returns the current materialized status of one request.
+    rpc GetRequestSummaryByID(GetRequestSummaryByIDRequest) returns (GetRequestSummaryByIDResponse) {}
+
+    // GetRequestSummaryByChangeURI returns current materialized statuses for an exact pinned change URI.
+    rpc GetRequestSummaryByChangeURI(GetRequestSummaryByChangeURIRequest) returns (GetRequestSummaryByChangeURIResponse) {}
+
+    // List returns requests received for one queue during a bounded receipt-time range.
+    rpc List(ListRequest) returns (ListResponse) {}
+
+    // GetRequestHistoryByID returns every retained request-log event for one request.
+    rpc GetRequestHistoryByID(GetRequestHistoryByIDRequest) returns (GetRequestHistoryByIDResponse) {}
+
+    // GetRequestHistoryByChangeURI returns retained request histories for an exact pinned change URI.
+    rpc GetRequestHistoryByChangeURI(GetRequestHistoryByChangeURIRequest) returns (GetRequestHistoryByChangeURIResponse) {}
 }

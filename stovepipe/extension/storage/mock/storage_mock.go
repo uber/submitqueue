@@ -54,6 +54,20 @@ func (mr *MockStorageMockRecorder) Close() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockStorage)(nil).Close))
 }
 
+// GetBuildStore mocks base method.
+func (m *MockStorage) GetBuildStore() storage.BuildStore {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetBuildStore")
+	ret0, _ := ret[0].(storage.BuildStore)
+	return ret0
+}
+
+// GetBuildStore indicates an expected call of GetBuildStore.
+func (mr *MockStorageMockRecorder) GetBuildStore() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBuildStore", reflect.TypeOf((*MockStorage)(nil).GetBuildStore))
+}
+
 // GetQueueStore mocks base method.
 func (m *MockStorage) GetQueueStore() storage.QueueStore {
 	m.ctrl.T.Helper()

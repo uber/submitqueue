@@ -366,7 +366,7 @@ func (s *subscriber) advanceWatermark(ctx context.Context, consumerGroup, topic,
 
 // Subscribe starts consuming messages from the specified topic
 func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueue.SubscriptionConfig) (_ <-chan extqueue.Delivery, retErr error) {
-	op := metrics.Begin(s.scope, "subscribe", metrics.NewTag("topic", topic))
+	op := metrics.Begin(s.scope, "subscribe", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
 	defer func() { op.Complete(retErr) }()
 
 	s.mu.RLock()
@@ -410,9 +410,6 @@ func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueu
 	}
 
 	s.subscriptions[subKey] = sub
-
-	// Track active subscription
-	metrics.NamedGauge(s.scope, "subscribe", "active_subscriptions", 1, metrics.NewTag("topic", topic))
 
 	// Start the supervisor goroutine. It will discover partitions, acquire
 	// leases, and spawn per-partition worker goroutines. The supervisor runs
@@ -750,12 +747,17 @@ func (w *partitionWorker) run(ctx context.Context) {
 // Partition leasing guarantees a single writer, so the TOCTOU gap between
 // GetDeliveryState and MarkDelivered cannot cause incorrect behavior — no other
 // worker can mutate the same (consumer_group, topic, partition_key, offset).
-func (w *partitionWorker) pollAndDeliver(ctx context.Context) error {
-	start := time.Now()
+func (w *partitionWorker) pollAndDeliver(ctx context.Context) (retErr error) {
 	s := w.subscriber
 	sub := w.sub
 	cfg := sub.config
 	partitionKey := w.partitionKey
+
+	op := metrics.Begin(s.scope, "poll", metrics.StorageLatencyBuckets,
+		metrics.NewTag("topic", sub.topic),
+		metrics.NewTag("partition_key", partitionKey),
+	)
+	defer func() { op.Complete(retErr) }()
 
 	// Initialize offset for this partition once per worker lifetime
 	if !w.offsetInitialized {
@@ -835,10 +837,10 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) error {
 
 		// Calculate message age for metrics
 		messageAge := time.Duration(time.Now().UnixMilli()-row.PublishedAt) * time.Millisecond
-		metrics.NamedTimer(s.scope, "poll", "message_age", messageAge,
+		metrics.NamedHistogram(s.scope, "poll", "message_age", metrics.LongLatencyBuckets,
 			metrics.NewTag("topic", sub.topic),
 			metrics.NewTag("partition_key", partitionKey),
-		)
+		).RecordDuration(messageAge)
 
 		// Create delivery ID from offset
 		deliveryID := strconv.FormatInt(row.Offset, 10)
@@ -915,12 +917,7 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) error {
 
 	// Record poll metrics
 	if messageCount > 0 {
-		elapsed := time.Since(start)
 		metrics.NamedCounter(s.scope, "poll", "messages_delivered", int64(messageCount),
-			metrics.NewTag("topic", sub.topic),
-			metrics.NewTag("partition_key", partitionKey),
-		)
-		metrics.NamedTimer(s.scope, "poll", "latency", elapsed,
 			metrics.NewTag("topic", sub.topic),
 			metrics.NewTag("partition_key", partitionKey),
 		)
@@ -1088,7 +1085,7 @@ func (s *subscriber) fairShareCap(ctx context.Context, sub *subscription, owned 
 //  3. managePartitions internally handles stopping workers and closing deliveryCh
 //     (see managePartitions shutdown sequence)
 func (s *subscriber) Close() (retErr error) {
-	op := metrics.Begin(s.scope, "close")
+	op := metrics.Begin(s.scope, "close", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	s.mu.Lock()
@@ -1130,9 +1127,6 @@ func (s *subscriber) Close() (retErr error) {
 				"consumer_group", sub.config.ConsumerGroup,
 			)
 		}
-
-		// Update metrics
-		metrics.NamedGauge(s.scope, "subscribe", "active_subscriptions", 0, metrics.NewTag("topic", sub.topic))
 	}
 
 	s.subscriptions = make(map[string]*subscription)

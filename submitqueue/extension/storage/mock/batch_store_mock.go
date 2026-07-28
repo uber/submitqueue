@@ -85,20 +85,6 @@ func (mr *MockBatchStoreMockRecorder) GetByQueueAndStates(ctx, queue, states any
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByQueueAndStates", reflect.TypeOf((*MockBatchStore)(nil).GetByQueueAndStates), ctx, queue, states)
 }
 
-// UpdateScoreAndState mocks base method.
-func (m *MockBatchStore) UpdateScoreAndState(ctx context.Context, id string, oldVersion, newVersion int32, score float64, newState entity.BatchState) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateScoreAndState", ctx, id, oldVersion, newVersion, score, newState)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// UpdateScoreAndState indicates an expected call of UpdateScoreAndState.
-func (mr *MockBatchStoreMockRecorder) UpdateScoreAndState(ctx, id, oldVersion, newVersion, score, newState any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateScoreAndState", reflect.TypeOf((*MockBatchStore)(nil).UpdateScoreAndState), ctx, id, oldVersion, newVersion, score, newState)
-}
-
 // UpdateState mocks base method.
 func (m *MockBatchStore) UpdateState(ctx context.Context, id string, oldVersion, newVersion int32, newState entity.BatchState) error {
 	m.ctrl.T.Helper()

@@ -19,18 +19,23 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: submitqueue
+      MYSQL_INITDB_SKIP_TZINFO: ${SQ_MYSQL_INITDB_SKIP_TZINFO:-}
     ports:
       - "3306" # Random ephemeral port to avoid conflicts
+    volumes:
+      - type: ${SQ_MYSQL_DATA_MOUNT_TYPE:-volume}
+        target: /var/lib/mysql
     healthcheck:
       # Use 127.0.0.1 (TCP) instead of localhost (Unix socket). MySQL treats
       # "localhost" as a socket connection, which can be ready before the TCP
       # listener — causing dependent services that connect over TCP to fail.
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-proot"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      interval: 1s
+      timeout: 2s
+      retries: 60
 
   runway-service:
+    image: ${SQ_DOCKER_IMAGE_PREFIX:-submitqueue}-runway-service:latest
     build:
       context: ${REPO_ROOT}
       dockerfile: service/runway/server/Dockerfile

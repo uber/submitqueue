@@ -367,29 +367,41 @@ func (*CancelResponse) Descriptor() ([]byte, []int) {
 	return file_gateway_proto_rawDescGZIP(), []int{5}
 }
 
-// StatusRequest defines a request to look up the current status of a previously submitted request.
-type StatusRequest struct {
+// RequestSummary is the gateway-owned materialized current view of one received request.
+type RequestSummary struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Globally unique identifier for the request, as returned by Land in the LandResponse.
-	Sqid          string `protobuf:"bytes,1,opt,name=sqid,proto3" json:"sqid,omitempty"`
+	// Globally unique request identifier. This is request_id in internal storage.
+	Sqid string `protobuf:"bytes,1,opt,name=sqid,proto3" json:"sqid,omitempty"`
+	// Queue supplied when the request was received.
+	Queue string `protobuf:"bytes,2,opt,name=queue,proto3" json:"queue,omitempty"`
+	// Change URIs supplied when the request was received, in caller order.
+	ChangeUris []string `protobuf:"bytes,3,rep,name=change_uris,json=changeUris,proto3" json:"change_uris,omitempty"`
+	// Receipt time in Unix milliseconds.
+	ReceivedAtMs int64 `protobuf:"varint,4,opt,name=received_at_ms,json=receivedAtMs,proto3" json:"received_at_ms,omitempty"`
+	// Current customer-friendly status of the request.
+	Status string `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"`
+	// Last error associated with the current status. Empty when absent.
+	LastError string `protobuf:"bytes,6,opt,name=last_error,json=lastError,proto3" json:"last_error,omitempty"`
+	// Display and debugging metadata associated with the current status.
+	Metadata      map[string]string `protobuf:"bytes,7,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *StatusRequest) Reset() {
-	*x = StatusRequest{}
+func (x *RequestSummary) Reset() {
+	*x = RequestSummary{}
 	mi := &file_gateway_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *StatusRequest) String() string {
+func (x *RequestSummary) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*StatusRequest) ProtoMessage() {}
+func (*RequestSummary) ProtoMessage() {}
 
-func (x *StatusRequest) ProtoReflect() protoreflect.Message {
+func (x *RequestSummary) ProtoReflect() protoreflect.Message {
 	mi := &file_gateway_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -401,47 +413,83 @@ func (x *StatusRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use StatusRequest.ProtoReflect.Descriptor instead.
-func (*StatusRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use RequestSummary.ProtoReflect.Descriptor instead.
+func (*RequestSummary) Descriptor() ([]byte, []int) {
 	return file_gateway_proto_rawDescGZIP(), []int{6}
 }
 
-func (x *StatusRequest) GetSqid() string {
+func (x *RequestSummary) GetSqid() string {
 	if x != nil {
 		return x.Sqid
 	}
 	return ""
 }
 
-// StatusResponse defines the response to a status request.
-// The status is eventually consistent with the request store; it might take some time to converge, typically no more than a few seconds.
-type StatusResponse struct {
+func (x *RequestSummary) GetQueue() string {
+	if x != nil {
+		return x.Queue
+	}
+	return ""
+}
+
+func (x *RequestSummary) GetChangeUris() []string {
+	if x != nil {
+		return x.ChangeUris
+	}
+	return nil
+}
+
+func (x *RequestSummary) GetReceivedAtMs() int64 {
+	if x != nil {
+		return x.ReceivedAtMs
+	}
+	return 0
+}
+
+func (x *RequestSummary) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *RequestSummary) GetLastError() string {
+	if x != nil {
+		return x.LastError
+	}
+	return ""
+}
+
+func (x *RequestSummary) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+// GetRequestSummaryByIDRequest selects one request by the sqid returned from Land.
+type GetRequestSummaryByIDRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Current customer-friendly status of the request (e.g. "accepted", "validating", "landed", "error").
-	// Status is a free-form string because the system may introduce new statuses without breaking existing clients.
-	Status string `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
-	// Last error message associated with the current status. Empty string if there is no error.
-	LastError string `protobuf:"bytes,2,opt,name=last_error,json=lastError,proto3" json:"last_error,omitempty"`
-	// Free-form key-value metadata associated with the current status, for display or debugging purposes. Empty if none.
-	Metadata      map[string]string `protobuf:"bytes,3,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Globally unique identifier for the request.
+	Sqid          string `protobuf:"bytes,1,opt,name=sqid,proto3" json:"sqid,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *StatusResponse) Reset() {
-	*x = StatusResponse{}
+func (x *GetRequestSummaryByIDRequest) Reset() {
+	*x = GetRequestSummaryByIDRequest{}
 	mi := &file_gateway_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *StatusResponse) String() string {
+func (x *GetRequestSummaryByIDRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*StatusResponse) ProtoMessage() {}
+func (*GetRequestSummaryByIDRequest) ProtoMessage() {}
 
-func (x *StatusResponse) ProtoReflect() protoreflect.Message {
+func (x *GetRequestSummaryByIDRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_gateway_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -453,28 +501,601 @@ func (x *StatusResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use StatusResponse.ProtoReflect.Descriptor instead.
-func (*StatusResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use GetRequestSummaryByIDRequest.ProtoReflect.Descriptor instead.
+func (*GetRequestSummaryByIDRequest) Descriptor() ([]byte, []int) {
 	return file_gateway_proto_rawDescGZIP(), []int{7}
 }
 
-func (x *StatusResponse) GetStatus() string {
+func (x *GetRequestSummaryByIDRequest) GetSqid() string {
+	if x != nil {
+		return x.Sqid
+	}
+	return ""
+}
+
+// GetRequestSummaryByIDResponse contains the current materialized request view.
+type GetRequestSummaryByIDResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Matching request.
+	Request       *RequestSummary `protobuf:"bytes,1,opt,name=request,proto3" json:"request,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetRequestSummaryByIDResponse) Reset() {
+	*x = GetRequestSummaryByIDResponse{}
+	mi := &file_gateway_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetRequestSummaryByIDResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetRequestSummaryByIDResponse) ProtoMessage() {}
+
+func (x *GetRequestSummaryByIDResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gateway_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetRequestSummaryByIDResponse.ProtoReflect.Descriptor instead.
+func (*GetRequestSummaryByIDResponse) Descriptor() ([]byte, []int) {
+	return file_gateway_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *GetRequestSummaryByIDResponse) GetRequest() *RequestSummary {
+	if x != nil {
+		return x.Request
+	}
+	return nil
+}
+
+// GetRequestSummaryByChangeURIRequest selects requests by an exact pinned change URI.
+type GetRequestSummaryByChangeURIRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Exact change URI supplied in a Land request.
+	ChangeUri     string `protobuf:"bytes,1,opt,name=change_uri,json=changeUri,proto3" json:"change_uri,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetRequestSummaryByChangeURIRequest) Reset() {
+	*x = GetRequestSummaryByChangeURIRequest{}
+	mi := &file_gateway_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetRequestSummaryByChangeURIRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetRequestSummaryByChangeURIRequest) ProtoMessage() {}
+
+func (x *GetRequestSummaryByChangeURIRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gateway_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetRequestSummaryByChangeURIRequest.ProtoReflect.Descriptor instead.
+func (*GetRequestSummaryByChangeURIRequest) Descriptor() ([]byte, []int) {
+	return file_gateway_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *GetRequestSummaryByChangeURIRequest) GetChangeUri() string {
+	if x != nil {
+		return x.ChangeUri
+	}
+	return ""
+}
+
+// GetRequestSummaryByChangeURIResponse contains matching requests newest first.
+type GetRequestSummaryByChangeURIResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Matching requests ordered by receipt time descending, then sqid descending.
+	Requests      []*RequestSummary `protobuf:"bytes,1,rep,name=requests,proto3" json:"requests,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetRequestSummaryByChangeURIResponse) Reset() {
+	*x = GetRequestSummaryByChangeURIResponse{}
+	mi := &file_gateway_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetRequestSummaryByChangeURIResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetRequestSummaryByChangeURIResponse) ProtoMessage() {}
+
+func (x *GetRequestSummaryByChangeURIResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gateway_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetRequestSummaryByChangeURIResponse.ProtoReflect.Descriptor instead.
+func (*GetRequestSummaryByChangeURIResponse) Descriptor() ([]byte, []int) {
+	return file_gateway_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *GetRequestSummaryByChangeURIResponse) GetRequests() []*RequestSummary {
+	if x != nil {
+		return x.Requests
+	}
+	return nil
+}
+
+// ListRequest defines one bounded queue receipt-history query.
+type ListRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Exact queue to query.
+	Queue string `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
+	// Inclusive lower receipt-time bound in Unix milliseconds.
+	ReceivedAtOrAfterMs int64 `protobuf:"varint,2,opt,name=received_at_or_after_ms,json=receivedAtOrAfterMs,proto3" json:"received_at_or_after_ms,omitempty"`
+	// Exclusive upper receipt-time bound in Unix milliseconds.
+	ReceivedBeforeMs int64 `protobuf:"varint,3,opt,name=received_before_ms,json=receivedBeforeMs,proto3" json:"received_before_ms,omitempty"`
+	// Maximum results to return. Zero selects the server default; values above the server maximum are invalid.
+	PageSize int32 `protobuf:"varint,4,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	// Opaque continuation token from a previous response. Empty selects the first page.
+	PageToken     string `protobuf:"bytes,5,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListRequest) Reset() {
+	*x = ListRequest{}
+	mi := &file_gateway_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListRequest) ProtoMessage() {}
+
+func (x *ListRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gateway_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListRequest.ProtoReflect.Descriptor instead.
+func (*ListRequest) Descriptor() ([]byte, []int) {
+	return file_gateway_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ListRequest) GetQueue() string {
+	if x != nil {
+		return x.Queue
+	}
+	return ""
+}
+
+func (x *ListRequest) GetReceivedAtOrAfterMs() int64 {
+	if x != nil {
+		return x.ReceivedAtOrAfterMs
+	}
+	return 0
+}
+
+func (x *ListRequest) GetReceivedBeforeMs() int64 {
+	if x != nil {
+		return x.ReceivedBeforeMs
+	}
+	return 0
+}
+
+func (x *ListRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *ListRequest) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
+// ListResponse defines one page of queue receipt history.
+type ListResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Requests ordered by receipt time descending, then sqid descending.
+	Requests []*RequestSummary `protobuf:"bytes,1,rep,name=requests,proto3" json:"requests,omitempty"`
+	// Opaque continuation token. Empty when this is the last page.
+	NextPageToken string `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListResponse) Reset() {
+	*x = ListResponse{}
+	mi := &file_gateway_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListResponse) ProtoMessage() {}
+
+func (x *ListResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gateway_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListResponse.ProtoReflect.Descriptor instead.
+func (*ListResponse) Descriptor() ([]byte, []int) {
+	return file_gateway_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *ListResponse) GetRequests() []*RequestSummary {
+	if x != nil {
+		return x.Requests
+	}
+	return nil
+}
+
+func (x *ListResponse) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
+}
+
+// GetRequestHistoryByIDRequest selects one retained request history by sqid.
+type GetRequestHistoryByIDRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Globally unique identifier for the request.
+	Sqid          string `protobuf:"bytes,1,opt,name=sqid,proto3" json:"sqid,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetRequestHistoryByIDRequest) Reset() {
+	*x = GetRequestHistoryByIDRequest{}
+	mi := &file_gateway_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetRequestHistoryByIDRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetRequestHistoryByIDRequest) ProtoMessage() {}
+
+func (x *GetRequestHistoryByIDRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gateway_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetRequestHistoryByIDRequest.ProtoReflect.Descriptor instead.
+func (*GetRequestHistoryByIDRequest) Descriptor() ([]byte, []int) {
+	return file_gateway_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *GetRequestHistoryByIDRequest) GetSqid() string {
+	if x != nil {
+		return x.Sqid
+	}
+	return ""
+}
+
+// HistoryEvent is one retained append-only request-log event.
+type HistoryEvent struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Time the request-log entry was created, in Unix milliseconds.
+	TimestampMs int64 `protobuf:"varint,1,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`
+	// Customer-friendly request status recorded by the event.
+	Status string `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	// Error message associated with the event. Empty when absent.
+	LastError string `protobuf:"bytes,3,opt,name=last_error,json=lastError,proto3" json:"last_error,omitempty"`
+	// Display and debugging metadata associated with this event. Each lifecycle event carries its own values.
+	Metadata      map[string]string `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HistoryEvent) Reset() {
+	*x = HistoryEvent{}
+	mi := &file_gateway_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HistoryEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HistoryEvent) ProtoMessage() {}
+
+func (x *HistoryEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_gateway_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HistoryEvent.ProtoReflect.Descriptor instead.
+func (*HistoryEvent) Descriptor() ([]byte, []int) {
+	return file_gateway_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *HistoryEvent) GetTimestampMs() int64 {
+	if x != nil {
+		return x.TimestampMs
+	}
+	return 0
+}
+
+func (x *HistoryEvent) GetStatus() string {
 	if x != nil {
 		return x.Status
 	}
 	return ""
 }
 
-func (x *StatusResponse) GetLastError() string {
+func (x *HistoryEvent) GetLastError() string {
 	if x != nil {
 		return x.LastError
 	}
 	return ""
 }
 
-func (x *StatusResponse) GetMetadata() map[string]string {
+func (x *HistoryEvent) GetMetadata() map[string]string {
 	if x != nil {
 		return x.Metadata
+	}
+	return nil
+}
+
+// GetRequestHistoryByIDResponse contains all retained events for one request.
+type GetRequestHistoryByIDResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Events ordered by timestamp ascending with a stable storage tie-breaker.
+	Events        []*HistoryEvent `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetRequestHistoryByIDResponse) Reset() {
+	*x = GetRequestHistoryByIDResponse{}
+	mi := &file_gateway_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetRequestHistoryByIDResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetRequestHistoryByIDResponse) ProtoMessage() {}
+
+func (x *GetRequestHistoryByIDResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gateway_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetRequestHistoryByIDResponse.ProtoReflect.Descriptor instead.
+func (*GetRequestHistoryByIDResponse) Descriptor() ([]byte, []int) {
+	return file_gateway_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *GetRequestHistoryByIDResponse) GetEvents() []*HistoryEvent {
+	if x != nil {
+		return x.Events
+	}
+	return nil
+}
+
+// GetRequestHistoryByChangeURIRequest selects retained histories by an exact pinned change URI.
+type GetRequestHistoryByChangeURIRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Exact change URI supplied in a Land request.
+	ChangeUri     string `protobuf:"bytes,1,opt,name=change_uri,json=changeUri,proto3" json:"change_uri,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetRequestHistoryByChangeURIRequest) Reset() {
+	*x = GetRequestHistoryByChangeURIRequest{}
+	mi := &file_gateway_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetRequestHistoryByChangeURIRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetRequestHistoryByChangeURIRequest) ProtoMessage() {}
+
+func (x *GetRequestHistoryByChangeURIRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gateway_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetRequestHistoryByChangeURIRequest.ProtoReflect.Descriptor instead.
+func (*GetRequestHistoryByChangeURIRequest) Descriptor() ([]byte, []int) {
+	return file_gateway_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *GetRequestHistoryByChangeURIRequest) GetChangeUri() string {
+	if x != nil {
+		return x.ChangeUri
+	}
+	return ""
+}
+
+// RequestHistory groups retained events for one request.
+type RequestHistory struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Globally unique request identifier.
+	Sqid string `protobuf:"bytes,1,opt,name=sqid,proto3" json:"sqid,omitempty"`
+	// Retained events ordered chronologically.
+	Events        []*HistoryEvent `protobuf:"bytes,2,rep,name=events,proto3" json:"events,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RequestHistory) Reset() {
+	*x = RequestHistory{}
+	mi := &file_gateway_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RequestHistory) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RequestHistory) ProtoMessage() {}
+
+func (x *RequestHistory) ProtoReflect() protoreflect.Message {
+	mi := &file_gateway_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RequestHistory.ProtoReflect.Descriptor instead.
+func (*RequestHistory) Descriptor() ([]byte, []int) {
+	return file_gateway_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *RequestHistory) GetSqid() string {
+	if x != nil {
+		return x.Sqid
+	}
+	return ""
+}
+
+func (x *RequestHistory) GetEvents() []*HistoryEvent {
+	if x != nil {
+		return x.Events
+	}
+	return nil
+}
+
+// GetRequestHistoryByChangeURIResponse contains retained histories ordered by numeric sqid counter ascending.
+type GetRequestHistoryByChangeURIResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Matching request histories.
+	Histories     []*RequestHistory `protobuf:"bytes,1,rep,name=histories,proto3" json:"histories,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetRequestHistoryByChangeURIResponse) Reset() {
+	*x = GetRequestHistoryByChangeURIResponse{}
+	mi := &file_gateway_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetRequestHistoryByChangeURIResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetRequestHistoryByChangeURIResponse) ProtoMessage() {}
+
+func (x *GetRequestHistoryByChangeURIResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gateway_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetRequestHistoryByChangeURIResponse.ProtoReflect.Descriptor instead.
+func (*GetRequestHistoryByChangeURIResponse) Descriptor() ([]byte, []int) {
+	return file_gateway_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *GetRequestHistoryByChangeURIResponse) GetHistories() []*RequestHistory {
+	if x != nil {
+		return x.Histories
 	}
 	return nil
 }
@@ -490,7 +1111,7 @@ type Error struct {
 
 func (x *Error) Reset() {
 	*x = Error{}
-	mi := &file_gateway_proto_msgTypes[8]
+	mi := &file_gateway_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -502,7 +1123,7 @@ func (x *Error) String() string {
 func (*Error) ProtoMessage() {}
 
 func (x *Error) ProtoReflect() protoreflect.Message {
-	mi := &file_gateway_proto_msgTypes[8]
+	mi := &file_gateway_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -515,7 +1136,7 @@ func (x *Error) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Error.ProtoReflect.Descriptor instead.
 func (*Error) Descriptor() ([]byte, []int) {
-	return file_gateway_proto_rawDescGZIP(), []int{8}
+	return file_gateway_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *Error) GetMessage() string {
@@ -538,7 +1159,7 @@ type UnrecognizedQueueError struct {
 
 func (x *UnrecognizedQueueError) Reset() {
 	*x = UnrecognizedQueueError{}
-	mi := &file_gateway_proto_msgTypes[9]
+	mi := &file_gateway_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -550,7 +1171,7 @@ func (x *UnrecognizedQueueError) String() string {
 func (*UnrecognizedQueueError) ProtoMessage() {}
 
 func (x *UnrecognizedQueueError) ProtoReflect() protoreflect.Message {
-	mi := &file_gateway_proto_msgTypes[9]
+	mi := &file_gateway_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -563,7 +1184,7 @@ func (x *UnrecognizedQueueError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnrecognizedQueueError.ProtoReflect.Descriptor instead.
 func (*UnrecognizedQueueError) Descriptor() ([]byte, []int) {
-	return file_gateway_proto_rawDescGZIP(), []int{9}
+	return file_gateway_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *UnrecognizedQueueError) GetError() *Error {
@@ -586,14 +1207,16 @@ type RequestNotFoundError struct {
 	// Free text error message describing the error.
 	Error *Error `protobuf:"bytes,1,opt,name=error,proto3" json:"error,omitempty"`
 	// The sqid that was not found.
-	Sqid          string `protobuf:"bytes,2,opt,name=sqid,proto3" json:"sqid,omitempty"`
+	Sqid string `protobuf:"bytes,2,opt,name=sqid,proto3" json:"sqid,omitempty"`
+	// Exact change URI that was not found. Populated only for change-URI lookup.
+	ChangeUri     string `protobuf:"bytes,3,opt,name=change_uri,json=changeUri,proto3" json:"change_uri,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RequestNotFoundError) Reset() {
 	*x = RequestNotFoundError{}
-	mi := &file_gateway_proto_msgTypes[10]
+	mi := &file_gateway_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -605,7 +1228,7 @@ func (x *RequestNotFoundError) String() string {
 func (*RequestNotFoundError) ProtoMessage() {}
 
 func (x *RequestNotFoundError) ProtoReflect() protoreflect.Message {
-	mi := &file_gateway_proto_msgTypes[10]
+	mi := &file_gateway_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -618,7 +1241,7 @@ func (x *RequestNotFoundError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RequestNotFoundError.ProtoReflect.Descriptor instead.
 func (*RequestNotFoundError) Descriptor() ([]byte, []int) {
-	return file_gateway_proto_rawDescGZIP(), []int{10}
+	return file_gateway_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *RequestNotFoundError) GetError() *Error {
@@ -631,6 +1254,13 @@ func (x *RequestNotFoundError) GetError() *Error {
 func (x *RequestNotFoundError) GetSqid() string {
 	if x != nil {
 		return x.Sqid
+	}
+	return ""
+}
+
+func (x *RequestNotFoundError) GetChangeUri() string {
+	if x != nil {
+		return x.ChangeUri
 	}
 	return ""
 }
@@ -656,30 +1286,79 @@ const file_gateway_proto_rawDesc = "" +
 	"\rCancelRequest\x12\x12\n" +
 	"\x04sqid\x18\x01 \x01(\tR\x04sqid\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x10\n" +
-	"\x0eCancelResponse\"#\n" +
-	"\rStatusRequest\x12\x12\n" +
-	"\x04sqid\x18\x01 \x01(\tR\x04sqid\"\xd8\x01\n" +
-	"\x0eStatusResponse\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\tR\x06status\x12\x1d\n" +
+	"\x0eCancelResponse\"\xc9\x02\n" +
+	"\x0eRequestSummary\x12\x12\n" +
+	"\x04sqid\x18\x01 \x01(\tR\x04sqid\x12\x14\n" +
+	"\x05queue\x18\x02 \x01(\tR\x05queue\x12\x1f\n" +
+	"\vchange_uris\x18\x03 \x03(\tR\n" +
+	"changeUris\x12$\n" +
+	"\x0ereceived_at_ms\x18\x04 \x01(\x03R\freceivedAtMs\x12\x16\n" +
+	"\x06status\x18\x05 \x01(\tR\x06status\x12\x1d\n" +
 	"\n" +
-	"last_error\x18\x02 \x01(\tR\tlastError\x12R\n" +
-	"\bmetadata\x18\x03 \x03(\v26.uber.submitqueue.gateway.StatusResponse.MetadataEntryR\bmetadata\x1a;\n" +
+	"last_error\x18\x06 \x01(\tR\tlastError\x12R\n" +
+	"\bmetadata\x18\a \x03(\v26.uber.submitqueue.gateway.RequestSummary.MetadataEntryR\bmetadata\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"!\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"2\n" +
+	"\x1cGetRequestSummaryByIDRequest\x12\x12\n" +
+	"\x04sqid\x18\x01 \x01(\tR\x04sqid\"c\n" +
+	"\x1dGetRequestSummaryByIDResponse\x12B\n" +
+	"\arequest\x18\x01 \x01(\v2(.uber.submitqueue.gateway.RequestSummaryR\arequest\"D\n" +
+	"#GetRequestSummaryByChangeURIRequest\x12\x1d\n" +
+	"\n" +
+	"change_uri\x18\x01 \x01(\tR\tchangeUri\"l\n" +
+	"$GetRequestSummaryByChangeURIResponse\x12D\n" +
+	"\brequests\x18\x01 \x03(\v2(.uber.submitqueue.gateway.RequestSummaryR\brequests\"\xc3\x01\n" +
+	"\vListRequest\x12\x14\n" +
+	"\x05queue\x18\x01 \x01(\tR\x05queue\x124\n" +
+	"\x17received_at_or_after_ms\x18\x02 \x01(\x03R\x13receivedAtOrAfterMs\x12,\n" +
+	"\x12received_before_ms\x18\x03 \x01(\x03R\x10receivedBeforeMs\x12\x1b\n" +
+	"\tpage_size\x18\x04 \x01(\x05R\bpageSize\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\x05 \x01(\tR\tpageToken\"|\n" +
+	"\fListResponse\x12D\n" +
+	"\brequests\x18\x01 \x03(\v2(.uber.submitqueue.gateway.RequestSummaryR\brequests\x12&\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"2\n" +
+	"\x1cGetRequestHistoryByIDRequest\x12\x12\n" +
+	"\x04sqid\x18\x01 \x01(\tR\x04sqid\"\xf7\x01\n" +
+	"\fHistoryEvent\x12!\n" +
+	"\ftimestamp_ms\x18\x01 \x01(\x03R\vtimestampMs\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\x12\x1d\n" +
+	"\n" +
+	"last_error\x18\x03 \x01(\tR\tlastError\x12P\n" +
+	"\bmetadata\x18\x04 \x03(\v24.uber.submitqueue.gateway.HistoryEvent.MetadataEntryR\bmetadata\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"_\n" +
+	"\x1dGetRequestHistoryByIDResponse\x12>\n" +
+	"\x06events\x18\x01 \x03(\v2&.uber.submitqueue.gateway.HistoryEventR\x06events\"D\n" +
+	"#GetRequestHistoryByChangeURIRequest\x12\x1d\n" +
+	"\n" +
+	"change_uri\x18\x01 \x01(\tR\tchangeUri\"d\n" +
+	"\x0eRequestHistory\x12\x12\n" +
+	"\x04sqid\x18\x01 \x01(\tR\x04sqid\x12>\n" +
+	"\x06events\x18\x02 \x03(\v2&.uber.submitqueue.gateway.HistoryEventR\x06events\"n\n" +
+	"$GetRequestHistoryByChangeURIResponse\x12F\n" +
+	"\thistories\x18\x01 \x03(\v2(.uber.submitqueue.gateway.RequestHistoryR\thistories\"!\n" +
 	"\x05Error\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"e\n" +
 	"\x16UnrecognizedQueueError\x125\n" +
 	"\x05error\x18\x01 \x01(\v2\x1f.uber.submitqueue.gateway.ErrorR\x05error\x12\x14\n" +
-	"\x05queue\x18\x02 \x01(\tR\x05queue\"a\n" +
+	"\x05queue\x18\x02 \x01(\tR\x05queue\"\x80\x01\n" +
 	"\x14RequestNotFoundError\x125\n" +
 	"\x05error\x18\x01 \x01(\v2\x1f.uber.submitqueue.gateway.ErrorR\x05error\x12\x12\n" +
-	"\x04sqid\x18\x02 \x01(\tR\x04sqid2\x84\x03\n" +
+	"\x04sqid\x18\x02 \x01(\tR\x04sqid\x12\x1d\n" +
+	"\n" +
+	"change_uri\x18\x03 \x01(\tR\tchangeUri2\xdc\a\n" +
 	"\x12SubmitQueueGateway\x12W\n" +
 	"\x04Ping\x12%.uber.submitqueue.gateway.PingRequest\x1a&.uber.submitqueue.gateway.PingResponse\"\x00\x12W\n" +
 	"\x04Land\x12%.uber.submitqueue.gateway.LandRequest\x1a&.uber.submitqueue.gateway.LandResponse\"\x00\x12]\n" +
-	"\x06Cancel\x12'.uber.submitqueue.gateway.CancelRequest\x1a(.uber.submitqueue.gateway.CancelResponse\"\x00\x12]\n" +
-	"\x06Status\x12'.uber.submitqueue.gateway.StatusRequest\x1a(.uber.submitqueue.gateway.StatusResponse\"\x00Bk\n" +
+	"\x06Cancel\x12'.uber.submitqueue.gateway.CancelRequest\x1a(.uber.submitqueue.gateway.CancelResponse\"\x00\x12\x8a\x01\n" +
+	"\x15GetRequestSummaryByID\x126.uber.submitqueue.gateway.GetRequestSummaryByIDRequest\x1a7.uber.submitqueue.gateway.GetRequestSummaryByIDResponse\"\x00\x12\x9f\x01\n" +
+	"\x1cGetRequestSummaryByChangeURI\x12=.uber.submitqueue.gateway.GetRequestSummaryByChangeURIRequest\x1a>.uber.submitqueue.gateway.GetRequestSummaryByChangeURIResponse\"\x00\x12W\n" +
+	"\x04List\x12%.uber.submitqueue.gateway.ListRequest\x1a&.uber.submitqueue.gateway.ListResponse\"\x00\x12\x8a\x01\n" +
+	"\x15GetRequestHistoryByID\x126.uber.submitqueue.gateway.GetRequestHistoryByIDRequest\x1a7.uber.submitqueue.gateway.GetRequestHistoryByIDResponse\"\x00\x12\x9f\x01\n" +
+	"\x1cGetRequestHistoryByChangeURI\x12=.uber.submitqueue.gateway.GetRequestHistoryByChangeURIRequest\x1a>.uber.submitqueue.gateway.GetRequestHistoryByChangeURIResponse\"\x00Bk\n" +
 	"\x1ccom.uber.submitqueue.gatewayB\fGatewayProtoP\x01Z;github.com/uber/submitqueue/api/submitqueue/gateway/protopbb\x06proto3"
 
 var (
@@ -694,42 +1373,69 @@ func file_gateway_proto_rawDescGZIP() []byte {
 	return file_gateway_proto_rawDescData
 }
 
-var file_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_gateway_proto_goTypes = []any{
-	(*PingRequest)(nil),            // 0: uber.submitqueue.gateway.PingRequest
-	(*PingResponse)(nil),           // 1: uber.submitqueue.gateway.PingResponse
-	(*LandRequest)(nil),            // 2: uber.submitqueue.gateway.LandRequest
-	(*LandResponse)(nil),           // 3: uber.submitqueue.gateway.LandResponse
-	(*CancelRequest)(nil),          // 4: uber.submitqueue.gateway.CancelRequest
-	(*CancelResponse)(nil),         // 5: uber.submitqueue.gateway.CancelResponse
-	(*StatusRequest)(nil),          // 6: uber.submitqueue.gateway.StatusRequest
-	(*StatusResponse)(nil),         // 7: uber.submitqueue.gateway.StatusResponse
-	(*Error)(nil),                  // 8: uber.submitqueue.gateway.Error
-	(*UnrecognizedQueueError)(nil), // 9: uber.submitqueue.gateway.UnrecognizedQueueError
-	(*RequestNotFoundError)(nil),   // 10: uber.submitqueue.gateway.RequestNotFoundError
-	nil,                            // 11: uber.submitqueue.gateway.StatusResponse.MetadataEntry
-	(*protopb.Change)(nil),         // 12: uber.base.change.Change
-	(protopb1.Strategy)(0),         // 13: uber.base.mergestrategy.Strategy
+	(*PingRequest)(nil),                          // 0: uber.submitqueue.gateway.PingRequest
+	(*PingResponse)(nil),                         // 1: uber.submitqueue.gateway.PingResponse
+	(*LandRequest)(nil),                          // 2: uber.submitqueue.gateway.LandRequest
+	(*LandResponse)(nil),                         // 3: uber.submitqueue.gateway.LandResponse
+	(*CancelRequest)(nil),                        // 4: uber.submitqueue.gateway.CancelRequest
+	(*CancelResponse)(nil),                       // 5: uber.submitqueue.gateway.CancelResponse
+	(*RequestSummary)(nil),                       // 6: uber.submitqueue.gateway.RequestSummary
+	(*GetRequestSummaryByIDRequest)(nil),         // 7: uber.submitqueue.gateway.GetRequestSummaryByIDRequest
+	(*GetRequestSummaryByIDResponse)(nil),        // 8: uber.submitqueue.gateway.GetRequestSummaryByIDResponse
+	(*GetRequestSummaryByChangeURIRequest)(nil),  // 9: uber.submitqueue.gateway.GetRequestSummaryByChangeURIRequest
+	(*GetRequestSummaryByChangeURIResponse)(nil), // 10: uber.submitqueue.gateway.GetRequestSummaryByChangeURIResponse
+	(*ListRequest)(nil),                          // 11: uber.submitqueue.gateway.ListRequest
+	(*ListResponse)(nil),                         // 12: uber.submitqueue.gateway.ListResponse
+	(*GetRequestHistoryByIDRequest)(nil),         // 13: uber.submitqueue.gateway.GetRequestHistoryByIDRequest
+	(*HistoryEvent)(nil),                         // 14: uber.submitqueue.gateway.HistoryEvent
+	(*GetRequestHistoryByIDResponse)(nil),        // 15: uber.submitqueue.gateway.GetRequestHistoryByIDResponse
+	(*GetRequestHistoryByChangeURIRequest)(nil),  // 16: uber.submitqueue.gateway.GetRequestHistoryByChangeURIRequest
+	(*RequestHistory)(nil),                       // 17: uber.submitqueue.gateway.RequestHistory
+	(*GetRequestHistoryByChangeURIResponse)(nil), // 18: uber.submitqueue.gateway.GetRequestHistoryByChangeURIResponse
+	(*Error)(nil),                                // 19: uber.submitqueue.gateway.Error
+	(*UnrecognizedQueueError)(nil),               // 20: uber.submitqueue.gateway.UnrecognizedQueueError
+	(*RequestNotFoundError)(nil),                 // 21: uber.submitqueue.gateway.RequestNotFoundError
+	nil,                                          // 22: uber.submitqueue.gateway.RequestSummary.MetadataEntry
+	nil,                                          // 23: uber.submitqueue.gateway.HistoryEvent.MetadataEntry
+	(*protopb.Change)(nil),                       // 24: uber.base.change.Change
+	(protopb1.Strategy)(0),                       // 25: uber.base.mergestrategy.Strategy
 }
 var file_gateway_proto_depIdxs = []int32{
-	12, // 0: uber.submitqueue.gateway.LandRequest.change:type_name -> uber.base.change.Change
-	13, // 1: uber.submitqueue.gateway.LandRequest.strategy:type_name -> uber.base.mergestrategy.Strategy
-	11, // 2: uber.submitqueue.gateway.StatusResponse.metadata:type_name -> uber.submitqueue.gateway.StatusResponse.MetadataEntry
-	8,  // 3: uber.submitqueue.gateway.UnrecognizedQueueError.error:type_name -> uber.submitqueue.gateway.Error
-	8,  // 4: uber.submitqueue.gateway.RequestNotFoundError.error:type_name -> uber.submitqueue.gateway.Error
-	0,  // 5: uber.submitqueue.gateway.SubmitQueueGateway.Ping:input_type -> uber.submitqueue.gateway.PingRequest
-	2,  // 6: uber.submitqueue.gateway.SubmitQueueGateway.Land:input_type -> uber.submitqueue.gateway.LandRequest
-	4,  // 7: uber.submitqueue.gateway.SubmitQueueGateway.Cancel:input_type -> uber.submitqueue.gateway.CancelRequest
-	6,  // 8: uber.submitqueue.gateway.SubmitQueueGateway.Status:input_type -> uber.submitqueue.gateway.StatusRequest
-	1,  // 9: uber.submitqueue.gateway.SubmitQueueGateway.Ping:output_type -> uber.submitqueue.gateway.PingResponse
-	3,  // 10: uber.submitqueue.gateway.SubmitQueueGateway.Land:output_type -> uber.submitqueue.gateway.LandResponse
-	5,  // 11: uber.submitqueue.gateway.SubmitQueueGateway.Cancel:output_type -> uber.submitqueue.gateway.CancelResponse
-	7,  // 12: uber.submitqueue.gateway.SubmitQueueGateway.Status:output_type -> uber.submitqueue.gateway.StatusResponse
-	9,  // [9:13] is the sub-list for method output_type
-	5,  // [5:9] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	24, // 0: uber.submitqueue.gateway.LandRequest.change:type_name -> uber.base.change.Change
+	25, // 1: uber.submitqueue.gateway.LandRequest.strategy:type_name -> uber.base.mergestrategy.Strategy
+	22, // 2: uber.submitqueue.gateway.RequestSummary.metadata:type_name -> uber.submitqueue.gateway.RequestSummary.MetadataEntry
+	6,  // 3: uber.submitqueue.gateway.GetRequestSummaryByIDResponse.request:type_name -> uber.submitqueue.gateway.RequestSummary
+	6,  // 4: uber.submitqueue.gateway.GetRequestSummaryByChangeURIResponse.requests:type_name -> uber.submitqueue.gateway.RequestSummary
+	6,  // 5: uber.submitqueue.gateway.ListResponse.requests:type_name -> uber.submitqueue.gateway.RequestSummary
+	23, // 6: uber.submitqueue.gateway.HistoryEvent.metadata:type_name -> uber.submitqueue.gateway.HistoryEvent.MetadataEntry
+	14, // 7: uber.submitqueue.gateway.GetRequestHistoryByIDResponse.events:type_name -> uber.submitqueue.gateway.HistoryEvent
+	14, // 8: uber.submitqueue.gateway.RequestHistory.events:type_name -> uber.submitqueue.gateway.HistoryEvent
+	17, // 9: uber.submitqueue.gateway.GetRequestHistoryByChangeURIResponse.histories:type_name -> uber.submitqueue.gateway.RequestHistory
+	19, // 10: uber.submitqueue.gateway.UnrecognizedQueueError.error:type_name -> uber.submitqueue.gateway.Error
+	19, // 11: uber.submitqueue.gateway.RequestNotFoundError.error:type_name -> uber.submitqueue.gateway.Error
+	0,  // 12: uber.submitqueue.gateway.SubmitQueueGateway.Ping:input_type -> uber.submitqueue.gateway.PingRequest
+	2,  // 13: uber.submitqueue.gateway.SubmitQueueGateway.Land:input_type -> uber.submitqueue.gateway.LandRequest
+	4,  // 14: uber.submitqueue.gateway.SubmitQueueGateway.Cancel:input_type -> uber.submitqueue.gateway.CancelRequest
+	7,  // 15: uber.submitqueue.gateway.SubmitQueueGateway.GetRequestSummaryByID:input_type -> uber.submitqueue.gateway.GetRequestSummaryByIDRequest
+	9,  // 16: uber.submitqueue.gateway.SubmitQueueGateway.GetRequestSummaryByChangeURI:input_type -> uber.submitqueue.gateway.GetRequestSummaryByChangeURIRequest
+	11, // 17: uber.submitqueue.gateway.SubmitQueueGateway.List:input_type -> uber.submitqueue.gateway.ListRequest
+	13, // 18: uber.submitqueue.gateway.SubmitQueueGateway.GetRequestHistoryByID:input_type -> uber.submitqueue.gateway.GetRequestHistoryByIDRequest
+	16, // 19: uber.submitqueue.gateway.SubmitQueueGateway.GetRequestHistoryByChangeURI:input_type -> uber.submitqueue.gateway.GetRequestHistoryByChangeURIRequest
+	1,  // 20: uber.submitqueue.gateway.SubmitQueueGateway.Ping:output_type -> uber.submitqueue.gateway.PingResponse
+	3,  // 21: uber.submitqueue.gateway.SubmitQueueGateway.Land:output_type -> uber.submitqueue.gateway.LandResponse
+	5,  // 22: uber.submitqueue.gateway.SubmitQueueGateway.Cancel:output_type -> uber.submitqueue.gateway.CancelResponse
+	8,  // 23: uber.submitqueue.gateway.SubmitQueueGateway.GetRequestSummaryByID:output_type -> uber.submitqueue.gateway.GetRequestSummaryByIDResponse
+	10, // 24: uber.submitqueue.gateway.SubmitQueueGateway.GetRequestSummaryByChangeURI:output_type -> uber.submitqueue.gateway.GetRequestSummaryByChangeURIResponse
+	12, // 25: uber.submitqueue.gateway.SubmitQueueGateway.List:output_type -> uber.submitqueue.gateway.ListResponse
+	15, // 26: uber.submitqueue.gateway.SubmitQueueGateway.GetRequestHistoryByID:output_type -> uber.submitqueue.gateway.GetRequestHistoryByIDResponse
+	18, // 27: uber.submitqueue.gateway.SubmitQueueGateway.GetRequestHistoryByChangeURI:output_type -> uber.submitqueue.gateway.GetRequestHistoryByChangeURIResponse
+	20, // [20:28] is the sub-list for method output_type
+	12, // [12:20] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_gateway_proto_init() }
@@ -743,7 +1449,7 @@ func file_gateway_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gateway_proto_rawDesc), len(file_gateway_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

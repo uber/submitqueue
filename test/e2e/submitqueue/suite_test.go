@@ -16,16 +16,21 @@ package e2e_test
 
 // E2E Integration Tests
 //
-// These tests use docker-compose from service/submitqueue/docker-compose.yml
-// which requires pre-built Linux binaries.
+// These tests use docker-compose from service/submitqueue/docker-compose.yml.
+// They are hermetic: the service images are built from a staged context whose
+// inputs (Bazel-built Linux binaries, Dockerfiles, queues.yaml) are all
+// declared data dependencies of the test target.
 //
-// Run with make target (builds binaries + runs test):
+// Run with:
 //   make e2e-test
 
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,8 +38,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
+	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	gatewaypb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	orchestratorpb "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb"
+	"github.com/uber/submitqueue/platform/extension/consumergate"
+	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemysql "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
@@ -53,24 +61,19 @@ type E2EIntegrationSuite struct {
 	orchestratorClient orchestratorpb.SubmitQueueOrchestratorClient
 	db                 *sql.DB                 // App database
 	queueDB            *sql.DB                 // Queue database
-	requestLog         storage.RequestLogStore // White-box view of the request_log status timeline (app DB)
 	requestStore       storage.RequestStore    // White-box view of the internal RequestState (app DB)
+	gate               *consumergatefile.Store // Consumer-gate control plane (shared dir bind-mounted into services)
 }
 
 func TestE2EIntegration(t *testing.T) {
 	suite.Run(t, new(E2EIntegrationSuite))
 }
 
-// The gateway log consumer runs inside the gateway-service container, so this
-// suite can only observe persistence black-box through the Status RPC — there is
-// no in-process channel/HookSignal to wait on across the container boundary. A
-// bounded poll is therefore the deterministic-enough analog: persistTimeout is a
-// safety net (a failure here means something is genuinely stuck, not a timing
-// race), and persistPollInterval bounds how often we re-query.
-const (
-	persistTimeout      = 30 * time.Second
-	persistPollInterval = 500 * time.Millisecond
-)
+// The gateway log consumer runs inside the gateway-service container, so there
+// is no in-process signal to wait on across the container boundary.
+// persistPollInterval bounds how often helpers re-query; Bazel's test timeout is
+// the only convergence deadline.
+const persistPollInterval = 500 * time.Millisecond
 
 func (s *E2EIntegrationSuite) SetupSuite() {
 	t := s.T()
@@ -79,14 +82,35 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 
 	s.log.Logf("Starting E2E integration test suite using docker-compose")
 
-	// Set REPO_ROOT for docker-compose volume mounts and build context
-	repoRoot := testutil.FindRepoRoot(t)
-	t.Setenv("REPO_ROOT", repoRoot)
+	// Application services write parked records into a host bind mount. On a
+	// rootful daemon they must run as the host test user so those records remain
+	// readable and removable by the test. On a rootless daemon, container root
+	// already maps to the host user, so keep the container user at 0:0.
+	containerUser := dockerContainerUser(t)
+	t.Setenv("SQ_CONTAINER_USER", containerUser)
+	s.log.Logf("Application containers will run as %s", containerUser)
 
-	// Use docker-compose from service/submitqueue (full stack)
-	// NOTE: Assumes Linux binaries are pre-built via make target
-	composeFile := filepath.Join(repoRoot, "service/submitqueue/docker-compose.yml")
-	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "e2e-submitqueue")
+	// Consumer-gate state is an explicit E2E-only opt-in. The compose file
+	// bind-mounts this test-owned directory into every application service, and
+	// the suite manipulates the same directory through the file implementation.
+	gateDir := t.TempDir()
+	t.Setenv("SQ_CONSUMER_GATE_DIR", gateDir)
+	s.gate = consumergatefile.New(gateDir, consumergate.DefaultConfig())
+
+	// Use docker-compose from service/submitqueue (full stack), resolved from
+	// the test runfiles. All three service images are built from a staged
+	// build context assembled entirely from declared data dependencies.
+	composeFile := testutil.Runfile("service/submitqueue/docker-compose.yml")
+	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "e2e-submitqueue",
+		testutil.WithBuildContext(map[string]string{
+			".docker-bin/gateway":                                "service/submitqueue/gateway/server/gateway_linux",
+			".docker-bin/orchestrator":                           "service/submitqueue/orchestrator/server/orchestrator_linux",
+			".docker-bin/runway":                                 "service/runway/server/runway_linux",
+			"service/submitqueue/gateway/server/Dockerfile":      "service/submitqueue/gateway/server/Dockerfile",
+			"service/submitqueue/gateway/server/queues.yaml":     "service/submitqueue/gateway/server/queues.yaml",
+			"service/submitqueue/orchestrator/server/Dockerfile": "service/submitqueue/orchestrator/server/Dockerfile",
+			"service/runway/server/Dockerfile":                   "service/runway/server/Dockerfile",
+		}))
 
 	// Start the compose stack (Gateway + Orchestrator + 2 MySQL DBs)
 	err := s.stack.Up()
@@ -111,9 +135,7 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 
 	s.log.Logf("Schemas applied successfully")
 
-	// White-box handles on the app DB: the request_log audit trail (ordered
-	// status history) and the operating store (point-in-time RequestState).
-	s.requestLog = storagemysql.NewRequestLogStore(s.db, tally.NoopScope)
+	// White-box handle on the operating store for point-in-time RequestState.
 	s.requestStore = storagemysql.NewRequestStore(s.db, tally.NoopScope)
 
 	// Connect to Gateway gRPC service
@@ -129,6 +151,21 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 	s.orchestratorClient = orchestratorpb.NewSubmitQueueOrchestratorClient(orchestratorConn)
 
 	s.log.Logf("E2E integration test suite ready")
+}
+
+// dockerContainerUser returns the UID:GID that application containers should
+// use for host-bind-mounted test artifacts. Rootless Docker maps container root
+// to the host user; rootful Docker needs the host UID:GID explicitly.
+func dockerContainerUser(t *testing.T) string {
+	t.Helper()
+
+	cmd := exec.Command("docker", "info", "--format", "{{json .SecurityOptions}}")
+	output, err := cmd.Output()
+	require.NoError(t, err, "failed to inspect Docker security options")
+	if strings.Contains(string(output), "name=rootless") {
+		return "0:0"
+	}
+	return fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
 }
 
 func (s *E2EIntegrationSuite) TearDownSuite() {
@@ -181,15 +218,15 @@ func (s *E2EIntegrationSuite) TestPingOrchestrator() {
 // pipeline to terminal success on the fully-hermetic e2e-test-queue (no
 // conflicts, fake build succeeds, noop runway signals SUCCEEDED for both the
 // merge-conflict check and the merge). It asserts three views: the black-box
-// terminal Status, the ordered request_log status history, and the internal
-// RequestState in the operating store.
+// terminal request summary, the public GetRequestHistoryByID timeline, and the internal RequestState
+// in the operating store.
 //
 // This also exercises the request-log ownership invariant end-to-end: the
 // orchestrator only *publishes* log entries to the log topic (it never writes
 // the request log itself), and the gateway's log consumer drains that topic and
 // persists them. Every status below except the synchronous "accepted" reaches
 // storage only via that cross-service publish→consume→persist path, so its
-// presence in the timeline proves the path works.
+// presence in GetRequestHistoryByID proves the path works.
 func (s *E2EIntegrationSuite) TestLand_HappyPath_ReachesLanded() {
 	sqid := s.land("e2e-test-queue", "github://github.example.com/uber/e2e-service/pull/123/abcdef0123456789abcdef0123456789abcdef01")
 	s.log.Logf("Land (happy path) succeeded: sqid=%s; waiting for landed", sqid)
@@ -197,17 +234,15 @@ func (s *E2EIntegrationSuite) TestLand_HappyPath_ReachesLanded() {
 	// Black-box: the customer-facing status reaches landed.
 	s.awaitStatus(sqid, entity.RequestStatusLanded)
 
-	// White-box (status history): the request_log is the only ordered trail. All
-	// status entries for a request share its request_id partition on the log
-	// topic (ordered delivery) and the terminal "landed" is published last, so
-	// once "landed" is observed the earlier statuses are already persisted. This
-	// is a tolerant ordered-subsequence match — display statuses the pipeline
-	// does not emit (e.g. validating, speculating, building) are omitted.
+	// Black-box history: all status entries for a request share its request_id
+	// partition on the log topic, and the terminal "landed" is published last.
+	// Once "landed" is observed, GetRequestHistoryByID must expose the earlier statuses.
+	// This is a tolerant ordered-subsequence match because the pipeline does not
+	// emit every possible display status.
 	s.assertStatusesInOrder(sqid,
 		entity.RequestStatusAccepted,
 		entity.RequestStatusStarted,
 		entity.RequestStatusBatched,
-		entity.RequestStatusScored,
 		entity.RequestStatusLanded,
 	)
 
@@ -216,6 +251,82 @@ func (s *E2EIntegrationSuite) TestLand_HappyPath_ReachesLanded() {
 	// terminal check, not a sequence.
 	assert.Equal(s.T(), entity.RequestStateLanded, s.terminalState(sqid),
 		"operating store should show request %s in terminal state landed", sqid)
+}
+
+// TestReadAPIs validates all five request read endpoints against receipts
+// created through the public Land API.
+func (s *E2EIntegrationSuite) TestReadAPIs() {
+	t := s.T()
+	const (
+		queue     = "e2e-test-queue"
+		changeURI = "github://uber/e2e-read-apis/pull/456/abcdef0123456789abcdef0123456789abcdef01"
+	)
+	firstSqid := s.land(queue, changeURI)
+	secondSqid := s.land(queue, changeURI)
+	s.awaitStatus(firstSqid, entity.RequestStatusLanded)
+	s.awaitStatus(secondSqid, entity.RequestStatusError)
+
+	firstSummary, err := s.gatewayClient.GetRequestSummaryByID(s.ctx, &gatewaypb.GetRequestSummaryByIDRequest{Sqid: firstSqid})
+	require.NoError(t, err)
+	require.NotNil(t, firstSummary.Request)
+	assert.Equal(t, firstSqid, firstSummary.Request.Sqid)
+	assert.Equal(t, queue, firstSummary.Request.Queue)
+	assert.Equal(t, []string{changeURI}, firstSummary.Request.ChangeUris)
+
+	secondSummary, err := s.gatewayClient.GetRequestSummaryByID(s.ctx, &gatewaypb.GetRequestSummaryByIDRequest{Sqid: secondSqid})
+	require.NoError(t, err)
+	require.NotNil(t, secondSummary.Request)
+	assert.Contains(t, secondSummary.Request.LastError, firstSqid)
+
+	summariesByChange, err := s.gatewayClient.GetRequestSummaryByChangeURI(s.ctx, &gatewaypb.GetRequestSummaryByChangeURIRequest{ChangeUri: changeURI})
+	require.NoError(t, err)
+	require.Len(t, summariesByChange.Requests, 2)
+	expectedNewestFirst := []string{firstSqid, secondSqid}
+	if secondSummary.Request.ReceivedAtMs > firstSummary.Request.ReceivedAtMs ||
+		(secondSummary.Request.ReceivedAtMs == firstSummary.Request.ReceivedAtMs && secondSqid > firstSqid) {
+		expectedNewestFirst[0], expectedNewestFirst[1] = expectedNewestFirst[1], expectedNewestFirst[0]
+	}
+	assert.Equal(t, expectedNewestFirst, []string{summariesByChange.Requests[0].Sqid, summariesByChange.Requests[1].Sqid})
+
+	receivedAtOrAfterMs := min(firstSummary.Request.ReceivedAtMs, secondSummary.Request.ReceivedAtMs)
+	receivedBeforeMs := max(firstSummary.Request.ReceivedAtMs, secondSummary.Request.ReceivedAtMs) + 1
+	var listedSqids []string
+	var pageToken string
+	for {
+		listResponse, listErr := s.gatewayClient.List(s.ctx, &gatewaypb.ListRequest{
+			Queue:               queue,
+			ReceivedAtOrAfterMs: receivedAtOrAfterMs,
+			ReceivedBeforeMs:    receivedBeforeMs,
+			PageSize:            1,
+			PageToken:           pageToken,
+		})
+		require.NoError(t, listErr)
+		for _, request := range listResponse.Requests {
+			if request.Sqid == firstSqid || request.Sqid == secondSqid {
+				listedSqids = append(listedSqids, request.Sqid)
+			}
+		}
+		pageToken = listResponse.NextPageToken
+		if pageToken == "" {
+			break
+		}
+	}
+	assert.Equal(t, expectedNewestFirst, listedSqids)
+
+	historyByID, err := s.gatewayClient.GetRequestHistoryByID(s.ctx, &gatewaypb.GetRequestHistoryByIDRequest{Sqid: firstSqid})
+	require.NoError(t, err)
+	require.NotEmpty(t, historyByID.Events)
+	assert.Equal(t, string(entity.RequestStatusAccepted), historyByID.Events[0].Status)
+
+	historyByChange, err := s.gatewayClient.GetRequestHistoryByChangeURI(s.ctx, &gatewaypb.GetRequestHistoryByChangeURIRequest{ChangeUri: changeURI})
+	require.NoError(t, err)
+	require.Len(t, historyByChange.Histories, 2)
+	assert.Equal(t, []string{firstSqid, secondSqid}, []string{historyByChange.Histories[0].Sqid, historyByChange.Histories[1].Sqid})
+	require.NotEmpty(t, historyByChange.Histories[0].Events)
+	require.NotEmpty(t, historyByChange.Histories[1].Events)
+	secondEvents := historyByChange.Histories[1].Events
+	assert.Equal(t, string(entity.RequestStatusError), secondEvents[len(secondEvents)-1].Status)
+	assert.Equal(t, secondSummary.Request.LastError, secondEvents[len(secondEvents)-1].LastError)
 }
 
 // TestCancelRequest_InvalidSqid verifies the gateway rejects an empty sqid
@@ -230,33 +341,76 @@ func (s *E2EIntegrationSuite) TestCancelRequest_InvalidSqid() {
 		"empty sqid should map to InvalidArgument; got %s", st.Code())
 }
 
-// TestCancel_RecordsIntent verifies the deterministic half of the cancel flow:
-// Cancel returns OK and the gateway synchronously records a "cancelling" intent
-// entry in the request_log (written directly to the app DB before the RPC
-// returns, right after the Land "accepted" entry).
+// TestCancel_CaughtPreBatch_NeverLands drives the deterministic cancel
+// scenario from doc/rfc/consumer-gate.md as stop → observe → start: the
+// consumer gate stops runway's merge-conflict-check controller before the
+// request's check message can be answered, so the request is provably held
+// pre-batch while the cancel lands. The change must never reach the repo.
 //
-// It deliberately does NOT assert the terminal "cancelled" outcome. Cancellation
-// is best-effort and races the pipeline: on the hermetic stack the happy path
-// reaches "landed" in ~2s, and a cancel published before the orchestrator's
-// start controller has created the request is rejected to the DLQ and reconciled
-// to "error". Asserting a terminal "cancelled" deterministically needs a
-// pipeline-pause lever (e.g. a runway "park" marker that withholds the
-// merge-conflict-check signal so the request is caught pre-batch) — that is the
-// next incremental, per-stage addition on top of this harness.
-func (s *E2EIntegrationSuite) TestCancel_RecordsIntent() {
+//  1. Stop: close the gate for runway-mergeconflictcheck, scoped to this
+//     queue's partition, before landing — exact by construction, no timing.
+//  2. Land: the orchestrator runs the request to the merge-conflict-check
+//     hand-off; runway's subscriber delivers the check and the gate parks it.
+//  3. Observe: awaiting the parked record proves the controller is stopped and
+//     holding exactly this request's check (there is otherwise no signal
+//     distinguishing "gated and parked" from "not arrived yet").
+//  4. Act while stopped: cancel the request. It is pre-batch by construction,
+//     so the cancel controller drives it terminal Cancelled directly.
+//  5. Start: open the gate. The parked check proceeds as the same attempt,
+//     runway answers the now-stale check, and the orchestrator drops the
+//     signal for the halted request.
+//
+// The drop in step 5 is asserted without sleeping: a sentinel request landed
+// on the same queue after the gate opens shares the check and signal
+// partitions with the stale message, so the sentinel reaching "landed" proves
+// the stale signal was already consumed — at which point the cancelled
+// request must still be terminal Cancelled, never batched, never landed.
+func (s *E2EIntegrationSuite) TestCancel_CaughtPreBatch_NeverLands() {
 	t := s.T()
 
-	sqid := s.land("e2e-cancel-queue", "github://github.example.com/uber/e2e-cancel/pull/9999/abcdef0123456789abcdef0123456789abcdef01")
-	s.log.Logf("Land (cancel path) succeeded: sqid=%s; cancelling", sqid)
+	const queue = "e2e-cancel-queue"
+	const gateGroup = "runway-mergeconflictcheck"
+	gateTopic := runwaymq.TopicKeyMergeConflictCheck.String()
 
+	s.closeGate(gateGroup, queue, "e2e: hold merge-conflict check to catch cancel pre-batch")
+	// Reopen even if an assertion below fails, so teardown does not stop the
+	// stack with a delivery still parked. Opening twice is a no-op.
+	defer s.openGate(gateGroup, queue)
+
+	sqid := s.land(queue, "github://github.example.com/uber/e2e-cancel/pull/9999/abcdef0123456789abcdef0123456789abcdef01")
+	s.log.Logf("Land (cancel path) succeeded: sqid=%s; awaiting parked check", sqid)
+
+	parked := s.awaitParked(gateGroup, gateTopic, sqid)
+	assert.Equal(t, queue, parked.PartitionKey, "check message should be partitioned by queue")
+	assert.NotEmpty(t, parked.Payload, "parked record should carry the check payload")
+
+	// The controller is provably stopped and holding this request's check;
+	// cancel now. The request cannot be batched until the check is answered,
+	// so the cancel controller takes the not-batched path to terminal
+	// Cancelled.
 	_, err := s.gatewayClient.Cancel(s.ctx, &gatewaypb.CancelRequest{Sqid: sqid, Reason: "e2e cancel test"})
 	require.NoError(t, err, "Cancel failed")
 
-	// The gateway writes "accepted" (on Land) and "cancelling" (on Cancel)
-	// synchronously to the same store, so both are present the moment Cancel
-	// returns — no polling needed.
+	s.awaitStatus(sqid, entity.RequestStatusCancelled)
 	s.assertStatusesInOrder(sqid,
 		entity.RequestStatusAccepted,
 		entity.RequestStatusCancelling,
+		entity.RequestStatusCancelled,
 	)
+	assert.Equal(t, entity.RequestStateCancelled, s.terminalState(sqid),
+		"operating store should show request %s terminal cancelled while its check is parked", sqid)
+
+	// Start the controller again and prove the parked delivery cleared the gate.
+	s.openGate(gateGroup, queue)
+	s.awaitUnparked(gateGroup, gateTopic, sqid)
+
+	// Sentinel on the same queue: its landing proves the stale signal ahead of
+	// it on the same partitions was consumed.
+	sentinel := s.land(queue, "github://github.example.com/uber/e2e-cancel/pull/10000/1234567890abcdef1234567890abcdef12345678")
+	s.awaitStatus(sentinel, entity.RequestStatusLanded)
+
+	// The stale check answer was dropped: the cancelled request never advanced.
+	assert.Equal(t, entity.RequestStateCancelled, s.terminalState(sqid),
+		"request %s must stay terminal cancelled after its stale check signal is processed", sqid)
+	s.assertStatusesNever(sqid, entity.RequestStatusBatched, entity.RequestStatusLanded)
 }

@@ -44,7 +44,7 @@ func NewRequestStore(db *sql.DB, scope tally.Scope) storage.RequestStore {
 
 // Create persists a new request. Returns ErrAlreadyExists if the request ID already exists.
 func (r *requestStore) Create(ctx context.Context, request entity.Request) (retErr error) {
-	op := metrics.Begin(r.scope, "create")
+	op := metrics.Begin(r.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	_, err := r.db.ExecContext(ctx,
@@ -70,7 +70,7 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) (retE
 
 // Get retrieves a request by ID. Returns ErrNotFound if the request is not found.
 func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, retErr error) {
-	op := metrics.Begin(r.scope, "get")
+	op := metrics.Begin(r.scope, "get", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	var req entity.Request
@@ -103,7 +103,7 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 // (including when the request does not exist). This is a pure conditional write; the caller owns
 // version arithmetic.
 func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVersion, newVersion int32) (retErr error) {
-	op := metrics.Begin(r.scope, "update")
+	op := metrics.Begin(r.scope, "update", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	result, err := r.db.ExecContext(ctx,

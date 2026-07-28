@@ -113,7 +113,10 @@ func newTestController(
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ}},
+		[]consumer.TopicConfig{
+			{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
+		},
 	)
 	require.NoError(t, err)
 
@@ -220,8 +223,8 @@ func TestController_Process_PublishesCheckToRunway(t *testing.T) {
 	assert.Equal(t, request.Queue, got.QueueName)
 	require.Len(t, got.Steps, 1)
 	assert.Equal(t, request.ID, got.Steps[0].StepId)
-	require.Len(t, got.Steps[0].Changes, 1)
-	assert.Equal(t, request.Change.URIs, got.Steps[0].Changes[0].Uris)
+	require.NotNil(t, got.Steps[0].Change)
+	assert.Equal(t, request.Change.URIs, got.Steps[0].Change.Uris)
 	assert.Equal(t, strategypb.Strategy_REBASE, got.Steps[0].Strategy)
 }
 
@@ -344,7 +347,7 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 		ownerLookup    map[string]entity.Request
 		ownerNotFound  map[string]bool
 		ownerErr       map[string]error
-		wantUserErr    bool
+		wantRejected   bool
 		wantUnexpected bool
 	}{
 		{
@@ -352,14 +355,14 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			byURI: map[string][]entity.ChangeRecord{uriA: nil},
 		},
 		{
-			name: "overlap with live in-flight request returns user error",
+			name: "overlap with live in-flight request rejects the request",
 			byURI: map[string][]entity.ChangeRecord{
 				uriA: {{URI: uriA, RequestID: dupRequestID, Queue: queueName}},
 			},
 			ownerLookup: map[string]entity.Request{
 				dupRequestID: {ID: dupRequestID, Queue: queueName, State: entity.RequestStateStarted, Version: 1},
 			},
-			wantUserErr: true,
+			wantRejected: true,
 		},
 		{
 			name: "overlap with terminal owner is skipped",
@@ -387,7 +390,7 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			ownerLookup: map[string]entity.Request{
 				dupRequestID: {ID: dupRequestID, Queue: queueName, State: entity.RequestStateValidated, Version: 2},
 			},
-			wantUserErr: true,
+			wantRejected: true,
 		},
 		{
 			name:        "first URI's owner is terminal, second URI's owner is live",
@@ -400,7 +403,7 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 				terminalReqID: {ID: terminalReqID, State: entity.RequestStateError, Version: 3},
 				anotherReqID:  {ID: anotherReqID, State: entity.RequestStateProcessing, Version: 4},
 			},
-			wantUserErr: true,
+			wantRejected: true,
 		},
 		{
 			// Store doesn't exclude self; controller filters by RequestID and must not look up its own row.
@@ -420,7 +423,7 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			ownerLookup: map[string]entity.Request{
 				dupRequestID: {ID: dupRequestID, Queue: queueName, State: entity.RequestStateStarted, Version: 1},
 			},
-			wantUserErr: true,
+			wantRejected: true,
 		},
 		{
 			name: "owner lookup unexpected error propagates",
@@ -453,7 +456,9 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			}
 
 			mockReqStore := storagemock.NewMockRequestStore(ctrl)
-			mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+			// Get is called once for the initial load and, on a duplicate, once more
+			// inside TerminateRequest before the terminal CAS.
+			mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil).AnyTimes()
 			for id, req := range tt.ownerLookup {
 				mockReqStore.EXPECT().Get(gomock.Any(), id).Return(req, nil)
 			}
@@ -462,6 +467,11 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			}
 			for id, e := range tt.ownerErr {
 				mockReqStore.EXPECT().Get(gomock.Any(), id).Return(entity.Request{}, e)
+			}
+			if tt.wantRejected {
+				// A detected duplicate is terminated (Started → Error) rather than
+				// dead-lettered, then the delivery is acked.
+				mockReqStore.EXPECT().UpdateState(gomock.Any(), request.ID, int32(1), int32(2), entity.RequestStateError).Return(nil)
 			}
 			store := storagemock.NewMockStorage(ctrl)
 			store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
@@ -489,9 +499,10 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			case tt.wantUnexpected:
 				require.Error(t, err)
 				assert.False(t, errs.IsUserError(err), "owner lookup failure should not be a user error")
-			case tt.wantUserErr:
-				require.Error(t, err)
-				assert.True(t, errs.IsUserError(err), "duplicate detection should be a user error")
+			case tt.wantRejected:
+				// If we get an expected failure, the request is terminated, and the delivery acked (no error, no DLQ).
+				// The terminal CAS is asserted via the UpdateState expectation above.
+				require.NoError(t, err)
 			default:
 				require.NoError(t, err)
 			}
@@ -623,16 +634,30 @@ func TestController_Process_CustomValidatorFails(t *testing.T) {
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
-	store, _ := newMockStorage(ctrl, request)
+	store, mockReqStore := newMockStorage(ctrl, request)
 	store.EXPECT().GetChangeStore().Return(newMockChangeStore(ctrl)).AnyTimes()
+	// A validator rejection terminates the request (Started → Error) rather than dead-lettering it.
+	mockReqStore.EXPECT().UpdateState(gomock.Any(), request.ID, int32(1), int32(2), entity.RequestStateError).Return(nil)
 
 	logger := zaptest.NewLogger(t).Sugar()
 
+	var gotLog entity.RequestLog
 	mockPub := queuemock.NewMockPublisher(ctrl)
+	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, msg entityqueue.Message) error {
+			log, err := entity.RequestLogFromBytes(msg.Payload)
+			require.NoError(t, err)
+			gotLog = log
+			return nil
+		},
+	).AnyTimes()
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ}},
+		[]consumer.TopicConfig{
+			{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
+		},
 	)
 	require.NoError(t, err)
 
@@ -654,6 +679,58 @@ func TestController_Process_CustomValidatorFails(t *testing.T) {
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
+	// The delivery is acked (no error): an invalid request is an expected terminal
+	// outcome, not a dead-letter, and the reason is preserved on the terminal log.
+	require.NoError(t, controller.Process(context.Background(), delivery))
+	assert.Equal(t, entity.RequestStatusError, gotLog.Status)
+	assert.Equal(t, int32(2), gotLog.RequestVersion)
+	assert.Contains(t, gotLog.LastError, "some validation error")
+}
+
+func TestController_Process_CustomValidatorFailure_TerminationPublishFails(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	request := entity.Request{
+		ID:           "test-queue/123",
+		Queue:        "test-queue",
+		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
+		LandStrategy: mergestrategy.MergeStrategyRebase,
+		State:        entity.RequestStateStarted,
+		Version:      1,
+	}
+	store, mockReqStore := newMockStorage(ctrl, request)
+	store.EXPECT().GetChangeStore().Return(newMockChangeStore(ctrl)).AnyTimes()
+	mockReqStore.EXPECT().UpdateState(gomock.Any(), request.ID, int32(1), int32(2), entity.RequestStateError).Return(nil)
+
+	mockPub := queuemock.NewMockPublisher(ctrl)
+	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("publish boom")).AnyTimes()
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{
+			{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
+		},
+	)
+	require.NoError(t, err)
+
+	cpFactory := changeprovidermock.NewMockFactory(ctrl)
+	cpFactory.EXPECT().For(gomock.Any()).Return(&mockChangeProvider{}, nil).AnyTimes()
+
+	mockValidator := validatormock.NewMockValidator(ctrl)
+	mockValidator.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(fmt.Errorf("some validation error"))
+	mockValidatorFactory := validatormock.NewMockFactory(ctrl)
+	mockValidatorFactory.EXPECT().For(validator.Config{
+		QueueName: request.Queue,
+	}).Return(mockValidator, nil)
+
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
+	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
 	err = controller.Process(context.Background(), delivery)
-	require.ErrorContains(t, err, "some validation error")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "failed to terminate rejected request")
 }

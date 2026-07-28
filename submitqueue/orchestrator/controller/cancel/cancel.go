@@ -35,7 +35,7 @@
 // it (cancelling builds, respeculating dependents) live in the same controller
 // — speculate is the single writer of every non-Cancelling batch state and is
 // already wired with the build/dependent stores. Forward-progress controllers
-// (score, build, buildsignal, merge) observe BatchStateCancelling via
+// (build, buildsignal, merge) observe BatchStateCancelling via
 // IsBatchStateHalted and short-circuit while speculate drives the batch to
 // its terminal state.
 //
@@ -46,10 +46,10 @@
 // Cancelling batch re-publishes to TopicKeySpeculate (a cheap no-op nudge
 // the speculate controller absorbs).
 //
-// Concurrent producers surface as storage.ErrVersionMismatch; the controller
-// returns the wrapped error as-is and relies on the base controller layer to
-// classify it as retryable so the next attempt sees the new state and takes
-// the other branch. storage.ErrNotFound on the initial Get (the start
+// Concurrent producers surface as the intrinsically retryable
+// storage.ErrVersionMismatch; the controller returns the wrapped error as-is
+// so the next attempt sees the new state and takes the other branch.
+// storage.ErrNotFound on the initial Get (the start
 // controller has not yet persisted the request) is returned as-is for the
 // same reason.
 package cancel
@@ -61,6 +61,7 @@ import (
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/metrics"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -80,6 +81,8 @@ type Controller struct {
 
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
+
+const opName = "process"
 
 // NewController creates a new cancel controller for the orchestrator.
 func NewController(
@@ -103,19 +106,17 @@ func NewController(
 // Process processes a cancel delivery from the queue.
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
-	c.metricsScope.Counter("received").Inc(1)
-
 	msg := delivery.Message()
 
 	cancelReq, err := entity.CancelRequestFromBytes(msg.Payload)
 	if err != nil {
-		c.metricsScope.Counter("deserialize_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		return fmt.Errorf("failed to deserialize cancel request: %w", err)
 	}
 
 	request, err := c.store.GetRequestStore().Get(ctx, cancelReq.ID)
 	if err != nil {
-		c.metricsScope.Counter("storage_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to get request %s: %w", cancelReq.ID, err)
 	}
 
@@ -130,7 +131,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	)
 
 	if entity.IsRequestStateTerminal(request.State) {
-		c.metricsScope.Counter("already_terminal").Inc(1)
+		metrics.NamedCounter(c.metricsScope, opName, "already_terminal", 1)
 		return nil
 	}
 
@@ -161,23 +162,23 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // where the prior delivery already wrote Cancelling.
 //
 // storage.ErrVersionMismatch (a concurrent writer — most likely conclude
-// observing a batch transition) is returned as-is for the base controller to
-// classify and retry; the next attempt re-fetches and re-evaluates (it may now
+// observing a batch transition) is returned as-is; its declaration makes it
+// retryable, and the next attempt re-fetches and re-evaluates (it may now
 // be terminal, in which case the top-level terminal-check acks).
 func (c *Controller) markCancelling(ctx context.Context, request entity.Request) (entity.Request, error) {
 	if request.State == entity.RequestStateCancelling {
 		// Idempotent re-delivery: prior pass already recorded intent.
-		c.metricsScope.Counter("already_cancelling").Inc(1)
+		metrics.NamedCounter(c.metricsScope, opName, "already_cancelling", 1)
 		return request, nil
 	}
 	newVersion := request.Version + 1
 	if err := c.store.GetRequestStore().UpdateState(ctx, request.ID, request.Version, newVersion, entity.RequestStateCancelling); err != nil {
-		c.metricsScope.Counter("request_update_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, opName, "request_update_errors", 1)
 		return entity.Request{}, fmt.Errorf("failed to mark request %s as cancelling: %w", request.ID, err)
 	}
 	request.Version = newVersion
 	request.State = entity.RequestStateCancelling
-	c.metricsScope.Counter("request_cancelling").Inc(1)
+	metrics.NamedCounter(c.metricsScope, opName, "request_cancelling", 1)
 	return request, nil
 }
 
@@ -194,7 +195,7 @@ func (c *Controller) findActiveBatch(ctx context.Context, request entity.Request
 	// TODO: Scans all the batches in flight - make it more efficient?
 	active, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, entity.ActiveBatchStates())
 	if err != nil {
-		c.metricsScope.Counter("batch_store_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
 		return entity.Batch{}, false, fmt.Errorf("failed to get active batches for queue=%s: %w", request.Queue, err)
 	}
 
@@ -208,35 +209,48 @@ func (c *Controller) findActiveBatch(ctx context.Context, request entity.Request
 	return entity.Batch{}, false, nil
 }
 
-// cancelRequest performs the terminal CAS (Cancelling → Cancelled) for a request
-// that is not part of any active batch, and emits the RequestStatusCancelled log
-// entry. storage.ErrVersionMismatch here means a concurrent writer (typically
-// conclude after a racing batch terminal transition) advanced the request between
-// our mark-cancelling CAS and this terminal CAS — returned as-is for the base
-// controller to classify and retry; the next pass will observe the new state
-// (likely terminal) and ack via the top-level terminal-check.
+// cancelRequest drives the terminal transition (Cancelling → Cancelled) for a
+// request that is not part of any active batch, and emits the RequestStatusCancelled log entry.
+// It delegates the CAS-plus-log to the shared TerminateRequest helper,
+// which re-reads the request before the terminal write.
+//
+// A storage.ErrVersionMismatch surfaced by the helper means a concurrent writer
+// (typically conclude after a racing batch terminal transition) advanced the
+// request between our mark-cancelling CAS and this terminal CAS; it is returned
+// as-is because the sentinel is intrinsically retryable, and the next pass will
+// observe the new state and ack via the top-level terminal-check. If that
+// concurrent writer already reached a *different* terminal state, the helper
+// reports TerminationDiverged and we simply ack — the other writer owns the
+// terminal log for the state it wrote.
 func (c *Controller) cancelRequest(ctx context.Context, request entity.Request, reason string) error {
-	newVersion := request.Version + 1
-	if err := c.store.GetRequestStore().UpdateState(ctx, request.ID, request.Version, newVersion, entity.RequestStateCancelled); err != nil {
-		c.metricsScope.Counter("request_update_errors").Inc(1)
-		return fmt.Errorf("failed to cancel request %s: %w", request.ID, err)
-	}
-
 	metadata := map[string]string{}
 	if reason != "" {
 		metadata["reason"] = reason
 	}
-	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusCancelled, newVersion, "", metadata)
-	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID); err != nil {
-		c.metricsScope.Counter("log_publish_errors").Inc(1)
-		return fmt.Errorf("failed to publish cancel log for request %s: %w", request.ID, err)
+	res, err := corerequest.TerminateRequest(ctx, c.store, c.registry, request.ID, entity.RequestStateCancelled, "", metadata)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "request_terminate_errors", 1)
+		return fmt.Errorf("failed to cancel request %s: %w", request.ID, err)
 	}
 
-	c.logger.Infow("request cancelled (not batched)",
-		"request_id", request.ID,
-		"queue", request.Queue,
-	)
-	c.metricsScope.Counter("request_cancelled").Inc(1)
+	switch res.Outcome {
+	case corerequest.TerminationOutcomeSuccess, corerequest.TerminationOutcomeAlreadyInTargetState:
+		c.logger.Infow("request cancelled (not batched)",
+			"request_id", request.ID,
+			"queue", request.Queue,
+		)
+		metrics.NamedCounter(c.metricsScope, opName, "request_cancelled", 1)
+	case corerequest.TerminationOutcomeDiverged:
+		c.logger.Infow("request reached a different terminal state before cancel, skipping",
+			"request_id", request.ID,
+			"queue", request.Queue,
+			"actual_state", string(res.BeforeState),
+		)
+		metrics.NamedCounter(c.metricsScope, opName, "request_terminal_divergence", 1)
+	case corerequest.TerminationOutcomeNotFound:
+		metrics.NamedCounter(c.metricsScope, opName, "request_store_errors", 1)
+		return fmt.Errorf("request %s not found during cancel: %w", request.ID, storage.ErrNotFound)
+	}
 	return nil
 }
 
@@ -266,27 +280,27 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 	if batch.State != entity.BatchStateCancelling {
 		newVersion := batch.Version + 1
 		if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateCancelling); err != nil {
-			c.metricsScope.Counter("batch_update_errors").Inc(1)
+			metrics.NamedCounter(c.metricsScope, opName, "batch_update_errors", 1)
 			// storage.ErrVersionMismatch here means the batch advanced concurrently
-			// (e.g. speculate / merge progressed). Returned as-is for the base
-			// controller to classify and retry; the re-fetch will see the new state
+			// (e.g. speculate / merge progressed). Returned as-is because the
+			// sentinel is intrinsically retryable; the re-fetch will see the new state
 			// and either short-circuit (already terminal) or attempt the transition
 			// again.
 			return fmt.Errorf("failed to mark batch %s as cancelling: %w", batch.ID, err)
 		}
 		batch.Version = newVersion
 		batch.State = entity.BatchStateCancelling
-		c.metricsScope.Counter("batch_cancelling").Inc(1)
+		metrics.NamedCounter(c.metricsScope, opName, "batch_cancelling", 1)
 	} else {
-		c.metricsScope.Counter("batch_already_cancelling").Inc(1)
+		metrics.NamedCounter(c.metricsScope, opName, "batch_already_cancelling", 1)
 	}
 
 	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, batch.ID, batch.Queue); err != nil {
-		c.metricsScope.Counter("publish_errors").Inc(1)
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to hand off cancelled batch %s to speculate: %w", batch.ID, err)
 	}
 
-	c.metricsScope.Counter("batch_handed_off").Inc(1)
+	metrics.NamedCounter(c.metricsScope, opName, "batch_handed_off", 1)
 	return nil
 }
 

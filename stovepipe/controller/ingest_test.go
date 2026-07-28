@@ -22,7 +22,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
-	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
 	"github.com/uber/submitqueue/platform/consumer"
 	countermock "github.com/uber/submitqueue/platform/extension/counter/mock"
 	mqmock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
@@ -145,7 +144,6 @@ func TestIngestController_Ingest(t *testing.T) {
 			name:  "heals when uri mapped but request missing",
 			queue: testQueue,
 			setup: func(m ingestMocks) {
-				// Prior attempt committed the URI mapping but failed before the request write.
 				expectResolve(m)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testQueue, testURI).Return("request/monorepo/main/3", nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), "request/monorepo/main/3").Return(entity.Request{}, storage.ErrNotFound)
@@ -242,7 +240,7 @@ func TestIngestController_Ingest(t *testing.T) {
 			c, m := newIngestController(t, ctrl)
 			tt.setup(m)
 
-			resp, err := c.Ingest(context.Background(), &pb.IngestRequest{Queue: tt.queue})
+			result, err := c.Ingest(context.Background(), entity.IngestRequest{Queue: tt.queue})
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -250,7 +248,7 @@ func TestIngestController_Ingest(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, tt.wantID, resp.Id)
+			assert.Equal(t, tt.wantID, result.ID)
 		})
 	}
 }

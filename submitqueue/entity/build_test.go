@@ -68,10 +68,9 @@ func TestBuildStatus_IsTerminal(t *testing.T) {
 
 func TestBuild_ToBytes(t *testing.T) {
 	build := Build{
-		ID:                "build-1",
-		BatchID:           "batch-1",
-		Status:            BuildStatusAccepted,
-		SpeculationPathID: "path-1",
+		ID:      "build-1",
+		BatchID: "batch-1",
+		Status:  BuildStatusAccepted,
 	}
 
 	data, err := build.ToBytes()
@@ -83,15 +82,13 @@ func TestBuild_ToBytes(t *testing.T) {
 	assert.Contains(t, jsonStr, "build-1")
 	assert.Contains(t, jsonStr, "batch-1")
 	assert.Contains(t, jsonStr, "accepted")
-	assert.Contains(t, jsonStr, "path-1")
 }
 
 func TestBuildFromBytes(t *testing.T) {
 	original := Build{
-		ID:                "build-42",
-		BatchID:           "batch-7",
-		Status:            BuildStatusAccepted,
-		SpeculationPathID: "path-42",
+		ID:      "build-42",
+		BatchID: "batch-7",
+		Status:  BuildStatusAccepted,
 	}
 
 	// Serialize
@@ -106,7 +103,6 @@ func TestBuildFromBytes(t *testing.T) {
 	assert.Equal(t, original.ID, deserialized.ID)
 	assert.Equal(t, original.BatchID, deserialized.BatchID)
 	assert.Equal(t, original.Status, deserialized.Status)
-	assert.Equal(t, original.SpeculationPathID, deserialized.SpeculationPathID)
 }
 
 func TestBuildFromBytes_InvalidJSON(t *testing.T) {
@@ -134,16 +130,15 @@ func TestBuild_SerializationRoundTrip(t *testing.T) {
 		build Build
 	}{
 		{
-			name: "accepted build with speculation path id",
+			name: "accepted build",
 			build: Build{
-				ID:                "build-100",
-				BatchID:           "batch-50",
-				Status:            BuildStatusAccepted,
-				SpeculationPathID: "path-100",
+				ID:      "build-100",
+				BatchID: "batch-50",
+				Status:  BuildStatusAccepted,
 			},
 		},
 		{
-			name: "succeeded build with no speculation path id",
+			name: "succeeded build",
 			build: Build{
 				ID:      "build-200",
 				BatchID: "batch-60",
@@ -153,10 +148,9 @@ func TestBuild_SerializationRoundTrip(t *testing.T) {
 		{
 			name: "failed build",
 			build: Build{
-				ID:                "build-300",
-				BatchID:           "batch-70",
-				Status:            BuildStatusFailed,
-				SpeculationPathID: "path-300",
+				ID:      "build-300",
+				BatchID: "batch-70",
+				Status:  BuildStatusFailed,
 			},
 		},
 	}

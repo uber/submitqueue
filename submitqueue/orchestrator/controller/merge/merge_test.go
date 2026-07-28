@@ -70,7 +70,7 @@ func TestNewController(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	q := queuemock.NewMockQueue(ctrl)
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "merge", Queue: q}},
+		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "runway-merge", Queue: q}},
 	)
 	require.NoError(t, err)
 
@@ -130,7 +130,7 @@ func TestProcess_PublishesFullPayloadToRunway(t *testing.T) {
 	q := queuemock.NewMockQueue(ctrl)
 	q.EXPECT().Publisher().Return(pub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "merge", Queue: q}},
+		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "runway-merge", Queue: q}},
 	)
 	require.NoError(t, err)
 
@@ -138,7 +138,7 @@ func TestProcess_PublishesFullPayloadToRunway(t *testing.T) {
 	require.NoError(t, c.Process(context.Background(), newDelivery(t, ctrl, batchID, batch.Queue)))
 
 	// Full payload published to runway, keyed by the batch id (the correlation id).
-	assert.Equal(t, "merge", gotTopic)
+	assert.Equal(t, "runway-merge", gotTopic)
 	got := &runwaymq.MergeRequest{}
 	require.NoError(t, runwaymq.Unmarshal(gotPayload, got))
 	assert.Equal(t, batch.ID, got.Id)
@@ -146,12 +146,12 @@ func TestProcess_PublishesFullPayloadToRunway(t *testing.T) {
 	require.Len(t, got.Steps, 2)
 	// One step per member request, in Contains order, attributed by request id.
 	assert.Equal(t, req1.ID, got.Steps[0].StepId)
-	require.Len(t, got.Steps[0].Changes, 1)
-	assert.Equal(t, req1.Change.URIs, got.Steps[0].Changes[0].Uris)
+	require.NotNil(t, got.Steps[0].Change)
+	assert.Equal(t, req1.Change.URIs, got.Steps[0].Change.Uris)
 	assert.Equal(t, strategypb.Strategy_SQUASH_REBASE, got.Steps[0].Strategy)
 	assert.Equal(t, req2.ID, got.Steps[1].StepId)
-	require.Len(t, got.Steps[1].Changes, 1)
-	assert.Equal(t, req2.Change.URIs, got.Steps[1].Changes[0].Uris)
+	require.NotNil(t, got.Steps[1].Change)
+	assert.Equal(t, req2.Change.URIs, got.Steps[1].Change.Uris)
 	assert.Equal(t, strategypb.Strategy_REBASE, got.Steps[1].Strategy)
 }
 
@@ -180,7 +180,7 @@ func TestProcess_HaltedBatchSkips(t *testing.T) {
 			q := queuemock.NewMockQueue(ctrl)
 			q.EXPECT().Publisher().Return(pub).AnyTimes()
 			registry, err := consumer.NewTopicRegistry(
-				[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "merge", Queue: q}},
+				[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "runway-merge", Queue: q}},
 			)
 			require.NoError(t, err)
 
@@ -211,7 +211,7 @@ func TestProcess_PublishFailureReturnsError(t *testing.T) {
 	q := queuemock.NewMockQueue(ctrl)
 	q.EXPECT().Publisher().Return(pub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "merge", Queue: q}},
+		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "runway-merge", Queue: q}},
 	)
 	require.NoError(t, err)
 
@@ -233,7 +233,7 @@ func TestProcess_BatchStoreGetFailureNotRetryable(t *testing.T) {
 
 	q := queuemock.NewMockQueue(ctrl)
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "merge", Queue: q}},
+		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMerge, Name: "runway-merge", Queue: q}},
 	)
 	require.NoError(t, err)
 

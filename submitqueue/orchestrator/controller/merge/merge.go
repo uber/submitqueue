@@ -90,11 +90,8 @@ func NewController(
 // (reject to DLQ). The publish to runway is retryable — it is the hand-off that
 // keeps the merge alive, so a transient enqueue blip should replay rather than
 // strand the batch.
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName)
-	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
@@ -168,7 +165,7 @@ func (c *Controller) buildMergeRequest(ctx context.Context, batch entity.Batch) 
 		}
 		steps = append(steps, &runwaymq.MergeStep{
 			StepId:   request.ID,
-			Changes:  []*changepb.Change{{Uris: request.Change.URIs}},
+			Change:   &changepb.Change{Uris: request.Change.URIs},
 			Strategy: toProtoStrategy(request.LandStrategy),
 		})
 	}

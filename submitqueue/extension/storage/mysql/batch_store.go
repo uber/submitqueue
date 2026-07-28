@@ -42,7 +42,7 @@ func NewBatchStore(db *sql.DB, scope tally.Scope) storage.BatchStore {
 
 // Get retrieves a batch by ID. Returns ErrNotFound if the batch is not found.
 func (s *batchStore) Get(ctx context.Context, id string) (ret entity.Batch, retErr error) {
-	op := metrics.Begin(s.scope, "get")
+	op := metrics.Begin(s.scope, "get", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	var batch entity.Batch
@@ -50,9 +50,9 @@ func (s *batchStore) Get(ctx context.Context, id string) (ret entity.Batch, retE
 	var dependenciesJSON []byte
 
 	err := s.db.QueryRowContext(ctx,
-		"SELECT id, queue, contains, dependencies, score, state, version FROM batch WHERE id = ?",
+		"SELECT id, queue, contains, dependencies, state, version FROM batch WHERE id = ?",
 		id,
-	).Scan(&batch.ID, &batch.Queue, &containsJSON, &dependenciesJSON, &batch.Score, &batch.State, &batch.Version)
+	).Scan(&batch.ID, &batch.Queue, &containsJSON, &dependenciesJSON, &batch.State, &batch.Version)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.Batch{}, storage.WrapNotFound(err)
@@ -74,7 +74,7 @@ func (s *batchStore) Get(ctx context.Context, id string) (ret entity.Batch, retE
 
 // Create creates a new batch. The batch must have a unique ID already assigned. Returns ErrAlreadyExists if the batch ID already exists.
 func (s *batchStore) Create(ctx context.Context, batch entity.Batch) (retErr error) {
-	op := metrics.Begin(s.scope, "create")
+	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	containsJSON, err := json.Marshal(batch.Contains)
@@ -88,12 +88,12 @@ func (s *batchStore) Create(ctx context.Context, batch entity.Batch) (retErr err
 	}
 
 	_, err = s.db.ExecContext(ctx,
-		"INSERT INTO batch (id, queue, contains, dependencies, score, state, version) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		batch.ID, batch.Queue, containsJSON, dependenciesJSON, batch.Score, batch.State, batch.Version,
+		"INSERT INTO batch (id, queue, contains, dependencies, state, version) VALUES (?, ?, ?, ?, ?, ?)",
+		batch.ID, batch.Queue, containsJSON, dependenciesJSON, batch.State, batch.Version,
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrDuplicateEntry {
 			return fmt.Errorf("batch entity id=%s: %w", batch.ID, storage.ErrAlreadyExists)
 		}
 		return fmt.Errorf("failed to insert batch entity id=%s: %w", batch.ID, err)
@@ -106,7 +106,7 @@ func (s *batchStore) Create(ctx context.Context, batch entity.Batch) (retErr err
 // if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
 // Version arithmetic is owned by the caller; this is a pure conditional write.
 func (s *batchStore) UpdateState(ctx context.Context, id string, oldVersion, newVersion int32, newState entity.BatchState) (retErr error) {
-	op := metrics.Begin(s.scope, "update_state")
+	op := metrics.Begin(s.scope, "update_state", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	result, err := s.db.ExecContext(ctx,
@@ -138,52 +138,16 @@ func (s *batchStore) UpdateState(ctx context.Context, id string, oldVersion, new
 	return nil
 }
 
-// UpdateScoreAndState atomically updates the score and state of a batch and the version to newVersion
-// if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
-// Version arithmetic is owned by the caller; this is a pure conditional write.
-func (s *batchStore) UpdateScoreAndState(ctx context.Context, id string, oldVersion, newVersion int32, score float64, newState entity.BatchState) (retErr error) {
-	op := metrics.Begin(s.scope, "update_score_and_state")
-	defer func() { op.Complete(retErr) }()
-
-	result, err := s.db.ExecContext(ctx,
-		"UPDATE batch SET score = ?, state = ?, version = ? WHERE id = ? AND version = ?",
-		score, newState, newVersion, id, oldVersion,
-	)
-	if err != nil {
-		return fmt.Errorf(
-			"failed to update batch score and state for id=%q oldVersion=%d newVersion=%d score=%f newState=%v: %w",
-			id, oldVersion, newVersion, score, newState, err,
-		)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf(
-			"failed to get rows affected from update score and state for id=%q oldVersion=%d newVersion=%d score=%f newState=%v: %w",
-			id, oldVersion, newVersion, score, newState, err,
-		)
-	}
-
-	if rowsAffected != 1 {
-		return fmt.Errorf(
-			"version mismatch for batch update score and state: id=%q expected_version=%d score=%f newState=%v: %w",
-			id, oldVersion, score, newState, storage.ErrVersionMismatch,
-		)
-	}
-
-	return nil
-}
-
 // GetByQueueAndStates retrieves all batches that belong to the given queue and are in the given states.
 func (s *batchStore) GetByQueueAndStates(ctx context.Context, queue string, states []entity.BatchState) (ret []entity.Batch, retErr error) {
-	op := metrics.Begin(s.scope, "get_by_queue_and_states")
+	op := metrics.Begin(s.scope, "get_by_queue_and_states", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	if len(states) == 0 {
 		return nil, nil
 	}
 
-	query := "SELECT id, queue, contains, dependencies, score, state, version FROM batch WHERE queue = ? AND state IN (?" + strings.Repeat(", ?", len(states)-1) + ")"
+	query := "SELECT id, queue, contains, dependencies, state, version FROM batch WHERE queue = ? AND state IN (?" + strings.Repeat(", ?", len(states)-1) + ")"
 
 	args := make([]any, 1+len(states))
 	args[0] = queue
@@ -203,7 +167,7 @@ func (s *batchStore) GetByQueueAndStates(ctx context.Context, queue string, stat
 		var containsJSON []byte
 		var dependenciesJSON []byte
 
-		if err := rows.Scan(&batch.ID, &batch.Queue, &containsJSON, &dependenciesJSON, &batch.Score, &batch.State, &batch.Version); err != nil {
+		if err := rows.Scan(&batch.ID, &batch.Queue, &containsJSON, &dependenciesJSON, &batch.State, &batch.Version); err != nil {
 			return nil, fmt.Errorf("failed to scan batch entity by queue=%q states=%v from the database: %w", queue, states, err)
 		}
 

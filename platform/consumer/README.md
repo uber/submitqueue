@@ -118,6 +118,10 @@ func (c *MyController) Process(ctx context.Context, delivery consumer.Delivery) 
 
 When the consumer is wired with `errs.AlwaysRetryableProcessor` (DLQ reconciliation), the framework overrides this: every non-nil error is forced retryable so the DLQ message comes back for another attempt. See `submitqueue/orchestrator/controller/dlq/README.md`.
 
+The consumer records controller operations with `process.start` and `process.finish`. The finish histogram records both latency and completion count with `result=success|error|cancel`; error and cancellation series also include `origin=infra|infra_retryable|user` and `dependency=yes|no`. These dimensions are added after error processing, so they describe the classified error that drives ack, nack, or reject behavior rather than the controller's raw return value. The lifecycle histogram count replaces separate received, processed, and controller-error counters.
+
+The consumer also owns lifecycle metrics for the resulting `ack`, `nack`, or `reject` transport operation. Queue controllers should emit only domain-specific event counters; they must not duplicate the consumer-owned `process` lifecycle metrics.
+
 ## Lifecycle
 
 1. **Register** controllers before starting.

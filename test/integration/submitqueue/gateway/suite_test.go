@@ -16,19 +16,18 @@ package gateway
 
 // Gateway Integration Tests
 //
-// These tests use docker-compose from service/submitqueue/gateway/server/docker-compose.yml
-// which requires pre-built Linux binaries.
+// These tests use docker-compose from service/submitqueue/gateway/server/docker-compose.yml.
+// They are hermetic: the gateway image is built from a staged context whose
+// inputs (Bazel-built Linux binary, Dockerfile, queues.yaml) are all declared
+// data dependencies of the test target.
 //
-// Run with make target (builds binary + runs test):
-//   make integration-test-gateway
-//
-// For manual testing with docker-compose:
-//   make docker-gateway
+// Run with:
+//   make integration-test-submitqueue-gateway
 
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
+	"fmt"
 	"testing"
 	"time"
 
@@ -44,9 +43,12 @@ import (
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/test/testutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type GatewayIntegrationSuite struct {
@@ -64,7 +66,7 @@ func TestGatewayIntegration(t *testing.T) {
 }
 
 // The log consumer runs inside the gateway-service container, so this suite can
-// only observe persistence black-box through the Status RPC — there is no
+// only observe persistence black-box through the request-summary RPC — there is no
 // in-process channel/HookSignal to wait on across the container boundary. A
 // bounded poll is therefore the deterministic-enough analog: persistTimeout is a
 // safety net (a failure here means something is genuinely stuck, not a timing
@@ -81,14 +83,16 @@ func (s *GatewayIntegrationSuite) SetupSuite() {
 
 	s.log.Logf("Starting Gateway integration test suite using docker-compose")
 
-	// Set REPO_ROOT for docker-compose volume mounts and build context
-	repoRoot := testutil.FindRepoRoot(t)
-	t.Setenv("REPO_ROOT", repoRoot)
-
-	// Use docker-compose from service/submitqueue/gateway/server
-	// NOTE: Assumes Linux binary is pre-built via make target
-	composeFile := filepath.Join(repoRoot, "service/submitqueue/gateway/server/docker-compose.yml")
-	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "svc-submitqueue-gateway")
+	// Use docker-compose from service/submitqueue/gateway/server, resolved
+	// from the test runfiles. The gateway image is built from a staged build
+	// context assembled entirely from declared data dependencies.
+	composeFile := testutil.Runfile("service/submitqueue/gateway/server/docker-compose.yml")
+	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "svc-submitqueue-gateway",
+		testutil.WithBuildContext(map[string]string{
+			".docker-bin/gateway":                            "service/submitqueue/gateway/server/gateway_linux",
+			"service/submitqueue/gateway/server/Dockerfile":  "service/submitqueue/gateway/server/Dockerfile",
+			"service/submitqueue/gateway/server/queues.yaml": "service/submitqueue/gateway/server/queues.yaml",
+		}))
 
 	// Start the compose stack (Gateway + 2 MySQL DBs)
 	err := s.stack.Up()
@@ -162,12 +166,92 @@ func (s *GatewayIntegrationSuite) TestLandAPI() {
 	assert.Equal(t, 1, msgCount, "should have 1 message in queue")
 }
 
+// TestListAPI verifies the queue projection is exposed in deterministic receipt order.
+func (s *GatewayIntegrationSuite) TestListAPI() {
+	t := s.T()
+	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
+	require.NoError(t, err)
+	materializer := corerequest.NewMaterializer(store)
+	for _, summary := range []entity.RequestSummary{
+		{RequestID: "test-queue/list-1", Queue: "test-queue", ChangeURIs: []string{"uri/1"}, ReceivedAtMs: 100, Status: entity.RequestStatusAccepted, StatusTimestampMs: 100, Version: 1, Metadata: map[string]string{}},
+		{RequestID: "test-queue/list-2", Queue: "test-queue", ChangeURIs: []string{"uri/2"}, ReceivedAtMs: 200, Status: entity.RequestStatusLanded, StatusTimestampMs: 200, Version: 1, Metadata: map[string]string{}},
+	} {
+		publicStatus := summary.Status
+		summary.Status = entity.RequestStatusAccepting
+		require.NoError(t, store.GetRequestSummaryStore().Create(s.ctx, summary))
+		require.NoError(t, materializer.PersistLog(s.ctx, entity.RequestLog{
+			RequestID:   summary.RequestID,
+			TimestampMs: summary.StatusTimestampMs,
+			Status:      publicStatus,
+			Metadata:    map[string]string{},
+		}))
+	}
+
+	resp, err := s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, PageSize: 1})
+	require.NoError(t, err)
+	require.Len(t, resp.Requests, 1)
+	assert.Equal(t, "test-queue/list-2", resp.Requests[0].Sqid)
+	require.NotEmpty(t, resp.NextPageToken)
+
+	resp, err = s.client.List(s.ctx, &pb.ListRequest{Queue: "test-queue", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, PageSize: 1, PageToken: resp.NextPageToken})
+	require.NoError(t, err)
+	require.Len(t, resp.Requests, 1)
+	assert.Equal(t, "test-queue/list-1", resp.Requests[0].Sqid)
+	assert.Empty(t, resp.NextPageToken)
+}
+
+// TestReadAPIErrorCodes verifies controller error classes reach stable gRPC codes.
+func (s *GatewayIntegrationSuite) TestReadAPIErrorCodes() {
+	t := s.T()
+
+	_, err := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: "missing/1"})
+	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, status.Code(err))
+
+	_, err = s.client.List(s.ctx, &pb.ListRequest{
+		Queue:               "missing-queue",
+		ReceivedAtOrAfterMs: 1,
+		ReceivedBeforeMs:    2,
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+
+	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
+	require.NoError(t, err)
+	const overflowChangeURI = "uri/read-api-overflow"
+	for i := 1; i <= 101; i++ {
+		require.NoError(t, store.GetRequestURIStore().Create(s.ctx, entity.RequestURI{
+			ChangeURI:    overflowChangeURI,
+			ReceivedAtMs: int64(i),
+			RequestID:    fmt.Sprintf("overflow/%d", i),
+		}))
+	}
+
+	_, err = s.client.GetRequestSummaryByChangeURI(s.ctx, &pb.GetRequestSummaryByChangeURIRequest{ChangeUri: overflowChangeURI})
+	require.Error(t, err)
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+
+	_, err = s.client.GetRequestHistoryByChangeURI(s.ctx, &pb.GetRequestHistoryByChangeURIRequest{ChangeUri: overflowChangeURI})
+	require.Error(t, err)
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+
+	const inconsistentChangeURI = "uri/read-api-inconsistent"
+	require.NoError(t, store.GetRequestURIStore().Create(s.ctx, entity.RequestURI{
+		ChangeURI:    inconsistentChangeURI,
+		ReceivedAtMs: 1,
+		RequestID:    "missing-summary/1",
+	}))
+	_, err = s.client.GetRequestSummaryByChangeURI(s.ctx, &pb.GetRequestSummaryByChangeURIRequest{ChangeUri: inconsistentChangeURI})
+	require.Error(t, err)
+	assert.Equal(t, codes.Internal, status.Code(err))
+}
+
 // TestRequestLogConsumer verifies the gateway's log-topic consumer in isolation:
 // no orchestrator runs in this stack, so the test itself publishes a request log
 // entry to the log topic exactly as the orchestrator does in production (via
 // submitqueue/core/request.PublishLog). The gateway is the sole writer of the
 // request log; this asserts its consumer drains the log topic and persists the
-// entry to storage, observable through the Status RPC.
+// entry to storage, observable through the request-summary RPC.
 func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 	t := s.T()
 
@@ -188,6 +272,13 @@ func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 	require.NoError(t, err, "failed to create topic registry")
 
 	const sqid = "log-consumer-test/1"
+	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
+	require.NoError(t, err)
+	summary := entity.RequestSummary{
+		RequestID: sqid, Queue: "log-consumer-test", ChangeURIs: []string{}, ReceivedAtMs: 1,
+		Status: entity.RequestStatusAccepting, StatusTimestampMs: 1, Version: 1, Metadata: map[string]string{},
+	}
+	require.NoError(t, store.GetRequestSummaryStore().Create(s.ctx, summary))
 	logEntry := entity.NewRequestLog(sqid, entity.RequestStatusStarted, 1, "", nil)
 	require.NoError(t, corerequest.PublishLog(s.ctx, registry, logEntry, sqid),
 		"failed to publish request log to log topic")
@@ -195,11 +286,13 @@ func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 	s.log.Logf("Published 'started' log for sqid=%s; waiting for gateway consumer to persist it", sqid)
 
 	require.Eventually(t, func() bool {
-		resp, statusErr := s.client.Status(s.ctx, &pb.StatusRequest{Sqid: sqid})
+		resp, statusErr := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: sqid})
 		if statusErr != nil {
 			return false
 		}
-		return resp.Status == string(entity.RequestStatusStarted)
+		return resp.Request != nil && resp.Request.Status == string(entity.RequestStatusStarted)
 	}, persistTimeout, persistPollInterval,
 		"gateway log consumer should persist the published request log for sqid=%s", sqid)
+
+	s.log.Logf("Request log consumer test passed: entry persisted and readable via GetRequestSummaryByID")
 }

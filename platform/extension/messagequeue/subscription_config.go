@@ -78,6 +78,23 @@ type DLQConfig struct {
 	TopicSuffix string
 }
 
+// DLQSubscriptionConfig returns a SubscriptionConfig for consuming a dead-letter
+// topic (DLQ reconciliation). It starts from DefaultSubscriptionConfig and applies
+// the two overrides every DLQ consumer needs:
+//
+//   - DLQ.Enabled is false, so a reconciliation failure retries in place instead of
+//     cascading to a second-level "_dlq_dlq" topic that nobody consumes.
+//   - Retry.MaxAttempts is a very high backstop so the per-message retry budget
+//     effectively never runs out. This pairs with errs.AlwaysRetryableProcessor
+//     wired into the DLQ consumer: reconciliation converges eventually instead of
+//     being silently dropped after the default retry count.
+func DLQSubscriptionConfig(subscriberName, consumerGroup string) SubscriptionConfig {
+	config := DefaultSubscriptionConfig(subscriberName, consumerGroup)
+	config.DLQ.Enabled = false
+	config.Retry.MaxAttempts = 1000
+	return config
+}
+
 // DefaultSubscriptionConfig returns a SubscriptionConfig with sensible defaults.
 func DefaultSubscriptionConfig(subscriberName, consumerGroup string) SubscriptionConfig {
 	return SubscriptionConfig{

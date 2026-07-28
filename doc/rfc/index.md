@@ -6,6 +6,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 
 - [SQL-Based Distributed Queue](sql-queue-rfc.md) - MySQL-based distributed message queue with partition leasing and at-least-once delivery (used by SubmitQueue, Stovepipe, and other repo-local services)
 - [Message Queue Contract](messagequeue-contract.md) - How queue payloads are defined (Protobuf, serialized as protobuf JSON), located by audience (external in `api/{domain}/messagequeue/`, internal in `{domain}/core/messagequeue/`), bound to topics (the `topics` proto option), and enforced by Bazel visibility
+- [Consumer Gate](consumer-gate.md) - Stopping and starting individual queue controllers at runtime via consumer middleware: parked deliveries held in-flight with visibility extension, gate state as a separate extension with a file-based first implementation shared by tests and operators
 - [Change URIs](change-uri.md) - Identity of a code change: `scheme://{host[:port]}/{path}` per provider (GitHub PR, Phabricator Diff, git ref/commit) and canonical-form rules
 
 ## SubmitQueue
@@ -16,6 +17,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 - [Extension Contract](submitqueue/extension-contract.md) - When extensions take orchestrator identity (request/batch) and resolve granular content themselves vs. take controller-resolved data; revises the BuildRunner base/head contract
 - [Gateway Status and List APIs](submitqueue/status-list-api.md) - Gateway-owned request context, materialized current status, sqid or change-URI status lookup, and queue admission listing
 - [Speculation](submitqueue/speculation.md) - Why SubmitQueue speculates, the path/tree model, and the two pluggable seams: speculation-tree enumeration and path selection
+- [Modular Queue Wiring](submitqueue/modular-queue-wiring.md) - Declare-don't-assemble engine (`pipeline.Construct`) that unifies topic registry, controller registration, DLQ pairing, and lifecycle ordering into one typed call; services self-declare via Deps struct + Stages slice, hosts own per-queue profiles and transport
 
 ## Stovepipe
 

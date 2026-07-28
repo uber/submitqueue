@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_binary", "go_library")
+load("@rules_go//go:def.bzl", "go_binary", "go_cross_binary", "go_library", "go_test")
 
 exports_files(
     ["docker-compose.yml"],
@@ -16,9 +16,13 @@ go_library(
         "//platform/errs:go_default_library",
         "//platform/errs/generic:go_default_library",
         "//platform/errs/mysql:go_default_library",
+        "//platform/extension/consumergate:go_default_library",
+        "//platform/extension/consumergate/file:go_default_library",
+        "//platform/extension/consumergate/noop:go_default_library",
         "//platform/extension/counter/mysql:go_default_library",
         "//platform/extension/messagequeue:go_default_library",
         "//platform/extension/messagequeue/mysql:go_default_library",
+        "//service/submitqueue/gateway/server/mapper:go_default_library",
         "//submitqueue/core/topickey:go_default_library",
         "//submitqueue/extension/queueconfig/yaml:go_default_library",
         "//submitqueue/extension/storage/mysql:go_default_library",
@@ -38,4 +42,39 @@ go_binary(
     name = "gateway",
     embed = [":gateway_lib"],
     visibility = ["//visibility:public"],
+)
+
+# Linux binary consumed by the Docker image build. Docker-based tests depend on
+# this target as data so Bazel builds the exact binary that ends up in the
+# container image — no pre-built .docker-bin artifacts required.
+go_cross_binary(
+    name = "gateway_linux",
+    platform = "@rules_go//go/toolchain:linux_amd64",
+    target = ":gateway",
+)
+
+# Everything a Docker-based test needs to build the gateway image from a staged
+# build context (see testutil.WithBuildContext). Test-only so the
+# cross-compiled binary cannot leak into production targets.
+filegroup(
+    name = "docker_test_context",
+    testonly = True,
+    srcs = [
+        "Dockerfile",
+        "queues.yaml",
+        ":gateway_linux",
+    ],
+    visibility = ["//test:__subpackages__"],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["main_test.go"],
+    embed = [":gateway_lib"],  # keep
+    deps = [
+        "//submitqueue/gateway/controller:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@org_golang_google_grpc//codes:go_default_library",
+        "@org_golang_google_grpc//status:go_default_library",
+    ],
 )

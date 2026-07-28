@@ -70,7 +70,7 @@ func TestPublishBatchLogs_Success(t *testing.T) {
 
 	err := PublishBatchLogs(context.Background(), registry,
 		[]string{"req/1", "req/2", "req/3"},
-		entity.RequestStatusScored,
+		entity.RequestStatusBatched,
 		map[string]string{"batch_id": "b/1"},
 	)
 	require.NoError(t, err)
@@ -101,7 +101,7 @@ func TestPublishBatchLogs_PartialFailure(t *testing.T) {
 
 	err = PublishBatchLogs(context.Background(), registry,
 		[]string{"req/1", "req/2", "req/3"},
-		entity.RequestStatusScored,
+		entity.RequestStatusBatched,
 		map[string]string{"batch_id": "b/1"},
 	)
 	require.Error(t, err)
@@ -111,7 +111,7 @@ func TestPublishBatchLogs_Empty(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	registry := newTestRegistry(t, ctrl, nil)
 
-	err := PublishBatchLogs(context.Background(), registry, nil, entity.RequestStatusScored, nil)
+	err := PublishBatchLogs(context.Background(), registry, nil, entity.RequestStatusBatched, nil)
 	require.NoError(t, err)
 }
 

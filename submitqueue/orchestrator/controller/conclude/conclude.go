@@ -64,10 +64,7 @@ func NewController(
 // Process processes a conclude delivery from the queue.
 // Deserializes the batch and completes the pipeline processing.
 // Returns nil to ack (success), or error to nack (retry).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := metrics.Begin(c.metricsScope, "process")
-	defer func() { op.Complete(retErr) }()
-
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
 	// Deserialize batch ID from payload
@@ -102,64 +99,45 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		metrics.NamedCounter(c.metricsScope, "process", "unexpected_state_errors", 1)
 		return fmt.Errorf("unexpected batch state %q for batch %s: %w", batch.State, batch.ID, err)
 	}
-	requestStatus, err := requestStateToStatus(requestState)
-	if err != nil {
-		// Unreachable: batchStateToRequestState only returns terminal request states.
-		return fmt.Errorf("failed to map request state %s to status: %w", requestState, err)
-	}
 
 	// Reconcile each request to the batch's terminal state and emit a terminal
-	// log entry. The flow is idempotent under at-least-once delivery: a prior
-	// attempt may have completed the CAS but failed before publishing the log,
-	// so the log publish must still run when the request is already in the
-	// target terminal state.
+	// log entry. TerminateRequest is idempotent under at-least-once delivery: a
+	// prior attempt may have completed the CAS but failed before publishing the
+	// log, so the log publish still runs when the request is already in the
+	// target terminal state, and a request that a concurrent path already drove
+	// to a different terminal state is left untouched. A request referenced by
+	// the batch but missing from the store is a hard error — the whole batch is
+	// retried (and eventually dead-lettered) rather than silently skipped. We
+	// translate the result into per-outcome logs and metrics.
 	for _, requestID := range batch.Contains {
-		request, err := c.store.GetRequestStore().Get(ctx, requestID)
+		res, err := corerequest.TerminateRequest(ctx, c.store, c.registry, requestID, requestState, "", map[string]string{
+			"batch_id": batch.ID,
+		})
 		if err != nil {
-			metrics.NamedCounter(c.metricsScope, "process", "request_store_errors", 1)
-			return fmt.Errorf("failed to get request %s: %w", requestID, err)
+			metrics.NamedCounter(c.metricsScope, "process", "terminate_errors", 1)
+			return fmt.Errorf("failed to terminate request %s for batch %s: %w", requestID, batch.ID, err)
 		}
 
-		switch {
-		case request.State == requestState:
-			// Idempotent retry: a prior delivery already wrote the terminal
-			// state. Skip the CAS and fall through to the log publish.
-			metrics.NamedCounter(c.metricsScope, "process", "already_reconciled", 1)
-		case entity.IsRequestStateTerminal(request.State):
-			// Divergent terminal state — a concurrent path (e.g. a racing
-			// cancel-not-yet-batched transition) reached terminal first. Skip
-			// the reconcile and the log publish; the other writer owns the
-			// terminal log entry for the state it actually wrote.
-			c.logger.Warnw("request already in different terminal state, skipping reconcile",
-				"batch_id", batch.ID,
-				"request_id", requestID,
-				"actual_state", string(request.State),
-				"expected_state", string(requestState),
-			)
-			metrics.NamedCounter(c.metricsScope, "process", "terminal_state_divergence", 1)
-			continue
-		default:
-			newVersion := request.Version + 1
-			if err := c.store.GetRequestStore().UpdateState(ctx, requestID, request.Version, newVersion, requestState); err != nil {
-				metrics.NamedCounter(c.metricsScope, "process", "request_update_errors", 1)
-				return fmt.Errorf("failed to update request %s state to %s: %w", requestID, requestState, err)
-			}
-			request.Version = newVersion
-			request.State = requestState
-
+		switch res.Outcome {
+		case corerequest.TerminationOutcomeSuccess:
 			c.logger.Infow("updated request state",
 				"batch_id", batch.ID,
 				"request_id", requestID,
-				"new_state", string(requestState),
+				"new_state", string(res.AfterState),
 			)
-		}
-
-		logEntry := entity.NewRequestLog(requestID, requestStatus, request.Version, "", map[string]string{
-			"batch_id": batch.ID,
-		})
-		if err := corerequest.PublishLog(ctx, c.registry, logEntry, requestID); err != nil {
-			metrics.NamedCounter(c.metricsScope, "process", "log_publish_errors", 1)
-			return fmt.Errorf("failed to publish request log for %s: %w", requestID, err)
+		case corerequest.TerminationOutcomeAlreadyInTargetState:
+			metrics.NamedCounter(c.metricsScope, "process", "already_reconciled", 1)
+		case corerequest.TerminationOutcomeDiverged:
+			c.logger.Warnw("request already in different terminal state, skipping reconcile",
+				"batch_id", batch.ID,
+				"request_id", requestID,
+				"expected_state", string(requestState),
+				"actual_state", string(res.BeforeState),
+			)
+			metrics.NamedCounter(c.metricsScope, "process", "terminal_state_divergence", 1)
+		case corerequest.TerminationOutcomeNotFound:
+			metrics.NamedCounter(c.metricsScope, "process", "request_store_errors", 1)
+			return fmt.Errorf("failed to get request %s for batch %s: %w", requestID, batch.ID, storage.ErrNotFound)
 		}
 	}
 
@@ -192,19 +170,5 @@ func batchStateToRequestState(state entity.BatchState) (entity.RequestState, err
 		return entity.RequestStateCancelled, nil
 	default:
 		return entity.RequestStateUnknown, fmt.Errorf("non-terminal batch state: %s", state)
-	}
-}
-
-// requestStateToStatus maps a terminal request state to the corresponding log status.
-func requestStateToStatus(state entity.RequestState) (entity.RequestStatus, error) {
-	switch state {
-	case entity.RequestStateLanded:
-		return entity.RequestStatusLanded, nil
-	case entity.RequestStateError:
-		return entity.RequestStatusError, nil
-	case entity.RequestStateCancelled:
-		return entity.RequestStatusCancelled, nil
-	default:
-		return entity.RequestStatusUnknown, fmt.Errorf("non-terminal request state: %s", state)
 	}
 }

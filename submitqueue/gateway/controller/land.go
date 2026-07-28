@@ -18,17 +18,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/uber-go/tally"
-	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
-	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
-	"github.com/uber/submitqueue/platform/base/change"
-	"github.com/uber/submitqueue/platform/base/mergestrategy"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
+	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/queueconfig"
@@ -64,11 +62,18 @@ func IsUnrecognizedQueue(err error) bool {
 }
 
 // LandController handles land business logic for the gateway
-type LandController struct {
+type LandController interface {
+	Land(ctx context.Context, req entity.LandRequest) (entity.LandResult, error)
+}
+
+var _ LandController = (*landController)(nil)
+
+type landController struct {
 	logger       *zap.SugaredLogger
 	metricsScope tally.Scope
 	counter      counter.Counter
 	store        storage.Storage
+	materializer *requestcore.Materializer
 	queueConfigs queueconfig.Store
 	registry     consumer.TopicRegistry
 }
@@ -76,98 +81,111 @@ type LandController struct {
 // NewLandController creates a new instance of the gateway land controller.
 // The controller publishes land requests to the topic registered under
 // topickey.TopicKeyStart in the registry.
-func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter counter.Counter, store storage.Storage, queueConfigs queueconfig.Store, registry consumer.TopicRegistry) *LandController {
-	return &LandController{
+func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter counter.Counter, store storage.Storage, queueConfigs queueconfig.Store, registry consumer.TopicRegistry) LandController {
+	return &landController{
 		logger:       logger,
 		metricsScope: scope.SubScope("land_controller"),
 		counter:      counter,
 		store:        store,
+		materializer: requestcore.NewMaterializer(store),
 		queueConfigs: queueConfigs,
 		registry:     registry,
 	}
 }
 
-// Land handles the land request and returns a response
-func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (resp *pb.LandResponse, retErr error) {
+// Land handles the land request and returns the ID assigned to the accepted request.
+func (c *landController) Land(ctx context.Context, req entity.LandRequest) (result entity.LandResult, retErr error) {
 	const opName = "land"
 
-	op := metrics.Begin(c.metricsScope, opName)
+	op := metrics.Begin(c.metricsScope, opName, metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
-	// Validate required fields.
-	if req.Queue == "" {
-		return nil, fmt.Errorf("LandController requires the request to have a queue name specified: %w", ErrInvalidRequest)
+	// Validate provider-agnostic request constraints before allocating an sqid.
+	if err := validateQueueIdentifier(req.Queue); err != nil {
+		return entity.LandResult{}, fmt.Errorf("invalid queue: %w", err)
 	}
-	if req.Change == nil || len(req.Change.Uris) == 0 {
-		return nil, fmt.Errorf("LandController requires the request to have at least one change URI specified: %w", ErrInvalidRequest)
-	}
-
-	change := change.Change{
-		URIs: req.Change.GetUris(),
+	if err := validateChangeURIs(req.Change.URIs); err != nil {
+		return entity.LandResult{}, fmt.Errorf("invalid change URIs: %w", err)
 	}
 
 	queue := req.Queue
 	if _, err := c.queueConfigs.Get(ctx, queue); err != nil {
 		if errors.Is(err, queueconfig.ErrNotFound) {
-			return nil, errs.NewUserError(&UnrecognizedQueueError{Queue: queue})
+			return entity.LandResult{}, errs.NewUserError(&UnrecognizedQueueError{Queue: queue})
 		}
-		return nil, fmt.Errorf("LandController failed to look up queue %q: %w", queue, err)
-	}
-
-	// TODO: pass default queue land strategy to resolver function to process a default.
-	strategy, err := resolveMergeStrategy(req.Strategy)
-	if err != nil {
-		return nil, fmt.Errorf("LandController failed to map strategy for queue=%s: %w", req.Queue, err)
+		return entity.LandResult{}, fmt.Errorf("failed to look up queue %q: %w", queue, err)
 	}
 
 	// Generate a globally unique request ID for the land request.
+	// The inbound entity arrives with an empty ID; the controller owns minting it.
 	seq, err := c.counter.Next(ctx, "request/"+queue)
 	if err != nil {
-		return nil, fmt.Errorf("LandController failed to generate request ID for queue=%s: %w", queue, err)
+		return entity.LandResult{}, fmt.Errorf("failed to generate request ID for queue=%s: %w", queue, err)
+	}
+	req.ID = fmt.Sprintf("%s/%d", queue, seq)
+	if err := validateStoredIdentifier("generated sqid", req.ID); err != nil {
+		return entity.LandResult{}, fmt.Errorf("generated invalid request ID for queue=%s: %w", queue, err)
 	}
 
-	landRequest := entity.LandRequest{
-		ID:           fmt.Sprintf("%s/%d", queue, seq),
-		Queue:        queue,
-		Change:       change,
-		LandStrategy: strategy,
+	receivedAtMs := time.Now().UnixMilli()
+	summary := entity.RequestSummary{
+		RequestID:         req.ID,
+		Queue:             req.Queue,
+		ChangeURIs:        append([]string{}, req.Change.URIs...),
+		ReceivedAtMs:      receivedAtMs,
+		Status:            entity.RequestStatusAccepting,
+		StatusTimestampMs: receivedAtMs,
+		Version:           1,
+		Metadata:          map[string]string{},
+	}
+	if err := c.store.GetRequestSummaryStore().Create(ctx, summary); err != nil {
+		return entity.LandResult{}, fmt.Errorf("failed to create request receipt sqid=%s: %w", req.ID, err)
 	}
 
-	// Record the accepted status in the request log for reconciliation. Once the request materializes as a Request entity, the status might be updated to "new".
-	// It is important to record the status before publishing to the queue for processing. It is important to publish straight to the database and not via a entityqueue.
-	// Gateway has to stay consistent with the request log.
-	logEntry := entity.NewRequestLog(landRequest.ID, entity.RequestStatusAccepted, 0, "", nil)
-	if err := c.store.GetRequestLogStore().Insert(ctx, logEntry); err != nil {
-		return nil, fmt.Errorf("LandController failed to insert request log for sqid=%s: %w", landRequest.ID, err)
+	// Publish before exposing the request as accepted. A failed publish leaves an
+	// internal accepting receipt that public read APIs do not expose.
+	if err := c.publishToQueue(ctx, req); err != nil {
+		return entity.LandResult{}, fmt.Errorf("failed to publish request to queue: %w", err)
+	}
+
+	logEntry := entity.RequestLog{
+		RequestID:   req.ID,
+		TimestampMs: receivedAtMs,
+		Status:      entity.RequestStatusAccepted,
+		Metadata:    map[string]string{},
+	}
+	if err := c.materializer.PersistLog(ctx, logEntry); err != nil {
+		// Publication is the Land success boundary. Later pipeline events repair
+		// the accepting projection even if this accepted log is not persisted. If
+		// the client retries after losing the response, the orchestrator rejects
+		// the new sqid as a duplicate while the original request continues.
+		c.logger.Errorw("failed to record accepted status after publishing request",
+			"queue", req.Queue,
+			"sqid", req.ID,
+			"error", err,
+		)
+		metrics.NamedCounter(c.metricsScope, opName, "accepted_log_failure", 1)
 	}
 
 	c.logger.Debugw("land request created",
 		"queue", req.Queue,
-		"sqid", landRequest.ID,
-		"change_uris", change.URIs,
-		"change_count", len(change.URIs),
-		"strategy", string(strategy),
+		"sqid", req.ID,
+		"change_uris", req.Change.URIs,
+		"change_count", len(req.Change.URIs),
+		"strategy", string(req.LandStrategy),
 	)
-
-	// Publish to queue for async processing
-	if err := c.publishToQueue(ctx, landRequest); err != nil {
-		return nil, fmt.Errorf("LandController failed to publish request to queue: %w", err)
-	}
 
 	c.logger.Infow("request published to queue",
 		"queue", req.Queue,
-		"sqid", landRequest.ID,
+		"sqid", req.ID,
 		"topic_key", topickey.TopicKeyStart,
 	)
-	metrics.NamedCounter(c.metricsScope, opName, "publish_success", 1)
 
-	return &pb.LandResponse{
-		Sqid: landRequest.ID,
-	}, nil
+	return entity.LandResult{ID: req.ID}, nil
 }
 
 // publishToQueue publishes a land request to the request queue for async processing.
-func (c *LandController) publishToQueue(ctx context.Context, landRequest entity.LandRequest) error {
+func (c *landController) publishToQueue(ctx context.Context, landRequest entity.LandRequest) error {
 	// Serialize land request entity to JSON
 	payload, err := landRequest.ToBytes()
 	if err != nil {
@@ -195,21 +213,4 @@ func (c *LandController) publishToQueue(ctx context.Context, landRequest entity.
 	}
 
 	return nil
-}
-
-// resolveMergeStrategy maps a proto Strategy enum to the shared mergestrategy.MergeStrategy.
-func resolveMergeStrategy(s mergestrategypb.Strategy) (mergestrategy.MergeStrategy, error) {
-	switch s {
-	case mergestrategypb.Strategy_DEFAULT:
-		// TODO: resolve default strategy based on queue configuration
-		return mergestrategy.MergeStrategyRebase, nil
-	case mergestrategypb.Strategy_REBASE:
-		return mergestrategy.MergeStrategyRebase, nil
-	case mergestrategypb.Strategy_SQUASH_REBASE:
-		return mergestrategy.MergeStrategySquashRebase, nil
-	case mergestrategypb.Strategy_MERGE:
-		return mergestrategy.MergeStrategyMerge, nil
-	default:
-		return mergestrategy.MergeStrategyUnknown, fmt.Errorf("unknown land strategy in proto message: %v", s)
-	}
 }

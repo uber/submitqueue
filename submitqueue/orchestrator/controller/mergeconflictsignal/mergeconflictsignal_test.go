@@ -57,24 +57,28 @@ func TestProcess_MergeablePublishesToBatch(t *testing.T) {
 	reqStore := storagemock.NewMockRequestStore(ctrl)
 	reqStore.EXPECT().Get(gomock.Any(), testRequestID).Return(
 		entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateStarted, Version: 1}, nil)
+	reqStore.EXPECT().UpdateState(gomock.Any(), testRequestID, int32(1), int32(2), entity.RequestStateValidated).Return(nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 
-	var gotTopic string
-	var gotPayload []byte
+	var gotTopics []string
+	var gotPayloads [][]byte
 	pub := queuemock.NewMockPublisher(ctrl)
 	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, topic string, msg entityqueue.Message) error {
-			gotTopic = topic
-			gotPayload = msg.Payload
+			gotTopics = append(gotTopics, topic)
+			gotPayloads = append(gotPayloads, msg.Payload)
 			return nil
 		},
-	)
+	).Times(2)
 	q := queuemock.NewMockQueue(ctrl)
 	q.EXPECT().Publisher().Return(pub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: topickey.TopicKeyBatch, Name: "batch", Queue: q}},
+		[]consumer.TopicConfig{
+			{Key: topickey.TopicKeyBatch, Name: "batch", Queue: q},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: q},
+		},
 	)
 	require.NoError(t, err)
 
@@ -85,8 +89,18 @@ func TestProcess_MergeablePublishesToBatch(t *testing.T) {
 	msg := entityqueue.NewMessage(testRequestID, resultPayload(t, res), testQueue, nil)
 	require.NoError(t, controller.Process(context.Background(), newDelivery(ctrl, msg)))
 
-	assert.Equal(t, "batch", gotTopic)
-	rid, err := entity.RequestIDFromBytes(gotPayload)
+	require.Len(t, gotTopics, 2)
+
+	// First publish: validated log entry.
+	assert.Equal(t, "log", gotTopics[0])
+	logEntry, err := entity.RequestLogFromBytes(gotPayloads[0])
+	require.NoError(t, err)
+	assert.Equal(t, entity.RequestStatusValidated, logEntry.Status)
+	assert.Equal(t, int32(2), logEntry.RequestVersion)
+
+	// Second publish: request ID to batch topic.
+	assert.Equal(t, "batch", gotTopics[1])
+	rid, err := entity.RequestIDFromBytes(gotPayloads[1])
 	require.NoError(t, err)
 	assert.Equal(t, testRequestID, rid.ID)
 }

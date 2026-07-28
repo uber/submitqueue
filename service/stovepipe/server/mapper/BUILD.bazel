@@ -1,0 +1,23 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["ingest.go"],
+    importpath = "github.com/uber/submitqueue/service/stovepipe/server/mapper",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api/stovepipe/protopb:go_default_library",
+        "//stovepipe/entity:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["ingest_test.go"],
+    embed = [":go_default_library"],
+    deps = [
+        "//api/stovepipe/protopb:go_default_library",
+        "//stovepipe/entity:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+    ],
+)

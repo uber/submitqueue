@@ -32,8 +32,6 @@ const (
 	BatchStateSucceeded BatchState = "succeeded"
 	// BatchStateFailed is the terminal state of a batch that has failed.
 	BatchStateFailed BatchState = "failed"
-	// BatchStateScored is the state of a batch that has been scored for build success probability.
-	BatchStateScored BatchState = "scored"
 	// BatchStateCancelling is the non-terminal intent state set when a cancel has been requested but the
 	// batch has not yet been transitioned to BatchStateCancelled. A batch in this state may still reach
 	// BatchStateSucceeded or BatchStateFailed if a concurrent merge wins the race (e.g. the push had
@@ -62,7 +60,7 @@ func (s BatchState) IsTerminal() bool {
 }
 
 // IsBatchStateHalted returns true if the batch is either terminal or in the process of being cancelled.
-// Forward-progress controllers (score, build, buildsignal, speculate, merge) use this to short-circuit
+// Forward-progress controllers (build, buildsignal, speculate, merge) use this to short-circuit
 // work for batches that the user has asked to cancel — even though Cancelling is non-terminal, no
 // further pipeline work should start (cancel will write the terminal state and fan out).
 func IsBatchStateHalted(s BatchState) bool {
@@ -75,7 +73,6 @@ func IsBatchStateHalted(s BatchState) bool {
 func ActiveBatchStates() []BatchState {
 	return []BatchState{
 		BatchStateCreated,
-		BatchStateScored,
 		BatchStateSpeculating,
 		BatchStateMerging,
 		BatchStateCancelling,
@@ -95,7 +92,6 @@ func ActiveBatchStates() []BatchState {
 func DependencyBatchStates() []BatchState {
 	return []BatchState{
 		BatchStateCreated,
-		BatchStateScored,
 		BatchStateSpeculating,
 		BatchStateMerging,
 	}
@@ -134,10 +130,6 @@ type Batch struct {
 	// - queueA/batch/2 will contain queueA/batch/1
 	// - queueA/batch/3 will contain queueA/batch/1
 	Dependencies []string
-
-	// Score is the predicted probability of build success for this batch, ranging from 0.0 to 1.0.
-	// Set during the scoring phase. Zero value means the batch has not been scored yet.
-	Score float64
 
 	// The state of the batch lifecycle this batch is in. Updateable field with Version for optimistic locking.
 	State BatchState

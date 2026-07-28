@@ -75,10 +75,10 @@ func testRequest() entity.Request {
 // newTestController creates a controller with test dependencies.
 // If mockStorage is nil, a default MockStorage with an empty batch store is created.
 // If analyzer is nil, the "all" conflict analyzer is used (every active batch becomes a dependency).
-// scorePublishErr, if non-nil, is returned only for publishes to the "score" topic; the
+// speculatePublishErr, if non-nil, is returned only for publishes to the "speculate" topic; the
 // log publish (which the controller emits first) always succeeds, so callers exercising the
-// score publish-failure path are not short-circuited on the earlier log publish.
-func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.MockCounter, mockStorage *storagemock.MockStorage, analyzer conflict.Analyzer, scorePublishErr error) *Controller {
+// speculate publish-failure path are not short-circuited on the earlier log publish.
+func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.MockCounter, mockStorage *storagemock.MockStorage, analyzer conflict.Analyzer, speculatePublishErr error) *Controller {
 	logger := zaptest.NewLogger(t).Sugar()
 	scope := tally.NoopScope
 
@@ -108,8 +108,8 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, topic string, msg entityqueue.Message) error {
-			if topic == "score" {
-				return scorePublishErr
+			if topic == "speculate" {
+				return speculatePublishErr
 			}
 			return nil
 		},
@@ -120,7 +120,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Key: topickey.TopicKeyScore, Name: "score", Queue: mockQ},
+			{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
 			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
 		},
 	)
@@ -197,7 +197,7 @@ func TestController_Process_PublishesBatchedLog(t *testing.T) {
 
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Key: topickey.TopicKeyScore, Name: "score", Queue: mockQ},
+			{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
 			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
 		},
 	)
@@ -479,7 +479,7 @@ func TestController_Process_HaltedShortCircuit(t *testing.T) {
 // so the batch controller's request-claim CAS (Validated → Batched) fails
 // with storage.ErrVersionMismatch. The controller must ack the message (the
 // cancel pipeline now owns the request) and must NOT call BatchStore.Create
-// or publish to the score topic.
+// or publish to the speculate topic.
 //
 // This test exercises the race where the halted check at the top of Process
 // passed against a stale in-memory copy from the initial Get (the cancel
@@ -516,7 +516,7 @@ func TestController_Process_CASLostToCancel(t *testing.T) {
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: topickey.TopicKeyScore, Name: "score", Queue: mockQ}},
+		[]consumer.TopicConfig{{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: mockQ}},
 	)
 	require.NoError(t, err)
 

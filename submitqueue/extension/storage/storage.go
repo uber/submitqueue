@@ -19,6 +19,8 @@ package storage
 import (
 	"errors"
 	"fmt"
+
+	"github.com/uber/submitqueue/platform/errs"
 )
 
 // ErrNotFound is returned by storage implementations when the requested record is not found in the database.
@@ -39,8 +41,8 @@ var ErrAlreadyExists = errors.New("record already exists")
 
 // ErrVersionMismatch is returned by storage implementations when the expected entity version does not match the current version of the object.
 // This is used to implement an optimistic locking mechanism, allowing multiple clients to update the same entity concurrently
-// and either retry or implement idempotent operations.
-var ErrVersionMismatch = errors.New("version mismatch")
+// and either retry or implement idempotent operations. It is intrinsically a retryable infrastructure error.
+var ErrVersionMismatch = errs.NewRetryableError(errors.New("version mismatch"))
 
 // Storage is a factory interface that aggregates all entity stores into a single injectable dependency.
 type Storage interface {
@@ -59,14 +61,17 @@ type Storage interface {
 	// GetBuildStore returns the BuildStore instance.
 	GetBuildStore() BuildStore
 
-	// GetSpeculationPathBuildStore returns the SpeculationPathBuildStore instance.
-	GetSpeculationPathBuildStore() SpeculationPathBuildStore
-
-	// GetSpeculationTreeStore returns the SpeculationTreeStore instance.
-	GetSpeculationTreeStore() SpeculationTreeStore
-
 	// GetRequestLogStore returns the RequestLogStore instance.
 	GetRequestLogStore() RequestLogStore
+
+	// GetRequestSummaryStore returns the RequestSummaryStore instance.
+	GetRequestSummaryStore() RequestSummaryStore
+
+	// GetRequestQueueSummaryStore returns the RequestQueueSummaryStore instance.
+	GetRequestQueueSummaryStore() RequestQueueSummaryStore
+
+	// GetRequestURIStore returns the RequestURIStore instance.
+	GetRequestURIStore() RequestURIStore
 
 	// Close closes the storage and all underlying connections. Should only be called once at the end of the program.
 	Close() error

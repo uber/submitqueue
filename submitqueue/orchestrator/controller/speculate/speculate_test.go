@@ -71,7 +71,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
 			{Key: topickey.TopicKeyBuild, Name: "build", Queue: mockQ},
-			{Key: topickey.TopicKeyMerge, Name: "merge", Queue: mockQ},
+			{Key: topickey.TopicKeyMerge, Name: "submitqueue-merge", Queue: mockQ},
 			{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: mockQ},
 			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
 		},
@@ -103,14 +103,13 @@ func TestNewController(t *testing.T) {
 	var _ consumer.Controller = controller
 }
 
-// startSpeculation: Created/Scored should publish to build and CAS to Speculating with newVersion = oldVersion+1.
+// startSpeculation: Created should publish to build and CAS to Speculating with newVersion = oldVersion+1.
 func TestController_Process_StartSpeculation(t *testing.T) {
 	tests := []struct {
 		name  string
 		state entity.BatchState
 	}{
 		{name: "from_created", state: entity.BatchStateCreated},
-		{name: "from_scored", state: entity.BatchStateScored},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -515,8 +514,8 @@ func TestController_Process_CancellingNoDependents(t *testing.T) {
 }
 
 // storage.ErrVersionMismatch on the terminal CAS must surface as an error
-// with the underlying sentinel in the chain so the base controller can
-// classify it as retryable. The dependent fan-out and conclude publish must
+// with the underlying sentinel in the chain so its intrinsic retryable
+// classification survives. The dependent fan-out and conclude publish must
 // NOT run if the terminal CAS failed — on redelivery the self-heal branch
 // will pick up the (now-terminal) state and complete the fan-out.
 func TestController_Process_CancellingTerminalCASVersionMismatch(t *testing.T) {
@@ -593,7 +592,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 // Publish failure must not advance the batch state.
 func TestController_Process_PublishFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	batch := testBatch(entity.BatchStateScored)
+	batch := testBatch(entity.BatchStateCreated)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)

@@ -39,6 +39,7 @@ type buildSignalController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	store         storage.Storage
+	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -51,6 +52,7 @@ func NewDLQBuildSignalController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	store storage.Storage,
+	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) consumer.Controller {
@@ -59,17 +61,15 @@ func NewDLQBuildSignalController(
 		logger:        logger.Named(name),
 		metricsScope:  scope.SubScope(name),
 		store:         store,
+		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
 }
 
 // Process reconciles a single DLQ delivery for the buildsignal topic.
-func (c *buildSignalController) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+func (c *buildSignalController) Process(ctx context.Context, delivery consumer.Delivery) error {
 	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName)
-	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
@@ -118,7 +118,7 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 		return nil
 	}
 
-	if err := failBatch(ctx, c.store, c.logger, build.BatchID); err != nil {
+	if err := failBatch(ctx, c.store, c.registry, c.logger, build.BatchID, dmeta["dlq.last_error"]); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
 		return err
 	}

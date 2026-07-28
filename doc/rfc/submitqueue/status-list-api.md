@@ -1,14 +1,14 @@
-# Gateway Status and List APIs
+# Gateway Request Summary and List APIs
 
 ## RFC Status
 
 Proposed.
 
-This RFC replaces the unimplemented design in [list-api.md](list-api.md). It defines the gateway-owned request context and materialized status model used by both `Status` and `List`.
+This RFC replaces the unimplemented design in [list-api.md](list-api.md). It defines the gateway-owned request context and materialized status model used by request-summary retrieval and `List`.
 
 ## Problem
 
-The gateway currently stores an append-only request log and reconciles it at read time for `Status`. Request-log entries contain status, error, and display metadata, but they do not contain the immutable request context needed by user-facing APIs: queue name, submitted change URIs, and the time the gateway received the request.
+The gateway currently stores an append-only request log and reconciles it at read time for request-summary retrieval. Request-log entries contain status, error, and display metadata, but they do not contain the immutable request context needed by user-facing APIs: queue name, submitted change URIs, and the time the gateway received the request.
 
 The required read patterns are:
 
@@ -20,16 +20,17 @@ The append-only request log is not shaped for the second or third query. Serving
 
 ## Decisions
 
-1. `Status` accepts exactly one selector: sqid or change URI.
+1. The gateway exposes `GetRequestSummaryByID` for sqid lookup and `GetRequestSummaryByChangeURI` for exact change URI lookup.
 2. A change URI lookup returns all requests containing that exact URI, ordered by receipt time descending.
-3. Change URIs are treated as globally meaningful identifiers. `Status` does not require a queue when selecting by URI.
+3. Change URIs are treated as globally meaningful identifiers. `GetRequestSummaryByChangeURI` does not require a queue.
 4. `List` accepts one queue and a required receipt-time range. It does not accept sqid or URI selectors.
 5. The `List` time range is based only on gateway receipt time, not lifecycle overlap.
-6. `Status` and `List` return the same materialized current state and immutable request context. Neither endpoint returns the request-log timeline.
+6. The request-summary RPCs and `List` return the same materialized current state and immutable request context. Neither endpoint returns the request-log timeline.
 7. Materialization happens on write. Reads do not reconcile the append-only log at request time.
 8. The data model uses separate query-shaped stores rather than secondary indexes.
 9. Existing rows are not backfilled. Requests received before rollout may be unavailable through the new read model.
 10. Retention and pruning are outside the scope of this RFC.
+11. Land receipts begin in the internal `accepting` state. `accepting` requests are excluded from request-summary retrieval and `List` until successful pipeline publication promotes them to `accepted`, or a later pipeline event proves that publication succeeded.
 
 ## Vocabulary
 
@@ -39,13 +40,20 @@ The append-only request log is not shaped for the second or third query. Serving
 
 ## API Contract
 
-### Status
+### Request Summary Retrieval
 
-`Status` requires exactly one selector: sqid or change URI. An unset selector or an explicitly selected empty value is invalid.
+The gateway exposes two explicit RPCs:
+
+```proto
+rpc GetRequestSummaryByID(GetRequestSummaryByIDRequest) returns (GetRequestSummaryByIDResponse) {}
+rpc GetRequestSummaryByChangeURI(GetRequestSummaryByChangeURIRequest) returns (GetRequestSummaryByChangeURIResponse) {}
+```
+
+`GetRequestSummaryByID` requires a non-empty sqid. `GetRequestSummaryByChangeURI` requires a non-empty exact change URI.
 
 An sqid lookup returns exactly one request summary when found. A change URI lookup returns every matching request summary ordered by `(received_at_ms DESC, sqid DESC)`. The sqid tie-breaker makes the result deterministic when requests share a millisecond.
 
-Both selector modes return the same response shape: a list of request summaries. Each summary contains sqid, queue, change URIs, receipt time, current status, last error, and display metadata.
+`GetRequestSummaryByID` returns one request summary. `GetRequestSummaryByChangeURI` returns a list of request summaries. Each summary contains sqid, queue, change URIs, receipt time, current status, last error, and display metadata.
 
 The URI result is intentionally unpaginated and has a hard maximum of 100 requests. A change is expected to have only a small number of SubmitQueue requests, generally fewer than one hundred. Exceeding the maximum returns an error rather than silently truncating the result.
 
@@ -75,7 +83,7 @@ The gateway owns the append-only request log and three new logical read models. 
 
 The authoritative request summary is keyed by sqid. It contains immutable request context plus the current materialized request-log winner and the reconciliation state needed to compare a later log entry without rereading historical logs.
 
-The immutable context is queue, change URIs, and receipt time. The mutable response state is status, last error, and metadata. Optimistic-lock state is internal to the projection and is not part of the API response.
+The immutable context is queue, change URIs, and receipt time. The mutable response state is status, last error, and metadata. The internal `accepting` admission state is not returned by the API. The projection version fields used for optimistic conditional writes are internal and are not part of the API response.
 
 The sqid key supports authoritative lookup and conditional status updates for one request without a secondary index.
 
@@ -93,7 +101,7 @@ The URI reverse mapping is logically keyed by `(change_uri, received_at_ms, sqid
 
 The mapping repeats `received_at_ms` because receipt time is part of the promised newest-first ordering. This allows the gateway to perform a bounded ordered scan before resolving the matching authoritative summaries. Without receipt time in the mapping, the gateway would have to fetch and sort every request associated with a URI before enforcing the result maximum.
 
-The logical key supports the bounded `Status(change_uri)` newest-first scan and deterministic sqid tie-breaker without fetching every matching summary first.
+The logical key supports the bounded `GetRequestSummaryByChangeURI(change_uri)` newest-first scan and deterministic sqid tie-breaker without fetching every matching summary first.
 
 The URI is stored in the canonical form received from the validated Land request. URI normalization rules belong to the change contract or source-control integration and are not introduced by this read model.
 
@@ -101,52 +109,58 @@ The URI is stored in the canonical form received from the validated Land request
 
 ### Land Receipt
 
-After synchronous validation, Land generates the sqid and one receipt timestamp. The gateway persists the authoritative summary, URI mappings, and queue projection before appending the initial `accepted` request log and before publishing the request to the orchestrator.
+After synchronous validation, Land generates the sqid and one receipt timestamp. The gateway persists the authoritative summary in the internal `accepting` state, then publishes the request to the orchestrator. It does not create the URI or queue projections while the request remains `accepting`.
 
-This ordering guarantees that immutable request context exists before the request can produce later status logs or enter the asynchronous pipeline. The logical writes are independent and must be safe to retry for the same sqid and values; conflicting duplicate data is an error.
+After publication succeeds, Land appends the initial `accepted` request log. Materializing `accepted`, `started`, or any later event promotes the authoritative summary out of `accepting` and creates the URI and queue projections. This handles the race where the orchestrator emits `started` before Land finishes persisting `accepted`.
+
+An `accepted` event is the lowest public lifecycle state. A late `accepted` event is retained in request history but must not replace `started` or any later materialized status.
+
+Pipeline publication is the Land success boundary. If publication fails, Land returns an error and leaves the hidden `accepting` receipt for operational cleanup. If publication succeeds but appending or materializing `accepted` fails, Land still returns the sqid because retrying the RPC would submit a duplicate request that is already in the pipeline. A later pipeline event activates and repairs the public projections.
 
 ### Request-Log Materialization
 
 Every gateway request-log persistence path uses the same materialization component. It appends the audit log, compares the incoming entry with the authoritative summary, conditionally advances the winner, and propagates the authoritative value to the queue projection.
 
-The winner comparison preserves the existing `Status` behavior:
+The winner comparison preserves the existing current-status reconciliation behavior:
 
 1. A terminal request-state entry with a positive request version beats every non-terminal or unversioned winner.
 2. Between versioned terminal entries, the greater request version wins.
 3. Equal terminal versions use the greater log timestamp as a tie-breaker.
 4. When no versioned terminal winner exists, the greater log timestamp wins.
+5. Any retained lifecycle event promotes an `accepting` summary into the public projections.
+6. `accepted` cannot replace `started` or any later status, even when the accepted log arrives later.
 
 Materialization uses optimistic concurrency so stale or out-of-order consumers cannot replace a newer winner. Version arithmetic and reconciliation decisions belong to the materialization component; stores perform only mechanical creates, reads, conditional updates, and bounded page queries.
 
 ## Read Flows
 
-### Status by Sqid
+### Request Summary by ID
 
-The gateway reads the authoritative summary by sqid and returns its current materialized state and immutable context. It does not fall back to parsing the sqid, reconciling logs, or reading orchestrator stores.
+The gateway reads the authoritative summary by sqid and returns its current materialized state and immutable context. An `accepting` summary is treated as not found because it has not crossed the public admission boundary. The gateway does not fall back to parsing the sqid, reconciling logs, or reading orchestrator stores.
 
-### Status by Change URI
+### Request Summaries by Change URI
 
-The gateway performs a bounded newest-first scan of the URI reverse mapping and then reads the authoritative summary for each resolved sqid. Results preserve the mapping order. No mapping is a not-found result; exceeding the 100-request maximum is an error. A mapping whose authoritative summary is missing is an internal consistency error that fails the lookup; it is not returned as user-facing not-found and is not silently omitted.
+The gateway performs a bounded newest-first scan of the URI reverse mapping and then reads the authoritative summary for each resolved sqid. Results preserve the mapping order. URI mappings are created only when the request reaches `accepted` or a later state, so `accepting` receipts are absent by construction. No mapping is a not-found result; exceeding the 100-request maximum is an error. A mapping whose authoritative summary is missing is an internal consistency error that fails the lookup; it is not returned as user-facing not-found and is not silently omitted.
 
 ### List by Queue and Receipt Time
 
-The gateway performs one bounded range scan of the queue projection using queue, receipt-time bounds, and an optional keyset cursor. The ordering key is immutable, so later status updates cannot move an item across an issued cursor.
+The gateway performs one bounded range scan of the queue projection using queue, receipt-time bounds, and an optional keyset cursor. Queue projections are created only when the request reaches `accepted` or a later state, so `accepting` receipts are absent by construction. The ordering key is immutable, so later status updates cannot move an item across an issued cursor.
 
 ## Consistency
 
 The request log remains the append-only audit record. The authoritative summary and queue projection are eventually consistent views of its winning current state.
 
-Because the authoritative summary and queue projection are separate writes, a short interval can exist where `Status` and `List` show different statuses. Retried materialization repairs the queue projection from the authoritative sqid summary until both converge. Neither API reconciles logs during reads to hide this interval.
+Because the authoritative summary and queue projection are separate writes, a short interval can exist where request-summary retrieval and `List` show different statuses. Retried materialization repairs the queue projection from the authoritative sqid summary until both converge. Neither API reconciles logs during reads to hide this interval.
 
-Request context has a stronger guarantee than status convergence: it is persisted before the initial log and before the request is published to the orchestrator. Once a queue projection is visible, its queue, sqid, change URIs, and receipt time are complete.
+Request context has a stronger guarantee than status convergence: the authoritative receipt is persisted before the request is published to the orchestrator. Public URI and queue projections are activated only by `accepted` or a later event. Once a queue projection is visible, its queue, sqid, change URIs, and receipt time are complete.
 
 ## Compatibility and Rollout
 
 No existing SQL table requires an in-place breaking modification. The request log remains unchanged, and the new query patterns use additive gateway-owned read models.
 
-There is intentionally no backfill from orchestrator working state or historical request logs. Deployments may create the new stores empty and begin populating them for new Land requests. This creates a behavioral cutoff: requests received before rollout are not guaranteed to resolve through the new `Status` implementation or appear in `List`.
+There is intentionally no backfill from orchestrator working state or historical request logs. Deployments may create the new stores empty and begin populating them for new Land requests. This creates a behavioral cutoff: requests received before rollout are not guaranteed to resolve through the new request-summary implementation or appear in `List`.
 
-The Status request change preserves the existing sqid field number but may be source-breaking because generated clients represent the selector as a protobuf `oneof`. Changing Status from singular status fields to a list of request summaries is a breaking response change. The List RPC is additive.
+The request-summary RPCs replace the former polymorphic Status shape with explicit ID and change-URI lookups. This is a source-breaking API change. The List RPC is additive.
 
 ## Rejected Alternatives
 
@@ -168,4 +182,4 @@ Filtering the existing queue receipt scan would require server-side filtering ou
 
 ### Let List Accept Sqid or URI
 
-Sqid lookup and the small URI submission-history lookup belong to `Status`. `List` has one purpose: enumerate queue receipts in a bounded time range. Keeping these contracts separate gives each storage operation one predictable access pattern.
+Sqid lookup and the small URI submission-history lookup belong to the request-summary RPCs. `List` has one purpose: enumerate queue receipts in a bounded time range. Keeping these contracts separate gives each storage operation one predictable access pattern.

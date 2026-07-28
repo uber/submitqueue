@@ -29,9 +29,7 @@ const (
 	TopicKeyValidate TopicKey = "validate"
 	// TopicKeyBatch is the pipeline stage where validated requests are published for batching.
 	TopicKeyBatch TopicKey = "batch"
-	// TopicKeyScore is the pipeline stage where batches are published for scoring.
-	TopicKeyScore TopicKey = "score"
-	// TopicKeySpeculate is the pipeline stage where scored batches are published for speculation.
+	// TopicKeySpeculate is the pipeline stage where batches are published for speculation.
 	TopicKeySpeculate TopicKey = "speculate"
 	// TopicKeyBuild is the pipeline stage where speculated batches are published for builds.
 	TopicKeyBuild TopicKey = "build"
@@ -42,7 +40,7 @@ const (
 	// PublishAfter when the build has not yet reached a terminal state.
 	TopicKeyBuildSignal TopicKey = "buildsignal"
 	// TopicKeyMerge is the pipeline stage where speculated batches are published for merging.
-	TopicKeyMerge TopicKey = "merge"
+	TopicKeyMerge TopicKey = "submitqueue-merge"
 	// TopicKeyConclude is the pipeline stage where merged requests are published for conclusion.
 	TopicKeyConclude TopicKey = "conclude"
 	// TopicKeyLog is the pipeline stage where per-request logs are written.

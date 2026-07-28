@@ -27,6 +27,7 @@ type mysqlStorage struct {
 	requestStore    storage.RequestStore
 	requestURIStore storage.RequestURIStore
 	queueStore      storage.QueueStore
+	buildStore      storage.BuildStore
 }
 
 // NewStorage creates a new MySQL-backed storage.
@@ -36,6 +37,7 @@ func NewStorage(db *sql.DB, scope tally.Scope) (storage.Storage, error) {
 		requestStore:    NewRequestStore(db, scope.SubScope("request_store")),
 		requestURIStore: NewRequestURIStore(db, scope.SubScope("request_uri_store")),
 		queueStore:      NewQueueStore(db, scope.SubScope("queue_store")),
+		buildStore:      NewBuildStore(db, scope.SubScope("build_store")),
 	}, nil
 }
 
@@ -52,6 +54,11 @@ func (f *mysqlStorage) GetRequestURIStore() storage.RequestURIStore {
 // GetQueueStore returns the MySQL-backed QueueStore.
 func (f *mysqlStorage) GetQueueStore() storage.QueueStore {
 	return f.queueStore
+}
+
+// GetBuildStore returns the MySQL-backed BuildStore.
+func (f *mysqlStorage) GetBuildStore() storage.BuildStore {
+	return f.buildStore
 }
 
 // Close closes the underlying database connection.

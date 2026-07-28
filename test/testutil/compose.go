@@ -16,11 +16,16 @@ package testutil
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
+	"hash"
+	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -39,26 +44,56 @@ type ComposeStack struct {
 	log         *TestLogger
 	ctx         context.Context
 	composeCmd  []string  // docker-compose command (either ["docker-compose"] or ["docker", "compose"])
+	composeEnv  []string  // environment shared by compose commands
 	logCmd      *exec.Cmd // background "docker compose logs -f" process
 }
 
-// getDockerComposeCommand returns the docker-compose command to use.
-// Tries "docker-compose" first (V1), falls back to "docker compose" (V2).
+// getDockerComposeCommand returns the docker compose command to use.
+// Prefers the Compose V2 plugin ("docker compose") and falls back to a
+// standalone docker-compose binary only when the plugin is unavailable: a
+// standalone binary is often the legacy Python V1, which lacks flags the
+// stack relies on (e.g. `up --wait`).
 func getDockerComposeCommand() []string {
-	// Try docker-compose (V1)
-	if _, err := exec.LookPath("docker-compose"); err == nil {
-		return []string{"docker-compose"}
+	if exec.Command("docker", "compose", "version").Run() == nil {
+		return []string{"docker", "compose"}
 	}
 
-	// Fall back to docker compose (V2)
-	return []string{"docker", "compose"}
+	return []string{"docker-compose"}
+}
+
+// ComposeOption customizes how a ComposeStack is created.
+type ComposeOption func(*composeOptions)
+
+type composeOptions struct {
+	// buildContextFiles maps a path inside the synthesized docker build
+	// context to the workspace-relative runfile it is staged from.
+	buildContextFiles map[string]string
+}
+
+// WithBuildContext stages the given files into a synthesized docker build
+// context directory and points the compose build context variable (REPO_ROOT)
+// at it. Keys are context-relative destination paths that must match the
+// Dockerfile COPY sources and the compose `dockerfile:` path (e.g.
+// ".docker-bin/gateway", "service/submitqueue/gateway/server/Dockerfile");
+// values are workspace-relative runfile paths, each of which must be declared
+// as a `data` dependency of the test target. This keeps image builds hermetic:
+// docker only ever sees files Bazel knows about, never the source checkout.
+func WithBuildContext(files map[string]string) ComposeOption {
+	return func(o *composeOptions) {
+		o.buildContextFiles = files
+	}
 }
 
 // NewComposeStack creates a new compose stack from the given docker-compose file.
 // Automatically registers cleanup to tear down the stack.
 // testContext should describe what's being tested (e.g., "gateway", "storage", "e2e-submitqueue").
-func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, composeFile, testContext string) *ComposeStack {
+func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, composeFile, testContext string, opts ...ComposeOption) *ComposeStack {
 	t.Helper()
+
+	var options composeOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
 
 	// Setup Docker environment
 	setupDockerEnv(t)
@@ -66,6 +101,17 @@ func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, compose
 	// Get absolute path to compose file
 	absPath, err := filepath.Abs(composeFile)
 	require.NoError(t, err, "failed to get absolute path to compose file")
+
+	// The image prefix is derived from the content of the declared inputs, so
+	// the compose file participates in the hash alongside the staged build
+	// context files.
+	inputHash := sha256.New()
+	hashFile(t, inputHash, composeFile, absPath)
+
+	buildContextDir := ""
+	if len(options.buildContextFiles) > 0 {
+		buildContextDir = stageBuildContext(t, inputHash, options.buildContextFiles)
+	}
 
 	// Generate meaningful project name: sq-test-{context}-{short-timestamp}
 	// Results in container names like: sq-test-gateway-a1b2c3d-mysql-app-1
@@ -79,6 +125,7 @@ func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, compose
 		log:         log,
 		ctx:         ctx,
 		composeCmd:  getDockerComposeCommand(),
+		composeEnv:  composeEnvironment(inputHash.Sum(nil), buildContextDir),
 	}
 
 	// Register cleanup
@@ -89,7 +136,7 @@ func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, compose
 			log.Logf("SKIP_CLEANUP=true - keeping containers for inspection")
 			log.Logf("Container prefix: %s", projectName)
 			composeCmd := strings.Join(stack.composeCmd, " ")
-			log.Logf("Clean up manually: %s -f %s -p %s down -v --rmi local", composeCmd, absPath, projectName)
+			log.Logf("Clean up manually: %s -f %s -p %s down -v", composeCmd, absPath, projectName)
 			return
 		}
 
@@ -108,6 +155,7 @@ func (s *ComposeStack) Up() error {
 
 	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName, "up", "-d", "--build", "--wait")
 	cmd := exec.CommandContext(s.ctx, s.composeCmd[0], args...)
+	cmd.Env = s.composeEnv
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -120,13 +168,15 @@ func (s *ComposeStack) Up() error {
 	return nil
 }
 
-// down stops and removes all services in the compose stack.
-// Also removes locally built images to prevent accumulation.
+// down stops and removes all services and volumes in the compose stack.
+// Locally built images are named after the hash of their declared inputs and
+// remain cached for subsequent runs with the same build context.
 func (s *ComposeStack) down() {
-	s.log.Logf("Stopping compose stack and removing images")
+	s.log.Logf("Stopping compose stack")
 
-	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName, "down", "-v", "--rmi", "local")
+	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName, "down", "-v")
 	cmd := exec.CommandContext(s.ctx, s.composeCmd[0], args...)
+	cmd.Env = s.composeEnv
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -141,6 +191,7 @@ func (s *ComposeStack) down() {
 func (s *ComposeStack) tailLogs() {
 	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName, "logs", "-f")
 	cmd := exec.Command(s.composeCmd[0], args...)
+	cmd.Env = s.composeEnv
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 
@@ -165,6 +216,7 @@ func (s *ComposeStack) ServicePort(serviceName string, containerPort int) (int, 
 
 	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName, "port", serviceName, fmt.Sprintf("%d", containerPort))
 	cmd := exec.CommandContext(s.ctx, s.composeCmd[0], args...)
+	cmd.Env = s.composeEnv
 
 	output, err := cmd.Output()
 	if err != nil {
@@ -293,6 +345,7 @@ func (s *ComposeStack) StopService(serviceName string, timeoutSec int) error {
 	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName,
 		"stop", "-t", fmt.Sprintf("%d", timeoutSec), serviceName)
 	cmd := exec.CommandContext(s.ctx, s.composeCmd[0], args...)
+	cmd.Env = s.composeEnv
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -313,6 +366,7 @@ func (s *ComposeStack) ServiceExitCode(serviceName string) (int, error) {
 	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName,
 		"ps", "-a", "-q", serviceName)
 	cmd := exec.CommandContext(s.ctx, s.composeCmd[0], args...)
+	cmd.Env = s.composeEnv
 	output, err := cmd.Output()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get container ID for service %s: %w", serviceName, err)
@@ -341,7 +395,7 @@ func (s *ComposeStack) ServiceExitCode(serviceName string) (int, error) {
 	return exitCode, nil
 }
 
-// setupDockerEnv configures Docker environment for docker-compose.
+// setupDockerEnv configures the Docker CLI environment for compose commands.
 func setupDockerEnv(t *testing.T) {
 	t.Helper()
 
@@ -349,45 +403,93 @@ func setupDockerEnv(t *testing.T) {
 	if os.Getenv("HOME") == "" {
 		t.Setenv("HOME", t.TempDir())
 	}
-}
 
-// FindRepoRoot finds the repository root.
-// Checks REPO_ROOT env var, then git, then walks up to find marker files.
-func FindRepoRoot(t *testing.T) string {
-	t.Helper()
-
-	// Check if REPO_ROOT is set (from .envrc or test environment)
-	if repoRoot := os.Getenv("REPO_ROOT"); repoRoot != "" {
-		return repoRoot
-	}
-
-	// Try git (works outside Bazel sandbox)
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-	if output, err := cmd.Output(); err == nil {
-		if repoRoot := strings.TrimSpace(string(output)); repoRoot != "" {
-			return repoRoot
-		}
-	}
-
-	// Walk up from current directory to find marker files
-	// In Bazel sandbox, marker files are symlinks - resolve them to get source location
-	dir, err := os.Getwd()
-	require.NoError(t, err, "failed to get working directory")
-
-	for {
-		// Try to find and resolve marker file symlinks
-		for _, marker := range []string{"MODULE.bazel", "go.mod"} {
-			markerPath := filepath.Join(dir, marker)
-			if realMarker, err := filepath.EvalSymlinks(markerPath); err == nil {
-				return filepath.Dir(realMarker)
+	// Bazel gives tests a scratch HOME, which hides user-level Docker CLI
+	// plugin installs (e.g. compose v2 in ~/.docker/cli-plugins). Point
+	// DOCKER_CONFIG at the invoking user's docker config dir when not set
+	// explicitly — mirroring how the docker CLI resolves it outside the
+	// sandbox. Machine-level plugin installs are unaffected either way.
+	if os.Getenv("DOCKER_CONFIG") == "" {
+		if u, err := user.Current(); err == nil && u.HomeDir != "" {
+			dockerConfig := filepath.Join(u.HomeDir, ".docker")
+			if _, statErr := os.Stat(dockerConfig); statErr == nil {
+				t.Setenv("DOCKER_CONFIG", dockerConfig)
 			}
 		}
-
-		// Move up one directory
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatalf("repository root not found")
-		}
-		dir = parent
 	}
+}
+
+// stageBuildContext copies the given runfiles into a temporary directory that
+// serves as the docker build context, feeding each destination path and file
+// content into inputHash in deterministic (sorted) order. Runfiles are
+// symlinks into Bazel's output tree, and docker's context upload does not
+// follow symlinks, so the content is copied. Each staged file keeps its source
+// mode, so service binaries stay executable; docker preserves the mode on COPY.
+func stageBuildContext(t *testing.T, inputHash hash.Hash, files map[string]string) string {
+	t.Helper()
+
+	dests := make([]string, 0, len(files))
+	for dest := range files {
+		dests = append(dests, dest)
+	}
+	sort.Strings(dests)
+
+	dir := t.TempDir()
+	for _, dest := range dests {
+		src := files[dest]
+		srcFile, err := os.Open(Runfile(src))
+		require.NoError(t, err, "failed to open build context input %s (is it declared as a data dependency?)", src)
+
+		info, err := srcFile.Stat()
+		require.NoError(t, err, "failed to stat build context input %s", src)
+
+		destPath := filepath.Join(dir, dest)
+		require.NoError(t, os.MkdirAll(filepath.Dir(destPath), 0o755), "failed to create build context dir for %s", dest)
+
+		destFile, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+		require.NoError(t, err, "failed to create build context file %s", dest)
+
+		_, _ = io.WriteString(inputHash, dest)
+		_, _ = inputHash.Write([]byte{0})
+		_, err = io.Copy(io.MultiWriter(destFile, inputHash), srcFile)
+		require.NoError(t, err, "failed to stage build context file %s", dest)
+		require.NoError(t, destFile.Close(), "failed to close build context file %s", dest)
+		require.NoError(t, srcFile.Close(), "failed to close build context input %s", src)
+	}
+	return dir
+}
+
+// hashFile feeds a logical path marker and the content of the file at path
+// into inputHash.
+func hashFile(t *testing.T, inputHash hash.Hash, logicalPath, path string) {
+	t.Helper()
+
+	_, _ = io.WriteString(inputHash, logicalPath)
+	_, _ = inputHash.Write([]byte{0})
+
+	f, err := os.Open(path)
+	require.NoError(t, err, "failed to open declared input %s", logicalPath)
+	_, err = io.Copy(inputHash, f)
+	require.NoError(t, err, "failed to hash declared input %s", logicalPath)
+	require.NoError(t, f.Close(), "failed to close declared input %s", logicalPath)
+}
+
+// composeEnvironment returns the environment used by every compose command.
+// The image prefix is derived from the content of the declared inputs (compose
+// file plus staged build context), so runs with identical inputs reuse the
+// docker build cache while different revisions — including concurrent runs
+// from separate worktrees against one daemon — never collide on an image tag.
+func composeEnvironment(inputHash []byte, buildContextDir string) []string {
+	imagePrefix := fmt.Sprintf("sq-test-%x", inputHash[:6])
+
+	env := os.Environ()
+	env = append(env, "SQ_DOCKER_IMAGE_PREFIX="+imagePrefix)
+	env = append(env, "SQ_MYSQL_DATA_MOUNT_TYPE=tmpfs")
+	env = append(env, "SQ_MYSQL_INITDB_SKIP_TZINFO=1")
+	if buildContextDir != "" {
+		// The compose files resolve their build context from REPO_ROOT; in
+		// tests it points at the staged minimal context, not the checkout.
+		env = append(env, "REPO_ROOT="+buildContextDir)
+	}
+	return env
 }

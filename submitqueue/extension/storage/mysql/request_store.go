@@ -41,7 +41,7 @@ func NewRequestStore(db *sql.DB, scope tally.Scope) storage.RequestStore {
 
 // Get retrieves a land request by ID. Returns ErrNotFound if the request is not found.
 func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, retErr error) {
-	op := metrics.Begin(r.scope, "get")
+	op := metrics.Begin(r.scope, "get", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	var req entity.Request
@@ -69,7 +69,7 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 
 // Create creates a new land request. The request must have a unique ID already assigned. Returns ErrAlreadyExists if the request ID already exists.
 func (r *requestStore) Create(ctx context.Context, request entity.Request) (retErr error) {
-	op := metrics.Begin(r.scope, "create")
+	op := metrics.Begin(r.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	// Marshal the change URIs to JSON
@@ -84,9 +84,7 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) (retE
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
-			// MySQL error code 1062 is "Duplicate entry". Hopefully it will never change with new versions of MySQL.
-			// Also it requires to have a single unique index on the table.
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrDuplicateEntry {
 			return fmt.Errorf("request entity id=%s: %w", request.ID, storage.ErrAlreadyExists)
 		}
 		return fmt.Errorf("failed to insert request entity id=%s: %w", request.ID, err)
@@ -99,7 +97,7 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) (retE
 // if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
 // Version arithmetic is owned by the caller; this is a pure conditional write.
 func (r *requestStore) UpdateState(ctx context.Context, id string, oldVersion, newVersion int32, newState entity.RequestState) (retErr error) {
-	op := metrics.Begin(r.scope, "update_state")
+	op := metrics.Begin(r.scope, "update_state", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	result, err := r.db.ExecContext(ctx,

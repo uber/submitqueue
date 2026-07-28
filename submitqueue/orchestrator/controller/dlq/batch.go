@@ -27,8 +27,8 @@ import (
 )
 
 // batchController is the DLQ reconciler for batch-scoped pipeline stages
-// (score, speculate, build, merge, conclude). All five topics carry a
-// BatchID payload, so this controller is registered five times — one per
+// (speculate, build, merge, conclude). All four topics carry a
+// BatchID payload, so this controller is registered four times — one per
 // topic, each with the matching DLQ topic key and consumer group.
 //
 // On each delivery the controller decodes the BatchID, transitions the batch
@@ -40,6 +40,7 @@ type batchController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	store         storage.Storage
+	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -53,6 +54,7 @@ func NewDLQBatchController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	store storage.Storage,
+	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) consumer.Controller {
@@ -61,17 +63,15 @@ func NewDLQBatchController(
 		logger:        logger.Named(name),
 		metricsScope:  scope.SubScope(name),
 		store:         store,
+		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
 }
 
 // Process reconciles a single DLQ delivery for a batch-scoped topic.
-func (c *batchController) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+func (c *batchController) Process(ctx context.Context, delivery consumer.Delivery) error {
 	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName)
-	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
@@ -94,12 +94,11 @@ func (c *batchController) Process(ctx context.Context, delivery consumer.Deliver
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
 
-	if err := failBatch(ctx, c.store, c.logger, bid.ID); err != nil {
+	if err := failBatch(ctx, c.store, c.registry, c.logger, bid.ID, dmeta["dlq.last_error"]); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
 		return err
 	}
 
-	metrics.NamedCounter(c.metricsScope, opName, "reconciled", 1)
 	return nil
 }
 
