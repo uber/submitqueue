@@ -15,7 +15,7 @@
 // Package changeset resolves batch identity into the changes a batch contains.
 // It is the single place the orchestrator walks batch -> requests -> changes,
 // consolidating what the build and merge controllers each did privately.
-// Decision/action extensions (scorer, buildrunner, pusher, and future
+// Decision/action extensions (scorer, buildrunner, and future
 // detail-aware conflict analyzers) take thin identity entities and resolve their
 // granular content through an injected Resolver instead of being handed
 // pre-resolved data by a controller.
