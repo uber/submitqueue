@@ -209,35 +209,48 @@ func (c *Controller) findActiveBatch(ctx context.Context, request entity.Request
 	return entity.Batch{}, false, nil
 }
 
-// cancelRequest performs the terminal CAS (Cancelling → Cancelled) for a request
-// that is not part of any active batch, and emits the RequestStatusCancelled log
-// entry. storage.ErrVersionMismatch here means a concurrent writer (typically
-// conclude after a racing batch terminal transition) advanced the request between
-// our mark-cancelling CAS and this terminal CAS — returned as-is because the
-// sentinel is intrinsically retryable; the next pass will observe the new state
-// (likely terminal) and ack via the top-level terminal-check.
+// cancelRequest drives the terminal transition (Cancelling → Cancelled) for a
+// request that is not part of any active batch, and emits the RequestStatusCancelled log entry.
+// It delegates the CAS-plus-log to the shared TerminateRequest helper,
+// which re-reads the request before the terminal write.
+//
+// A storage.ErrVersionMismatch surfaced by the helper means a concurrent writer
+// (typically conclude after a racing batch terminal transition) advanced the
+// request between our mark-cancelling CAS and this terminal CAS; it is returned
+// as-is because the sentinel is intrinsically retryable, and the next pass will
+// observe the new state and ack via the top-level terminal-check. If that
+// concurrent writer already reached a *different* terminal state, the helper
+// reports TerminationDiverged and we simply ack — the other writer owns the
+// terminal log for the state it wrote.
 func (c *Controller) cancelRequest(ctx context.Context, request entity.Request, reason string) error {
-	newVersion := request.Version + 1
-	if err := c.store.GetRequestStore().UpdateState(ctx, request.ID, request.Version, newVersion, entity.RequestStateCancelled); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "request_update_errors", 1)
-		return fmt.Errorf("failed to cancel request %s: %w", request.ID, err)
-	}
-
 	metadata := map[string]string{}
 	if reason != "" {
 		metadata["reason"] = reason
 	}
-	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusCancelled, newVersion, "", metadata)
-	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "log_publish_errors", 1)
-		return fmt.Errorf("failed to publish cancel log for request %s: %w", request.ID, err)
+	res, err := corerequest.TerminateRequest(ctx, c.store, c.registry, request.ID, entity.RequestStateCancelled, "", metadata)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "request_terminate_errors", 1)
+		return fmt.Errorf("failed to cancel request %s: %w", request.ID, err)
 	}
 
-	c.logger.Infow("request cancelled (not batched)",
-		"request_id", request.ID,
-		"queue", request.Queue,
-	)
-	metrics.NamedCounter(c.metricsScope, opName, "request_cancelled", 1)
+	switch res.Outcome {
+	case corerequest.TerminationOutcomeSuccess, corerequest.TerminationOutcomeAlreadyInTargetState:
+		c.logger.Infow("request cancelled (not batched)",
+			"request_id", request.ID,
+			"queue", request.Queue,
+		)
+		metrics.NamedCounter(c.metricsScope, opName, "request_cancelled", 1)
+	case corerequest.TerminationOutcomeDiverged:
+		c.logger.Infow("request reached a different terminal state before cancel, skipping",
+			"request_id", request.ID,
+			"queue", request.Queue,
+			"actual_state", string(res.BeforeState),
+		)
+		metrics.NamedCounter(c.metricsScope, opName, "request_terminal_divergence", 1)
+	case corerequest.TerminationOutcomeNotFound:
+		metrics.NamedCounter(c.metricsScope, opName, "request_store_errors", 1)
+		return fmt.Errorf("request %s not found during cancel: %w", request.ID, storage.ErrNotFound)
+	}
 	return nil
 }
 

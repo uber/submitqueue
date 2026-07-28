@@ -261,6 +261,38 @@ func TestController_Process(t *testing.T) {
 			expectLogPublish: false,
 		},
 		{
+			name: "missing request returns error",
+			batch: entity.Batch{
+				ID:       "test-queue/batch/11",
+				Queue:    "test-queue",
+				Contains: []string{"test-queue/40"},
+				State:    entity.BatchStateSucceeded,
+				Version:  2,
+			},
+			setupStore: func(ctrl *gomock.Controller) *storagemock.MockStorage {
+				mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+				mockBatchStore.EXPECT().Get(gomock.Any(), "test-queue/batch/11").Return(entity.Batch{
+					ID:       "test-queue/batch/11",
+					Queue:    "test-queue",
+					Contains: []string{"test-queue/40"},
+					State:    entity.BatchStateSucceeded,
+					Version:  2,
+				}, nil)
+
+				// A request referenced by the batch but missing from the store is a
+				// hard error (nack/retry, eventually DLQ) — not a silent skip.
+				mockRequestStore := storagemock.NewMockRequestStore(ctrl)
+				mockRequestStore.EXPECT().Get(gomock.Any(), "test-queue/40").Return(entity.Request{}, storage.ErrNotFound)
+
+				mockStorage := storagemock.NewMockStorage(ctrl)
+				mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+				mockStorage.EXPECT().GetRequestStore().Return(mockRequestStore).AnyTimes()
+				return mockStorage
+			},
+			wantErr:   true,
+			retryable: false,
+		},
+		{
 			name: "non-terminal batch state returns error",
 			batch: entity.Batch{
 				ID:       "test-queue/batch/4",
