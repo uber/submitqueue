@@ -106,6 +106,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Short-circuit if the request has been halted — either it already reached a
 	// terminal state, or the cancel controller has recorded a cancellation intent
 	// (RequestStateCancelling). A halted request must never spawn a new batch.
+	// If cancellation races with an attempt already initializing below, speculate re-checks the contained request state before starting work.
 	if entity.IsRequestStateHalted(request.State) {
 		metrics.NamedCounter(c.metricsScope, opName, "skipped_halted", 1)
 		c.logger.Infow("skipping batch for halted request",
@@ -128,7 +129,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		ID:       fmt.Sprintf("%s/batch/%d", request.Queue, seq),
 		Queue:    request.Queue,
 		Contains: []string{request.ID},
-		State:    entity.BatchStateCreated,
+		State:    entity.BatchStateCreating,
 		Version:  1,
 	}
 
@@ -167,36 +168,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	batch.Dependencies = conflictingIDs
 
-	// Update reverse index for each conflicting batch (BatchDependent =
-	// "batches that depend on me"). One UpdateDependents call per conflict.
-	for _, depID := range conflictingIDs {
-		existing, err := c.store.GetBatchDependentStore().Get(ctx, depID)
-		if err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1)
-			return fmt.Errorf("failed to get batch dependent for batchID=%s: %w", depID, err)
-		}
-
-		dependents := append(existing.Dependents, batch.ID)
-
-		newVersion := existing.Version + 1
-		if err := c.store.GetBatchDependentStore().UpdateDependents(ctx, depID, existing.Version, newVersion, dependents); err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1)
-			return fmt.Errorf("failed to update batch dependent index for existing batchID=%s and new batchID=%s: %w", depID, batch.ID, err)
-		}
-	}
-
-	// Create new reverse index entry for the new batch. It would be empty for now, but will be updated as new batches are created that conflict with this batch.
-	bd := entity.BatchDependent{
-		BatchID:    batch.ID,
-		Dependents: []string{},
-		Version:    1,
-	}
-
-	if err := c.store.GetBatchDependentStore().Create(ctx, bd); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1)
-		return fmt.Errorf("failed to create batch dependent index for new batchID=%s: %w", batch.ID, err)
-	}
-
 	// Claim the request for this batch with a CAS-write that transitions the
 	// request to RequestStateBatched. This CAS is the serialization point
 	// between the batch controller and the cancel controller — without it, the
@@ -223,9 +194,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// RequestStateBatched) and cancel.markCancelling(... RequestStateCancelling)
 	// reaches storage first wins; the loser sees storage.ErrVersionMismatch:
 	//   - If cancel won: this CAS fails. We ack the message (cancel will drive R
-	//     to its terminal state on its own; no batch is needed). The reverse-index
-	//     entry above becomes a dangling BatchDependent — tolerated per the
-	//     "downstream should handle stale entries" contract on this store.
+	//     to its terminal state on its own; no batch or reverse-index data has
+	//     been written).
 	//   - If batch won: cancel.markCancelling will fail with ErrVersionMismatch
 	//     on its next attempt, re-fetch R, observe RequestStateBatched, and take
 	//     the batch-cancellation branch (which terminates the whole batch).
@@ -270,6 +240,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	request.Version = newRequestVersion
 	request.State = entity.RequestStateBatched
 
+	// Persist the batch before creating references to it. A Creating batch is not eligible for dependency analysis or normal processing.
+	if err := c.store.GetBatchStore().Create(ctx, batch); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
+		return fmt.Errorf("failed to create batch in batch store: %w", err)
+	}
+
 	for _, requestID := range batch.Contains {
 		association := entity.RequestBatch{
 			RequestID: requestID,
@@ -278,16 +254,17 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		}
 		if err := c.store.GetRequestBatchStore().Create(ctx, association); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "request_batch_store_errors", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "batch_abandoned_creating", 1)
 			return fmt.Errorf("failed to associate request %s with batch %s: %w", requestID, batch.ID, err)
 		}
 	}
 
-	// Persist batch to storage.
-	// This is the final operation that concludes the batch creation process. If it fails, BatchDependents will be pointing to a batch id that does not exist.
-	// We do not reuse batch ids, a retry of this operation will create a new batch with a new ID. The downstream logic should tolerate stale BatchDependent and RequestBatch entries.
-	if err := c.store.GetBatchStore().Create(ctx, batch); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
-		return fmt.Errorf("failed to create batch in batch store: %w", err)
+	batch, err = c.populateBatch(ctx, batch)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "batch_abandoned_creating", 1)
+		// Retries intentionally mint a new batch ID. Failures may therefore leave unpublished Creating or Created attempts behind.
+		// These attempts are inert and can be removed by a future background cleanup job if their volume becomes significant.
+		return err
 	}
 
 	c.logger.Infow("batch created",
@@ -308,6 +285,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	})
 	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "batch_abandoned_created", 1)
 		return fmt.Errorf("failed to publish request log for request %s: %w", request.ID, err)
 	}
 
@@ -316,6 +294,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// The downstream logic should be able to handle stale entries by looking at the state of the batch.
 	if err := c.publish(ctx, topickey.TopicKeySpeculate, batch.ID, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+		metrics.NamedCounter(c.metricsScope, opName, "batch_abandoned_created", 1)
 		return fmt.Errorf("failed to publish batch ID to speculate topic: %w", err)
 	}
 
@@ -325,6 +304,45 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	)
 
 	return nil // Success - message will be acked
+}
+
+// populateBatch creates the reverse-index structure and marks a Creating batch ready for publication.
+func (c *Controller) populateBatch(ctx context.Context, batch entity.Batch) (entity.Batch, error) {
+	batchDependent := entity.BatchDependent{
+		BatchID:    batch.ID,
+		Dependents: []string{},
+		Version:    1,
+	}
+	if err := c.store.GetBatchDependentStore().Create(ctx, batchDependent); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1)
+		return entity.Batch{}, fmt.Errorf("failed to create batch dependent index for new batchID=%s: %w", batch.ID, err)
+	}
+
+	for _, dependencyID := range batch.Dependencies {
+		existing, err := c.store.GetBatchDependentStore().Get(ctx, dependencyID)
+		if err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1)
+			return entity.Batch{}, fmt.Errorf("failed to get batch dependent for batchID=%s: %w", dependencyID, err)
+		}
+
+		dependents := append(existing.Dependents, batch.ID)
+		newVersion := existing.Version + 1
+		if err := c.store.GetBatchDependentStore().UpdateDependents(ctx, dependencyID, existing.Version, newVersion, dependents); err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1)
+			return entity.Batch{}, fmt.Errorf("failed to update batch dependent index for existing batchID=%s and new batchID=%s: %w", dependencyID, batch.ID, err)
+		}
+	}
+
+	// The batch's own reverse-index row now exists and every dependency lists this batch as a dependent.
+	// Structural initialization is complete, so transition Creating → Created to make the batch ready for processing once published to speculate.
+	newVersion := batch.Version + 1
+	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateCreated); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
+		return entity.Batch{}, fmt.Errorf("failed to mark batch %s created: %w", batch.ID, err)
+	}
+	batch.Version = newVersion
+	batch.State = entity.BatchStateCreated
+	return batch, nil
 }
 
 // publish publishes a batch ID to the specified topic key.
