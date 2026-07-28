@@ -37,6 +37,7 @@ func TestNewStorage(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.NotNil(t, s.GetRequestStore())
+	assert.NotNil(t, s.GetRequestBatchStore())
 	assert.NotNil(t, s.GetChangeStore())
 	assert.NotNil(t, s.GetBatchStore())
 	assert.NotNil(t, s.GetBatchDependentStore())

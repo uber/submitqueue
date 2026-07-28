@@ -17,6 +17,7 @@ go_library(
         "push_result.go",
         "queue_config.go",
         "request.go",
+        "request_batch.go",
         "request_history.go",
         "request_log.go",
         "request_summary.go",

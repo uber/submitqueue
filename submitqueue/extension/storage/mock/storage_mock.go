@@ -110,6 +110,20 @@ func (mr *MockStorageMockRecorder) GetChangeStore() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetChangeStore", reflect.TypeOf((*MockStorage)(nil).GetChangeStore))
 }
 
+// GetRequestBatchStore mocks base method.
+func (m *MockStorage) GetRequestBatchStore() storage.RequestBatchStore {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRequestBatchStore")
+	ret0, _ := ret[0].(storage.RequestBatchStore)
+	return ret0
+}
+
+// GetRequestBatchStore indicates an expected call of GetRequestBatchStore.
+func (mr *MockStorageMockRecorder) GetRequestBatchStore() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRequestBatchStore", reflect.TypeOf((*MockStorage)(nil).GetRequestBatchStore))
+}
+
 // GetRequestLogStore mocks base method.
 func (m *MockStorage) GetRequestLogStore() storage.RequestLogStore {
 	m.ctrl.T.Helper()

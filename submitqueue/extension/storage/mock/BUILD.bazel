@@ -7,6 +7,7 @@ go_library(
         "batch_store_mock.go",
         "build_store_mock.go",
         "change_store_mock.go",
+        "request_batch_store_mock.go",
         "request_log_store_mock.go",
         "request_queue_summary_store_mock.go",
         "request_store_mock.go",

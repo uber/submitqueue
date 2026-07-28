@@ -30,6 +30,7 @@ const mysqlErrDuplicateEntry = 1062
 type mysqlStorage struct {
 	db                  *sql.DB
 	requestStore        storage.RequestStore
+	requestBatchStore   storage.RequestBatchStore
 	changeStore         storage.ChangeStore
 	batchStore          storage.BatchStore
 	batchDependentStore storage.BatchDependentStore
@@ -45,6 +46,7 @@ func NewStorage(db *sql.DB, scope tally.Scope) (storage.Storage, error) {
 	return &mysqlStorage{
 		db:                  db,
 		requestStore:        NewRequestStore(db, scope.SubScope("request_store")),
+		requestBatchStore:   NewRequestBatchStore(db, scope.SubScope("request_batch_store")),
 		changeStore:         NewChangeStore(db, scope.SubScope("change_store")),
 		batchStore:          NewBatchStore(db, scope.SubScope("batch_store")),
 		batchDependentStore: NewBatchDependentStore(db, scope.SubScope("batch_dependent_store")),
@@ -59,6 +61,11 @@ func NewStorage(db *sql.DB, scope tally.Scope) (storage.Storage, error) {
 // GetRequestStore returns the MySQL-backed RequestStore.
 func (f *mysqlStorage) GetRequestStore() storage.RequestStore {
 	return f.requestStore
+}
+
+// GetRequestBatchStore returns the MySQL-backed RequestBatchStore.
+func (f *mysqlStorage) GetRequestBatchStore() storage.RequestBatchStore {
+	return f.requestBatchStore
 }
 
 // GetChangeStore returns the MySQL-backed ChangeStore.
