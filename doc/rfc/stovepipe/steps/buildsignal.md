@@ -1,6 +1,6 @@
 # Buildsignal stage
 
-`buildsignal` polls the build-runner until a build reaches a terminal state, records the status, and — once the build is terminal — releases the queue's build slot, projects the outcome onto the `Request`, and publishes the build id to `record`. See [workflow.md](doc/rfc/stovepipe/workflow.md) for where it sits in the pipeline and [build.md](doc/rfc/stovepipe/steps/build.md) for how the build it polls was triggered.
+`buildsignal` polls the build-runner until a build reaches a terminal state, records the status, and — once the build is terminal — releases the queue's build slot, projects the outcome onto the `Request`, and publishes the **request id** to `record`. See [workflow.md](doc/rfc/stovepipe/workflow.md) for where it sits in the pipeline and [build.md](doc/rfc/stovepipe/steps/build.md) for how the build it polls was triggered.
 
 It handles only the poll loop: it does not decide build strategy, write greenness, or map targets to projects — those are `process`'s, `record`'s, and `analyze`'s jobs. It reports the *fact* (this request's build ended succeeded, failed, or cancelled); `record` derives what that fact *means* for greenness.
 
@@ -10,7 +10,7 @@ It handles only the poll loop: it does not decide build strategy, write greennes
 
 `buildsignal` consumes a build id, published by `build` — once per phase, since Phase 1 (whole-repo) and Phase 2 (per-project) each run their own `build` → `buildsignal` cycle against builds tied to the same `Request` (see [workflow.md](doc/rfc/stovepipe/workflow.md#workflow)).
 
-Its logic does not branch on phase: it loads the `Build`, polls it toward terminal, persists the result, and publishes the build id onward to `record`. What differs between phases is what `record` does with that publish (whole-repo vs. per-project greenness) — not anything `buildsignal` decides.
+Its logic does not branch on phase: it loads the `Build`, polls it toward terminal, persists the result, and publishes the request id onward to `record`. What differs between phases is what `record` does with that publish (whole-repo vs. per-project greenness) — not anything `buildsignal` decides.
 
 `buildsignal` is the sole writer of `Build.Status`/`Build.Version` after `build` creates the row (see [build.md](doc/rfc/stovepipe/steps/build.md#input-partitioning-and-the-single-writer-property)). It reads `Request` via `RequestStore.Get` (for `R.Queue`, to resolve the build-runner) and writes it exactly once, at the terminal transition, to record the build's outcome — the one `Request.State` write outside `process` and the DLQ reconciler.
 
@@ -65,12 +65,14 @@ For a delivery carrying build id `B`:
       - failure here aborts the step: R must not go terminal while still holding a slot.
    b. CAS R from processing to the outcome the stored status projects onto it:
       succeeded -> succeeded, failed -> failed, cancelled -> cancelled. First writer wins.
-   Then publish B (the build key, Build.ID) to the record topic,
-   partitioned by request id; ack, return. No re-publish to buildsignal.
-   - record loads the Build directly by this key (Build->Request gives it R for the per-Queue writes),
-     so no reverse lookup from Request to its builds is ever needed.
-   - a redelivery republishes the same terminal signal; record is idempotent.
-   - publish failure -> return raw (non-retryable); status is persisted, operational republish recovers.
+   Then publish R.ID to the record topic, partitioned by request id; ack, return.
+   No re-publish to buildsignal.
+   - record loads the Request directly by this key and derives greenness from its outcome,
+     so it never reaches a Build and no reverse lookup from Request to its builds is needed.
+   - the message id is the request id, so a redelivery republishing the same terminal signal
+     dedups into the original message; record is idempotent regardless.
+   - publish failure -> return raw (non-retryable); the outcome is persisted, operational
+     republish recovers.
 
 8. Else PublishAfter(B -> buildsignal, delayMs), partitioned by build id:
    - delayMs = pollDelay(status): shorter while running, longer while accepted.
@@ -135,7 +137,7 @@ Everything else — factory lookup, an `Update` store error other than a CAS con
 Every branch is safe under at-least-once redelivery:
 
 - **Build not found** — non-retryable; storage's read-after-write guarantee means a miss here is a storage defect, not a lag condition to retry through.
-- **Status already persisted** — a redelivery re-runs the whole algorithm from step 1, including a redundant `Status` poll (harmless — the runner reports the same thing); step 6 no-ops on the unchanged status, and the delivery proceeds to re-schedule the poll (non-terminal) or republish to `record` (terminal, idempotent). No corruption.
+- **Status already persisted** — a redelivery re-runs the whole algorithm from step 1, including a redundant `Status` poll (harmless — the runner reports the same thing); step 6 no-ops on the unchanged status, and the delivery proceeds to re-schedule the poll (non-terminal) or republish the request id to `record` (terminal, idempotent). No corruption.
 - **Terminal already published** — a redelivery reloads, re-polls, no-ops at step 6, republishes the same terminal signal to `record` (idempotent), and acks. Harmless.
 - **`PublishAfter` failed, then retried** — the nacked delivery re-runs from step 1; there is no way to resume mid-algorithm, so it re-polls the runner too, but the row already carries the non-terminal status and step 6 no-ops. Only the final enqueue does new work.
 
@@ -154,4 +156,4 @@ One boundary of that posture is worth stating: the `MaxAttempts` path fires only
 
 ## Entity, storage, and queue additions
 
-No additions beyond [build.md](doc/rfc/stovepipe/steps/build.md#entity-and-storage-additions-needed): `buildsignal` calls `BuildStore.Get`/`Update` and `RequestStore.Get`/`Update` against the `Build`/`Request` shapes defined there — `Build.ID` being the runner-assigned id it hands straight back to `Status` — plus `QueueStore.Get`/`Update` to release the build slot, and consumes/re-produces the `BuildSignal` message on `TopicKeyBuildSignal` introduced there. `Request.State` gains the three build outcomes (`succeeded`, `failed`, `cancelled`), all terminal. The message it publishes to `record`, and the `record` topic key itself, are owned by the `record` stage and land with `record.md`; `buildsignal` only needs that the **build id** (the build key, so `record` loads the `Build` directly) reaches the record topic once the build is terminal, partitioned by request id.
+No additions beyond [build.md](doc/rfc/stovepipe/steps/build.md#entity-and-storage-additions-needed): `buildsignal` calls `BuildStore.Get`/`Update` and `RequestStore.Get`/`Update` against the `Build`/`Request` shapes defined there — `Build.ID` being the runner-assigned id it hands straight back to `Status` — plus `QueueStore.Get`/`Update` to release the build slot, and consumes/re-produces the `BuildSignal` message on `TopicKeyBuildSignal` introduced there. `Request.State` gains the three build outcomes (`succeeded`, `failed`, `cancelled`), all terminal. The message it publishes to `record`, and the `record` topic key itself, are owned by the `record` stage and land with `record.md`; `buildsignal` only needs that the **request id** reaches the record topic once the build is terminal, partitioned by request id.
