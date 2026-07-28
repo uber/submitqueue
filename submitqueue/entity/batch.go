@@ -62,6 +62,21 @@ func (s BatchState) IsTerminal() bool {
 	}
 }
 
+var nonCancellableBatchStates = map[BatchState]bool{
+	BatchStateUnknown:   true,
+	BatchStateCreating:  true,
+	BatchStateMerging:   true,
+	BatchStateSucceeded: true,
+	BatchStateFailed:    true,
+	BatchStateCancelled: true,
+}
+
+// IsCancellable returns true if cancellation should transition or republish a batch in this state.
+// New non-terminal states are cancellable by default unless explicitly excluded above.
+func (s BatchState) IsCancellable() bool {
+	return !nonCancellableBatchStates[s]
+}
+
 // IsBatchStateHalted returns true if the batch is either terminal or in the process of being cancelled.
 // Forward-progress controllers (build, buildsignal, speculate, merge) use this to short-circuit
 // work for batches that the user has asked to cancel — even though Cancelling is non-terminal, no

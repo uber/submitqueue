@@ -45,6 +45,19 @@ func TestBatchState_IsTerminal(t *testing.T) {
 	}
 }
 
+func TestIsCancellable(t *testing.T) {
+	assert.True(t, BatchStateCreated.IsCancellable())
+	assert.True(t, BatchStateSpeculating.IsCancellable())
+	assert.True(t, BatchStateCancelling.IsCancellable())
+	assert.True(t, BatchState("future").IsCancellable())
+	assert.False(t, BatchStateUnknown.IsCancellable())
+	assert.False(t, BatchStateCreating.IsCancellable())
+	assert.False(t, BatchStateMerging.IsCancellable())
+	assert.False(t, BatchStateSucceeded.IsCancellable())
+	assert.False(t, BatchStateFailed.IsCancellable())
+	assert.False(t, BatchStateCancelled.IsCancellable())
+}
+
 func TestActiveBatchStates_ExcludesCreating(t *testing.T) {
 	assert.NotContains(t, ActiveBatchStates(), BatchStateCreating)
 }
