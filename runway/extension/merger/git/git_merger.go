@@ -19,11 +19,15 @@
 // Strategy → git operation:
 //
 //   - REBASE:        cherry-pick each URI's head commit onto the target tip.
+//   - SQUASH_REBASE: cherry-pick the step's changes, then collapse them into a
+//     single commit (squash unit = the step).
+//   - MERGE:         create a --no-ff merge commit per URI, preserving the
+//     original commit hashes in second-parent history.
 //   - DEFAULT:       resolved to the instance's configured DefaultStrategy
 //     before any step runs.
 //
-// REBASE is the only strategy implemented so far. A step naming any other
-// strategy is rejected as merger.ErrInvalidRequest until its apply path lands.
+// PROMOTE is not implemented yet; a step naming it is rejected as
+// merger.ErrInvalidRequest until its apply path lands.
 //
 // Atomicity: for a committing merge nothing reaches the remote until the final
 // push. A step that fails to apply aborts the in-progress git operation and
@@ -77,8 +81,8 @@ const defaultMaxPushAttempts = 10
 
 // Default committer identity used when Params leaves it unset. The scrubbed
 // environment (GIT_CONFIG_NOSYSTEM, GIT_CONFIG_GLOBAL=/dev/null) leaves no
-// ambient identity, so the commit-creating REBASE strategy needs one supplied
-// explicitly.
+// ambient identity, so commit-creating strategies (REBASE/SQUASH_REBASE/MERGE)
+// need one supplied explicitly.
 const (
 	defaultCommitterName  = "SubmitQueue Runway"
 	defaultCommitterEmail = "runway@submitqueue.invalid"
@@ -112,7 +116,7 @@ type Params struct {
 	// Target is the destination branch ref on the remote (e.g. "main").
 	Target string
 	// DefaultStrategy resolves a step whose strategy is DEFAULT. Must be a
-	// concrete strategy (currently only REBASE).
+	// concrete strategy (REBASE, SQUASH_REBASE, or MERGE).
 	DefaultStrategy mergestrategypb.Strategy
 	// Runtime is the pinned Git runtime used for every invocation.
 	Runtime GitRuntime
@@ -129,6 +133,13 @@ type Params struct {
 	// CheckStaleness enables verifying, before applying, that each change's
 	// canonical ref still points at the commit its URI names.
 	CheckStaleness bool
+	// AllowUnrelatedHistories lets a MERGE step integrate a change that shares
+	// no ancestry with the target — importing one repository's history into
+	// another. Off by default: the refusal it lifts is a real safeguard, since
+	// without it a merge of the wrong object fails loudly instead of quietly
+	// producing a nonsense result. Enable it on a queue that exists to perform
+	// such an import.
+	AllowUnrelatedHistories bool
 	// CommitterName / CommitterEmail identify the author/committer of
 	// service-created commits. Defaults are used when empty.
 	CommitterName  string
@@ -150,10 +161,13 @@ type gitMerger struct {
 	maxPushAttempts int
 	fetchRefspecs   []string
 	checkStaleness  bool
-	committerName   string
-	committerEmail  string
-	logger          *zap.SugaredLogger
-	metricsScope    tally.Scope
+
+	// allowUnrelatedHistories permits a MERGE across disjoint history graphs.
+	allowUnrelatedHistories bool
+	committerName           string
+	committerEmail          string
+	logger                  *zap.SugaredLogger
+	metricsScope            tally.Scope
 
 	// mu serializes concurrent operations — the underlying checkout cannot be
 	// safely shared between operations.
@@ -182,7 +196,7 @@ func NewMerger(params Params) (merger.Merger, error) {
 		return nil, err
 	}
 	if !isConcreteStrategy(params.DefaultStrategy) {
-		return nil, fmt.Errorf("default strategy must be concrete (currently only REBASE), got %v", params.DefaultStrategy)
+		return nil, fmt.Errorf("default strategy must be concrete (REBASE, SQUASH_REBASE, or MERGE), got %v", params.DefaultStrategy)
 	}
 	maxAttempts := params.MaxPushAttempts
 	if maxAttempts <= 0 {
@@ -205,10 +219,12 @@ func NewMerger(params Params) (merger.Merger, error) {
 		maxPushAttempts: maxAttempts,
 		fetchRefspecs:   params.FetchRefspecs,
 		checkStaleness:  params.CheckStaleness,
-		committerName:   committerName,
-		committerEmail:  committerEmail,
-		logger:          params.Logger.Named("git_merger"),
-		metricsScope:    params.MetricsScope.SubScope("git_merger"),
+
+		allowUnrelatedHistories: params.AllowUnrelatedHistories,
+		committerName:           committerName,
+		committerEmail:          committerEmail,
+		logger:                  params.Logger.Named("git_merger"),
+		metricsScope:            params.MetricsScope.SubScope("git_merger"),
 	}, nil
 }
 
@@ -307,7 +323,8 @@ func (m *gitMerger) resolveAndValidate(req *runwaymq.MergeRequest) ([]resolvedSt
 }
 
 // applyTransforming runs the reset/apply/push cycle for the transforming
-// strategies, retrying on remote contention when committing. For a dry run it applies the steps locally then discards them.
+// strategies (REBASE, SQUASH_REBASE, MERGE), retrying on remote contention when
+// committing. For a dry run it applies the steps locally then discards them.
 func (m *gitMerger) applyTransforming(ctx context.Context, req *runwaymq.MergeRequest, steps []resolvedStep, commit bool) (*runwaymq.MergeResult, error) {
 	// Fetch and vet every change the request names before the first attempt, so
 	// an unusable request fails without having touched the checkout. This sits
@@ -416,6 +433,10 @@ func (m *gitMerger) applySteps(ctx context.Context, steps []resolvedStep) ([]*ru
 		switch rs.strategy {
 		case mergestrategypb.Strategy_REBASE:
 			outputs, err = m.applyRebase(ctx, rs)
+		case mergestrategypb.Strategy_SQUASH_REBASE:
+			outputs, err = m.applySquashRebase(ctx, rs)
+		case mergestrategypb.Strategy_MERGE:
+			outputs, err = m.applyMerge(ctx, rs)
 		default:
 			// resolveAndValidate rejects anything else; defensive.
 			return nil, fmt.Errorf("%w: unsupported strategy %v", merger.ErrInvalidRequest, rs.strategy)
@@ -436,6 +457,140 @@ func (m *gitMerger) applyRebase(ctx context.Context, rs resolvedStep) ([]*runway
 		return nil, err
 	}
 	return toOutputs(picked), nil
+}
+
+// applySquashRebase collapses each change in the step into a single commit.
+//
+// The squash unit is the change, not the step: a change is one pull request,
+// and squashing it is what "squash the PR" means. A step whose change carries
+// several URIs is a stack of pull requests, and collapsing those into one
+// commit would erase the per-PR boundary the stack exists to express. So each
+// URI is picked as its own range and squashed on its own, in order, yielding
+// one commit — and one output — per change that had anything to contribute.
+func (m *gitMerger) applySquashRebase(ctx context.Context, rs resolvedStep) ([]*runwaymq.StepOutput, error) {
+	var outputs []*runwaymq.StepOutput
+	for _, ref := range rs.refs {
+		sha, squashed, err := m.squashChange(ctx, rs.step, ref)
+		if err != nil {
+			return nil, err
+		}
+		if squashed {
+			outputs = append(outputs, &runwaymq.StepOutput{Id: sha})
+		}
+	}
+	return outputs, nil
+}
+
+// squashChange replays one change and collapses whatever it produced into a
+// single commit, reporting squashed=false when it produced nothing worth
+// keeping.
+//
+// Two cases produce nothing. A change already present on the target creates no
+// commits at all. A change that does create commits whose net tree matches the
+// base — its effect was already there, spread differently — would squash to an
+// empty commit, so the intermediates are dropped instead. Both keep redelivery
+// idempotent.
+func (m *gitMerger) squashChange(ctx context.Context, step *runwaymq.MergeStep, ref changeRef) (string, bool, error) {
+	preSHA, err := m.headSHA(ctx)
+	if err != nil {
+		return "", false, err
+	}
+
+	created, err := m.pickRange(ctx, ref)
+	if err != nil {
+		return "", false, err
+	}
+	if len(created) == 0 {
+		return "", false, nil
+	}
+
+	preTree, err := m.commitTreeSHA(ctx, preSHA)
+	if err != nil {
+		return "", false, err
+	}
+	postTree, err := m.commitTreeSHA(ctx, "HEAD")
+	if err != nil {
+		return "", false, err
+	}
+	if preTree == postTree {
+		if _, err := m.run(ctx, nil, "reset", "--hard", preSHA); err != nil {
+			return "", false, fmt.Errorf("git reset --hard %s after empty squash: %w", preSHA, err)
+		}
+		return "", false, nil
+	}
+
+	if _, err := m.run(ctx, nil, "reset", "--soft", preSHA); err != nil {
+		return "", false, fmt.Errorf("git reset --soft %s: %w", preSHA, err)
+	}
+	if _, err := m.run(ctx, nil, "commit", "-m", squashMessage(step, ref)); err != nil {
+		return "", false, fmt.Errorf("git commit (squash): %w", err)
+	}
+	sha, err := m.headSHA(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	return sha, true, nil
+}
+
+// applyMerge creates a --no-ff merge commit for every change in the step,
+// keeping the change's original commits reachable through second-parent
+// history — the property that distinguishes MERGE from the picking strategies,
+// which rewrite those commits. A change already contained in HEAD produces no
+// output, which is what makes redelivery idempotent.
+func (m *gitMerger) applyMerge(ctx context.Context, rs resolvedStep) ([]*runwaymq.StepOutput, error) {
+	var outputs []*runwaymq.StepOutput
+	for _, ref := range rs.refs {
+		contained, err := m.isAncestor(ctx, ref.SHA, "HEAD")
+		if err != nil {
+			return nil, err
+		}
+		if contained {
+			continue
+		}
+
+		args := []string{"merge", "--no-ff", "--no-edit"}
+		if m.allowUnrelatedHistories {
+			args = append(args, "--allow-unrelated-histories")
+		}
+		out, err := m.runCombined(ctx, nil, append(args, ref.SHA)...)
+		if err != nil {
+			// Read the index before aborting clears it; a non-zero exit alone
+			// does not establish that anything collided.
+			conflicted := m.hasUnmergedPaths(ctx)
+			_, _ = m.run(ctx, nil, "merge", "--abort")
+			return nil, m.classifyMergeFailure(ref, out, conflicted)
+		}
+		mergeSHA, err := m.headSHA(ctx)
+		if err != nil {
+			return nil, err
+		}
+		outputs = append(outputs, &runwaymq.StepOutput{Id: mergeSHA})
+	}
+	return outputs, nil
+}
+
+// classifyMergeFailure decides what a failed `git merge` actually means, given
+// whether the index was left holding conflicted entries.
+//
+// Not every refusal is a conflict, and reporting one as such tells the client
+// its change collides with the target when nothing of the sort happened. Two
+// non-conflicts land here: an import of an unrelated history, refused outright
+// and fixed by configuration rather than by rebasing, and any other way git
+// can exit non-zero — a missing object, an unreadable repository, a killed
+// process — which is infrastructure and should be retried, not made terminal.
+func (m *gitMerger) classifyMergeFailure(ref changeRef, out []byte, conflicted bool) error {
+	detail := strings.TrimSpace(string(out))
+	if strings.Contains(detail, "refusing to merge unrelated histories") {
+		coremetrics.NamedCounter(m.metricsScope, "merge", "unrelated_histories", 1)
+		return fmt.Errorf("%w: %s shares no history with the merge target; integrating an imported history requires the merger to allow unrelated histories",
+			merger.ErrInvalidRequest, ref.Label)
+	}
+	if !conflicted {
+		coremetrics.NamedCounter(m.metricsScope, "merge", "merge_errors", 1)
+		return fmt.Errorf("git merge %s: %s", ref.SHA, detail)
+	}
+	coremetrics.NamedCounter(m.metricsScope, "merge", "merge_conflicts", 1)
+	return fmt.Errorf("%w: git merge %s: %s", merger.ErrConflict, ref.SHA, detail)
 }
 
 // pickStepChanges applies every change in the step, in order, returning the
@@ -618,6 +773,33 @@ func (m *gitMerger) refetchTipSHA(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// isAncestor reports whether ancestor is an ancestor of (or equal to)
+// descendant. `git merge-base --is-ancestor` exits 0 for true, 1 for false;
+// any other exit is a real error.
+func (m *gitMerger) isAncestor(ctx context.Context, ancestor, descendant string) (bool, error) {
+	cmd := m.command(ctx, "merge-base", "--is-ancestor", ancestor, descendant)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("git merge-base --is-ancestor %s %s: %w: %s", ancestor, descendant, err, strings.TrimSpace(stderr.String()))
+}
+
+// commitTreeSHA returns the tree SHA recorded in the commit object at ref.
+func (m *gitMerger) commitTreeSHA(ctx context.Context, ref string) (string, error) {
+	out, err := m.run(ctx, nil, "rev-parse", ref+"^{tree}")
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse %s^{tree}: %w", ref, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // push pushes the current HEAD to refs/heads/<target> on the remote.
 func (m *gitMerger) push(ctx context.Context) error {
 	refspec := "HEAD:refs/heads/" + m.target
@@ -750,12 +932,13 @@ func passthroughEnv(extra []string) []string {
 }
 
 // isConcreteStrategy reports whether s names a concrete integration strategy
-// (i.e. not DEFAULT and not an unknown value). Only REBASE is implemented so
-// far; the remaining strategies are rejected as invalid requests until their
-// apply paths land.
+// (i.e. not DEFAULT and not an unknown value). PROMOTE is not implemented yet
+// and is rejected as an invalid request until its apply path lands.
 func isConcreteStrategy(s mergestrategypb.Strategy) bool {
 	switch s {
-	case mergestrategypb.Strategy_REBASE:
+	case mergestrategypb.Strategy_REBASE,
+		mergestrategypb.Strategy_SQUASH_REBASE,
+		mergestrategypb.Strategy_MERGE:
 		return true
 	default:
 		return false
@@ -768,6 +951,18 @@ func isRedundantCherryPick(out []byte) bool {
 	s := string(out)
 	return strings.Contains(s, "previous cherry-pick is now empty") ||
 		strings.Contains(s, "nothing to commit")
+}
+
+// squashMessage synthesizes a commit message for one squashed change. The wire
+// carries no upstream commit message, so the change is named by its provider
+// label — which is why this goes through the resolver rather than one
+// provider's fields, so a non-GitHub change is named too instead of being
+// silently omitted.
+func squashMessage(step *runwaymq.MergeStep, ref changeRef) string {
+	if step.GetStepId() != "" {
+		return fmt.Sprintf("squash: %s (%s)", step.GetStepId(), ref.Label)
+	}
+	return fmt.Sprintf("squash: %s", ref.Label)
 }
 
 // toOutputs wraps commit SHAs as StepOutputs in order.
