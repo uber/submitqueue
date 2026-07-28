@@ -23,6 +23,7 @@ import (
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/errs"
+	"github.com/uber/submitqueue/platform/extension/consumergate"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	"github.com/uber/submitqueue/platform/metrics"
 	"go.uber.org/zap"
@@ -32,6 +33,16 @@ const (
 	// startupCleanupTimeoutMs is the timeout for cleaning up subscriptions when
 	// a controller fails to start during Start().
 	startupCleanupTimeoutMs = 30000
+
+	// gateExtensionMs is the visibility extension applied to a delivery blocked
+	// behind its consumer gate on each keep-in-flight tick, keeping it in-flight
+	// without burning retry budget (milliseconds). Must comfortably exceed
+	// defaultGateExtendInterval.
+	gateExtensionMs = int64(30000)
+
+	// defaultGateExtendInterval is how often a gate-blocked delivery's
+	// visibility is extended.
+	defaultGateExtendInterval = 10 * time.Second
 )
 
 // Consumer orchestrates multiple queue consumers. It handles subscription lifecycle,
@@ -61,6 +72,12 @@ type consumer struct {
 	metricsScope tally.Scope
 	registry     TopicRegistry
 	processor    errs.ErrorProcessor
+	gate         consumergate.Gate
+
+	// gateExtendInterval is how often a gate-blocked delivery's visibility is
+	// extended. Fixed to defaultGateExtendInterval by New; a field (not the
+	// const) so in-package tests can exercise the keep-in-flight path quickly.
+	gateExtendInterval time.Duration
 
 	mu            sync.Mutex
 	stopped       bool
@@ -87,13 +104,20 @@ type activeSubscription struct {
 // without introducing duplicate consumer sub-scopes. processor must not be nil;
 // callers that genuinely want no transformation can pass
 // errs.NewClassifierProcessor() with no classifiers.
-func New(logger *zap.SugaredLogger, scope tally.Scope, registry TopicRegistry, processor errs.ErrorProcessor) Consumer {
+//
+// gate is the consumer-gate implementation consulted before each delivery
+// reaches its controller. Pass noop.New() (from
+// platform/extension/consumergate/noop) for services that do not need runtime
+// gating. gate must not be nil.
+func New(logger *zap.SugaredLogger, scope tally.Scope, registry TopicRegistry, processor errs.ErrorProcessor, gate consumergate.Gate) Consumer {
 	return &consumer{
-		logger:        logger,
-		metricsScope:  scope,
-		registry:      registry,
-		processor:     processor,
-		subscriptions: make(map[TopicKey]*activeSubscription),
+		logger:             logger,
+		metricsScope:       scope,
+		registry:           registry,
+		processor:          processor,
+		gate:               gate,
+		gateExtendInterval: defaultGateExtendInterval,
+		subscriptions:      make(map[TopicKey]*activeSubscription),
 	}
 }
 
@@ -343,6 +367,14 @@ func (m *consumer) processPartition(ctx context.Context, controller Controller, 
 func (m *consumer) processDelivery(ctx context.Context, controller Controller, delivery extqueue.Delivery, controllerScope tally.Scope) {
 	const opName = "process"
 
+	// Consumer gate: block the delivery while the controller's gate is closed.
+	// A false return means the consumer is shutting down while blocked — leave
+	// the delivery in-flight (no process, no ack/nack) so its visibility lapses
+	// into a normal redelivery. Gate errors fail open inside waitGate.
+	if !m.waitGate(ctx, controller, delivery, controllerScope) {
+		return
+	}
+
 	msg := delivery.Message()
 	topicKey := controller.TopicKey()
 
@@ -464,6 +496,103 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 		"attempt", delivery.Attempt(),
 		"elapsed_ms", elapsed.Milliseconds(),
 	)
+}
+
+// waitGate clears a delivery through the consumer gate before it reaches the
+// controller. It returns true when the delivery may proceed, false when it
+// must be left in-flight without processing or ack/nack.
+//
+// Gate.Enter checks the gate synchronously; an unblocked entry is the common
+// path and costs nothing further. For a blocked entry the gate hands back a
+// watch channel (its own monitoring goroutine behind it), and this routine
+// multiplexes the watch with visibility extension. The source delivery remains
+// owned by the queue throughout the wait: gating never acknowledges, rejects,
+// nacks, or moves it. On shutdown, extension stops and normal queue visibility
+// semantics make the delivery eligible for redelivery.
+//
+// Failures fail open: if gate state cannot be read or recorded, or the delivery
+// can no longer be held safely because visibility extension failed, processing
+// proceeds and the failure is surfaced via logs and metrics.
+func (m *consumer) waitGate(ctx context.Context, controller Controller, delivery extqueue.Delivery, scope tally.Scope) bool {
+	const opName = "gate"
+
+	msg := delivery.Message()
+	consumerGroup := controller.ConsumerGroup()
+	topic := controller.TopicKey().String()
+
+	entry, err := m.gate.Enter(ctx, consumergate.Key{ConsumerGroup: consumerGroup, PartitionKey: msg.PartitionKey})
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return false
+		}
+		metrics.NamedCounter(scope, opName, "enter_errors", 1)
+		m.logger.Errorw("gate check failed, failing open",
+			"consumer_group", consumerGroup,
+			"topic", topic,
+			"message_id", msg.ID,
+			"error", err,
+		)
+		return true
+	}
+	if !entry.Blocked() {
+		return true
+	}
+
+	start := time.Now()
+	defer func() {
+		metrics.NamedHistogram(scope, opName, "wait_latency", metrics.LongLatencyBuckets).RecordDuration(time.Since(start))
+	}()
+
+	descriptor := consumergate.DeliveryDescriptor{
+		Topic:     topic,
+		MessageID: msg.ID,
+		Payload:   msg.Payload,
+		Attempt:   delivery.Attempt(),
+	}
+
+	watchCtx, cancelWatch := context.WithCancel(ctx)
+	defer cancelWatch()
+	watchCh := entry.Watch(watchCtx, descriptor)
+
+	ticker := time.NewTicker(m.gateExtendInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case waitErr := <-watchCh:
+			if waitErr == nil {
+				return true
+			}
+			if errors.Is(waitErr, context.Canceled) {
+				return false
+			}
+			metrics.NamedCounter(scope, opName, "wait_errors", 1)
+			m.logger.Errorw("gate wait failed, failing open",
+				"consumer_group", consumerGroup,
+				"topic", topic,
+				"message_id", msg.ID,
+				"error", waitErr,
+			)
+			return true
+
+		case <-ticker.C:
+			if extendErr := delivery.ExtendVisibilityTimeout(ctx, gateExtensionMs); extendErr != nil {
+				cancelWatch()
+				<-watchCh
+				if errors.Is(extendErr, context.Canceled) {
+					return false
+				}
+				metrics.NamedCounter(scope, opName, "wait_errors", 1)
+				m.logger.Errorw("gate visibility extension failed, failing open",
+					"consumer_group", consumerGroup,
+					"topic", topic,
+					"message_id", msg.ID,
+					"error", extendErr,
+				)
+				return true
+			}
+		}
+	}
 }
 
 func controllerClassificationTags(err error) []metrics.Tag {

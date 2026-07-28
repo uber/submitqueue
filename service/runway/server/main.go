@@ -34,6 +34,9 @@ import (
 	"github.com/uber/submitqueue/platform/errs"
 	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
 	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
+	"github.com/uber/submitqueue/platform/extension/consumergate"
+	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
+	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/runway/controller"
@@ -152,6 +155,7 @@ func run() error {
 			genericerrs.Classifier,
 			mysqlerrs.Classifier,
 		),
+		newConsumerGate(logger),
 	)
 
 	mergerFactory := newMergerFactory()
@@ -287,4 +291,18 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Queue: q,
 		},
 	})
+}
+
+// newConsumerGate enables the file-backed consumer gate only when
+// CONSUMER_GATE_DIR is explicitly configured. The file implementation is for
+// E2E and single-host development; normal service deployments use the no-op
+// implementation.
+func newConsumerGate(logger *zap.Logger) consumergate.Gate {
+	dir := os.Getenv("CONSUMER_GATE_DIR")
+	if dir == "" {
+		logger.Info("consumer gate disabled")
+		return consumergatenoop.New()
+	}
+	logger.Info("consumer gate configured", zap.String("dir", dir))
+	return consumergatefile.New(dir, consumergate.DefaultConfig())
 }

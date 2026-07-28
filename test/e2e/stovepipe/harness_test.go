@@ -24,16 +24,28 @@ package e2e_test
 //   - the asynchronous completion of the process stage by polling the queue
 //     backend's per-consumer-group delivery state until the message is acked.
 //
-// Convergence is bounded by require.Eventually rather than time.Sleep: the
-// process consumer runs inside the stovepipe-service container, so there is no
-// in-process signal to await; a timeout here means the stage is genuinely stuck,
-// not a timing race.
+// The process consumer runs inside the stovepipe-service container, so there is
+// no in-process signal to await. Polling continues until the condition holds or
+// Bazel's test timeout terminates a genuinely stuck suite.
 
 import (
+	"time"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
 )
+
+func pollUntil(interval time.Duration, condition func() bool) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if condition() {
+			return
+		}
+		<-ticker.C
+	}
+}
 
 // The process consumer's topic and consumer group as wired in
 // service/stovepipe/server/main.go (topic name "process", consumer group
@@ -92,12 +104,11 @@ func (s *StovepipeE2ESuite) publishedMessageCount(id string) int {
 // as the message's partition key (see the ingest controller), so the partition
 // key here is the queue.
 func (s *StovepipeE2ESuite) awaitProcessed(queue string) {
-	t := s.T()
 	const query = `
-		SELECT offset_acked
-		FROM queue_offsets
-		WHERE consumer_group = ? AND topic = ? AND partition_key = ?`
-	require.Eventually(t, func() bool {
+			SELECT offset_acked
+			FROM queue_offsets
+			WHERE consumer_group = ? AND topic = ? AND partition_key = ?`
+	pollUntil(processPollInterval, func() bool {
 		var ackedOffset int64
 		err := s.queueDB.QueryRow(query, processConsumerGroup, processTopic, queue).Scan(&ackedOffset)
 		if err != nil {
@@ -107,9 +118,7 @@ func (s *StovepipeE2ESuite) awaitProcessed(queue string) {
 		}
 		s.log.Logf("acked offset for queue %s = %d (want > 0)", queue, ackedOffset)
 		return ackedOffset > 0
-	}, processTimeout, processPollInterval,
-		"process consumer group %q on topic %q should advance the acked offset for queue %s",
-		processConsumerGroup, processTopic, queue)
+	})
 }
 
 // assertIngestPersisted asserts the synchronous side effects of a successful
