@@ -164,7 +164,7 @@ Ingestion is idempotent on `(Queue, head URI)`, so duplicate poller reports — 
 
 ## Fail-closed on unprocessable work
 
-Callers gate deployments on greenness, so the dangerous failure is a Request that can never finish and silently leaves a URI with no recorded greenness — indistinguishable, to a naive caller, from "not yet validated". Following SQ's DLQ-reconciliation posture, a Request whose validation can never complete must be driven to a **conservative not-green outcome** rather than left non-terminal: gating stays safe (never falsely green), and the pipeline moves on. State writes use optimistic-locking CAS, so a late successful update wins cleanly over the conservative one. See [submitqueue/orchestrator/controller/dlq/README.md](../../../submitqueue/orchestrator/controller/dlq/README.md) for the shared reconcile-only design.
+Callers gate deployments on greenness, so the dangerous failure is a Request that can never finish and silently leaves a URI with no recorded greenness — indistinguishable, to a naive caller, from "not yet validated". Following SQ's DLQ-reconciliation posture, a Request whose validation can never complete must be driven to a **conservative terminal `failed` outcome** — which whatever records greenness treats as not-green — rather than left non-terminal: gating stays safe (never falsely green), and the pipeline moves on. State writes use optimistic-locking CAS, so a late successful update wins cleanly over the conservative one. See [submitqueue/orchestrator/controller/dlq/README.md](../../../submitqueue/orchestrator/controller/dlq/README.md) for the shared reconcile-only design.
 
 ## Open questions
 

@@ -427,6 +427,30 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
+			name: "succeeded is no-op",
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
+					ID: testID, Queue: testQueue, State: entity.RequestStateSucceeded, Version: 2,
+				}, nil)
+			},
+		},
+		{
+			name: "failed is no-op",
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
+					ID: testID, Queue: testQueue, State: entity.RequestStateFailed, Version: 2,
+				}, nil)
+			},
+		},
+		{
+			name: "cancelled is no-op",
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
+					ID: testID, Queue: testQueue, State: entity.RequestStateCancelled, Version: 2,
+				}, nil)
+			},
+		},
+		{
 			name: "processing republishes to build",
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{

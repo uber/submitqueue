@@ -95,8 +95,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return err
 	}
 
-	// A redelivery after record already finished, or after process superseded
-	// the head, must not start a fresh build.
+	// A redelivery after the build outcome was already recorded, or after process
+	// superseded the head, must not start a fresh build.
 	if request.State.IsTerminal() {
 		return nil
 	}

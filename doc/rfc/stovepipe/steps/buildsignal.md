@@ -27,8 +27,8 @@ For a delivery carrying build id `B`:
    - ErrNotFound -> return raw; non-retryable, same as step 1 — the Build's existence proves the
      Request write is already committed, so a miss here is a storage defect, not a lagging read.
 
-3. If R.State is terminal (superseded / recorded-green / recorded-not-green): ack and return.
-   - the Request is done (record already ran, or the head was superseded); stop polling.
+3. If R.State is terminal (superseded / succeeded / failed / cancelled): ack and return.
+   - the Request is done (its build outcome was recorded, or the head was superseded); stop polling.
    - mirrors submitqueue's halted-batch short-circuit in buildsignal.go.
 
 4. Resolve the build-runner: buildRunner = Factory.For(Config{QueueName: R.Queue}).
@@ -100,7 +100,7 @@ Package-level `var`s (not `const`s) so tests can shorten them; the server always
 
 ## Error classification
 
-Per `platform/errs`'s non-retryable-by-default rule (see [platform/errs/README.md](platform/errs/README.md)), a plain returned error is already non-retryable and rejects straight to DLQ, where the fail-closed path forces a conservative not-green so a Request never wedges its Queue's slot ([workflow.md](doc/rfc/stovepipe/workflow.md#fail-closed-on-unprocessable-work)). So this section documents only the departures from that default, not every failure the algorithm can hit:
+Per `platform/errs`'s non-retryable-by-default rule (see [platform/errs/README.md](platform/errs/README.md)), a plain returned error is already non-retryable and rejects straight to DLQ, where the fail-closed path forces a conservative terminal `failed` so a Request never wedges its Queue's slot ([workflow.md](doc/rfc/stovepipe/workflow.md#fail-closed-on-unprocessable-work)). So this section documents only the departures from that default, not every failure the algorithm can hit:
 
 | Failure | Disposition | Why |
 |---|---|---|
@@ -130,7 +130,7 @@ The window to guard is between persisting status (step 6) and ack (steps 7–8);
 
 ## Fail-closed interaction
 
-A build that never reaches terminal `Status` — runner outage, a build the runner lost — must not wedge its `Request` forever, since callers gate deployments on greenness reaching a recorded terminal state. `buildsignal` does not implement the forcing function: per [workflow.md](doc/rfc/stovepipe/workflow.md#fail-closed-on-unprocessable-work) and the `in_flight_count` slot lifecycle in [process.md](doc/rfc/stovepipe/steps/process.md#concurrency-lifecycle), a `Request` stuck at `buildsignal` past `MaxAttempts` dead-letters, and the DLQ reconciler forces a conservative not-green and releases the Queue's slot. This is the same posture SubmitQueue's build/buildsignal pair relies on: terminal status is what releases the slot and lets validation progress.
+A build that never reaches terminal `Status` — runner outage, a build the runner lost — must not wedge its `Request` forever, since callers gate deployments on greenness reaching a recorded terminal state. `buildsignal` does not implement the forcing function: per [workflow.md](doc/rfc/stovepipe/workflow.md#fail-closed-on-unprocessable-work) and the `in_flight_count` slot lifecycle in [process.md](doc/rfc/stovepipe/steps/process.md#concurrency-lifecycle), a `Request` stuck at `buildsignal` past `MaxAttempts` dead-letters, and the DLQ reconciler forces a conservative terminal `failed` and releases the Queue's slot. This is the same posture SubmitQueue's build/buildsignal pair relies on: terminal status is what releases the slot and lets validation progress.
 
 One boundary of that posture is worth stating: the `MaxAttempts` path fires only when polls *fail*. A runner that keeps answering a healthy non-terminal status forever — a hung build on a backend with no timeout of its own — never errors, so the `PublishAfter` chain (which resets `retry_count` by design) re-polls indefinitely and nothing dead-letters; SubmitQueue's poll loop shares this property. Bounding it requires a poll deadline — a `max_validation_ms` past which `buildsignal` treats the build as failed and lets the normal terminal path run — which pairs naturally with the lease idea [process.md](doc/rfc/stovepipe/steps/process.md#per-queue-concurrency-gate) floats for `in_flight_count`. Deferred with it; until then a too-old non-terminal `Build` is an operational alert, not a self-healing path.
 

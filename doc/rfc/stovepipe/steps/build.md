@@ -10,7 +10,7 @@ It handles only the trigger: it does not poll for completion, record greenness, 
 
 `build` consumes a request id, published by `process` in Phase 1 (see [workflow.md](doc/rfc/stovepipe/workflow.md#workflow)). Both phases drive the same `build` → `buildsignal` machinery against the same `Request` row. The `process`/`analyze` → `build` topic is partitioned by **request id**; see [Partitioning](#partitioning) for the full rationale, including why `build` → `buildsignal` partitions finer (by build id) than SubmitQueue's equivalent topic.
 
-**`build` is not the sole writer of the rows it touches, and its own writes are narrow.** On `Request`, `build` never writes at all — it only reads the `BuildStrategy`/`BaseURI`/`URI` fields `process` set at admit, and it leaves `Request.State` untouched at `processing` throughout (`process` and `record` are `Request.State`'s only writers). On `Build`, `build` is the sole creator — it calls `BuildStore.Create` exactly once, at step 6 — and never mutates the row again; `buildsignal` is the sole writer of `Build.Status`/`Build.Version` afterward (see [buildsignal.md](doc/rfc/stovepipe/steps/buildsignal.md#input-and-re-entrancy)). This division is why `build` never needs a CAS/version write of its own: `Create` is the only storage mutation in its algorithm.
+**`build` is not the sole writer of the rows it touches, and its own writes are narrow.** On `Request`, `build` never writes at all — it only reads the `BuildStrategy`/`BaseURI`/`URI` fields `process` set at admit, and it leaves `Request.State` untouched at `processing` throughout (`process` and the DLQ reconciler are `Request.State`'s only writers). On `Build`, `build` is the sole creator — it calls `BuildStore.Create` exactly once, at step 6 — and never mutates the row again; `buildsignal` is the sole writer of `Build.Status`/`Build.Version` afterward (see [buildsignal.md](doc/rfc/stovepipe/steps/buildsignal.md#input-and-re-entrancy)). This division is why `build` never needs a CAS/version write of its own: `Create` is the only storage mutation in its algorithm.
 
 `build` is phase-agnostic: it never asks "which phase is this?" It reads whatever scope is already persisted and immutable on the `Request` and acts on it. Phase 2's project-scoped invocation is expected to read project-scoped equivalents of the scope fields off the same `Request`; the exact shape of a project-scoped trigger is left to the `analyze` design, consistent with `workflow.md`'s "project mapping contract" open question — see [Project-scoped `Trigger`: reserved, not yet designed](#project-scoped-trigger-reserved-not-yet-designed) for the resulting gap in the `BuildRunner` contract itself.
 
@@ -25,9 +25,9 @@ For a delivery carrying request id `R`:
    - ErrNotFound       -> return raw; non-retryable (storage is read-after-write consistent; see [storage README](stovepipe/extension/storage/README.md)).
    - other store error -> return raw; classifier decides.
 
-2. If R.State is terminal (superseded / recorded-green / recorded-not-green): ack and return.
-   - a redelivery after record already finished, or after process superseded R, must not start a
-     fresh build.
+2. If R.State is terminal (superseded / succeeded / failed / cancelled): ack and return.
+   - a redelivery after the build outcome was already recorded, or after process superseded R,
+     must not start a fresh build.
 
 3. Resolve the build-runner for R's Queue: buildRunner = Factory.For(Config{QueueName: R.Queue}).
    - lookup failure -> non-retryable (a queue with no builder is a config error).
@@ -88,7 +88,7 @@ Every branch is safe under at-least-once redelivery — with SubmitQueue's postu
 
 ## Fail-closed interaction
 
-A build that never reaches step 8 — `Trigger` failing repeatedly, the publish to `buildsignal` never landing, `BuildStore.Create` down — must not wedge its `Request`'s Queue slot forever: `process`'s per-Queue concurrency gate holds `in_flight_count` open until the Request reaches a terminal state (see [process.md](doc/rfc/stovepipe/steps/process.md#concurrency-lifecycle)). `build` does not implement the forcing function itself. Per [workflow.md](doc/rfc/stovepipe/workflow.md#fail-closed-on-unprocessable-work), every non-retryable failure in the algorithm rejects to DLQ (see [Error classification](#error-classification)), and a Request stuck past `MaxAttempts` is driven to a conservative terminal not-green by the DLQ reconciler, which decrements `in_flight_count` and frees the slot. This is the same posture `buildsignal` relies on for its own poll loop (see [buildsignal.md](doc/rfc/stovepipe/steps/buildsignal.md#fail-closed-interaction)) — `build` and `buildsignal` are two links in the same fail-closed chain that keeps one bad Request from wedging its Queue.
+A build that never reaches step 8 — `Trigger` failing repeatedly, the publish to `buildsignal` never landing, `BuildStore.Create` down — must not wedge its `Request`'s Queue slot forever: `process`'s per-Queue concurrency gate holds `in_flight_count` open until the Request reaches a terminal state (see [process.md](doc/rfc/stovepipe/steps/process.md#concurrency-lifecycle)). `build` does not implement the forcing function itself. Per [workflow.md](doc/rfc/stovepipe/workflow.md#fail-closed-on-unprocessable-work), every non-retryable failure in the algorithm rejects to DLQ (see [Error classification](#error-classification)), and a Request stuck past `MaxAttempts` is driven to a conservative terminal `failed` by the DLQ reconciler, which decrements `in_flight_count` and frees the slot. This is the same posture `buildsignal` relies on for its own poll loop (see [buildsignal.md](doc/rfc/stovepipe/steps/buildsignal.md#fail-closed-interaction)) — `build` and `buildsignal` are two links in the same fail-closed chain that keeps one bad Request from wedging its Queue.
 
 One boundary is worth stating explicitly: this path fires only when `build` (or a downstream stage) *errors*. A `Trigger` call that returns successfully but the backend never actually runs — or a `Build` row created for a build the runner silently drops — has no protocol-level failure to escalate at the `build` stage; nothing here retries or dead-letters, because nothing failed. That gap surfaces one hop later, when `buildsignal` polls: either the runner reports an error (handled by `buildsignal`'s own classification) or it reports a non-terminal status forever, which is `buildsignal`'s fail-closed boundary to close, not `build`'s (see [buildsignal.md](doc/rfc/stovepipe/steps/buildsignal.md#fail-closed-interaction)). `build`'s liveness responsibility ends at a successful publish to `buildsignal`.
 
@@ -98,7 +98,7 @@ One boundary is worth stating explicitly: this path fires only when `build` (or 
 
 ## Error classification
 
-Per `platform/errs`'s non-retryable-by-default rule (see [platform/errs/README.md](platform/errs/README.md)), a plain returned error is already non-retryable and rejects straight to DLQ, where the fail-closed path forces a conservative not-green so a Request never wedges its Queue's slot ([workflow.md](doc/rfc/stovepipe/workflow.md#fail-closed-on-unprocessable-work)). So this section documents only the departures from that default, not every failure the algorithm can hit:
+Per `platform/errs`'s non-retryable-by-default rule (see [platform/errs/README.md](platform/errs/README.md)), a plain returned error is already non-retryable and rejects straight to DLQ, where the fail-closed path forces a conservative terminal `failed` so a Request never wedges its Queue's slot ([workflow.md](doc/rfc/stovepipe/workflow.md#fail-closed-on-unprocessable-work)). So this section documents only the departures from that default, not every failure the algorithm can hit:
 
 | Failure | Disposition | Why |
 |---|---|---|

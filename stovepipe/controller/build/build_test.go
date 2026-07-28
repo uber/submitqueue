@@ -160,18 +160,26 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "recorded green is a no-op",
+			name: "succeeded request is a no-op",
 			setup: func(m buildMocks) {
 				req := processingRequest(entity.BuildStrategyFull, "")
-				req.State = entity.RequestStateRecordedGreen
+				req.State = entity.RequestStateSucceeded
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(req, nil)
 			},
 		},
 		{
-			name: "recorded not green is a no-op",
+			name: "failed request is a no-op",
 			setup: func(m buildMocks) {
 				req := processingRequest(entity.BuildStrategyFull, "")
-				req.State = entity.RequestStateRecordedNotGreen
+				req.State = entity.RequestStateFailed
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(req, nil)
+			},
+		},
+		{
+			name: "cancelled request is a no-op",
+			setup: func(m buildMocks) {
+				req := processingRequest(entity.BuildStrategyFull, "")
+				req.State = entity.RequestStateCancelled
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(req, nil)
 			},
 		},

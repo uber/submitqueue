@@ -36,19 +36,42 @@ const (
 	RequestStateProcessing RequestState = "processing"
 	// RequestStateSuperseded means process skipped the request because a newer head exists.
 	RequestStateSuperseded RequestState = "superseded"
-	// RequestStateRecordedGreen means record wrote whole-repo greenness as green for this URI.
-	RequestStateRecordedGreen RequestState = "recorded_green"
-	// RequestStateRecordedNotGreen means record wrote whole-repo greenness as not-green for this
-	// URI — either a genuine build failure, or a conservative verdict forced by the DLQ
-	// reconciler when the request could never complete (see workflow.md's fail-closed posture).
-	RequestStateRecordedNotGreen RequestState = "recorded_not_green"
+	// RequestStateSucceeded means the build validating this request's commit reached a
+	// successful terminal status.
+	RequestStateSucceeded RequestState = "succeeded"
+	// RequestStateFailed means the build validating this request's commit reached an
+	// unsuccessful terminal status, or the request could never complete and was forced to a
+	// conservative unsuccessful outcome (see workflow.md's fail-closed posture).
+	RequestStateFailed RequestState = "failed"
+	// RequestStateCancelled means the build validating this request's commit was cancelled
+	// before reaching a verdict. Distinct from failed: what a cancellation implies for
+	// greenness is decided where greenness is recorded, not here.
+	RequestStateCancelled RequestState = "cancelled"
 )
 
 // IsTerminal returns true if the state is one the pipeline never advances past: superseded (a
-// newer head preempted this request) or either recorded outcome (record wrote greenness for
-// this URI, whether via the normal path or the fail-closed reconciler).
+// newer head preempted this request before it was validated) or one of the three build
+// outcomes. Greenness derived from an outcome is a separate fact recorded against the URI, so
+// it is not part of this lifecycle.
 func (s RequestState) IsTerminal() bool {
-	return s == RequestStateSuperseded || s == RequestStateRecordedGreen || s == RequestStateRecordedNotGreen
+	switch s {
+	case RequestStateSuperseded, RequestStateSucceeded, RequestStateFailed, RequestStateCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+// HasBuildOutcome returns true if the state records the terminal status of this request's
+// build: succeeded, failed, or cancelled. Superseded requests never ran a build, so they are
+// terminal without an outcome.
+func (s RequestState) HasBuildOutcome() bool {
+	switch s {
+	case RequestStateSucceeded, RequestStateFailed, RequestStateCancelled:
+		return true
+	default:
+		return false
+	}
 }
 
 // BuildStrategy defines how build validates the request's commit.
