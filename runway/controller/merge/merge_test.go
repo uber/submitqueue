@@ -198,6 +198,51 @@ func TestProcess_MergeConflict(t *testing.T) {
 	assert.NotEmpty(t, result.Reason)
 }
 
+func TestProcess_InvalidRequest(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	m := mergermock.NewMockMerger(ctrl)
+	m.EXPECT().Merge(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("bad strategy: %w", merger.ErrInvalidRequest))
+
+	factory := mergermock.NewMockFactory(ctrl)
+	factory.EXPECT().For(merger.Config{QueueName: testQueue}).Return(m, nil)
+
+	var gotTopic string
+	var gotPayload []byte
+	pub := queuemock.NewMockPublisher(ctrl)
+	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, topic string, msg entityqueue.Message) error {
+			gotTopic = topic
+			gotPayload = msg.Payload
+			return nil
+		},
+	)
+	q := queuemock.NewMockQueue(ctrl)
+	q.EXPECT().Publisher().Return(pub).AnyTimes()
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: runwaymq.TopicKeyMergeSignal, Name: "merge-signal", Queue: q},
+	})
+	require.NoError(t, err)
+
+	controller := newController(t, factory, registry)
+
+	req := &runwaymq.MergeRequest{
+		Id:        testID,
+		QueueName: testQueue,
+		Steps:     []*runwaymq.MergeStep{{StepId: "step-1"}},
+	}
+	delivery := newDelivery(t, ctrl, requestPayload(t, req))
+
+	require.NoError(t, controller.Process(context.Background(), delivery))
+
+	assert.Equal(t, "merge-signal", gotTopic)
+	result := &runwaymq.MergeResult{}
+	require.NoError(t, runwaymq.Unmarshal(gotPayload, result))
+	assert.Equal(t, testID, result.Id)
+	assert.Equal(t, runwaypb.Outcome_FAILED, result.Outcome)
+	assert.NotEmpty(t, result.Reason)
+}
+
 func TestProcess_MergerInfraError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 

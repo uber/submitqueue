@@ -103,15 +103,24 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	result, err := m.CheckMergeability(ctx, request)
 	if err != nil {
-		if !errors.Is(err, merger.ErrConflict) {
+		if !merger.IsTerminal(err) {
 			metrics.NamedCounter(c.metricsScope, opName, "check_errors", 1)
 			return fmt.Errorf("failed to check mergeability for %s: %w", request.GetId(), err)
 		}
-		metrics.NamedCounter(c.metricsScope, opName, "merge_conflicts", 1)
-		c.logger.Infow("merge conflict detected",
-			"id", request.GetId(),
-			"queue_name", request.GetQueueName(),
-		)
+		if errors.Is(err, merger.ErrInvalidRequest) {
+			metrics.NamedCounter(c.metricsScope, opName, "invalid_requests", 1)
+			c.logger.Infow("invalid merge request",
+				"id", request.GetId(),
+				"queue_name", request.GetQueueName(),
+				"err", err,
+			)
+		} else {
+			metrics.NamedCounter(c.metricsScope, opName, "merge_conflicts", 1)
+			c.logger.Infow("merge conflict detected",
+				"id", request.GetId(),
+				"queue_name", request.GetQueueName(),
+			)
+		}
 		result = &runwaymq.MergeResult{
 			Id:      request.GetId(),
 			Outcome: runwaypb.Outcome_FAILED,
