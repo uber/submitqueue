@@ -84,8 +84,6 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet() {
 	assert.Equal(t, request.Change.URIs, retrieved.Change.URIs)
 	assert.Equal(t, request.LandStrategy, retrieved.LandStrategy)
 	assert.Equal(t, request.Version, retrieved.Version)
-
-	s.log.Logf("CreateAndGet test passed: created and retrieved request %s", request.ID)
 }
 
 // TestStorage_CreateAndGet_StackedPRs tests creating and retrieving a request with stacked PRs
@@ -124,8 +122,6 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet_StackedPRs() {
 	assert.Equal(t, stackedURIs, retrieved.Change.URIs, "stacked PR URIs should be preserved exactly")
 	assert.Equal(t, request.ID, retrieved.ID)
 	assert.Equal(t, request.LandStrategy, retrieved.LandStrategy)
-
-	s.log.Logf("CreateAndGet_StackedPRs test passed: %d stacked URIs", len(stackedURIs))
 }
 
 // TestStorage_UpdateState tests updating request state
@@ -154,8 +150,6 @@ func (s *StorageContractSuite) TestStorage_UpdateState() {
 	require.NoError(t, err)
 	assert.Equal(t, entity.RequestStateProcessing, retrieved.State)
 	assert.Equal(t, int32(2), retrieved.Version, "version should increment after update")
-
-	s.log.Logf("UpdateState test passed: updated request %s to state %s", request.ID, retrieved.State)
 }
 
 // TestStorage_OptimisticLocking tests version-based optimistic locking
@@ -189,8 +183,6 @@ func (s *StorageContractSuite) TestStorage_OptimisticLocking() {
 	require.NoError(t, err)
 	assert.Equal(t, entity.RequestStateProcessing, retrieved.State, "stale update should not modify state")
 	assert.Equal(t, int32(2), retrieved.Version)
-
-	s.log.Logf("Optimistic locking test passed: prevented stale update for request %s", request.ID)
 }
 
 // TestStorage_NotFound tests getting a non-existent request
@@ -202,8 +194,6 @@ func (s *StorageContractSuite) TestStorage_NotFound() {
 	_, err := s.storage.GetRequestStore().Get(ctx, "test/nonexistent")
 	assert.Error(t, err, "getting non-existent request should return error")
 	assert.ErrorIs(t, err, storage.ErrNotFound, "should return ErrNotFound")
-
-	s.log.Logf("NotFound test passed: correctly returned ErrNotFound")
 }
 
 // TestStorage_CreateDuplicate tests creating a request with duplicate ID
@@ -227,8 +217,6 @@ func (s *StorageContractSuite) TestStorage_CreateDuplicate() {
 	err = s.storage.GetRequestStore().Create(ctx, request)
 	assert.Error(t, err, "creating duplicate request should return error")
 	assert.ErrorIs(t, err, storage.ErrAlreadyExists, "should return ErrAlreadyExists")
-
-	s.log.Logf("CreateDuplicate test passed: prevented duplicate creation")
 }
 
 // changeURI is a representative change URI reused across change-store contract tests.
