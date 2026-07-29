@@ -62,7 +62,7 @@ Verdicts are controller-owned facts: the Speculator can neither compute nor veto
 
 Conflict analysis is conservative — it flags any *possible* conflict — so heads carry dependencies that rarely matter and over-serialize. Relaxation lets the Speculator **drop** the weakest: the path tags that dependency *dropped* and ignores it — it neither gates the merge nor refutes the path if it lands. Which to drop is a per-run Speculator policy.
 
-The drop lives on the path, so the path stays self-describing: finalization needs no external relaxed set, and dropped dependencies don't count toward the depth bound (relaxing is what shrinks a head's depth).
+The drop lives on the path, so the path stays self-describing: finalization needs no external relaxed set (relaxing is what shrinks the space of guesses a head's paths range over).
 
 Example: `H` conflicts with `B1` and weak `B2`. Drop `B2`, and `H` merges once `B1` lands and its build passes — even if `B2` later lands. Without it, `H` waits on both.
 
@@ -95,14 +95,14 @@ The one extension. It decides *which paths to build and which running ones to ca
   - `batches`: every in-flight batch plus finalized batches still referenced as dependencies by an in-flight batch; each carries its dependency list and state.
   - `pathSets`: every materialized path for those batches, whether pending, in flight, or terminal, including recently finished paths retained to prevent duplicate work.
 - **Out:** a list of build/cancel actions whose heads are in `BatchStateSpeculating`; batches in every other state provide facts but are never action targets.
-- Budget, depth bound, and clock are injected at construction. An impl may read extra data (also injected); the controller checks the output, so extra data never affects correctness.
+- Budget and clock are injected at construction. An impl may read extra data (also injected); the controller checks the output, so extra data never affects correctness.
 
 ### The default Speculator
 
-The default Speculator is composed from two swappable interfaces — a **Generator** and an **Allocator** — so scoring and preemption policy can vary independently. They are composition points inside the default implementation, not controller-facing extensions: the controller depends only on the Speculator contract, and an alternate Speculator need not use or expose this split. The default opens the Generator's candidate stream over the batches and their path sets, then hands that stream and the path sets to the Allocator.
+The default Speculator is composed from two swappable interfaces — a **Generator** and an **Allocator** — so scoring and preemption policy can vary independently. They are composition points inside the default implementation, not controller-facing extensions: the controller depends only on the Speculator contract, and an alternate Speculator need not use or expose this split. The default opens the Generator's candidate stream over the batches, then hands that stream and the path sets to the Allocator.
 
-- **Generator** — yields the queue's candidate paths as one iterator, best-first across heads in `BatchStateSpeculating`. *Contract:* every candidate has a Speculating head, is coherent, and is within the depth bound (the count of unresolved dependencies a head's paths range over); none repeats or contradicts a resolved fact; a head past the bound is skipped until its dependencies resolve. Ranking is implementation-owned: the Generator may compute it directly, call an injected scorer extension, or use other injected data. It carries the resulting ranking score only within the run and skips paths already terminal in the path sets.
-- **Allocator** — spends the build budget (the queue's cap on concurrent builds) over the iterator. *Contract:* it pulls in order until the budget fills and matches candidates to existing paths by ID, so a pending or building path remains funded rather than starting a new attempt; pending dispatches are replayed by the controller as described above. Pending, building, and cancelling paths charge the budget (a cancelling build holds CI until terminal), while terminal ones charge none. Cancellation is best-effort, so the Allocator does not spend capacity it merely expects a cancel to release and risk exceeding the hard CI cap. *Default:* the sticky policy fills only free slots and leaves in-flight builds running; a preempting policy cancels in-flight paths below the funded set. Budget is the only rationing lever — there is no ranking-score floor. A build cancelled to make room still charges budget until its cancel reaches terminal and publishes dirty, so the next run funds the released slot — the queue converges over successive ticks rather than oversubscribing in a single pass.
+- **Generator** — yields the queue's candidate paths as one iterator, best-first across heads in `BatchStateSpeculating`. *Contract:* every candidate has a Speculating head and is coherent; none repeats or contradicts a resolved fact. Ranking is implementation-owned: the Generator may compute it directly, call an injected scorer extension, or use other injected data. It carries the resulting ranking score only within the run.
+- **Allocator** — spends the build budget (the queue's cap on concurrent builds) over the iterator. *Contract:* it pulls in order until the budget fills and matches candidates to existing paths by ID, so a pending or building path remains funded rather than starting a new attempt, and a candidate whose path is already terminal in the path sets is skipped rather than rebuilt; pending dispatches are replayed by the controller as described above. Pending, building, and cancelling paths charge the budget (a cancelling build holds CI until terminal), while terminal ones charge none. Cancellation is best-effort, so the Allocator does not spend capacity it merely expects a cancel to release and risk exceeding the hard CI cap. *Default:* the sticky policy fills only free slots and leaves in-flight builds running; a preempting policy cancels in-flight paths below the funded set. Budget is the only rationing lever — there is no ranking-score floor. A build cancelled to make room still charges budget until its cancel reaches terminal and publishes dirty, so the next run funds the released slot — the queue converges over successive ticks rather than oversubscribing in a single pass.
 
 ### Extension APIs
 
@@ -123,24 +123,24 @@ type SpeculationPathEntry struct {
 // SpeculationPath identifies a head batch and its ordered dependency bets; every
 // dependency appears exactly once, so the logical path is self-describing.
 type SpeculationPath struct {
-	HeadBatchID string          // ID of the batch being built
-	Bets        []DependencyBet // one bet per dependency of HeadBatchID, in queue order
+	Head string          // ID of the batch being built
+	Bets []DependencyBet // one bet per dependency of Head, in queue order
 }
 
 // DependencyBet is the path's bet on one dependency.
 type DependencyBet struct {
-	BatchID string            // dependency batch ID
-	Bet     DependencyBetType // included | excluded | dropped
+	Batch string            // dependency batch ID
+	Bet   DependencyBetType // included | excluded | dropped
 }
 
 // DependencyBetType is how a path treats one dependency.
-type DependencyBetType int
+type DependencyBetType string
 
 const (
-	BetUnknown  DependencyBetType = 0 // zero-value sentinel; never valid
-	BetIncluded DependencyBetType = 1 // bet it lands; head built on top of it, refuted if it fails
-	BetExcluded DependencyBetType = 2 // bet it does not land; refuted if it lands
-	BetDropped  DependencyBetType = 3 // dropped by relaxation; landing or failing never affects the path
+	BetUnknown  DependencyBetType = ""         // zero-value sentinel; never valid
+	BetIncluded DependencyBetType = "included" // bet it lands; head built on top of it, refuted if it fails
+	BetExcluded DependencyBetType = "excluded" // bet it does not land; refuted if it lands
+	BetDropped  DependencyBetType = "dropped"  // dropped by relaxation; landing or failing never affects the path
 )
 
 // SpeculationPathSet is one head's chosen paths — live and recently finished —
@@ -148,10 +148,10 @@ const (
 // collide with an old build; live heads are listed via the batch store's
 // by-state query. Every logical path is self-describing, but a store may encode
 // the common head and ordered dependency IDs once per set and store each path's
-// bets positionally — two bits per dependency, or a base-3 code the depth bound
-// keeps to a small integer.
+// bets positionally — two bits per dependency, or a base-3 code that stays a
+// small integer.
 type SpeculationPathSet struct {
-	BatchID string                 // primary key; the head batch
+	Head    string                 // primary key; ID of the head batch
 	Paths   []SpeculationPathEntry // the head's chosen paths
 	Version int                    // for compare-and-swap writes
 }
@@ -170,17 +170,17 @@ type Speculator interface {
 // Speculation is one proposed action on one path; a kept path has no entry.
 type Speculation struct {
 	Path   entity.SpeculationPath // the path acted on; its ID hashes head batch ID + its bets
-	Action PathAction             // Build | Cancel
+	Action PathAction             // build | cancel
 }
 
 // The only two actions the Speculator may propose. No Merge or Fail —
 // verdicts are the controller's.
-type PathAction int
+type PathAction string
 
 const (
-	PathActionUnknown PathAction = 0 // zero-value sentinel; never valid, rejected by the controller's check step
-	Build             PathAction = 1 // start (or resurrect) a build for the path
-	Cancel            PathAction = 2 // preempt this in-flight path (refutation cancels are the controller's)
+	PathActionUnknown PathAction = ""       // zero-value sentinel; never valid, rejected by the controller's check step
+	PathActionBuild   PathAction = "build"  // start (or resurrect) a build for the path
+	PathActionCancel  PathAction = "cancel" // preempt this in-flight path (refutation cancels are the controller's)
 )
 ```
 
@@ -189,12 +189,12 @@ const (
 // lazily; the producer computes only what is pulled.
 type Generator interface {
 	// Open starts the queue's candidate stream, best-first across Speculating heads.
-	Open(ctx context.Context, batches []entity.Batch, pathSets []entity.SpeculationPathSet) (PathIterator, error)
+	Open(ctx context.Context, batches []entity.Batch) (PathIterator, error)
 }
 
 type PathIterator interface {
 	// Next yields the next-best candidate across Speculating heads; ok = false means the
-	// queue's coherent, depth-capped space is exhausted. Candidates descend in
+	// queue's coherent space is exhausted. Candidates descend in
 	// ranking score, never repeat, and never contradict a resolved fact.
 	Next(ctx context.Context) (c CandidatePath, ok bool, err error)
 }
@@ -208,7 +208,8 @@ type CandidatePath struct {
 
 ```go
 // Allocator — spends the build budget over the iterator, matching in-flight
-// paths to the funded set by ID. Budget and clock are injected at construction.
+// paths to the funded set by ID and skipping candidates whose path is already
+// terminal in the path sets. Budget and clock are injected at construction.
 type Allocator interface {
 	Allocate(ctx context.Context, pathSets []entity.SpeculationPathSet, iter PathIterator) ([]Speculation, error)
 }

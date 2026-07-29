@@ -20,6 +20,7 @@ go_library(
         "request_history.go",
         "request_log.go",
         "request_summary.go",
+        "speculation.go",
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/entity",
     visibility = ["//visibility:public"],
@@ -38,6 +39,7 @@ go_test(
         "land_test.go",
         "request_log_test.go",
         "request_test.go",
+        "speculation_test.go",
     ],
     embed = [":go_default_library"],
     deps = [
