@@ -89,7 +89,7 @@ var Stages = []pipeline.Stage[Deps]{
 	{
 		Key:           topickey.TopicKeyStart,
 		Name:          "start",
-		ConsumerGroup: "orchestrator-start",
+		ConsumerGroup: "orchestrator",
 		New: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
 			return start.NewController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
@@ -100,7 +100,7 @@ var Stages = []pipeline.Stage[Deps]{
 	{
 		Key:           topickey.TopicKeyCancel,
 		Name:          "cancel",
-		ConsumerGroup: "orchestrator-cancel",
+		ConsumerGroup: "orchestrator",
 		New: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
 			return cancel.NewController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
@@ -111,7 +111,7 @@ var Stages = []pipeline.Stage[Deps]{
 	{
 		Key:           topickey.TopicKeyValidate,
 		Name:          "validate",
-		ConsumerGroup: "orchestrator-validate",
+		ConsumerGroup: "orchestrator",
 		New: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
 			return validate.NewController(d.Logger, d.Scope, d.Storage, sc.Registry, d.ChangeProvider, d.Validator, runwaymq.TopicKeyMergeConflictCheck, sc.TopicKey, sc.ConsumerGroup), nil
 		},
@@ -122,7 +122,7 @@ var Stages = []pipeline.Stage[Deps]{
 	{
 		Key:           runwaymq.TopicKeyMergeConflictCheckSignal,
 		Name:          "merge-conflict-check-signal",
-		ConsumerGroup: "orchestrator-mergeconflictsignal",
+		ConsumerGroup: "orchestrator",
 		New: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
 			return mergeconflictsignal.NewController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
@@ -133,7 +133,7 @@ var Stages = []pipeline.Stage[Deps]{
 	{
 		Key:           topickey.TopicKeyBatch,
 		Name:          "batch",
-		ConsumerGroup: "orchestrator-batch",
+		ConsumerGroup: "orchestrator",
 		New: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
 			return batch.NewController(d.Logger, d.Scope, sc.Registry, d.Counter, d.Storage, d.Analyzer, sc.TopicKey, sc.ConsumerGroup), nil
 		},
@@ -144,7 +144,7 @@ var Stages = []pipeline.Stage[Deps]{
 	{
 		Key:           topickey.TopicKeySpeculate,
 		Name:          "speculate",
-		ConsumerGroup: "orchestrator-speculate",
+		ConsumerGroup: "orchestrator",
 		New: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
 			return speculate.NewController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
@@ -155,7 +155,7 @@ var Stages = []pipeline.Stage[Deps]{
 	{
 		Key:           topickey.TopicKeyBuild,
 		Name:          "build",
-		ConsumerGroup: "orchestrator-build",
+		ConsumerGroup: "orchestrator",
 		New: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
 			return build.NewController(d.Logger, d.Scope, d.Storage, d.BuildRunner, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
@@ -166,7 +166,7 @@ var Stages = []pipeline.Stage[Deps]{
 	{
 		Key:           topickey.TopicKeyBuildSignal,
 		Name:          "buildsignal",
-		ConsumerGroup: "orchestrator-buildsignal",
+		ConsumerGroup: "orchestrator",
 		New: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
 			return buildsignal.NewController(d.Logger, d.Scope, d.Storage, d.BuildRunner, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
@@ -177,7 +177,7 @@ var Stages = []pipeline.Stage[Deps]{
 	{
 		Key:           topickey.TopicKeyMerge,
 		Name:          "submitqueue-merge",
-		ConsumerGroup: "orchestrator-merge",
+		ConsumerGroup: "orchestrator",
 		New: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
 			return merge.NewController(d.Logger, d.Scope, d.Storage, sc.Registry, runwaymq.TopicKeyMerge, sc.TopicKey, sc.ConsumerGroup), nil
 		},
@@ -188,7 +188,7 @@ var Stages = []pipeline.Stage[Deps]{
 	{
 		Key:           runwaymq.TopicKeyMergeSignal,
 		Name:          "merge-signal",
-		ConsumerGroup: "orchestrator-mergesignal",
+		ConsumerGroup: "orchestrator",
 		New: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
 			return mergesignal.NewController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
@@ -199,7 +199,7 @@ var Stages = []pipeline.Stage[Deps]{
 	{
 		Key:           topickey.TopicKeyConclude,
 		Name:          "conclude",
-		ConsumerGroup: "orchestrator-conclude",
+		ConsumerGroup: "orchestrator",
 		New: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
 			return conclude.NewController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
