@@ -45,8 +45,8 @@ type Stage[D any] struct {
 	// Used as the default when no TopicNames override is provided.
 	Name string
 
-	// ConsumerGroup is the consumer group suffix for this stage's subscription
-	// (e.g. "orchestrator-start").
+	// ConsumerGroup is the consumer group for this stage's subscription
+	// (e.g. "orchestrator").
 	ConsumerGroup string
 
 	// New builds the stage's controller from the service's Deps and engine-
@@ -55,10 +55,11 @@ type Stage[D any] struct {
 	// name on it, never mid-delivery.
 	New func(D, StageContext) (consumer.Controller, error)
 
-	// DLQ, when non-nil, declares "this stage dead-letters". The engine then
-	// derives the paired DLQ topic (<topic>_dlq, retry budget, DLQ-of-DLQ
-	// disabled) AND registers this reconciler on the DLQ consumer. Declaring
-	// one without getting the other is impossible — that's the invariant.
+	// DLQ builds the stage's dead-letter reconciler. Every stage must declare
+	// one: the queue infrastructure always creates a DLQ topic, so not
+	// processing it silently accumulates messages. The engine derives the
+	// paired DLQ topic (<topic>_dlq, retry budget, DLQ-of-DLQ disabled) and
+	// registers this reconciler on the DLQ consumer automatically.
 	DLQ func(D, StageContext) (consumer.Controller, error)
 }
 
@@ -179,10 +180,12 @@ func Construct[D any](
 	// Create the DLQ consumer with always-retryable processor.
 	dlq := consumer.New(logger, scope, registry, errs.AlwaysRetryableProcessor)
 
-	hasDLQ := false
-
 	// Eagerly construct and register all controllers.
 	for _, s := range stages {
+		if s.DLQ == nil {
+			return nil, fmt.Errorf("pipeline: stage %s: DLQ handler is required (every topic gets a DLQ)", s.Key)
+		}
+
 		sc := StageContext{
 			Registry:      registry,
 			TopicKey:      s.Key,
@@ -197,20 +200,17 @@ func Construct[D any](
 			return nil, fmt.Errorf("pipeline: stage %s: failed to register controller: %w", s.Key, err)
 		}
 
-		if s.DLQ != nil {
-			dlqSC := StageContext{
-				Registry:      registry,
-				TopicKey:      dlqTopicKey(s.Key),
-				ConsumerGroup: s.ConsumerGroup + "-dlq",
-			}
-			rec, err := s.DLQ(deps, dlqSC)
-			if err != nil {
-				return nil, fmt.Errorf("pipeline: stage %s dlq: failed to create controller: %w", s.Key, err)
-			}
-			if err := dlq.Register(rec); err != nil {
-				return nil, fmt.Errorf("pipeline: stage %s dlq: failed to register controller: %w", s.Key, err)
-			}
-			hasDLQ = true
+		dlqSC := StageContext{
+			Registry:      registry,
+			TopicKey:      dlqTopicKey(s.Key),
+			ConsumerGroup: s.ConsumerGroup + "-dlq",
+		}
+		rec, err := s.DLQ(deps, dlqSC)
+		if err != nil {
+			return nil, fmt.Errorf("pipeline: stage %s dlq: failed to create controller: %w", s.Key, err)
+		}
+		if err := dlq.Register(rec); err != nil {
+			return nil, fmt.Errorf("pipeline: stage %s dlq: failed to register controller: %w", s.Key, err)
 		}
 	}
 
@@ -218,9 +218,7 @@ func Construct[D any](
 	members := make([]lifecycle.Component, 0, len(o.extraComponents)+2)
 	members = append(members, o.extraComponents...)
 	members = append(members, &consumerComponent{name: "primary", c: primary})
-	if hasDLQ {
-		members = append(members, &consumerComponent{name: "dlq", c: dlq})
-	}
+	members = append(members, &consumerComponent{name: "dlq", c: dlq})
 
 	return lifecycle.NewGroup(members...), nil
 }
@@ -232,7 +230,7 @@ func buildTopicConfigs[D any](
 	stages []Stage[D],
 	o *options,
 ) ([]consumer.TopicConfig, error) {
-	// Pre-size: each stage gets a primary config + optional DLQ config,
+	// Pre-size: each stage gets a primary config + DLQ config,
 	// plus publish-only topics.
 	configs := make([]consumer.TopicConfig, 0, 2*len(stages)+len(o.publishOnly))
 
@@ -248,16 +246,14 @@ func buildTopicConfigs[D any](
 			),
 		})
 
-		if s.DLQ != nil {
-			configs = append(configs, consumer.TopicConfig{
-				Key:   dlqTopicKey(s.Key),
-				Name:  topicName + dlqTopicSuffix,
-				Queue: queue,
-				Subscription: extqueue.DLQSubscriptionConfig(
-					subscriberName, s.ConsumerGroup+"-dlq",
-				),
-			})
-		}
+		configs = append(configs, consumer.TopicConfig{
+			Key:   dlqTopicKey(s.Key),
+			Name:  topicName + dlqTopicSuffix,
+			Queue: queue,
+			Subscription: extqueue.DLQSubscriptionConfig(
+				subscriberName, s.ConsumerGroup+"-dlq",
+			),
+		})
 	}
 
 	for _, p := range o.publishOnly {

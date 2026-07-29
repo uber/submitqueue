@@ -50,7 +50,7 @@ func newTestLogger() *zap.SugaredLogger {
 	return l.Sugar()
 }
 
-func TestConstruct_SingleStage_NoDLQ(t *testing.T) {
+func TestConstruct_SingleStage(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	q := mqmock.NewMockQueue(ctrl)
 	q.EXPECT().Subscriber().Return(mqmock.NewMockSubscriber(ctrl)).AnyTimes()
@@ -61,8 +61,11 @@ func TestConstruct_SingleStage_NoDLQ(t *testing.T) {
 		{
 			Key:           "start",
 			Name:          "start",
-			ConsumerGroup: "orchestrator-start",
+			ConsumerGroup: "orchestrator",
 			New: func(d testDeps, sc StageContext) (consumer.Controller, error) {
+				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
+			},
+			DLQ: func(d testDeps, sc StageContext) (consumer.Controller, error) {
 				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
 			},
 		},
@@ -84,7 +87,7 @@ func TestConstruct_WithDLQ(t *testing.T) {
 		{
 			Key:           "start",
 			Name:          "start",
-			ConsumerGroup: "orchestrator-start",
+			ConsumerGroup: "orchestrator",
 			New: func(d testDeps, sc StageContext) (consumer.Controller, error) {
 				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
 			},
@@ -99,6 +102,30 @@ func TestConstruct_WithDLQ(t *testing.T) {
 	assert.NotNil(t, comp)
 }
 
+func TestConstruct_NilDLQ_Error(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	q := mqmock.NewMockQueue(ctrl)
+	q.EXPECT().Subscriber().Return(mqmock.NewMockSubscriber(ctrl)).AnyTimes()
+	q.EXPECT().Publisher().Return(mqmock.NewMockPublisher(ctrl)).AnyTimes()
+
+	deps := testDeps{logger: newTestLogger()}
+	stages := []Stage[testDeps]{
+		{
+			Key:           "start",
+			Name:          "start",
+			ConsumerGroup: "orchestrator",
+			New: func(d testDeps, sc StageContext) (consumer.Controller, error) {
+				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
+			},
+			// DLQ intentionally omitted.
+		},
+	}
+
+	_, err := Construct(deps.logger, tally.NoopScope, q, "test-sub", deps, stages)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "DLQ handler is required")
+}
+
 func TestConstruct_MultipleStages(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	q := mqmock.NewMockQueue(ctrl)
@@ -110,15 +137,18 @@ func TestConstruct_MultipleStages(t *testing.T) {
 		{
 			Key:           "start",
 			Name:          "start",
-			ConsumerGroup: "orchestrator-start",
+			ConsumerGroup: "orchestrator",
 			New: func(d testDeps, sc StageContext) (consumer.Controller, error) {
+				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
+			},
+			DLQ: func(d testDeps, sc StageContext) (consumer.Controller, error) {
 				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
 			},
 		},
 		{
 			Key:           "validate",
 			Name:          "validate",
-			ConsumerGroup: "orchestrator-validate",
+			ConsumerGroup: "orchestrator",
 			New: func(d testDeps, sc StageContext) (consumer.Controller, error) {
 				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
 			},
@@ -154,9 +184,12 @@ func TestConstruct_ControllerCreationFailure(t *testing.T) {
 		{
 			Key:           "start",
 			Name:          "start",
-			ConsumerGroup: "orchestrator-start",
+			ConsumerGroup: "orchestrator",
 			New: func(d testDeps, sc StageContext) (consumer.Controller, error) {
 				return nil, fmt.Errorf("missing dependency")
+			},
+			DLQ: func(d testDeps, sc StageContext) (consumer.Controller, error) {
+				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
 			},
 		},
 	}
@@ -178,7 +211,7 @@ func TestConstruct_DLQControllerCreationFailure(t *testing.T) {
 		{
 			Key:           "start",
 			Name:          "start",
-			ConsumerGroup: "orchestrator-start",
+			ConsumerGroup: "orchestrator",
 			New: func(d testDeps, sc StageContext) (consumer.Controller, error) {
 				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
 			},
@@ -205,8 +238,11 @@ func TestConstruct_WithPublishOnly(t *testing.T) {
 		{
 			Key:           "start",
 			Name:          "start",
-			ConsumerGroup: "orchestrator-start",
+			ConsumerGroup: "orchestrator",
 			New: func(d testDeps, sc StageContext) (consumer.Controller, error) {
+				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
+			},
+			DLQ: func(d testDeps, sc StageContext) (consumer.Controller, error) {
 				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
 			},
 		},
@@ -233,8 +269,11 @@ func TestConstruct_WithTopicNameOverrides(t *testing.T) {
 		{
 			Key:           "start",
 			Name:          "start",
-			ConsumerGroup: "orchestrator-start",
+			ConsumerGroup: "orchestrator",
 			New: func(d testDeps, sc StageContext) (consumer.Controller, error) {
+				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
+			},
+			DLQ: func(d testDeps, sc StageContext) (consumer.Controller, error) {
 				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
 			},
 		},
@@ -262,7 +301,7 @@ func TestConstruct_StageContext_Populated(t *testing.T) {
 		{
 			Key:           "start",
 			Name:          "start",
-			ConsumerGroup: "orchestrator-start",
+			ConsumerGroup: "orchestrator",
 			New: func(d testDeps, sc StageContext) (consumer.Controller, error) {
 				primarySC = sc
 				return &fakeController{key: sc.TopicKey, group: sc.ConsumerGroup}, nil
@@ -279,11 +318,11 @@ func TestConstruct_StageContext_Populated(t *testing.T) {
 
 	// Primary StageContext should have the stage's own key and group.
 	assert.Equal(t, consumer.TopicKey("start"), primarySC.TopicKey)
-	assert.Equal(t, "orchestrator-start", primarySC.ConsumerGroup)
+	assert.Equal(t, "orchestrator", primarySC.ConsumerGroup)
 
 	// DLQ StageContext should have the derived DLQ key and group.
 	assert.Equal(t, consumer.TopicKey("start_dlq"), dlqSC.TopicKey)
-	assert.Equal(t, "orchestrator-start-dlq", dlqSC.ConsumerGroup)
+	assert.Equal(t, "orchestrator-dlq", dlqSC.ConsumerGroup)
 
 	// Both should share the same registry.
 	assert.Equal(t, primarySC.Registry, dlqSC.Registry)
@@ -347,16 +386,16 @@ func TestBuildTopicConfigs(t *testing.T) {
 		{
 			Key:           "start",
 			Name:          "start",
-			ConsumerGroup: "orchestrator-start",
+			ConsumerGroup: "orchestrator",
 			New:           func(d testDeps, sc StageContext) (consumer.Controller, error) { return nil, nil },
 			DLQ:           func(d testDeps, sc StageContext) (consumer.Controller, error) { return nil, nil },
 		},
 		{
 			Key:           "validate",
 			Name:          "validate",
-			ConsumerGroup: "orchestrator-validate",
+			ConsumerGroup: "orchestrator",
 			New:           func(d testDeps, sc StageContext) (consumer.Controller, error) { return nil, nil },
-			// No DLQ for this stage.
+			DLQ:           func(d testDeps, sc StageContext) (consumer.Controller, error) { return nil, nil },
 		},
 	}
 
@@ -369,29 +408,30 @@ func TestBuildTopicConfigs(t *testing.T) {
 	configs, err := buildTopicConfigs(q, "test-sub", stages, o)
 	require.NoError(t, err)
 
-	// Expected: start (primary + DLQ) + validate (primary only) + log (publish-only) = 4
-	assert.Len(t, configs, 4)
+	// Expected: start (primary + DLQ) + validate (primary + DLQ) + log (publish-only) = 5
+	assert.Len(t, configs, 5)
 
 	// Verify primary stage config.
 	assert.Equal(t, consumer.TopicKey("start"), configs[0].Key)
 	assert.Equal(t, "start", configs[0].Name)
-	assert.Equal(t, "orchestrator-start", configs[0].Subscription.ConsumerGroup)
+	assert.Equal(t, "orchestrator", configs[0].Subscription.ConsumerGroup)
 
 	// Verify DLQ config derived from primary.
 	assert.Equal(t, consumer.TopicKey("start_dlq"), configs[1].Key)
 	assert.Equal(t, "start_dlq", configs[1].Name)
-	assert.Equal(t, "orchestrator-start-dlq", configs[1].Subscription.ConsumerGroup)
+	assert.Equal(t, "orchestrator-dlq", configs[1].Subscription.ConsumerGroup)
 
 	// Verify DLQ subscription has DLQ disabled (no cascade).
-	expected := extqueue.DLQSubscriptionConfig("test-sub", "orchestrator-start-dlq")
+	expected := extqueue.DLQSubscriptionConfig("test-sub", "orchestrator-dlq")
 	assert.Equal(t, expected.DLQ.Enabled, configs[1].Subscription.DLQ.Enabled)
 	assert.Equal(t, expected.Retry.MaxAttempts, configs[1].Subscription.Retry.MaxAttempts)
 
-	// Verify validate stage (no DLQ).
+	// Verify validate stage (primary + DLQ).
 	assert.Equal(t, consumer.TopicKey("validate"), configs[2].Key)
+	assert.Equal(t, consumer.TopicKey("validate_dlq"), configs[3].Key)
 
 	// Verify publish-only topic.
-	assert.Equal(t, consumer.TopicKey("log"), configs[3].Key)
-	assert.Equal(t, "log", configs[3].Name)
-	assert.Equal(t, "", configs[3].Subscription.ConsumerGroup)
+	assert.Equal(t, consumer.TopicKey("log"), configs[4].Key)
+	assert.Equal(t, "log", configs[4].Name)
+	assert.Equal(t, "", configs[4].Subscription.ConsumerGroup)
 }
