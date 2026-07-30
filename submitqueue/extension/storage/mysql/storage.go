@@ -60,14 +60,15 @@ func (s *Storage) For(queueName string) (storage.Storage, error) {
 		return nil, fmt.Errorf("queue name must not be empty")
 	}
 	return &boundStorage{
-		requestStore:         NewRequestStore(s.db, s.scope.SubScope("request_store"), queueName),
-		requestBatchStore:    NewRequestBatchStore(s.db, s.scope.SubScope("request_batch_store"), queueName),
-		changeStore:          NewChangeStore(s.db, s.scope.SubScope("change_store"), queueName),
-		batchStore:           NewBatchStore(s.db, s.scope.SubScope("batch_store"), queueName),
-		batchDependentStore:  NewBatchDependentStore(s.db, s.scope.SubScope("batch_dependent_store"), queueName),
-		queueBatchStateStore: NewQueueBatchStateStore(s.db, s.scope.SubScope("queue_batch_state_store"), queueName),
-		buildStore:           NewBuildStore(s.db, s.scope.SubScope("build_store"), queueName),
-		requestQueueStore:    NewRequestQueueSummaryStore(s.db, s.scope.SubScope("request_queue_summary_store"), queueName),
+		requestStore:            NewRequestStore(s.db, s.scope.SubScope("request_store"), queueName),
+		requestBatchStore:       NewRequestBatchStore(s.db, s.scope.SubScope("request_batch_store"), queueName),
+		changeStore:             NewChangeStore(s.db, s.scope.SubScope("change_store"), queueName),
+		batchStore:              NewBatchStore(s.db, s.scope.SubScope("batch_store"), queueName),
+		batchDependentStore:     NewBatchDependentStore(s.db, s.scope.SubScope("batch_dependent_store"), queueName),
+		queueBatchStateStore:    NewQueueBatchStateStore(s.db, s.scope.SubScope("queue_batch_state_store"), queueName),
+		buildStore:              NewBuildStore(s.db, s.scope.SubScope("build_store"), queueName),
+		speculationPathSetStore: NewSpeculationPathSetStore(s.db, s.scope.SubScope("speculation_path_set_store")),
+		requestQueueStore:       NewRequestQueueSummaryStore(s.db, s.scope.SubScope("request_queue_summary_store"), queueName),
 	}, nil
 }
 
@@ -93,14 +94,15 @@ func (s *Storage) Close() error {
 
 // boundStorage is the queue-scoped store aggregate returned by For.
 type boundStorage struct {
-	requestStore         storage.RequestStore
-	requestBatchStore    storage.RequestBatchStore
-	changeStore          storage.ChangeStore
-	batchStore           storage.BatchStore
-	batchDependentStore  storage.BatchDependentStore
-	queueBatchStateStore storage.QueueBatchStateStore
-	buildStore           storage.BuildStore
-	requestQueueStore    storage.RequestQueueSummaryStore
+	requestStore            storage.RequestStore
+	requestBatchStore       storage.RequestBatchStore
+	changeStore             storage.ChangeStore
+	batchStore              storage.BatchStore
+	batchDependentStore     storage.BatchDependentStore
+	queueBatchStateStore    storage.QueueBatchStateStore
+	buildStore              storage.BuildStore
+	speculationPathSetStore storage.SpeculationPathSetStore
+	requestQueueStore       storage.RequestQueueSummaryStore
 }
 
 // Verify boundStorage implements the queue-scoped aggregate at compile time.
@@ -139,6 +141,11 @@ func (f *boundStorage) GetQueueBatchStateStore() storage.QueueBatchStateStore {
 // GetBuildStore returns the bound MySQL-backed BuildStore.
 func (f *boundStorage) GetBuildStore() storage.BuildStore {
 	return f.buildStore
+}
+
+// GetSpeculationPathSetStore returns the bound MySQL-backed SpeculationPathSetStore.
+func (f *boundStorage) GetSpeculationPathSetStore() storage.SpeculationPathSetStore {
+	return f.speculationPathSetStore
 }
 
 // GetRequestQueueSummaryStore returns the bound MySQL-backed RequestQueueSummaryStore.

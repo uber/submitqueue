@@ -94,6 +94,9 @@ type Storage interface {
 	// GetBuildStore returns the BuildStore instance.
 	GetBuildStore() BuildStore
 
+	// GetSpeculationPathSetStore returns the SpeculationPathSetStore instance.
+	GetSpeculationPathSetStore() SpeculationPathSetStore
+
 	// GetRequestQueueSummaryStore returns the RequestQueueSummaryStore instance.
 	GetRequestQueueSummaryStore() RequestQueueSummaryStore
 }
