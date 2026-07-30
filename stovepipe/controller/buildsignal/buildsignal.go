@@ -15,12 +15,14 @@
 // Package buildsignal holds the buildsignal-stage queue controller. It consumes
 // BuildSignal messages (a build id), polls the build-runner until the build
 // reaches a terminal status, persists that status, and — once terminal —
+// releases the queue's build slot, projects the outcome onto the request, and
 // publishes the build id to record. See
 // doc/rfc/stovepipe/steps/buildsignal.md.
 package buildsignal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -54,6 +56,7 @@ var (
 
 // Controller consumes BuildSignal messages, polls the build-runner toward a
 // terminal status, persists the result, and either reschedules itself or
+// releases the queue's build slot, projects the outcome onto the request, and
 // publishes the build id to record. Implements consumer.Controller.
 type Controller struct {
 	logger        *zap.SugaredLogger
@@ -94,8 +97,9 @@ func NewController(
 
 // Process reloads the build referenced by the delivery, polls its runner for
 // the latest status, persists a real transition, and either reschedules a
-// poll or, once terminal, publishes the build id to record. Returns nil to
-// ack (success) or an error to nack (retry) / reject (DLQ).
+// poll or, once terminal, releases the queue's build slot, projects the
+// outcome onto the request, and publishes the build id to record. Returns nil
+// to ack (success) or an error to nack (retry) / reject (DLQ).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
@@ -118,9 +122,18 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return err
 	}
 
-	// The request is done (record already ran, or the head was superseded);
-	// stop polling.
-	if request.State.IsTerminal() {
+	// A request only reaches the poll loop after process admitted it, so it is
+	// `processing` — or it already carries this build's outcome, on a redelivery
+	// after the outcome was stamped but before record was published. Both cases
+	// proceed: the redelivery re-publishes to record rather than dropping the
+	// signal, and every write below is a no-op the second time.
+	//
+	// Anything else is terminal without a build outcome, which today means only
+	// `superseded` — and process supersedes solely from `accepted` (see
+	// supersedeRequest), so a superseded request can never reach this point. It
+	// is guarded rather than assumed away because finishRequest would otherwise
+	// release a build slot the request never claimed: superseding consumes none.
+	if request.State != entity.RequestStateProcessing && !request.State.HasBuildOutcome() {
 		return nil
 	}
 
@@ -141,6 +154,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	if effective.IsTerminal() {
+		if err := c.finishRequest(ctx, &request, effective); err != nil {
+			return err
+		}
 		if err := c.publishRecord(ctx, build.ID, request.ID); err != nil {
 			return fmt.Errorf("failed to publish record for build %s: %w", build.ID, err)
 		}
@@ -148,6 +164,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			"build_id", build.ID,
 			"request_id", request.ID,
 			"status", string(effective),
+			"request_state", string(request.State),
 		)
 		return nil
 	}
@@ -162,6 +179,116 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"delay_ms", delayMs,
 	)
 	return nil
+}
+
+// finishRequest releases the queue's build slot and projects the build's
+// terminal status onto the request, leaving it terminal. It is a no-op when the
+// request already carries an outcome, so a redelivery neither double-releases
+// the slot nor rewrites the state.
+//
+// The slot is released *before* the terminal write, and a failed release aborts
+// the write, matching the DLQ reconciler (see stovepipe/controller/dlq/dlq.go).
+// Both rules exist for the same reason: the request must not go terminal while
+// still holding a slot, because a terminal request is skipped on redelivery and
+// by the reconciler, so nothing would ever decrement it. Failing this way leaves
+// the request non-terminal, so redelivery re-runs both steps and decrements again
+// — transiently over-admitting by one until releaseBuildSlot's zero clamp
+// reconverges, which is the failure mode this pipeline prefers.
+func (c *Controller) finishRequest(ctx context.Context, request *entity.Request, status entity.BuildStatus) error {
+	if request.State.HasBuildOutcome() {
+		return nil
+	}
+
+	if err := c.releaseBuildSlot(ctx, request.Queue); err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+		return err
+	}
+
+	if err := c.markOutcome(ctx, request, outcomeState(status)); err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+		return err
+	}
+	return nil
+}
+
+// outcomeState maps a terminal build status onto the request state that records
+// it. Cancelled stays distinct from failed: what a cancellation implies for
+// greenness is decided where greenness is recorded.
+func outcomeState(status entity.BuildStatus) entity.RequestState {
+	switch status {
+	case entity.BuildStatusSucceeded:
+		return entity.RequestStateSucceeded
+	case entity.BuildStatusCancelled:
+		return entity.RequestStateCancelled
+	default:
+		return entity.RequestStateFailed
+	}
+}
+
+// markOutcome CAS-transitions request from processing to state, retrying on version
+// conflicts. First writer wins: once any outcome is recorded a later caller leaves it
+// alone, so duplicate builds for one request (which build.md accepts) cannot flip the
+// verdict back and forth.
+func (c *Controller) markOutcome(ctx context.Context, request *entity.Request, state entity.RequestState) error {
+	reqStore := c.store.GetRequestStore()
+
+	for {
+		if request.State != entity.RequestStateProcessing {
+			return nil
+		}
+
+		updated := *request
+		updated.State = state
+		newVersion := request.Version + 1
+		if err := reqStore.Update(ctx, updated, request.Version, newVersion); err != nil {
+			if errors.Is(err, storage.ErrVersionMismatch) {
+				got, getErr := reqStore.Get(ctx, request.ID)
+				if getErr != nil {
+					return fmt.Errorf("failed to reload request %s after version mismatch: %w", request.ID, getErr)
+				}
+				*request = got
+				continue
+			}
+			return fmt.Errorf("failed to mark request %s %s: %w", request.ID, state, err)
+		}
+		updated.Version = newVersion
+		*request = updated
+		metrics.NamedCounter(c.metricsScope, _opName, "outcomes", 1,
+			metrics.NewTag("state", string(state)),
+		)
+		return nil
+	}
+}
+
+// releaseBuildSlot CAS-decrements the queue's in_flight_count, reopening the process
+// concurrency gate now that this request's build is over. It decrements relatively
+// (preserving concurrent updates), clamps at zero, and retries on version conflicts.
+// Unlike process's unwind-path release this is not best-effort: the caller must not
+// mark the request terminal if the slot was not freed, so a hard failure is returned.
+func (c *Controller) releaseBuildSlot(ctx context.Context, queueName string) error {
+	queueStore := c.store.GetQueueStore()
+
+	for {
+		queueRow, err := queueStore.Get(ctx, queueName)
+		if err != nil {
+			return fmt.Errorf("failed to load queue %s to release build slot: %w", queueName, err)
+		}
+		if queueRow.InFlightCount <= 0 {
+			return nil
+		}
+
+		updated := queueRow
+		updated.InFlightCount = queueRow.InFlightCount - 1
+		newVersion := queueRow.Version + 1
+		if err := queueStore.Update(ctx, updated, queueRow.Version, newVersion); err != nil {
+			if errors.Is(err, storage.ErrVersionMismatch) {
+				continue
+			}
+			return fmt.Errorf("failed to release build slot for queue %s: %w", queueName, err)
+		}
+		metrics.NamedCounter(c.metricsScope, _opName, "slot_released", 1)
+		return nil
+	}
 }
 
 // reconcile persists a real status transition and returns the status that

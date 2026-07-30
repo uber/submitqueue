@@ -128,8 +128,8 @@ The pipeline runs in two phases against the same Request. **Phase 1** establishe
 1. **ingest** — invoked by the external poller with a **Queue name**. It asks `SourceControl` for that Queue's current head URI, mints a Request namespaced by the Queue, persists it with no recorded greenness yet, and dedups on `(Queue, head URI)` so a re-reported head is processed once. It publishes the RequestID onward.
 2. **process** — decides build strategy (incremental since last-green vs full monorepo), gates concurrent work per Queue, coalesces backlog to the latest head, and publishes to `build`. See [process.md](steps/process.md).
 3. **build** — runs the build-runner for the chosen scope. A flag derived from `process` decides whether to build relative to the last-green **baseline URI** (incremental) or from scratch (full). It records a build and publishes the BuildID.
-4. **buildsignal** — records the build's status and target graph when the build completes, then publishes the BuildID to `record` (the `Build` row carries its RequestID, so `record` reaches the Request with a direct get).
-5. **record** — writes the whole-repo greenness for the head URI (`0` green / `1` broken to start). On green it advances the Queue's **last-green URI** so the next `process` can build incrementally from here. It also decrements the Queue's `in_flight_count`, opening the process concurrency gate for the next head. It fires the **Hooks** extension with the green/not-green event, then fans out into Phase 2.
+4. **buildsignal** — records the build's status and target graph when the build completes, then releases the Queue's `in_flight_count` slot, projects the terminal status onto the Request (`succeeded` / `failed` / `cancelled`), and publishes the BuildID to `record` (the `Build` row carries its RequestID, so `record` reaches the Request with a direct get).
+5. **record** — writes the whole-repo greenness for the head URI (`0` green / `1` broken to start), derived from the Request's build outcome. On green it advances the Queue's **last-green URI** so the next `process` can build incrementally from here. It fires the **Hooks** extension with the green/not-green event, then fans out into Phase 2. The Queue's `in_flight_count` was already released by `buildsignal` when the build went terminal.
 
 ### Phase 2 — project greenness
 
@@ -146,8 +146,8 @@ The pipeline runs in two phases against the same Request. **Phase 1** establishe
 | **ingest** | Queue name (from poller) | process | Resolve head URI via SourceControl, mint Request, persist (no greenness), dedup on `(Queue, head URI)` |
 | **process** | RequestID | build | Build strategy, concurrency gate, backlog coalescing → [process.md](steps/process.md) |
 | **build** | RequestID | buildsignal | Run the build-runner for the chosen scope; baseline = last-green URI iff incremental |
-| **buildsignal** | BuildID | record (P1), record (P2) | Record build status + target graph; signal completion |
-| **record** | BuildID | analyze (P1→P2), Hooks | Write greenness; advance last-green URI on whole-repo green; decrement `in_flight_count`; fire Hooks |
+| **buildsignal** | BuildID | record (P1), record (P2) | Record build status + target graph; release `in_flight_count`; project the outcome onto the Request; signal completion |
+| **record** | BuildID | analyze (P1→P2), Hooks | Write greenness; advance last-green URI on whole-repo green; fire Hooks |
 | **analyze** | RequestID | build | Map broken/at-risk targets → projects; decide project-scoped builds |
 
 ## Step RFCs
