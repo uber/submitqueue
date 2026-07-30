@@ -25,8 +25,9 @@
 // Reconciliation strategy. Each DLQ topic carries the same payload as its originating
 // topic (the queue framework preserves the bytes verbatim under a new `{topic}_dlq`
 // name). The DLQ controller decodes that payload to recover the affected request, then
-// transitions it to RequestStateRecordedNotGreen — the conservative not-green verdict
-// for gating (see entity.RequestState) — with an idempotent optimistic-locking write so
+// transitions it to RequestStateFailed — the conservative unsuccessful outcome, which
+// whatever records greenness treats as not-green for gating (see entity.RequestState) —
+// with an idempotent optimistic-locking write so
 // concurrent activity (a late successful pipeline transition) wins cleanly. If the request had
 // already been admitted (processing) and was holding a concurrency slot, the
 // reconciler also releases it by CAS-decrementing the queue's in_flight_count, per
@@ -57,9 +58,10 @@ func TopicKey(main consumer.TopicKey) consumer.TopicKey {
 	return consumer.TopicKey(string(main) + topicSuffix)
 }
 
-// failRequest transitions request to RequestStateRecordedNotGreen if it is not already
+// failRequest transitions request to RequestStateFailed if it is not already
 // in a terminal state. If the request had reached RequestStateProcessing — meaning process's
-// admit step already CAS-incremented the queue's in_flight_count for it — the queue's
+// admit step already CAS-incremented the queue's in_flight_count for it and no terminal
+// outcome has released it yet — the queue's
 // slot is released first. Queue and Request are separate entities with no cross-entity
 // transaction, so the two writes cannot be atomic and the ordering picks which crash
 // failure mode we accept: a crash between the writes leaves the request non-terminal,
@@ -97,12 +99,12 @@ func failRequest(ctx context.Context, store storage.Storage, logger *zap.Sugared
 	}
 
 	updated := request
-	updated.State = entity.RequestStateRecordedNotGreen
+	updated.State = entity.RequestStateFailed
 	newVersion := request.Version + 1
 	if err := store.GetRequestStore().Update(ctx, updated, request.Version, newVersion); err != nil {
-		return fmt.Errorf("failed to update request %s state to recorded_not_green: %w", requestID, err)
+		return fmt.Errorf("failed to update request %s state to failed: %w", requestID, err)
 	}
-	logger.Infow("dlq reconcile: request forced terminal not-green",
+	logger.Infow("dlq reconcile: request forced terminal failed",
 		"request_id", requestID,
 		"previous_state", string(request.State),
 	)

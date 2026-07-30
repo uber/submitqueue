@@ -165,17 +165,24 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "recorded green request is a no-op",
+			name: "succeeded request is a no-op",
 			setup: func(m buildsignalMocks) {
 				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusRunning, 2), nil)
-				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateRecordedGreen), nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateSucceeded), nil)
 			},
 		},
 		{
-			name: "recorded not green request is a no-op",
+			name: "failed request is a no-op",
 			setup: func(m buildsignalMocks) {
 				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusRunning, 2), nil)
-				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateRecordedNotGreen), nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateFailed), nil)
+			},
+		},
+		{
+			name: "cancelled request is a no-op",
+			setup: func(m buildsignalMocks) {
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusRunning, 2), nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateCancelled), nil)
 			},
 		},
 		{
