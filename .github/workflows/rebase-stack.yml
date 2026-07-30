@@ -8,22 +8,57 @@
 #
 # Solution:
 #   This workflow triggers when any PR is merged and automatically:
-#   1. Finds all open PRs whose base branch is the merged PR's head branch
+#   1. Checks each candidate PR for GitHub *native* stack membership (the
+#      `stack` object on the pull request resource — see NATIVE STACKS below)
+#      and leaves those to GitHub, which rebases and retargets the members of
+#      its own stacks. Everything else — standalone PRs, and hand-rolled chains
+#      where each PR simply targets the one below it, as `arh` produces — is
+#      rebased here.
+#   2. Finds all open PRs whose base branch is the merged PR's head branch
 #      (i.e., the next PR in the stack).
-#   2. Rebases each child PR onto the merged PR's base (e.g., main), using
-#      "git rebase --onto" to replay only the child's own commits.
-#   3. Walks the full chain recursively — if PR2 is rebased, PR3 (based on
+#   3. Rebases each child PR onto the merged PR's base (e.g., main), using
+#      "git rebase --onto" to replay only the child's own commits. A child that
+#      is itself a native-stack member is skipped, for the same reason as (1).
+#   4. Walks the full chain recursively — if PR2 is rebased, PR3 (based on
 #      PR2) is also rebased onto the new PR2, and so on to any depth.
-#   4. Validates the diff is identical before and after rebase — if the
+#   5. Validates the diff is identical before and after rebase — if the
 #      rebase silently altered code, it refuses to force-push.
-#   5. If a rebase hits conflicts, it leaves a comment with manual fix
+#   6. If a rebase hits conflicts, it leaves a comment with manual fix
 #      instructions and stops processing that chain.
-#   6. Sweeps merged head branches and deletes any that no open PR still
+#   7. Sweeps merged head branches and deletes any that no open PR still
 #      references (as base or head). This deletes the just-merged branch once
 #      its children are retargeted, keeps it when an immediate child rebase
 #      failed (that child still bases on it), and — because the sweep runs on
 #      every merge — also reaps branches stranded by an earlier conflicted run
 #      after their children were manually rebased and retargeted.
+#
+# NATIVE STACKS (github/gh-stack):
+#   A pull request that is part of a GitHub native stack carries a non-null
+#   `stack` object (id, number, size, position, base). GitHub owns those PRs:
+#   on a partial merge it rebases and retargets the remaining MEMBERS of the
+#   stack itself. Rebasing them here would race that machinery and force-push
+#   over its work, so they are skipped.
+#
+#   The check is applied per CHILD PR, not to the merged PR. GitHub only ever
+#   touches a stack's own members; a PR that targets a member's head branch
+#   without joining the stack is invisible to it. Skipping the whole chain just
+#   because the merged PR happened to be a stack member would strand such a PR
+#   with exactly the broken diff this workflow exists to prevent — so the chain
+#   always runs and each child is judged on its own membership. Membership of
+#   the merged PR is logged for context and gates nothing.
+#
+#   Membership survives merge (a merged member still reports its stack), which
+#   is what makes the lookup meaningful at this point in the lifecycle. It hits
+#   the REST API at run time rather than reading the webhook payload, so a PR
+#   added to a stack after the merge event was queued is still recognised.
+#
+#   Presence is tested on the `stack` object itself, not on a sub-field such as
+#   `stack.number`: a stack object arriving without the field it was probed for
+#   would read as "standalone" and get force-pushed. An unreadable response is
+#   deliberately treated as standalone — the Stacks API 404s when the feature
+#   is not enabled for the repo, and that is precisely when the rebase is
+#   wanted — but that fallback must be reached only by a genuinely absent
+#   stack, never by an unexpected shape.
 #
 # Why "rebase --onto" instead of "--fork-point":
 #   GitHub Actions runs on a fresh clone with no reflog, so --fork-point
@@ -48,6 +83,11 @@
 #   the branch and the child bases untouched, so this job can find the
 #   children, rebase them, retarget their bases, and finally delete the merged
 #   branch itself — for both stacked and non-stacked PRs.
+#
+#   This holds for native-stack merges too. The sweep runs on EVERY merge,
+#   including those where every child turned out to be GitHub's to rebase, so
+#   native-stack head branches are reaped here as well — each one on the first
+#   merge after GitHub has retargeted its successors off it.
 
 name: Rebase Stacked PRs
 
@@ -82,10 +122,11 @@ permissions:
 jobs:
   rebase-stack:
     name: Rebase Stack
-    # DISABLED: this workflow is turned off in favor of GitHub's native stacked
-    # PR support. The file is kept (not removed) so it can be re-enabled by
-    # restoring the condition below to `github.event.pull_request.merged == true`.
-    if: false && github.event.pull_request.merged == true
+    # Runs on every merge. Native-stack membership is checked per child PR
+    # inside the job, not here: a single merge can have both stack members
+    # (GitHub's to rebase) and children outside the stack (ours), and the
+    # branch sweep has to run either way.
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     # Scope the privileged PAT to a protected Environment restricted to `main`
     # so the secret cannot be used from any other ref/context.
@@ -105,6 +146,7 @@ jobs:
       - name: Rebase stacked PRs
         env:
           GH_TOKEN: ${{ secrets.STACK_REBASE_TOKEN }}
+          MERGED_PR_NUMBER: ${{ github.event.pull_request.number }}
           MERGED_HEAD: ${{ github.event.pull_request.head.ref }}
           MERGED_BASE: ${{ github.event.pull_request.base.ref }}
           MERGED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -113,6 +155,36 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # detect_stack sets STACK_NUMBER to the GitHub native stack number the
+          # given PR belongs to, or "" when it is standalone. GitHub rebases and
+          # retargets the members of its own stacks, so a non-empty STACK_NUMBER
+          # means "hands off — this PR is not ours to rebase".
+          #
+          # Membership is decided by `.stack` being non-null rather than by
+          # reading `.stack.number`, so a stack object that lacked the probed
+          # field could not read as standalone and get force-pushed; the number
+          # is only ever used for logging, hence the "?" fallback.
+          #
+          # An unreadable response is deliberately treated as standalone: the
+          # Stacks API returns 404 when the feature is not enabled for the repo,
+          # and that is precisely the case where the rebase below is wanted.
+          # The result is written to a global instead of stdout so the warning
+          # cannot end up captured as the value by the caller.
+          STACK_NUMBER=""
+          detect_stack() {
+            local pr_number="$1"
+            local out
+            STACK_NUMBER=""
+
+            if ! out=$(gh api "repos/{owner}/{repo}/pulls/${pr_number}" \
+              --jq 'if .stack == null then "" else "\(.stack.number // "?")" end' 2>&1); then
+              echo "::warning::Could not read stack membership for PR #${pr_number}; treating it as standalone. Details: ${out}"
+              return 0
+            fi
+
+            STACK_NUMBER="$out"
+          }
 
           # rebase_chain walks the stack depth-first, rebasing each child PR
           # onto its new base and recursing into grandchildren.
@@ -150,8 +222,19 @@ jobs:
 
             while IFS=' ' read -r pr_number pr_branch; do
               echo ""
-              echo "=== Rebasing PR #${pr_number} (${pr_branch}) ==="
-              echo "    onto: ${rebase_onto}"
+              echo "=== PR #${pr_number} (${pr_branch}) ==="
+
+              # A child that belongs to a native stack is rebased and retargeted
+              # by GitHub itself. Skip it — and do NOT recurse into it, since
+              # GitHub walks the rest of that stack. Siblings are unaffected, so
+              # this is a `continue`, not a failure.
+              detect_stack "$pr_number"
+              if [ -n "$STACK_NUMBER" ]; then
+                echo "    skipped: belongs to native stack #${STACK_NUMBER}; GitHub owns its rebase."
+                continue
+              fi
+
+              echo "    rebasing onto: ${rebase_onto}"
               echo "    old base SHA: ${old_base_sha}"
 
               git fetch origin "$pr_branch"
@@ -322,10 +405,21 @@ jobs:
             return 0
           }
 
-          echo "Merged PR: ${MERGED_HEAD} -> ${MERGED_BASE}"
+          echo "Merged PR: #${MERGED_PR_NUMBER} ${MERGED_HEAD} -> ${MERGED_BASE}"
           echo "Merged head SHA: ${MERGED_HEAD_SHA}"
 
           git fetch origin "$MERGED_BASE"
+
+          # Note whether the merged PR was itself a native-stack member. This is
+          # context for the log and nothing more: GitHub retargets that stack's
+          # own members, but any child that merely targets this branch without
+          # being in the stack is invisible to GitHub and still ours to fix, so
+          # the chain below runs regardless and each child is judged on its own
+          # membership.
+          detect_stack "$MERGED_PR_NUMBER"
+          if [ -n "$STACK_NUMBER" ]; then
+            echo "PR #${MERGED_PR_NUMBER} belongs to native stack #${STACK_NUMBER}; GitHub retargets its fellow members. Any child outside that stack is still rebased below."
+          fi
 
           # Kick off the recursive rebase. Immediate children of the merged PR
           # get rebased onto MERGED_BASE, using MERGED_HEAD_SHA as the old
@@ -352,4 +446,7 @@ jobs:
           # deletes MERGED_HEAD on a clean run, KEEPS it when an immediate child
           # rebase failed (that child still bases on it), and cleans up branches
           # stranded by earlier conflicted runs once their children were fixed.
+          # For a native-stack merge it is likewise conservative: if GitHub has
+          # not retargeted the successors off MERGED_HEAD yet, the branch is kept
+          # and reaped by the sweep on a later merge.
           cleanup_orphaned_merged_branches
