@@ -27,6 +27,8 @@ import (
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
+	"github.com/uber/submitqueue/platform/extension/consumergate"
+	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	"github.com/uber/submitqueue/platform/lifecycle"
 	"go.uber.org/zap"
@@ -94,6 +96,7 @@ type PublishOnlyTopic struct {
 type options struct {
 	topicNames      map[consumer.TopicKey]string
 	classifiers     []errs.Classifier
+	gate            consumergate.Gate
 	publishOnly     []PublishOnlyTopic
 	extraComponents []lifecycle.Component
 }
@@ -111,6 +114,13 @@ func TopicNames(m map[consumer.TopicKey]string) Option {
 // ErrorProcessor. DLQ consumers always use AlwaysRetryableProcessor.
 func Classifiers(c ...errs.Classifier) Option {
 	return func(o *options) { o.classifiers = c }
+}
+
+// Gate sets the consumer gate for runtime stop/start of individual
+// controllers. Both the primary and DLQ consumers share the same gate.
+// When not set, a no-op gate is used (all controllers always admitted).
+func Gate(g consumergate.Gate) Option {
+	return func(o *options) { o.gate = g }
 }
 
 // PublishOnly adds topics the service publishes to but does not consume.
@@ -162,6 +172,11 @@ func Construct[D any](
 		opt(o)
 	}
 
+	// Default to no-op gate when none is provided.
+	if o.gate == nil {
+		o.gate = consumergatenoop.New()
+	}
+
 	// Build topic configs for the registry.
 	configs, err := buildTopicConfigs(queue, subscriberName, stages, o)
 	if err != nil {
@@ -175,10 +190,10 @@ func Construct[D any](
 
 	// Create the primary consumer with user-provided classifiers.
 	primaryProcessor := errs.NewClassifierProcessor(o.classifiers...)
-	primary := consumer.New(logger, scope, registry, primaryProcessor)
+	primary := consumer.New(logger, scope, registry, primaryProcessor, o.gate)
 
 	// Create the DLQ consumer with always-retryable processor.
-	dlq := consumer.New(logger, scope, registry, errs.AlwaysRetryableProcessor)
+	dlq := consumer.New(logger, scope, registry, errs.AlwaysRetryableProcessor, o.gate)
 
 	// Eagerly construct and register all controllers.
 	for _, s := range stages {
