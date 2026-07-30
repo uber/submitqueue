@@ -70,8 +70,11 @@ func (m *gitMerger) ensureObject(ctx context.Context, ref changeRef) error {
 	}
 
 	coremetrics.NamedCounter(m.metricsScope, "merge", "object_unavailable", 1)
-	return fmt.Errorf("%w: commit %s is not available from remote %s (tried by SHA and via %q)",
-		merger.ErrInvalidRequest, ref.SHA, m.remote, ref.Ref)
+	// Name the change, not just the commit. A bare "commit not available"
+	// sends the reader looking for a deleted commit, when the likelier cause is
+	// a change this remote was never going to be able to serve.
+	return fmt.Errorf("%w: commit %s of %s is not available from remote %s (tried by SHA and via %q)",
+		merger.ErrInvalidRequest, ref.SHA, ref.Label, m.remote, ref.Ref)
 }
 
 // hasCommit reports whether sha names a commit object in the local checkout.

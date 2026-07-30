@@ -294,16 +294,18 @@ func (m *gitMerger) process(ctx context.Context, req *runwaymq.MergeRequest, com
 }
 
 // resolveAndValidate normalizes DEFAULT strategies to the configured default,
-// resolves every change URI once for the apply paths to work from, and enforces
-// the PROMOTE composition rule. All failures here are terminal
-// (merger.ErrInvalidRequest): retrying never succeeds, so the controller
-// publishes a FAILED result rather than nacking.
+// resolves every change URI once for the apply paths to work from, checks that
+// the request's changes agree on a provider, and enforces the PROMOTE
+// composition rule. All failures here are terminal (merger.ErrInvalidRequest):
+// retrying never succeeds, so the controller publishes a FAILED result rather
+// than nacking.
 func (m *gitMerger) resolveAndValidate(req *runwaymq.MergeRequest) ([]resolvedStep, error) {
 	if len(req.GetSteps()) == 0 {
 		return nil, fmt.Errorf("%w: request has no steps", merger.ErrInvalidRequest)
 	}
 
 	resolved := make([]resolvedStep, 0, len(req.GetSteps()))
+	var first providerCheck
 	promoteSeen := false
 	for _, step := range req.GetSteps() {
 		strategy := step.GetStrategy()
@@ -327,6 +329,9 @@ func (m *gitMerger) resolveAndValidate(req *runwaymq.MergeRequest) ([]resolvedSt
 			if err != nil {
 				return nil, err
 			}
+			if err := first.check(ref, step.GetStepId()); err != nil {
+				return nil, err
+			}
 			refs = append(refs, ref)
 		}
 		resolved = append(resolved, resolvedStep{step: step, strategy: strategy, refs: refs})
@@ -344,6 +349,32 @@ func (m *gitMerger) resolveAndValidate(req *runwaymq.MergeRequest) ([]resolvedSt
 	}
 
 	return resolved, nil
+}
+
+// providerCheck holds the provider the first change in a request established,
+// and rejects any later change addressed through a different one.
+//
+// There is no sense in one merge being addressed through two providers, and
+// SubmitQueue already refuses it within a single change. Catching it here costs
+// nothing and keeps the apply paths from having to reason about a request whose
+// changes were resolved by different parsers.
+type providerCheck struct {
+	provider string
+	stepID   string
+	set      bool
+}
+
+// check records the first change's provider and compares every later one to it.
+func (o *providerCheck) check(ref changeRef, stepID string) error {
+	if !o.set {
+		o.provider, o.stepID, o.set = ref.Provider, stepID, true
+		return nil
+	}
+	if ref.Provider != o.provider {
+		return fmt.Errorf("%w: request mixes change providers: step %q uses %q, step %q uses %q",
+			merger.ErrInvalidRequest, o.stepID, o.provider, stepID, ref.Provider)
+	}
+	return nil
 }
 
 // applyTransforming runs the reset/apply/push cycle for the transforming
