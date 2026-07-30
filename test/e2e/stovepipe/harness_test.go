@@ -130,3 +130,21 @@ func (s *StovepipeE2ESuite) assertIngestPersisted(queue, id string) {
 	assert.Equal(t, id, s.uriMapping(queue), "URI mapping should point at the minted request id")
 	assert.Equal(t, 1, s.publishedMessageCount(id), "should have published one process message for %s", id)
 }
+
+// awaitBuildStatus blocks until the build row for a request reaches want. The
+// pipeline runs inside the stovepipe-service container, so the build's own status
+// column is the durable, black-box signal that the poll loop converged: buildsignal
+// is its only writer after build creates the row.
+func (s *StovepipeE2ESuite) awaitBuildStatus(requestID, want string) {
+	pollUntil(processPollInterval, func() bool {
+		var status string
+		err := s.db.QueryRow("SELECT status FROM build WHERE request_id = ?", requestID).Scan(&status)
+		if err != nil {
+			// sql.ErrNoRows means the build row is not created yet.
+			s.log.Logf("build for %s not readable yet: %v", requestID, err)
+			return false
+		}
+		s.log.Logf("build for %s status = %q (want %q)", requestID, status, want)
+		return status == want
+	})
+}

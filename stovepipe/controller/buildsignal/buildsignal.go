@@ -22,6 +22,8 @@ package buildsignal
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
@@ -151,7 +153,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	delayMs := pollDelay(effective)
-	if err := c.publishBuildSignal(ctx, build.ID, delayMs); err != nil {
+	if err := c.publishBuildSignal(ctx, build.ID, msg.ID, delayMs); err != nil {
 		return errs.NewRetryableError(fmt.Errorf("failed to reschedule poll for build %s: %w", build.ID, err))
 	}
 	c.logger.Debugw("rescheduled build status poll",
@@ -218,15 +220,48 @@ func (c *Controller) publishRecord(ctx context.Context, buildID, requestID strin
 	return c.publish(ctx, stovepipemq.TopicKeyRecord, msg, 0)
 }
 
+// pollIDInfix separates a build id from its poll generation in a re-poll
+// message id: "<buildID>/poll/<generation>".
+const pollIDInfix = "/poll/"
+
+// nextPollMessageID returns the message id for the next poll of buildID, one
+// generation past the delivery that scheduled it. currentMsgID is the id of the
+// message being processed — either the initial publish from build (no
+// generation, so the next is 1) or a previous re-poll.
+//
+// The generation has to advance because the queue dedups on
+// (topic, partition_key, id) and the delivery being processed has not been acked
+// yet, so its row is still present: a re-poll reusing the current id would
+// collide with the message that scheduled it and be silently discarded, ending
+// the poll loop after one tick.
+//
+// It advances deterministically rather than randomly so the id stays a pure
+// function of the delivery. A redelivery racing the original computes the same
+// next id, so dedup collapses the two into one message and the build keeps a
+// single poll chain — where a random suffix would fork a second chain that
+// doubles the poll rate and races the first one's status CAS.
+func nextPollMessageID(buildID, currentMsgID string) string {
+	generation := 0
+	if rest, found := strings.CutPrefix(currentMsgID, buildID+pollIDInfix); found {
+		if n, err := strconv.Atoi(rest); err == nil && n > 0 {
+			generation = n
+		}
+	}
+	return fmt.Sprintf("%s%s%d", buildID, pollIDInfix, generation+1)
+}
+
 // publishBuildSignal re-publishes buildID to buildsignal after delayMs,
 // partitioned by build id so each build's poll loop runs in its own
 // partition. A fresh message, not a nack — polling is not failure.
-func (c *Controller) publishBuildSignal(ctx context.Context, buildID string, delayMs int64) error {
+//
+// currentMsgID is the id of the delivery being processed; see nextPollMessageID
+// for why the new id is derived from it rather than reused or randomized.
+func (c *Controller) publishBuildSignal(ctx context.Context, buildID, currentMsgID string, delayMs int64) error {
 	payload, err := stovepipemq.Marshal(&stovepipemq.BuildSignal{Id: buildID})
 	if err != nil {
 		return fmt.Errorf("failed to serialize build signal: %w", err)
 	}
-	msg := entityqueue.NewMessage(buildID, payload, buildID, nil)
+	msg := entityqueue.NewMessage(nextPollMessageID(buildID, currentMsgID), payload, buildID, nil)
 	return c.publish(ctx, stovepipemq.TopicKeyBuildSignal, msg, delayMs)
 }
 

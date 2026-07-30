@@ -326,3 +326,77 @@ func TestProcess(t *testing.T) {
 		})
 	}
 }
+
+// TestPublishBuildSignalAdvancesPollGeneration is the regression test for the poll
+// loop stalling. The queue dedups on (topic, partition_key, id) and the delivery that
+// scheduled a re-poll is still un-acked when the re-poll is published, so a reused
+// message id makes the reschedule a silent no-op and the build is never polled again.
+// The generation therefore has to advance each tick. The partition key must stay the
+// build id so each poll loop keeps its own partition.
+func TestPublishBuildSignalAdvancesPollGeneration(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+
+	var ids []string
+	m.publisher.EXPECT().PublishAfter(gomock.Any(), "buildsignal", gomock.Any(), PollDelayRunningMs).
+		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message, _ int64) error {
+			ids = append(ids, msg.ID)
+			assert.Equal(t, testBuildID, msg.PartitionKey)
+			return nil
+		}).Times(3)
+
+	// Walk a chain: each publish is scheduled by the message the previous one minted.
+	current := testBuildID
+	for range 3 {
+		require.NoError(t, c.publishBuildSignal(context.Background(), testBuildID, current, PollDelayRunningMs))
+		current = ids[len(ids)-1]
+	}
+
+	assert.Equal(t, []string{
+		testBuildID + "/poll/1",
+		testBuildID + "/poll/2",
+		testBuildID + "/poll/3",
+	}, ids, "each tick must mint a fresh id, or the reschedule dedups against the message that scheduled it")
+}
+
+// TestPublishBuildSignalIsIdempotentPerDelivery pins the other half of the contract:
+// the next id is a pure function of the delivery being processed. A redelivery racing
+// the original computes the same id, so dedup collapses them and the build keeps a
+// single poll chain rather than forking a second one that doubles the poll rate and
+// races the first one's status CAS.
+func TestPublishBuildSignalIsIdempotentPerDelivery(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+
+	var ids []string
+	m.publisher.EXPECT().PublishAfter(gomock.Any(), "buildsignal", gomock.Any(), PollDelayRunningMs).
+		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message, _ int64) error {
+			ids = append(ids, msg.ID)
+			return nil
+		}).Times(2)
+
+	scheduledBy := testBuildID + "/poll/7"
+	require.NoError(t, c.publishBuildSignal(context.Background(), testBuildID, scheduledBy, PollDelayRunningMs))
+	require.NoError(t, c.publishBuildSignal(context.Background(), testBuildID, scheduledBy, PollDelayRunningMs))
+
+	assert.Equal(t, ids[0], ids[1], "a redelivery of the same message must republish the same id so dedup collapses it")
+	assert.Equal(t, testBuildID+"/poll/8", ids[0])
+}
+
+func TestNextPollMessageID(t *testing.T) {
+	tests := []struct {
+		name     string
+		current  string
+		expected string
+	}{
+		{name: "initial publish from build starts at one", current: testBuildID, expected: testBuildID + "/poll/1"},
+		{name: "advances the generation", current: testBuildID + "/poll/4", expected: testBuildID + "/poll/5"},
+		{name: "unparsable generation restarts at one", current: testBuildID + "/poll/x", expected: testBuildID + "/poll/1"},
+		{name: "another build's id is not a prefix match", current: "other/poll/9", expected: testBuildID + "/poll/1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, nextPollMessageID(testBuildID, tt.current))
+		})
+	}
+}

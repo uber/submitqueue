@@ -61,6 +61,10 @@ For a delivery carrying build id `B`:
 8. Else PublishAfter(B -> buildsignal, delayMs), partitioned by build id:
    - delayMs = pollDelay(status): shorter while running, longer while accepted.
    - a fresh message (retry_count resets to 0), not a nack — polling is not failure.
+   - the message id must be unique per tick. The queue dedups on (topic, partition_key, id)
+     and the delivery being processed is still un-acked, so its row is present: reusing B as
+     the message id makes every re-poll collide with the message that scheduled it and be
+     silently discarded, ending the poll loop after one tick.
    - ack.
 ```
 
