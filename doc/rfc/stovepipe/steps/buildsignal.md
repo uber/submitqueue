@@ -81,6 +81,7 @@ For a delivery carrying build id `B`:
      and the delivery being processed is still un-acked, so its row is present: reusing B as
      the message id makes every re-poll collide with the message that scheduled it and be
      silently discarded, ending the poll loop after one tick.
+   - publish failure -> return raw (non-retryable), same posture as step 7.
    - ack.
 ```
 
@@ -126,11 +127,10 @@ Per `platform/errs`'s non-retryable-by-default rule (see [platform/errs/README.m
 |---|---|---|
 | `Status` call | raw error; classifier decides | Deliberately left open rather than fixed either way — runner timeout/connection is transient, "runner not deployed for this queue" is not, and only a backend classifier can tell them apart. |
 | `Update` CAS conflict (`ErrVersionMismatch`) | declaration-level retryable | A concurrent (redelivered) writer moved the row; reload and re-check converges. |
-| `PublishAfter` re-poll | retryable | The poll heartbeat; it runs only after status/persist/record all succeeded, so a transient enqueue blip is worth replaying to `MaxAttempts` before dead-lettering. |
 
 `Build`/`Request` not found (`storage.ErrNotFound`) are **not** in this table: storage is required to be read-after-write consistent (see [storage README](stovepipe/extension/storage/README.md)), so a miss here is already the correct default (non-retryable, straight to DLQ) rather than a departure worth overriding.
 
-Everything else — factory lookup, an `Update` store error other than a CAS conflict, and the publish to `record` — is returned raw with no override, because the default is already correct: a queue with no registered runner is a config error, and storage/queue failures dead-letter and let DLQ reconciliation recover.
+Everything else — factory lookup, an `Update` store error other than a CAS conflict, and both publishes — is returned raw with no override, because the default is already correct: a queue with no registered runner is a config error, and storage/queue failures dead-letter and let DLQ reconciliation recover. The `PublishAfter` re-poll is included in that: per `platform/errs` rule 4 a failed queue publish is not wrapped retryable just because replaying it is convenient, which would turn a permanent enqueue failure into an infinite retry instead of dead-lettering.
 
 ## Idempotency
 

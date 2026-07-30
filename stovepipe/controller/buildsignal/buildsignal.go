@@ -30,7 +30,6 @@ import (
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
-	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
@@ -171,7 +170,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	delayMs := pollDelay(effective)
 	if err := c.publishBuildSignal(ctx, build.ID, msg.ID, delayMs); err != nil {
-		return errs.NewRetryableError(fmt.Errorf("failed to reschedule poll for build %s: %w", build.ID, err))
+		return fmt.Errorf("failed to reschedule poll for build %s: %w", build.ID, err)
 	}
 	c.logger.Debugw("rescheduled build status poll",
 		"build_id", build.ID,

@@ -367,9 +367,9 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name:      "reschedule publish failure is retryable",
+			name:      "reschedule publish failure is not retryable",
 			wantErr:   true,
-			wantRetry: true,
+			wantRetry: false,
 			setup: func(m buildsignalMocks) {
 				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusAccepted, 1), nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
