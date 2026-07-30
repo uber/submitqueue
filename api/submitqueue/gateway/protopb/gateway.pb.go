@@ -169,6 +169,8 @@ type LandRequest struct {
 	// Change (such as a pull request) to land into the target branch. Target branch is defined by the queue configuration.
 	Change *protopb.Change `protobuf:"bytes,2,opt,name=change,proto3" json:"change,omitempty"`
 	// Source control integration strategy to use for this land operation. If not specified, the default queue strategy is used.
+	// It applies to every URI the change carries, the same way to each — a land
+	// request cannot pick a different strategy per URI.
 	Strategy      protopb1.Strategy `protobuf:"varint,4,opt,name=strategy,proto3,enum=uber.base.mergestrategy.Strategy" json:"strategy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

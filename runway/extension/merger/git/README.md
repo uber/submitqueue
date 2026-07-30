@@ -6,6 +6,8 @@ A `merger.Merger` backed by the `git` CLI operating on a local checkout. It appl
 
 A request is an ordered list of steps; each step names a change (a set of provider URIs, each ending in a full head commit SHA) and a strategy. Steps are applied in order on top of the target tip — earlier steps are the in-flight base, the last step is the candidate. Each step yields one `StepResult`; the revisions a step produces on the target are its outputs, in application order.
 
+The URI is the unit of application. A step's change may carry several URIs — a stack — and the step's strategy applies to each of them, the same way to each, in the order given. So a step is never a mix of strategies, and its outputs are the concatenation of what each URI produced: one revision per created commit under `REBASE`, one per URI under `SQUASH_REBASE` and `MERGE`. `PROMOTE` is the exception that admits only one URI, since advancing a ref to an exact revision cannot repeat.
+
 A URI pins a change to one head commit, but a change is routinely several commits. The full set is recovered locally rather than from the wire: the commits to replay are the range from the change's merge base with the target up to its head. Applying the head commit alone would apply only that commit's diff against its own parent — conflicting against context its predecessors would have established, or silently dropping them when they touch different files.
 
 ## Change providers
