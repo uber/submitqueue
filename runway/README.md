@@ -16,3 +16,5 @@ Each controller deserializes the `MergeRequest`, obtains a `Merger` for the requ
 ## Failure handling
 
 A merge outcome the controller can name is published as a `FAILED` result and acked, not retried: a merge conflict (`merger.ErrConflict`) or an invalid request (`merger.ErrInvalidRequest` — unknown strategy, malformed change URI, invalid PROMOTE composition). The `merger.IsTerminal` helper draws that line. Any other error is an infrastructure fault and is nacked for retry.
+
+Because Runway is stateless and the sole responder on the client's correlation id, a request that exhausts retries (or hits an unexpected fault) must still resolve the client. The inbound topics dead-letter by default; the [`dlq`](controller/dlq) reconciler drains those `_dlq` topics and republishes a `FAILED` `MergeResult` to the signal topic so the correlation id never hangs.
