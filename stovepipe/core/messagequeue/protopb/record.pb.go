@@ -37,15 +37,16 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// Record is the payload buildsignal publishes once a build reaches a terminal
-// status: only the build id travels on the queue. record reloads the full
-// Build from storage by this id (producer and consumer share the store, so
-// the id is enough and redelivery stays idempotent). See
-// doc/rfc/stovepipe/steps/buildsignal.md.
+// Record is the payload buildsignal publishes once a request's build reaches a
+// terminal status: only the request id travels on the queue. record reloads the
+// full Request from storage by this id (producer and consumer share the store,
+// so the id is enough and redelivery stays idempotent). The build's terminal
+// status is projected onto Request.State before this is published, so record
+// never reaches a Build. See doc/rfc/stovepipe/steps/buildsignal.md.
 type Record struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// id is the terminal build's id: the runner-assigned id minted by
-	// BuildRunner.Trigger (entity.Build.ID / entity.BuildID.ID).
+	// id is the request id whose build reached a terminal status. Format:
+	// "request/<queue>/<counter>" (entity.Request.ID).
 	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

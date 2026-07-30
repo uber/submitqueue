@@ -61,6 +61,20 @@ The merge-conflict-check controller always publishes a result — even when all 
 
 The merge controller publishes a conflict result (and acks) when the merge detects a conflict; SubmitQueue handles rebatching. On infrastructure error it nacks for retry. On success it publishes per-step outcomes (output IDs of the revisions produced) so SubmitQueue can update its request state.
 
+## Terminal failures and dead-lettering
+
+Runway is stateless and the sole responder on the client's correlation id: SubmitQueue records the in-flight work before publishing and waits for exactly one `MergeResult` echoing that id. Every request must therefore resolve to a result — success or failure — or the client waits forever.
+
+Failures split into two classes:
+
+- **Named terminal outcomes** — a merge conflict or an invalid request (an unknown/unsupported strategy, a malformed change URI, or an invalid `PROMOTE` composition). These can never succeed on retry, so the controller publishes a `FAILED` `MergeResult` (with a reason) and acks, rather than nacking. The merger surfaces them as the `ErrConflict` / `ErrInvalidRequest` sentinels; `IsTerminal` is the single classification point.
+
+- **Infrastructure faults** — fetch/network/auth failures, a push rejected for a reason other than a moved tip, and so on. These are nacked for retry.
+
+An infrastructure fault that never recovers would exhaust retries and dead-letter. Because nothing consumed those dead-letter topics, such a request produced no signal and left the client's correlation id unresolved. Runway closes that gap with a **DLQ reconciler**: a dedicated consumer subscribes to the inbound topics' `_dlq` queues and, for each dead-lettered request, republishes a `FAILED` `MergeResult` (echoing the correlation id) to the corresponding signal topic. Unlike the SubmitQueue/Stovepipe DLQ reconcilers it writes no entity state — the signal is the resolution. It runs under an always-retryable error policy so a transient publish failure retries indefinitely rather than dead-lettering again. A payload that cannot even be decoded carries no correlation id and is dropped.
+
+Together these guarantee the client's correlation id always resolves: the primary controllers handle what they can name, and the reconciler is the backstop for everything else.
+
 ## Idempotency
 
 Runway has no persistent state — no request store, no job store, no database. Idempotency is achieved through the VCS contract: merge detects already-pushed changes (revisions reachable from HEAD) and treats them as already-landed. Merge-conflict check is read-only and naturally idempotent.

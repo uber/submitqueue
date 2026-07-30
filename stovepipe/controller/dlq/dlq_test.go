@@ -99,7 +99,7 @@ func TestProcess(t *testing.T) {
 			setup: func(m dlqMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateAccepted), nil)
 				updated := requestWithState(entity.RequestStateAccepted)
-				updated.State = entity.RequestStateRecordedNotGreen
+				updated.State = entity.RequestStateFailed
 				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
 			},
 		},
@@ -114,7 +114,7 @@ func TestProcess(t *testing.T) {
 					Name: testQueue, InFlightCount: 0, Version: 5,
 				}, int32(5), int32(6)).Return(nil)
 				updated := requestWithState(entity.RequestStateProcessing)
-				updated.State = entity.RequestStateRecordedNotGreen
+				updated.State = entity.RequestStateFailed
 				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
 			},
 		},
@@ -127,7 +127,7 @@ func TestProcess(t *testing.T) {
 		{
 			name: "already failed is a no-op",
 			setup: func(m dlqMocks) {
-				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateRecordedNotGreen), nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateFailed), nil)
 			},
 		},
 		{
@@ -141,7 +141,7 @@ func TestProcess(t *testing.T) {
 			setup: func(m dlqMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateAccepted), nil)
 				updated := requestWithState(entity.RequestStateAccepted)
-				updated.State = entity.RequestStateRecordedNotGreen
+				updated.State = entity.RequestStateFailed
 				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(storage.ErrVersionMismatch)
 			},
 			wantErr: true,
@@ -163,7 +163,7 @@ func TestProcess(t *testing.T) {
 					Name: testQueue, InFlightCount: 0, Version: 6,
 				}, int32(6), int32(7)).Return(nil)
 				updated := requestWithState(entity.RequestStateProcessing)
-				updated.State = entity.RequestStateRecordedNotGreen
+				updated.State = entity.RequestStateFailed
 				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
 			},
 		},
@@ -175,7 +175,7 @@ func TestProcess(t *testing.T) {
 					Name: testQueue, InFlightCount: 0, Version: 5,
 				}, nil)
 				updated := requestWithState(entity.RequestStateProcessing)
-				updated.State = entity.RequestStateRecordedNotGreen
+				updated.State = entity.RequestStateFailed
 				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
 			},
 		},

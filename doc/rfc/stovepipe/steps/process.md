@@ -9,7 +9,7 @@ It handles everything *before* the first build is triggered: it does not run bui
 Ingest publishes a `ProcessRequest` (request id only — producer and consumer share the store) to the process topic, **partitioned by Queue name**. Two consequences the design relies on:
 
 1. **One partition per Queue**, and `BatchSize = 1` (strict serialization; see [sql-queue-rfc.md](../../sql-queue-rfc.md#strict-serialization-opt-in)) — so at most one `process` invocation runs per Queue at a time. The read-modify-write on the Queue row (gate check, count increment) is therefore race-free **without** a transaction, the same property SubmitQueue's `validate` gets from per-queue partition leasing.
-2. **`process` is not the only Queue-row writer.** `ingest` stamps `latest_request_id` (the request id of the newest accepted head, not a URI; see [Backlog coalescing](#backlog-coalescing)) and `record` advances the `last_green_uri` bookmark and releases slots. They touch different fields under optimistic-locking CAS, so concurrent writes converge instead of clobbering.
+2. **`process` is not the only Queue-row writer.** `ingest` stamps `latest_request_id` (the request id of the newest accepted head, not a URI; see [Backlog coalescing](#backlog-coalescing)) and `buildsignal` releases slots when a build goes terminal, and `record` advances the `last_green_uri` bookmark. They touch different fields under optimistic-locking CAS, so concurrent writes converge instead of clobbering.
 
 ## Process algorithm
 
@@ -18,7 +18,7 @@ For a delivery carrying request id `R`:
 ```
 1. Load Request R from the request store.
    - not found -> non-retryable (storage is read-after-write consistent; see [storage README](../../../../stovepipe/extension/storage/README.md)).
-2. If R.State is terminal (superseded / recorded-green / recorded-not-green):
+2. If R.State is terminal (superseded / succeeded / failed / cancelled):
    - ack and return (idempotent no-op).
 3. If R.State is processing (strategy already recorded):
    - re-publish R to build (the prior publish may have failed), ack, return.
@@ -62,9 +62,9 @@ Validation is expensive and shares a baseline, so heads arriving while an earlie
 | Queue row | `in_flight_count` | Requests past `process` and not yet terminal. `process` increments on admit; `record` (or DLQ reconciliation) decrements on terminal. |
 | Queue config | `max_concurrent` | Cap on concurrent in-flight validations. **Default 1** (global wiring default for MVP; per-queue override when a Stovepipe `queueconfig` extension lands). |
 
-A slot is held for the **entire** Phase 1 cycle (`process → build → buildsignal → record`), not just while `process` runs. It is released when the Request reaches **any** terminal state and `in_flight_count` is decremented — `record` writing green *or* not-green, or the DLQ reconciler forcing a terminal not-green (see [integrity](#in_flight_count-integrity)). A build *failure* frees the slot just like a success; only a Request that never terminates keeps its slot.
+A slot is held from admit until the build goes terminal (`process → build → buildsignal`), not just while `process` runs. It is released when the Request reaches **any** terminal state and `in_flight_count` is decremented — `buildsignal` recording the build's outcome, success *or* failure, or the DLQ reconciler forcing a terminal `failed` (see [integrity](#in_flight_count-integrity)). A build *failure* frees the slot just like a success; only a Request that never terminates keeps its slot.
 
-**Liveness — a stuck Request wedges the whole Queue.** The slot is shared per-Queue, so a Request admitted but never driven terminal holds the only slot and stalls the whole Queue. The fail-closed path in [workflow.md](../workflow.md#fail-closed-on-unprocessable-work) prevents this: every admitted Request terminates — `build`/`buildsignal` errors retry to `MaxAttempts`, then dead-letter, and the DLQ reconciler forces a conservative terminal not-green, freeing the slot. Residual risk is operational: a **poison DLQ message** the reconciler can't process loops forever (it runs always-retryable), wedging that Queue until an operator removes it. The gate makes the blast radius the whole Queue, not one Request — monitor and alert on the DLQ.
+**Liveness — a stuck Request wedges the whole Queue.** The slot is shared per-Queue, so a Request admitted but never driven terminal holds the only slot and stalls the whole Queue. The fail-closed path in [workflow.md](../workflow.md#fail-closed-on-unprocessable-work) prevents this: every admitted Request terminates — `build`/`buildsignal` errors retry to `MaxAttempts`, then dead-letter, and the DLQ reconciler forces a conservative terminal `failed`, freeing the slot. Residual risk is operational: a **poison DLQ message** the reconciler can't process loops forever (it runs always-retryable), wedging that Queue until an operator removes it. The gate makes the blast radius the whole Queue, not one Request — monitor and alert on the DLQ.
 
 **Future alternative — time-bounded leases.** To self-heal instead of relying on operator cleanup, `in_flight_count` could become a set of `{owner, expires_at}` leases: the gate counts only unexpired leases, terminal transitions drop the owner's lease, and a leaked lease is reclaimed on expiry — bounding any stall to a `max_validation_ms`. A *list* of leases would also generalize to `max_concurrent > 1`. Deferred; `in_flight_count` plus the fail-closed path is enough for MVP.
 
@@ -196,7 +196,7 @@ Per-queue knobs such as `max_concurrent` live outside this row — see [Per-Queu
 | `accepted` | Ingested, awaiting `process` | no |
 | `processing` | Admitted; strategy recorded; build in flight | no |
 | `superseded` | Skipped by coalescing for a newer head | **yes** |
-| *(owned by record)* recorded-green / recorded-not-green | Phase 1 outcome | **yes** |
+| *(owned by buildsignal)* succeeded / failed / cancelled | Phase 1 build outcome | **yes** |
 | *(later)* building, recording, … | Finer states as downstream stages need them | — |
 
 Transitions use the repo's optimistic-locking pattern: compute `newVersion = oldVersion + 1`, call `RequestStore.Update(ctx, req, oldVersion, newVersion)`, assign `req.Version = newVersion` only on success (see [storage README](../../../../submitqueue/extension/storage/README.md) and [CLAUDE.md](../../../../CLAUDE.md)).

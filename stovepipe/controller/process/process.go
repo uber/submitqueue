@@ -106,7 +106,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			return fmt.Errorf("failed to publish request %s to build: %w", request.ID, err)
 		}
 		return nil
-	case entity.RequestStateSuperseded:
+	case entity.RequestStateSuperseded, entity.RequestStateSucceeded, entity.RequestStateFailed, entity.RequestStateCancelled:
+		// Terminal: a newer head preempted this request, or its build already finished.
+		// A stale redelivery has nothing left to do.
 		return nil
 	case entity.RequestStateAccepted:
 		return c.processAccepted(ctx, request)
