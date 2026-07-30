@@ -23,18 +23,18 @@ import (
 func TestSpeculationPath_ID_Deterministic(t *testing.T) {
 	path := SpeculationPath{
 		Head: "queueA/batch/3",
-		Bets: []DependencyBet{
-			{Batch: "queueA/batch/1", Bet: BetIncluded},
-			{Batch: "queueA/batch/2", Bet: BetExcluded},
+		Dependencies: []PathDependency{
+			{Batch: "queueA/batch/1", Assumption: DependencyAssumptionSucceeds},
+			{Batch: "queueA/batch/2", Assumption: DependencyAssumptionFails},
 		},
 	}
 
 	// Same content produces the same ID across separate value instances.
 	same := SpeculationPath{
 		Head: "queueA/batch/3",
-		Bets: []DependencyBet{
-			{Batch: "queueA/batch/1", Bet: BetIncluded},
-			{Batch: "queueA/batch/2", Bet: BetExcluded},
+		Dependencies: []PathDependency{
+			{Batch: "queueA/batch/1", Assumption: DependencyAssumptionSucceeds},
+			{Batch: "queueA/batch/2", Assumption: DependencyAssumptionFails},
 		},
 	}
 
@@ -45,9 +45,9 @@ func TestSpeculationPath_ID_Deterministic(t *testing.T) {
 func TestSpeculationPath_ID_Sensitivity(t *testing.T) {
 	base := SpeculationPath{
 		Head: "queueA/batch/3",
-		Bets: []DependencyBet{
-			{Batch: "queueA/batch/1", Bet: BetIncluded},
-			{Batch: "queueA/batch/2", Bet: BetIncluded},
+		Dependencies: []PathDependency{
+			{Batch: "queueA/batch/1", Assumption: DependencyAssumptionSucceeds},
+			{Batch: "queueA/batch/2", Assumption: DependencyAssumptionSucceeds},
 		},
 	}
 
@@ -58,17 +58,17 @@ func TestSpeculationPath_ID_Sensitivity(t *testing.T) {
 		{
 			name: "different head",
 			path: SpeculationPath{
-				Head: "queueA/batch/4",
-				Bets: base.Bets,
+				Head:         "queueA/batch/4",
+				Dependencies: base.Dependencies,
 			},
 		},
 		{
-			name: "different bet type",
+			name: "different assumption",
 			path: SpeculationPath{
 				Head: base.Head,
-				Bets: []DependencyBet{
-					{Batch: "queueA/batch/1", Bet: BetIncluded},
-					{Batch: "queueA/batch/2", Bet: BetExcluded},
+				Dependencies: []PathDependency{
+					{Batch: "queueA/batch/1", Assumption: DependencyAssumptionSucceeds},
+					{Batch: "queueA/batch/2", Assumption: DependencyAssumptionFails},
 				},
 			},
 		},
@@ -76,24 +76,24 @@ func TestSpeculationPath_ID_Sensitivity(t *testing.T) {
 			name: "different dependency",
 			path: SpeculationPath{
 				Head: base.Head,
-				Bets: []DependencyBet{
-					{Batch: "queueA/batch/1", Bet: BetIncluded},
-					{Batch: "queueA/batch/9", Bet: BetIncluded},
+				Dependencies: []PathDependency{
+					{Batch: "queueA/batch/1", Assumption: DependencyAssumptionSucceeds},
+					{Batch: "queueA/batch/9", Assumption: DependencyAssumptionSucceeds},
 				},
 			},
 		},
 		{
-			name: "different bet order",
+			name: "different dependency order",
 			path: SpeculationPath{
 				Head: base.Head,
-				Bets: []DependencyBet{
-					{Batch: "queueA/batch/2", Bet: BetIncluded},
-					{Batch: "queueA/batch/1", Bet: BetIncluded},
+				Dependencies: []PathDependency{
+					{Batch: "queueA/batch/2", Assumption: DependencyAssumptionSucceeds},
+					{Batch: "queueA/batch/1", Assumption: DependencyAssumptionSucceeds},
 				},
 			},
 		},
 		{
-			name: "no bets",
+			name: "no dependencies",
 			path: SpeculationPath{
 				Head: base.Head,
 			},
@@ -131,18 +131,18 @@ func TestSpeculationPathStatus_IsTerminal(t *testing.T) {
 
 func TestSpeculationPathEntry_IDDerivesFromPath(t *testing.T) {
 	path := SpeculationPath{
-		Head: "queueA/batch/2",
-		Bets: []DependencyBet{{Batch: "queueA/batch/1", Bet: BetIncluded}},
+		Head:         "queueA/batch/2",
+		Dependencies: []PathDependency{{Batch: "queueA/batch/1", Assumption: DependencyAssumptionSucceeds}},
 	}
 
 	// A well-formed entry keys itself by its path's content hash.
 	entry := SpeculationPathEntry{ID: path.ID(), Path: path}
 	assert.Equal(t, entry.Path.ID(), entry.ID)
 
-	// A different path (same head, different bet) is a different entry.
+	// A different path (same head, different assumption) is a different entry.
 	other := SpeculationPath{
-		Head: path.Head,
-		Bets: []DependencyBet{{Batch: "queueA/batch/1", Bet: BetExcluded}},
+		Head:         path.Head,
+		Dependencies: []PathDependency{{Batch: "queueA/batch/1", Assumption: DependencyAssumptionFails}},
 	}
 	assert.NotEqual(t, entry.ID, other.ID())
 }

@@ -20,57 +20,60 @@ import (
 	"strings"
 )
 
-// DependencyBetType is how a path treats one of its head's dependencies.
-type DependencyBetType string
+// DependencyAssumption is what a path assumes about one dependency's outcome.
+type DependencyAssumption string
 
 const (
-	// BetUnknown is the zero-value sentinel; it is never a valid bet.
-	BetUnknown DependencyBetType = ""
-	// BetIncluded bets the dependency lands: the head is built on top of it, and
-	// the path is invalidated if the dependency ultimately fails.
-	BetIncluded DependencyBetType = "included"
-	// BetExcluded bets the dependency does not land: the head is built without it,
-	// and the path is invalidated if the dependency ultimately lands.
-	BetExcluded DependencyBetType = "excluded"
-	// BetDropped marks a dependency ignored by conflict relaxation: whether it
-	// lands or fails never affects the path — it neither gates the merge nor
-	// invalidates the path.
-	BetDropped DependencyBetType = "dropped"
+	// DependencyAssumptionUnknown is the zero-value sentinel; it is never a
+	// valid assumption.
+	DependencyAssumptionUnknown DependencyAssumption = ""
+	// DependencyAssumptionSucceeds assumes the dependency succeeds: the head is
+	// built on top of it, and the path is refuted if it does not.
+	DependencyAssumptionSucceeds DependencyAssumption = "succeeds"
+	// DependencyAssumptionFails assumes the dependency does not succeed —
+	// whether it fails or is cancelled. The head is built without it, and the
+	// path is refuted if it succeeds after all.
+	DependencyAssumptionFails DependencyAssumption = "fails"
+	// DependencyAssumptionIgnored means the path makes no assumption about this
+	// dependency. Its outcome neither gates the merge nor refutes the path.
+	DependencyAssumptionIgnored DependencyAssumption = "ignored"
 )
 
-// DependencyBet is a path's bet on one dependency of its head.
-type DependencyBet struct {
-	// Batch is the dependency batch ID this bet is about.
+// PathDependency is one dependency of a path's head, with what the path assumes
+// about it.
+type PathDependency struct {
+	// Batch is the dependency batch ID.
 	Batch string
-	// Bet is how the path treats the dependency (included, excluded, or dropped).
-	Bet DependencyBetType
+	// Assumption is what the path assumes about that dependency's outcome.
+	Assumption DependencyAssumption
 }
 
-// SpeculationPath is one guess at how a batch's dependencies resolve: a head
-// batch plus a bet on each of its dependencies. Every dependency of the head
-// appears exactly once, in queue order, so the path is self-describing — its
-// full meaning can be read without consulting any external relaxed set or
-// dependency list.
+// SpeculationPath is one set of assumptions about how a batch's dependencies
+// resolve: a head batch plus an assumption about each of its dependencies.
+// Every dependency of the head appears exactly once, in queue order, so the
+// path is self-describing — its full meaning can be read without consulting any
+// external relaxed set or dependency list.
 type SpeculationPath struct {
 	// Head is the ID of the batch being built along this path.
 	Head string
-	// Bets is one bet per dependency of Head, in queue order.
-	Bets []DependencyBet
+	// Dependencies is one entry per dependency of Head, in queue order.
+	Dependencies []PathDependency
 }
 
 // ID returns the path's stable identity: a hex-encoded SHA-256 over the head
-// and its bets in order. Two paths with the same head and the same ordered
-// bets share an ID; any difference in head, dependency, or bet yields a
-// different ID. The hash is computed on every call and never cached, so a
-// caller that compares IDs repeatedly should keep the result.
+// and its dependencies in order. Two paths with the same head and the same
+// ordered assumptions share an ID; any difference in head, dependency, or
+// assumption yields a different ID. The hash is computed on every call and
+// never cached, so a caller that compares IDs repeatedly should keep the
+// result.
 func (p SpeculationPath) ID() string {
 	var b strings.Builder
 	b.WriteString(p.Head)
-	for _, bet := range p.Bets {
+	for _, dep := range p.Dependencies {
 		b.WriteByte('\n')
-		b.WriteString(bet.Batch)
+		b.WriteString(dep.Batch)
 		b.WriteByte('=')
-		b.WriteString(string(bet.Bet))
+		b.WriteString(string(dep.Assumption))
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:])
@@ -124,11 +127,11 @@ func (s SpeculationPathStatus) IsTerminal() bool {
 // is meaningful only within a single speculation run).
 type SpeculationPathEntry struct {
 	// ID is the primary key: the hash of the path's content (head plus its
-	// bets). It always equals Path.ID() — it is materialized here, rather than
-	// recomputed from Path, because a stored record carries its own key: lookups
-	// and comparisons read it without rehashing the path.
+	// assumptions). It always equals Path.ID() — it is materialized here, rather
+	// than recomputed from Path, because a stored record carries its own key:
+	// lookups and comparisons read it without rehashing the path.
 	ID string
-	// Path is the head plus one bet per dependency, in queue order.
+	// Path is the head plus one assumption per dependency, in queue order.
 	Path SpeculationPath
 	// Status is the lifecycle status of the current build attempt.
 	Status SpeculationPathStatus
@@ -149,8 +152,8 @@ type SpeculationPathEntry struct {
 // SpeculationPathSet is one head's chosen speculation paths under a single
 // version. It holds both live paths and recently finished ones — finished
 // entries linger briefly so that a re-run cannot collide with an old build.
-// Every path in the set shares the same head and bets over the same ordered
-// dependency list.
+// Every path in the set shares the same head and assumptions over the same
+// ordered dependency list.
 type SpeculationPathSet struct {
 	// Head is the primary key: the ID of the head batch these paths speculate
 	// on. Every path in the set carries this same head.
@@ -179,7 +182,8 @@ const (
 // Speculation is one proposed action on one path. A path left as-is has no
 // Speculation.
 type Speculation struct {
-	// Path is the path the action applies to; its ID hashes the head and its bets.
+	// Path is the path the action applies to; its ID hashes the head and its
+	// assumptions.
 	Path SpeculationPath
 	// Action is the proposed action (build or cancel).
 	Action PathAction
@@ -189,8 +193,11 @@ type Speculation struct {
 // within a single speculation run. The ranking score orders candidates for that
 // run only and is never stored — rankings go stale across runs.
 type CandidatePath struct {
-	// Path is the candidate: a head plus one bet per dependency.
+	// Path is the candidate: a head plus one assumption per dependency.
 	Path SpeculationPath
-	// RankingScore is the ordering score assigned this run; higher sorts first.
+	// RankingScore is the score the Generator ranked this candidate by. Higher
+	// sorts first. The scale is the Generator's own — consumers order by it but
+	// do not interpret it — and it is meaningful only within the run that
+	// produced it, which is why it is never stored.
 	RankingScore float64
 }

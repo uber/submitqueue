@@ -61,8 +61,8 @@ type Config struct {
 }
 
 // Factory builds the Speculator for a queue. Implementations are provided by
-// integrators (and tests) and inject whatever they need — budget, depth bound,
-// clock, and any extra data — at construction.
+// integrators (and tests) and inject whatever they need — budget, clock, and
+// any extra data — at construction.
 type Factory interface {
 	// For returns the Speculator for the given queue.
 	For(cfg Config) (Speculator, error)
