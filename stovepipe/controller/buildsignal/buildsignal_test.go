@@ -412,6 +412,29 @@ func TestProcess(t *testing.T) {
 	}
 }
 
+// TestPublishRecordCarriesRequestID pins the record contract: the payload and the
+// message id are the request id, not the build id, so record never has to reach a
+// Build. The message id is stable so a redelivery dedups instead of enqueuing twice.
+func TestPublishRecordCarriesRequestID(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+
+	var got entityqueue.Message
+	m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+			got = msg
+			return nil
+		})
+
+	require.NoError(t, c.publishRecord(context.Background(), testID))
+
+	var payload stovepipemq.Record
+	require.NoError(t, stovepipemq.Unmarshal(got.Payload, &payload))
+	assert.Equal(t, testID, payload.Id)
+	assert.Equal(t, testID, got.ID)
+	assert.Equal(t, testID, got.PartitionKey)
+}
+
 // TestPublishBuildSignalAdvancesPollGeneration is the regression test for the poll
 // loop stalling. The queue dedups on (topic, partition_key, id) and the delivery that
 // scheduled a re-poll is still un-acked when the re-poll is published, so a reused

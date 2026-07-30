@@ -183,4 +183,10 @@ func (s *StovepipeE2ESuite) TestIngest_SlowBuild_PollsToCompletion() {
 
 	// Getting here at all means the reschedule produced a deliverable message.
 	s.awaitBuildStatus(id, "succeeded")
+
+	// buildsignal projects the terminal build status onto the request and, in the
+	// same step, releases the build slot that reopens the process gate.
+	s.awaitRequestState(id, "succeeded")
+	assert.Equal(s.T(), int32(0), s.inFlightCount(queue),
+		"a terminal build should release the queue's build slot")
 }

@@ -42,9 +42,10 @@ const (
 	// partition.
 	TopicKeyBuildSignal TopicKey = "buildsignal"
 
-	// TopicKeyRecord carries a build's terminal status from buildsignal to the
-	// record stage. The buildsignal controller publishes a Record (the build
-	// id) here once, and only once, a build reaches a terminal status;
-	// non-terminal polls never publish here. Partitioned by request id.
+	// TopicKeyRecord carries a request whose build reached a terminal status from
+	// buildsignal to the record stage. The buildsignal controller publishes a
+	// Record (the request id) here once, and only once, a build reaches a
+	// terminal status; non-terminal polls never publish here. Partitioned by
+	// request id.
 	TopicKeyRecord TopicKey = "record"
 )

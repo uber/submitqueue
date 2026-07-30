@@ -16,7 +16,7 @@
 // BuildSignal messages (a build id), polls the build-runner until the build
 // reaches a terminal status, persists that status, and — once terminal —
 // releases the queue's build slot, projects the outcome onto the request, and
-// publishes the build id to record. See
+// publishes the request id to record. See
 // doc/rfc/stovepipe/steps/buildsignal.md.
 package buildsignal
 
@@ -57,7 +57,7 @@ var (
 // Controller consumes BuildSignal messages, polls the build-runner toward a
 // terminal status, persists the result, and either reschedules itself or
 // releases the queue's build slot, projects the outcome onto the request, and
-// publishes the build id to record. Implements consumer.Controller.
+// publishes the request id to record. Implements consumer.Controller.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
@@ -98,8 +98,8 @@ func NewController(
 // Process reloads the build referenced by the delivery, polls its runner for
 // the latest status, persists a real transition, and either reschedules a
 // poll or, once terminal, releases the queue's build slot, projects the
-// outcome onto the request, and publishes the build id to record. Returns nil
-// to ack (success) or an error to nack (retry) / reject (DLQ).
+// outcome onto the request, and publishes the request id to record. Returns
+// nil to ack (success) or an error to nack (retry) / reject (DLQ).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
@@ -157,8 +157,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		if err := c.finishRequest(ctx, &request, effective); err != nil {
 			return err
 		}
-		if err := c.publishRecord(ctx, build.ID, request.ID); err != nil {
-			return fmt.Errorf("failed to publish record for build %s: %w", build.ID, err)
+		if err := c.publishRecord(ctx, request.ID); err != nil {
+			return fmt.Errorf("failed to publish record for request %s: %w", request.ID, err)
 		}
 		c.logger.Infow("build reached terminal status",
 			"build_id", build.ID,
@@ -336,14 +336,16 @@ func pollDelay(status entity.BuildStatus) int64 {
 	}
 }
 
-// publishRecord publishes buildID to the record stage, partitioned by
-// requestID.
-func (c *Controller) publishRecord(ctx context.Context, buildID, requestID string) error {
-	payload, err := stovepipemq.Marshal(&stovepipemq.Record{Id: buildID})
+// publishRecord publishes requestID to the record stage, partitioned by request
+// id. The message id is the request id too, so a redelivery republishing the
+// same terminal signal dedups into the original message rather than enqueuing a
+// second one.
+func (c *Controller) publishRecord(ctx context.Context, requestID string) error {
+	payload, err := stovepipemq.Marshal(&stovepipemq.Record{Id: requestID})
 	if err != nil {
 		return fmt.Errorf("failed to serialize record: %w", err)
 	}
-	msg := entityqueue.NewMessage(buildID, payload, requestID, nil)
+	msg := entityqueue.NewMessage(requestID, payload, requestID, nil)
 	return c.publish(ctx, stovepipemq.TopicKeyRecord, msg, 0)
 }
 

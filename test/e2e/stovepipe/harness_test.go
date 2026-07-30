@@ -131,6 +131,31 @@ func (s *StovepipeE2ESuite) assertIngestPersisted(queue, id string) {
 	assert.Equal(t, 1, s.publishedMessageCount(id), "should have published one process message for %s", id)
 }
 
+// awaitRequestState blocks until the request row reaches want. buildsignal projects
+// the build's terminal status onto the request, so this is the durable, black-box
+// signal that the whole ingest→process→build→buildsignal chain converged.
+func (s *StovepipeE2ESuite) awaitRequestState(id, want string) {
+	pollUntil(processPollInterval, func() bool {
+		var state string
+		if err := s.db.QueryRow("SELECT state FROM request WHERE id = ?", id).Scan(&state); err != nil {
+			s.log.Logf("request %s state not readable yet: %v", id, err)
+			return false
+		}
+		s.log.Logf("request %s state = %q (want %q)", id, state, want)
+		return state == want
+	})
+}
+
+// inFlightCount returns the queue row's in_flight_count, the process concurrency
+// gate's counter.
+func (s *StovepipeE2ESuite) inFlightCount(queue string) int32 {
+	t := s.T()
+	var count int32
+	require.NoError(t, s.db.QueryRow("SELECT in_flight_count FROM queue WHERE name = ?", queue).Scan(&count),
+		"failed to read in_flight_count for queue %s", queue)
+	return count
+}
+
 // awaitBuildStatus blocks until the build row for a request reaches want. The
 // pipeline runs inside the stovepipe-service container, so the build's own status
 // column is the durable, black-box signal that the poll loop converged: buildsignal
