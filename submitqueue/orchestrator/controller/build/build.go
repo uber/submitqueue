@@ -141,7 +141,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	// Persist the initial Build snapshot so the buildsignal poll loop has a
-	// row to UpdateStatus against. ErrAlreadyExists is benign — a redelivery
+	// row to Update against. ErrAlreadyExists is benign — a redelivery
 	// of this message after a previous successful Create.
 	if err := c.store.GetBuildStore().Create(ctx, build); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)

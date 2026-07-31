@@ -134,11 +134,13 @@ func TestController_Process_Terminal(t *testing.T) {
 			h := newTestHarness(t, ctrl)
 
 			build := entity.Build{ID: "b-1", BatchID: "batch-1", Status: entity.BuildStatusAccepted}
+			updatedBuild := build
+			updatedBuild.Status = tt.status
 
 			h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(build, nil)
 			h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: build.ID}).Return(tt.status, entity.BuildMetadata{}, nil)
 			h.batchStore.EXPECT().Get(gomock.Any(), build.BatchID).Return(entity.Batch{ID: build.BatchID, State: entity.BatchStateSpeculating}, nil)
-			h.buildStore.EXPECT().UpdateStatus(gomock.Any(), build.ID, tt.status).Return(nil)
+			h.buildStore.EXPECT().Update(gomock.Any(), updatedBuild).Return(nil)
 			h.speculatePub.EXPECT().
 				Publish(gomock.Any(), "speculate", gomock.AssignableToTypeOf(entityqueue.Message{})).
 				DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
@@ -174,11 +176,13 @@ func TestController_Process_NonTerminal(t *testing.T) {
 			h := newTestHarness(t, ctrl)
 
 			build := entity.Build{ID: "b-2", BatchID: "batch-2", Status: entity.BuildStatusAccepted}
+			updatedBuild := build
+			updatedBuild.Status = tt.status
 
 			h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(build, nil)
 			h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: build.ID}).Return(tt.status, entity.BuildMetadata{}, nil)
 			h.batchStore.EXPECT().Get(gomock.Any(), build.BatchID).Return(entity.Batch{ID: build.BatchID, State: entity.BatchStateSpeculating}, nil)
-			h.buildStore.EXPECT().UpdateStatus(gomock.Any(), build.ID, tt.status).Return(nil)
+			h.buildStore.EXPECT().Update(gomock.Any(), updatedBuild).Return(nil)
 			h.speculatePub.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).Return(nil).Times(1)
 			h.signalPub.EXPECT().
 				PublishAfter(gomock.Any(), "buildsignal", gomock.AssignableToTypeOf(entityqueue.Message{}), tt.wantDelayMs).
@@ -205,7 +209,7 @@ func TestController_Process_StatusError(t *testing.T) {
 	h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(build, nil)
 	h.batchStore.EXPECT().Get(gomock.Any(), build.BatchID).Return(entity.Batch{ID: build.BatchID, State: entity.BatchStateSpeculating}, nil)
 	h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: build.ID}).Return(entity.BuildStatusUnknown, nil, errors.New("provider down"))
-	// No UpdateStatus, no Publish, no PublishAfter expected.
+	// No Update, no Publish, no PublishAfter expected.
 
 	err := h.controller.Process(context.Background(), buildDelivery(t, ctrl, build))
 	require.Error(t, err)
@@ -213,16 +217,18 @@ func TestController_Process_StatusError(t *testing.T) {
 	assert.False(t, errs.IsRetryable(err))
 }
 
-func TestController_Process_UpdateStatusError(t *testing.T) {
+func TestController_Process_UpdateError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	h := newTestHarness(t, ctrl)
 
 	build := entity.Build{ID: "b-4", BatchID: "batch-4", Status: entity.BuildStatusAccepted}
+	updatedBuild := build
+	updatedBuild.Status = entity.BuildStatusRunning
 
 	h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(build, nil)
 	h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: build.ID}).Return(entity.BuildStatusRunning, nil, nil)
 	h.batchStore.EXPECT().Get(gomock.Any(), build.BatchID).Return(entity.Batch{ID: build.BatchID, State: entity.BatchStateSpeculating}, nil)
-	h.buildStore.EXPECT().UpdateStatus(gomock.Any(), build.ID, entity.BuildStatusRunning).
+	h.buildStore.EXPECT().Update(gomock.Any(), updatedBuild).
 		Return(errors.New("db unreachable"))
 	// No Publish / PublishAfter expected after the store failure.
 
@@ -240,11 +246,13 @@ func TestController_Process_RepublishError(t *testing.T) {
 	h := newTestHarness(t, ctrl)
 
 	build := entity.Build{ID: "b-5", BatchID: "batch-5", Status: entity.BuildStatusAccepted}
+	updatedBuild := build
+	updatedBuild.Status = entity.BuildStatusRunning
 
 	h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(build, nil)
 	h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: build.ID}).Return(entity.BuildStatusRunning, entity.BuildMetadata{}, nil)
 	h.batchStore.EXPECT().Get(gomock.Any(), build.BatchID).Return(entity.Batch{ID: build.BatchID, State: entity.BatchStateSpeculating}, nil)
-	h.buildStore.EXPECT().UpdateStatus(gomock.Any(), build.ID, entity.BuildStatusRunning).Return(nil)
+	h.buildStore.EXPECT().Update(gomock.Any(), updatedBuild).Return(nil)
 	h.speculatePub.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).Return(nil).Times(1)
 	h.signalPub.EXPECT().
 		PublishAfter(gomock.Any(), "buildsignal", gomock.Any(), PollDelayRunningMs).
@@ -264,7 +272,7 @@ func TestController_Process_GetError(t *testing.T) {
 	build := entity.Build{ID: "b-6", BatchID: "batch-6", Status: entity.BuildStatusAccepted}
 
 	h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(entity.Build{}, errors.New("db unreachable"))
-	// No Status / UpdateStatus / Publish expected once the load fails.
+	// No Status / Update / Publish expected once the load fails.
 
 	err := h.controller.Process(context.Background(), buildDelivery(t, ctrl, build))
 	require.Error(t, err)
@@ -306,7 +314,7 @@ func TestController_Process_HaltedShortCircuit(t *testing.T) {
 			h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(build, nil)
 			h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: build.ID}).Return(entity.BuildStatusRunning, entity.BuildMetadata{}, nil)
 			h.batchStore.EXPECT().Get(gomock.Any(), build.BatchID).Return(entity.Batch{ID: build.BatchID, State: state}, nil)
-			// Halted: no UpdateStatus, no speculate Publish, no buildsignal
+			// Halted: no Update, no speculate Publish, no buildsignal
 			// PublishAfter. The harness publishers have no expectations, so any
 			// publish fails the test.
 

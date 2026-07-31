@@ -175,9 +175,12 @@ func TestBuildStore_Create(t *testing.T) {
 	}
 }
 
-func TestBuildStore_UpdateStatus(t *testing.T) {
-	const id = "bk-1001"
-	const newStatus = entity.BuildStatusSucceeded
+func TestBuildStore_Update(t *testing.T) {
+	build := entity.Build{
+		ID:      "bk-1001",
+		BatchID: "monorepo/batch/2",
+		Status:  entity.BuildStatusSucceeded,
+	}
 
 	tests := []struct {
 		name      string
@@ -189,7 +192,7 @@ func TestBuildStore_UpdateStatus(t *testing.T) {
 			name: "success",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE build").
-					WithArgs(newStatus, id).
+					WithArgs(build.BatchID, build.Status, build.ID).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -197,7 +200,7 @@ func TestBuildStore_UpdateStatus(t *testing.T) {
 			name: "not found",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE build").
-					WithArgs(newStatus, id).
+					WithArgs(build.BatchID, build.Status, build.ID).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
 			wantErr:   true,
@@ -207,7 +210,7 @@ func TestBuildStore_UpdateStatus(t *testing.T) {
 			name: "exec error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE build").
-					WithArgs(newStatus, id).
+					WithArgs(build.BatchID, build.Status, build.ID).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,
@@ -216,7 +219,7 @@ func TestBuildStore_UpdateStatus(t *testing.T) {
 			name: "rows affected error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE build").
-					WithArgs(newStatus, id).
+					WithArgs(build.BatchID, build.Status, build.ID).
 					WillReturnResult(sqlmock.NewErrorResult(fmt.Errorf("driver error")))
 			},
 			wantErr: true,
@@ -230,7 +233,7 @@ func TestBuildStore_UpdateStatus(t *testing.T) {
 
 			tt.setup(mock)
 
-			err := store.UpdateStatus(context.Background(), id, newStatus)
+			err := store.Update(context.Background(), build)
 			if tt.wantErr {
 				require.Error(t, err)
 				if tt.wantErrIs != nil {

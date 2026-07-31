@@ -265,7 +265,7 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 // Order matters for correctness:
 //
 //  1. Cancel the in-flight Build entity (build.ID == batch.ID; one Get + one
-//     UpdateStatus covers all builds for this batch). A future external CI
+//     Update covers all builds for this batch). A future external CI
 //     integration hooks in here. Idempotent: tolerate ErrNotFound (no build
 //     was scheduled), skip if already terminal.
 //
@@ -332,7 +332,7 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 // This is the hook point for a future external CI integration: today the
 // system has no external runner, so the local state flip is the complete
 // cancellation. Once a runner exists, it must be invoked here before the
-// local UpdateStatus.
+// local Update.
 func (c *Controller) cancelBuild(ctx context.Context, batch entity.Batch) error {
 	build, err := c.store.GetBuildStore().Get(ctx, batch.ID)
 	if err != nil {
@@ -349,7 +349,9 @@ func (c *Controller) cancelBuild(ctx context.Context, batch entity.Batch) error 
 		return nil
 	}
 
-	if err := c.store.GetBuildStore().UpdateStatus(ctx, batch.ID, entity.BuildStatusCancelled); err != nil {
+	updatedBuild := build
+	updatedBuild.Status = entity.BuildStatusCancelled
+	if err := c.store.GetBuildStore().Update(ctx, updatedBuild); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to cancel build for batch %s: %w", batch.ID, err)
 	}

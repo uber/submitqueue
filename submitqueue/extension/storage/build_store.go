@@ -31,6 +31,6 @@ type BuildStore interface {
 	// Returns ErrAlreadyExists if a build with the same ID already exists.
 	Create(ctx context.Context, build entity.Build) error
 
-	// UpdateStatus updates the status of a build.
-	UpdateStatus(ctx context.Context, id string, newStatus entity.BuildStatus) error
+	// Update replaces all non-key fields of a build.
+	Update(ctx context.Context, build entity.Build) error
 }
