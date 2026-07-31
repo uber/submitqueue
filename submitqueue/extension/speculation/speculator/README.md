@@ -6,7 +6,7 @@ The `speculator` package defines the one speculation extension the speculate con
 
 `Cancel` is a `Speculator`'s only cancel power — preempting an in-flight path to free budget for a better candidate. Correctness cancels (refuting a path whose bet a resolved dependency broke, and batch cancellation) belong to the controller and are not routed through the extension.
 
-Like the other extensions, a `Speculator` is selected **per queue** by the wiring layer through the `Config` (queue name) and `Factory` interface. Budget, depth bound, clock, and any extra data are injected at construction by the integrator, not carried on the contract.
+Like the other extensions, a `Speculator` is selected **per queue** by the wiring layer through the `Config` (queue name) and `Factory` interface. Budget, clock, and any extra data are injected at construction by the integrator, not carried on the contract.
 
 ## Adding a backend
 
