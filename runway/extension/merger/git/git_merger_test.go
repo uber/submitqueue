@@ -497,6 +497,85 @@ func TestMerge_Merge_AlreadyAncestor(t *testing.T) {
 
 // --- PROMOTE ---
 
+func TestMerge_Promote_MultiCommitChange(t *testing.T) {
+	// PROMOTE moves the ref to the named commit, so a change of any size
+	// arrives whole by construction — its ancestry comes along with it.
+	f := setupGitFixture(t)
+	head := f.pushMultiCommitPR(t, "feature/ff",
+		commitSpec{"a.txt", "a\n", "add a"},
+		commitSpec{"b.txt", "b\n", "add b"},
+		commitSpec{"c.txt", "c\n", "add c"},
+	)
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.Merge(context.Background(), req("b", stepOf(mergestrategypb.Strategy_PROMOTE, "s1", uri(head))))
+	require.NoError(t, err)
+	assert.Equal(t, head, f.remoteHEAD(t), "promote fast-forwards to the exact named commit")
+	assert.Equal(t, "a\n", f.remoteFile(t, "a.txt"))
+	assert.Equal(t, "c\n", f.remoteFile(t, "c.txt"))
+	require.Len(t, res.GetSteps(), 1)
+	require.Len(t, res.GetSteps()[0].GetOutputs(), 1)
+	assert.Equal(t, head, res.GetSteps()[0].GetOutputs()[0].GetId())
+}
+
+func TestMerge_Promote_UnavailableCommitIsInvalidNotRetryable(t *testing.T) {
+	// promote does not run through tryApply, so it needs its own availability
+	// check; otherwise the containment queries fail with a plain error and the
+	// consumer retries a request that can never succeed.
+	f := setupGitFixture(t)
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+
+	_, err := m.Merge(context.Background(), req("b", stepOf(mergestrategypb.Strategy_PROMOTE, "s1", uri(fakeSHA))))
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, merger.ErrInvalidRequest))
+	assert.False(t, errors.Is(err, merger.ErrConflict))
+}
+
+func TestMerge_Promote_FastForward(t *testing.T) {
+	f := setupGitFixture(t)
+	ffSHA := f.pushPRCommit(t, "feature/ff", "hello.txt", "hello\nearth\n", "ff")
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.Merge(context.Background(), req("b", stepOf(mergestrategypb.Strategy_PROMOTE, "s1", uri(ffSHA))))
+	require.NoError(t, err)
+	assert.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
+	require.Len(t, res.GetSteps(), 1)
+	require.Len(t, res.GetSteps()[0].GetOutputs(), 1)
+	assert.Equal(t, ffSHA, res.GetSteps()[0].GetOutputs()[0].GetId(), "promote reports the exact named SHA")
+	assert.Equal(t, ffSHA, f.remoteHEAD(t))
+}
+
+func TestMerge_Promote_AlreadyContained(t *testing.T) {
+	f := setupGitFixture(t)
+	seedSHA := f.remoteSHA(t, "main")
+	advSHA := f.pushPRCommit(t, "feature/adv", "adv.txt", "adv\n", "adv")
+	f.advanceMain(t, advSHA)
+	mainBefore := f.remoteHEAD(t)
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.Merge(context.Background(), req("b", stepOf(mergestrategypb.Strategy_PROMOTE, "s1", uri(seedSHA))))
+	require.NoError(t, err)
+	assert.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
+	assert.Equal(t, mainBefore, f.remoteHEAD(t), "promoting an already-contained SHA does not move the tip")
+}
+
+func TestMerge_Promote_Divergent(t *testing.T) {
+	f := setupGitFixture(t)
+	seedSHA := f.remoteSHA(t, "main")
+	divSHA := f.pushPRCommitFrom(t, seedSHA, "feature/div", "div.txt", "div\n", "div")
+	otherSHA := f.pushPRCommitFrom(t, seedSHA, "feature/other", "other.txt", "other\n", "other")
+	f.advanceMain(t, otherSHA)
+	mainBefore := f.remoteHEAD(t)
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	_, err := m.Merge(context.Background(), req("b", stepOf(mergestrategypb.Strategy_PROMOTE, "s1", uri(divSHA))))
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, merger.ErrConflict))
+	assert.Equal(t, mainBefore, f.remoteHEAD(t))
+}
+
+// --- DEFAULT ---
+
 func TestMerge_Default_ResolvesToRebase(t *testing.T) {
 	f := setupGitFixture(t)
 	sha := f.pushPRCommit(t, "feature/a", "hello.txt", "hello\nearth\n", "tweak hello")
@@ -966,8 +1045,15 @@ func TestMerge_InvalidRequests(t *testing.T) {
 			req:  req("b"),
 		},
 		{
-			name: "unsupported strategy",
-			req:  req("b", stepOf(mergestrategypb.Strategy_PROMOTE, "s1", uri(fakeSHA))),
+			name: "promote with two steps",
+			req: req("b",
+				stepOf(mergestrategypb.Strategy_PROMOTE, "s1", uri(fakeSHA)),
+				stepOf(mergestrategypb.Strategy_PROMOTE, "s2", uri(fakeSHA)),
+			),
+		},
+		{
+			name: "promote step with two URIs",
+			req:  req("b", stepOf(mergestrategypb.Strategy_PROMOTE, "s1", uri(fakeSHA), uri(fakeSHA))),
 		},
 		{
 			name: "malformed URI",
@@ -1022,6 +1108,35 @@ func TestCheckMergeability_Conflict(t *testing.T) {
 
 	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
 	_, err := m.CheckMergeability(context.Background(), req("b", stepOf(mergestrategypb.Strategy_REBASE, "s1", uri(conflictingSHA))))
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, merger.ErrConflict))
+	assert.Equal(t, mainBefore, f.remoteHEAD(t))
+}
+
+func TestCheckMergeability_PromoteFastForward(t *testing.T) {
+	f := setupGitFixture(t)
+	ffSHA := f.pushPRCommit(t, "feature/ff", "hello.txt", "hello\nearth\n", "ff")
+	mainBefore := f.remoteHEAD(t)
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.CheckMergeability(context.Background(), req("b", stepOf(mergestrategypb.Strategy_PROMOTE, "s1", uri(ffSHA))))
+	require.NoError(t, err)
+	assert.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
+	require.Len(t, res.GetSteps(), 1)
+	assert.Empty(t, res.GetSteps()[0].GetOutputs())
+	assert.Equal(t, mainBefore, f.remoteHEAD(t))
+}
+
+func TestCheckMergeability_PromoteDivergent(t *testing.T) {
+	f := setupGitFixture(t)
+	seedSHA := f.remoteSHA(t, "main")
+	divSHA := f.pushPRCommitFrom(t, seedSHA, "feature/div", "div.txt", "div\n", "div")
+	otherSHA := f.pushPRCommitFrom(t, seedSHA, "feature/other", "other.txt", "other\n", "other")
+	f.advanceMain(t, otherSHA)
+	mainBefore := f.remoteHEAD(t)
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	_, err := m.CheckMergeability(context.Background(), req("b", stepOf(mergestrategypb.Strategy_PROMOTE, "s1", uri(divSHA))))
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, merger.ErrConflict))
 	assert.Equal(t, mainBefore, f.remoteHEAD(t))

@@ -40,9 +40,10 @@ Fetching by SHA guarantees the merger applies exactly the commit a URI names —
 | `REBASE` | Cherry-picks every commit each change introduces onto the tip, in order. A commit already present on the target is skipped (no output), as is one that was empty to begin with. | one revision per newly-created commit |
 | `SQUASH_REBASE` | Applies each change like `REBASE`, then collapses the commits it produced into a single commit (squash unit = the change, not the step). | one revision per change, or none for a change already present |
 | `MERGE` | Creates a `--no-ff` merge commit per change, keeping the change's original commits reachable through second-parent history. A commit already contained in the tip is skipped. | the merge-commit revision(s) |
+| `PROMOTE` | Fast-forwards the target to an already-existing commit — no content transform, no new revision. Must be the entire request (one step, one change, one URI). | the exact named revision |
 | `DEFAULT` | Resolved to the instance's configured default strategy before any step runs. | per the resolved strategy |
 
-`PROMOTE` is defined by the wire contract but not yet applied here — a step naming it is rejected as an invalid request.
+`PROMOTE` is exclusive because a pre-existing commit cannot descend from commits an earlier transforming step produced, and it advances the ref to an exact SHA rather than to the locally-built HEAD. Mixing it with any other step is rejected as an invalid request.
 
 ## Importing an unrelated history
 
@@ -58,11 +59,11 @@ Redelivery is safe: once imported, the source head is contained in the target, s
 
 `Merge` commits and reports outputs; `CheckMergeability` runs the identical apply but never pushes, then resets the checkout to discard the local commits and reports empty outputs. A multi-step check commits its intermediate steps locally so it sees the same conflict surface a real merge would.
 
-For a committing merge nothing reaches the remote until the final push. A step that fails to apply aborts its in-progress git operation and returns without pushing. If the push fails because the remote tip moved between reset and push, the whole reset/apply/push cycle is retried up to a bounded number of attempts; detection re-fetches the tip and compares it to the SHA the cycle was based on.
+For a committing merge nothing reaches the remote until the final push (a `PROMOTE` is itself a single atomic fast-forward ref update). A step that fails to apply aborts its in-progress git operation and returns without pushing. If the push fails because the remote tip moved between reset and push, the whole reset/apply/push cycle is retried up to a bounded number of attempts; detection re-fetches the tip and compares it to the SHA the cycle was based on.
 
 ## Failure classification
 
-A merge conflict surfaces as `merger.ErrConflict`. An unusable request surfaces as `merger.ErrInvalidRequest`: an unsupported strategy or URI scheme, a malformed URI, a commit a reachable remote cannot supply, a change whose head has moved on, or a change sharing no history with the target under a picking strategy. Both are terminal — the controller publishes a `FAILED` result rather than retrying. Everything else (network/auth/push faults, and an unreachable remote) is returned as a plain error for the consumer to retry.
+A merge conflict surfaces as `merger.ErrConflict`. An unusable request surfaces as `merger.ErrInvalidRequest`: an unsupported strategy or URI scheme, a malformed URI, an invalid `PROMOTE` composition, a commit a reachable remote cannot supply, a change whose head has moved on, or a change sharing no history with the target under a picking strategy. Both are terminal — the controller publishes a `FAILED` result rather than retrying. Everything else (network/auth/push faults, and an unreachable remote) is returned as a plain error for the consumer to retry.
 
 The distinction between the last two matters operationally: a commit that is missing while the remote answers is a property of the request, whereas a remote that will not answer is a property of the moment.
 

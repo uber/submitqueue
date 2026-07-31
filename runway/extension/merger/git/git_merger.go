@@ -23,14 +23,16 @@
 //     single commit (squash unit = the step).
 //   - MERGE:         create a --no-ff merge commit per URI, preserving the
 //     original commit hashes in second-parent history.
+//   - PROMOTE:       fast-forward the target to an already-existing commit with
+//     no content transform. PROMOTE must be the entire request (one step, one
+//     change, one URI) because a pre-existing commit cannot descend from
+//     commits produced by an earlier transforming step.
 //   - DEFAULT:       resolved to the instance's configured DefaultStrategy
 //     before any step runs.
 //
-// PROMOTE is not implemented yet; a step naming it is rejected as
-// merger.ErrInvalidRequest until its apply path lands.
-//
 // Atomicity: for a committing merge nothing reaches the remote until the final
-// push. A step that fails to apply aborts the in-progress git operation and
+// push (PROMOTE excepted, which is itself a single atomic fast-forward ref
+// update). A step that fails to apply aborts the in-progress git operation and
 // returns without pushing.
 //
 // Contention: if the push fails because the remote tip moved between reset and
@@ -116,7 +118,7 @@ type Params struct {
 	// Target is the destination branch ref on the remote (e.g. "main").
 	Target string
 	// DefaultStrategy resolves a step whose strategy is DEFAULT. Must be a
-	// concrete strategy (REBASE, SQUASH_REBASE, or MERGE).
+	// concrete strategy (REBASE, SQUASH_REBASE, MERGE, or PROMOTE).
 	DefaultStrategy mergestrategypb.Strategy
 	// Runtime is the pinned Git runtime used for every invocation.
 	Runtime GitRuntime
@@ -196,7 +198,7 @@ func NewMerger(params Params) (merger.Merger, error) {
 		return nil, err
 	}
 	if !isConcreteStrategy(params.DefaultStrategy) {
-		return nil, fmt.Errorf("default strategy must be concrete (REBASE, SQUASH_REBASE, or MERGE), got %v", params.DefaultStrategy)
+		return nil, fmt.Errorf("default strategy must be concrete (REBASE, SQUASH_REBASE, MERGE, or PROMOTE), got %v", params.DefaultStrategy)
 	}
 	maxAttempts := params.MaxPushAttempts
 	if maxAttempts <= 0 {
@@ -284,18 +286,25 @@ func (m *gitMerger) process(ctx context.Context, req *runwaymq.MergeRequest, com
 		"commit", commit,
 	)
 
+	// PROMOTE is exclusive: validated to be the entire request (one step).
+	if steps[0].strategy == mergestrategypb.Strategy_PROMOTE {
+		return m.promote(ctx, req, steps[0], commit)
+	}
 	return m.applyTransforming(ctx, req, steps, commit)
 }
 
-// resolveAndValidate normalizes DEFAULT strategies to the configured default
-// and resolves every change URI, once, for the apply paths to work from. All failures here are terminal (merger.ErrInvalidRequest): retrying never
-// succeeds, so the controller publishes a FAILED result rather than nacking.
+// resolveAndValidate normalizes DEFAULT strategies to the configured default,
+// resolves every change URI once for the apply paths to work from, and enforces
+// the PROMOTE composition rule. All failures here are terminal
+// (merger.ErrInvalidRequest): retrying never succeeds, so the controller
+// publishes a FAILED result rather than nacking.
 func (m *gitMerger) resolveAndValidate(req *runwaymq.MergeRequest) ([]resolvedStep, error) {
 	if len(req.GetSteps()) == 0 {
 		return nil, fmt.Errorf("%w: request has no steps", merger.ErrInvalidRequest)
 	}
 
 	resolved := make([]resolvedStep, 0, len(req.GetSteps()))
+	promoteSeen := false
 	for _, step := range req.GetSteps() {
 		strategy := step.GetStrategy()
 		if strategy == mergestrategypb.Strategy_DEFAULT {
@@ -304,6 +313,10 @@ func (m *gitMerger) resolveAndValidate(req *runwaymq.MergeRequest) ([]resolvedSt
 		if !isConcreteStrategy(strategy) {
 			return nil, fmt.Errorf("%w: unsupported strategy %v", merger.ErrInvalidRequest, step.GetStrategy())
 		}
+		if strategy == mergestrategypb.Strategy_PROMOTE {
+			promoteSeen = true
+		}
+
 		ch := step.GetChange()
 		if ch == nil || len(ch.GetUris()) == 0 {
 			return nil, fmt.Errorf("%w: step %q has no change URIs", merger.ErrInvalidRequest, step.GetStepId())
@@ -317,6 +330,17 @@ func (m *gitMerger) resolveAndValidate(req *runwaymq.MergeRequest) ([]resolvedSt
 			refs = append(refs, ref)
 		}
 		resolved = append(resolved, resolvedStep{step: step, strategy: strategy, refs: refs})
+	}
+
+	// PROMOTE must be the entire request: one step, one change, one URI. A
+	// pre-existing commit cannot descend from commits an earlier transforming
+	// step produced, and PROMOTE pushes <sha>:target directly rather than
+	// HEAD:target, so it cannot compose with any other step.
+	if promoteSeen {
+		if len(resolved) != 1 ||
+			len(resolved[0].step.GetChange().GetUris()) != 1 {
+			return nil, fmt.Errorf("%w: PROMOTE must be the entire request (one step, one change, one URI)", merger.ErrInvalidRequest)
+		}
 	}
 
 	return resolved, nil
@@ -567,6 +591,77 @@ func (m *gitMerger) applyMerge(ctx context.Context, rs resolvedStep) ([]*runwaym
 		outputs = append(outputs, &runwaymq.StepOutput{Id: mergeSHA})
 	}
 	return outputs, nil
+}
+
+// promote fast-forwards the target to an already-existing commit. It is only
+// reachable for a validated single-step/single-change/single-URI request.
+func (m *gitMerger) promote(ctx context.Context, req *runwaymq.MergeRequest, rs resolvedStep, commit bool) (*runwaymq.MergeResult, error) {
+	// Validated to be one step with one change of one URI, so the request names
+	// exactly one commit.
+	ref := rs.refs[0]
+	sha := ref.SHA
+
+	// PROMOTE does not go through tryApply, so it performs the same availability
+	// and freshness checks itself. Without them a commit the remote cannot
+	// supply turns every containment query into a plain error, which the
+	// consumer retries forever instead of reporting. They sit outside the retry
+	// loop because the commit under promotion is fixed for the whole request —
+	// only the target tip moves between attempts.
+	if err := m.ensureObjects(ctx, []changeRef{ref}); err != nil {
+		return nil, err
+	}
+	if err := m.checkStale(ctx, []changeRef{ref}); err != nil {
+		return nil, err
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= m.maxPushAttempts; attempt++ {
+		if err := m.resetToRemote(ctx); err != nil {
+			return nil, err
+		}
+		tip, err := m.headSHA(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		// Idempotent: the commit is already the tip or contained in it.
+		if sha == tip {
+			return promoteResult(req, rs, sha, commit), nil
+		}
+		contained, err := m.isAncestor(ctx, sha, tip)
+		if err != nil {
+			return nil, err
+		}
+		if contained {
+			return promoteResult(req, rs, sha, commit), nil
+		}
+
+		// Only a true fast-forward is allowed; divergence is a terminal conflict.
+		fastForward, err := m.isAncestor(ctx, tip, sha)
+		if err != nil {
+			return nil, err
+		}
+		if !fastForward {
+			return nil, fmt.Errorf("%w: promote target %s is not a fast-forward of %s", merger.ErrConflict, sha, tip)
+		}
+
+		if !commit {
+			return promoteResult(req, rs, sha, commit), nil
+		}
+
+		refspec := sha + ":refs/heads/" + m.target
+		if _, err := m.run(ctx, nil, "push", m.remote, refspec); err != nil {
+			// The target may have moved under us; re-fetch and re-classify.
+			coremetrics.NamedCounter(m.metricsScope, "promote", "push_retries", 1)
+			m.logger.Warnw("promote push failed, re-classifying",
+				"attempt", attempt, "max_attempts", m.maxPushAttempts, "err", err)
+			lastErr = err
+			continue
+		}
+		return promoteResult(req, rs, sha, commit), nil
+	}
+	coremetrics.NamedCounter(m.metricsScope, "promote", "giveup", 1)
+	return nil, fmt.Errorf("exceeded %d promote attempts due to remote contention: %w", m.maxPushAttempts, lastErr)
 }
 
 // classifyMergeFailure decides what a failed `git merge` actually means, given
@@ -932,13 +1027,13 @@ func passthroughEnv(extra []string) []string {
 }
 
 // isConcreteStrategy reports whether s names a concrete integration strategy
-// (i.e. not DEFAULT and not an unknown value). PROMOTE is not implemented yet
-// and is rejected as an invalid request until its apply path lands.
+// (i.e. not DEFAULT and not an unknown value).
 func isConcreteStrategy(s mergestrategypb.Strategy) bool {
 	switch s {
 	case mergestrategypb.Strategy_REBASE,
 		mergestrategypb.Strategy_SQUASH_REBASE,
-		mergestrategypb.Strategy_MERGE:
+		mergestrategypb.Strategy_MERGE,
+		mergestrategypb.Strategy_PROMOTE:
 		return true
 	default:
 		return false
@@ -991,5 +1086,20 @@ func successResult(req *runwaymq.MergeRequest, steps []*runwaymq.StepResult) *ru
 		Id:      req.GetId(),
 		Outcome: runwaypb.Outcome_SUCCEEDED,
 		Steps:   steps,
+	}
+}
+
+// promoteResult builds a SUCCEEDED MergeResult for a promote. A committing
+// promote reports the promoted SHA as the step's single output; a dry-run check
+// reports no output.
+func promoteResult(req *runwaymq.MergeRequest, rs resolvedStep, sha string, commit bool) *runwaymq.MergeResult {
+	var outputs []*runwaymq.StepOutput
+	if commit {
+		outputs = []*runwaymq.StepOutput{{Id: sha}}
+	}
+	return &runwaymq.MergeResult{
+		Id:      req.GetId(),
+		Outcome: runwaypb.Outcome_SUCCEEDED,
+		Steps:   []*runwaymq.StepResult{{StepId: rs.step.GetStepId(), Outputs: outputs}},
 	}
 }
