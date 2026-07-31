@@ -17,7 +17,6 @@ package mysql
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -45,7 +44,7 @@ func (s *requestQueueSummaryStore) Create(ctx context.Context, summary entity.Re
 
 	changeURIsJSON, metadataJSON, err := marshalSummaryJSON(summary.ChangeURIs, summary.Metadata)
 	if err != nil {
-		return fmt.Errorf("failed to marshal queue summary request_id=%s: %w", summary.RequestID, err)
+		return fmt.Errorf("failed to marshal queue summary metadata request_id=%s: %w", summary.RequestID, err)
 	}
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO request_summary_by_queue (
@@ -93,15 +92,15 @@ func (s *requestQueueSummaryStore) Update(ctx context.Context, summary entity.Re
 	op := metrics.Begin(s.scope, "update", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
-	metadataJSON, err := json.Marshal(normalizeMetadata(summary.Metadata))
+	changeURIsJSON, metadataJSON, err := marshalSummaryJSON(summary.ChangeURIs, summary.Metadata)
 	if err != nil {
-		return fmt.Errorf("failed to marshal queue summary metadata request_id=%s: %w", summary.RequestID, err)
+		return fmt.Errorf("failed to marshal queue summary request_id=%s: %w", summary.RequestID, err)
 	}
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE request_summary_by_queue
-		SET status = ?, version = ?, last_error = ?, metadata = ?
+		SET change_uris = ?, status = ?, version = ?, last_error = ?, metadata = ?
 		WHERE queue = ? AND received_at_ms = ? AND request_id = ? AND version = ?`,
-		summary.Status, newVersion, summary.LastError, metadataJSON,
+		changeURIsJSON, summary.Status, newVersion, summary.LastError, metadataJSON,
 		summary.Queue, summary.ReceivedAtMs, summary.RequestID, oldVersion,
 	)
 	if err != nil {

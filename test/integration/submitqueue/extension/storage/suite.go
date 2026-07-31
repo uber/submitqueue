@@ -540,15 +540,49 @@ func (s *StorageContractSuite) TestStorage_RequestQueueSummaryListAndCursor() {
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
 	got.Status = entity.RequestStatusLanded
+	got.ChangeURIs = []string{"uri/replacement/1", "uri/replacement/2"}
 	got.LastError = "done"
 	got.Metadata = map[string]string{"result": "landed"}
 	require.NoError(t, store.Update(ctx, got, 1, 2))
-	require.ErrorIs(t, store.Update(ctx, got, 1, 3), storage.ErrVersionMismatch)
 	updated, err := store.Get(ctx, got.Queue, got.ReceivedAtMs, got.RequestID)
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), updated.Version)
+	assert.Equal(t, []string{"uri/replacement/1", "uri/replacement/2"}, updated.ChangeURIs)
 	assert.Equal(t, entity.RequestStatusLanded, updated.Status)
 	assert.Equal(t, "done", updated.LastError)
+	assert.Equal(t, map[string]string{"result": "landed"}, updated.Metadata)
+
+	stale := updated
+	stale.ChangeURIs = []string{}
+	stale.Status = entity.RequestStatusError
+	stale.LastError = "stale"
+	stale.Metadata = map[string]string{}
+	require.ErrorIs(t, store.Update(ctx, stale, 1, 3), storage.ErrVersionMismatch)
+	unchanged, err := store.Get(ctx, got.Queue, got.ReceivedAtMs, got.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, updated, unchanged)
+
+	updated.ChangeURIs = nil
+	updated.Metadata = nil
+	require.NoError(t, store.Update(ctx, updated, 2, 3))
+	normalized, err := store.Get(ctx, got.Queue, got.ReceivedAtMs, got.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, int32(3), normalized.Version)
+	assert.NotNil(t, normalized.ChangeURIs)
+	assert.Empty(t, normalized.ChangeURIs)
+	assert.NotNil(t, normalized.Metadata)
+	assert.Empty(t, normalized.Metadata)
+
+	normalized.ChangeURIs = []string{}
+	normalized.Metadata = map[string]string{}
+	require.NoError(t, store.Update(ctx, normalized, 3, 4))
+	emptyCollections, err := store.Get(ctx, got.Queue, got.ReceivedAtMs, got.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, int32(4), emptyCollections.Version)
+	assert.NotNil(t, emptyCollections.ChangeURIs)
+	assert.Empty(t, emptyCollections.ChangeURIs)
+	assert.NotNil(t, emptyCollections.Metadata)
+	assert.Empty(t, emptyCollections.Metadata)
 
 	firstPage, err := store.List(ctx, storage.RequestQueueSummaryQuery{
 		Queue: "queue-summary", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, Limit: 2,
