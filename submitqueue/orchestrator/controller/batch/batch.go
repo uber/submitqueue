@@ -325,9 +325,11 @@ func (c *Controller) populateBatch(ctx context.Context, batch entity.Batch) (ent
 			return entity.Batch{}, fmt.Errorf("failed to get batch dependent for batchID=%s: %w", dependencyID, err)
 		}
 
-		dependents := append(existing.Dependents, batch.ID)
+		updated := existing
+		updated.Dependents = append([]string(nil), existing.Dependents...)
+		updated.Dependents = append(updated.Dependents, batch.ID)
 		newVersion := existing.Version + 1
-		if err := c.store.GetBatchDependentStore().UpdateDependents(ctx, dependencyID, existing.Version, newVersion, dependents); err != nil {
+		if err := c.store.GetBatchDependentStore().Update(ctx, updated, existing.Version, newVersion); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1)
 			return entity.Batch{}, fmt.Errorf("failed to update batch dependent index for existing batchID=%s and new batchID=%s: %w", dependencyID, batch.ID, err)
 		}

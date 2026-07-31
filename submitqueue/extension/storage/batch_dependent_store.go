@@ -37,8 +37,8 @@ type BatchDependentStore interface {
 	// Returns ErrAlreadyExists if the entry already exists for the given batch ID.
 	Create(ctx context.Context, batchDependent entity.BatchDependent) error
 
-	// UpdateDependents updates the dependents of a batch dependent and the version to newVersion
+	// Update replaces the non-key fields of a batch dependent and persists newVersion
 	// if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
 	// Version arithmetic is owned by the caller; the store performs a pure conditional write.
-	UpdateDependents(ctx context.Context, batchID string, oldVersion, newVersion int32, dependents []string) error
+	Update(ctx context.Context, batchDependent entity.BatchDependent, oldVersion, newVersion int32) error
 }

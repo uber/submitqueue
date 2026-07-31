@@ -185,6 +185,49 @@ func (s *StorageContractSuite) TestStorage_OptimisticLocking() {
 	assert.Equal(t, int32(2), retrieved.Version)
 }
 
+// TestStorage_BatchDependentUpdate verifies full updates, collection encoding, and optimistic locking.
+func (s *StorageContractSuite) TestStorage_BatchDependentUpdate() {
+	t := s.T()
+	ctx := s.ctx
+
+	batchDependent := entity.BatchDependent{
+		BatchID:    "test/batch-dependent-update",
+		Dependents: []string{"test/dependent/1"},
+		Version:    1,
+	}
+	require.NoError(t, s.storage.GetBatchDependentStore().Create(ctx, batchDependent))
+
+	nilDependents := batchDependent
+	nilDependents.Dependents = nil
+	require.NoError(t, s.storage.GetBatchDependentStore().Update(ctx, nilDependents, 1, 2))
+
+	retrieved, err := s.storage.GetBatchDependentStore().Get(ctx, batchDependent.BatchID)
+	require.NoError(t, err)
+	assert.Nil(t, retrieved.Dependents)
+	assert.Equal(t, int32(2), retrieved.Version)
+
+	emptyDependents := retrieved
+	emptyDependents.Dependents = []string{}
+	require.NoError(t, s.storage.GetBatchDependentStore().Update(ctx, emptyDependents, 2, 3))
+
+	retrieved, err = s.storage.GetBatchDependentStore().Get(ctx, batchDependent.BatchID)
+	require.NoError(t, err)
+	assert.Empty(t, retrieved.Dependents)
+	assert.NotNil(t, retrieved.Dependents)
+	assert.Equal(t, int32(3), retrieved.Version)
+
+	staleUpdate := retrieved
+	staleUpdate.Dependents = []string{"test/dependent/stale"}
+	err = s.storage.GetBatchDependentStore().Update(ctx, staleUpdate, 2, 4)
+	assert.ErrorIs(t, err, storage.ErrVersionMismatch)
+
+	retrieved, err = s.storage.GetBatchDependentStore().Get(ctx, batchDependent.BatchID)
+	require.NoError(t, err)
+	assert.Empty(t, retrieved.Dependents)
+	assert.NotNil(t, retrieved.Dependents)
+	assert.Equal(t, int32(3), retrieved.Version)
+}
+
 // TestStorage_NotFound tests getting a non-existent request
 func (s *StorageContractSuite) TestStorage_NotFound() {
 	t := s.T()
