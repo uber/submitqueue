@@ -995,6 +995,147 @@ func TestMerge_Rebase_StackedMultiCommitChanges(t *testing.T) {
 	}
 }
 
+// --- authorship ---
+
+func TestAuthorIdent(t *testing.T) {
+	tests := []struct {
+		name     string
+		ident    authorIdent
+		complete bool
+		wantEnv  []string
+	}{
+		{
+			name:     "both halves present",
+			ident:    authorIdent{Name: "Jane Dev", Email: "jane@example.com"},
+			complete: true,
+			wantEnv:  []string{"GIT_AUTHOR_NAME=Jane Dev", "GIT_AUTHOR_EMAIL=jane@example.com"},
+		},
+		{
+			// Passed through verbatim: the environment carries the two halves
+			// separately, so nothing has to survive being parsed back apart.
+			name:     "name containing angle brackets",
+			ident:    authorIdent{Name: "Jane <the dev> Doe", Email: "jane@example.com"},
+			complete: true,
+			wantEnv:  []string{"GIT_AUTHOR_NAME=Jane <the dev> Doe", "GIT_AUTHOR_EMAIL=jane@example.com"},
+		},
+		{
+			name:  "missing email falls back",
+			ident: authorIdent{Name: "Jane Dev"},
+		},
+		{
+			name:  "missing name falls back",
+			ident: authorIdent{Email: "jane@example.com"},
+		},
+		{
+			name:  "empty falls back",
+			ident: authorIdent{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.complete, tt.ident.complete())
+			assert.Equal(t, tt.wantEnv, tt.ident.env())
+		})
+	}
+}
+
+func TestMerge_SquashRebase_CreditsChangeAuthor(t *testing.T) {
+	// A squash mints a fresh commit, so without attribution it would be
+	// authored by the merger. The person who wrote the change should be its
+	// author; the merger stays the committer, since it is what applied it.
+	f := setupGitFixture(t)
+	sha := f.pushPRCommit(t, "feature/a", "hello.txt", "hello\nearth\n", "tweak hello")
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.Merge(context.Background(), req("b",
+		stepOf(mergestrategypb.Strategy_SQUASH_REBASE, "s1", uri(sha)),
+	))
+	require.NoError(t, err)
+	require.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
+
+	author, committer := f.remoteIdent(t, f.remoteHEAD(t))
+	assert.Equal(t, "author <author@example.com>", author)
+	assert.Equal(t, "Test <test@example.com>", committer)
+}
+
+func TestMerge_Merge_CreditsChangeAuthorOnMergeCommit(t *testing.T) {
+	// `git merge` has no --author flag, so the merge commit is the case that
+	// only the environment can attribute.
+	f := setupGitFixture(t)
+	sha := f.pushPRCommit(t, "feature/a", "hello.txt", "hello\nearth\n", "tweak hello")
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.Merge(context.Background(), req("b",
+		stepOf(mergestrategypb.Strategy_MERGE, "s1", uri(sha)),
+	))
+	require.NoError(t, err)
+	require.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
+
+	mergeSHA := f.remoteHEAD(t)
+	require.Len(t, f.parents(t, mergeSHA), 2, "expected a merge commit")
+	author, committer := f.remoteIdent(t, mergeSHA)
+	assert.Equal(t, "author <author@example.com>", author)
+	assert.Equal(t, "Test <test@example.com>", committer)
+}
+
+func TestMerge_SquashRebase_CreditsAuthorOfHeadCommit(t *testing.T) {
+	// The URI pins a head SHA, and that commit's author is the one the request
+	// names. A change whose commits have different authors is credited to the
+	// head's, not to whoever happened to start it.
+	f := setupGitFixture(t)
+	head := f.pushMultiCommitPRAs(t, "feature/multi",
+		authoredCommit{spec: commitSpec{path: "a.go", contents: "package a\n", message: "add a"},
+			name: "First Author", email: "first@example.com"},
+		authoredCommit{spec: commitSpec{path: "b.go", contents: "package b\n", message: "add b"},
+			name: "Head Author", email: "head@example.com"},
+	)
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.Merge(context.Background(), req("b",
+		stepOf(mergestrategypb.Strategy_SQUASH_REBASE, "s1", uri(head)),
+	))
+	require.NoError(t, err)
+	require.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
+
+	author, committer := f.remoteIdent(t, f.remoteHEAD(t))
+	assert.Equal(t, "Head Author <head@example.com>", author)
+	assert.Equal(t, "Test <test@example.com>", committer)
+	// Both commits' content still landed — attribution did not change what the
+	// squash contains.
+	assert.Equal(t, "package a\n", f.remoteFile(t, "a.go"))
+	assert.Equal(t, "package b\n", f.remoteFile(t, "b.go"))
+}
+
+func TestMerge_Rebase_PreservesEachCommitsOwnAuthor(t *testing.T) {
+	// REBASE cherry-picks, which carries the author across on its own. Nothing
+	// collapses, so each commit keeps the person who wrote it rather than
+	// everything being credited to the head's author.
+	f := setupGitFixture(t)
+	head := f.pushMultiCommitPRAs(t, "feature/multi",
+		authoredCommit{spec: commitSpec{path: "a.go", contents: "package a\n", message: "add a"},
+			name: "First Author", email: "first@example.com"},
+		authoredCommit{spec: commitSpec{path: "b.go", contents: "package b\n", message: "add b"},
+			name: "Head Author", email: "head@example.com"},
+	)
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.Merge(context.Background(), req("b",
+		stepOf(mergestrategypb.Strategy_REBASE, "s1", uri(head)),
+	))
+	require.NoError(t, err)
+	require.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
+
+	landed := f.remoteCommitsSinceSeed(t)
+	require.Len(t, landed, 2)
+	firstAuthor, firstCommitter := f.remoteIdent(t, landed[0])
+	headAuthor, headCommitter := f.remoteIdent(t, landed[1])
+	assert.Equal(t, "First Author <first@example.com>", firstAuthor)
+	assert.Equal(t, "Head Author <head@example.com>", headAuthor)
+	assert.Equal(t, "Test <test@example.com>", firstCommitter)
+	assert.Equal(t, "Test <test@example.com>", headCommitter)
+}
+
 // --- object availability and staleness ---
 
 func TestMerge_UnavailableCommitIsInvalidRequestNotConflict(t *testing.T) {
@@ -1549,6 +1690,40 @@ func (f gitFixture) parents(t *testing.T, sha string) []string {
 	fields := strings.Fields(strings.TrimSpace(string(out)))
 	require.NotEmpty(t, fields)
 	return fields[1:]
+}
+
+// remoteIdent returns the author and committer recorded on a commit, each
+// formatted "Name <email>". The two differ whenever the merger creates a commit
+// for someone else's change.
+func (f gitFixture) remoteIdent(t *testing.T, sha string) (author, committer string) {
+	t.Helper()
+	out := mustGitOutput(t, f.remoteDir, "show", "--no-patch", "--format=%an <%ae>%n%cn <%ce>", sha)
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	require.Len(t, lines, 2)
+	return lines[0], lines[1]
+}
+
+// authoredCommit is a commitSpec plus the identity to author it with, for the
+// tests that need a change whose commits are not all by the same person.
+type authoredCommit struct {
+	spec  commitSpec
+	name  string
+	email string
+}
+
+// pushMultiCommitPRAs is pushMultiCommitPR with an explicit author per commit.
+func (f gitFixture) pushMultiCommitPRAs(t *testing.T, branch string, commits ...authoredCommit) string {
+	t.Helper()
+	mustGit(t, f.authorDir, "fetch", "origin")
+	mustGit(t, f.authorDir, "checkout", "-B", branch, "origin/main")
+	for _, c := range commits {
+		require.NoError(t, writeFile(filepath.Join(f.authorDir, c.spec.path), c.spec.contents))
+		mustGit(t, f.authorDir, "add", ".")
+		mustGit(t, f.authorDir, "commit", "-m", c.spec.message,
+			"--author", fmt.Sprintf("%s <%s>", c.name, c.email))
+	}
+	mustGit(t, f.authorDir, "push", "-f", "origin", branch)
+	return strings.TrimSpace(string(mustGitOutput(t, f.authorDir, "rev-parse", "HEAD")))
 }
 
 func mustGit(t *testing.T, dir string, args ...string) {
