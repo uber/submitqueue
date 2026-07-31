@@ -1,0 +1,52 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "changeref.go",
+        "git_merger.go",
+        "objects.go",
+    ],
+    importpath = "github.com/uber/submitqueue/runway/extension/merger/git",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api/base/mergestrategy/protopb:go_default_library",
+        "//api/runway/messagequeue:go_default_library",
+        "//api/runway/messagequeue/protopb:go_default_library",
+        "//platform/base/change/git:go_default_library",
+        "//platform/base/change/github:go_default_library",
+        "//platform/metrics:go_default_library",
+        "//runway/extension/merger:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["git_merger_test.go"],
+    data = [
+        "@git",
+        "@git//:git_receive_pack",
+        "@git//:git_upload_archive",
+        "@git//:git_upload_pack",
+        "@git//:templates",
+        "@git//:templates/description",
+    ],
+    embed = [":go_default_library"],
+    env = {
+        "SUBMITQUEUE_TEST_GIT": "$(location @git//:git)",
+        "SUBMITQUEUE_TEST_GIT_TEMPLATE_DESCRIPTION": "$(location @git//:templates/description)",
+    },
+    deps = [
+        "//api/base/change/protopb:go_default_library",
+        "//api/base/mergestrategy/protopb:go_default_library",
+        "//api/runway/messagequeue:go_default_library",
+        "//api/runway/messagequeue/protopb:go_default_library",
+        "//runway/extension/merger:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_uber_go_zap//zaptest:go_default_library",
+    ],
+)
