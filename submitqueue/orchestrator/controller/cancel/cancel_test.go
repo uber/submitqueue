@@ -33,6 +33,11 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
+func batchWithState(batch entity.Batch, state entity.BatchState) entity.Batch {
+	batch.State = state
+	return batch
+}
+
 // cancelPayload serializes a CancelRequest to JSON bytes for test message payloads.
 func cancelPayload(t *testing.T, id, reason string) []byte {
 	payload, err := entity.CancelRequest{ID: id, Reason: reason}.ToBytes()
@@ -355,7 +360,7 @@ func TestProcess_BatchPath_HandsOffToSpeculate(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	// Single batch CAS: intent only. No terminal CAS.
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(3), int32(4), entity.BatchStateCancelling).Return(nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateCancelling), int32(3), int32(4)).Return(nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
@@ -385,14 +390,14 @@ func TestProcess_CancelsEveryApplicableBatch(t *testing.T) {
 
 	var operations []string
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch1.ID, int32(1), int32(2), entity.BatchStateCancelling).DoAndReturn(
-		func(context.Context, string, int32, int32, entity.BatchState) error {
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch1, entity.BatchStateCancelling), int32(1), int32(2)).DoAndReturn(
+		func(context.Context, entity.Batch, int32, int32) error {
 			operations = append(operations, "update:"+batch1.ID)
 			return nil
 		},
 	)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch2.ID, int32(3), int32(4), entity.BatchStateCancelling).DoAndReturn(
-		func(context.Context, string, int32, int32, entity.BatchState) error {
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch2, entity.BatchStateCancelling), int32(3), int32(4)).DoAndReturn(
+		func(context.Context, entity.Batch, int32, int32) error {
 			operations = append(operations, "update:"+batch2.ID)
 			return nil
 		},
@@ -433,8 +438,8 @@ func TestProcess_BatchFailureDoesNotPreventLaterCancellation(t *testing.T) {
 	requestStore.EXPECT().UpdateState(gomock.Any(), request.ID, int32(2), int32(3), entity.RequestStateCancelling).Return(nil)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch1.ID, int32(1), int32(2), entity.BatchStateCancelling).Return(storeErr)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch2.ID, int32(2), int32(3), entity.BatchStateCancelling).Return(nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch1, entity.BatchStateCancelling), int32(1), int32(2)).Return(storeErr)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch2, entity.BatchStateCancelling), int32(2), int32(3)).Return(nil)
 	publisher.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, msg entityqueue.Message) error {
 			assert.Equal(t, batch2.ID, msg.ID)
@@ -574,7 +579,7 @@ func TestProcess_BatchAlreadyCancelling_RepublishesToSpeculate(t *testing.T) {
 	// No request UpdateState — already in Cancelling.
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	// No batch UpdateState — already in Cancelling.
+	// No batch Update — already in Cancelling.
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
@@ -604,7 +609,7 @@ func TestProcess_BatchIntentVersionMismatch_Retryable(t *testing.T) {
 	reqStore.EXPECT().UpdateState(gomock.Any(), "q/1", int32(2), int32(3), entity.RequestStateCancelling).Return(nil)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelling).
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateCancelling), int32(1), int32(2)).
 		Return(storage.ErrVersionMismatch)
 
 	store := storagemock.NewMockStorage(ctrl)

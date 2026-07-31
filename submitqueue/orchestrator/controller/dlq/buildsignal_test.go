@@ -49,11 +49,12 @@ func TestDLQBuildSignalController_Process_FansOutToBatch(t *testing.T) {
 	}, nil)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().Get(gomock.Any(), "q/batch/2").Return(entity.Batch{
+	batch := entity.Batch{
 		ID: "q/batch/2", Queue: "q", Contains: []string{"q/1"},
 		State: entity.BatchStateSpeculating, Version: 3,
-	}, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), "q/batch/2", int32(3), int32(4), entity.BatchStateFailed).Return(nil)
+	}
+	batchStore.EXPECT().Get(gomock.Any(), "q/batch/2").Return(batch, nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateFailed), int32(3), int32(4)).Return(nil)
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.Request{

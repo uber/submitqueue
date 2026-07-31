@@ -228,6 +228,64 @@ func (s *StorageContractSuite) TestStorage_BatchDependentUpdate() {
 	assert.Equal(t, int32(3), retrieved.Version)
 }
 
+func (s *StorageContractSuite) TestStorage_BatchUpdateReplacesAllNonKeyFields() {
+	t := s.T()
+	ctx := s.ctx
+	store := s.storage.GetBatchStore()
+	batch := entity.Batch{
+		ID:           "batch-update/batch/1",
+		Queue:        "batch-update",
+		Contains:     []string{"batch-update/1"},
+		Dependencies: []string{"batch-update/batch/0"},
+		State:        entity.BatchStateCreated,
+		Version:      1,
+	}
+	require.NoError(t, store.Create(ctx, batch))
+
+	nilCollections := batch
+	nilCollections.Queue = "batch-update-nil"
+	nilCollections.Contains = nil
+	nilCollections.Dependencies = nil
+	nilCollections.State = entity.BatchStateSpeculating
+	require.NoError(t, store.Update(ctx, nilCollections, 1, 2))
+
+	got, err := store.Get(ctx, batch.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "batch-update-nil", got.Queue)
+	assert.Nil(t, got.Contains)
+	assert.Nil(t, got.Dependencies)
+	assert.Equal(t, entity.BatchStateSpeculating, got.State)
+	assert.Equal(t, int32(2), got.Version)
+
+	emptyCollections := got
+	emptyCollections.Queue = "batch-update-empty"
+	emptyCollections.Contains = []string{}
+	emptyCollections.Dependencies = []string{}
+	emptyCollections.State = entity.BatchStateMerging
+	require.NoError(t, store.Update(ctx, emptyCollections, 2, 3))
+
+	got, err = store.Get(ctx, batch.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "batch-update-empty", got.Queue)
+	assert.NotNil(t, got.Contains)
+	assert.Empty(t, got.Contains)
+	assert.NotNil(t, got.Dependencies)
+	assert.Empty(t, got.Dependencies)
+	assert.Equal(t, entity.BatchStateMerging, got.State)
+	assert.Equal(t, int32(3), got.Version)
+
+	stale := got
+	stale.Queue = "stale-queue"
+	stale.Contains = []string{"stale/request"}
+	stale.Dependencies = []string{"stale/batch"}
+	stale.State = entity.BatchStateFailed
+	require.ErrorIs(t, store.Update(ctx, stale, 2, 4), storage.ErrVersionMismatch)
+
+	unchanged, err := store.Get(ctx, batch.ID)
+	require.NoError(t, err)
+	assert.Equal(t, got, unchanged)
+}
+
 // TestStorage_NotFound tests getting a non-existent request
 func (s *StorageContractSuite) TestStorage_NotFound() {
 	t := s.T()

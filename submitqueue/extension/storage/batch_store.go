@@ -31,10 +31,10 @@ type BatchStore interface {
 	// Returns ErrAlreadyExists if a batch with the same ID already exists.
 	Create(ctx context.Context, batch entity.Batch) error
 
-	// UpdateState updates the state of a batch to newState and the version to newVersion
+	// Update replaces every non-key field of a batch and writes newVersion
 	// if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
 	// Version arithmetic is owned by the caller; the store performs a pure conditional write.
-	UpdateState(ctx context.Context, id string, oldVersion, newVersion int32, newState entity.BatchState) error
+	Update(ctx context.Context, batch entity.Batch, oldVersion, newVersion int32) error
 
 	// GetByQueueAndStates retrieves all batches that belong to the given queue and are in the given states.
 	GetByQueueAndStates(ctx context.Context, queue string, states []entity.BatchState) ([]entity.Batch, error)

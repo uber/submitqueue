@@ -137,12 +137,15 @@ func failBatch(ctx context.Context, store storage.Storage, registry consumer.Top
 		return nil
 	default:
 		newVersion := batch.Version + 1
-		if err := store.GetBatchStore().UpdateState(ctx, batchID, batch.Version, newVersion, entity.BatchStateFailed); err != nil {
+		previousState := batch.State
+		batch.State = entity.BatchStateFailed
+		if err := store.GetBatchStore().Update(ctx, batch, batch.Version, newVersion); err != nil {
 			return fmt.Errorf("failed to update batch %s state to failed: %w", batchID, err)
 		}
+		batch.Version = newVersion
 		logger.Infow("dlq reconcile: batch marked failed",
 			"batch_id", batchID,
-			"previous_state", string(batch.State),
+			"previous_state", string(previousState),
 		)
 	}
 
