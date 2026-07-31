@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -421,6 +422,81 @@ func TestMerge_Rebase_GivesUpAfterMaxAttempts(t *testing.T) {
 	assert.Equal(t, raceSHAs[1], f.remoteHEAD(t))
 }
 
+// --- SQUASH_REBASE ---
+
+func TestMerge_SquashRebase_OneCommitPerChange(t *testing.T) {
+	// Two URIs in one change are a stack of two pull requests. Each squashes on
+	// its own — collapsing them together would erase the boundary the stack
+	// exists to express.
+	f := setupGitFixture(t)
+	sha1, sha2 := f.pushStack(t)
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.Merge(context.Background(), req("b",
+		stepOf(mergestrategypb.Strategy_SQUASH_REBASE, "s1", uri(sha1), uri(sha2)),
+	))
+	require.NoError(t, err)
+	assert.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
+	require.Len(t, res.GetSteps(), 1)
+
+	outputs := res.GetSteps()[0].GetOutputs()
+	require.Len(t, outputs, 2, "one squashed commit per change")
+	commits := f.remoteCommitsSinceSeed(t)
+	require.Len(t, commits, 2)
+	assert.Equal(t, []string{outputs[0].GetId(), outputs[1].GetId()}, commits, "in application order")
+	assert.Equal(t, "hello\nearth\ngoodbye\n", f.remoteFile(t, "hello.txt"))
+}
+
+func TestMerge_SquashRebase_AlreadyLanded(t *testing.T) {
+	f := setupGitFixture(t)
+	sha := f.pushPRCommit(t, "feature/a", "hello.txt", "hello\nearth\n", "tweak hello")
+	f.landOnMain(t, sha)
+	mainBefore := f.remoteHEAD(t)
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.Merge(context.Background(), req("b", stepOf(mergestrategypb.Strategy_SQUASH_REBASE, "s1", uri(sha))))
+	require.NoError(t, err)
+	require.Len(t, res.GetSteps(), 1)
+	assert.Empty(t, res.GetSteps()[0].GetOutputs())
+	assert.Equal(t, mainBefore, f.remoteHEAD(t))
+}
+
+// --- MERGE ---
+
+func TestMerge_Merge_FreshChangeCreatesMergeCommit(t *testing.T) {
+	f := setupGitFixture(t)
+	freshSHA := f.pushPRCommit(t, "feature/a", "hello.txt", "hello\nearth\n", "tweak hello")
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.Merge(context.Background(), req("b", stepOf(mergestrategypb.Strategy_MERGE, "s1", uri(freshSHA))))
+	require.NoError(t, err)
+	assert.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
+	require.Len(t, res.GetSteps(), 1)
+	require.Len(t, res.GetSteps()[0].GetOutputs(), 1)
+
+	mergeSHA := res.GetSteps()[0].GetOutputs()[0].GetId()
+	assert.Equal(t, mergeSHA, f.remoteHEAD(t))
+	assert.Len(t, f.parents(t, mergeSHA), 2, "a --no-ff merge commit has two parents")
+	assert.Contains(t, f.parents(t, mergeSHA), freshSHA,
+		"the original head commit is preserved as the merge's second parent")
+}
+
+func TestMerge_Merge_AlreadyAncestor(t *testing.T) {
+	f := setupGitFixture(t)
+	freshSHA := f.pushPRCommit(t, "feature/a", "hello.txt", "hello\nearth\n", "tweak hello")
+	f.advanceMain(t, freshSHA) // fast-forward main directly to freshSHA
+	mainBefore := f.remoteHEAD(t)
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.Merge(context.Background(), req("b", stepOf(mergestrategypb.Strategy_MERGE, "s1", uri(freshSHA))))
+	require.NoError(t, err)
+	require.Len(t, res.GetSteps(), 1)
+	assert.Empty(t, res.GetSteps()[0].GetOutputs())
+	assert.Equal(t, mainBefore, f.remoteHEAD(t))
+}
+
+// --- PROMOTE ---
+
 func TestMerge_Default_ResolvesToRebase(t *testing.T) {
 	f := setupGitFixture(t)
 	sha := f.pushPRCommit(t, "feature/a", "hello.txt", "hello\nearth\n", "tweak hello")
@@ -432,6 +508,206 @@ func TestMerge_Default_ResolvesToRebase(t *testing.T) {
 	require.Len(t, res.GetSteps(), 1)
 	require.Len(t, res.GetSteps()[0].GetOutputs(), 1, "DEFAULT resolves to REBASE: one output per fresh change")
 	assert.Equal(t, []string{res.GetSteps()[0].GetOutputs()[0].GetId()}, f.remoteCommitsSinceSeed(t))
+}
+
+func TestClassifyMergeFailure(t *testing.T) {
+	f := setupGitFixture(t)
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE).(*gitMerger)
+	ref := changeRef{SHA: fakeSHA, Label: "uber/repo#1"}
+
+	tests := []struct {
+		name         string
+		out          string
+		conflicted   bool
+		wantConflict bool
+		wantInvalid  bool
+	}{
+		{
+			name:         "content conflict",
+			out:          "CONFLICT (content): Merge conflict in a.txt",
+			conflicted:   true,
+			wantConflict: true,
+		},
+		{
+			name:        "unrelated histories",
+			out:         "fatal: refusing to merge unrelated histories",
+			conflicted:  false,
+			wantInvalid: true,
+		},
+		{
+			name:       "infrastructure failure",
+			out:        "fatal: unable to read tree",
+			conflicted: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := m.classifyMergeFailure(ref, []byte(tt.out), tt.conflicted)
+			require.Error(t, err)
+			assert.Equal(t, tt.wantConflict, errors.Is(err, merger.ErrConflict))
+			assert.Equal(t, tt.wantInvalid, errors.Is(err, merger.ErrInvalidRequest))
+		})
+	}
+}
+
+// --- repo migration (unrelated histories) ---
+//
+// A repository migration reaches Runway as an ordinary change in the target
+// repo whose branch carries the *source* repo's entire history. Being in the
+// same repository is what makes the commits fetchable; it says nothing about
+// ancestry, and the two graphs still share no common ancestor.
+
+// pushImportedHistory builds a branch with its own root commit — an imported
+// history, unrelated to the target's — and publishes it in the target repo as
+// a change ref, the way such a migration is actually proposed. Returns the head
+// SHA and every commit of the imported history, oldest first.
+func (f gitFixture) pushImportedHistory(t *testing.T, prNumber int, commits ...commitSpec) (string, []string) {
+	t.Helper()
+	dir := filepath.Join(f.root, fmt.Sprintf("import-%d", prNumber))
+	mustGit(t, f.root, "init", "-b", "main", dir)
+	configRepo(t, dir, "importer", "importer@example.com")
+	for _, c := range commits {
+		require.NoError(t, writeFile(filepath.Join(dir, c.path), c.contents))
+		mustGit(t, dir, "add", ".")
+		mustGit(t, dir, "commit", "-m", c.message)
+	}
+	head := strings.TrimSpace(string(mustGitOutput(t, dir, "rev-parse", "HEAD")))
+	mustGit(t, dir, "remote", "add", "origin", f.remoteDir)
+	mustGit(t, dir, "push", "-f", "origin", fmt.Sprintf("HEAD:refs/pull/%d/head", prNumber))
+
+	out := mustGitOutput(t, dir, "rev-list", "--reverse", "HEAD")
+	return head, strings.Fields(string(out))
+}
+
+func TestMerge_Merge_ImportsUnrelatedHistory(t *testing.T) {
+	f := setupGitFixture(t)
+	head, imported := f.pushImportedHistory(t, 1,
+		commitSpec{"src/lib.go", "v1\n", "micro: initial"},
+		commitSpec{"src/lib.go", "v2\n", "micro: feature A"},
+		commitSpec{"src/util.go", "u\n", "micro: feature B"},
+	)
+	require.Len(t, imported, 3)
+
+	m := f.newMergerWith(t, func(p *Params) { p.AllowUnrelatedHistories = true })
+	res, err := m.Merge(context.Background(), req("b", stepOf(mergestrategypb.Strategy_MERGE, "s1", uri(head))))
+	require.NoError(t, err)
+	assert.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
+
+	// The target keeps its own file and gains the imported tree.
+	assert.Equal(t, "hello\nworld\n", f.remoteFile(t, "hello.txt"))
+	assert.Equal(t, "v2\n", f.remoteFile(t, "src/lib.go"))
+	assert.Equal(t, "u\n", f.remoteFile(t, "src/util.go"))
+
+	// The point of using MERGE for a migration: every imported commit survives
+	// under its original hash rather than being rewritten.
+	for _, sha := range imported {
+		assert.True(t, f.remoteHasCommit(t, sha), "imported commit %s must be reachable unchanged", sha)
+	}
+
+	// The merge commit joins both graphs.
+	require.Len(t, res.GetSteps(), 1)
+	require.Len(t, res.GetSteps()[0].GetOutputs(), 1)
+	assert.Len(t, f.remoteParents(t, res.GetSteps()[0].GetOutputs()[0].GetId()), 2)
+}
+
+func TestMerge_Merge_ImportedHistoryRedeliveryIsNoOp(t *testing.T) {
+	f := setupGitFixture(t)
+	head, _ := f.pushImportedHistory(t, 1,
+		commitSpec{"src/lib.go", "v1\n", "micro: initial"},
+		commitSpec{"src/lib.go", "v2\n", "micro: feature A"},
+	)
+
+	m := f.newMergerWith(t, func(p *Params) { p.AllowUnrelatedHistories = true })
+	request := req("b", stepOf(mergestrategypb.Strategy_MERGE, "s1", uri(head)))
+	_, err := m.Merge(context.Background(), request)
+	require.NoError(t, err)
+	afterFirst := f.remoteHEAD(t)
+
+	res, err := m.Merge(context.Background(), request)
+	require.NoError(t, err)
+	assert.Equal(t, afterFirst, f.remoteHEAD(t), "redelivery must not merge the import twice")
+	require.Len(t, res.GetSteps(), 1)
+	assert.Empty(t, res.GetSteps()[0].GetOutputs())
+}
+
+func TestMerge_Merge_UnrelatedHistoryRejectedByDefault(t *testing.T) {
+	// Without the option the merge is refused. It must not be reported as a
+	// conflict: nothing collided, the merger simply declined to join two
+	// unrelated graphs.
+	f := setupGitFixture(t)
+	head, _ := f.pushImportedHistory(t, 1, commitSpec{"src/lib.go", "v1\n", "micro: initial"})
+	mainBefore := f.remoteHEAD(t)
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	_, err := m.Merge(context.Background(), req("b", stepOf(mergestrategypb.Strategy_MERGE, "s1", uri(head))))
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, merger.ErrInvalidRequest))
+	assert.False(t, errors.Is(err, merger.ErrConflict))
+	assert.Equal(t, mainBefore, f.remoteHEAD(t))
+	assert.True(t, f.checkoutClean(t))
+}
+
+func TestMerge_Rebase_UnrelatedHistoryRejected(t *testing.T) {
+	// A picking strategy cannot serve a migration at all: there is no range to
+	// compute, and replaying the import commit-by-commit would rewrite every
+	// hash in it — the opposite of preserving the history.
+	f := setupGitFixture(t)
+	head, _ := f.pushImportedHistory(t, 1,
+		commitSpec{"src/lib.go", "v1\n", "micro: initial"},
+		commitSpec{"src/lib.go", "v2\n", "micro: feature A"},
+	)
+
+	for _, strategy := range []mergestrategypb.Strategy{
+		mergestrategypb.Strategy_REBASE,
+		mergestrategypb.Strategy_SQUASH_REBASE,
+	} {
+		t.Run(strategy.String(), func(t *testing.T) {
+			m := f.newMergerWith(t, func(p *Params) { p.AllowUnrelatedHistories = true })
+			_, err := m.Merge(context.Background(), req("b", stepOf(strategy, "s1", uri(head))))
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, merger.ErrInvalidRequest))
+			assert.False(t, errors.Is(err, merger.ErrConflict))
+		})
+	}
+}
+
+// --- multi-commit changes under the remaining strategies ---
+
+func TestMerge_SquashRebase_MultiCommitChangeSingleURI(t *testing.T) {
+	f := setupGitFixture(t)
+	head := f.pushMultiCommitPR(t, "feature/multi",
+		commitSpec{"a.txt", "a\n", "add a"},
+		commitSpec{"b.txt", "b\n", "add b"},
+		commitSpec{"c.txt", "c\n", "add c"},
+	)
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.Merge(context.Background(), req("b", stepOf(mergestrategypb.Strategy_SQUASH_REBASE, "s1", uri(head))))
+	require.NoError(t, err)
+	require.Len(t, res.GetSteps(), 1)
+	assert.Len(t, res.GetSteps()[0].GetOutputs(), 1, "a change of any length collapses into one commit")
+	// All three commits' content is present despite the single output.
+	assert.Equal(t, "a\n", f.remoteFile(t, "a.txt"))
+	assert.Equal(t, "b\n", f.remoteFile(t, "b.txt"))
+	assert.Equal(t, "c\n", f.remoteFile(t, "c.txt"))
+	assert.Len(t, f.remoteCommitsSinceSeed(t), 1)
+}
+
+func TestMerge_Merge_MultiCommitChangeSingleURI(t *testing.T) {
+	f := setupGitFixture(t)
+	head := f.pushMultiCommitPR(t, "feature/multi",
+		commitSpec{"a.txt", "a\n", "add a"},
+		commitSpec{"b.txt", "b\n", "add b"},
+	)
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.Merge(context.Background(), req("b", stepOf(mergestrategypb.Strategy_MERGE, "s1", uri(head))))
+	require.NoError(t, err)
+	assert.Equal(t, "a\n", f.remoteFile(t, "a.txt"))
+	assert.Equal(t, "b\n", f.remoteFile(t, "b.txt"))
+	require.Len(t, res.GetSteps(), 1)
+	assert.Len(t, res.GetSteps()[0].GetOutputs(), 1, "one merge commit regardless of change size")
 }
 
 // --- multi-commit changes (one URI, many commits) ---
@@ -691,7 +967,7 @@ func TestMerge_InvalidRequests(t *testing.T) {
 		},
 		{
 			name: "unsupported strategy",
-			req:  req("b", stepOf(mergestrategypb.Strategy_MERGE, "s1", uri(fakeSHA))),
+			req:  req("b", stepOf(mergestrategypb.Strategy_PROMOTE, "s1", uri(fakeSHA))),
 		},
 		{
 			name: "malformed URI",
@@ -724,6 +1000,20 @@ func TestCheckMergeability_RebaseMergeable(t *testing.T) {
 	require.Len(t, res.GetSteps(), 1)
 	assert.Empty(t, res.GetSteps()[0].GetOutputs(), "a dry run reports no outputs")
 	assert.Equal(t, mainBefore, f.remoteHEAD(t), "a dry run does not advance the remote tip")
+}
+
+func TestCheckMergeability_MergeMergeable(t *testing.T) {
+	f := setupGitFixture(t)
+	sha := f.pushPRCommit(t, "feature/a", "hello.txt", "hello\nearth\n", "tweak hello")
+	mainBefore := f.remoteHEAD(t)
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.CheckMergeability(context.Background(), req("b", stepOf(mergestrategypb.Strategy_MERGE, "s1", uri(sha))))
+	require.NoError(t, err)
+	assert.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
+	require.Len(t, res.GetSteps(), 1)
+	assert.Empty(t, res.GetSteps()[0].GetOutputs())
+	assert.Equal(t, mainBefore, f.remoteHEAD(t))
 }
 
 func TestCheckMergeability_Conflict(t *testing.T) {
@@ -759,6 +1049,24 @@ func stepOf(strategy mergestrategypb.Strategy, stepID string, uris ...string) *r
 }
 
 // --- merger + fixture helpers ---
+
+// remoteHasCommit reports whether sha is reachable in the remote repository.
+func (f gitFixture) remoteHasCommit(t *testing.T, sha string) bool {
+	t.Helper()
+	mustGit(t, f.checkoutDir, "fetch", "origin")
+	cmd := exec.Command("git", "cat-file", "-e", sha+"^{commit}")
+	cmd.Dir = f.checkoutDir
+	return cmd.Run() == nil
+}
+
+// remoteParents returns the parent SHAs of a commit on the remote.
+func (f gitFixture) remoteParents(t *testing.T, sha string) []string {
+	t.Helper()
+	mustGit(t, f.checkoutDir, "fetch", "origin")
+	out := mustGitOutput(t, f.checkoutDir, "rev-list", "--parents", "-n", "1", sha)
+	fields := strings.Fields(string(out))
+	return fields[1:]
+}
 
 // commitSpec describes one commit to build on a change branch.
 type commitSpec struct {
@@ -1121,5 +1429,8 @@ func absoluteTestPath(t *testing.T, name string) string {
 }
 
 func writeFile(path, contents string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	return os.WriteFile(path, []byte(contents), 0o644)
 }

@@ -38,9 +38,21 @@ Fetching by SHA guarantees the merger applies exactly the commit a URI names —
 | Strategy | What it does | Outputs |
 |---|---|---|
 | `REBASE` | Cherry-picks every commit each change introduces onto the tip, in order. A commit already present on the target is skipped (no output), as is one that was empty to begin with. | one revision per newly-created commit |
+| `SQUASH_REBASE` | Applies each change like `REBASE`, then collapses the commits it produced into a single commit (squash unit = the change, not the step). | one revision per change, or none for a change already present |
+| `MERGE` | Creates a `--no-ff` merge commit per change, keeping the change's original commits reachable through second-parent history. A commit already contained in the tip is skipped. | the merge-commit revision(s) |
 | `DEFAULT` | Resolved to the instance's configured default strategy before any step runs. | per the resolved strategy |
 
-`REBASE` is the only strategy implemented so far. `SQUASH_REBASE`, `MERGE`, and `PROMOTE` are defined by the wire contract but not yet applied here — a step naming one is rejected as an invalid request.
+`PROMOTE` is defined by the wire contract but not yet applied here — a step naming it is rejected as an invalid request.
+
+## Importing an unrelated history
+
+A repository migration arrives as an ordinary change in the target repo whose branch carries the source repo's entire history. Living in the target repo is what makes its commits fetchable; it says nothing about ancestry, and the two graphs still share no common ancestor, so git refuses the merge by default.
+
+`MERGE` is the only strategy that can serve this, because it is the only one that leaves the imported commits reachable under their original hashes — the picking strategies would rewrite every one of them, and have no range to compute in the first place, so they reject such a change outright.
+
+The refusal is lifted by a per-instance option rather than always: it is a real safeguard, and without it a merge of the wrong object fails loudly instead of quietly producing a nonsense result. A queue that exists to perform imports turns it on. A refusal that surfaces without the option is reported as an invalid request, not as a conflict — nothing collided.
+
+Redelivery is safe: once imported, the source head is contained in the target, so the change is skipped rather than merged twice.
 
 ## Committing, dry-run, atomicity, contention
 
@@ -56,7 +68,7 @@ The distinction between the last two matters operationally: a commit that is mis
 
 ## Runtime and identity
 
-Every git invocation uses the pinned runtime (explicit executable, exec-path, and template dir) and a scrubbed environment: no ambient configuration, no system or global git config, no interactive prompts. Because that leaves no ambient identity, the committer name and email are injected per-invocation, which the commit-creating `REBASE` strategy requires.
+Every git invocation uses the pinned runtime (explicit executable, exec-path, and template dir) and a scrubbed environment: no ambient configuration, no system or global git config, no interactive prompts. Because that leaves no ambient identity, the committer name and email are injected per-invocation, which the commit-creating strategies (`REBASE`, `SQUASH_REBASE`, `MERGE`) require.
 
 Scrubbing denies git ambient *configuration* — anything that could change what a merge produces. It deliberately does not deny it the means to reach the remote, so the agent socket, `PATH`, ssh-command, TLS and proxy variables are inherited when set. Without them an SSH remote cannot authenticate and git cannot even exec `ssh`; none of them can influence merge semantics. A deployment needing more can name additional variables on the runtime.
 
