@@ -10,9 +10,9 @@ Stores gate state as plain files under an explicitly configured root directory f
 {dir}/parked/{consumer_group}/{topic}/{urlenc(id)}.json  # one parked delivery record
 ```
 
-Partition keys and message IDs may contain `/` (request IDs like `queue/1`), so they are URL-encoded in file names. Gate files carry human-readable JSON metadata (`reason`, `created_by`, `created_at_ms`); parked records carry the payload, attempt, and `parked_at_ms` while a delivery is blocked. The record is deleted before the wait ends, so the parked tree contains only active waits and does not retain payloads after release or cancellation. All writes go through temp-file-plus-rename so readers never see partial JSON.
+Partition keys and message IDs may contain `/` (request IDs like `queue/1`), so they are URL-encoded in file names. Gate files carry human-readable JSON metadata (`reason`, `created_by`, `created_at_ms`); parked records carry the payload, attempt, and `parked_at_ms` while a delivery is blocked. The record is refreshed on each re-check of a still-closed gate and removed on the admit path once the gate opens, so the parked tree contains only currently blocked deliveries and does not retain payloads after release. All writes go through temp-file-plus-rename so readers never see partial JSON.
 
-Gate state is not cached. Each delivery reads its applicable gate files, and each blocked delivery polls those files at the configured interval until they are absent.
+Gate state is not cached and the store never polls. Each delivery attempt reads its applicable gate files; a blocked delivery's re-check cadence is the consumer's postpone delay, so gate state is re-read on every redelivery.
 
 ## Operating it by hand
 

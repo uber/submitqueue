@@ -28,10 +28,13 @@ func TestGate_EnterNeverBlocks(t *testing.T) {
 	entry, err := g.Enter(context.Background(), consumergate.Key{ConsumerGroup: "group", PartitionKey: "part"})
 	require.NoError(t, err)
 	assert.False(t, entry.Blocked())
-	require.NoError(t, consumergate.Wait(context.Background(), entry, consumergate.DeliveryDescriptor{
+
+	descriptor := consumergate.DeliveryDescriptor{
 		Topic:     "topic",
 		MessageID: "msg-1",
 		Payload:   []byte("hello"),
 		Attempt:   1,
-	}))
+	}
+	require.NoError(t, entry.Park(context.Background(), descriptor))
+	require.NoError(t, entry.Unpark(context.Background(), descriptor))
 }

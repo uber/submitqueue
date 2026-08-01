@@ -45,11 +45,9 @@ func (g Gate) Enter(_ context.Context, _ consumergate.Key) (consumergate.Entry, 
 // Blocked implements consumergate.Entry. A no-op gate never blocks.
 func (Gate) Blocked() bool { return false }
 
-// Watch implements consumergate.Entry. A no-op gate never blocks, so the
-// returned channel yields nil at once. It is never reached in practice because
-// Blocked reports false.
-func (Gate) Watch(context.Context, consumergate.DeliveryDescriptor) <-chan error {
-	ch := make(chan error, 1)
-	ch <- nil
-	return ch
-}
+// Park implements consumergate.Entry. A no-op gate records nothing. It is
+// never reached in practice because Blocked reports false.
+func (Gate) Park(context.Context, consumergate.DeliveryDescriptor) error { return nil }
+
+// Unpark implements consumergate.Entry. A no-op gate holds no records.
+func (Gate) Unpark(context.Context, consumergate.DeliveryDescriptor) error { return nil }

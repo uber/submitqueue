@@ -94,18 +94,32 @@ func (mr *MockEntryMockRecorder) Blocked() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Blocked", reflect.TypeOf((*MockEntry)(nil).Blocked))
 }
 
-// Watch mocks base method.
-func (m *MockEntry) Watch(ctx context.Context, descriptor consumergate.DeliveryDescriptor) <-chan error {
+// Park mocks base method.
+func (m *MockEntry) Park(ctx context.Context, descriptor consumergate.DeliveryDescriptor) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Watch", ctx, descriptor)
-	ret0, _ := ret[0].(<-chan error)
+	ret := m.ctrl.Call(m, "Park", ctx, descriptor)
+	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// Watch indicates an expected call of Watch.
-func (mr *MockEntryMockRecorder) Watch(ctx, descriptor any) *gomock.Call {
+// Park indicates an expected call of Park.
+func (mr *MockEntryMockRecorder) Park(ctx, descriptor any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Watch", reflect.TypeOf((*MockEntry)(nil).Watch), ctx, descriptor)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Park", reflect.TypeOf((*MockEntry)(nil).Park), ctx, descriptor)
+}
+
+// Unpark mocks base method.
+func (m *MockEntry) Unpark(ctx context.Context, descriptor consumergate.DeliveryDescriptor) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Unpark", ctx, descriptor)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Unpark indicates an expected call of Unpark.
+func (mr *MockEntryMockRecorder) Unpark(ctx, descriptor any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Unpark", reflect.TypeOf((*MockEntry)(nil).Unpark), ctx, descriptor)
 }
 
 // MockAdmin is a mock of Admin interface.
@@ -173,43 +187,4 @@ func (m *MockAdmin) Open(ctx context.Context, key consumergate.Key) error {
 func (mr *MockAdminMockRecorder) Open(ctx, key any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Open", reflect.TypeOf((*MockAdmin)(nil).Open), ctx, key)
-}
-
-// MockFactory is a mock of Factory interface.
-type MockFactory struct {
-	ctrl     *gomock.Controller
-	recorder *MockFactoryMockRecorder
-	isgomock struct{}
-}
-
-// MockFactoryMockRecorder is the mock recorder for MockFactory.
-type MockFactoryMockRecorder struct {
-	mock *MockFactory
-}
-
-// NewMockFactory creates a new mock instance.
-func NewMockFactory(ctrl *gomock.Controller) *MockFactory {
-	mock := &MockFactory{ctrl: ctrl}
-	mock.recorder = &MockFactoryMockRecorder{mock}
-	return mock
-}
-
-// EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockFactory) EXPECT() *MockFactoryMockRecorder {
-	return m.recorder
-}
-
-// For mocks base method.
-func (m *MockFactory) For(cfg consumergate.Config) (consumergate.Gate, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "For", cfg)
-	ret0, _ := ret[0].(consumergate.Gate)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// For indicates an expected call of For.
-func (mr *MockFactoryMockRecorder) For(cfg any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "For", reflect.TypeOf((*MockFactory)(nil).For), cfg)
 }

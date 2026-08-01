@@ -176,8 +176,9 @@ func (s *E2EIntegrationSuite) openGate(consumerGroup, partitionKey string) {
 
 // awaitParked polls the shared gate directory until the delivery identified by
 // (consumer group, topic key, message ID) has a parked record, and returns it.
-// The record is written by the gated service before it blocks, so observing it
-// proves the stopped controller is holding exactly this message — as opposed
+// The record is written by the gated service before it postpones the delivery
+// (and refreshed on every re-check while the gate stays closed), so observing
+// it proves the stopped controller caught exactly this message — as opposed
 // to the message simply not having arrived yet.
 func (s *E2EIntegrationSuite) awaitParked(consumerGroup, topic, messageID string) consumergate.Parked {
 	t := s.T()
@@ -197,8 +198,8 @@ func (s *E2EIntegrationSuite) awaitParked(consumerGroup, topic, messageID string
 }
 
 // awaitUnparked polls until the previously observed parked record is absent.
-// The gate removes the record before releasing the delivery, so disappearance
-// proves the delivery cleared the gate after it opened.
+// The gated service removes the record when the redelivered message clears the
+// open gate, so disappearance proves the delivery was admitted after the open.
 func (s *E2EIntegrationSuite) awaitUnparked(consumerGroup, topic, messageID string) {
 	t := s.T()
 	pollUntil(persistPollInterval, func() bool {

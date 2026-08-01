@@ -41,7 +41,6 @@ import (
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	gatewaypb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	orchestratorpb "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb"
-	"github.com/uber/submitqueue/platform/extension/consumergate"
 	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -95,7 +94,7 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 	// the suite manipulates the same directory through the file implementation.
 	gateDir := t.TempDir()
 	t.Setenv("SQ_CONSUMER_GATE_DIR", gateDir)
-	s.gate = consumergatefile.New(gateDir, consumergate.DefaultConfig())
+	s.gate = consumergatefile.New(gateDir)
 
 	// Use docker-compose from service/submitqueue (full stack), resolved from
 	// the test runfiles. All three service images are built from a staged
@@ -356,9 +355,9 @@ func (s *E2EIntegrationSuite) TestCancelRequest_InvalidSqid() {
 //     distinguishing "gated and parked" from "not arrived yet").
 //  4. Act while stopped: cancel the request. It is pre-batch by construction,
 //     so the cancel controller drives it terminal Cancelled directly.
-//  5. Start: open the gate. The parked check proceeds as the same attempt,
-//     runway answers the now-stale check, and the orchestrator drops the
-//     signal for the halted request.
+//  5. Start: open the gate. The postponed check redelivers within a re-check
+//     tick and clears the open gate, runway answers the now-stale check, and
+//     the orchestrator drops the signal for the halted request.
 //
 // The drop in step 5 is asserted without sleeping: a sentinel request landed
 // on the same queue after the gate opens shares the check and signal
