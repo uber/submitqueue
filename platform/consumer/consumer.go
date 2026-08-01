@@ -471,9 +471,9 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 			"elapsed_ms", elapsed.Milliseconds(),
 		)
 
-		// Nack with no delay - let visibility timeout handle retry delay
+		// Nack requeues immediately - the visibility timeout spaces retries
 		nackOp := metrics.Begin(controllerScope, "nack", metrics.StorageLatencyBuckets)
-		nackErr := delivery.Nack(ctx, 0)
+		nackErr := delivery.Nack(ctx)
 		nackOp.Complete(nackErr)
 		if nackErr != nil {
 			m.logger.Errorw("failed to nack message",

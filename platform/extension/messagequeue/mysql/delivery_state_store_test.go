@@ -212,7 +212,7 @@ func TestDeliveryStateStore_MarkNacked(t *testing.T) {
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			}
 
-			err := store.MarkNacked(context.Background(), "group-1", "orders", "part-1", 5, 5000)
+			err := store.MarkNacked(context.Background(), "group-1", "orders", "part-1", 5)
 
 			if tt.wantErr {
 				require.Error(t, err)
