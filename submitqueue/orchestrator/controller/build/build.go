@@ -149,8 +149,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	// Hand off to the buildsignal poll loop; it calls Status, updates the
-	// persisted Build, publishes to speculate, and re-publishes itself via
-	// PublishAfter until terminal.
+	// persisted Build, publishes to speculate, and holds its delivery
+	// between polls until terminal.
 	if err := c.publish(ctx, topickey.TopicKeyBuildSignal, build); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to buildsignal: %w", err)

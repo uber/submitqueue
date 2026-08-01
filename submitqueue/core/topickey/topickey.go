@@ -36,8 +36,8 @@ const (
 	// TopicKeyBuildSignal is the polling stage for triggered builds. Each
 	// message carries a Build; the consumer calls BuildRunner.Status,
 	// persists the latest status, publishes the batch ID to TopicKeySpeculate
-	// so the state machine re-evaluates, and re-publishes itself via
-	// PublishAfter when the build has not yet reached a terminal state.
+	// so the state machine re-evaluates, and holds the delivery for the next
+	// poll when the build has not yet reached a terminal state.
 	TopicKeyBuildSignal TopicKey = "buildsignal"
 	// TopicKeyMerge is the pipeline stage where speculated batches are published for merging.
 	TopicKeyMerge TopicKey = "submitqueue-merge"

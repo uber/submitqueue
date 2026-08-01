@@ -15,11 +15,11 @@
 // Package buildsignal implements the build poll loop. Each message carries
 // a Build; the controller calls BuildRunner.Status, writes the latest
 // status to the BuildStore, publishes the batch ID to TopicKeySpeculate
-// so the state machine re-evaluates, and re-publishes itself via
-// PublishAfter when the build has not yet reached a terminal state. Each
-// buildID partitions independently, so slow polls on one build do not
-// block others. A webhook-capable backend can publish into this same
-// topic — the controller cannot tell a poll-driven message from a push.
+// so the state machine re-evaluates, and holds the delivery for the next
+// poll when the build has not yet reached a terminal state. Each message
+// partitions by batch ID, so slow polls on one batch's build do not block
+// others. A webhook-capable backend can publish into this same topic — the
+// controller cannot tell a poll-driven message from a push.
 package buildsignal
 
 import (
@@ -89,18 +89,16 @@ func NewController(
 }
 
 // Process polls the build's current status, persists it, publishes the
-// batch ID to speculate so the state machine re-evaluates, and re-publishes
-// a delayed message back to this topic when the build is still in flight.
+// batch ID to speculate so the state machine re-evaluates, and holds the
+// delivery for the next poll when the build is still in flight.
 // Returns nil to ack (success), or error to nack/reject.
 //
 // Error classification: deserialize, Status, Update, and the speculate
 // publish stay non-retryable — they reject straight to DLQ on the first
 // failure, where the operational republish path is the recovery mechanism.
-// Only the PublishAfter self-reschedule is retryable: it is the poll loop's
-// heartbeat and runs only after status/persist/speculate have all succeeded,
-// so a transient enqueue blip nacks and replays (up to MaxAttempts) rather
-// than silently stalling the build, then still falls through to DLQ if it
-// persists.
+// The poll loop's continuation is a hold, not a publish: the framework
+// postpones the delivery, and a failed postpone write lapses into a normal
+// visibility-timeout redelivery, so the loop cannot stall on an enqueue.
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	const opName = "process"
 
@@ -187,14 +185,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return nil
 	}
 
+	// Not terminal yet: hold the delivery so this same message redelivers
+	// after the poll delay, without counting toward the retry limit.
 	delayMs := pollDelay(status)
 	metrics.NamedCounter(c.metricsScope, opName, "rescheduled", 1, metrics.NewTag("status", string(status)))
-	if err := c.publishBuild(ctx, c.topicKey, updatedBuild, delayMs); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
-		return fmt.Errorf("failed to re-publish to buildsignal: %w", err)
-	}
+	delivery.Hold(delayMs)
 
-	c.logger.Debugw("rescheduled build status poll",
+	c.logger.Debugw("holding for next build status poll",
 		"build_id", updatedBuild.ID,
 		"status", string(status),
 		"delay_ms", delayMs,
@@ -211,34 +208,6 @@ func pollDelay(status entity.BuildStatus) int64 {
 		// Accepted and any unknown non-terminal state.
 		return PollDelayAcceptedMs
 	}
-}
-
-// publishBuild publishes a build's ID to the topic identified by key. delayMs > 0
-// uses PublishAfter; otherwise it uses Publish. Only the identifier travels on
-// the queue — the consumer reloads the full Build from storage.
-func (c *Controller) publishBuild(ctx context.Context, key consumer.TopicKey, build entity.Build, delayMs int64) error {
-	payload, err := entity.BuildID{ID: build.ID}.ToBytes()
-	if err != nil {
-		return fmt.Errorf("failed to serialize build ID: %w", err)
-	}
-
-	msg := entityqueue.NewMessage(build.ID, payload, build.BatchID, nil)
-
-	q, ok := c.registry.Queue(key)
-	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", key)
-	}
-
-	topicName, ok := c.registry.TopicName(key)
-	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", key)
-	}
-
-	publisher := q.Publisher()
-	if delayMs > 0 {
-		return publisher.PublishAfter(ctx, topicName, msg, delayMs)
-	}
-	return publisher.Publish(ctx, topicName, msg)
 }
 
 // publishBatchID publishes a batch ID to the topic identified by key.
