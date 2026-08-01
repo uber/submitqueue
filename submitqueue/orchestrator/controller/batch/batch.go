@@ -270,9 +270,21 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	request.Version = newRequestVersion
 	request.State = entity.RequestStateBatched
 
+	for _, requestID := range batch.Contains {
+		association := entity.RequestBatch{
+			RequestID: requestID,
+			BatchID:   batch.ID,
+			Version:   1,
+		}
+		if err := c.store.GetRequestBatchStore().Create(ctx, association); err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "request_batch_store_errors", 1)
+			return fmt.Errorf("failed to associate request %s with batch %s: %w", requestID, batch.ID, err)
+		}
+	}
+
 	// Persist batch to storage.
 	// This is the final operation that concludes the batch creation process. If it fails, BatchDependents will be pointing to a batch id that does not exist.
-	// We do not reuse batch ids, a retry of this operation will create a new batch with a new ID. The downstream logic that operates on BatchDependent should be able to handle stale entries.
+	// We do not reuse batch ids, a retry of this operation will create a new batch with a new ID. The downstream logic should tolerate stale BatchDependent and RequestBatch entries.
 	if err := c.store.GetBatchStore().Create(ctx, batch); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
 		return fmt.Errorf("failed to create batch in batch store: %w", err)

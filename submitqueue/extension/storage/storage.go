@@ -49,6 +49,9 @@ type Storage interface {
 	// GetRequestStore returns the RequestStore instance.
 	GetRequestStore() RequestStore
 
+	// GetRequestBatchStore returns the RequestBatchStore instance.
+	GetRequestBatchStore() RequestBatchStore
+
 	// GetChangeStore returns the ChangeStore instance.
 	GetChangeStore() ChangeStore
 
