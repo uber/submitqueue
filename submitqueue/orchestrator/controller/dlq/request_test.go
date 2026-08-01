@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 	queue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
-	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
@@ -171,9 +171,9 @@ func TestDLQRequestController_Process_EmptyIDFails(t *testing.T) {
 
 // newMockDelivery returns a MockDelivery wired up enough to be passed through
 // the DLQ controller Process flow.
-func newMockDelivery(ctrl *gomock.Controller, payload []byte) *queuemock.MockDelivery {
+func newMockDelivery(ctrl *gomock.Controller, payload []byte) *consumermock.MockDelivery {
 	msg := queue.NewMessage("dlq-msg-1", payload, "", nil)
-	d := queuemock.NewMockDelivery(ctrl)
+	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
 	d.EXPECT().Metadata().Return(map[string]string{

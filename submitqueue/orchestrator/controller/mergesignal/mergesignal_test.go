@@ -25,6 +25,7 @@ import (
 	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -49,8 +50,8 @@ func resultPayload(t *testing.T, res runwaymq.MergeResult) []byte {
 	return payload
 }
 
-func newDelivery(ctrl *gomock.Controller, msg entityqueue.Message) *queuemock.MockDelivery {
-	d := queuemock.NewMockDelivery(ctrl)
+func newDelivery(ctrl *gomock.Controller, msg entityqueue.Message) *consumermock.MockDelivery {
+	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
 	return d

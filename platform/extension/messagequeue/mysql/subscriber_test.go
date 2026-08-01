@@ -192,6 +192,77 @@ func TestSQLDelivery_Ack(t *testing.T) {
 	}
 }
 
+func TestSQLDelivery_Postpone(t *testing.T) {
+	tests := []struct {
+		name             string
+		alreadyAcked     bool
+		markPostponedErr error
+		expectErr        bool
+	}{
+		{
+			name: "successful postpone",
+		},
+		{
+			name:         "already acknowledged returns error",
+			alreadyAcked: true,
+			expectErr:    true,
+		},
+		{
+			name:             "MarkPostponed failure returns error",
+			markPostponedErr: fmt.Errorf("db error"),
+			expectErr:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockMsgStore := NewMockmessageStore(ctrl)
+			mockOffStore := NewMockoffsetStore(ctrl)
+			mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+			mockDeliveryState := NewMockdeliveryStateStore(ctrl)
+
+			sub := NewSubscriber(
+				zaptest.NewLogger(t).Sugar(),
+				tally.NoopScope,
+				mockMsgStore,
+				mockOffStore,
+				mockLeaseStore,
+				newTestHeartbeatStore(ctrl),
+				mockDeliveryState,
+			)
+
+			msg := entityqueue.NewMessage("msg-1", []byte("payload"), "part-1", nil)
+			d := newSQLDelivery(
+				msg, "1", 1, nil,
+				sub, "test_topic", "part-1", 100, "msg-1", "test-group",
+				extqueue.DLQConfig{},
+			)
+
+			if tt.alreadyAcked {
+				d.acknowledged = true
+			}
+
+			if !tt.alreadyAcked {
+				mockDeliveryState.EXPECT().MarkPostponed(
+					gomock.Any(), "test-group", "test_topic", "part-1", int64(100), int64(5000),
+				).Return(tt.markPostponedErr)
+			}
+
+			err := d.Postpone(context.Background(), 5000)
+
+			if tt.expectErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.True(t, d.acknowledged)
+			}
+		})
+	}
+}
+
 func TestSQLDelivery_Reject(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -548,6 +619,117 @@ func TestSubscriber_PartitionWorkerPollAndDeliver(t *testing.T) {
 		assert.NotContains(t, histogram.Name(), "poll.latency")
 	}
 	assert.True(t, foundFinish, "expected poll.finish histogram")
+}
+
+// TestSubscriber_PollAndDeliver_PostponedBarrier verifies that a postponed
+// message halts the partition scan (barrier), while a nacked message is
+// skipped and later offsets keep flowing.
+func TestSubscriber_PollAndDeliver_PostponedBarrier(t *testing.T) {
+	tests := []struct {
+		name string
+		// state of the first row (offset 1); rows 2 and 3 have no delivery state
+		firstRowState DeliveryState
+		// expectDeliveries is how many of the later rows are delivered
+		expectDeliveries int
+	}{
+		{
+			name: "postponed row is a barrier, later offsets wait",
+			firstRowState: DeliveryState{
+				Acked:          false,
+				InvisibleUntil: time.Now().UnixMilli() + 60000,
+				Postponed:      true,
+			},
+			expectDeliveries: 0,
+		},
+		{
+			name: "nacked row is skipped, later offsets flow",
+			firstRowState: DeliveryState{
+				Acked:          false,
+				InvisibleUntil: time.Now().UnixMilli() + 60000,
+				Postponed:      false,
+			},
+			expectDeliveries: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockMessageStore := NewMockmessageStore(ctrl)
+			mockOffsetStore := NewMockoffsetStore(ctrl)
+			mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+			mockDeliveryState := NewMockdeliveryStateStore(ctrl)
+
+			s := NewSubscriber(
+				zaptest.NewLogger(t).Sugar(),
+				tally.NoopScope,
+				mockMessageStore,
+				mockOffsetStore,
+				mockLeaseStore,
+				newTestHeartbeatStore(ctrl),
+				mockDeliveryState,
+			)
+
+			cfg := testSubscriptionConfig()
+			deliveryCh := make(chan extqueue.Delivery, 10)
+			sub := &subscription{
+				topic:      "test_topic",
+				config:     cfg,
+				deliveryCh: deliveryCh,
+				workers:    make(map[string]*partitionWorker),
+			}
+
+			ctx := context.Background()
+
+			mockOffsetStore.EXPECT().Initialize(gomock.Any(), "test_topic", "part-1", cfg.ConsumerGroup).Return(nil)
+			mockOffsetStore.EXPECT().GetAckedOffset(gomock.Any(), "test_topic", "part-1", cfg.ConsumerGroup).Return(int64(0), nil).Times(2)
+
+			rows := []messageRow{
+				{ID: "msg-1", Offset: 1, PartitionKey: "part-1", Payload: []byte("p1"), PublishedAt: time.Now().UnixMilli()},
+				{ID: "msg-2", Offset: 2, PartitionKey: "part-1", Payload: []byte("p2"), PublishedAt: time.Now().UnixMilli()},
+				{ID: "msg-3", Offset: 3, PartitionKey: "part-1", Payload: []byte("p3"), PublishedAt: time.Now().UnixMilli()},
+			}
+			mockMessageStore.EXPECT().FetchByOffset(gomock.Any(), "test_topic", "part-1", int64(0), gomock.Any(), cfg.BatchSize).
+				Return(rows, nil)
+
+			mockDeliveryState.EXPECT().GetDeliveryState(gomock.Any(), cfg.ConsumerGroup, "test_topic", "part-1", int64(1)).
+				Return(tt.firstRowState, true, nil)
+			if tt.expectDeliveries > 0 {
+				for _, offset := range []int64{2, 3} {
+					mockDeliveryState.EXPECT().GetDeliveryState(gomock.Any(), cfg.ConsumerGroup, "test_topic", "part-1", offset).
+						Return(DeliveryState{}, false, nil)
+					mockDeliveryState.EXPECT().MarkDelivered(gomock.Any(), cfg.ConsumerGroup, "test_topic", "part-1", offset, cfg.VisibilityTimeoutMs).
+						Return(0, nil)
+				}
+			}
+
+			mockMessageStore.EXPECT().GetOffsetsAbove(gomock.Any(), "test_topic", "part-1", int64(0), watermarkAdvancementLimit).Return(nil, nil)
+			mockDeliveryState.EXPECT().AdvanceWatermark(gomock.Any(), cfg.ConsumerGroup, "test_topic", "part-1", int64(0), gomock.Nil()).Return(int64(0), nil)
+
+			w := &partitionWorker{
+				partitionKey: "part-1",
+				sub:          sub,
+				subscriber:   s,
+				done:         make(chan struct{}),
+			}
+
+			require.NoError(t, w.pollAndDeliver(ctx))
+
+			delivered := 0
+			for {
+				select {
+				case <-deliveryCh:
+					delivered++
+					continue
+				default:
+				}
+				break
+			}
+			assert.Equal(t, tt.expectDeliveries, delivered)
+		})
+	}
 }
 
 // TestSubscriber_StopAllWorkers tests that all workers are stopped gracefully.

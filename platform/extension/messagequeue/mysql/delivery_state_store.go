@@ -58,12 +58,17 @@ func (s *sqldeliveryStateStore) MarkDelivered(ctx context.Context, consumerGroup
 	now := time.Now().UnixMilli()
 	invisibleUntil := now + visibilityTimeoutMs
 
+	// Assignment order matters: retry_count reads the pre-update postponed value
+	// (MySQL applies ON DUPLICATE KEY UPDATE assignments left to right), so the
+	// postponed reset must come after it. A postponed redelivery is a deliberate
+	// wait, not a failure — it is exempt from the increment and consumes the flag.
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (consumer_group, topic, partition_key, message_offset, acked, invisible_until, retry_count)
-		VALUES (?, ?, ?, ?, FALSE, ?, 0)
+		INSERT INTO %s (consumer_group, topic, partition_key, message_offset, acked, invisible_until, retry_count, postponed)
+		VALUES (?, ?, ?, ?, FALSE, ?, 0, FALSE)
 		ON DUPLICATE KEY UPDATE
 			invisible_until = IF(acked = FALSE, VALUES(invisible_until), invisible_until),
-			retry_count = IF(acked = FALSE, retry_count + 1, retry_count)
+			retry_count = IF(acked = FALSE AND postponed = FALSE, retry_count + 1, retry_count),
+			postponed = IF(acked = FALSE, FALSE, postponed)
 	`, DeliveryStateTableName),
 		consumerGroup, topic, partitionKey, offset, invisibleUntil)
 
@@ -171,6 +176,39 @@ func (s *sqldeliveryStateStore) MarkNacked(ctx context.Context, consumerGroup, t
 	return nil
 }
 
+// MarkPostponed sets invisible_until = now + delay, resets retry_count, and sets
+// the postponed flag. A postpone is a deliberate wait, not a failure: the flag
+// makes the message a partition barrier while invisible, and exempts the next
+// MarkDelivered from the retry_count increment. The reset restarts failure
+// accounting — a completed delivery that chose to wait has demonstrated the
+// message is processable.
+func (s *sqldeliveryStateStore) MarkPostponed(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64, delayMs int64) (retErr error) {
+	op := metrics.Begin(s.scope, "mark_postponed", metrics.StorageLatencyBuckets,
+		metrics.NewTag("topic", topic),
+		metrics.NewTag("consumer_group", consumerGroup),
+		metrics.NewTag("partition_key", partitionKey))
+	defer func() { op.Complete(retErr) }()
+
+	now := time.Now().UnixMilli()
+	invisibleUntil := now + delayMs
+
+	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
+		INSERT INTO %s (consumer_group, topic, partition_key, message_offset, acked, invisible_until, retry_count, postponed)
+		VALUES (?, ?, ?, ?, FALSE, ?, 0, TRUE)
+		ON DUPLICATE KEY UPDATE
+			invisible_until = IF(acked = FALSE, VALUES(invisible_until), invisible_until),
+			retry_count = IF(acked = FALSE, 0, retry_count),
+			postponed = IF(acked = FALSE, TRUE, postponed)
+	`, DeliveryStateTableName),
+		consumerGroup, topic, partitionKey, offset, invisibleUntil)
+
+	if err != nil {
+		return fmt.Errorf("mark postponed topic=%s partition=%s offset=%d: %w", topic, partitionKey, offset, err)
+	}
+
+	return nil
+}
+
 // GetDeliveryState returns the full delivery state for a message offset.
 // Returns (state, found, error). found=false means no row (never delivered).
 func (s *sqldeliveryStateStore) GetDeliveryState(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64) (_ DeliveryState, _ bool, retErr error) {
@@ -182,9 +220,9 @@ func (s *sqldeliveryStateStore) GetDeliveryState(ctx context.Context, consumerGr
 
 	var state DeliveryState
 	err := s.db.QueryRowContext(ctx, fmt.Sprintf(`
-		SELECT acked, invisible_until, retry_count FROM %s
+		SELECT acked, invisible_until, retry_count, postponed FROM %s
 		WHERE consumer_group = ? AND topic = ? AND partition_key = ? AND message_offset = ?
-	`, DeliveryStateTableName), consumerGroup, topic, partitionKey, offset).Scan(&state.Acked, &state.InvisibleUntil, &state.RetryCount)
+	`, DeliveryStateTableName), consumerGroup, topic, partitionKey, offset).Scan(&state.Acked, &state.InvisibleUntil, &state.RetryCount, &state.Postponed)
 
 	if err == sql.ErrNoRows {
 		return DeliveryState{}, false, nil

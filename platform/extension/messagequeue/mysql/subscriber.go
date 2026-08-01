@@ -262,6 +262,32 @@ func (d *sqlDelivery) Nack(ctx context.Context, requeueAfterMillis int64) error 
 	return nil
 }
 
+// Postpone implements extqueue.Delivery.Postpone
+func (d *sqlDelivery) Postpone(ctx context.Context, delayMs int64) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if d.acknowledged {
+		return &ErrAlreadyAcknowledged{DeliveryID: d.deliveryID}
+	}
+
+	// Mark as postponed in delivery state (per consumer group): invisible for
+	// the delay, retry_count reset, partition barrier until redelivery.
+	if err := d.subscriber.deliveryStateStore.MarkPostponed(ctx, d.consumerGroup, d.topic, d.partitionKey, d.offset, delayMs); err != nil {
+		return err
+	}
+
+	d.subscriber.logger.Debugw("message postponed",
+		"topic", d.topic,
+		"partition_key", d.partitionKey,
+		"message_id", d.messageID,
+		"delay_millis", delayMs,
+	)
+
+	d.acknowledged = true
+	return nil
+}
+
 // Reject implements extqueue.Delivery.Reject
 func (d *sqlDelivery) Reject(ctx context.Context, reason string) error {
 	d.mu.Lock()
@@ -792,9 +818,15 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) (retErr error) {
 		// Determine deliverability in-memory:
 		//   !found → new message, deliverable
 		//   state.Acked → already processed, skip
-		//   state.InvisibleUntil > now → in-flight or nack delay, skip
+		//   state.InvisibleUntil > now → in-flight, nack delay, or postpone delay
 		now := time.Now().UnixMilli()
 		if found && (state.Acked || state.InvisibleUntil > now) {
+			// A postponed message is a barrier: its partition waits for it, so
+			// stop scanning instead of skipping past it. In-flight and nacked
+			// messages are skipped — a failed delivery must not halt its partition.
+			if !state.Acked && state.Postponed {
+				break
+			}
 			continue
 		}
 

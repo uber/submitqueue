@@ -155,12 +155,17 @@ type DeliveryState struct {
 	InvisibleUntil int64
 	// RetryCount tracks how many times the message has been delivered
 	RetryCount int
+	// Postponed indicates the last delivery was postponed (a deliberate wait,
+	// not a failure). While set and invisible, the message is a partition
+	// barrier and its next delivery is exempt from the retry_count increment.
+	Postponed bool
 }
 
 // deliveryStateStore handles per-consumer-group delivery tracking (internal use only)
 type deliveryStateStore interface {
 	// MarkDelivered inserts a row marking message as in-flight for this consumer group.
-	// Increments retry_count on redelivery (ON DUPLICATE KEY UPDATE).
+	// Increments retry_count on redelivery (ON DUPLICATE KEY UPDATE), except when the
+	// row is marked postponed — that delivery is exempt and clears the postponed flag.
 	// Returns the resulting retry_count after the operation.
 	MarkDelivered(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64, visibilityTimeoutMs int64) (retryCount int, err error)
 
@@ -173,6 +178,11 @@ type deliveryStateStore interface {
 
 	// MarkNacked sets invisible_until = now + delay to schedule redelivery.
 	MarkNacked(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64, delayMs int64) error
+
+	// MarkPostponed sets invisible_until = now + delay, resets retry_count, and
+	// sets the postponed flag. The message becomes a partition barrier until it
+	// redelivers, and the redelivery does not count as a failure.
+	MarkPostponed(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64, delayMs int64) error
 
 	// GetDeliveryState returns the full delivery state for a message offset.
 	// Returns (state, found, error). found=false means no row (never delivered).

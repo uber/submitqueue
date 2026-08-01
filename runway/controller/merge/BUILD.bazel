@@ -26,6 +26,7 @@ go_test(
         "//api/runway/messagequeue/protopb:go_default_library",
         "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
+        "//platform/consumer/mock:go_default_library",
         "//platform/extension/messagequeue/mock:go_default_library",
         "//runway/extension/merger:go_default_library",
         "//runway/extension/merger/mock:go_default_library",

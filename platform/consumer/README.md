@@ -62,7 +62,7 @@ type Controller interface {
 
 ### Delivery
 
-A restricted view of a queue delivery exposed to controllers. Hides Ack/Nack/Reject (handled automatically by Consumer) while exposing message data and `ExtendVisibilityTimeout`.
+A restricted view of a queue delivery exposed to controllers. Hides Ack/Nack/Reject (handled automatically by Consumer) while exposing message data, `ExtendVisibilityTimeout`, and `Hold`.
 
 ## TopicRegistry
 
@@ -92,6 +92,7 @@ registry, _ := consumer.NewTopicRegistry([]consumer.TopicConfig{
 The consumer passes every non-nil controller error through the configured `errs.ErrorProcessor` once and then uses `errs.IsRetryable` to decide the transport action:
 
 - **`return nil`** — success, message is acked.
+- **`delivery.Hold(delayMs)` then `return nil`** — success that chose to wait: the message is postponed instead of acked. It redelivers after the delay as a barrier its partition waits behind, and the redelivery does not count toward the retry limit (`Attempt()` restarts at 1). A hold is only honored on success — if `Process` returns an error, the failure outcome below wins and the recorded hold is discarded (logged, `hold_ignored` counter). Use hold for backoff loops (waiting for a budget slot, polling an external status) instead of acking and republishing to your own topic.
 - **non-nil, retryable after processing** — message is nacked for redelivery (visibility timeout drives the retry delay).
 - **non-nil, non-retryable after processing** — message is rejected, which moves it to the DLQ if one is configured for the subscription, or simply acks-and-drops if not.
 
@@ -120,7 +121,21 @@ When the consumer is wired with `errs.AlwaysRetryableProcessor` (DLQ reconciliat
 
 The consumer records controller operations with `process.start` and `process.finish`. The finish histogram records both latency and completion count with `result=success|error|cancel`; error and cancellation series also include `origin=infra|infra_retryable|user` and `dependency=yes|no`. These dimensions are added after error processing, so they describe the classified error that drives ack, nack, or reject behavior rather than the controller's raw return value. The lifecycle histogram count replaces separate received, processed, and controller-error counters.
 
-The consumer also owns lifecycle metrics for the resulting `ack`, `nack`, or `reject` transport operation. Queue controllers should emit only domain-specific event counters; they must not duplicate the consumer-owned `process` lifecycle metrics.
+The consumer also owns lifecycle metrics for the resulting `ack`, `nack`, `postpone`, or `reject` transport operation. Queue controllers should emit only domain-specific event counters; they must not duplicate the consumer-owned `process` lifecycle metrics.
+
+## Which wait do I want?
+
+Several mechanisms can delay work; they mean different things. Pick by what you're trying to say:
+
+| You want to say | Use | Partition while waiting |
+|---|---|---|
+| "This delivery failed — retry it" | return a retryable error (framework nacks) | keeps flowing — a failure never halts its partition |
+| "I'm still working — keep my lease" | `delivery.ExtendVisibilityTimeout(...)` | blocked behind the in-flight delivery |
+| "Done for now — wake this partition in N ms" | `delivery.Hold(N)` then `return nil` | paused behind the postponed message (barrier), redelivers first in order |
+| "Stop this controller/partition from outside" (tests, operators) | consumer gate (`platform/extension/consumergate`) | parked in flight until the gate opens |
+| "Defer *other* work" — a delayed message to another topic or key | `Publisher.PublishAfter` | not involved — it's a fresh publish |
+
+Gate vs hold, since both pause a partition: the **gate** is an external, event-ended stop — someone stops the controller at the door, before `Process` ever sees the message. **Hold** is a controller-chosen, timer-ended wait — the controller saw the work and decided to come back later. Business logic never closes or opens gates; a controller that needs to back off uses hold.
 
 ## Lifecycle
 

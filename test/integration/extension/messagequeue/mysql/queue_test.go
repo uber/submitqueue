@@ -2055,6 +2055,135 @@ func (s *SQLQueueIntegrationSuite) TestNackDoesNotBlockOtherMessages() {
 	t.Logf("Verified: nacked message did not block subsequent messages")
 }
 
+// TestPostponeBlocksPartitionUntilDue verifies the postpone barrier: while a
+// postponed message waits out its delay, later offsets in the partition are
+// not delivered; when due, the postponed message redelivers first, in order,
+// and as a first attempt (postponing does not consume retry budget).
+func (s *SQLQueueIntegrationSuite) TestPostponeBlocksPartitionUntilDue() {
+	t := s.T()
+
+	signalCh := make(chan queueMySQL.HookSignal, 100)
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB:           s.db,
+		Logger:       zaptest.NewLogger(t),
+		MetricsScope: tally.NoopScope,
+		OnSignal:     signalCh,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	topic := "postpone_barrier_topic"
+	partition := "postpone-part"
+
+	// Subscribe with batch=10 so the barrier — not the batch size — is what
+	// keeps later offsets back.
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "postpone-cg")
+	subConfig.PollIntervalMs = 50
+	subConfig.BatchSize = 10
+	deliveryCh, err := q.Subscriber().Subscribe(s.ctx, topic, subConfig)
+	require.NoError(t, err)
+
+	// Publish the first message alone, receive it, and postpone it. The
+	// barrier must be in place before the later messages exist — deliveries
+	// already fetched into the in-memory buffer are past the barrier by
+	// design (it acts at the fetch layer).
+	msg1 := entityqueue.NewMessage("msg-1", []byte("payload-1"), partition, nil)
+	require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg1))
+
+	d1 := receive(t, deliveryCh)
+	assert.Equal(t, "msg-1", d1.Message().ID)
+	postponeDelay := 2 * time.Second
+	require.NoError(t, d1.Postpone(s.ctx, postponeDelay.Milliseconds()))
+	t.Logf("Postponed msg-1 for %s", postponeDelay)
+
+	// Publish two more messages behind the postponed one
+	for i := 2; i <= 3; i++ {
+		msg := entityqueue.NewMessage(fmt.Sprintf("msg-%d", i), []byte(fmt.Sprintf("payload-%d", i)), partition, nil)
+		require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg))
+	}
+
+	// Barrier: messages 2 and 3 must not be delivered while msg-1 waits —
+	// the opposite of the nacked case above.
+	assertNoDelivery(t, deliveryCh, signalCh, queueMySQL.SignalDeliveryCheck, 3)
+	t.Logf("Confirmed: partition blocked behind postponed msg-1")
+
+	// When due, msg-1 redelivers first, in order, as a fresh first attempt
+	d1again := receive(t, deliveryCh)
+	assert.Equal(t, "msg-1", d1again.Message().ID)
+	assert.Equal(t, 1, d1again.Attempt(), "postponed redelivery must not consume retry budget")
+	require.NoError(t, d1again.Ack(s.ctx))
+	t.Logf("Received postponed msg-1 again as attempt 1")
+
+	d2 := receive(t, deliveryCh)
+	assert.Equal(t, "msg-2", d2.Message().ID)
+	require.NoError(t, d2.Ack(s.ctx))
+
+	d3 := receive(t, deliveryCh)
+	assert.Equal(t, "msg-3", d3.Message().ID)
+	require.NoError(t, d3.Ack(s.ctx))
+
+	t.Logf("Verified: postponed message acted as a barrier and redelivered in order")
+}
+
+// TestPostponeResetsRetryBudget verifies a postpone does not weaken the DLQ
+// backstop: after a postpone the message restarts as attempt 1, and real
+// failures still dead-letter at MaxAttempts.
+func (s *SQLQueueIntegrationSuite) TestPostponeResetsRetryBudget() {
+	t := s.T()
+
+	signalCh := make(chan queueMySQL.HookSignal, 100)
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB:           s.db,
+		Logger:       zaptest.NewLogger(t),
+		MetricsScope: tally.NoopScope,
+		OnSignal:     signalCh,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	topic := "postpone_budget_topic"
+
+	subConfig := testSubConfig("worker-1", "postpone-budget-cg")
+	subConfig.Retry.MaxAttempts = 2
+	subConfig.DLQ.Enabled = true
+
+	deliveryChan, err := q.Subscriber().Subscribe(s.ctx, topic, subConfig)
+	require.NoError(t, err)
+
+	msg := entityqueue.NewMessage("wait-then-poison", []byte("payload"), "partition-1", nil)
+	require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg))
+
+	// First delivery: postpone briefly — a deliberate wait, not a failure
+	d := receive(t, deliveryChan)
+	assert.Equal(t, 1, d.Attempt())
+	require.NoError(t, d.Postpone(s.ctx, 100))
+	t.Logf("Postponed message on first delivery")
+
+	// The post-postpone redelivery restarts at attempt 1; now fail for real
+	// MaxAttempts times.
+	for attempt := 1; attempt <= subConfig.Retry.MaxAttempts; attempt++ {
+		delivery := receive(t, deliveryChan)
+		assert.Equal(t, attempt, delivery.Attempt())
+		assert.Equal(t, "wait-then-poison", delivery.Message().ID)
+		require.NoError(t, delivery.Nack(s.ctx, 0))
+		t.Logf("Attempt %d: nacked", delivery.Attempt())
+	}
+
+	// The message dead-letters despite the earlier postpone
+	assertNoDelivery(t, deliveryChan, signalCh, queueMySQL.SignalDeliveryCheck, 3)
+
+	dlqTopic := topic + subConfig.DLQ.TopicSuffix
+	dlqConfig := extqueue.DefaultSubscriptionConfig("worker-1", "postpone-budget-cg")
+	dlqDeliveryChan, err := q.Subscriber().Subscribe(s.ctx, dlqTopic, dlqConfig)
+	require.NoError(t, err)
+
+	dlqDelivery := receive(t, dlqDeliveryChan)
+	assert.Equal(t, "wait-then-poison", dlqDelivery.Message().ID)
+	require.NoError(t, dlqDelivery.Ack(s.ctx))
+
+	t.Logf("Verified: postpone reset the budget but real failures still dead-lettered")
+}
+
 // TestBatchSizeOneStrictSerialization verifies that with batchSize=1, messages
 // within a partition are processed strictly in order — only one message is
 // in-flight at a time.

@@ -411,6 +411,18 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 	op.Complete(err, completionTags...)
 
 	if err != nil {
+		// A failure outcome wins over a recorded hold — a hold is only honored
+		// on success, so retry accounting and dead-lettering stay meaningful.
+		if wrapped.held {
+			metrics.NamedCounter(controllerScope, opName, "hold_ignored", 1)
+			m.logger.Warnw("hold recorded but controller returned error, failure outcome wins",
+				"controller", controller.Name(),
+				"topic_key", topicKey,
+				"message_id", msg.ID,
+				"partition_key", msg.PartitionKey,
+			)
+		}
+
 		// By convention, Controller can only return context.Canceled if it is
 		// cancelled by the processing context during shutdown.
 		isCanceled := errors.Is(err, context.Canceled)
@@ -471,6 +483,36 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 				"error", nackErr,
 			)
 		}
+		return
+	}
+
+	// Controller succeeded with a recorded hold - postpone instead of acking.
+	// The message redelivers after the delay as a partition barrier, without
+	// consuming retry budget. A failed postpone is abandoned like a failed ack:
+	// the visibility timeout lapses into a normal redelivery, so the hold
+	// loop's liveness never depends on this write succeeding.
+	if wrapped.held {
+		postponeOp := metrics.Begin(controllerScope, "postpone", metrics.StorageLatencyBuckets)
+		postponeErr := delivery.Postpone(ctx, wrapped.holdDelayMs)
+		postponeOp.Complete(postponeErr)
+		if postponeErr != nil {
+			m.logger.Errorw("failed to postpone held message",
+				"controller", controller.Name(),
+				"topic_key", topicKey,
+				"message_id", msg.ID,
+				"error", postponeErr,
+			)
+			return
+		}
+
+		m.logger.Debugw("message held, postponed for redelivery",
+			"controller", controller.Name(),
+			"topic_key", topicKey,
+			"message_id", msg.ID,
+			"partition_key", msg.PartitionKey,
+			"delay_ms", wrapped.holdDelayMs,
+			"elapsed_ms", elapsed.Milliseconds(),
+		)
 		return
 	}
 

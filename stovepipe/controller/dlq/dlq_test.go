@@ -23,7 +23,7 @@ import (
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
-	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -60,7 +60,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, dlqMocks
 
 func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) consumer.Delivery {
 	t.Helper()
-	d := queuemock.NewMockDelivery(ctrl)
+	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(entityqueue.NewMessage(testID, payload, testQueue, nil)).AnyTimes()
 	d.EXPECT().Attempt().Return(4).AnyTimes()
 	d.EXPECT().Metadata().Return(map[string]string{

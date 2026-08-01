@@ -25,6 +25,7 @@ import (
 	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
@@ -42,10 +43,10 @@ type publishedMsg struct {
 	msg   entityqueue.Message
 }
 
-func newDelivery(t *testing.T, ctrl *gomock.Controller, payload []byte, meta map[string]string) *queuemock.MockDelivery {
+func newDelivery(t *testing.T, ctrl *gomock.Controller, payload []byte, meta map[string]string) *consumermock.MockDelivery {
 	t.Helper()
 	msg := entityqueue.NewMessage(testID, payload, testPartitionKey, nil)
-	d := queuemock.NewMockDelivery(ctrl)
+	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Metadata().Return(meta).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
