@@ -21,6 +21,8 @@ The gate is a decorator installed by the consumer around every registered contro
 
 Stopping is a barrier, not preemption: a message already inside `Process` when the gate closes runs to completion; the gate guarantees no *new* message enters the controller.
 
+The gate is an external stop lever — closed and opened from outside the controller, ended by an event. A controller that itself needs to wait (backing off for a budget slot, polling a slow status) should not reach for the gate; that is the hold outcome — see [Consumer Hold](consumer-hold.md).
+
 One bounded side effect is accepted and documented: the routing loop feeds each partition through a channel buffered at the subscription's batch size, so if messages keep arriving for a parked partition, the topic's routing loop eventually stalls once that buffer fills. For a fully closed gate this is moot (every partition parks anyway), and at test volumes it never triggers.
 
 ### Gate identity: consumer group, optionally narrowed to a partition
