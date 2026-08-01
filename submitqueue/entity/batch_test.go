@@ -28,6 +28,7 @@ func TestBatchState_IsTerminal(t *testing.T) {
 		terminal bool
 	}{
 		{name: "unknown", state: BatchStateUnknown, terminal: false},
+		{name: "creating", state: BatchStateCreating, terminal: false},
 		{name: "created", state: BatchStateCreated, terminal: false},
 		{name: "speculating", state: BatchStateSpeculating, terminal: false},
 		{name: "merging", state: BatchStateMerging, terminal: false},
@@ -42,6 +43,14 @@ func TestBatchState_IsTerminal(t *testing.T) {
 			assert.Equal(t, tt.terminal, tt.state.IsTerminal())
 		})
 	}
+}
+
+func TestActiveBatchStates_ExcludesCreating(t *testing.T) {
+	assert.NotContains(t, ActiveBatchStates(), BatchStateCreating)
+}
+
+func TestDependencyBatchStates_ExcludesCreating(t *testing.T) {
+	assert.NotContains(t, DependencyBatchStates(), BatchStateCreating)
 }
 
 func TestBatch_SerializationRoundTrip(t *testing.T) {

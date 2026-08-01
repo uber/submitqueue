@@ -22,7 +22,10 @@ type BatchState string
 const (
 	// BatchStateUnknown is the unreachable state. It is set by default when the structure is initialized. It should never be seen in the system.
 	BatchStateUnknown BatchState = ""
-	// BatchStateCreated is the state of a batch that has been created for processing.
+	// BatchStateCreating indicates that the batch has been persisted but its dependency reverse indexes may not yet be fully initialized.
+	// A Creating batch is not eligible to be referenced as a dependency.
+	BatchStateCreating BatchState = "creating"
+	// BatchStateCreated indicates that the batch and its dependency reverse indexes are fully initialized and ready for processing.
 	BatchStateCreated BatchState = "created"
 	// BatchStateSpeculating is the state of a batch that is undergoing speculative execution.
 	BatchStateSpeculating BatchState = "speculating"
@@ -67,9 +70,8 @@ func IsBatchStateHalted(s BatchState) bool {
 	return s.IsTerminal() || s == BatchStateCancelling
 }
 
-// ActiveBatchStates returns every non-terminal batch state that must be considered in-flight.
-// Use this when callers need to find batches that still own a request, including Cancelling
-// batches that cancel redelivery must be able to resolve.
+// ActiveBatchStates returns batch states eligible for active pipeline and cancellation lookups.
+// Creating is excluded because its reverse-index structure may still be incomplete.
 func ActiveBatchStates() []BatchState {
 	return []BatchState{
 		BatchStateCreated,

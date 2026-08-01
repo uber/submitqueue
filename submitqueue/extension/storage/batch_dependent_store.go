@@ -25,16 +25,12 @@ import (
 // BatchDependentStore is an interface that defines methods for managing batch dependent information in the database.
 //
 // A BatchDependent is a reverse index ("batches that depend on me") paired one-to-one with a Batch.
-// The batch-creation flow always calls Create here before creating the Batch itself, so every active
-// Batch is guaranteed to have a corresponding BatchDependent row. Lookups via Get are only performed
-// for batch IDs returned from the active-batch set, meaning a missing row indicates data corruption or
-// out-of-band manipulation rather than a normal "not found" outcome. ErrNotFound is therefore part of
-// the contract for completeness but is not expected to be returned in steady-state operation.
+// The batch-creation flow creates this row while the Batch is Creating and before making the Batch eligible for pipeline processing.
+// A Creating Batch can briefly exist without its row; every Batch that reaches Created is guaranteed to have one.
 type BatchDependentStore interface {
 	// Get retrieves the batch dependent by batch ID.
 	// If the batch contains no dependents, the returned BatchDependent will have an empty Dependents list.
-	// Returns ErrNotFound if the batch itself is not found, which should never happen in steady-state system and
-	// therefore does not need a special handling.
+	// Returns ErrNotFound if no reverse-index row exists for the batch.
 	Get(ctx context.Context, batchID string) (entity.BatchDependent, error)
 
 	// Create creates a new batch dependent.
