@@ -358,11 +358,14 @@ func TestProcess_UnbatchedRequestDisappears_Retryable(t *testing.T) {
 
 // TestProcess_BatchPath_HandsOffToSpeculate asserts the entire batch path:
 // the request intent CAS runs, the batch intent CAS to Cancelling runs, and
-// exactly one publish lands on the speculate topic with the batch ID as the
-// message ID. The controller does NOT perform a terminal batch CAS, does
-// NOT publish to conclude, and does NOT emit a per-request log on this path
-// (the gateway already wrote the Cancelling intent log; conclude writes the
-// terminal log when it reconciles request state).
+// exactly one publish lands on the speculate topic carrying the batch ID. The
+// message ID is not the bare batch ID: the queue deduplicates on it, so a
+// redelivery's re-publish would be silently dropped and the batch left
+// Cancelling with nothing driving it. The controller does NOT perform a
+// terminal batch CAS, does NOT publish to conclude, and does NOT emit a
+// per-request log on this path (the gateway already wrote the Cancelling
+// intent log; conclude writes the terminal log when it reconciles request
+// state).
 func TestProcess_BatchPath_HandsOffToSpeculate(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	registry, pub := newRegistry(t, ctrl)
@@ -370,11 +373,16 @@ func TestProcess_BatchPath_HandsOffToSpeculate(t *testing.T) {
 	type pubRec struct {
 		topic string
 		msgID string
+		// payloadID is the batch ID the message actually carries, which is what
+		// the consumer acts on — the message ID is only the queue's dedup key.
+		payloadID string
 	}
 	var records []pubRec
 	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, topic string, msg entityqueue.Message) error {
-			records = append(records, pubRec{topic: topic, msgID: msg.ID})
+			bid, err := entity.BatchIDFromBytes(msg.Payload)
+			require.NoError(t, err)
+			records = append(records, pubRec{topic: topic, msgID: msg.ID, payloadID: bid.ID})
 			return nil
 		}).AnyTimes()
 
@@ -406,7 +414,12 @@ func TestProcess_BatchPath_HandsOffToSpeculate(t *testing.T) {
 	err := controller.Process(context.Background(), newDelivery(t, ctrl, cancelPayload(t, "q/1", "stop"), "q/1"))
 	require.NoError(t, err)
 
-	assert.Equal(t, []pubRec{{topic: "speculate", msgID: "q/batch/1"}}, records)
+	require.Len(t, records, 1)
+	assert.Equal(t, "speculate", records[0].topic)
+	assert.Equal(t, batch.ID, records[0].payloadID)
+	assert.NotEqual(t, batch.ID, records[0].msgID,
+		"a bare batch ID as the message ID lets the queue swallow the redelivery re-publish")
+	assert.Contains(t, records[0].msgID, batch.ID)
 }
 
 func TestProcess_CancelsEveryApplicableBatch(t *testing.T) {
@@ -438,7 +451,11 @@ func TestProcess_CancelsEveryApplicableBatch(t *testing.T) {
 	)
 	publisher.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, msg entityqueue.Message) error {
-			operations = append(operations, "publish:"+msg.ID)
+			// The message ID is the queue's dedup key and is distinct per
+			// publish; the payload carries the batch ID the consumer acts on.
+			bid, err := entity.BatchIDFromBytes(msg.Payload)
+			require.NoError(t, err)
+			operations = append(operations, "publish:"+bid.ID)
 			return nil
 		},
 	).Times(2)
@@ -477,7 +494,9 @@ func TestProcess_BatchFailureDoesNotPreventLaterCancellation(t *testing.T) {
 	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch2, entity.BatchStateCancelling), int32(2), int32(3)).Return(nil)
 	publisher.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, msg entityqueue.Message) error {
-			assert.Equal(t, batch2.ID, msg.ID)
+			bid, err := entity.BatchIDFromBytes(msg.Payload)
+			require.NoError(t, err)
+			assert.Equal(t, batch2.ID, bid.ID)
 			return nil
 		},
 	)
