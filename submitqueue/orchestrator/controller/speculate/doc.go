@@ -12,23 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package speculate plans a queue's speculative builds: which guesses about
-// the queue's future are worth building, within the queue's cap on concurrent
-// builds (the build budget).
-//
-// Batch outcomes — merge or fail — are still decided by the legacy per-batch
-// finalizer in speculate.go, which waits on every dependency. Deriving them
-// from the paths planned here replaces it in the next change; this package
-// doc grows with it.
+// Package speculate plans a queue's speculative builds and finalizes each
+// batch's outcome from their results. It is the orchestrator's decision
+// stage: builds are started by the build stage and watched — and stopped —
+// by the buildsignal stage, but what to build and what a finished build
+// means are decided here.
 //
 // # Why speculation
 //
 // Batches in a queue depend on the batches ahead of them, so without
 // speculation everything is serial: C waits for B, B waits for A. Speculation
 // builds a batch against a guess about how its dependencies turn out. When
-// the guess holds, the head's build has already run by the time its
-// dependencies resolve — it never waits for a build of its own to start
-// afterwards.
+// the guess holds, the batch merges the moment the guessed-on dependencies
+// land — it never waits for a build of its own to start afterwards.
 //
 // # Paths
 //
@@ -38,6 +34,26 @@
 // a path *is* its guess; building the same guess again is a new attempt of
 // the same path, and (path ID, attempt) names the resulting build.
 //
+// # A worked example
+//
+// A two-batch queue, where B depends on A and A is still building:
+//
+//	queue:  A ← B
+//
+//	B's speculation space is two paths:
+//	  P1 = [A succeeds]   B built on top of A's result
+//	  P2 = [A fails]      B built without A
+//
+// Fund both and every future is covered:
+//
+//   - A succeeds and P1 passed: B merges the moment A lands. P2's guess
+//     ("A fails") is broken — it can no longer come true — so its build is
+//     cancelled to free the slot.
+//   - A fails and P2 passed: B merges without A, again with no new build.
+//     P1's guess is broken.
+//   - A resolved either way, and every unbroken path failed: no future
+//     remains in which B passes, so B fails.
+//
 // # The life of a path
 //
 // A path's status tracks its current attempt:
@@ -46,10 +62,11 @@
 //	(no entry) ─────────► pending ─────────► building ──────┬──► passed
 //	                         │                    │         └──► failed
 //	           "stop this":  │                    │
-//	           broken or     ▼                    ▼
-//	           preempted   ─────► cancelling ◄────┘
-//	                                  │
-//	                                  │  build observed stopped
+//	           broken,       ▼                    ▼
+//	           superseded, ─────► cancelling ◄────┘
+//	           head cancelled,        │
+//	           or preempted           │  build observed stopped, or
+//	                                  │  nothing was ever dispatched
 //	                                  ▼
 //	                              cancelled
 //
@@ -58,14 +75,27 @@
 // building, and every pending, building, and cancelling path holds its slot
 // until its build stops. A path is broken once a dependency's actual result
 // proves one of its assumptions wrong: its guess can no longer come true, so
-// its build is cancelled to free the slot.
+// its build is cancelled to free the slot. A path is superseded when a
+// sibling path of the same head passes — that sibling will carry the head out
+// of the queue, so the others are cancelled too.
 //
 // Cancelling is intent, not fact: the build keeps its slot until CI actually
-// stops it, and only an observation of that stop moves the path to cancelled.
-// The intent needs no dispatch of its own — the poll loop reads it off the set
-// and asks the runner to stop the build. A terminal path can be resurrected by
-// a new build proposal — status returns to pending and Attempt increments, the
-// one backwards step in the diagram.
+// stops it, and only an observation of that stop (or proof nothing was ever
+// dispatched) moves the path to cancelled. The intent needs no dispatch of its
+// own — the poll loop reads it off the set and asks the runner to stop the
+// build. A terminal path can be resurrected by a new build proposal — status
+// returns to pending and Attempt increments, the one backwards step in the
+// diagram.
+//
+// # The life of a batch, as seen from here
+//
+//	Created ──admit──► Speculating ──┬── merge ──► Merging   (merge stage takes over)
+//	                                 └── fail ───► Failed
+//	user cancel (cancel stage):
+//	   ... ──► Cancelling ── every path stopped ──► Cancelled
+//
+// Failed and Cancelled fan out to the conclude stage, which reconciles the
+// batch's requests.
 //
 // # How a run works
 //
@@ -75,16 +105,18 @@
 // reordered signals are harmless, and a later run repairs whatever an
 // earlier one left half-done.
 //
-//	signal ──► read ──► cancel ──► ask ──► check ──► dispatch
-//	           one      broken     the     filter    save changes,
-//	           read of  paths      Specu-  its       hand builds to
-//	           queue +             lator   proposals the build stage
-//	           paths
+//	signal ──► read ──► finalize ──► ask ──► check ──► dispatch
+//	           one      enact the    the     filter     save changes,
+//	           read of  outcomes     Specu-  its        hand builds to
+//	           queue +  the facts    lator   proposals  the build stage
+//	           paths    already
+//	                    decide
 //
 // The Speculator is the extension that proposes which paths to fund or
-// preempt. It only ever proposes: check.go filters its answer, and broken
-// paths are cancelled before it is asked, so it reasons over facts as they
-// now stand rather than over a picture the run is about to invalidate.
+// preempt. It only ever proposes: check.go filters its answer, and outcomes
+// are computed here, never by the extension. Finalize runs before ask so the
+// Speculator reasons over facts as they now stand, not over a picture the run
+// is about to invalidate.
 //
 // # Ownership
 //

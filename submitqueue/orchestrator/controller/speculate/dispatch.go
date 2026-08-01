@@ -26,11 +26,19 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
 
-// dispatch saves each head's decisions and hands the build stage its work.
-// Everything decided this run — build results, broken-path cancellations and
+// dispatch saves what finalize left over and hands the build stage its work.
+// Everything still outstanding — build results, broken-path cancellations and
 // accepted proposals — is folded together per head, so a head costs one
 // compare-and-swap however many of its paths changed.
-func (c *Controller) dispatch(ctx context.Context, store storage.Storage, queue string, snap snapshot, kept []entity.Speculation) error {
+//
+// It walks every in-flight batch, not only the speculating ones. Proposals
+// apply to speculating heads alone and are simply absent for the rest, but
+// observations are not: a merging or cancelling head's paths keep holding CI
+// slots until their builds stop, and this is the only writer that can record
+// that they have. Batches already finalized arrive here clean —
+// commitOutcome persisted their set with their outcome — so only their
+// dispatch is left to do.
+func (c *Controller) dispatch(ctx context.Context, queue string, snap snapshot, kept []entity.Speculation) error {
 	nowMs := time.Now().UnixMilli()
 
 	// Group the accepted proposals by head so each head is written once.
@@ -39,7 +47,7 @@ func (c *Controller) dispatch(ctx context.Context, store storage.Storage, queue 
 		byHead[proposal.Path.Head] = append(byHead[proposal.Path.Head], proposal)
 	}
 
-	for _, batch := range snap.speculating {
+	for _, batch := range snap.inFlight {
 		// A head with no stored set is one nothing has been funded for yet. It
 		// gets an empty set to fold this run's proposals into, which persist
 		// then creates; a head that ends the run with no paths writes nothing
@@ -57,7 +65,7 @@ func (c *Controller) dispatch(ctx context.Context, store storage.Storage, queue 
 		}
 
 		if changed {
-			if err := c.persist(ctx, store, set, exists); err != nil {
+			if _, err := c.persist(ctx, snap.store, set, exists); err != nil {
 				if errors.Is(err, storage.ErrVersionMismatch) {
 					// Skipped rather than failed, and nothing is lost by that.
 					//
@@ -101,8 +109,9 @@ func (c *Controller) dispatch(ctx context.Context, store storage.Storage, queue 
 }
 
 // persist writes a head's path set, creating it if this run is the first to
-// fund the head.
-func (c *Controller) persist(ctx context.Context, store storage.Storage, set entity.SpeculationPathSet, exists bool) error {
+// fund the head. It returns the set as stored, with its version advanced, so
+// a caller that keeps the set around goes on holding a current copy.
+func (c *Controller) persist(ctx context.Context, store storage.Storage, set entity.SpeculationPathSet, exists bool) (entity.SpeculationPathSet, error) {
 	pathSets := store.GetSpeculationPathSetStore()
 
 	if !exists {
@@ -111,23 +120,24 @@ func (c *Controller) persist(ctx context.Context, store storage.Storage, set ent
 			if errors.Is(err, storage.ErrAlreadyExists) {
 				// Another writer created it between this run's read and now.
 				// Treat it as a lost race: the next run reads the winner.
-				return storage.ErrVersionMismatch
+				return set, storage.ErrVersionMismatch
 			}
 			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-			return fmt.Errorf("failed to create path set for batch %s: %w", set.Head, err)
+			return set, fmt.Errorf("failed to create path set for batch %s: %w", set.Head, err)
 		}
-		return nil
+		return set, nil
 	}
 
 	newVersion := set.Version + 1
 	if err := pathSets.Update(ctx, set, set.Version, newVersion); err != nil {
 		if errors.Is(err, storage.ErrVersionMismatch) {
-			return err
+			return set, err
 		}
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to update path set for batch %s: %w", set.Head, err)
+		return set, fmt.Errorf("failed to update path set for batch %s: %w", set.Head, err)
 	}
-	return nil
+	set.Version = newVersion
+	return set, nil
 }
 
 // applyProposal folds one accepted proposal into the set and reports whether
