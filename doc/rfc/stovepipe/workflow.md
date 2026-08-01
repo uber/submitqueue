@@ -156,7 +156,7 @@ Per-stage design detail lives under `steps/` so this doc stays a pipeline overvi
 
 - [process.md](steps/process.md) — build-strategy decision, concurrency gate, backlog coalescing, [concurrency lifecycle](steps/process.md#concurrency-lifecycle), entity changes, [waiting for a slot](steps/process.md#waiting-for-a-slot)
 - [build.md](steps/build.md) — trigger-only stage: reads the decided scope off the Request, triggers the build-runner, hands off to buildsignal; the stovepipe `BuildRunner` contract and why it differs from SubmitQueue's
-- [buildsignal.md](steps/buildsignal.md) — the poll loop: `PublishAfter` re-poll cadence, target-graph return, per-build partitioning, and the fail-closed handoff to record
+- [buildsignal.md](steps/buildsignal.md) — the poll loop: hold-based re-poll cadence, target-graph return, per-build partitioning, and the fail-closed handoff to record
 
 ## Dedup, idempotency, and history rewrites
 

@@ -24,6 +24,6 @@ type QueueConfig struct {
 	Name string `json:"name" yaml:"name"`
 	// MaxConcurrent is the cap on concurrent in-flight validations for the queue.
 	MaxConcurrent int32 `json:"max_concurrent" yaml:"max_concurrent"`
-	// GateWaitDelayMs is the PublishAfter delay when the latest head waits for a slot.
+	// GateWaitDelayMs is the redelivery delay while the latest head waits for a slot.
 	GateWaitDelayMs int64 `json:"gate_wait_delay_ms" yaml:"gate_wait_delay_ms"`
 }

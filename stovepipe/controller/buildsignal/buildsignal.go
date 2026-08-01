@@ -24,8 +24,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
@@ -54,9 +52,10 @@ var (
 )
 
 // Controller consumes BuildSignal messages, polls the build-runner toward a
-// terminal status, persists the result, and either reschedules itself or
-// releases the queue's build slot, projects the outcome onto the request, and
-// publishes the request id to record. Implements consumer.Controller.
+// terminal status, persists the result, and either holds the delivery until
+// the next poll or releases the queue's build slot, projects the outcome onto
+// the request, and publishes the request id to record. Implements
+// consumer.Controller.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
@@ -95,10 +94,11 @@ func NewController(
 }
 
 // Process reloads the build referenced by the delivery, polls its runner for
-// the latest status, persists a real transition, and either reschedules a
-// poll or, once terminal, releases the queue's build slot, projects the
-// outcome onto the request, and publishes the request id to record. Returns
-// nil to ack (success) or an error to nack (retry) / reject (DLQ).
+// the latest status, persists a real transition, and either holds the delivery
+// until the next poll or, once terminal, releases the queue's build slot,
+// projects the outcome onto the request, and publishes the request id to
+// record. Returns nil to ack (success) or an error to nack (retry) / reject
+// (DLQ).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
@@ -168,11 +168,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return nil
 	}
 
+	// Not terminal yet: hold the delivery so this same message redelivers
+	// after the poll delay — the partition (keyed by build id) sleeps with it,
+	// and the redelivery does not count toward the retry limit.
 	delayMs := pollDelay(effective)
-	if err := c.publishBuildSignal(ctx, build.ID, msg.ID, delayMs); err != nil {
-		return fmt.Errorf("failed to reschedule poll for build %s: %w", build.ID, err)
-	}
-	c.logger.Debugw("rescheduled build status poll",
+	delivery.Hold(delayMs)
+	c.logger.Debugw("holding for next build status poll",
 		"build_id", build.ID,
 		"status", string(effective),
 		"delay_ms", delayMs,
@@ -345,57 +346,11 @@ func (c *Controller) publishRecord(ctx context.Context, requestID string) error 
 		return fmt.Errorf("failed to serialize record: %w", err)
 	}
 	msg := entityqueue.NewMessage(requestID, payload, requestID, nil)
-	return c.publish(ctx, stovepipemq.TopicKeyRecord, msg, 0)
+	return c.publish(ctx, stovepipemq.TopicKeyRecord, msg)
 }
 
-// pollIDInfix separates a build id from its poll generation in a re-poll
-// message id: "<buildID>/poll/<generation>".
-const pollIDInfix = "/poll/"
-
-// nextPollMessageID returns the message id for the next poll of buildID, one
-// generation past the delivery that scheduled it. currentMsgID is the id of the
-// message being processed — either the initial publish from build (no
-// generation, so the next is 1) or a previous re-poll.
-//
-// The generation has to advance because the queue dedups on
-// (topic, partition_key, id) and the delivery being processed has not been acked
-// yet, so its row is still present: a re-poll reusing the current id would
-// collide with the message that scheduled it and be silently discarded, ending
-// the poll loop after one tick.
-//
-// It advances deterministically rather than randomly so the id stays a pure
-// function of the delivery. A redelivery racing the original computes the same
-// next id, so dedup collapses the two into one message and the build keeps a
-// single poll chain — where a random suffix would fork a second chain that
-// doubles the poll rate and races the first one's status CAS.
-func nextPollMessageID(buildID, currentMsgID string) string {
-	generation := 0
-	if rest, found := strings.CutPrefix(currentMsgID, buildID+pollIDInfix); found {
-		if n, err := strconv.Atoi(rest); err == nil && n > 0 {
-			generation = n
-		}
-	}
-	return fmt.Sprintf("%s%s%d", buildID, pollIDInfix, generation+1)
-}
-
-// publishBuildSignal re-publishes buildID to buildsignal after delayMs,
-// partitioned by build id so each build's poll loop runs in its own
-// partition. A fresh message, not a nack — polling is not failure.
-//
-// currentMsgID is the id of the delivery being processed; see nextPollMessageID
-// for why the new id is derived from it rather than reused or randomized.
-func (c *Controller) publishBuildSignal(ctx context.Context, buildID, currentMsgID string, delayMs int64) error {
-	payload, err := stovepipemq.Marshal(&stovepipemq.BuildSignal{Id: buildID})
-	if err != nil {
-		return fmt.Errorf("failed to serialize build signal: %w", err)
-	}
-	msg := entityqueue.NewMessage(nextPollMessageID(buildID, currentMsgID), payload, buildID, nil)
-	return c.publish(ctx, stovepipemq.TopicKeyBuildSignal, msg, delayMs)
-}
-
-// publish sends msg to the queue registered for key, using PublishAfter when
-// delayMs > 0 and Publish otherwise.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, msg entityqueue.Message, delayMs int64) error {
+// publish sends msg to the queue registered for key.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, msg entityqueue.Message) error {
 	q, ok := c.registry.Queue(key)
 	if !ok {
 		return fmt.Errorf("no queue registered for topic key %s", key)
@@ -403,9 +358,6 @@ func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, msg ent
 	topicName, ok := c.registry.TopicName(key)
 	if !ok {
 		return fmt.Errorf("no topic name registered for topic key %s", key)
-	}
-	if delayMs > 0 {
-		return q.Publisher().PublishAfter(ctx, topicName, msg, delayMs)
 	}
 	return q.Publisher().Publish(ctx, topicName, msg)
 }

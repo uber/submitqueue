@@ -74,15 +74,12 @@ For a delivery carrying build id `B`:
    - publish failure -> return raw (non-retryable); the outcome is persisted, operational
      republish recovers.
 
-8. Else PublishAfter(B -> buildsignal, delayMs), partitioned by build id:
+8. Else hold the delivery for delayMs (postpone: the same message redelivers after the delay):
    - delayMs = pollDelay(status): shorter while running, longer while accepted.
-   - a fresh message (retry_count resets to 0), not a nack — polling is not failure.
-   - the message id must be unique per tick. The queue dedups on (topic, partition_key, id)
-     and the delivery being processed is still un-acked, so its row is present: reusing B as
-     the message id makes every re-poll collide with the message that scheduled it and be
-     silently discarded, ending the poll loop after one tick.
-   - publish failure -> return raw (non-retryable), same posture as step 7.
-   - ack.
+   - a hold is a postpone, not a nack — the redelivery does not count toward the retry
+     limit, so polling never burns retry_count toward the DLQ.
+   - the held message is a barrier for its partition (the build id), so each build keeps
+     exactly one poll chain; no message ids are minted and no new rows are written per tick.
 ```
 
 **Why the slot is released before the outcome write, and why a failed release aborts it**: `Queue` and `Request` are separate entities with no cross-entity transaction, so the ordering picks which crash failure mode we accept. Both rules serve one invariant — *the request must not go terminal while still holding a slot* — because a terminal request is skipped by redelivery and by the DLQ reconciler alike, so nothing would ever decrement it. Failing this way leaves the request non-terminal: redelivery re-runs both steps and decrements again, transiently over-admitting by one slot until the zero clamp reconverges. Over-admission is the failure mode this pipeline already prefers, for the same reason and in the same words as the DLQ reconciler (see [process.md](doc/rfc/stovepipe/steps/process.md#in_flight_count-integrity)).
@@ -99,14 +96,14 @@ For a delivery carrying build id `B`:
 
 Returning `TargetGraph` from `Status` in place of `BuildMetadata`, with `buildsignal` persisting it for `analyze` to read later, was considered and set aside — how `analyze` obtains the target graph is left to its own design, not `buildsignal`'s poll loop.
 
-## Polling primitive: `PublishAfter`, not `Nack`
+## Polling primitive: hold, not `Nack`
 
-On non-terminal status, step 8 reschedules with `PublishAfter`, never `Nack`:
+On non-terminal status, step 8 holds the delivery, never `Nack`s:
 
 - **`Nack`** requeues and increments `retry_count`; at `MaxAttempts` the message dead-letters. That is the primitive for "something failed; retry."
-- **`PublishAfter`** emits a fresh message with `retry_count` reset to 0, deferred by a delay. That is the primitive for "still working; check back later."
+- **Hold** postpones the same delivery for a delay; the redelivery restarts failure accounting. That is the primitive for "still working; check back later."
 
-Polling is a scheduled heartbeat, neither failure nor retry, so a long-running build never burns `retry_count` toward the DLQ. A genuine `Status` failure (runner down, bad id) is a *different* path: it returns from step 5 to the classifier, which decides retryability, and a retryable verdict nacks normally. See [build-runner.md](doc/rfc/submitqueue/build-runner.md#polling-primitive-publishafter-not-nack) for the full rationale.
+Polling is a scheduled heartbeat, neither failure nor retry, so a long-running build never burns `retry_count` toward the DLQ. A genuine `Status` failure (runner down, bad id) is a *different* path: it returns from step 5 to the classifier, which decides retryability, and a retryable verdict nacks normally. See [consumer-hold.md](doc/rfc/consumer-hold.md) for the primitive's full rationale.
 
 ## Poll delays
 
@@ -130,16 +127,16 @@ Per `platform/errs`'s non-retryable-by-default rule (see [platform/errs/README.m
 
 `Build`/`Request` not found (`storage.ErrNotFound`) are **not** in this table: storage is required to be read-after-write consistent (see [storage README](stovepipe/extension/storage/README.md)), so a miss here is already the correct default (non-retryable, straight to DLQ) rather than a departure worth overriding.
 
-Everything else — factory lookup, an `Update` store error other than a CAS conflict, and both publishes — is returned raw with no override, because the default is already correct: a queue with no registered runner is a config error, and storage/queue failures dead-letter and let DLQ reconciliation recover. The `PublishAfter` re-poll is included in that: per `platform/errs` rule 4 a failed queue publish is not wrapped retryable just because replaying it is convenient, which would turn a permanent enqueue failure into an infinite retry instead of dead-lettering.
+Everything else — factory lookup, an `Update` store error other than a CAS conflict, and the `record` publish — is returned raw with no override, because the default is already correct: a queue with no registered runner is a config error, and storage/queue failures dead-letter and let DLQ reconciliation recover. The poll loop itself no longer has a publish to fail: holding is a local outcome, and a failed postpone write in the framework lapses into a normal visibility-timeout redelivery, so the loop's liveness never rides on an enqueue succeeding.
 
 ## Idempotency
 
 Every branch is safe under at-least-once redelivery:
 
 - **Build not found** — non-retryable; storage's read-after-write guarantee means a miss here is a storage defect, not a lag condition to retry through.
-- **Status already persisted** — a redelivery re-runs the whole algorithm from step 1, including a redundant `Status` poll (harmless — the runner reports the same thing); step 6 no-ops on the unchanged status, and the delivery proceeds to re-schedule the poll (non-terminal) or republish the request id to `record` (terminal, idempotent). No corruption.
+- **Status already persisted** — a redelivery re-runs the whole algorithm from step 1, including a redundant `Status` poll (harmless — the runner reports the same thing); step 6 no-ops on the unchanged status, and the delivery proceeds to hold for the next poll (non-terminal) or republish the request id to `record` (terminal, idempotent). No corruption.
 - **Terminal already published** — a redelivery reloads, re-polls, no-ops at step 6, republishes the same terminal signal to `record` (idempotent), and acks. Harmless.
-- **`PublishAfter` failed, then retried** — the nacked delivery re-runs from step 1; there is no way to resume mid-algorithm, so it re-polls the runner too, but the row already carries the non-terminal status and step 6 no-ops. Only the final enqueue does new work.
+- **Postpone write failed** — the framework abandons the delivery; the visibility timeout lapses into a normal redelivery, which re-runs from step 1 and no-ops at step 6. The poll loop's continuation is framework-owned.
 
 The window to guard is between persisting status (step 6) and ack (steps 7–8); because status writes are CAS-guarded, monotonic, and write-once at terminal, a redelivery always observes a consistent row.
 
@@ -152,7 +149,7 @@ The window to guard is between persisting status (step 6) and ack (steps 7–8);
 
 A build that never reaches terminal `Status` — runner outage, a build the runner lost — must not wedge its `Request` forever, since callers gate deployments on greenness reaching a recorded terminal state. `buildsignal` does not implement the forcing function: per [workflow.md](doc/rfc/stovepipe/workflow.md#fail-closed-on-unprocessable-work) and the `in_flight_count` slot lifecycle in [process.md](doc/rfc/stovepipe/steps/process.md#concurrency-lifecycle), a `Request` stuck at `buildsignal` past `MaxAttempts` dead-letters, and the DLQ reconciler forces a conservative terminal `failed` and releases the Queue's slot. This is the same posture SubmitQueue's build/buildsignal pair relies on: terminal status is what releases the slot and lets validation progress.
 
-One boundary of that posture is worth stating: the `MaxAttempts` path fires only when polls *fail*. A runner that keeps answering a healthy non-terminal status forever — a hung build on a backend with no timeout of its own — never errors, so the `PublishAfter` chain (which resets `retry_count` by design) re-polls indefinitely and nothing dead-letters; SubmitQueue's poll loop shares this property. Bounding it requires a poll deadline — a `max_validation_ms` past which `buildsignal` treats the build as failed and lets the normal terminal path run — which pairs naturally with the lease idea [process.md](doc/rfc/stovepipe/steps/process.md#per-queue-concurrency-gate) floats for `in_flight_count`. Deferred with it; until then a too-old non-terminal `Build` is an operational alert, not a self-healing path.
+One boundary of that posture is worth stating: the `MaxAttempts` path fires only when polls *fail*. A runner that keeps answering a healthy non-terminal status forever — a hung build on a backend with no timeout of its own — never errors, so the hold chain (whose redeliveries deliberately do not count toward the retry limit) re-polls indefinitely and nothing dead-letters; SubmitQueue's poll loop shares this property. Bounding it requires a poll deadline — a `max_validation_ms` past which `buildsignal` treats the build as failed and lets the normal terminal path run — which pairs naturally with the lease idea [process.md](doc/rfc/stovepipe/steps/process.md#per-queue-concurrency-gate) floats for `in_flight_count`. Deferred with it; until then a too-old non-terminal `Build` is an operational alert, not a self-healing path.
 
 ## Entity, storage, and queue additions
 
