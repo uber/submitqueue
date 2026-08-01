@@ -16,7 +16,9 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"sort"
+	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -124,14 +126,15 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet_StackedPRs() {
 	assert.Equal(t, request.LandStrategy, retrieved.LandStrategy)
 }
 
-// TestStorage_UpdateState tests updating request state
-func (s *StorageContractSuite) TestStorage_UpdateState() {
+// TestStorage_Update tests replacing all non-key request fields.
+func (s *StorageContractSuite) TestStorage_Update() {
 	t := s.T()
 	ctx := s.ctx
 
 	request := entity.Request{
 		ID:           "test/update",
 		Queue:        "test-queue",
+		Change:       change.Change{URIs: []string{"github://github.example.com/uber/monorepo/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
 		State:        entity.RequestStateStarted,
 		LandStrategy: mergestrategy.MergeStrategyMerge,
 		Version:      1,
@@ -141,15 +144,19 @@ func (s *StorageContractSuite) TestStorage_UpdateState() {
 	err := s.storage.GetRequestStore().Create(ctx, request)
 	require.NoError(t, err)
 
-	// Update state
-	err = s.storage.GetRequestStore().UpdateState(ctx, request.ID, request.Version, request.Version+1, entity.RequestStateProcessing)
-	require.NoError(t, err, "failed to update request state")
+	updated := request
+	updated.Queue = "updated-queue"
+	updated.Change.URIs = []string{"github://github.example.com/uber/monorepo/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+	updated.LandStrategy = mergestrategy.MergeStrategySquashRebase
+	updated.State = entity.RequestStateProcessing
+	err = s.storage.GetRequestStore().Update(ctx, updated, request.Version, request.Version+1)
+	require.NoError(t, err, "failed to update request")
 
 	// Verify update
 	retrieved, err := s.storage.GetRequestStore().Get(ctx, request.ID)
 	require.NoError(t, err)
-	assert.Equal(t, entity.RequestStateProcessing, retrieved.State)
-	assert.Equal(t, int32(2), retrieved.Version, "version should increment after update")
+	updated.Version = request.Version + 1
+	assert.Equal(t, updated, retrieved)
 }
 
 // TestStorage_OptimisticLocking tests version-based optimistic locking
@@ -169,20 +176,66 @@ func (s *StorageContractSuite) TestStorage_OptimisticLocking() {
 	err := s.storage.GetRequestStore().Create(ctx, request)
 	require.NoError(t, err)
 
-	// Update with correct version
-	err = s.storage.GetRequestStore().UpdateState(ctx, request.ID, 1, 2, entity.RequestStateProcessing)
+	// Update with correct version.
+	updated := request
+	updated.Queue = "updated-queue"
+	updated.Change.URIs = []string{"github://github.example.com/uber/monorepo/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+	updated.LandStrategy = mergestrategy.MergeStrategySquashRebase
+	updated.State = entity.RequestStateProcessing
+	err = s.storage.GetRequestStore().Update(ctx, updated, 1, 2)
 	require.NoError(t, err, "update with correct version should succeed")
 
-	// Try to update with stale version (should fail)
-	err = s.storage.GetRequestStore().UpdateState(ctx, request.ID, 1, 2, entity.RequestStateLanded)
+	// Try to replace every field with a stale version.
+	stale := request
+	stale.Queue = "stale-queue"
+	stale.Change.URIs = []string{"github://github.example.com/uber/monorepo/pull/3/cccccccccccccccccccccccccccccccccccccccc"}
+	stale.LandStrategy = mergestrategy.MergeStrategyRebase
+	stale.State = entity.RequestStateLanded
+	err = s.storage.GetRequestStore().Update(ctx, stale, 1, 3)
 	assert.Error(t, err, "update with stale version should fail")
 	assert.ErrorIs(t, err, storage.ErrVersionMismatch, "should return ErrVersionMismatch")
 
-	// Verify state wasn't changed by stale update
+	// Verify no field was changed by the stale update.
 	retrieved, err := s.storage.GetRequestStore().Get(ctx, request.ID)
 	require.NoError(t, err)
-	assert.Equal(t, entity.RequestStateProcessing, retrieved.State, "stale update should not modify state")
-	assert.Equal(t, int32(2), retrieved.Version)
+	updated.Version = 2
+	assert.Equal(t, updated, retrieved)
+}
+
+// TestStorage_UpdateChangeURIs tests nil and empty URI replacement semantics.
+func (s *StorageContractSuite) TestStorage_UpdateChangeURIs() {
+	t := s.T()
+	ctx := s.ctx
+
+	tests := []struct {
+		name string
+		uris []string
+	}{
+		{name: "nil", uris: nil},
+		{name: "empty", uris: []string{}},
+	}
+
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := entity.Request{
+				ID:           fmt.Sprintf("test/update-change-uris-%d", i),
+				Queue:        "test-queue",
+				Change:       change.Change{URIs: []string{"github://github.example.com/uber/monorepo/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+				State:        entity.RequestStateStarted,
+				LandStrategy: mergestrategy.MergeStrategyMerge,
+				Version:      1,
+			}
+			require.NoError(t, s.storage.GetRequestStore().Create(ctx, request))
+
+			updated := request
+			updated.Change.URIs = tt.uris
+			require.NoError(t, s.storage.GetRequestStore().Update(ctx, updated, request.Version, request.Version+1))
+
+			retrieved, err := s.storage.GetRequestStore().Get(ctx, request.ID)
+			require.NoError(t, err)
+			assert.Equal(t, tt.uris, retrieved.Change.URIs)
+		})
+	}
 }
 
 // TestStorage_BatchDependentUpdate verifies full updates, collection encoding, and optimistic locking.

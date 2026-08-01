@@ -6,25 +6,31 @@ Pluggable persistence interfaces for SubmitQueue entities (requests, batches, de
 
 Entities that support concurrent mutation carry an `int32 Version` field. Updates are conditional on the version: the write only succeeds if the persisted version matches the caller's expected version. On mismatch, the implementation returns `storage.ErrVersionMismatch`, which is declared as a retryable infrastructure error so callers can return it without reclassifying it.
 
-**Version arithmetic is owned by the controller, not the store.** Update methods take both `oldVersion` (the where-clause guard) and `newVersion` (the value to write):
+**Updates replace every non-primary-key field.** Callers must pass a complete authoritative entity loaded from storage or constructed with every persisted field; sparse patch entities can clear unrelated columns. The primary key identifies the row and is not rewritten.
+
+**Version arithmetic is owned by the controller, not the store.** Versioned update methods take a complete entity plus both `oldVersion` (the where-clause guard) and `newVersion` (the value to write):
 
 ```go
-UpdateState(ctx, id, oldVersion, newVersion int32, newState entity.RequestState) error
+Update(ctx, request entity.Request, oldVersion, newVersion int32) error
 ```
 
-The store performs a pure conditional write — it does not compute `oldVersion + 1` internally. This keeps the in-memory entity and the persisted row in sync without the storage layer mutating values the caller didn't supply.
+The store writes `newVersion` rather than the entity's current `Version` and performs a pure conditional write — it does not compute `oldVersion + 1` internally. This keeps the in-memory entity and the persisted row in sync without the storage layer mutating values the caller didn't supply.
 
 ### Caller pattern
 
 ```go
-newVersion := entity.Version + 1
-if err := store.UpdateState(ctx, entity.ID, entity.Version, newVersion, newState); err != nil {
-    return err // entity.Version unchanged on failure — safe to retry
+oldVersion := request.Version
+newVersion := oldVersion + 1
+updated := request
+updated.State = newState
+if err := store.Update(ctx, updated, oldVersion, newVersion); err != nil {
+    return err // request remains unchanged on failure — safe to retry
 }
-entity.Version = newVersion // only after the write succeeded
+updated.Version = newVersion
+request = updated // only after the write succeeded
 ```
 
-The post-success assignment matters whenever the entity is read again later in the same flow. Pre-incrementing in memory before the call is a bug pattern: if the call fails and the caller swallows the error, the in-memory version is now ahead of the database and subsequent updates will fail with `ErrVersionMismatch` for non-obvious reasons.
+The candidate-copy pattern keeps the caller-owned entity unchanged if the write fails. Clone slice and map fields before changing their contents so the candidate cannot mutate the original through shared backing storage. The post-success assignment matters whenever the entity is read again later in the same flow. Pre-incrementing in memory before the call is a bug pattern: if the call fails and the caller swallows the error, the in-memory version is now ahead of the database and subsequent updates will fail with `ErrVersionMismatch` for non-obvious reasons.
 
 ## Read-after-write consistency
 

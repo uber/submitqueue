@@ -16,6 +16,7 @@ package mergeconflictsignal
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,6 +33,11 @@ import (
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
+
+func requestWithState(request entity.Request, state entity.RequestState) entity.Request {
+	request.State = state
+	return request
+}
 
 func resultPayload(t *testing.T, res runwaymq.MergeResult) []byte {
 	payload, err := runwaymq.Marshal(&res)
@@ -55,9 +61,9 @@ func TestProcess_MergeablePublishesToBatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	reqStore := storagemock.NewMockRequestStore(ctrl)
-	reqStore.EXPECT().Get(gomock.Any(), testRequestID).Return(
-		entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateStarted, Version: 1}, nil)
-	reqStore.EXPECT().UpdateState(gomock.Any(), testRequestID, int32(1), int32(2), entity.RequestStateValidated).Return(nil)
+	request := entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateStarted, Version: 1}
+	reqStore.EXPECT().Get(gomock.Any(), testRequestID).Return(request, nil)
+	reqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateValidated), int32(1), int32(2)).Return(nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
@@ -109,10 +115,10 @@ func TestProcess_NotMergeableMarksRequestError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	reqStore := storagemock.NewMockRequestStore(ctrl)
-	reqStore.EXPECT().Get(gomock.Any(), testRequestID).Return(
-		entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateStarted, Version: 1}, nil)
+	request := entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateStarted, Version: 1}
+	reqStore.EXPECT().Get(gomock.Any(), testRequestID).Return(request, nil)
 	// The request is driven to terminal Error inline (version 1 -> 2).
-	reqStore.EXPECT().UpdateState(gomock.Any(), testRequestID, int32(1), int32(2), entity.RequestStateError).Return(nil)
+	reqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
@@ -154,6 +160,25 @@ func TestProcess_NotMergeableMarksRequestError(t *testing.T) {
 	assert.Equal(t, entity.RequestStatusError, logEntry.Status)
 	assert.Equal(t, int32(2), logEntry.RequestVersion)
 	assert.Equal(t, "conflict in foo.go", logEntry.LastError)
+}
+
+func TestFailRequest_UpdateFailureLeavesRequestUnchanged(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	request := entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateStarted, Version: 1}
+	reqStore := storagemock.NewMockRequestStore(ctrl)
+	reqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(fmt.Errorf("db down"))
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetRequestStore().Return(reqStore)
+
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, consumer.TopicRegistry{},
+		runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-mergeconflictsignal")
+
+	err := controller.failRequest(context.Background(), request, "conflict")
+	require.Error(t, err)
+	assert.Equal(t, entity.RequestStateStarted, request.State)
+	assert.Equal(t, int32(1), request.Version)
 }
 
 func TestProcess_HaltedRequestSkips(t *testing.T) {

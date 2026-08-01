@@ -45,10 +45,11 @@ func TestDLQRequestController_Process_LandRequestPayload(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
-	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.Request{
+	request := entity.Request{
 		ID: "q/1", Version: 1, State: entity.RequestStateStarted,
-	}, nil)
-	requestStore.EXPECT().UpdateState(gomock.Any(), "q/1", int32(1), int32(2), entity.RequestStateError).Return(nil)
+	}
+	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil)
+	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
 
 	registry := newTestLogRegistry(t, ctrl, 1, func(entity.RequestLog) error {
 		return nil
@@ -70,10 +71,11 @@ func TestDLQRequestController_Process_CancelRequestPayload(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
-	requestStore.EXPECT().Get(gomock.Any(), "q/7").Return(entity.Request{
+	request := entity.Request{
 		ID: "q/7", Version: 2, State: entity.RequestStateBatched,
-	}, nil)
-	requestStore.EXPECT().UpdateState(gomock.Any(), "q/7", int32(2), int32(3), entity.RequestStateError).Return(nil)
+	}
+	requestStore.EXPECT().Get(gomock.Any(), "q/7").Return(request, nil)
+	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(2), int32(3)).Return(nil)
 
 	registry := newTestLogRegistry(t, ctrl, 1, func(entity.RequestLog) error {
 		return nil
@@ -95,10 +97,11 @@ func TestDLQRequestController_Process_RequestIDPayload(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
-	requestStore.EXPECT().Get(gomock.Any(), "q/3").Return(entity.Request{
+	request := entity.Request{
 		ID: "q/3", Version: 1, State: entity.RequestStateValidated,
-	}, nil)
-	requestStore.EXPECT().UpdateState(gomock.Any(), "q/3", int32(1), int32(2), entity.RequestStateError).Return(nil)
+	}
+	requestStore.EXPECT().Get(gomock.Any(), "q/3").Return(request, nil)
+	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
 
 	registry := newTestLogRegistry(t, ctrl, 1, func(log entity.RequestLog) error {
 		assert.Equal(t, "boom", log.LastError)

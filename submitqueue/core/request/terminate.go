@@ -114,6 +114,7 @@ func TerminateRequest(
 	// logVersion is the request version reflected in the published terminal log.
 	// It stays at the current version on the idempotent same-state path and
 	// advances to the new version only after a successful reconciling write.
+	beforeState := request.State
 	logVersion := request.Version
 	outcome := TerminationOutcomeSuccess
 	switch {
@@ -131,10 +132,12 @@ func TerminateRequest(
 		}, nil
 	default:
 		newVersion := request.Version + 1
-		if err := store.GetRequestStore().UpdateState(ctx, requestID, request.Version, newVersion, targetState); err != nil {
+		request.State = targetState
+		if err := store.GetRequestStore().Update(ctx, request, request.Version, newVersion); err != nil {
 			return TerminationResult{}, fmt.Errorf("failed to update request %s state to %s: %w", requestID, targetState, err)
 		}
-		logVersion = newVersion
+		request.Version = newVersion
+		logVersion = request.Version
 	}
 
 	logEntry := entity.NewRequestLog(requestID, status, logVersion, lastError, metadata)
@@ -144,7 +147,7 @@ func TerminateRequest(
 
 	return TerminationResult{
 		Outcome:     outcome,
-		BeforeState: request.State,
+		BeforeState: beforeState,
 		AfterState:  targetState,
 	}, nil
 }

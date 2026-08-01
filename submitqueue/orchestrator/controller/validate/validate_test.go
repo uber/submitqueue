@@ -41,6 +41,11 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
+func requestWithState(request entity.Request, state entity.RequestState) entity.Request {
+	request.State = state
+	return request
+}
+
 // requestIDPayload serializes a RequestID to JSON bytes for test message payloads.
 func requestIDPayload(t *testing.T, id string) []byte {
 	payload, err := entity.RequestID{ID: id}.ToBytes()
@@ -471,7 +476,7 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			if tt.wantRejected {
 				// A detected duplicate is terminated (Started → Error) rather than
 				// dead-lettered, then the delivery is acked.
-				mockReqStore.EXPECT().UpdateState(gomock.Any(), request.ID, int32(1), int32(2), entity.RequestStateError).Return(nil)
+				mockReqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
 			}
 			store := storagemock.NewMockStorage(ctrl)
 			store.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
@@ -637,7 +642,7 @@ func TestController_Process_CustomValidatorFails(t *testing.T) {
 	store, mockReqStore := newMockStorage(ctrl, request)
 	store.EXPECT().GetChangeStore().Return(newMockChangeStore(ctrl)).AnyTimes()
 	// A validator rejection terminates the request (Started → Error) rather than dead-lettering it.
-	mockReqStore.EXPECT().UpdateState(gomock.Any(), request.ID, int32(1), int32(2), entity.RequestStateError).Return(nil)
+	mockReqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
 
 	logger := zaptest.NewLogger(t).Sugar()
 
@@ -700,7 +705,7 @@ func TestController_Process_CustomValidatorFailure_TerminationPublishFails(t *te
 	}
 	store, mockReqStore := newMockStorage(ctrl, request)
 	store.EXPECT().GetChangeStore().Return(newMockChangeStore(ctrl)).AnyTimes()
-	mockReqStore.EXPECT().UpdateState(gomock.Any(), request.ID, int32(1), int32(2), entity.RequestStateError).Return(nil)
+	mockReqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
 
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("publish boom")).AnyTimes()

@@ -46,6 +46,11 @@ func batchWithState(batch entity.Batch, state entity.BatchState) entity.Batch {
 	return batch
 }
 
+func requestWithState(request entity.Request, state entity.RequestState) entity.Request {
+	request.State = state
+	return request
+}
+
 // requestIDPayload serializes a RequestID to JSON bytes for test message payloads.
 func requestIDPayload(t *testing.T, id string) []byte {
 	payload, err := entity.RequestID{ID: id}.ToBytes()
@@ -96,7 +101,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 		mockReqStore := storagemock.NewMockRequestStore(ctrl)
 		req := testRequest()
 		mockReqStore.EXPECT().Get(gomock.Any(), req.ID).Return(req, nil).AnyTimes()
-		mockReqStore.EXPECT().UpdateState(gomock.Any(), req.ID, req.Version, req.Version+1, entity.RequestStateBatched).Return(nil).AnyTimes()
+		mockReqStore.EXPECT().Update(gomock.Any(), requestWithState(req, entity.RequestStateBatched), req.Version, req.Version+1).Return(nil).AnyTimes()
 
 		mockBatchDependentStore := storagemock.NewMockBatchDependentStore(ctrl)
 		mockBatchDependentStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -189,7 +194,7 @@ func TestController_Process_PublishesBatchedLog(t *testing.T) {
 
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
 	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
-	mockReqStore.EXPECT().UpdateState(gomock.Any(), request.ID, request.Version, request.Version+1, entity.RequestStateBatched).Return(nil)
+	mockReqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateBatched), request.Version, request.Version+1).Return(nil)
 
 	mockBatchDependentStore := storagemock.NewMockBatchDependentStore(ctrl)
 	mockBatchDependentStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
@@ -284,7 +289,7 @@ func TestController_Process_RequestBatchStoreFailure(t *testing.T) {
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
-	requestStore.EXPECT().UpdateState(gomock.Any(), request.ID, request.Version, request.Version+1, entity.RequestStateBatched).Return(nil)
+	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateBatched), request.Version, request.Version+1).Return(nil)
 
 	requestBatchStore := storagemock.NewMockRequestBatchStore(ctrl)
 	requestBatchStore.EXPECT().Create(gomock.Any(), entity.RequestBatch{
@@ -397,7 +402,7 @@ func TestController_Process_WithDependencies(t *testing.T) {
 
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
 	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
-	mockReqStore.EXPECT().UpdateState(gomock.Any(), request.ID, request.Version, request.Version+1, entity.RequestStateBatched).Return(nil)
+	mockReqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateBatched), request.Version, request.Version+1).Return(nil)
 
 	mockRequestBatchStore := storagemock.NewMockRequestBatchStore(ctrl)
 	mockRequestBatchStore.EXPECT().Create(gomock.Any(), entity.RequestBatch{
@@ -461,7 +466,7 @@ func TestController_Process_AnalyzerSelectsSubset(t *testing.T) {
 
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
 	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
-	mockReqStore.EXPECT().UpdateState(gomock.Any(), request.ID, request.Version, request.Version+1, entity.RequestStateBatched).Return(nil)
+	mockReqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateBatched), request.Version, request.Version+1).Return(nil)
 
 	mockRequestBatchStore := storagemock.NewMockRequestBatchStore(ctrl)
 	mockRequestBatchStore.EXPECT().Create(gomock.Any(), entity.RequestBatch{
@@ -652,8 +657,8 @@ func TestController_Process_CASLostToCancel(t *testing.T) {
 
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
 	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
-	mockReqStore.EXPECT().UpdateState(
-		gomock.Any(), request.ID, request.Version, request.Version+1, entity.RequestStateBatched,
+	mockReqStore.EXPECT().Update(
+		gomock.Any(), requestWithState(request, entity.RequestStateBatched), request.Version, request.Version+1,
 	).Return(fmt.Errorf("cas: %w", storage.ErrVersionMismatch))
 
 	mockStorage := storagemock.NewMockStorage(ctrl)
@@ -683,6 +688,8 @@ func TestController_Process_CASLostToCancel(t *testing.T) {
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
 	require.NoError(t, controller.Process(context.Background(), delivery))
+	assert.Equal(t, entity.RequestStateStarted, request.State)
+	assert.Equal(t, int32(1), request.Version)
 }
 
 // Race-unexpected-error: any CAS failure other than ErrVersionMismatch (e.g.
@@ -700,8 +707,8 @@ func TestController_Process_CASUnexpectedErrorPropagates(t *testing.T) {
 	casErr := fmt.Errorf("db connection lost")
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
 	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
-	mockReqStore.EXPECT().UpdateState(
-		gomock.Any(), request.ID, request.Version, request.Version+1, entity.RequestStateBatched,
+	mockReqStore.EXPECT().Update(
+		gomock.Any(), requestWithState(request, entity.RequestStateBatched), request.Version, request.Version+1,
 	).Return(casErr)
 
 	mockStorage := storagemock.NewMockStorage(ctrl)
@@ -719,6 +726,8 @@ func TestController_Process_CASUnexpectedErrorPropagates(t *testing.T) {
 	require.Error(t, err)
 	// Cause must be preserved for upstream classification.
 	assert.True(t, errors.Is(err, casErr))
+	assert.Equal(t, entity.RequestStateStarted, request.State)
+	assert.Equal(t, int32(1), request.Version)
 }
 
 // Recovery path: a re-delivered batch message whose prior attempt CAS'd the
@@ -752,8 +761,8 @@ func TestController_Process_RecoveryAfterPriorCAS(t *testing.T) {
 
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
 	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
-	mockReqStore.EXPECT().UpdateState(
-		gomock.Any(), request.ID, request.Version, request.Version+1, entity.RequestStateBatched,
+	mockReqStore.EXPECT().Update(
+		gomock.Any(), requestWithState(request, entity.RequestStateBatched), request.Version, request.Version+1,
 	).Return(nil)
 
 	mockRequestBatchStore := storagemock.NewMockRequestBatchStore(ctrl)
@@ -805,7 +814,7 @@ func TestController_Process_ReadiesBatchBeforePublishing(t *testing.T) {
 	batchDependentStore := storagemock.NewMockBatchDependentStore(ctrl)
 	publisher := queuemock.NewMockPublisher(ctrl)
 	gomock.InOrder(
-		requestStore.EXPECT().UpdateState(gomock.Any(), request.ID, int32(1), int32(2), entity.RequestStateBatched).Return(nil),
+		requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateBatched), int32(1), int32(2)).Return(nil),
 		batchStore.EXPECT().Create(gomock.Any(), batch).Return(nil),
 		requestBatchStore.EXPECT().Create(gomock.Any(), entity.RequestBatch{
 			RequestID: request.ID,
@@ -865,9 +874,9 @@ func TestController_Process_RedeliveryMintsFreshBatchID(t *testing.T) {
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), firstRequest.ID).Return(firstRequest, nil)
-	requestStore.EXPECT().UpdateState(gomock.Any(), firstRequest.ID, int32(1), int32(2), entity.RequestStateBatched).Return(nil)
+	requestStore.EXPECT().Update(gomock.Any(), requestWithState(firstRequest, entity.RequestStateBatched), int32(1), int32(2)).Return(nil)
 	requestStore.EXPECT().Get(gomock.Any(), firstRequest.ID).Return(secondRequest, nil)
-	requestStore.EXPECT().UpdateState(gomock.Any(), firstRequest.ID, int32(2), int32(3), entity.RequestStateBatched).Return(nil)
+	requestStore.EXPECT().Update(gomock.Any(), requestWithState(secondRequest, entity.RequestStateBatched), int32(2), int32(3)).Return(nil)
 
 	var createdIDs []string
 	batchStore := storagemock.NewMockBatchStore(ctrl)
@@ -934,7 +943,7 @@ func TestController_Process_InitializationFailure(t *testing.T) {
 	request := testRequest()
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
-	requestStore.EXPECT().UpdateState(gomock.Any(), request.ID, int32(1), int32(2), entity.RequestStateBatched).Return(nil)
+	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateBatched), int32(1), int32(2)).Return(nil)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().GetByQueueAndStates(gomock.Any(), request.Queue, entity.DependencyBatchStates()).Return(nil, nil)
