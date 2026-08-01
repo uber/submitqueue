@@ -13,19 +13,11 @@ Publishes messages to topics.
 ```go
 type Publisher interface {
     Publish(ctx context.Context, topic string, message entityqueue.Message) error
-    PublishAfter(ctx context.Context, topic string, message entityqueue.Message, delayMs int64) error
     Close() error
 }
 ```
 
 (`entityqueue` is `github.com/uber/submitqueue/platform/base/messagequeue`.)
-
-**`PublishAfter`** inserts a fresh message that becomes visible to subscribers only after `delayMs`. It is distinct from `Nack(requeueAfterMillis)` even though both can produce "next delivery happens at T+delay":
-
-- `Nack` is "this delivery failed, try again" — it bumps `retry_count` and eventually trips DLQ.
-- `PublishAfter` is "postpone this work" — `retry_count` resets to 0, DLQ stays available for true failures.
-
-For a consumer deferring its *own current delivery* ("check back in N ms"), prefer `Delivery.Postpone` (below) over ack-plus-`PublishAfter`: it needs no publisher, no fresh message id, and keeps the same log row. `PublishAfter` remains the tool for deferring *other* work — publishing a delayed message to a different topic or key. Use `Nack` for processing failures.
 
 ### Subscriber
 Consumes messages from topics with per-subscription configuration.

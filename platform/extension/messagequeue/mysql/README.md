@@ -112,8 +112,6 @@ platform/extension/messagequeue/mysql/
 | `queue_partition_leases` | Partition lease coordination | `(consumer_group, topic, partition_key)` |
 | `queue_subscriber_heartbeats` | Active subscriber tracking | `(consumer_group, topic, subscriber_name)` |
 
-`queue_messages` has a `visible_after BIGINT UNSIGNED NOT NULL DEFAULT 0` column that supports `Publisher.PublishAfter`: subscribers' `FetchByOffset` skips rows where `visible_after > now`. Default 0 means immediately visible, so existing rows continue to behave as before — the column is back-compatible.
-
 `queue_delivery_state` has a `postponed BOOLEAN NOT NULL DEFAULT FALSE` column that supports `Delivery.Postpone`. `MarkPostponed` sets `invisible_until = now + delay`, resets `retry_count` to 0, and sets the flag. While the flag is set and the row is invisible, the poll loop treats the message as a **barrier** — it stops scanning the partition instead of skipping past it (nacked rows keep skip-and-continue semantics, so a failed message never halts its partition). On the next `MarkDelivered` the flag is consumed: the `retry_count` increment is skipped and the flag cleared, so a postponed redelivery restarts as attempt 1 and only consecutive real failures count toward `Retry.MaxAttempts`. Default FALSE keeps existing rows back-compatible.
 
 See `schema/` for full SQL definitions. See the [RFC](../../../doc/rfc/sql-queue-rfc.md#database-schema) for field-level documentation.
