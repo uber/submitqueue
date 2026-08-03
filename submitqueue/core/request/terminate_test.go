@@ -31,6 +31,11 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+func requestWithState(request entity.Request, state entity.RequestState) entity.Request {
+	request.State = state
+	return request
+}
+
 // recordingRegistry returns a registry whose publisher appends every published
 // request log to *logs and returns publishErr. It lets tests assert both that a
 // terminal log was (or was not) published and what version/status it carried.
@@ -61,6 +66,7 @@ func TestTerminateRequest(t *testing.T) {
 	const requestID = "q/1"
 
 	validated := entity.Request{ID: requestID, Queue: "q", State: entity.RequestStateValidated, Version: 3}
+	originalValidated := validated
 
 	testCases := map[string]struct {
 		targetState entity.RequestState
@@ -101,7 +107,7 @@ func TestTerminateRequest(t *testing.T) {
 			metadata:    map[string]string{"source": "validate"},
 			mockFunc: func(rs *storagemock.MockRequestStore) {
 				rs.EXPECT().Get(gomock.Any(), requestID).Return(validated, nil)
-				rs.EXPECT().UpdateState(gomock.Any(), requestID, int32(3), int32(4), entity.RequestStateError).Return(nil)
+				rs.EXPECT().Update(gomock.Any(), requestWithState(validated, entity.RequestStateError), int32(3), int32(4)).Return(nil)
 			},
 			wantResult: TerminationResult{
 				Outcome:     TerminationOutcomeSuccess,
@@ -157,7 +163,7 @@ func TestTerminateRequest(t *testing.T) {
 			targetState: entity.RequestStateError,
 			mockFunc: func(rs *storagemock.MockRequestStore) {
 				rs.EXPECT().Get(gomock.Any(), requestID).Return(validated, nil)
-				rs.EXPECT().UpdateState(gomock.Any(), requestID, int32(3), int32(4), entity.RequestStateError).Return(storage.ErrVersionMismatch)
+				rs.EXPECT().Update(gomock.Any(), requestWithState(validated, entity.RequestStateError), int32(3), int32(4)).Return(storage.ErrVersionMismatch)
 			},
 			wantResult: TerminationResult{Outcome: TerminationOutcomeUnknown},
 			errMsg:     "version mismatch",
@@ -167,7 +173,7 @@ func TestTerminateRequest(t *testing.T) {
 			targetState: entity.RequestStateError,
 			mockFunc: func(rs *storagemock.MockRequestStore) {
 				rs.EXPECT().Get(gomock.Any(), requestID).Return(validated, nil)
-				rs.EXPECT().UpdateState(gomock.Any(), requestID, int32(3), int32(4), entity.RequestStateError).Return(nil)
+				rs.EXPECT().Update(gomock.Any(), requestWithState(validated, entity.RequestStateError), int32(3), int32(4)).Return(nil)
 			},
 			publishErr: fmt.Errorf("connection refused"),
 			wantResult: TerminationResult{Outcome: TerminationOutcomeUnknown},
@@ -187,6 +193,7 @@ func TestTerminateRequest(t *testing.T) {
 
 			res, err := TerminateRequest(context.Background(), store, registry, requestID, tc.targetState, tc.lastError, tc.metadata)
 
+			assert.Equal(t, originalValidated, validated)
 			assert.Equal(t, tc.wantResult, res)
 			if tc.errMsg != "" {
 				assert.ErrorContains(t, err, tc.errMsg)

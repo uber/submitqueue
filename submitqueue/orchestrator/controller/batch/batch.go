@@ -190,7 +190,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// state, so it would CAS the request from Cancelled back to Landed, silently
 	// undoing the user's cancel.
 	//
-	// The CAS below collapses that window. Whichever of batch.UpdateState(...,
+	// The CAS below collapses that window. Whichever of request.Update(...,
 	// RequestStateBatched) and cancel.markCancelling(... RequestStateCancelling)
 	// reaches storage first wins; the loser sees storage.ErrVersionMismatch:
 	//   - If cancel won: this CAS fails. We ack the message (cancel will drive R
@@ -221,7 +221,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// (request cancelled) is still correct — the orphan batch just gets
 	// reconciled by conclude as if it had no requests to act on.
 	newRequestVersion := request.Version + 1
-	if err := c.store.GetRequestStore().UpdateState(ctx, request.ID, request.Version, newRequestVersion, entity.RequestStateBatched); err != nil {
+	request.State = entity.RequestStateBatched
+	if err := c.store.GetRequestStore().Update(ctx, request, request.Version, newRequestVersion); err != nil {
 		// ErrVersionMismatch == cancel (or another writer) advanced R first. Ack
 		// the message: there is nothing for us to do, and retrying would not help
 		// since the new state of R is now visible to the cancel pipeline.
@@ -238,7 +239,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to claim request %s for batch %s: %w", request.ID, batch.ID, err)
 	}
 	request.Version = newRequestVersion
-	request.State = entity.RequestStateBatched
 
 	// Persist the batch before creating references to it. A Creating batch is not eligible for dependency analysis or normal processing.
 	if err := c.store.GetBatchStore().Create(ctx, batch); err != nil {

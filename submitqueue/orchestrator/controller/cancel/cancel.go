@@ -200,12 +200,12 @@ func (c *Controller) markCancelling(ctx context.Context, request entity.Request)
 		return request, nil
 	}
 	newVersion := request.Version + 1
-	if err := c.store.GetRequestStore().UpdateState(ctx, request.ID, request.Version, newVersion, entity.RequestStateCancelling); err != nil {
+	request.State = entity.RequestStateCancelling
+	if err := c.store.GetRequestStore().Update(ctx, request, request.Version, newVersion); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "request_update_errors", 1)
 		return entity.Request{}, fmt.Errorf("failed to mark request %s as cancelling: %w", request.ID, err)
 	}
 	request.Version = newVersion
-	request.State = entity.RequestStateCancelling
 	metrics.NamedCounter(c.metricsScope, opName, "request_cancelling", 1)
 	return request, nil
 }
