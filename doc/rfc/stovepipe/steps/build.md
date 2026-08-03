@@ -316,7 +316,7 @@ Either could be adopted independently: the idempotency token, if a backend that 
 
 Plus the `BuildID{ID string}` wire type in `stovepipe/entity` (same "id only travels" convention as `RequestID`, shaped like SubmitQueue's own `entity.BuildID` but not the same Go type — see the [contract sketch](#stovepipe-buildrunner-contract-design-sketch)), wrapping the one runner-assigned id everywhere it appears — `Trigger`'s return, the queue payload, `Status`/`Cancel`'s parameter. `buildsignal` reaches a build by the id carried in its message, and `record` reads the `Request` (whose state carries the build's outcome) rather than a `Build`, so no reverse index from `Request` to its builds is ever needed.
 
-**`BuildStore`** (new, added to the `Storage` aggregator via `GetBuildStore()`), matching stovepipe's existing `RequestStore` conventions — **generic `Update` with caller-owned version arithmetic, not SubmitQueue's field-specific `UpdateStatus`**:
+**`BuildStore`** (new, added to the `Storage` aggregator via `GetBuildStore()`), matching stovepipe's existing `RequestStore` conventions — **generic `Update` with caller-owned version arithmetic**:
 
 - `Create(ctx, build entity.Build) error` — `ErrAlreadyExists` if the id is taken.
 - `Get(ctx, id string) (entity.Build, error)` — `ErrNotFound` if absent.

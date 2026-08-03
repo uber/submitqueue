@@ -222,7 +222,7 @@ func TestController_Process_TriggersWithBaseAndHead(t *testing.T) {
 // TestController_Process_BuildStoreAlreadyExistsIsSwallowed covers the
 // redelivery case: Create returns ErrAlreadyExists, the controller proceeds
 // to publish to buildsignal anyway. The polling loop will pick up the
-// existing row via UpdateStatus.
+// existing row via Update.
 func TestController_Process_BuildStoreAlreadyExistsIsSwallowed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 

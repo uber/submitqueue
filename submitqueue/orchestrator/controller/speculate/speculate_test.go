@@ -358,10 +358,13 @@ func TestController_Process_CancellingTerminalFlow(t *testing.T) {
 	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
-	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{
+	build := entity.Build{
 		ID: batch.ID, BatchID: batch.ID, Status: entity.BuildStatusRunning,
-	}, nil)
-	buildStore.EXPECT().UpdateStatus(gomock.Any(), batch.ID, entity.BuildStatusCancelled).Return(nil)
+	}
+	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(build, nil)
+	updatedBuild := build
+	updatedBuild.Status = entity.BuildStatusCancelled
+	buildStore.EXPECT().Update(gomock.Any(), updatedBuild).Return(nil)
 
 	depStore := storagemock.NewMockBatchDependentStore(ctrl)
 	depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{
@@ -412,7 +415,7 @@ func TestController_Process_CancellingTerminalFlow(t *testing.T) {
 
 // If the build for the batch has already reached a terminal status (e.g. CI
 // finished naturally between the cancel intent and the speculate pickup), the
-// cancellation must not re-flip it — UpdateStatus must never fire. The rest
+// cancellation must not re-flip it — Update must never fire. The rest
 // of the flow (terminal batch CAS, dependent fan-out, conclude) still runs.
 func TestController_Process_CancellingBuildAlreadyTerminal(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -426,7 +429,7 @@ func TestController_Process_CancellingBuildAlreadyTerminal(t *testing.T) {
 	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{
 		ID: batch.ID, BatchID: batch.ID, Status: entity.BuildStatusSucceeded,
 	}, nil)
-	// No UpdateStatus expected — the build is already terminal.
+	// No Update expected — the build is already terminal.
 
 	depStore := storagemock.NewMockBatchDependentStore(ctrl)
 	depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{
@@ -455,7 +458,7 @@ func TestController_Process_CancellingNoBuildYet(t *testing.T) {
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
 	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
-	// No UpdateStatus expected.
+	// No Update expected.
 
 	depStore := storagemock.NewMockBatchDependentStore(ctrl)
 	depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{

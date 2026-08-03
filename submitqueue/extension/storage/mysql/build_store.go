@@ -80,26 +80,26 @@ func (s *buildStore) Create(ctx context.Context, build entity.Build) (retErr err
 	return nil
 }
 
-// UpdateStatus updates the status of a build. Returns ErrNotFound if the build is not found.
-func (s *buildStore) UpdateStatus(ctx context.Context, id string, newStatus entity.BuildStatus) (retErr error) {
+// Update replaces all non-key fields of a build. Returns ErrNotFound if the build is not found.
+func (s *buildStore) Update(ctx context.Context, build entity.Build) (retErr error) {
 	op := metrics.Begin(s.scope, "update_status", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE build SET status = ? WHERE id = ?",
-		newStatus, id,
+		"UPDATE build SET batch_id = ?, status = ? WHERE id = ?",
+		build.BatchID, build.Status, build.ID,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to update build status for id=%q newStatus=%v: %w", id, newStatus, err)
+		return fmt.Errorf("failed to update build entity id=%q: %w", build.ID, err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("failed to get rows affected from update for id=%q newStatus=%v: %w", id, newStatus, err)
+		return fmt.Errorf("failed to get rows affected from update for build entity id=%q: %w", build.ID, err)
 	}
 
 	if rowsAffected != 1 {
-		return storage.WrapNotFound(fmt.Errorf("build entity id=%s", id))
+		return storage.WrapNotFound(fmt.Errorf("build entity id=%s", build.ID))
 	}
 
 	return nil

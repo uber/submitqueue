@@ -70,16 +70,16 @@ func (mr *MockBuildStoreMockRecorder) Get(ctx, id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockBuildStore)(nil).Get), ctx, id)
 }
 
-// UpdateStatus mocks base method.
-func (m *MockBuildStore) UpdateStatus(ctx context.Context, id string, newStatus entity.BuildStatus) error {
+// Update mocks base method.
+func (m *MockBuildStore) Update(ctx context.Context, build entity.Build) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateStatus", ctx, id, newStatus)
+	ret := m.ctrl.Call(m, "Update", ctx, build)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// UpdateStatus indicates an expected call of UpdateStatus.
-func (mr *MockBuildStoreMockRecorder) UpdateStatus(ctx, id, newStatus any) *gomock.Call {
+// Update indicates an expected call of Update.
+func (mr *MockBuildStoreMockRecorder) Update(ctx, build any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateStatus", reflect.TypeOf((*MockBuildStore)(nil).UpdateStatus), ctx, id, newStatus)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Update", reflect.TypeOf((*MockBuildStore)(nil).Update), ctx, build)
 }
