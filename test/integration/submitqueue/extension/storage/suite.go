@@ -442,33 +442,80 @@ func (s *StorageContractSuite) TestStorage_RequestSummaryCreateGetAndCAS() {
 	ctx := s.ctx
 	summary := entity.RequestSummary{
 		RequestID: "summary/1", Queue: "summary-q", ChangeURIs: nil, ReceivedAtMs: 100,
-		Status: entity.RequestStatusAccepted, StatusTimestampMs: 100, Version: 1, Metadata: nil,
+		Status: entity.RequestStatusAccepted, RequestVersion: 1, StatusTimestampMs: 100, Version: 1,
+		LastError: "", Metadata: nil,
 	}
+	store := s.storage.GetRequestSummaryStore()
 
-	require.NoError(t, s.storage.GetRequestSummaryStore().Create(ctx, summary))
-	require.ErrorIs(t, s.storage.GetRequestSummaryStore().Create(ctx, summary), storage.ErrAlreadyExists)
+	require.NoError(t, store.Create(ctx, summary))
+	require.ErrorIs(t, store.Create(ctx, summary), storage.ErrAlreadyExists)
 
-	got, err := s.storage.GetRequestSummaryStore().Get(ctx, summary.RequestID)
+	got, err := store.Get(ctx, summary.RequestID)
 	require.NoError(t, err)
-	assert.NotNil(t, got.ChangeURIs)
-	assert.NotNil(t, got.Metadata)
-	_, err = s.storage.GetRequestSummaryStore().Get(ctx, "summary/missing")
+	assert.Equal(t, []string{}, got.ChangeURIs)
+	assert.Equal(t, map[string]string{}, got.Metadata)
+	_, err = store.Get(ctx, "summary/missing")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
+	got.Queue = "summary-q-updated"
+	got.ChangeURIs = []string{"change/updated"}
+	got.ReceivedAtMs = 200
 	got.Status = entity.RequestStatusLanded
 	got.RequestVersion = 2
-	got.StatusTimestampMs = 200
+	got.StatusTimestampMs = 300
 	got.LastError = "terminal detail"
 	got.Metadata = map[string]string{"source": "test"}
-	require.NoError(t, s.storage.GetRequestSummaryStore().Update(ctx, got, 1, 2))
-	require.ErrorIs(t, s.storage.GetRequestSummaryStore().Update(ctx, got, 1, 3), storage.ErrVersionMismatch)
+	require.NoError(t, store.Update(ctx, got, 1, 2))
 
-	updated, err := s.storage.GetRequestSummaryStore().Get(ctx, summary.RequestID)
+	updated, err := store.Get(ctx, summary.RequestID)
 	require.NoError(t, err)
-	assert.Equal(t, int32(2), updated.Version)
-	assert.Equal(t, entity.RequestStatusLanded, updated.Status)
-	assert.Equal(t, "terminal detail", updated.LastError)
-	assert.Equal(t, map[string]string{"source": "test"}, updated.Metadata)
+	assert.Equal(t, entity.RequestSummary{
+		RequestID:         summary.RequestID,
+		Queue:             "summary-q-updated",
+		ChangeURIs:        []string{"change/updated"},
+		ReceivedAtMs:      200,
+		Status:            entity.RequestStatusLanded,
+		RequestVersion:    2,
+		StatusTimestampMs: 300,
+		Version:           2,
+		LastError:         "terminal detail",
+		Metadata:          map[string]string{"source": "test"},
+	}, updated)
+
+	stale := updated
+	stale.Queue = "stale-q"
+	stale.ChangeURIs = []string{"change/stale"}
+	stale.ReceivedAtMs = 400
+	stale.Status = entity.RequestStatusError
+	stale.RequestVersion = 3
+	stale.StatusTimestampMs = 500
+	stale.LastError = "stale detail"
+	stale.Metadata = map[string]string{"source": "stale"}
+	require.ErrorIs(t, store.Update(ctx, stale, 1, 3), storage.ErrVersionMismatch)
+
+	afterStale, err := store.Get(ctx, summary.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, updated, afterStale)
+
+	updated.ChangeURIs = nil
+	updated.Metadata = nil
+	require.NoError(t, store.Update(ctx, updated, 2, 3))
+
+	normalizedNil, err := store.Get(ctx, summary.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{}, normalizedNil.ChangeURIs)
+	assert.Equal(t, map[string]string{}, normalizedNil.Metadata)
+	assert.Equal(t, int32(3), normalizedNil.Version)
+
+	normalizedNil.ChangeURIs = []string{}
+	normalizedNil.Metadata = map[string]string{}
+	require.NoError(t, store.Update(ctx, normalizedNil, 3, 4))
+
+	normalizedEmpty, err := store.Get(ctx, summary.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{}, normalizedEmpty.ChangeURIs)
+	assert.Equal(t, map[string]string{}, normalizedEmpty.Metadata)
+	assert.Equal(t, int32(4), normalizedEmpty.Version)
 }
 
 func (s *StorageContractSuite) TestStorage_RequestQueueSummaryListAndCursor() {
