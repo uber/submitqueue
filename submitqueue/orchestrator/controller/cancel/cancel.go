@@ -312,7 +312,8 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 
 	if batch.State != entity.BatchStateCancelling {
 		newVersion := batch.Version + 1
-		if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateCancelling); err != nil {
+		batch.State = entity.BatchStateCancelling
+		if err := c.store.GetBatchStore().Update(ctx, batch, batch.Version, newVersion); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "batch_update_errors", 1)
 			// storage.ErrVersionMismatch here means the batch advanced concurrently
 			// (e.g. speculate / merge progressed). Returned as-is because the
@@ -322,7 +323,6 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 			return fmt.Errorf("failed to mark batch %s as cancelling: %w", batch.ID, err)
 		}
 		batch.Version = newVersion
-		batch.State = entity.BatchStateCancelling
 		metrics.NamedCounter(c.metricsScope, opName, "batch_cancelling", 1)
 	} else {
 		metrics.NamedCounter(c.metricsScope, opName, "batch_already_cancelling", 1)

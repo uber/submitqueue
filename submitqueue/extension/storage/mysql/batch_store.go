@@ -102,21 +102,31 @@ func (s *batchStore) Create(ctx context.Context, batch entity.Batch) (retErr err
 	return nil
 }
 
-// UpdateState updates the state of a batch to newState and the version to newVersion
+// Update replaces every non-key field of a batch and writes newVersion
 // if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
 // Version arithmetic is owned by the caller; this is a pure conditional write.
-func (s *batchStore) UpdateState(ctx context.Context, id string, oldVersion, newVersion int32, newState entity.BatchState) (retErr error) {
+func (s *batchStore) Update(ctx context.Context, batch entity.Batch, oldVersion, newVersion int32) (retErr error) {
 	op := metrics.Begin(s.scope, "update_state", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	containsJSON, err := json.Marshal(batch.Contains)
+	if err != nil {
+		return fmt.Errorf("failed to marshal contains=%v id=%s for Update batch entity: %w", batch.Contains, batch.ID, err)
+	}
+
+	dependenciesJSON, err := json.Marshal(batch.Dependencies)
+	if err != nil {
+		return fmt.Errorf("failed to marshal dependencies=%v id=%s for Update batch entity: %w", batch.Dependencies, batch.ID, err)
+	}
+
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE batch SET state = ?, version = ? WHERE id = ? AND version = ?",
-		newState, newVersion, id, oldVersion,
+		"UPDATE batch SET queue = ?, contains = ?, dependencies = ?, state = ?, version = ? WHERE id = ? AND version = ?",
+		batch.Queue, containsJSON, dependenciesJSON, batch.State, newVersion, batch.ID, oldVersion,
 	)
 	if err != nil {
 		return fmt.Errorf(
-			"failed to update batch state for id=%q oldVersion=%d newVersion=%d newState=%v: %w",
-			id, oldVersion, newVersion, newState, err,
+			"failed to update batch for id=%q oldVersion=%d newVersion=%d newState=%v: %w",
+			batch.ID, oldVersion, newVersion, batch.State, err,
 		)
 	}
 
@@ -124,14 +134,14 @@ func (s *batchStore) UpdateState(ctx context.Context, id string, oldVersion, new
 	if err != nil {
 		return fmt.Errorf(
 			"failed to get rows affected from update for id=%q oldVersion=%d newVersion=%d newState=%v: %w",
-			id, oldVersion, newVersion, newState, err,
+			batch.ID, oldVersion, newVersion, batch.State, err,
 		)
 	}
 
 	if rowsAffected != 1 {
 		return fmt.Errorf(
 			"version mismatch for batch update: id=%q expected_version=%d newState=%v: %w",
-			id, oldVersion, newState, storage.ErrVersionMismatch,
+			batch.ID, oldVersion, batch.State, storage.ErrVersionMismatch,
 		)
 	}
 

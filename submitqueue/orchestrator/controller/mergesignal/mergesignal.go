@@ -139,12 +139,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	newVersion := batch.Version + 1
-	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, newState); err != nil {
+	batch.State = newState
+	if err := c.store.GetBatchStore().Update(ctx, batch, batch.Version, newVersion); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "state_update_errors", 1)
 		return fmt.Errorf("failed to transition batch %s to %s: %w", batch.ID, newState, err)
 	}
 	batch.Version = newVersion
-	batch.State = newState
 
 	return c.fanout(ctx, batch.ID, batch.Queue)
 }

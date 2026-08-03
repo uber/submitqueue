@@ -46,11 +46,12 @@ func TestDLQMergeSignalController_Process_ReconcilesBatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(entity.Batch{
+	batch := entity.Batch{
 		ID: "q/batch/1", Queue: "q", Contains: []string{"q/1"},
 		State: entity.BatchStateMerging, Version: 2,
-	}, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), "q/batch/1", int32(2), int32(3), entity.BatchStateFailed).Return(nil)
+	}
+	batchStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(batch, nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateFailed), int32(2), int32(3)).Return(nil)
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.Request{

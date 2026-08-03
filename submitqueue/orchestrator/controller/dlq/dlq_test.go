@@ -31,6 +31,11 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
+func batchWithState(batch entity.Batch, state entity.BatchState) entity.Batch {
+	batch.State = state
+	return batch
+}
+
 // failRequest
 
 func TestFailRequest_TerminalStates(t *testing.T) {
@@ -177,11 +182,12 @@ func TestFailBatch_TransitionsAndFansOut(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(entity.Batch{
+	batch := entity.Batch{
 		ID: "q/batch/1", Queue: "q", Contains: []string{"q/1", "q/2"},
 		State: entity.BatchStateMerging, Version: 4,
-	}, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), "q/batch/1", int32(4), int32(5), entity.BatchStateFailed).Return(nil)
+	}
+	batchStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(batch, nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateFailed), int32(4), int32(5)).Return(nil)
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.Request{
@@ -213,7 +219,7 @@ func TestFailBatch_FailedFansOutForRepair(t *testing.T) {
 		ID: "q/batch/1", Queue: "q", Contains: []string{"q/1"},
 		State: entity.BatchStateFailed, Version: 5,
 	}, nil)
-	// no batchStore.UpdateState expected
+	// no batchStore.Update expected
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.Request{
@@ -261,11 +267,12 @@ func TestFailBatch_CancellingTransitionsToFailed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(entity.Batch{
+	batch := entity.Batch{
 		ID: "q/batch/1", Queue: "q", Contains: []string{"q/1"},
 		State: entity.BatchStateCancelling, Version: 6,
-	}, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), "q/batch/1", int32(6), int32(7), entity.BatchStateFailed).Return(nil)
+	}
+	batchStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(batch, nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateFailed), int32(6), int32(7)).Return(nil)
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.Request{

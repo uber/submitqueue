@@ -34,6 +34,11 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
+func batchWithState(batch entity.Batch, state entity.BatchState) entity.Batch {
+	batch.State = state
+	return batch
+}
+
 // batchIDPayload serializes a BatchID to JSON bytes for test message payloads.
 func batchIDPayload(t *testing.T, id string) []byte {
 	payload, err := entity.BatchID{ID: id}.ToBytes()
@@ -46,6 +51,7 @@ func testBatch(state entity.BatchState, deps ...string) entity.Batch {
 	return entity.Batch{
 		ID:           "test-queue/batch/1",
 		Queue:        "test-queue",
+		Contains:     []string{"test-queue/1"},
 		Dependencies: deps,
 		State:        state,
 		Version:      1,
@@ -118,7 +124,7 @@ func TestController_Process_StartSpeculation(t *testing.T) {
 
 			batchStore := storagemock.NewMockBatchStore(ctrl)
 			batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-			batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateSpeculating).Return(nil)
+			batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateSpeculating), int32(1), int32(2)).Return(nil)
 
 			store := storagemock.NewMockStorage(ctrl)
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -136,7 +142,7 @@ func TestController_Process_FinalizeNoDeps(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateMerging).Return(nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateMerging), int32(1), int32(2)).Return(nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -156,7 +162,7 @@ func TestController_Process_FinalizeAllDepsSucceeded(t *testing.T) {
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
 	batchStore.EXPECT().Get(gomock.Any(), depA.ID).Return(depA, nil)
 	batchStore.EXPECT().Get(gomock.Any(), depB.ID).Return(depB, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateMerging).Return(nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateMerging), int32(1), int32(2)).Return(nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -174,7 +180,7 @@ func TestController_Process_WaitingOnDep(t *testing.T) {
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
 	batchStore.EXPECT().Get(gomock.Any(), dep.ID).Return(dep, nil)
-	// No UpdateState expected — gomock will fail if it is called.
+	// No Update expected — gomock will fail if it is called.
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -194,7 +200,7 @@ func TestController_Process_FailedDepFailsBatch(t *testing.T) {
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
 	batchStore.EXPECT().Get(gomock.Any(), dep.ID).Return(dep, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateFailed).Return(nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateFailed), int32(1), int32(2)).Return(nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -216,7 +222,7 @@ func TestController_Process_CancelledDepSkipped(t *testing.T) {
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
 	batchStore.EXPECT().Get(gomock.Any(), depCancelled.ID).Return(depCancelled, nil)
 	batchStore.EXPECT().Get(gomock.Any(), depSucceeded.ID).Return(depSucceeded, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateMerging).Return(nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateMerging), int32(1), int32(2)).Return(nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -232,7 +238,7 @@ func TestController_Process_MergingNoOp(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	// No UpdateState expected.
+	// No Update expected.
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -242,7 +248,7 @@ func TestController_Process_MergingNoOp(t *testing.T) {
 }
 
 // Terminal states re-fan-out to conclude for self-healing in case a previous
-// publish was lost. State must not change (no UpdateState). The Cancelled
+// publish was lost. State must not change (no Update). The Cancelled
 // terminal also re-fans-out dependents and is covered separately in
 // TestController_Process_CancelledTerminalSelfHealsDependents.
 func TestController_Process_TerminalSelfHeals(t *testing.T) {
@@ -256,7 +262,7 @@ func TestController_Process_TerminalSelfHeals(t *testing.T) {
 
 			batchStore := storagemock.NewMockBatchStore(ctrl)
 			batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-			// No UpdateState expected.
+			// No Update expected.
 
 			store := storagemock.NewMockStorage(ctrl)
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -285,7 +291,7 @@ func TestController_Process_TerminalSelfHeals(t *testing.T) {
 
 // Cancelled is terminal: redelivery must re-fan-out dependents (so a crash
 // between the terminal CAS and the dependent publish does not strand them)
-// AND re-publish to conclude. State must not change (no UpdateState; no
+// AND re-publish to conclude. State must not change (no Update; no
 // build cancel). The BuildStore must not be touched on this self-heal path.
 func TestController_Process_CancelledTerminalSelfHealsDependents(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -293,7 +299,7 @@ func TestController_Process_CancelledTerminalSelfHealsDependents(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	// No UpdateState expected.
+	// No Update expected.
 
 	depStore := storagemock.NewMockBatchDependentStore(ctrl)
 	depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{
@@ -355,7 +361,7 @@ func TestController_Process_CancellingTerminalFlow(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateCancelled), int32(1), int32(2)).Return(nil)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
 	build := entity.Build{
@@ -423,7 +429,7 @@ func TestController_Process_CancellingBuildAlreadyTerminal(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateCancelled), int32(1), int32(2)).Return(nil)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
 	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{
@@ -454,7 +460,7 @@ func TestController_Process_CancellingNoBuildYet(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateCancelled), int32(1), int32(2)).Return(nil)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
 	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
@@ -484,7 +490,7 @@ func TestController_Process_CancellingNoDependents(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateCancelled), int32(1), int32(2)).Return(nil)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
 	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
@@ -527,7 +533,7 @@ func TestController_Process_CancellingTerminalCASVersionMismatch(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateCancelled), int32(1), int32(2)).
 		Return(storage.ErrVersionMismatch)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
@@ -599,7 +605,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	// No UpdateState expected — publish fails before we get there.
+	// No Update expected — publish fails before we get there.
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()

@@ -33,6 +33,11 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
+func batchWithState(batch entity.Batch, state entity.BatchState) entity.Batch {
+	batch.State = state
+	return batch
+}
+
 const (
 	testBatchID = "test-queue/batch/1"
 	testQueue   = "test-queue"
@@ -98,9 +103,16 @@ func TestProcess_MergedAdvancesBatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().Get(gomock.Any(), testBatchID).Return(
-		entity.Batch{ID: testBatchID, Queue: testQueue, State: entity.BatchStateMerging, Version: 1}, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), testBatchID, int32(1), int32(2), entity.BatchStateSucceeded).Return(nil)
+	batch := entity.Batch{
+		ID:           testBatchID,
+		Queue:        testQueue,
+		Contains:     []string{"test-queue/1"},
+		Dependencies: []string{"test-queue/batch/0"},
+		State:        entity.BatchStateMerging,
+		Version:      1,
+	}
+	batchStore.EXPECT().Get(gomock.Any(), testBatchID).Return(batch, nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateSucceeded), int32(1), int32(2)).Return(nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -125,9 +137,16 @@ func TestProcess_NotMergedMarksBatchFailed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().Get(gomock.Any(), testBatchID).Return(
-		entity.Batch{ID: testBatchID, Queue: testQueue, State: entity.BatchStateMerging, Version: 3}, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), testBatchID, int32(3), int32(4), entity.BatchStateFailed).Return(nil)
+	batch := entity.Batch{
+		ID:           testBatchID,
+		Queue:        testQueue,
+		Contains:     []string{"test-queue/1"},
+		Dependencies: []string{"test-queue/batch/0"},
+		State:        entity.BatchStateMerging,
+		Version:      3,
+	}
+	batchStore.EXPECT().Get(gomock.Any(), testBatchID).Return(batch, nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateFailed), int32(3), int32(4)).Return(nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -153,7 +172,7 @@ func TestProcess_CancellingShortCircuit(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
-	// No UpdateState and no fan-out: gomock fails if either runs.
+	// No Update and no fan-out: gomock fails if either runs.
 	var got []string
 	c := newController(t, store, recordingRegistry(t, ctrl, &got))
 

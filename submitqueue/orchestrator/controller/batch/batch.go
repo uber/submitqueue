@@ -338,12 +338,12 @@ func (c *Controller) populateBatch(ctx context.Context, batch entity.Batch) (ent
 	// The batch's own reverse-index row now exists and every dependency lists this batch as a dependent.
 	// Structural initialization is complete, so transition Creating → Created to make the batch ready for processing once published to speculate.
 	newVersion := batch.Version + 1
-	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateCreated); err != nil {
+	batch.State = entity.BatchStateCreated
+	if err := c.store.GetBatchStore().Update(ctx, batch, batch.Version, newVersion); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
 		return entity.Batch{}, fmt.Errorf("failed to mark batch %s created: %w", batch.ID, err)
 	}
 	batch.Version = newVersion
-	batch.State = entity.BatchStateCreated
 	return batch, nil
 }
 
