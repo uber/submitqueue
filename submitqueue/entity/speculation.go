@@ -79,6 +79,24 @@ func (p SpeculationPath) ID() string {
 	return hex.EncodeToString(sum[:])
 }
 
+// Base returns the path's base — the batches its head is stacked on top of:
+// the IDs of the dependencies the path assumes will succeed, in the path's
+// dependency order.
+//
+// It is a projection of the path rather than a decision about it — a
+// dependency the path assumes will fail is by definition built without, and
+// an ignored one is not built on either — so every caller that needs the base
+// derives it here rather than re-reading the assumptions itself.
+func (p SpeculationPath) Base() []string {
+	var deps []string
+	for _, dep := range p.Dependencies {
+		if dep.Assumption == DependencyAssumptionSucceeds {
+			deps = append(deps, dep.Batch)
+		}
+	}
+	return deps
+}
+
 // SpeculationPathStatus is the lifecycle status of one speculation path's
 // current build attempt.
 type SpeculationPathStatus string
@@ -122,9 +140,10 @@ func (s SpeculationPathStatus) IsTerminal() bool {
 }
 
 // SpeculationPathEntry is the stored record of one chosen speculation path,
-// keyed by the hash of its content. It holds no build reference (that lives on
-// the separate execution record, keyed by (ID, Attempt)) and no score (a score
-// is meaningful only within a single speculation run).
+// keyed by the hash of its content. It holds no build reference — a build is
+// linked to an attempt by PathBuild, so the path stays what the speculation run
+// decided rather than a mirror of what the build system is doing — and no score
+// (a score is meaningful only within a single speculation run).
 type SpeculationPathEntry struct {
 	// ID is the primary key: the hash of the path's content (head plus its
 	// assumptions). It always equals Path.ID() — it is materialized here, rather

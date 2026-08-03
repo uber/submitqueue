@@ -440,6 +440,14 @@ func (s *StorageContractSuite) TestStorage_QueueIsolation() {
 	require.NoError(t, err)
 	assert.Empty(t, crossQueue, "associations must be invisible through another queue's binding")
 
+	// A path ID is a content hash, so the same path can be speculated on in two
+	// queues at once; the queue-leading key keeps their links apart.
+	link := entity.PathBuild{Queue: "iso-queue-a", PathID: "iso/path/1", Attempt: 1, BuildID: "runner/iso/link"}
+	require.NoError(t, storeA.GetPathBuildStore().Create(ctx, link))
+	_, err = storeB.GetPathBuildStore().Get(ctx, link.PathID, link.Attempt)
+	require.ErrorIs(t, err, storage.ErrNotFound, "a link must be invisible through another queue's binding")
+	require.Error(t, storeB.GetPathBuildStore().Create(ctx, link), "a mismatched-queue write must be rejected")
+
 	// The owning queue still sees everything it wrote.
 	fromA, err := storeA.GetRequestStore().Get(ctx, request.ID)
 	require.NoError(t, err)
@@ -952,6 +960,52 @@ func speculationPathSet(queue, head, dep string) entity.SpeculationPathSet {
 		},
 		Version: 1,
 	}
+}
+
+// TestStorage_PathBuildResolvesAnAttemptToItsBuild tests the reverse lookup the
+// speculate run depends on: it holds a path and an attempt, and the runner
+// chose the build ID, so this record is the only way back.
+func (s *StorageContractSuite) TestStorage_PathBuildResolvesAnAttemptToItsBuild() {
+	t := s.T()
+	ctx := s.ctx
+	store := s.forQueue("test-queue").GetPathBuildStore()
+
+	want := entity.PathBuild{Queue: "test-queue", PathID: "pb/path/1", Attempt: 1, BuildID: "pb/build/1"}
+	require.NoError(t, store.Create(ctx, want))
+
+	got, err := store.Get(ctx, want.PathID, want.Attempt)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+
+	// An attempt that was never dispatched has no build.
+	_, err = store.Get(ctx, "pb/path/undispatched", 1)
+	assert.ErrorIs(t, err, storage.ErrNotFound)
+}
+
+// TestStorage_PathBuildIsImmutable tests that an attempt keeps the build it was
+// first linked to. A redelivered dispatch must be refused rather than silently
+// repointing the attempt at a second build, which would orphan the first.
+func (s *StorageContractSuite) TestStorage_PathBuildIsImmutable() {
+	t := s.T()
+	ctx := s.ctx
+	store := s.forQueue("test-queue").GetPathBuildStore()
+
+	first := entity.PathBuild{Queue: "test-queue", PathID: "pb/path/immutable", Attempt: 1, BuildID: "pb/build/first"}
+	require.NoError(t, store.Create(ctx, first))
+
+	second := first
+	second.BuildID = "pb/build/second"
+	assert.ErrorIs(t, store.Create(ctx, second), storage.ErrAlreadyExists)
+
+	got, err := store.Get(ctx, first.PathID, first.Attempt)
+	require.NoError(t, err)
+	assert.Equal(t, "pb/build/first", got.BuildID)
+
+	// A retried path is a different attempt, so it is a different key.
+	retry := first
+	retry.Attempt = 2
+	retry.BuildID = "pb/build/retry"
+	require.NoError(t, store.Create(ctx, retry))
 }
 
 // TestStorage_SpeculationPathSetCreateAndGet tests that a set round-trips whole,
