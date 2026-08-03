@@ -357,14 +357,22 @@ func TestController_Process_WithDependencies(t *testing.T) {
 		BatchID: "test-queue/batch/1",
 		Version: 1,
 	}, nil)
-	mockBatchDependentStore.EXPECT().UpdateDependents(gomock.Any(), "test-queue/batch/1", int32(1), int32(2), gomock.Any()).Return(nil)
+	mockBatchDependentStore.EXPECT().Update(gomock.Any(), entity.BatchDependent{
+		BatchID:    "test-queue/batch/1",
+		Dependents: []string{"test-queue/batch/1"},
+		Version:    1,
+	}, int32(1), int32(2)).Return(nil)
 	// batch/2 already has an existing dependent.
 	mockBatchDependentStore.EXPECT().Get(gomock.Any(), "test-queue/batch/2").Return(entity.BatchDependent{
 		BatchID:    "test-queue/batch/2",
 		Dependents: []string{"test-queue/batch/99"},
 		Version:    2,
 	}, nil)
-	mockBatchDependentStore.EXPECT().UpdateDependents(gomock.Any(), "test-queue/batch/2", int32(2), int32(3), gomock.Any()).Return(nil)
+	mockBatchDependentStore.EXPECT().Update(gomock.Any(), entity.BatchDependent{
+		BatchID:    "test-queue/batch/2",
+		Dependents: []string{"test-queue/batch/99", "test-queue/batch/1"},
+		Version:    2,
+	}, int32(2), int32(3)).Return(nil)
 	// Create empty reverse index for the new batch.
 	mockBatchDependentStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 
@@ -418,7 +426,11 @@ func TestController_Process_AnalyzerSelectsSubset(t *testing.T) {
 		BatchID: "test-queue/batch/2",
 		Version: 5,
 	}, nil)
-	mockBatchDependentStore.EXPECT().UpdateDependents(gomock.Any(), "test-queue/batch/2", int32(5), int32(6), gomock.Any()).Return(nil)
+	mockBatchDependentStore.EXPECT().Update(gomock.Any(), entity.BatchDependent{
+		BatchID:    "test-queue/batch/2",
+		Dependents: []string{"test-queue/batch/1"},
+		Version:    5,
+	}, int32(5), int32(6)).Return(nil)
 	mockBatchDependentStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 
 	mockReqStore := storagemock.NewMockRequestStore(ctrl)
@@ -455,6 +467,56 @@ func TestController_Process_AnalyzerSelectsSubset(t *testing.T) {
 
 	err := controller.Process(context.Background(), delivery)
 	require.NoError(t, err)
+}
+
+func TestController_Process_BatchDependentUpdateFailureDoesNotMutateFetchedDependents(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	request := testRequest()
+	activeBatch := entity.Batch{
+		ID:      "test-queue/batch/99",
+		Queue:   "test-queue",
+		State:   entity.BatchStateCreated,
+		Version: 1,
+	}
+	dependents := make([]string, 1, 2)
+	dependents[0] = "test-queue/batch/98"
+	existing := entity.BatchDependent{
+		BatchID:    activeBatch.ID,
+		Dependents: dependents,
+		Version:    4,
+	}
+
+	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+	mockBatchStore.EXPECT().GetByQueueAndStates(gomock.Any(), request.Queue, gomock.Any()).Return([]entity.Batch{activeBatch}, nil)
+
+	mockBatchDependentStore := storagemock.NewMockBatchDependentStore(ctrl)
+	mockBatchDependentStore.EXPECT().Get(gomock.Any(), activeBatch.ID).Return(existing, nil)
+	mockBatchDependentStore.EXPECT().Update(gomock.Any(), entity.BatchDependent{
+		BatchID:    activeBatch.ID,
+		Dependents: []string{"test-queue/batch/98", "test-queue/batch/1"},
+		Version:    existing.Version,
+	}, existing.Version, existing.Version+1).Return(errors.New("update failed"))
+
+	mockReqStore := storagemock.NewMockRequestStore(ctrl)
+	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+
+	mockStorage := storagemock.NewMockStorage(ctrl)
+	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	mockStorage.EXPECT().GetBatchDependentStore().Return(mockBatchDependentStore).AnyTimes()
+	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
+
+	controller := newTestController(t, ctrl, newSequentialCounter(ctrl), mockStorage, nil, nil)
+
+	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	err := controller.Process(context.Background(), delivery)
+	require.Error(t, err)
+	assert.Equal(t, "", dependents[:cap(dependents)][1])
+	assert.Equal(t, int32(4), existing.Version)
 }
 
 func TestController_Process_AnalyzerFailure(t *testing.T) {
@@ -894,9 +956,11 @@ func TestController_PopulateBatch_Errors(t *testing.T) {
 					BatchID: "test-queue/batch/0",
 					Version: 2,
 				}, nil)
-				dependentStore.EXPECT().UpdateDependents(
-					gomock.Any(), "test-queue/batch/0", int32(2), int32(3), []string{batch.ID},
-				).Return(storeErr)
+				dependentStore.EXPECT().Update(gomock.Any(), entity.BatchDependent{
+					BatchID:    "test-queue/batch/0",
+					Dependents: []string{batch.ID},
+					Version:    2,
+				}, int32(2), int32(3)).Return(storeErr)
 			},
 			errMsg: "failed to update batch dependent index",
 		},
@@ -909,9 +973,11 @@ func TestController_PopulateBatch_Errors(t *testing.T) {
 					Dependents: []string{"test-queue/batch/old"},
 					Version:    2,
 				}, nil)
-				dependentStore.EXPECT().UpdateDependents(
-					gomock.Any(), "test-queue/batch/0", int32(2), int32(3), []string{"test-queue/batch/old", batch.ID},
-				).Return(nil)
+				dependentStore.EXPECT().Update(gomock.Any(), entity.BatchDependent{
+					BatchID:    "test-queue/batch/0",
+					Dependents: []string{"test-queue/batch/old", batch.ID},
+					Version:    2,
+				}, int32(2), int32(3)).Return(nil)
 				batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCreated).Return(storeErr)
 			},
 			errMsg: "failed to mark batch",
