@@ -10,6 +10,7 @@ MODULE.bazel.lock
 .mcp.json.bak
 .ijwb/
 
+WORKSPACE
 
 # Built binaries
 bin/
