@@ -9,6 +9,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 - [Consumer Gate](consumer-gate.md) - Stopping and starting individual queue controllers at runtime via consumer middleware: parked deliveries held in-flight with visibility extension, gate state as a separate extension with a file-based first implementation shared by tests and operators
 - [Consumer Hold](consumer-hold.md) - Fourth delivery outcome letting a controller postpone its delivery: the message becomes a partition barrier that pauses consumption for a chosen delay, redelivers in order, and does not count as a failure toward dead-lettering
 - [Change URIs](change-uri.md) - Identity of a code change: `scheme://{host[:port]}/{path}` per provider (GitHub PR, Phabricator Diff, git ref/commit) and canonical-form rules
+- [Hooks Framework](hook-framework.md) - Fire-and-forget side effects off pipeline lifecycle events: one shared `HookEvent` contract (`api/base/hook/`) published to a durable per-domain hook topic, dispatched by a per-domain stage to a pluggable hook extension (`platform/extension/hook/`) for integrations like warehouse export and code-review notifications
 
 ## SubmitQueue
 
