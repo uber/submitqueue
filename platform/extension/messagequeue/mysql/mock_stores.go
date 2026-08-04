@@ -501,3 +501,17 @@ func (mr *MockdeliveryStateStoreMockRecorder) MarkNacked(ctx, consumerGroup, top
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkNacked", reflect.TypeOf((*MockdeliveryStateStore)(nil).MarkNacked), ctx, consumerGroup, topic, partitionKey, offset, delayMs)
 }
+
+// MarkPostponed mocks base method.
+func (m *MockdeliveryStateStore) MarkPostponed(ctx context.Context, consumerGroup, topic, partitionKey string, offset, delayMs int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarkPostponed", ctx, consumerGroup, topic, partitionKey, offset, delayMs)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// MarkPostponed indicates an expected call of MarkPostponed.
+func (mr *MockdeliveryStateStoreMockRecorder) MarkPostponed(ctx, consumerGroup, topic, partitionKey, offset, delayMs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkPostponed", reflect.TypeOf((*MockdeliveryStateStore)(nil).MarkPostponed), ctx, consumerGroup, topic, partitionKey, offset, delayMs)
+}

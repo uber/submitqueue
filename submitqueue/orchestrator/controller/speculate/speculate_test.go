@@ -24,6 +24,7 @@ import (
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
@@ -90,7 +91,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 // runProcess builds a delivery for batchID and invokes Process once.
 func runProcess(t *testing.T, ctrl *gomock.Controller, controller *Controller, batchID string) error {
 	msg := entityqueue.NewMessage(batchID, batchIDPayload(t, batchID), "test-queue", nil)
-	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 	return controller.Process(context.Background(), delivery)
@@ -621,7 +622,7 @@ func TestController_Process_BadPayload(t *testing.T) {
 	controller := newTestController(t, ctrl, store, nil)
 
 	msg := entityqueue.NewMessage("anything", []byte("not-json"), "test-queue", nil)
-	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 

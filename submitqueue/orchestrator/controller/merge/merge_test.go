@@ -31,6 +31,7 @@ import (
 	"github.com/uber/submitqueue/platform/base/mergestrategy"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
@@ -45,9 +46,9 @@ func batchIDPayload(t *testing.T, id string) []byte {
 	return payload
 }
 
-func newDelivery(t *testing.T, ctrl *gomock.Controller, batchID, partitionKey string) *queuemock.MockDelivery {
+func newDelivery(t *testing.T, ctrl *gomock.Controller, batchID, partitionKey string) *consumermock.MockDelivery {
 	msg := entityqueue.NewMessage(batchID, batchIDPayload(t, batchID), partitionKey, nil)
-	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 	return delivery

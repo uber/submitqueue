@@ -24,6 +24,7 @@ import (
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	changesetfake "github.com/uber/submitqueue/submitqueue/core/changeset/fake"
@@ -129,7 +130,7 @@ func TestController_Process_Success(t *testing.T) {
 	controller := newTestController(t, ctrl, store, buildfake.New(changesetfake.New()), nil)
 
 	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
-	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
@@ -201,7 +202,7 @@ func TestController_Process_TriggersWithBaseAndHead(t *testing.T) {
 	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, staticBuildRunnerFactory{r: br}, registry, topickey.TopicKeyBuild, "orchestrator-build")
 
 	msg := entityqueue.NewMessage(headBatch.ID, batchIDPayload(t, headBatch.ID), headBatch.Queue, nil)
-	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
@@ -258,7 +259,7 @@ func TestController_Process_BuildStoreAlreadyExistsIsSwallowed(t *testing.T) {
 	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, staticBuildRunnerFactory{r: br}, registry, topickey.TopicKeyBuild, "orchestrator-build")
 
 	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
-	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
@@ -290,7 +291,7 @@ func TestController_Process_TriggerFailure(t *testing.T) {
 	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, staticBuildRunnerFactory{r: br}, registry, topickey.TopicKeyBuild, "orchestrator-build")
 
 	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
-	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
@@ -310,7 +311,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 	controller := newTestController(t, ctrl, store, buildfake.New(changesetfake.New()), nil)
 
 	msg := entityqueue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1"), "test-queue", nil)
-	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
@@ -327,7 +328,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 	controller := newTestController(t, ctrl, store, buildfake.New(changesetfake.New()), fmt.Errorf("publish failed"))
 
 	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
-	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
@@ -374,7 +375,7 @@ func TestController_Process_HaltedShortCircuit(t *testing.T) {
 			controller := newTestController(t, ctrl, store, br, fmt.Errorf("should not publish"))
 
 			msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
-			delivery := queuemock.NewMockDelivery(ctrl)
+			delivery := consumermock.NewMockDelivery(ctrl)
 			delivery.EXPECT().Message().Return(msg).AnyTimes()
 			delivery.EXPECT().Attempt().Return(1).AnyTimes()
 

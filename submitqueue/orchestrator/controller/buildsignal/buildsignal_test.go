@@ -24,6 +24,7 @@ import (
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
@@ -98,7 +99,7 @@ func buildDelivery(t *testing.T, ctrl *gomock.Controller, b entity.Build) consum
 	payload, err := entity.BuildID{ID: b.ID}.ToBytes()
 	require.NoError(t, err)
 	msg := entityqueue.NewMessage(b.ID, payload, b.BatchID, nil)
-	d := queuemock.NewMockDelivery(ctrl)
+	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
 	return d
@@ -284,7 +285,7 @@ func TestController_Process_MalformedPayload(t *testing.T) {
 	h := newTestHarness(t, ctrl)
 
 	msg := entityqueue.NewMessage("bad", []byte(`{"invalid"`), "batch-bad", nil)
-	d := queuemock.NewMockDelivery(ctrl)
+	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
 

@@ -27,6 +27,7 @@ go_test(
         "//platform/base/mergestrategy:go_default_library",
         "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
+        "//platform/consumer/mock:go_default_library",
         "//platform/errs:go_default_library",
         "//platform/extension/messagequeue/mock:go_default_library",
         "//submitqueue/core/topickey:go_default_library",

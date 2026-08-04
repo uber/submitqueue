@@ -357,6 +357,125 @@ func TestConsumer_ProcessDelivery_Error(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestConsumer_ProcessDelivery_Hold(t *testing.T) {
+	tests := []struct {
+		name        string
+		processFunc func(ctx context.Context, delivery Delivery) error
+		postponeErr error
+		// wantOutcome is the delivery method the framework must call: "postpone" or "nack".
+		wantOutcome string
+		wantDelayMs int64
+	}{
+		{
+			name: "hold postpones instead of acking",
+			processFunc: func(ctx context.Context, delivery Delivery) error {
+				delivery.Hold(5000)
+				return nil
+			},
+			wantOutcome: "postpone",
+			wantDelayMs: 5000,
+		},
+		{
+			name: "last hold wins",
+			processFunc: func(ctx context.Context, delivery Delivery) error {
+				delivery.Hold(1000)
+				delivery.Hold(2500)
+				return nil
+			},
+			wantOutcome: "postpone",
+			wantDelayMs: 2500,
+		},
+		{
+			name: "negative delay clamps to zero",
+			processFunc: func(ctx context.Context, delivery Delivery) error {
+				delivery.Hold(-5)
+				return nil
+			},
+			wantOutcome: "postpone",
+			wantDelayMs: 0,
+		},
+		{
+			name: "error outcome wins over hold",
+			processFunc: func(ctx context.Context, delivery Delivery) error {
+				delivery.Hold(5000)
+				return errs.NewRetryableError(fmt.Errorf("processing failed"))
+			},
+			wantOutcome: "nack",
+		},
+		{
+			name: "postpone failure leaves delivery in flight",
+			processFunc: func(ctx context.Context, delivery Delivery) error {
+				delivery.Hold(3000)
+				return nil
+			},
+			postponeErr: fmt.Errorf("db error"),
+			wantOutcome: "postpone",
+			wantDelayMs: 3000,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			logger := zaptest.NewLogger(t).Sugar()
+
+			deliveryChan := make(chan extqueue.Delivery, 1)
+			mockSub := queuemock.NewMockSubscriber(ctrl)
+			mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
+
+			mockQ := queuemock.NewMockQueue(ctrl)
+			mockQ.EXPECT().Subscriber().Return(mockSub)
+
+			reg := newRegistry(t, mockQ, testTopicKeyStart, "test-group")
+
+			c := New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor(), consumergatenoop.New())
+
+			handler := &testController{}
+			setupController(handler, "test-handler", testTopicKeyStart, "test-group", tt.processFunc)
+
+			require.NoError(t, c.Register(handler))
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			require.NoError(t, c.Start(ctx))
+
+			msg := entityqueue.NewMessage("held-msg", []byte("payload"), "partition1", nil)
+			done := make(chan struct{})
+			var gotDelayMs int64
+			mockDel := queuemock.NewMockDelivery(ctrl)
+			mockDel.EXPECT().Message().Return(msg).AnyTimes()
+			mockDel.EXPECT().Attempt().Return(1).AnyTimes()
+			mockDel.EXPECT().ReceivedAt().Return(time.Now().UnixMilli()).AnyTimes()
+			mockDel.EXPECT().Metadata().Return(nil).AnyTimes()
+			mockDel.EXPECT().DeliveryID().Return(msg.ID).AnyTimes()
+			// No Ack expectation: an Ack call on a held delivery fails the test.
+			switch tt.wantOutcome {
+			case "postpone":
+				mockDel.EXPECT().Postpone(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, delayMs int64) error {
+					gotDelayMs = delayMs
+					close(done)
+					return tt.postponeErr
+				})
+			case "nack":
+				mockDel.EXPECT().Nack(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, requeueAfterMillis int64) error {
+					close(done)
+					return nil
+				})
+			}
+
+			deliveryChan <- mockDel
+			<-done
+
+			if tt.wantOutcome == "postpone" {
+				assert.Equal(t, tt.wantDelayMs, gotDelayMs)
+			}
+
+			require.NoError(t, c.Stop(30000))
+		})
+	}
+}
+
 func TestConsumer_ProcessDelivery_NonRetryableError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	logger := zaptest.NewLogger(t).Sugar()

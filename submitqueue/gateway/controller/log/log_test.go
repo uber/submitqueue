@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
-	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
@@ -96,7 +96,7 @@ func TestController_Process(t *testing.T) {
 			}
 			controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, tt.setupStore(ctrl), topickey.TopicKeyLog, "gateway-log")
 			msg := entityqueue.NewMessage("test-queue/1", payload, "test-queue", nil)
-			delivery := queuemock.NewMockDelivery(ctrl)
+			delivery := consumermock.NewMockDelivery(ctrl)
 			delivery.EXPECT().Message().Return(msg).AnyTimes()
 			delivery.EXPECT().Attempt().Return(1).AnyTimes()
 

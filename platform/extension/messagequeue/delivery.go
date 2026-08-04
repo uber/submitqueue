@@ -40,6 +40,14 @@ type Delivery interface {
 	// If requeueAfterMillis is 0, the message is requeued immediately.
 	Nack(ctx context.Context, requeueAfterMillis int64) error
 
+	// Postpone finishes this delivery as "processed successfully, redeliver
+	// later": the message becomes invisible for delayMs and acts as a barrier —
+	// its partition is not consumed past it until it redelivers, in order.
+	// Unlike Nack, the redelivery does not count against the failure budget
+	// (retry limit / DLQ); postponing resets the failure streak.
+	// Postpone is terminal for this delivery, like Ack/Nack/Reject.
+	Postpone(ctx context.Context, delayMs int64) error
+
 	// Reject moves the message to the dead letter entityqueue.
 	// Use for poison pill messages that should never be retried.
 	// reason is stored as last_error in the DLQ for debugging.

@@ -24,6 +24,7 @@ import (
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
@@ -427,7 +428,7 @@ func TestController_Process(t *testing.T) {
 			controller, _ := newTestController(t, ctrl, mockStorage, tt.expectLogPublish)
 
 			msg := entityqueue.NewMessage(tt.batch.ID, batchIDPayload(t, tt.batch.ID), tt.batch.Queue, nil)
-			delivery := queuemock.NewMockDelivery(ctrl)
+			delivery := consumermock.NewMockDelivery(ctrl)
 			delivery.EXPECT().Message().Return(msg).AnyTimes()
 			delivery.EXPECT().Attempt().Return(1).AnyTimes()
 
@@ -455,7 +456,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 	controller, _ := newTestController(t, ctrl, mockStorage, false)
 
 	msg := entityqueue.NewMessage("test-queue/batch/1", batchIDPayload(t, "test-queue/batch/1"), "test-queue", nil)
-	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 

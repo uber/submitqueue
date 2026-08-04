@@ -26,6 +26,7 @@ import (
 	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/runway/extension/merger"
 	mergermock "github.com/uber/submitqueue/runway/extension/merger/mock"
@@ -39,10 +40,10 @@ const (
 	testPartitionKey = "test-queue"
 )
 
-func newDelivery(t *testing.T, ctrl *gomock.Controller, payload []byte) *queuemock.MockDelivery {
+func newDelivery(t *testing.T, ctrl *gomock.Controller, payload []byte) *consumermock.MockDelivery {
 	t.Helper()
 	msg := entityqueue.NewMessage(testID, payload, testPartitionKey, nil)
-	d := queuemock.NewMockDelivery(ctrl)
+	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
 	return d
