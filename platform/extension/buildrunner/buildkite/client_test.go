@@ -20,13 +20,34 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	phttp "github.com/uber/submitqueue/platform/http"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type observedReadCloser struct {
+	io.ReadCloser
+	once        sync.Once
+	readStarted chan struct{}
+}
+
+func (r *observedReadCloser) Read(p []byte) (int, error) {
+	r.once.Do(func() {
+		close(r.readStarted)
+	})
+	return r.ReadCloser.Read(p)
+}
 
 // newTestClient creates a Client backed by a test HTTP server.
 func newTestClient(t *testing.T, handler http.Handler) *Client {
@@ -121,6 +142,64 @@ func TestGetBuild_EchoesEnv(t *testing.T) {
 	resp, err := c.GetBuild(context.Background(), 7)
 	require.NoError(t, err)
 	assert.Equal(t, "bar", resp.Env["FOO"])
+}
+
+func TestGetBuild_CanceledWhileReadingResponseBody_ReturnsContextError(t *testing.T) {
+	releaseServer := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+
+		select {
+		case <-req.Context().Done():
+		case <-releaseServer:
+		}
+	}))
+	t.Cleanup(func() {
+		close(releaseServer)
+		srv.Close()
+	})
+
+	httpClient, err := phttp.NewClient(srv.URL)
+	require.NoError(t, err)
+	next := httpClient.Transport
+	readStarted := make(chan struct{})
+	httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		resp, err := next.RoundTrip(req)
+		if err != nil {
+			return nil, err
+		}
+		resp.Body = &observedReadCloser{
+			ReadCloser:  resp.Body,
+			readStarted: readStarted,
+		}
+		return resp, nil
+	})
+	c := NewClient(httpClient)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := c.GetBuild(ctx, 7)
+		errCh <- err
+	}()
+
+	select {
+	case <-readStarted:
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "GetBuild did not start reading the response body")
+	}
+	cancel()
+
+	select {
+	case err := <-errCh:
+		require.Error(t, err)
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "GetBuild did not return after its context was canceled")
+	}
 }
 
 // --- CancelBuild ---
