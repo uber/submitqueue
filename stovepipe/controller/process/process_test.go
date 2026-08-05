@@ -45,14 +45,6 @@ const (
 	testURI     = "git://repo/monorepo/main/abc123"
 )
 
-// rescheduledMsg matches a gate-wait re-publish: same partition, but a fresh message id —
-// re-publishing under the in-flight delivery's id would be silently deduped against its
-// still-present message-store row and lost on ack.
-func rescheduledMsg(msg entityqueue.Message) bool {
-	// Fresh non-empty id, same queue.
-	return msg.ID != testID && msg.ID != "" && msg.PartitionKey == testQueue
-}
-
 type processMocks struct {
 	reqStore      *storagemock.MockRequestStore
 	queueStore    *storagemock.MockQueueStore
@@ -101,7 +93,7 @@ func newControllerWithScope(t *testing.T, ctrl *gomock.Controller, scope tally.S
 	return c, m
 }
 
-func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) consumer.Delivery {
+func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) *consumermock.MockDelivery {
 	t.Helper()
 	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(entityqueue.NewMessage(testID, payload, testQueue, nil)).AnyTimes()
@@ -412,12 +404,15 @@ func TestProcessRederivesStrategyAfterQueueReload(t *testing.T) {
 
 func TestProcess(t *testing.T) {
 	tests := []struct {
-		name      string
-		id        string
-		payload   []byte
-		setup     func(m processMocks)
-		wantErr   bool
-		wantRetry bool
+		name    string
+		id      string
+		payload []byte
+		setup   func(m processMocks)
+		// wantHoldMs, when non-zero, expects the delivery to be held for the
+		// gate wait with exactly this delay. Cases without it fail on any Hold.
+		wantHoldMs int64
+		wantErr    bool
+		wantRetry  bool
 	}{
 		{
 			name: "superseded is no-op",
@@ -533,7 +528,8 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "latest accepted head reschedules when gate closed",
+			name:       "latest accepted head holds when gate closed",
+			wantHoldMs: 5000,
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
@@ -543,30 +539,11 @@ func TestProcess(t *testing.T) {
 					LastGreenURI:    "git://repo/monorepo/main/green",
 					Version:         1,
 				}, nil)
-				m.publisher.EXPECT().
-					PublishAfter(gomock.Any(), "process", gomock.Cond(rescheduledMsg), int64(5000)).
-					Return(nil)
 			},
 		},
 		{
-			name:      "gate reschedule publish error surfaces",
-			wantErr:   true,
-			wantRetry: false,
-			setup: func(m processMocks) {
-				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
-				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
-					Name:            testQueue,
-					LatestRequestID: testID,
-					InFlightCount:   1,
-					Version:         1,
-				}, nil)
-				m.publisher.EXPECT().
-					PublishAfter(gomock.Any(), "process", gomock.Cond(rescheduledMsg), int64(5000)).
-					Return(errors.New("queue down"))
-			},
-		},
-		{
-			name: "gate closed after slot claim race reschedules",
+			name:       "gate closed after slot claim race holds",
+			wantHoldMs: 5000,
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
@@ -586,9 +563,6 @@ func TestProcess(t *testing.T) {
 					InFlightCount:   1,
 					Version:         2,
 				}, nil)
-				m.publisher.EXPECT().
-					PublishAfter(gomock.Any(), "process", gomock.Cond(rescheduledMsg), int64(5000)).
-					Return(nil)
 			},
 		},
 		{
@@ -818,7 +792,12 @@ func TestProcess(t *testing.T) {
 				payload = processPayload(t, id)
 			}
 
-			err := c.Process(context.Background(), delivery(t, ctrl, payload))
+			d := delivery(t, ctrl, payload)
+			if tt.wantHoldMs > 0 {
+				d.EXPECT().Hold(tt.wantHoldMs)
+			}
+
+			err := c.Process(context.Background(), d)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -830,11 +809,17 @@ func TestProcess(t *testing.T) {
 	}
 }
 
-func TestRescheduleProcessRequiresPositiveDelay(t *testing.T) {
+// TestHoldForBuildSlotRequiresPositiveDelay pins the config guard: a non-positive
+// gate wait delay would redeliver immediately and hot-loop the gate check, so it is
+// rejected instead of held.
+func TestHoldForBuildSlotRequiresPositiveDelay(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c, _ := newController(t, ctrl)
 
-	err := c.rescheduleProcess(context.Background(), acceptedRequest(testID), 1, 0)
+	d := consumermock.NewMockDelivery(ctrl)
+	// No Hold expectation: the guard must reject before recording a hold.
+
+	err := c.holdForBuildSlot(d, acceptedRequest(testID), 1, 0)
 
 	require.Error(t, err)
 	assert.False(t, errs.IsRetryable(err))

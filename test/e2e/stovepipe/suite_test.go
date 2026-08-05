@@ -160,19 +160,17 @@ func (s *StovepipeE2ESuite) TestIngest_Idempotent() {
 }
 
 // TestIngest_SlowBuild_PollsToCompletion drives a build that is not terminal on its
-// first poll, which is the only path that exercises buildsignal's reschedule.
+// first poll, which is the only path that exercises buildsignal's poll loop.
 //
 // The queue name carries a fake-buildrunner marker: the fake SourceControl resolves a
 // queue to "git://<queue>/HEAD", so the marker rides into the head URI and the fake
 // BuildRunner reports running for a while before succeeding. Reaching a terminal build
 // status therefore requires the poll loop to tick more than once.
 //
-// This is the regression test for the loop stalling: buildsignal re-publishes to its
-// own topic to schedule the next poll, and the queue dedups on
-// (topic, partition_key, id). While the delivery being processed is still un-acked its
-// row is present, so a re-poll that reuses the build id as the message id is silently
-// discarded and the build is never polled again — the build would sit at `running`
-// forever.
+// The loop is driven by holding the delivery: each non-terminal poll postpones the
+// same BuildSignal message, which redelivers after the poll delay without minting new
+// rows or burning retry attempts. A build that stalled the loop would sit at `running`
+// forever, so reaching a terminal status proves the held message kept redelivering.
 func (s *StovepipeE2ESuite) TestIngest_SlowBuild_PollsToCompletion() {
 	const queue = "monorepo/slow?buildrunner-fake=build-slow"
 
@@ -181,7 +179,7 @@ func (s *StovepipeE2ESuite) TestIngest_SlowBuild_PollsToCompletion() {
 
 	s.assertIngestPersisted(queue, id)
 
-	// Getting here at all means the reschedule produced a deliverable message.
+	// Getting here at all means the held delivery redelivered and re-polled.
 	s.awaitBuildStatus(id, "succeeded")
 
 	// buildsignal projects the terminal build status onto the request and, in the

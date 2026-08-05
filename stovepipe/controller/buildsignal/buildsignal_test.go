@@ -84,7 +84,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildsig
 	return c, m
 }
 
-func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) consumer.Delivery {
+func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) *consumermock.MockDelivery {
 	t.Helper()
 	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(entityqueue.NewMessage(testBuildID, payload, testBuildID, nil)).AnyTimes()
@@ -139,11 +139,14 @@ func expectFinish(m buildsignalMocks, state entity.RequestState) {
 
 func TestProcess(t *testing.T) {
 	tests := []struct {
-		name      string
-		payload   []byte
-		setup     func(m buildsignalMocks)
-		wantErr   bool
-		wantRetry bool
+		name    string
+		payload []byte
+		setup   func(m buildsignalMocks)
+		// wantHoldMs, when non-zero, expects the delivery to be held for the
+		// next poll with exactly this delay. Cases without it fail on any Hold.
+		wantHoldMs int64
+		wantErr    bool
+		wantRetry  bool
 	}{
 		{
 			name:      "build not found is not retryable",
@@ -218,17 +221,18 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "unchanged status skips write and reschedules",
+			name:       "unchanged status skips write and holds for next poll",
+			wantHoldMs: PollDelayRunningMs,
 			setup: func(m buildsignalMocks) {
 				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusRunning, 2), nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusRunning, nil, nil)
-				m.publisher.EXPECT().PublishAfter(gomock.Any(), "buildsignal", gomock.Any(), PollDelayRunningMs).Return(nil)
 			},
 		},
 		{
-			name: "status transition persists and reschedules",
+			name:       "status transition persists and holds for next poll",
+			wantHoldMs: PollDelayRunningMs,
 			setup: func(m buildsignalMocks) {
 				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusAccepted, 1), nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
@@ -236,7 +240,6 @@ func TestProcess(t *testing.T) {
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusRunning, nil, nil)
 				updated := build(entity.BuildStatusRunning, 1)
 				m.buildStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(nil)
-				m.publisher.EXPECT().PublishAfter(gomock.Any(), "buildsignal", gomock.Any(), PollDelayRunningMs).Return(nil)
 			},
 		},
 		{
@@ -368,18 +371,6 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name:      "reschedule publish failure is not retryable",
-			wantErr:   true,
-			wantRetry: false,
-			setup: func(m buildsignalMocks) {
-				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusAccepted, 1), nil)
-				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
-				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
-				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusAccepted, nil, nil)
-				m.publisher.EXPECT().PublishAfter(gomock.Any(), "buildsignal", gomock.Any(), PollDelayAcceptedMs).Return(errors.New("queue down"))
-			},
-		},
-		{
 			name:      "malformed payload is not retryable",
 			payload:   []byte("not-json"),
 			wantErr:   true,
@@ -401,7 +392,12 @@ func TestProcess(t *testing.T) {
 				payload = buildSignalPayload(t, testBuildID)
 			}
 
-			err := c.Process(context.Background(), delivery(t, ctrl, payload))
+			d := delivery(t, ctrl, payload)
+			if tt.wantHoldMs > 0 {
+				d.EXPECT().Hold(tt.wantHoldMs)
+			}
+
+			err := c.Process(context.Background(), d)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -434,80 +430,6 @@ func TestPublishRecordCarriesRequestID(t *testing.T) {
 	assert.Equal(t, testID, payload.Id)
 	assert.Equal(t, testID, got.ID)
 	assert.Equal(t, testID, got.PartitionKey)
-}
-
-// TestPublishBuildSignalAdvancesPollGeneration is the regression test for the poll
-// loop stalling. The queue dedups on (topic, partition_key, id) and the delivery that
-// scheduled a re-poll is still un-acked when the re-poll is published, so a reused
-// message id makes the reschedule a silent no-op and the build is never polled again.
-// The generation therefore has to advance each tick. The partition key must stay the
-// build id so each poll loop keeps its own partition.
-func TestPublishBuildSignalAdvancesPollGeneration(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	c, m := newController(t, ctrl)
-
-	var ids []string
-	m.publisher.EXPECT().PublishAfter(gomock.Any(), "buildsignal", gomock.Any(), PollDelayRunningMs).
-		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message, _ int64) error {
-			ids = append(ids, msg.ID)
-			assert.Equal(t, testBuildID, msg.PartitionKey)
-			return nil
-		}).Times(3)
-
-	// Walk a chain: each publish is scheduled by the message the previous one minted.
-	current := testBuildID
-	for range 3 {
-		require.NoError(t, c.publishBuildSignal(context.Background(), testBuildID, current, PollDelayRunningMs))
-		current = ids[len(ids)-1]
-	}
-
-	assert.Equal(t, []string{
-		testBuildID + "/poll/1",
-		testBuildID + "/poll/2",
-		testBuildID + "/poll/3",
-	}, ids, "each tick must mint a fresh id, or the reschedule dedups against the message that scheduled it")
-}
-
-// TestPublishBuildSignalIsIdempotentPerDelivery pins the other half of the contract:
-// the next id is a pure function of the delivery being processed. A redelivery racing
-// the original computes the same id, so dedup collapses them and the build keeps a
-// single poll chain rather than forking a second one that doubles the poll rate and
-// races the first one's status CAS.
-func TestPublishBuildSignalIsIdempotentPerDelivery(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	c, m := newController(t, ctrl)
-
-	var ids []string
-	m.publisher.EXPECT().PublishAfter(gomock.Any(), "buildsignal", gomock.Any(), PollDelayRunningMs).
-		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message, _ int64) error {
-			ids = append(ids, msg.ID)
-			return nil
-		}).Times(2)
-
-	scheduledBy := testBuildID + "/poll/7"
-	require.NoError(t, c.publishBuildSignal(context.Background(), testBuildID, scheduledBy, PollDelayRunningMs))
-	require.NoError(t, c.publishBuildSignal(context.Background(), testBuildID, scheduledBy, PollDelayRunningMs))
-
-	assert.Equal(t, ids[0], ids[1], "a redelivery of the same message must republish the same id so dedup collapses it")
-	assert.Equal(t, testBuildID+"/poll/8", ids[0])
-}
-
-func TestNextPollMessageID(t *testing.T) {
-	tests := []struct {
-		name     string
-		current  string
-		expected string
-	}{
-		{name: "initial publish from build starts at one", current: testBuildID, expected: testBuildID + "/poll/1"},
-		{name: "advances the generation", current: testBuildID + "/poll/4", expected: testBuildID + "/poll/5"},
-		{name: "unparsable generation restarts at one", current: testBuildID + "/poll/x", expected: testBuildID + "/poll/1"},
-		{name: "another build's id is not a prefix match", current: "other/poll/9", expected: testBuildID + "/poll/1"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, nextPollMessageID(testBuildID, tt.current))
-		})
-	}
 }
 
 func TestOutcomeState(t *testing.T) {
