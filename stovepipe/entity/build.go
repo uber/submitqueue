@@ -14,8 +14,6 @@
 
 package entity
 
-import "encoding/json"
-
 // BuildStatus defines the possible states of a build. Shaped the same as
 // SubmitQueue's own BuildStatus (submitqueue/entity/build.go), but defined
 // locally rather than shared — see build.md's "Alternatives considered for
@@ -74,36 +72,11 @@ type Build struct {
 	Version int32 `json:"version"`
 }
 
-// ToBytes serializes the Build to JSON bytes for queue message payload.
-func (b Build) ToBytes() ([]byte, error) {
-	return json.Marshal(b)
-}
-
-// BuildFromBytes deserializes a Build from JSON bytes.
-func BuildFromBytes(data []byte) (Build, error) {
-	var build Build
-	err := json.Unmarshal(data, &build)
-	return build, err
-}
-
-// BuildID is a lightweight entity for publishing and consuming just the
-// build identifier via the queue, and for the BuildRunner Status/Cancel
-// parameter. It wraps the one runner-assigned id everywhere it appears.
+// BuildID wraps the runner-assigned build identifier for BuildRunner
+// Status/Cancel/Trigger parameters.
 type BuildID struct {
 	// ID is the runner-assigned identifier for the build.
 	ID string `json:"id"`
-}
-
-// ToBytes serializes the BuildID to JSON bytes for queue message payload.
-func (b BuildID) ToBytes() ([]byte, error) {
-	return json.Marshal(b)
-}
-
-// BuildIDFromBytes deserializes a BuildID from JSON bytes.
-func BuildIDFromBytes(data []byte) (BuildID, error) {
-	var bid BuildID
-	err := json.Unmarshal(data, &bid)
-	return bid, err
 }
 
 // BuildMetadata carries caller-supplied, provider-echoed free-form metadata
