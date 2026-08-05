@@ -70,11 +70,8 @@ func NewController(
 // Process processes a build delivery from the queue.
 // Deserializes the batch, triggers a build, and publishes a build entity to the build signal topic.
 // Returns nil to ack (success), or error to nack (retry).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName)
-	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
@@ -144,7 +141,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	// Persist the initial Build snapshot so the buildsignal poll loop has a
-	// row to UpdateStatus against. ErrAlreadyExists is benign — a redelivery
+	// row to Update against. ErrAlreadyExists is benign — a redelivery
 	// of this message after a previous successful Create.
 	if err := c.store.GetBuildStore().Create(ctx, build); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)

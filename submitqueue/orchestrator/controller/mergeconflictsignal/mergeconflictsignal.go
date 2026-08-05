@@ -76,11 +76,8 @@ func NewController(
 // infrastructure faults — deserialize, storage, the terminal transition, and the
 // batch publish — return an error and reject to the DLQ, where the request is
 // reconciled to Error.
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName)
-	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
@@ -130,12 +127,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	// Advance the request to Validated now that the merge-conflict check passed.
 	newVersion := request.Version + 1
-	if err := c.store.GetRequestStore().UpdateState(ctx, request.ID, request.Version, newVersion, entity.RequestStateValidated); err != nil {
+	request.State = entity.RequestStateValidated
+	if err := c.store.GetRequestStore().Update(ctx, request, request.Version, newVersion); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "state_errors", 1)
 		return fmt.Errorf("failed to update request %s state to validated: %w", request.ID, err)
 	}
 	request.Version = newVersion
-	request.State = entity.RequestStateValidated
 
 	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusValidated, request.Version, "", nil)
 	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID); err != nil {
@@ -177,11 +174,11 @@ func (c *Controller) failRequest(ctx context.Context, request entity.Request, re
 		return nil
 	default:
 		newVersion := request.Version + 1
-		if err := c.store.GetRequestStore().UpdateState(ctx, request.ID, request.Version, newVersion, entity.RequestStateError); err != nil {
+		request.State = entity.RequestStateError
+		if err := c.store.GetRequestStore().Update(ctx, request, request.Version, newVersion); err != nil {
 			return fmt.Errorf("failed to update request %s state to error: %w", request.ID, err)
 		}
 		request.Version = newVersion
-		request.State = entity.RequestStateError
 	}
 
 	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusError, request.Version, reason, nil)

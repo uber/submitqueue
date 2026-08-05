@@ -22,7 +22,10 @@ type BatchState string
 const (
 	// BatchStateUnknown is the unreachable state. It is set by default when the structure is initialized. It should never be seen in the system.
 	BatchStateUnknown BatchState = ""
-	// BatchStateCreated is the state of a batch that has been created for processing.
+	// BatchStateCreating indicates that the batch has been persisted but its dependency reverse indexes may not yet be fully initialized.
+	// A Creating batch is not eligible to be referenced as a dependency.
+	BatchStateCreating BatchState = "creating"
+	// BatchStateCreated indicates that the batch and its dependency reverse indexes are fully initialized and ready for processing.
 	BatchStateCreated BatchState = "created"
 	// BatchStateSpeculating is the state of a batch that is undergoing speculative execution.
 	BatchStateSpeculating BatchState = "speculating"
@@ -32,8 +35,6 @@ const (
 	BatchStateSucceeded BatchState = "succeeded"
 	// BatchStateFailed is the terminal state of a batch that has failed.
 	BatchStateFailed BatchState = "failed"
-	// BatchStateScored is the state of a batch that has been scored for build success probability.
-	BatchStateScored BatchState = "scored"
 	// BatchStateCancelling is the non-terminal intent state set when a cancel has been requested but the
 	// batch has not yet been transitioned to BatchStateCancelled. A batch in this state may still reach
 	// BatchStateSucceeded or BatchStateFailed if a concurrent merge wins the race (e.g. the push had
@@ -61,21 +62,34 @@ func (s BatchState) IsTerminal() bool {
 	}
 }
 
+var nonCancellableBatchStates = map[BatchState]bool{
+	BatchStateUnknown:   true,
+	BatchStateCreating:  true,
+	BatchStateMerging:   true,
+	BatchStateSucceeded: true,
+	BatchStateFailed:    true,
+	BatchStateCancelled: true,
+}
+
+// IsCancellable returns true if cancellation should transition or republish a batch in this state.
+// New non-terminal states are cancellable by default unless explicitly excluded above.
+func (s BatchState) IsCancellable() bool {
+	return !nonCancellableBatchStates[s]
+}
+
 // IsBatchStateHalted returns true if the batch is either terminal or in the process of being cancelled.
-// Forward-progress controllers (score, build, buildsignal, speculate, merge) use this to short-circuit
+// Forward-progress controllers (build, buildsignal, speculate, merge) use this to short-circuit
 // work for batches that the user has asked to cancel — even though Cancelling is non-terminal, no
 // further pipeline work should start (cancel will write the terminal state and fan out).
 func IsBatchStateHalted(s BatchState) bool {
 	return s.IsTerminal() || s == BatchStateCancelling
 }
 
-// ActiveBatchStates returns every non-terminal batch state that must be considered in-flight.
-// Use this when callers need to find batches that still own a request, including Cancelling
-// batches that cancel redelivery must be able to resolve.
+// ActiveBatchStates returns batch states eligible for active pipeline and cancellation lookups.
+// Creating is excluded because its reverse-index structure may still be incomplete.
 func ActiveBatchStates() []BatchState {
 	return []BatchState{
 		BatchStateCreated,
-		BatchStateScored,
 		BatchStateSpeculating,
 		BatchStateMerging,
 		BatchStateCancelling,
@@ -95,7 +109,6 @@ func ActiveBatchStates() []BatchState {
 func DependencyBatchStates() []BatchState {
 	return []BatchState{
 		BatchStateCreated,
-		BatchStateScored,
 		BatchStateSpeculating,
 		BatchStateMerging,
 	}
@@ -134,10 +147,6 @@ type Batch struct {
 	// - queueA/batch/2 will contain queueA/batch/1
 	// - queueA/batch/3 will contain queueA/batch/1
 	Dependencies []string
-
-	// Score is the predicted probability of build success for this batch, ranging from 0.0 to 1.0.
-	// Set during the scoring phase. Zero value means the batch has not been scored yet.
-	Score float64
 
 	// The state of the batch lifecycle this batch is in. Updateable field with Version for optimistic locking.
 	State BatchState

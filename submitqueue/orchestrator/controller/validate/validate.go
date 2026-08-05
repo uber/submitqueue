@@ -27,8 +27,8 @@ import (
 	"github.com/uber/submitqueue/platform/base/mergestrategy"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
-	"github.com/uber/submitqueue/platform/errs"
 	coremetrics "github.com/uber/submitqueue/platform/metrics"
+	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -88,10 +88,7 @@ func NewController(
 // Runs duplicate detection, change metadata fetch, and change claiming, then kicks off the
 // asynchronous merge-conflict check by publishing the full check request to runway.
 // Returns nil to ack (success or non-retryable rejection), error to nack (retry).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := coremetrics.Begin(c.metricsScope, "process")
-	defer func() { op.Complete(retErr) }()
-
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
 	// Deserialize request ID from payload
@@ -143,7 +140,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 			"duplicate_id", dupID,
 		)
 		coremetrics.NamedCounter(c.metricsScope, "process", "duplicate_requests", 1)
-		return errs.NewUserError(fmt.Errorf("request %s is a duplicate of in-flight request %s", request.ID, dupID))
+		return c.reject(ctx, request.ID, fmt.Sprintf("request %s is a duplicate of in-flight request %s", request.ID, dupID))
 	}
 
 	// Fetch change metadata
@@ -177,7 +174,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		if v != nil {
 			if err := v.Validate(ctx, request); err != nil {
 				coremetrics.NamedCounter(c.metricsScope, "process", "custom_validation_failures", 1)
-				return fmt.Errorf("custom validation failed for request %s: %w", request.ID, err)
+				c.logger.Infow("custom validation rejected request",
+					"request_id", request.ID,
+					"queue", request.Queue,
+					"error", err.Error(),
+				)
+				return c.reject(ctx, request.ID, fmt.Sprintf("custom validation failed: %v", err))
 			}
 		}
 	}
@@ -203,7 +205,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		Steps: []*runwaymq.MergeStep{
 			{
 				StepId:   request.ID,
-				Changes:  []*changepb.Change{{Uris: request.Change.URIs}},
+				Change:   &changepb.Change{Uris: request.Change.URIs},
 				Strategy: toProtoStrategy(request.LandStrategy),
 			},
 		},
@@ -219,6 +221,25 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	)
 
 	return nil // Success - message will be acked
+}
+
+// reject terminates a request as an expected validation failure. It transitions
+// the request to RequestStateError (with reason preserved as the terminal log's
+// last error) and acks the delivery by returning nil. This deliberately does not
+// dead-letter the message: the DLQ is for unexpected failures, whereas an
+// invalid request (a duplicate, or one a custom validator rejected) is an
+// expected terminal outcome that should be reported to the user directly.
+//
+// Only an infra failure while terminating (storage/publish) is returned as an
+// error so the delivery is retried; the request itself is never re-queued for
+// validation once rejected.
+func (c *Controller) reject(ctx context.Context, requestID, reason string) error {
+	if _, err := corerequest.TerminateRequest(ctx, c.store, c.registry, requestID, entity.RequestStateError, reason, nil); err != nil {
+		coremetrics.NamedCounter(c.metricsScope, "process", "terminate_errors", 1)
+		return fmt.Errorf("failed to terminate rejected request %s: %w", requestID, err)
+	}
+	coremetrics.NamedCounter(c.metricsScope, "process", "rejected_requests", 1)
+	return nil
 }
 
 // checkDuplicate looks for any other in-flight request whose URIs overlap with this

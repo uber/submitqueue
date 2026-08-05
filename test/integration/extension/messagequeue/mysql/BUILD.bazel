@@ -8,8 +8,8 @@ go_test(
         "//platform/extension/messagequeue/mysql/schema",
     ],
     tags = [
-        "external",
         "integration",
+        "requires-network",
     ],
     deps = [
         "//platform/base/messagequeue:go_default_library",

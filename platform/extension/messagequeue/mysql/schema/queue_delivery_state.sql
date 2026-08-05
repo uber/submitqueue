@@ -4,7 +4,7 @@
 --
 -- State encoding:
 --   acked = TRUE                          → processed, never redeliver
---   acked = FALSE, invisible_until > now  → in-flight or nack delay
+--   acked = FALSE, invisible_until > now  → in-flight, nack delay, or postpone delay
 --   acked = FALSE, invisible_until <= now → ready for (re-)delivery
 
 CREATE TABLE IF NOT EXISTS queue_delivery_state (
@@ -30,6 +30,12 @@ CREATE TABLE IF NOT EXISTS queue_delivery_state (
 
     -- Number of times this message has been redelivered to this consumer group
     retry_count INT UNSIGNED NOT NULL DEFAULT 0,
+
+    -- Whether the last delivery was postponed (deliberate wait, not a failure).
+    -- While set and invisible, the message is a barrier: its partition is not
+    -- consumed past it. The next delivery is exempt from the retry_count
+    -- increment and clears the flag.
+    postponed BOOLEAN NOT NULL DEFAULT FALSE,
 
     PRIMARY KEY (consumer_group, topic, partition_key, message_offset)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

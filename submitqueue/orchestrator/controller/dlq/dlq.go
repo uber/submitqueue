@@ -73,50 +73,27 @@ func TopicKey(main consumer.TopicKey) consumer.TopicKey {
 // confirm the cancel completed cleanly. Writing Error is the honest signal and
 // keeps the request from being stuck in a non-terminal state forever.
 func failRequest(ctx context.Context, store storage.Storage, registry consumer.TopicRegistry, logger *zap.SugaredLogger, requestID, lastError string) error {
-	request, err := store.GetRequestStore().Get(ctx, requestID)
+	res, err := requestcore.TerminateRequest(ctx, store, registry, requestID, entity.RequestStateError, lastError, nil)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			logger.Warnw("dlq reconcile: request not found, skipping",
-				"request_id", requestID,
-			)
-			return nil
-		}
-		return fmt.Errorf("failed to get request %s: %w", requestID, err)
+		return fmt.Errorf("dlq reconcile request %s failed: %w", requestID, err)
 	}
 
-	logVersion := request.Version
-	switch request.State {
-	case entity.RequestStateError:
-		logger.Infow("dlq reconcile: request already failed, republishing terminal log",
-			"request_id", requestID,
-		)
-	case entity.RequestStateLanded, entity.RequestStateCancelled:
-		logger.Infow("dlq reconcile: request has a different terminal outcome, skipping",
-			"request_id", requestID,
-			"state", string(request.State),
-		)
-		return nil
-	default:
-		newVersion := request.Version + 1
-		if err := store.GetRequestStore().UpdateState(ctx, requestID, request.Version, newVersion, entity.RequestStateError); err != nil {
-			return fmt.Errorf("failed to update request %s state to error: %w", requestID, err)
-		}
-		logVersion = newVersion
+	switch res.Outcome {
+	case requestcore.TerminationOutcomeSuccess:
 		logger.Infow("dlq reconcile: request marked terminal error",
 			"request_id", requestID,
-			"previous_state", string(request.State),
+			"previous_state", string(res.BeforeState),
 		)
+	case requestcore.TerminationOutcomeAlreadyInTargetState:
+		logger.Infow("dlq reconcile: request already failed, republished terminal log", "request_id", requestID)
+	case requestcore.TerminationOutcomeDiverged:
+		logger.Infow("dlq reconcile: request has a different terminal outcome, skipping",
+			"request_id", requestID,
+			"state", string(res.BeforeState),
+		)
+	case requestcore.TerminationOutcomeNotFound:
+		logger.Warnw("dlq reconcile: request not found, skipping", "request_id", requestID)
 	}
-
-	// Publish the terminal Error status through the log topic so Gateway remains
-	// the sole writer of request logs and public projections. An existing Error
-	// state republishes the same logical event so a previous attempt that changed
-	// the entity but failed to publish can be repaired.
-	logEntry := entity.NewRequestLog(requestID, entity.RequestStatusError, logVersion, lastError, nil)
-	if err := requestcore.PublishLog(ctx, registry, logEntry, requestID); err != nil {
-		return fmt.Errorf("failed to publish request log for %s: %w", requestID, err)
-	}
-
 	return nil
 }
 
@@ -160,12 +137,15 @@ func failBatch(ctx context.Context, store storage.Storage, registry consumer.Top
 		return nil
 	default:
 		newVersion := batch.Version + 1
-		if err := store.GetBatchStore().UpdateState(ctx, batchID, batch.Version, newVersion, entity.BatchStateFailed); err != nil {
+		previousState := batch.State
+		batch.State = entity.BatchStateFailed
+		if err := store.GetBatchStore().Update(ctx, batch, batch.Version, newVersion); err != nil {
 			return fmt.Errorf("failed to update batch %s state to failed: %w", batchID, err)
 		}
+		batch.Version = newVersion
 		logger.Infow("dlq reconcile: batch marked failed",
 			"batch_id", batchID,
-			"previous_state", string(batch.State),
+			"previous_state", string(previousState),
 		)
 	}
 

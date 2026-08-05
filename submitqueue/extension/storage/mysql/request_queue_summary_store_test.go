@@ -185,32 +185,73 @@ func TestRequestQueueSummaryStore_Update(t *testing.T) {
 	summary := entity.RequestQueueSummary{
 		RequestID:    "monorepo/1",
 		Queue:        "monorepo",
+		ChangeURIs:   []string{"github://github.example.com/uber/submitqueue/pull/456/cafebabe"},
 		ReceivedAtMs: 1000,
 		Status:       entity.RequestStatusValidated,
-		LastError:    "",
+		LastError:    "validation detail",
+		Metadata:     map[string]string{"result": "validated"},
 	}
 	const oldVersion, newVersion = int32(1), int32(2)
 
 	tests := []struct {
 		name      string
+		summary   entity.RequestQueueSummary
 		setup     func(mock sqlmock.Sqlmock)
 		wantErr   bool
 		wantErrIs error
 	}{
 		{
-			name: "success",
+			name:    "success replaces all non-key fields",
+			summary: summary,
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("UPDATE request_summary_by_queue").
-					WithArgs(summary.Status, newVersion, summary.LastError, sqlmock.AnyArg(),
+				mock.ExpectExec("SET change_uris = \\?, status = \\?, version = \\?, last_error = \\?, metadata = \\?").
+					WithArgs([]byte(`["github://github.example.com/uber/submitqueue/pull/456/cafebabe"]`),
+						summary.Status, newVersion, summary.LastError, []byte(`{"result":"validated"}`),
 						summary.Queue, summary.ReceivedAtMs, summary.RequestID, oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
 		{
-			name: "version mismatch",
+			name: "success normalizes nil collections",
+			summary: entity.RequestQueueSummary{
+				RequestID:    summary.RequestID,
+				Queue:        summary.Queue,
+				ReceivedAtMs: summary.ReceivedAtMs,
+				Status:       summary.Status,
+				LastError:    summary.LastError,
+			},
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("UPDATE request_summary_by_queue").
-					WithArgs(summary.Status, newVersion, summary.LastError, sqlmock.AnyArg(),
+				mock.ExpectExec("SET change_uris = \\?, status = \\?, version = \\?, last_error = \\?, metadata = \\?").
+					WithArgs([]byte(`[]`), summary.Status, newVersion, summary.LastError, []byte(`{}`),
+						summary.Queue, summary.ReceivedAtMs, summary.RequestID, oldVersion).
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+		},
+		{
+			name: "success persists empty collections",
+			summary: entity.RequestQueueSummary{
+				RequestID:    summary.RequestID,
+				Queue:        summary.Queue,
+				ChangeURIs:   []string{},
+				ReceivedAtMs: summary.ReceivedAtMs,
+				Status:       summary.Status,
+				LastError:    summary.LastError,
+				Metadata:     map[string]string{},
+			},
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec("SET change_uris = \\?, status = \\?, version = \\?, last_error = \\?, metadata = \\?").
+					WithArgs([]byte(`[]`), summary.Status, newVersion, summary.LastError, []byte(`{}`),
+						summary.Queue, summary.ReceivedAtMs, summary.RequestID, oldVersion).
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+		},
+		{
+			name:    "version mismatch",
+			summary: summary,
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec("SET change_uris = \\?, status = \\?, version = \\?, last_error = \\?, metadata = \\?").
+					WithArgs([]byte(`["github://github.example.com/uber/submitqueue/pull/456/cafebabe"]`),
+						summary.Status, newVersion, summary.LastError, []byte(`{"result":"validated"}`),
 						summary.Queue, summary.ReceivedAtMs, summary.RequestID, oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
@@ -218,12 +259,26 @@ func TestRequestQueueSummaryStore_Update(t *testing.T) {
 			wantErrIs: storage.ErrVersionMismatch,
 		},
 		{
-			name: "exec error",
+			name:    "exec error",
+			summary: summary,
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("UPDATE request_summary_by_queue").
-					WithArgs(summary.Status, newVersion, summary.LastError, sqlmock.AnyArg(),
+				mock.ExpectExec("SET change_uris = \\?, status = \\?, version = \\?, last_error = \\?, metadata = \\?").
+					WithArgs([]byte(`["github://github.example.com/uber/submitqueue/pull/456/cafebabe"]`),
+						summary.Status, newVersion, summary.LastError, []byte(`{"result":"validated"}`),
 						summary.Queue, summary.ReceivedAtMs, summary.RequestID, oldVersion).
 					WillReturnError(fmt.Errorf("connection reset"))
+			},
+			wantErr: true,
+		},
+		{
+			name:    "rows affected error",
+			summary: summary,
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec("SET change_uris = \\?, status = \\?, version = \\?, last_error = \\?, metadata = \\?").
+					WithArgs([]byte(`["github://github.example.com/uber/submitqueue/pull/456/cafebabe"]`),
+						summary.Status, newVersion, summary.LastError, []byte(`{"result":"validated"}`),
+						summary.Queue, summary.ReceivedAtMs, summary.RequestID, oldVersion).
+					WillReturnResult(sqlmock.NewErrorResult(fmt.Errorf("driver error")))
 			},
 			wantErr: true,
 		},
@@ -236,7 +291,7 @@ func TestRequestQueueSummaryStore_Update(t *testing.T) {
 
 			tt.setup(mock)
 
-			err := store.Update(context.Background(), summary, oldVersion, newVersion)
+			err := store.Update(context.Background(), tt.summary, oldVersion, newVersion)
 			if tt.wantErr {
 				require.Error(t, err)
 				if tt.wantErrIs != nil {

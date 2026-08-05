@@ -33,11 +33,13 @@ import (
 	"github.com/uber/submitqueue/platform/errs"
 	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
 	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
+	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/service/stovepipe/server/mapper"
 	"github.com/uber/submitqueue/stovepipe/controller"
 	"github.com/uber/submitqueue/stovepipe/controller/build"
+	"github.com/uber/submitqueue/stovepipe/controller/buildsignal"
 	"github.com/uber/submitqueue/stovepipe/controller/dlq"
 	"github.com/uber/submitqueue/stovepipe/controller/process"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
@@ -227,15 +229,18 @@ func run() error {
 	// uses AlwaysRetryableProcessor so every non-nil error from a DLQ controller is
 	// forced retryable — reconciliation must redeliver on any failure because the DLQ
 	// subscription is a final destination (DLQ.Enabled is false on it, so there is no
-	// further DLQ to fall back on).
+	// further DLQ to fall back on). Stovepipe has no gated deployment yet, so both
+	// consumers use the no-op gate.
 	primaryConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
 		errs.NewClassifierProcessor(
 			genericerrs.Classifier,
 			mysqlerrs.Classifier,
 		),
+		consumergatenoop.New(),
 	)
 	dlqConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer-dlq"), registry,
 		errs.AlwaysRetryableProcessor,
+		consumergatenoop.New(),
 	)
 
 	// Each factory is constructed once and threaded through every consumer of
@@ -382,6 +387,12 @@ func registerPrimaryControllers(
 	}
 	count++
 
+	buildSignalController := buildsignal.NewController(logger, scope, store, brf, registry, stovepipemq.TopicKeyBuildSignal, "stovepipe-buildsignal")
+	if err := c.Register(buildSignalController); err != nil {
+		return count, fmt.Errorf("failed to register buildsignal controller: %w", err)
+	}
+	count++
+
 	return count, nil
 }
 
@@ -407,8 +418,10 @@ func registerDLQControllers(
 
 // newTopicRegistry builds the TopicRegistry for Stovepipe's internal pipeline queues. ingest
 // publishes to the process topic and the process consumer subscribes to it; process publishes
-// to the build topic and the build consumer subscribes to it. The buildsignal topic is added
-// once the buildsignal controller lands to consume it.
+// to the build topic and the build consumer subscribes to it; build publishes to the buildsignal
+// topic and the buildsignal consumer subscribes to it, and also republishes to itself while
+// polling. buildsignal publishes to the record topic once a build reaches a terminal status; it
+// has no Subscription yet since no consumer for it exists until the record stage lands.
 func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRegistry, error) {
 	return consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{
@@ -426,6 +439,19 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Subscription: extqueue.DefaultSubscriptionConfig(
 				subscriberName, "stovepipe-build",
 			),
+		},
+		{
+			Key:   stovepipemq.TopicKeyBuildSignal,
+			Name:  "buildsignal",
+			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "stovepipe-buildsignal",
+			),
+		},
+		{
+			Key:   stovepipemq.TopicKeyRecord,
+			Name:  "record",
+			Queue: q,
 		},
 		{
 			Key:          dlq.TopicKey(stovepipemq.TopicKeyProcess),

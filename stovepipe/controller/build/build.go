@@ -28,6 +28,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
@@ -78,10 +79,7 @@ func NewController(
 // Process reloads the request referenced by the delivery, triggers a build for
 // its decided scope, and publishes the build id to buildsignal. Returns nil to
 // ack (success) or an error to nack (retry) / reject (DLQ).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := metrics.Begin(c.metricsScope, _opName)
-	defer func() { op.Complete(retErr) }()
-
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
 	br := &stovepipemq.BuildRequest{}
@@ -97,8 +95,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return err
 	}
 
-	// A redelivery after record already finished, or after process superseded
-	// the head, must not start a fresh build.
+	// A redelivery after the build outcome was already recorded, or after process
+	// superseded the head, must not start a fresh build.
 	if request.State.IsTerminal() {
 		return nil
 	}
@@ -106,7 +104,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	buildRunner, err := c.buildRunners.For(buildrunner.Config{QueueName: request.Queue})
 	if err != nil {
 		// A queue with no registered builder is a config error.
-		return fmt.Errorf("BuildController failed to resolve build runner for queue %s: %w", request.Queue, err)
+		return fmt.Errorf("failed to resolve build runner for queue %s: %w", request.Queue, err)
 	}
 
 	// process decided the scope; build never re-derives incremental-vs-full.
@@ -121,7 +119,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	buildID, err := buildRunner.Trigger(ctx, baseURI, request.URI, nil)
 	if err != nil {
-		return fmt.Errorf("BuildController failed to trigger build for request %s: %w", request.ID, err)
+		return fmt.Errorf("failed to trigger build for request %s: %w", request.ID, err)
 	}
 
 	build := entity.Build{
@@ -131,11 +129,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		Version:   1,
 	}
 	if err := c.store.GetBuildStore().Create(ctx, build); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
-		return fmt.Errorf("BuildController failed to persist build %s: %w", build.ID, err)
+		return fmt.Errorf("failed to persist build %s: %w", build.ID, err)
 	}
 
 	if err := c.publishBuildSignal(ctx, build.ID); err != nil {
-		return fmt.Errorf("BuildController failed to publish build signal for %s: %w", build.ID, err)
+		return fmt.Errorf("failed to publish build signal for %s: %w", build.ID, err)
 	}
 
 	c.logger.Debugw("triggered build",
@@ -149,11 +147,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 // loadRequest returns the request for id.
 func (c *Controller) loadRequest(ctx context.Context, id string) (entity.Request, error) {
-	got, err := c.store.GetRequestStore().Get(ctx, id)
-	if err != nil {
-		return entity.Request{}, fmt.Errorf("BuildController failed to load request %s: %w", id, err)
-	}
-	return got, nil
+	return loader.ByID(ctx, id, c.store.GetRequestStore().Get, "request")
 }
 
 // publishBuildSignal publishes buildID to the buildsignal stage, partitioned by

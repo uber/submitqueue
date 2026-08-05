@@ -8,8 +8,8 @@ go_test(
         "//platform/extension/counter/mysql/schema",
     ],
     tags = [
-        "external",
         "integration",
+        "requires-network",
     ],
     deps = [
         "//platform/extension/counter/mysql:go_default_library",

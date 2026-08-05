@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_binary", "go_library")
+load("@rules_go//go:def.bzl", "go_binary", "go_cross_binary", "go_library")
 
 exports_files(
     ["docker-compose.yml"],
@@ -7,24 +7,24 @@ exports_files(
 
 go_library(
     name = "orchestrator_lib",
-    srcs = ["main.go"],
+    srcs = [
+        "main.go",
+        "profiles.go",
+    ],
     importpath = "github.com/uber/submitqueue/service/submitqueue/orchestrator/server",
     visibility = ["//visibility:private"],
     deps = [
-        "//api/runway/messagequeue:go_default_library",
         "//api/submitqueue/orchestrator/protopb:go_default_library",
-        "//platform/consumer:go_default_library",
-        "//platform/errs:go_default_library",
         "//platform/errs/generic:go_default_library",
         "//platform/errs/mysql:go_default_library",
-        "//platform/extension/counter:go_default_library",
+        "//platform/extension/consumergate:go_default_library",
+        "//platform/extension/consumergate/file:go_default_library",
+        "//platform/extension/consumergate/noop:go_default_library",
         "//platform/extension/counter/mysql:go_default_library",
-        "//platform/extension/messagequeue:go_default_library",
         "//platform/extension/messagequeue/mysql:go_default_library",
         "//platform/http:go_default_library",
+        "//platform/pipeline:go_default_library",
         "//submitqueue/core/changeset:go_default_library",
-        "//submitqueue/core/topickey:go_default_library",
-        "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/buildrunner:go_default_library",
         "//submitqueue/extension/buildrunner/fake:go_default_library",
         "//submitqueue/extension/changeprovider:go_default_library",
@@ -37,27 +37,9 @@ go_library(
         "//submitqueue/extension/conflict/fake:go_default_library",
         "//submitqueue/extension/conflict/fileoverlap:go_default_library",
         "//submitqueue/extension/conflict/none:go_default_library",
-        "//submitqueue/extension/scorer:go_default_library",
-        "//submitqueue/extension/scorer/composite:go_default_library",
-        "//submitqueue/extension/scorer/fake:go_default_library",
-        "//submitqueue/extension/scorer/heuristic:go_default_library",
-        "//submitqueue/extension/storage:go_default_library",
         "//submitqueue/extension/storage/mysql:go_default_library",
         "//submitqueue/extension/validator/fake:go_default_library",
-        "//submitqueue/orchestrator/controller:go_default_library",
-        "//submitqueue/orchestrator/controller/batch:go_default_library",
-        "//submitqueue/orchestrator/controller/build:go_default_library",
-        "//submitqueue/orchestrator/controller/buildsignal:go_default_library",
-        "//submitqueue/orchestrator/controller/cancel:go_default_library",
-        "//submitqueue/orchestrator/controller/conclude:go_default_library",
-        "//submitqueue/orchestrator/controller/dlq:go_default_library",
-        "//submitqueue/orchestrator/controller/merge:go_default_library",
-        "//submitqueue/orchestrator/controller/mergeconflictsignal:go_default_library",
-        "//submitqueue/orchestrator/controller/mergesignal:go_default_library",
-        "//submitqueue/orchestrator/controller/score:go_default_library",
-        "//submitqueue/orchestrator/controller/speculate:go_default_library",
-        "//submitqueue/orchestrator/controller/start:go_default_library",
-        "//submitqueue/orchestrator/controller/validate:go_default_library",
+        "//submitqueue/orchestrator:go_default_library",
         "@com_github_go_sql_driver_mysql//:go_default_library",
         "@com_github_uber_go_tally//:go_default_library",
         "@org_golang_google_grpc//:go_default_library",
@@ -71,4 +53,26 @@ go_binary(
     name = "orchestrator",
     embed = [":orchestrator_lib"],
     visibility = ["//visibility:public"],
+)
+
+# Linux binary consumed by the Docker image build. Docker-based tests depend on
+# this target as data so Bazel builds the exact binary that ends up in the
+# container image — no pre-built .docker-bin artifacts required.
+go_cross_binary(
+    name = "orchestrator_linux",
+    platform = "@rules_go//go/toolchain:linux_amd64",
+    target = ":orchestrator",
+)
+
+# Everything a Docker-based test needs to build the orchestrator image from a
+# staged build context (see testutil.WithBuildContext). Test-only so the
+# cross-compiled binary cannot leak into production targets.
+filegroup(
+    name = "docker_test_context",
+    testonly = True,
+    srcs = [
+        "Dockerfile",
+        ":orchestrator_linux",
+    ],
+    visibility = ["//test:__subpackages__"],
 )

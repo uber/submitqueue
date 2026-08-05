@@ -11,5 +11,10 @@ Runway is a single service (the domain *is* the service); its controllers live d
 - `merge-conflict-check` — dry-run check that an ordered sequence of merge steps applies cleanly, without committing.
 - `merge` — committing merge: apply and commit the ordered steps.
 
-Both controllers currently deserialize the `MergeRequest` off the queue and log it; performing the
-merge and publishing a `MergeResult` to the corresponding signal queue is not wired yet.
+Each controller deserializes the `MergeRequest`, obtains a `Merger` for the request's queue from the [`merger`](extension/merger) extension, applies the ordered steps, and publishes a `MergeResult` to the corresponding signal queue (`merge-conflict-check-signal` / `merge-signal`). `merge` commits and reports the produced revisions; `merge-conflict-check` is a dry run that reports mergeability with empty outputs.
+
+## Failure handling
+
+A merge outcome the controller can name is published as a `FAILED` result and acked, not retried: a merge conflict (`merger.ErrConflict`) or an invalid request (`merger.ErrInvalidRequest` — unknown strategy, malformed change URI, invalid PROMOTE composition). The `merger.IsTerminal` helper draws that line. Any other error is an infrastructure fault and is nacked for retry.
+
+Because Runway is stateless and the sole responder on the client's correlation id, a request that exhausts retries (or hits an unexpected fault) must still resolve the client. The inbound topics dead-letter by default; the [`dlq`](controller/dlq) reconciler drains those `_dlq` topics and republishes a `FAILED` `MergeResult` to the signal topic so the correlation id never hangs.

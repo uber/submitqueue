@@ -93,7 +93,7 @@ func NewController(
 // a delayed message back to this topic when the build is still in flight.
 // Returns nil to ack (success), or error to nack/reject.
 //
-// Error classification: deserialize, Status, UpdateStatus, and the speculate
+// Error classification: deserialize, Status, Update, and the speculate
 // publish stay non-retryable — they reject straight to DLQ on the first
 // failure, where the operational republish path is the recovery mechanism.
 // Only the PublishAfter self-reschedule is retryable: it is the poll loop's
@@ -101,11 +101,8 @@ func NewController(
 // so a transient enqueue blip nacks and replays (up to MaxAttempts) rather
 // than silently stalling the build, then still falls through to DLQ if it
 // persists.
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName)
-	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
@@ -166,15 +163,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 		return nil
 	}
 
-	build.Status = status
+	updatedBuild := build
+	updatedBuild.Status = status
 
-	if err := c.store.GetBuildStore().UpdateStatus(ctx, build.ID, status); err != nil {
+	if err := c.store.GetBuildStore().Update(ctx, updatedBuild); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to update status for build %s: %w", build.ID, err)
 	}
 
 	// Re-evaluate the batch state machine with the latest build status.
-	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, build.BatchID, msg.PartitionKey); err != nil {
+	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, updatedBuild.BatchID, msg.PartitionKey); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}
@@ -182,8 +180,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	if status.IsTerminal() {
 		metrics.NamedCounter(c.metricsScope, opName, "terminal", 1, metrics.NewTag("status", string(status)))
 		c.logger.Infow("build reached terminal status",
-			"build_id", build.ID,
-			"batch_id", build.BatchID,
+			"build_id", updatedBuild.ID,
+			"batch_id", updatedBuild.BatchID,
 			"status", string(status),
 		)
 		return nil
@@ -191,13 +189,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	delayMs := pollDelay(status)
 	metrics.NamedCounter(c.metricsScope, opName, "rescheduled", 1, metrics.NewTag("status", string(status)))
-	if err := c.publishBuild(ctx, c.topicKey, build, delayMs); err != nil {
+	if err := c.publishBuild(ctx, c.topicKey, updatedBuild, delayMs); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to re-publish to buildsignal: %w", err)
 	}
 
 	c.logger.Debugw("rescheduled build status poll",
-		"build_id", build.ID,
+		"build_id", updatedBuild.ID,
 		"status", string(status),
 		"delay_ms", delayMs,
 	)

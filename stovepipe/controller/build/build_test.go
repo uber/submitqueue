@@ -24,6 +24,7 @@ import (
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
 	mqmock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
@@ -82,7 +83,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildMoc
 
 func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) consumer.Delivery {
 	t.Helper()
-	d := mqmock.NewMockDelivery(ctrl)
+	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(entityqueue.NewMessage(testID, payload, testID, nil)).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
 	return d
@@ -160,18 +161,26 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "recorded green is a no-op",
+			name: "succeeded request is a no-op",
 			setup: func(m buildMocks) {
 				req := processingRequest(entity.BuildStrategyFull, "")
-				req.State = entity.RequestStateRecordedGreen
+				req.State = entity.RequestStateSucceeded
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(req, nil)
 			},
 		},
 		{
-			name: "recorded not green is a no-op",
+			name: "failed request is a no-op",
 			setup: func(m buildMocks) {
 				req := processingRequest(entity.BuildStrategyFull, "")
-				req.State = entity.RequestStateRecordedNotGreen
+				req.State = entity.RequestStateFailed
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(req, nil)
+			},
+		},
+		{
+			name: "cancelled request is a no-op",
+			setup: func(m buildMocks) {
+				req := processingRequest(entity.BuildStrategyFull, "")
+				req.State = entity.RequestStateCancelled
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(req, nil)
 			},
 		},

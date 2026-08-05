@@ -28,6 +28,7 @@ func TestBatchState_IsTerminal(t *testing.T) {
 		terminal bool
 	}{
 		{name: "unknown", state: BatchStateUnknown, terminal: false},
+		{name: "creating", state: BatchStateCreating, terminal: false},
 		{name: "created", state: BatchStateCreated, terminal: false},
 		{name: "speculating", state: BatchStateSpeculating, terminal: false},
 		{name: "merging", state: BatchStateMerging, terminal: false},
@@ -42,6 +43,27 @@ func TestBatchState_IsTerminal(t *testing.T) {
 			assert.Equal(t, tt.terminal, tt.state.IsTerminal())
 		})
 	}
+}
+
+func TestIsCancellable(t *testing.T) {
+	assert.True(t, BatchStateCreated.IsCancellable())
+	assert.True(t, BatchStateSpeculating.IsCancellable())
+	assert.True(t, BatchStateCancelling.IsCancellable())
+	assert.True(t, BatchState("future").IsCancellable())
+	assert.False(t, BatchStateUnknown.IsCancellable())
+	assert.False(t, BatchStateCreating.IsCancellable())
+	assert.False(t, BatchStateMerging.IsCancellable())
+	assert.False(t, BatchStateSucceeded.IsCancellable())
+	assert.False(t, BatchStateFailed.IsCancellable())
+	assert.False(t, BatchStateCancelled.IsCancellable())
+}
+
+func TestActiveBatchStates_ExcludesCreating(t *testing.T) {
+	assert.NotContains(t, ActiveBatchStates(), BatchStateCreating)
+}
+
+func TestDependencyBatchStates_ExcludesCreating(t *testing.T) {
+	assert.NotContains(t, DependencyBatchStates(), BatchStateCreating)
 }
 
 func TestBatch_SerializationRoundTrip(t *testing.T) {

@@ -36,7 +36,7 @@ import (
 // Per invocation, the controller advances the batch one step in the
 // state machine:
 //
-//   - Created or Scored → publish to build, transition to Speculating.
+//   - Created → publish to build, transition to Speculating.
 //   - Speculating       → if all deps are Succeeded, publish to merge and
 //     transition to Merging; otherwise no-op (or fail-fast if a dep is
 //     in a non-succeeding terminal state).
@@ -89,10 +89,7 @@ func NewController(
 
 // Process advances a batch one step along the naive happy-path.
 // Returns nil to ack (success), or error to nack (retry).
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
-	op := metrics.Begin(c.metricsScope, opName)
-	defer func() { op.Complete(retErr) }()
-
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
 	bid, err := entity.BatchIDFromBytes(msg.Payload)
@@ -136,7 +133,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 	}
 
 	switch batch.State {
-	case entity.BatchStateCreated, entity.BatchStateScored:
+	case entity.BatchStateCreated:
 		return c.startSpeculation(ctx, batch)
 	case entity.BatchStateSpeculating:
 		return c.tryFinalize(ctx, batch)
@@ -162,7 +159,8 @@ func (c *Controller) startSpeculation(ctx context.Context, batch entity.Batch) e
 	// Optimistic CAS: if the version has already advanced (concurrent speculate),
 	// the next event will see the new state and behave correctly.
 	newVersion := batch.Version + 1
-	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateSpeculating); err != nil {
+	batch.State = entity.BatchStateSpeculating
+	if err := c.store.GetBatchStore().Update(ctx, batch, batch.Version, newVersion); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to update batch %s state to speculating: %w", batch.ID, err)
 	}
@@ -196,7 +194,7 @@ func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error 
 		case entity.BatchStateCancelled:
 			// Out-of-the-way: the cancelled batch will never land, so it can
 			// no longer conflict. Drop it from the chain and continue.
-			c.metricsScope.Counter("dependency_cancelled_skipped").Inc(1)
+			metrics.NamedCounter(c.metricsScope, opName, "dependency_cancelled_skipped", 1)
 			c.logger.Infow("dependency cancelled; dropping from speculation chain",
 				"batch_id", batch.ID,
 				"dependency_id", d.ID,
@@ -223,7 +221,8 @@ func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error 
 	}
 
 	newVersion := batch.Version + 1
-	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateMerging); err != nil {
+	batch.State = entity.BatchStateMerging
+	if err := c.store.GetBatchStore().Update(ctx, batch, batch.Version, newVersion); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to update batch %s state to merging: %w", batch.ID, err)
 	}
@@ -245,10 +244,12 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 	)
 
 	newVersion := batch.Version + 1
-	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateFailed); err != nil {
+	batch.State = entity.BatchStateFailed
+	if err := c.store.GetBatchStore().Update(ctx, batch, batch.Version, newVersion); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to update batch %s state to failed: %w", batch.ID, err)
 	}
+	batch.Version = newVersion
 
 	if err := c.publish(ctx, topickey.TopicKeyConclude, batch.ID, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
@@ -268,7 +269,7 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 // Order matters for correctness:
 //
 //  1. Cancel the in-flight Build entity (build.ID == batch.ID; one Get + one
-//     UpdateStatus covers all builds for this batch). A future external CI
+//     Update covers all builds for this batch). A future external CI
 //     integration hooks in here. Idempotent: tolerate ErrNotFound (no build
 //     was scheduled), skip if already terminal.
 //
@@ -287,8 +288,8 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 // terminal self-heal branch, which re-runs the dependent fan-out and the
 // conclude publish for already-Cancelled batches.
 //
-// storage.ErrVersionMismatch on the terminal CAS is returned as-is for the
-// base controller to classify as retryable; the redelivery will land in the
+// storage.ErrVersionMismatch on the terminal CAS is returned as-is because it
+// is intrinsically retryable; the redelivery will land in the
 // self-heal branch and complete the fan-out.
 func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error {
 	metrics.NamedCounter(c.metricsScope, opName, "cancel_batch", 1)
@@ -307,12 +308,12 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 	}
 
 	newVersion := batch.Version + 1
-	if err := c.store.GetBatchStore().UpdateState(ctx, batch.ID, batch.Version, newVersion, entity.BatchStateCancelled); err != nil {
+	batch.State = entity.BatchStateCancelled
+	if err := c.store.GetBatchStore().Update(ctx, batch, batch.Version, newVersion); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to update batch %s state to cancelled: %w", batch.ID, err)
 	}
 	batch.Version = newVersion
-	batch.State = entity.BatchStateCancelled
 
 	if err := c.respeculateDependents(ctx, batch); err != nil {
 		return err
@@ -335,7 +336,7 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 // This is the hook point for a future external CI integration: today the
 // system has no external runner, so the local state flip is the complete
 // cancellation. Once a runner exists, it must be invoked here before the
-// local UpdateStatus.
+// local Update.
 func (c *Controller) cancelBuild(ctx context.Context, batch entity.Batch) error {
 	build, err := c.store.GetBuildStore().Get(ctx, batch.ID)
 	if err != nil {
@@ -352,7 +353,9 @@ func (c *Controller) cancelBuild(ctx context.Context, batch entity.Batch) error 
 		return nil
 	}
 
-	if err := c.store.GetBuildStore().UpdateStatus(ctx, batch.ID, entity.BuildStatusCancelled); err != nil {
+	updatedBuild := build
+	updatedBuild.Status = entity.BuildStatusCancelled
+	if err := c.store.GetBuildStore().Update(ctx, updatedBuild); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to cancel build for batch %s: %w", batch.ID, err)
 	}

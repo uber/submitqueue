@@ -17,7 +17,6 @@ package mysql
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -40,12 +39,12 @@ func NewRequestQueueSummaryStore(db *sql.DB, scope tally.Scope) storage.RequestQ
 }
 
 func (s *requestQueueSummaryStore) Create(ctx context.Context, summary entity.RequestQueueSummary) (retErr error) {
-	op := metrics.Begin(s.scope, "create")
+	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	changeURIsJSON, metadataJSON, err := marshalSummaryJSON(summary.ChangeURIs, summary.Metadata)
 	if err != nil {
-		return fmt.Errorf("failed to marshal queue summary request_id=%s: %w", summary.RequestID, err)
+		return fmt.Errorf("failed to marshal queue summary metadata request_id=%s: %w", summary.RequestID, err)
 	}
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO request_summary_by_queue (
@@ -66,7 +65,7 @@ func (s *requestQueueSummaryStore) Create(ctx context.Context, summary entity.Re
 }
 
 func (s *requestQueueSummaryStore) Get(ctx context.Context, queue string, receivedAtMs int64, requestID string) (ret entity.RequestQueueSummary, retErr error) {
-	op := metrics.Begin(s.scope, "get")
+	op := metrics.Begin(s.scope, "get", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	var changeURIsJSON []byte
@@ -90,18 +89,18 @@ func (s *requestQueueSummaryStore) Get(ctx context.Context, queue string, receiv
 }
 
 func (s *requestQueueSummaryStore) Update(ctx context.Context, summary entity.RequestQueueSummary, oldVersion, newVersion int32) (retErr error) {
-	op := metrics.Begin(s.scope, "update")
+	op := metrics.Begin(s.scope, "update", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
-	metadataJSON, err := json.Marshal(normalizeMetadata(summary.Metadata))
+	changeURIsJSON, metadataJSON, err := marshalSummaryJSON(summary.ChangeURIs, summary.Metadata)
 	if err != nil {
-		return fmt.Errorf("failed to marshal queue summary metadata request_id=%s: %w", summary.RequestID, err)
+		return fmt.Errorf("failed to marshal queue summary request_id=%s: %w", summary.RequestID, err)
 	}
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE request_summary_by_queue
-		SET status = ?, version = ?, last_error = ?, metadata = ?
+		SET change_uris = ?, status = ?, version = ?, last_error = ?, metadata = ?
 		WHERE queue = ? AND received_at_ms = ? AND request_id = ? AND version = ?`,
-		summary.Status, newVersion, summary.LastError, metadataJSON,
+		changeURIsJSON, summary.Status, newVersion, summary.LastError, metadataJSON,
 		summary.Queue, summary.ReceivedAtMs, summary.RequestID, oldVersion,
 	)
 	if err != nil {
@@ -118,7 +117,7 @@ func (s *requestQueueSummaryStore) Update(ctx context.Context, summary entity.Re
 }
 
 func (s *requestQueueSummaryStore) List(ctx context.Context, query storage.RequestQueueSummaryQuery) (ret []entity.RequestQueueSummary, retErr error) {
-	op := metrics.Begin(s.scope, "list")
+	op := metrics.Begin(s.scope, "list", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	statement := `

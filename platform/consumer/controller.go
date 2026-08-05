@@ -26,13 +26,14 @@ import (
 // Delivery is the consumer package's view of a queue delivery.
 // It exists to hide Ack/Nack from controllers — the Consumer framework handles those
 // automatically based on the error returned from Process(). Controllers only see
-// message data, metadata, and ExtendVisibilityTimeout (a business-level concern for
-// long-running processing).
+// message data, metadata, ExtendVisibilityTimeout (a business-level concern for
+// long-running processing), and Hold (a business-level concern for backing off).
 //
 // To signal outcome from Process():
 //   - Return nil to ack the message (success).
 //   - Return an error to nack the message for retry.
 //   - Return a non-retryable error to reject a poison pill message (removes it from the queue).
+//   - Call Hold(delayMs) and return nil to postpone the message (redeliver later, partition waits).
 type Delivery interface {
 	// Message returns the delivered message.
 	Message() entityqueue.Message
@@ -41,11 +42,21 @@ type Delivery interface {
 	// visible to other consumers. Use when processing takes longer than expected.
 	ExtendVisibilityTimeout(ctx context.Context, durationMillis int64) error
 
+	// Hold records intent to postpone this delivery: when Process then returns
+	// nil, the framework postpones the message for delayMs instead of acking.
+	// The postponed message is a barrier — its partition is not consumed past
+	// it until it redelivers, in order — and the redelivery does not count
+	// toward the retry limit. Recording has no side effects; the last call
+	// wins; a negative delay is clamped to 0. If Process returns an error, the
+	// failure outcome wins and the recorded hold is discarded. Must be called
+	// from the Process goroutine before returning.
+	Hold(delayMs int64)
+
 	// DeliveryID returns a backend-specific identifier for this delivery.
 	DeliveryID() string
 
 	// Attempt returns how many times this message has been delivered.
-	// Starts at 1 for first delivery.
+	// Starts at 1 for first delivery. A postponed redelivery restarts at 1.
 	Attempt() int
 
 	// ReceivedAt returns when this delivery was received (Unix milliseconds).
@@ -59,6 +70,11 @@ type Delivery interface {
 // Hides Ack/Nack from controllers - Consumer handles those automatically.
 type deliveryWrapper struct {
 	delivery extqueue.Delivery
+
+	// held and holdDelayMs record Hold intent. Written from the Process
+	// goroutine, read by the framework after Process returns.
+	held        bool
+	holdDelayMs int64
 }
 
 func (d *deliveryWrapper) Message() entityqueue.Message {
@@ -67,6 +83,14 @@ func (d *deliveryWrapper) Message() entityqueue.Message {
 
 func (d *deliveryWrapper) ExtendVisibilityTimeout(ctx context.Context, durationMillis int64) error {
 	return d.delivery.ExtendVisibilityTimeout(ctx, durationMillis)
+}
+
+func (d *deliveryWrapper) Hold(delayMs int64) {
+	if delayMs < 0 {
+		delayMs = 0
+	}
+	d.held = true
+	d.holdDelayMs = delayMs
 }
 
 func (d *deliveryWrapper) DeliveryID() string {
@@ -89,12 +113,14 @@ func (d *deliveryWrapper) Metadata() map[string]string {
 // The Controller interface enables clean separation of concerns:
 // - Controller focuses on business logic (deserialize, process, return error status)
 // - Consumer handles infrastructure (subscription, ack/nack, metrics, lifecycle)
+// Controllers may emit domain event counters, but must not duplicate the consumer-owned Process lifecycle metrics.
 // The implementation of the controller should be idempotent and stateless. The controller is expected to be retried for the same message multiple times and should process side effects gracefully.
 // The implementation must be thread-safe.
 type Controller interface {
 	// Process processes a delivery. Controller receives consumer.Delivery (not extension/entityqueue.Delivery)
 	// which prevents direct Ack/Nack calls - Consumer handles those automatically.
 	// Return nil to ack the message (success), error to nack and retry, or NonRetryableError to ack a poison pill message.
+	// Call delivery.Hold(delayMs) and return nil to postpone the message instead of acking it.
 	// Context controls the lifecycle of the service. It is cancelled when the consumer is stopped. The implementation should process it gracefully:
 	//  - Pass the context to the underlying services and wait for them to complete their operations.
 	//  - Proceed to the nearest safe state.

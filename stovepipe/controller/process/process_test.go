@@ -24,6 +24,7 @@ import (
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
 	mqmock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
@@ -102,7 +103,7 @@ func newControllerWithScope(t *testing.T, ctrl *gomock.Controller, scope tally.S
 
 func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) consumer.Delivery {
 	t.Helper()
-	d := mqmock.NewMockDelivery(ctrl)
+	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(entityqueue.NewMessage(testID, payload, testQueue, nil)).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
 	return d
@@ -423,6 +424,30 @@ func TestProcess(t *testing.T) {
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
 					ID: testID, Queue: testQueue, State: entity.RequestStateSuperseded, Version: 2,
+				}, nil)
+			},
+		},
+		{
+			name: "succeeded is no-op",
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
+					ID: testID, Queue: testQueue, State: entity.RequestStateSucceeded, Version: 2,
+				}, nil)
+			},
+		},
+		{
+			name: "failed is no-op",
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
+					ID: testID, Queue: testQueue, State: entity.RequestStateFailed, Version: 2,
+				}, nil)
+			},
+		},
+		{
+			name: "cancelled is no-op",
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
+					ID: testID, Queue: testQueue, State: entity.RequestStateCancelled, Version: 2,
 				}, nil)
 			},
 		},

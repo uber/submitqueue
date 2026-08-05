@@ -24,6 +24,7 @@ import (
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
@@ -33,6 +34,11 @@ import (
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
+
+func batchWithState(batch entity.Batch, state entity.BatchState) entity.Batch {
+	batch.State = state
+	return batch
+}
 
 // batchIDPayload serializes a BatchID to JSON bytes for test message payloads.
 func batchIDPayload(t *testing.T, id string) []byte {
@@ -46,6 +52,7 @@ func testBatch(state entity.BatchState, deps ...string) entity.Batch {
 	return entity.Batch{
 		ID:           "test-queue/batch/1",
 		Queue:        "test-queue",
+		Contains:     []string{"test-queue/1"},
 		Dependencies: deps,
 		State:        state,
 		Version:      1,
@@ -84,7 +91,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 // runProcess builds a delivery for batchID and invokes Process once.
 func runProcess(t *testing.T, ctrl *gomock.Controller, controller *Controller, batchID string) error {
 	msg := entityqueue.NewMessage(batchID, batchIDPayload(t, batchID), "test-queue", nil)
-	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 	return controller.Process(context.Background(), delivery)
@@ -103,14 +110,13 @@ func TestNewController(t *testing.T) {
 	var _ consumer.Controller = controller
 }
 
-// startSpeculation: Created/Scored should publish to build and CAS to Speculating with newVersion = oldVersion+1.
+// startSpeculation: Created should publish to build and CAS to Speculating with newVersion = oldVersion+1.
 func TestController_Process_StartSpeculation(t *testing.T) {
 	tests := []struct {
 		name  string
 		state entity.BatchState
 	}{
 		{name: "from_created", state: entity.BatchStateCreated},
-		{name: "from_scored", state: entity.BatchStateScored},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -119,7 +125,7 @@ func TestController_Process_StartSpeculation(t *testing.T) {
 
 			batchStore := storagemock.NewMockBatchStore(ctrl)
 			batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-			batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateSpeculating).Return(nil)
+			batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateSpeculating), int32(1), int32(2)).Return(nil)
 
 			store := storagemock.NewMockStorage(ctrl)
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -137,7 +143,7 @@ func TestController_Process_FinalizeNoDeps(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateMerging).Return(nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateMerging), int32(1), int32(2)).Return(nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -157,7 +163,7 @@ func TestController_Process_FinalizeAllDepsSucceeded(t *testing.T) {
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
 	batchStore.EXPECT().Get(gomock.Any(), depA.ID).Return(depA, nil)
 	batchStore.EXPECT().Get(gomock.Any(), depB.ID).Return(depB, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateMerging).Return(nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateMerging), int32(1), int32(2)).Return(nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -175,7 +181,7 @@ func TestController_Process_WaitingOnDep(t *testing.T) {
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
 	batchStore.EXPECT().Get(gomock.Any(), dep.ID).Return(dep, nil)
-	// No UpdateState expected — gomock will fail if it is called.
+	// No Update expected — gomock will fail if it is called.
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -195,7 +201,7 @@ func TestController_Process_FailedDepFailsBatch(t *testing.T) {
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
 	batchStore.EXPECT().Get(gomock.Any(), dep.ID).Return(dep, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateFailed).Return(nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateFailed), int32(1), int32(2)).Return(nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -217,7 +223,7 @@ func TestController_Process_CancelledDepSkipped(t *testing.T) {
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
 	batchStore.EXPECT().Get(gomock.Any(), depCancelled.ID).Return(depCancelled, nil)
 	batchStore.EXPECT().Get(gomock.Any(), depSucceeded.ID).Return(depSucceeded, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateMerging).Return(nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateMerging), int32(1), int32(2)).Return(nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -233,7 +239,7 @@ func TestController_Process_MergingNoOp(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	// No UpdateState expected.
+	// No Update expected.
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -243,7 +249,7 @@ func TestController_Process_MergingNoOp(t *testing.T) {
 }
 
 // Terminal states re-fan-out to conclude for self-healing in case a previous
-// publish was lost. State must not change (no UpdateState). The Cancelled
+// publish was lost. State must not change (no Update). The Cancelled
 // terminal also re-fans-out dependents and is covered separately in
 // TestController_Process_CancelledTerminalSelfHealsDependents.
 func TestController_Process_TerminalSelfHeals(t *testing.T) {
@@ -257,7 +263,7 @@ func TestController_Process_TerminalSelfHeals(t *testing.T) {
 
 			batchStore := storagemock.NewMockBatchStore(ctrl)
 			batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-			// No UpdateState expected.
+			// No Update expected.
 
 			store := storagemock.NewMockStorage(ctrl)
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -286,7 +292,7 @@ func TestController_Process_TerminalSelfHeals(t *testing.T) {
 
 // Cancelled is terminal: redelivery must re-fan-out dependents (so a crash
 // between the terminal CAS and the dependent publish does not strand them)
-// AND re-publish to conclude. State must not change (no UpdateState; no
+// AND re-publish to conclude. State must not change (no Update; no
 // build cancel). The BuildStore must not be touched on this self-heal path.
 func TestController_Process_CancelledTerminalSelfHealsDependents(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -294,7 +300,7 @@ func TestController_Process_CancelledTerminalSelfHealsDependents(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	// No UpdateState expected.
+	// No Update expected.
 
 	depStore := storagemock.NewMockBatchDependentStore(ctrl)
 	depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{
@@ -356,13 +362,16 @@ func TestController_Process_CancellingTerminalFlow(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateCancelled), int32(1), int32(2)).Return(nil)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
-	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{
+	build := entity.Build{
 		ID: batch.ID, BatchID: batch.ID, Status: entity.BuildStatusRunning,
-	}, nil)
-	buildStore.EXPECT().UpdateStatus(gomock.Any(), batch.ID, entity.BuildStatusCancelled).Return(nil)
+	}
+	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(build, nil)
+	updatedBuild := build
+	updatedBuild.Status = entity.BuildStatusCancelled
+	buildStore.EXPECT().Update(gomock.Any(), updatedBuild).Return(nil)
 
 	depStore := storagemock.NewMockBatchDependentStore(ctrl)
 	depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{
@@ -413,7 +422,7 @@ func TestController_Process_CancellingTerminalFlow(t *testing.T) {
 
 // If the build for the batch has already reached a terminal status (e.g. CI
 // finished naturally between the cancel intent and the speculate pickup), the
-// cancellation must not re-flip it — UpdateStatus must never fire. The rest
+// cancellation must not re-flip it — Update must never fire. The rest
 // of the flow (terminal batch CAS, dependent fan-out, conclude) still runs.
 func TestController_Process_CancellingBuildAlreadyTerminal(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -421,13 +430,13 @@ func TestController_Process_CancellingBuildAlreadyTerminal(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateCancelled), int32(1), int32(2)).Return(nil)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
 	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{
 		ID: batch.ID, BatchID: batch.ID, Status: entity.BuildStatusSucceeded,
 	}, nil)
-	// No UpdateStatus expected — the build is already terminal.
+	// No Update expected — the build is already terminal.
 
 	depStore := storagemock.NewMockBatchDependentStore(ctrl)
 	depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{
@@ -452,11 +461,11 @@ func TestController_Process_CancellingNoBuildYet(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateCancelled), int32(1), int32(2)).Return(nil)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
 	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
-	// No UpdateStatus expected.
+	// No Update expected.
 
 	depStore := storagemock.NewMockBatchDependentStore(ctrl)
 	depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{
@@ -482,7 +491,7 @@ func TestController_Process_CancellingNoDependents(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).Return(nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateCancelled), int32(1), int32(2)).Return(nil)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
 	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
@@ -515,8 +524,8 @@ func TestController_Process_CancellingNoDependents(t *testing.T) {
 }
 
 // storage.ErrVersionMismatch on the terminal CAS must surface as an error
-// with the underlying sentinel in the chain so the base controller can
-// classify it as retryable. The dependent fan-out and conclude publish must
+// with the underlying sentinel in the chain so its intrinsic retryable
+// classification survives. The dependent fan-out and conclude publish must
 // NOT run if the terminal CAS failed — on redelivery the self-heal branch
 // will pick up the (now-terminal) state and complete the fan-out.
 func TestController_Process_CancellingTerminalCASVersionMismatch(t *testing.T) {
@@ -525,7 +534,7 @@ func TestController_Process_CancellingTerminalCASVersionMismatch(t *testing.T) {
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), batch.ID, int32(1), int32(2), entity.BatchStateCancelled).
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateCancelled), int32(1), int32(2)).
 		Return(storage.ErrVersionMismatch)
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
@@ -593,11 +602,11 @@ func TestController_Process_StorageFailure(t *testing.T) {
 // Publish failure must not advance the batch state.
 func TestController_Process_PublishFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	batch := testBatch(entity.BatchStateScored)
+	batch := testBatch(entity.BatchStateCreated)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
-	// No UpdateState expected — publish fails before we get there.
+	// No Update expected — publish fails before we get there.
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
@@ -613,7 +622,7 @@ func TestController_Process_BadPayload(t *testing.T) {
 	controller := newTestController(t, ctrl, store, nil)
 
 	msg := entityqueue.NewMessage("anything", []byte("not-json"), "test-queue", nil)
-	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 

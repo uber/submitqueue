@@ -31,6 +31,16 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
+func batchWithState(batch entity.Batch, state entity.BatchState) entity.Batch {
+	batch.State = state
+	return batch
+}
+
+func requestWithState(request entity.Request, state entity.RequestState) entity.Request {
+	request.State = state
+	return request
+}
+
 // failRequest
 
 func TestFailRequest_TerminalStates(t *testing.T) {
@@ -79,10 +89,11 @@ func TestFailRequest_CancellingTransitionsToError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
-	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.Request{
+	request := entity.Request{
 		ID: "q/1", Version: 7, State: entity.RequestStateCancelling,
-	}, nil)
-	requestStore.EXPECT().UpdateState(gomock.Any(), "q/1", int32(7), int32(8), entity.RequestStateError).Return(nil)
+	}
+	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil)
+	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(7), int32(8)).Return(nil)
 
 	registry := newTestLogRegistry(t, ctrl, 1, func(l entity.RequestLog) error {
 		assert.Equal(t, "q/1", l.RequestID)
@@ -102,10 +113,11 @@ func TestFailRequest_TransitionsToError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
-	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.Request{
+	request := entity.Request{
 		ID: "q/1", Version: 3, State: entity.RequestStateValidated,
-	}, nil)
-	requestStore.EXPECT().UpdateState(gomock.Any(), "q/1", int32(3), int32(4), entity.RequestStateError).Return(nil)
+	}
+	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil)
+	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(3), int32(4)).Return(nil)
 
 	registry := newTestLogRegistry(t, ctrl, 1, func(l entity.RequestLog) error {
 		assert.Equal(t, "q/1", l.RequestID)
@@ -128,10 +140,11 @@ func TestFailRequest_LogPublishErrorPropagates(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
-	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.Request{
+	request := entity.Request{
 		ID: "q/1", Version: 3, State: entity.RequestStateValidated,
-	}, nil)
-	requestStore.EXPECT().UpdateState(gomock.Any(), "q/1", int32(3), int32(4), entity.RequestStateError).Return(nil)
+	}
+	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil)
+	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(3), int32(4)).Return(nil)
 
 	registry := newTestLogRegistry(t, ctrl, 1, func(entity.RequestLog) error {
 		return fmt.Errorf("publish boom")
@@ -177,21 +190,24 @@ func TestFailBatch_TransitionsAndFansOut(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(entity.Batch{
+	batch := entity.Batch{
 		ID: "q/batch/1", Queue: "q", Contains: []string{"q/1", "q/2"},
 		State: entity.BatchStateMerging, Version: 4,
-	}, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), "q/batch/1", int32(4), int32(5), entity.BatchStateFailed).Return(nil)
+	}
+	batchStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(batch, nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateFailed), int32(4), int32(5)).Return(nil)
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
-	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.Request{
+	request1 := entity.Request{
 		ID: "q/1", Version: 2, State: entity.RequestStateProcessing,
-	}, nil)
-	requestStore.EXPECT().UpdateState(gomock.Any(), "q/1", int32(2), int32(3), entity.RequestStateError).Return(nil)
-	requestStore.EXPECT().Get(gomock.Any(), "q/2").Return(entity.Request{
+	}
+	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request1, nil)
+	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request1, entity.RequestStateError), int32(2), int32(3)).Return(nil)
+	request2 := entity.Request{
 		ID: "q/2", Version: 1, State: entity.RequestStateProcessing,
-	}, nil)
-	requestStore.EXPECT().UpdateState(gomock.Any(), "q/2", int32(1), int32(2), entity.RequestStateError).Return(nil)
+	}
+	requestStore.EXPECT().Get(gomock.Any(), "q/2").Return(request2, nil)
+	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request2, entity.RequestStateError), int32(1), int32(2)).Return(nil)
 
 	registry := newTestLogRegistry(t, ctrl, 2, func(entity.RequestLog) error {
 		return nil
@@ -213,13 +229,14 @@ func TestFailBatch_FailedFansOutForRepair(t *testing.T) {
 		ID: "q/batch/1", Queue: "q", Contains: []string{"q/1"},
 		State: entity.BatchStateFailed, Version: 5,
 	}, nil)
-	// no batchStore.UpdateState expected
+	// no batchStore.Update expected
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
-	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.Request{
+	request := entity.Request{
 		ID: "q/1", Version: 2, State: entity.RequestStateProcessing,
-	}, nil)
-	requestStore.EXPECT().UpdateState(gomock.Any(), "q/1", int32(2), int32(3), entity.RequestStateError).Return(nil)
+	}
+	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil)
+	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(2), int32(3)).Return(nil)
 
 	registry := newTestLogRegistry(t, ctrl, 1, func(entity.RequestLog) error {
 		return nil
@@ -261,17 +278,19 @@ func TestFailBatch_CancellingTransitionsToFailed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
-	batchStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(entity.Batch{
+	batch := entity.Batch{
 		ID: "q/batch/1", Queue: "q", Contains: []string{"q/1"},
 		State: entity.BatchStateCancelling, Version: 6,
-	}, nil)
-	batchStore.EXPECT().UpdateState(gomock.Any(), "q/batch/1", int32(6), int32(7), entity.BatchStateFailed).Return(nil)
+	}
+	batchStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(batch, nil)
+	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateFailed), int32(6), int32(7)).Return(nil)
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
-	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(entity.Request{
+	request := entity.Request{
 		ID: "q/1", Version: 3, State: entity.RequestStateCancelling,
-	}, nil)
-	requestStore.EXPECT().UpdateState(gomock.Any(), "q/1", int32(3), int32(4), entity.RequestStateError).Return(nil)
+	}
+	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil)
+	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(3), int32(4)).Return(nil)
 
 	registry := newTestLogRegistry(t, ctrl, 1, func(entity.RequestLog) error {
 		return nil

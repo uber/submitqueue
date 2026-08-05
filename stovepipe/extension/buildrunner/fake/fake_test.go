@@ -16,7 +16,9 @@ package fake
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -109,4 +111,56 @@ func TestStatus_StatelessAcrossInstances(t *testing.T) {
 func TestCancel_NoOp(t *testing.T) {
 	err := New().Cancel(context.Background(), entity.BuildID{ID: "anything"})
 	assert.NoError(t, err)
+}
+
+// TestStatus_BuildSlowReportsRunningThenSucceeds covers the one marker that yields a
+// non-terminal status, which is what makes a caller's poll loop reachable in an
+// integration or e2e stack.
+func TestStatus_BuildSlowReportsRunningThenSucceeds(t *testing.T) {
+	// A window long enough that the build is still running when Status is called.
+	slow := runner{slowBuildDuration: 30 * time.Second}
+
+	id, err := slow.Trigger(context.Background(), "", "git://repo/ref/deadbeef?buildrunner-fake=build-slow", nil)
+	require.NoError(t, err)
+
+	status, _, err := New().Status(context.Background(), id)
+	require.NoError(t, err)
+	assert.Equal(t, entity.BuildStatusRunning, status)
+
+	// An id whose deadline has already passed reports the terminal outcome. Encoding
+	// the deadline in the id is what keeps Status stateless across instances.
+	elapsed := entity.BuildID{ID: fmt.Sprintf("fake-build-slow-%d-abcd1234", time.Now().UnixMilli()-1)}
+	status, _, err = New().Status(context.Background(), elapsed)
+	require.NoError(t, err)
+	assert.Equal(t, entity.BuildStatusSucceeded, status)
+}
+
+// TestStatus_BuildSlowWithoutDeadlineSucceeds pins the fallback: an id carrying the
+// marker but no parsable deadline is treated as already terminal rather than polling
+// forever.
+func TestStatus_BuildSlowWithoutDeadlineSucceeds(t *testing.T) {
+	status, _, err := New().Status(context.Background(), entity.BuildID{ID: "fake-build-slow-nodeadline"})
+	require.NoError(t, err)
+	assert.Equal(t, entity.BuildStatusSucceeded, status)
+}
+
+// TestMarker_StopsAtPathSegment covers a marker that arrives mid-URI rather than at the
+// end, as it does when the head URI is built as "git://<queue>/HEAD" and the marker
+// rides in on the queue name.
+func TestMarker_StopsAtPathSegment(t *testing.T) {
+	tests := []struct {
+		name string
+		uri  string
+		want string
+	}{
+		{name: "trailing path segment", uri: "git://repo/main?buildrunner-fake=build-slow/HEAD", want: "build-slow"},
+		{name: "end of uri", uri: "git://repo/ref/deadbeef?buildrunner-fake=build-fail", want: "build-fail"},
+		{name: "query separator", uri: "git://repo/ref?buildrunner-fake=build-fail&other=1", want: "build-fail"},
+		{name: "no marker", uri: "git://repo/ref/deadbeef", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, marker(tt.uri))
+		})
+	}
 }

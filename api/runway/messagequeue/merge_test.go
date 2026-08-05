@@ -33,12 +33,12 @@ func TestMergeRequestRoundTrip(t *testing.T) {
 		Steps: []*MergeStep{
 			{
 				StepId:   "queue-a/1",
-				Changes:  []*changepb.Change{{Uris: []string{"github://github.example.com/uber/repo/pull/1/0123456789abcdef0123456789abcdef01234567"}}},
+				Change:   &changepb.Change{Uris: []string{"github://github.example.com/uber/repo/pull/1/0123456789abcdef0123456789abcdef01234567"}},
 				Strategy: strategypb.Strategy_REBASE,
 			},
 			{
 				StepId:   "queue-a/2",
-				Changes:  []*changepb.Change{{Uris: []string{"github://github.example.com/uber/repo/pull/2/89abcdef0123456789abcdef0123456789abcdef"}}},
+				Change:   &changepb.Change{Uris: []string{"github://github.example.com/uber/repo/pull/2/89abcdef0123456789abcdef0123456789abcdef"}},
 				Strategy: strategypb.Strategy_MERGE,
 			},
 		},

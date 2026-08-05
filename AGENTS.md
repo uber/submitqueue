@@ -299,15 +299,17 @@ deps = [
 
 ### Testing
 
+- **Unit test package naming** — unit tests must use the same package name as the code under test (not a `*_test` package) so tests can access implementation details when needed.
 - **Table-driven tests** — prefer table-driven tests with `t.Run` subtests over individual test functions.
 - **Avoid asserting on error messages** — assert on error type or check the error with `require.Error`, do not `assert.Contains(t, err.Error(), message)`
 - **No change detector tests** — don't assert on default values, internal structure, or implementation details that can change without affecting behavior. Test what the code *does*, not how it's constructed.
 - **No `time.Sleep` for synchronization** — use channels, callbacks, condition variables.
+- **No hardcoded test timeouts** — do not add timeouts to tests or synchronization helpers; rely on the upstream test runner's timeout (for example, Bazel's test timeout).
 - **Use testify** — `assert`/`require` instead of `t.Fatal()`.
 
 **Integration tests** use Docker Compose via `testutil.ComposeStack`:
 - Package naming: folder name as package (NOT `*_test` suffix)
-- Bazel: add `tags = ["integration"]` and `data = [...]` for compose/schema files
+- Bazel: add `tags = ["integration", "requires-network"]` and `data = [...]` for every input the test reads (compose file, schema dirs, and each service's `docker_test_context` filegroup bundling its Dockerfile, configs, and Bazel-built `*_linux` binary). Tests are hermetic: never resolve the repo root — resolve inputs from runfiles via `testutil.Runfile` and stage docker build contexts with `testutil.WithBuildContext`.
 - Use `testutil.NewComposeStack()` with meaningful context (e.g., `"ext-storage-mysql"`)
 
 See [doc/howto/TESTING.md](doc/howto/TESTING.md) for full testing guide.

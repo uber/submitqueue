@@ -17,12 +17,12 @@ package controller
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
+	"github.com/uber/submitqueue/platform/metrics"
 	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -35,7 +35,13 @@ import (
 // and may still race a successful merge), publishes a CancelRequest to the cancel topic,
 // and returns a response. The orchestrator-side cancel controller performs the actual
 // state transitions and emits the terminal RequestStatusCancelled log entry.
-type CancelController struct {
+type CancelController interface {
+	Cancel(ctx context.Context, req entity.CancelRequest) error
+}
+
+var _ CancelController = (*cancelController)(nil)
+
+type cancelController struct {
 	logger              *zap.SugaredLogger
 	metricsScope        tally.Scope
 	requestSummaryStore storage.RequestSummaryStore
@@ -46,8 +52,8 @@ type CancelController struct {
 // NewCancelController creates a new instance of the gateway cancel controller.
 // The controller writes a RequestStatusCancelling log entry through the shared materializer and
 // publishes cancel requests to the topic registered under topickey.TopicKeyCancel.
-func NewCancelController(logger *zap.SugaredLogger, scope tally.Scope, store storage.Storage, registry consumer.TopicRegistry) *CancelController {
-	return &CancelController{
+func NewCancelController(logger *zap.SugaredLogger, scope tally.Scope, store storage.Storage, registry consumer.TopicRegistry) CancelController {
+	return &cancelController{
 		logger:              logger,
 		metricsScope:        scope,
 		requestSummaryStore: store.GetRequestSummaryStore(),
@@ -64,16 +70,14 @@ func NewCancelController(logger *zap.SugaredLogger, scope tally.Scope, store sto
 // completion before the cancel propagates may still land. The RequestStatusCancelling
 // entry written here records the user's intent; the terminal outcome is reflected by a
 // later RequestStatusCancelled (orchestrator side) or RequestStatusLanded entry.
-func (c *CancelController) Cancel(ctx context.Context, req entity.CancelRequest) error {
-	start := time.Now()
-	defer func() {
-		c.metricsScope.Timer("cancel_request_latency").Record(time.Since(start))
-	}()
+func (c *cancelController) Cancel(ctx context.Context, req entity.CancelRequest) (retErr error) {
+	const opName = "cancel"
 
-	c.metricsScope.Counter("cancel_request_count").Inc(1)
+	op := metrics.Begin(c.metricsScope, opName, metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
 
 	if req.ID == "" {
-		return fmt.Errorf("CancelController requires the request to have a sqid specified: %w", ErrInvalidRequest)
+		return fmt.Errorf("requires the request to have a sqid specified: %w", ErrInvalidRequest)
 	}
 
 	c.logger.Debugw("cancel request received",
@@ -84,10 +88,10 @@ func (c *CancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 	// Verify the sqid exists before recording intent or publishing.
 	if _, err := c.requestSummaryStore.Get(ctx, req.ID); err != nil {
 		if storage.IsNotFound(err) {
-			c.metricsScope.Counter("cancel_request_not_found").Inc(1)
+			metrics.NamedCounter(c.metricsScope, opName, "not_found", 1)
 			return errs.NewUserError(&RequestNotFoundError{Sqid: req.ID})
 		}
-		return fmt.Errorf("CancelController failed to look up request summary for sqid=%s: %w", req.ID, err)
+		return fmt.Errorf("failed to look up request summary for sqid=%s: %w", req.ID, err)
 	}
 
 	// Record the user's intent in the request log before publishing. Writing direct to the
@@ -99,24 +103,23 @@ func (c *CancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 	}
 	logEntry := entity.NewRequestLog(req.ID, entity.RequestStatusCancelling, 0, "", metadata)
 	if err := c.materializer.PersistLog(ctx, logEntry); err != nil {
-		return fmt.Errorf("CancelController failed to insert cancelling log for sqid=%s: %w", req.ID, err)
+		return fmt.Errorf("failed to insert cancelling log for sqid=%s: %w", req.ID, err)
 	}
 
 	if err := c.publishToQueue(ctx, req); err != nil {
-		return fmt.Errorf("CancelController failed to publish cancel request to queue: %w", err)
+		return fmt.Errorf("failed to publish cancel request to queue: %w", err)
 	}
 
 	c.logger.Infow("cancel request published to queue",
 		"sqid", req.ID,
 		"topic_key", topickey.TopicKeyCancel,
 	)
-	c.metricsScope.Counter("cancel_publish_success").Inc(1)
 
 	return nil
 }
 
 // publishToQueue publishes a cancel request to the cancel queue for async processing.
-func (c *CancelController) publishToQueue(ctx context.Context, cancelRequest entity.CancelRequest) error {
+func (c *cancelController) publishToQueue(ctx context.Context, cancelRequest entity.CancelRequest) error {
 	payload, err := cancelRequest.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize cancel request: %w", err)

@@ -16,26 +16,29 @@ package e2e_test
 
 // Stovepipe end-to-end tests.
 //
-// These tests use docker-compose from service/stovepipe/docker-compose.yml,
-// which requires a pre-built Linux binary. Run with the make target (builds
-// binaries + runs the test):
+// These tests use docker-compose from service/stovepipe/docker-compose.yml.
+// They are hermetic: the stovepipe image is built from a staged context whose
+// inputs (Bazel-built Linux binary, Dockerfile) are all declared data
+// dependencies of the test target.
+//
+// Run with:
 //
 //   make e2e-test
 //
-// or only this package (after building the binary):
+// or only this package:
 //
 //   bazel test //test/e2e/stovepipe:stovepipe_test
 //
 // The stack runs the Stovepipe gRPC service plus a storage MySQL (request,
-// request_uri) and a queue MySQL (the process stage). Unlike the integration
-// suite (test/integration/stovepipe), which asserts only that Ingest *publishes*
-// a process message, this suite additionally drives the asynchronous process
-// consumer to completion — proving the ingest→process pipeline runs end-to-end.
+// request_uri, queue, build) and a queue MySQL (the pipeline stages). Unlike the
+// integration suite (test/integration/stovepipe), which asserts only that Ingest
+// *publishes* a process message, this suite additionally drives the asynchronous
+// consumers to completion — proving the ingest→process→build→buildsignal pipeline
+// runs end-to-end.
 
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -52,12 +55,9 @@ import (
 // suite can only observe its completion black-box through the queue backend's
 // delivery-state table — there is no in-process signal to await across the
 // container boundary. A bounded poll is the deterministic-enough analog:
-// processTimeout is a safety net (a failure here means the stage is genuinely
-// stuck, not a timing race) and processPollInterval bounds re-query frequency.
-const (
-	processTimeout      = 30 * time.Second
-	processPollInterval = 500 * time.Millisecond
-)
+// processPollInterval bounds re-query frequency; Bazel's test timeout is the
+// only convergence deadline.
+const processPollInterval = 500 * time.Millisecond
 
 type StovepipeE2ESuite struct {
 	suite.Suite
@@ -80,12 +80,15 @@ func (s *StovepipeE2ESuite) SetupSuite() {
 
 	s.log.Logf("Starting Stovepipe e2e test suite using docker-compose")
 
-	// Set REPO_ROOT for the docker-compose build context.
-	repoRoot := testutil.FindRepoRoot(t)
-	t.Setenv("REPO_ROOT", repoRoot)
-
-	composeFile := filepath.Join(repoRoot, "service/stovepipe/docker-compose.yml")
-	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "e2e-stovepipe")
+	// Compose file and image build inputs come from the test runfiles; the
+	// stovepipe image is built from a staged build context assembled entirely
+	// from declared data dependencies.
+	composeFile := testutil.Runfile("service/stovepipe/docker-compose.yml")
+	s.stack = testutil.NewComposeStack(t, s.log, s.ctx, composeFile, "e2e-stovepipe",
+		testutil.WithBuildContext(map[string]string{
+			".docker-bin/stovepipe":               "service/stovepipe/server/stovepipe_linux",
+			"service/stovepipe/server/Dockerfile": "service/stovepipe/server/Dockerfile",
+		}))
 
 	err := s.stack.Up()
 	require.NoError(t, err, "failed to start compose stack")
@@ -154,4 +157,36 @@ func (s *StovepipeE2ESuite) TestIngest_Idempotent() {
 
 	id2 := s.ingest(queue)
 	assert.Equal(s.T(), id, id2, "re-ingest of the same head should dedup to the same id")
+}
+
+// TestIngest_SlowBuild_PollsToCompletion drives a build that is not terminal on its
+// first poll, which is the only path that exercises buildsignal's reschedule.
+//
+// The queue name carries a fake-buildrunner marker: the fake SourceControl resolves a
+// queue to "git://<queue>/HEAD", so the marker rides into the head URI and the fake
+// BuildRunner reports running for a while before succeeding. Reaching a terminal build
+// status therefore requires the poll loop to tick more than once.
+//
+// This is the regression test for the loop stalling: buildsignal re-publishes to its
+// own topic to schedule the next poll, and the queue dedups on
+// (topic, partition_key, id). While the delivery being processed is still un-acked its
+// row is present, so a re-poll that reuses the build id as the message id is silently
+// discarded and the build is never polled again — the build would sit at `running`
+// forever.
+func (s *StovepipeE2ESuite) TestIngest_SlowBuild_PollsToCompletion() {
+	const queue = "monorepo/slow?buildrunner-fake=build-slow"
+
+	id := s.ingest(queue)
+	s.log.Logf("Ingest succeeded: id=%s; waiting for the poll loop to reach a terminal build", id)
+
+	s.assertIngestPersisted(queue, id)
+
+	// Getting here at all means the reschedule produced a deliverable message.
+	s.awaitBuildStatus(id, "succeeded")
+
+	// buildsignal projects the terminal build status onto the request and, in the
+	// same step, releases the build slot that reopens the process gate.
+	s.awaitRequestState(id, "succeeded")
+	assert.Equal(s.T(), int32(0), s.inFlightCount(queue),
+		"a terminal build should release the queue's build slot")
 }

@@ -39,7 +39,7 @@ func NewBuildStore(db *sql.DB, scope tally.Scope) storage.BuildStore {
 
 // Create persists a new build. Returns ErrAlreadyExists if the build ID already exists.
 func (b *buildStore) Create(ctx context.Context, build entity.Build) (retErr error) {
-	op := metrics.Begin(b.scope, "create")
+	op := metrics.Begin(b.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	_, err := b.db.ExecContext(ctx,
@@ -62,7 +62,7 @@ func (b *buildStore) Create(ctx context.Context, build entity.Build) (retErr err
 
 // Get retrieves a build by ID. Returns ErrNotFound if the build is not found.
 func (b *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retErr error) {
-	op := metrics.Begin(b.scope, "get")
+	op := metrics.Begin(b.scope, "get", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	var build entity.Build
@@ -92,7 +92,7 @@ func (b *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retE
 // match (including when the build does not exist). This is a pure conditional write; the
 // caller owns version arithmetic.
 func (b *buildStore) Update(ctx context.Context, build entity.Build, oldVersion, newVersion int32) (retErr error) {
-	op := metrics.Begin(b.scope, "update")
+	op := metrics.Begin(b.scope, "update", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	result, err := b.db.ExecContext(ctx,

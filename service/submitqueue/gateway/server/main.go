@@ -33,6 +33,9 @@ import (
 	"github.com/uber/submitqueue/platform/errs"
 	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
 	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
+	"github.com/uber/submitqueue/platform/extension/consumergate"
+	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
+	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
 	mysqlcounter "github.com/uber/submitqueue/platform/extension/counter/mysql"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
@@ -52,12 +55,12 @@ import (
 // GatewayServer wraps the controller and implements the gRPC service interface
 type GatewayServer struct {
 	pb.UnimplementedSubmitQueueGatewayServer
-	pingController           *controller.PingController
-	landController           *controller.LandController
-	cancelController         *controller.CancelController
-	requestSummaryController *controller.RequestSummaryController
-	listController           *controller.ListController
-	requestHistoryController *controller.RequestHistoryController
+	pingController           controller.PingController
+	landController           controller.LandController
+	cancelController         controller.CancelController
+	requestSummaryController controller.RequestSummaryController
+	listController           controller.ListController
+	requestHistoryController controller.RequestHistoryController
 }
 
 // Ping delegates to the controller
@@ -361,6 +364,7 @@ func run() error {
 			genericerrs.Classifier,
 			mysqlerrs.Classifier,
 		),
+		newConsumerGate(logger),
 	)
 
 	logController := logctrl.NewController(logger.Sugar(), scope, store, topickey.TopicKeyLog, "gateway-log")
@@ -438,4 +442,18 @@ func run() error {
 	}
 
 	return err
+}
+
+// newConsumerGate enables the file-backed consumer gate only when
+// CONSUMER_GATE_DIR is explicitly configured. The file implementation is for
+// E2E and single-host development; normal service deployments use the no-op
+// implementation.
+func newConsumerGate(logger *zap.Logger) consumergate.Gate {
+	dir := os.Getenv("CONSUMER_GATE_DIR")
+	if dir == "" {
+		logger.Info("consumer gate disabled")
+		return consumergatenoop.New()
+	}
+	logger.Info("consumer gate configured", zap.String("dir", dir))
+	return consumergatefile.New(dir, consumergate.DefaultConfig())
 }

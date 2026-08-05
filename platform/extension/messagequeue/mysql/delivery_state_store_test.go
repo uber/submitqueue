@@ -224,12 +224,55 @@ func TestDeliveryStateStore_MarkNacked(t *testing.T) {
 	}
 }
 
+func TestDeliveryStateStore_MarkPostponed(t *testing.T) {
+	tests := []struct {
+		name    string
+		wantErr bool
+	}{
+		{
+			name:    "success",
+			wantErr: false,
+		},
+		{
+			name:    "db error",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, db, mock := newTestDeliveryStateStoreWithMock(t)
+			defer db.Close()
+
+			if tt.wantErr {
+				mock.ExpectExec("INSERT INTO queue_delivery_state").
+					WithArgs("group-1", "orders", "part-1", int64(5), sqlmock.AnyArg()).
+					WillReturnError(assert.AnError)
+			} else {
+				mock.ExpectExec("INSERT INTO queue_delivery_state").
+					WithArgs("group-1", "orders", "part-1", int64(5), sqlmock.AnyArg()).
+					WillReturnResult(sqlmock.NewResult(1, 1))
+			}
+
+			err := store.MarkPostponed(context.Background(), "group-1", "orders", "part-1", 5, 5000)
+
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestDeliveryStateStore_GetDeliveryState(t *testing.T) {
 	tests := []struct {
 		name           string
 		acked          bool
 		invisibleUntil int64
 		retryCount     int
+		postponed      bool
 		noRows         bool
 		wantErr        bool
 		wantFound      bool
@@ -261,6 +304,14 @@ func TestDeliveryStateStore_GetDeliveryState(t *testing.T) {
 			wantFound:      true,
 		},
 		{
+			name:           "postponed message",
+			acked:          false,
+			invisibleUntil: 9999999999999,
+			retryCount:     0,
+			postponed:      true,
+			wantFound:      true,
+		},
+		{
 			name:    "db error",
 			wantErr: true,
 		},
@@ -272,18 +323,18 @@ func TestDeliveryStateStore_GetDeliveryState(t *testing.T) {
 			defer db.Close()
 
 			if tt.wantErr {
-				mock.ExpectQuery("SELECT acked, invisible_until, retry_count FROM queue_delivery_state").
+				mock.ExpectQuery("SELECT acked, invisible_until, retry_count, postponed FROM queue_delivery_state").
 					WithArgs("group-1", "orders", "part-1", int64(5)).
 					WillReturnError(assert.AnError)
 			} else if tt.noRows {
-				mock.ExpectQuery("SELECT acked, invisible_until, retry_count FROM queue_delivery_state").
+				mock.ExpectQuery("SELECT acked, invisible_until, retry_count, postponed FROM queue_delivery_state").
 					WithArgs("group-1", "orders", "part-1", int64(5)).
-					WillReturnRows(sqlmock.NewRows([]string{"acked", "invisible_until", "retry_count"}))
+					WillReturnRows(sqlmock.NewRows([]string{"acked", "invisible_until", "retry_count", "postponed"}))
 			} else {
-				mock.ExpectQuery("SELECT acked, invisible_until, retry_count FROM queue_delivery_state").
+				mock.ExpectQuery("SELECT acked, invisible_until, retry_count, postponed FROM queue_delivery_state").
 					WithArgs("group-1", "orders", "part-1", int64(5)).
-					WillReturnRows(sqlmock.NewRows([]string{"acked", "invisible_until", "retry_count"}).
-						AddRow(tt.acked, tt.invisibleUntil, tt.retryCount))
+					WillReturnRows(sqlmock.NewRows([]string{"acked", "invisible_until", "retry_count", "postponed"}).
+						AddRow(tt.acked, tt.invisibleUntil, tt.retryCount, tt.postponed))
 			}
 
 			state, found, err := store.GetDeliveryState(context.Background(), "group-1", "orders", "part-1", 5)
@@ -297,6 +348,7 @@ func TestDeliveryStateStore_GetDeliveryState(t *testing.T) {
 					assert.Equal(t, tt.acked, state.Acked)
 					assert.Equal(t, tt.invisibleUntil, state.InvisibleUntil)
 					assert.Equal(t, tt.retryCount, state.RetryCount)
+					assert.Equal(t, tt.postponed, state.Postponed)
 				}
 			}
 			assert.NoError(t, mock.ExpectationsWereMet())

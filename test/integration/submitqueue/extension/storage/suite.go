@@ -16,7 +16,9 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"sort"
+	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -84,8 +86,6 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet() {
 	assert.Equal(t, request.Change.URIs, retrieved.Change.URIs)
 	assert.Equal(t, request.LandStrategy, retrieved.LandStrategy)
 	assert.Equal(t, request.Version, retrieved.Version)
-
-	s.log.Logf("CreateAndGet test passed: created and retrieved request %s", request.ID)
 }
 
 // TestStorage_CreateAndGet_StackedPRs tests creating and retrieving a request with stacked PRs
@@ -124,18 +124,17 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet_StackedPRs() {
 	assert.Equal(t, stackedURIs, retrieved.Change.URIs, "stacked PR URIs should be preserved exactly")
 	assert.Equal(t, request.ID, retrieved.ID)
 	assert.Equal(t, request.LandStrategy, retrieved.LandStrategy)
-
-	s.log.Logf("CreateAndGet_StackedPRs test passed: %d stacked URIs", len(stackedURIs))
 }
 
-// TestStorage_UpdateState tests updating request state
-func (s *StorageContractSuite) TestStorage_UpdateState() {
+// TestStorage_Update tests replacing all non-key request fields.
+func (s *StorageContractSuite) TestStorage_Update() {
 	t := s.T()
 	ctx := s.ctx
 
 	request := entity.Request{
 		ID:           "test/update",
 		Queue:        "test-queue",
+		Change:       change.Change{URIs: []string{"github://github.example.com/uber/monorepo/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
 		State:        entity.RequestStateStarted,
 		LandStrategy: mergestrategy.MergeStrategyMerge,
 		Version:      1,
@@ -145,17 +144,19 @@ func (s *StorageContractSuite) TestStorage_UpdateState() {
 	err := s.storage.GetRequestStore().Create(ctx, request)
 	require.NoError(t, err)
 
-	// Update state
-	err = s.storage.GetRequestStore().UpdateState(ctx, request.ID, request.Version, request.Version+1, entity.RequestStateProcessing)
-	require.NoError(t, err, "failed to update request state")
+	updated := request
+	updated.Queue = "updated-queue"
+	updated.Change.URIs = []string{"github://github.example.com/uber/monorepo/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+	updated.LandStrategy = mergestrategy.MergeStrategySquashRebase
+	updated.State = entity.RequestStateProcessing
+	err = s.storage.GetRequestStore().Update(ctx, updated, request.Version, request.Version+1)
+	require.NoError(t, err, "failed to update request")
 
 	// Verify update
 	retrieved, err := s.storage.GetRequestStore().Get(ctx, request.ID)
 	require.NoError(t, err)
-	assert.Equal(t, entity.RequestStateProcessing, retrieved.State)
-	assert.Equal(t, int32(2), retrieved.Version, "version should increment after update")
-
-	s.log.Logf("UpdateState test passed: updated request %s to state %s", request.ID, retrieved.State)
+	updated.Version = request.Version + 1
+	assert.Equal(t, updated, retrieved)
 }
 
 // TestStorage_OptimisticLocking tests version-based optimistic locking
@@ -175,22 +176,167 @@ func (s *StorageContractSuite) TestStorage_OptimisticLocking() {
 	err := s.storage.GetRequestStore().Create(ctx, request)
 	require.NoError(t, err)
 
-	// Update with correct version
-	err = s.storage.GetRequestStore().UpdateState(ctx, request.ID, 1, 2, entity.RequestStateProcessing)
+	// Update with correct version.
+	updated := request
+	updated.Queue = "updated-queue"
+	updated.Change.URIs = []string{"github://github.example.com/uber/monorepo/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+	updated.LandStrategy = mergestrategy.MergeStrategySquashRebase
+	updated.State = entity.RequestStateProcessing
+	err = s.storage.GetRequestStore().Update(ctx, updated, 1, 2)
 	require.NoError(t, err, "update with correct version should succeed")
 
-	// Try to update with stale version (should fail)
-	err = s.storage.GetRequestStore().UpdateState(ctx, request.ID, 1, 2, entity.RequestStateLanded)
+	// Try to replace every field with a stale version.
+	stale := request
+	stale.Queue = "stale-queue"
+	stale.Change.URIs = []string{"github://github.example.com/uber/monorepo/pull/3/cccccccccccccccccccccccccccccccccccccccc"}
+	stale.LandStrategy = mergestrategy.MergeStrategyRebase
+	stale.State = entity.RequestStateLanded
+	err = s.storage.GetRequestStore().Update(ctx, stale, 1, 3)
 	assert.Error(t, err, "update with stale version should fail")
 	assert.ErrorIs(t, err, storage.ErrVersionMismatch, "should return ErrVersionMismatch")
 
-	// Verify state wasn't changed by stale update
+	// Verify no field was changed by the stale update.
 	retrieved, err := s.storage.GetRequestStore().Get(ctx, request.ID)
 	require.NoError(t, err)
-	assert.Equal(t, entity.RequestStateProcessing, retrieved.State, "stale update should not modify state")
+	updated.Version = 2
+	assert.Equal(t, updated, retrieved)
+}
+
+// TestStorage_UpdateChangeURIs tests nil and empty URI replacement semantics.
+func (s *StorageContractSuite) TestStorage_UpdateChangeURIs() {
+	t := s.T()
+	ctx := s.ctx
+
+	tests := []struct {
+		name string
+		uris []string
+	}{
+		{name: "nil", uris: nil},
+		{name: "empty", uris: []string{}},
+	}
+
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := entity.Request{
+				ID:           fmt.Sprintf("test/update-change-uris-%d", i),
+				Queue:        "test-queue",
+				Change:       change.Change{URIs: []string{"github://github.example.com/uber/monorepo/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+				State:        entity.RequestStateStarted,
+				LandStrategy: mergestrategy.MergeStrategyMerge,
+				Version:      1,
+			}
+			require.NoError(t, s.storage.GetRequestStore().Create(ctx, request))
+
+			updated := request
+			updated.Change.URIs = tt.uris
+			require.NoError(t, s.storage.GetRequestStore().Update(ctx, updated, request.Version, request.Version+1))
+
+			retrieved, err := s.storage.GetRequestStore().Get(ctx, request.ID)
+			require.NoError(t, err)
+			assert.Equal(t, tt.uris, retrieved.Change.URIs)
+		})
+	}
+}
+
+// TestStorage_BatchDependentUpdate verifies full updates, collection encoding, and optimistic locking.
+func (s *StorageContractSuite) TestStorage_BatchDependentUpdate() {
+	t := s.T()
+	ctx := s.ctx
+
+	batchDependent := entity.BatchDependent{
+		BatchID:    "test/batch-dependent-update",
+		Dependents: []string{"test/dependent/1"},
+		Version:    1,
+	}
+	require.NoError(t, s.storage.GetBatchDependentStore().Create(ctx, batchDependent))
+
+	nilDependents := batchDependent
+	nilDependents.Dependents = nil
+	require.NoError(t, s.storage.GetBatchDependentStore().Update(ctx, nilDependents, 1, 2))
+
+	retrieved, err := s.storage.GetBatchDependentStore().Get(ctx, batchDependent.BatchID)
+	require.NoError(t, err)
+	assert.Nil(t, retrieved.Dependents)
 	assert.Equal(t, int32(2), retrieved.Version)
 
-	s.log.Logf("Optimistic locking test passed: prevented stale update for request %s", request.ID)
+	emptyDependents := retrieved
+	emptyDependents.Dependents = []string{}
+	require.NoError(t, s.storage.GetBatchDependentStore().Update(ctx, emptyDependents, 2, 3))
+
+	retrieved, err = s.storage.GetBatchDependentStore().Get(ctx, batchDependent.BatchID)
+	require.NoError(t, err)
+	assert.Empty(t, retrieved.Dependents)
+	assert.NotNil(t, retrieved.Dependents)
+	assert.Equal(t, int32(3), retrieved.Version)
+
+	staleUpdate := retrieved
+	staleUpdate.Dependents = []string{"test/dependent/stale"}
+	err = s.storage.GetBatchDependentStore().Update(ctx, staleUpdate, 2, 4)
+	assert.ErrorIs(t, err, storage.ErrVersionMismatch)
+
+	retrieved, err = s.storage.GetBatchDependentStore().Get(ctx, batchDependent.BatchID)
+	require.NoError(t, err)
+	assert.Empty(t, retrieved.Dependents)
+	assert.NotNil(t, retrieved.Dependents)
+	assert.Equal(t, int32(3), retrieved.Version)
+}
+
+func (s *StorageContractSuite) TestStorage_BatchUpdateReplacesAllNonKeyFields() {
+	t := s.T()
+	ctx := s.ctx
+	store := s.storage.GetBatchStore()
+	batch := entity.Batch{
+		ID:           "batch-update/batch/1",
+		Queue:        "batch-update",
+		Contains:     []string{"batch-update/1"},
+		Dependencies: []string{"batch-update/batch/0"},
+		State:        entity.BatchStateCreated,
+		Version:      1,
+	}
+	require.NoError(t, store.Create(ctx, batch))
+
+	nilCollections := batch
+	nilCollections.Queue = "batch-update-nil"
+	nilCollections.Contains = nil
+	nilCollections.Dependencies = nil
+	nilCollections.State = entity.BatchStateSpeculating
+	require.NoError(t, store.Update(ctx, nilCollections, 1, 2))
+
+	got, err := store.Get(ctx, batch.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "batch-update-nil", got.Queue)
+	assert.Nil(t, got.Contains)
+	assert.Nil(t, got.Dependencies)
+	assert.Equal(t, entity.BatchStateSpeculating, got.State)
+	assert.Equal(t, int32(2), got.Version)
+
+	emptyCollections := got
+	emptyCollections.Queue = "batch-update-empty"
+	emptyCollections.Contains = []string{}
+	emptyCollections.Dependencies = []string{}
+	emptyCollections.State = entity.BatchStateMerging
+	require.NoError(t, store.Update(ctx, emptyCollections, 2, 3))
+
+	got, err = store.Get(ctx, batch.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "batch-update-empty", got.Queue)
+	assert.NotNil(t, got.Contains)
+	assert.Empty(t, got.Contains)
+	assert.NotNil(t, got.Dependencies)
+	assert.Empty(t, got.Dependencies)
+	assert.Equal(t, entity.BatchStateMerging, got.State)
+	assert.Equal(t, int32(3), got.Version)
+
+	stale := got
+	stale.Queue = "stale-queue"
+	stale.Contains = []string{"stale/request"}
+	stale.Dependencies = []string{"stale/batch"}
+	stale.State = entity.BatchStateFailed
+	require.ErrorIs(t, store.Update(ctx, stale, 2, 4), storage.ErrVersionMismatch)
+
+	unchanged, err := store.Get(ctx, batch.ID)
+	require.NoError(t, err)
+	assert.Equal(t, got, unchanged)
 }
 
 // TestStorage_NotFound tests getting a non-existent request
@@ -202,8 +348,6 @@ func (s *StorageContractSuite) TestStorage_NotFound() {
 	_, err := s.storage.GetRequestStore().Get(ctx, "test/nonexistent")
 	assert.Error(t, err, "getting non-existent request should return error")
 	assert.ErrorIs(t, err, storage.ErrNotFound, "should return ErrNotFound")
-
-	s.log.Logf("NotFound test passed: correctly returned ErrNotFound")
 }
 
 // TestStorage_CreateDuplicate tests creating a request with duplicate ID
@@ -227,8 +371,6 @@ func (s *StorageContractSuite) TestStorage_CreateDuplicate() {
 	err = s.storage.GetRequestStore().Create(ctx, request)
 	assert.Error(t, err, "creating duplicate request should return error")
 	assert.ErrorIs(t, err, storage.ErrAlreadyExists, "should return ErrAlreadyExists")
-
-	s.log.Logf("CreateDuplicate test passed: prevented duplicate creation")
 }
 
 // changeURI is a representative change URI reused across change-store contract tests.
@@ -411,33 +553,80 @@ func (s *StorageContractSuite) TestStorage_RequestSummaryCreateGetAndCAS() {
 	ctx := s.ctx
 	summary := entity.RequestSummary{
 		RequestID: "summary/1", Queue: "summary-q", ChangeURIs: nil, ReceivedAtMs: 100,
-		Status: entity.RequestStatusAccepted, StatusTimestampMs: 100, Version: 1, Metadata: nil,
+		Status: entity.RequestStatusAccepted, RequestVersion: 1, StatusTimestampMs: 100, Version: 1,
+		LastError: "", Metadata: nil,
 	}
+	store := s.storage.GetRequestSummaryStore()
 
-	require.NoError(t, s.storage.GetRequestSummaryStore().Create(ctx, summary))
-	require.ErrorIs(t, s.storage.GetRequestSummaryStore().Create(ctx, summary), storage.ErrAlreadyExists)
+	require.NoError(t, store.Create(ctx, summary))
+	require.ErrorIs(t, store.Create(ctx, summary), storage.ErrAlreadyExists)
 
-	got, err := s.storage.GetRequestSummaryStore().Get(ctx, summary.RequestID)
+	got, err := store.Get(ctx, summary.RequestID)
 	require.NoError(t, err)
-	assert.NotNil(t, got.ChangeURIs)
-	assert.NotNil(t, got.Metadata)
-	_, err = s.storage.GetRequestSummaryStore().Get(ctx, "summary/missing")
+	assert.Equal(t, []string{}, got.ChangeURIs)
+	assert.Equal(t, map[string]string{}, got.Metadata)
+	_, err = store.Get(ctx, "summary/missing")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
+	got.Queue = "summary-q-updated"
+	got.ChangeURIs = []string{"change/updated"}
+	got.ReceivedAtMs = 200
 	got.Status = entity.RequestStatusLanded
 	got.RequestVersion = 2
-	got.StatusTimestampMs = 200
+	got.StatusTimestampMs = 300
 	got.LastError = "terminal detail"
 	got.Metadata = map[string]string{"source": "test"}
-	require.NoError(t, s.storage.GetRequestSummaryStore().Update(ctx, got, 1, 2))
-	require.ErrorIs(t, s.storage.GetRequestSummaryStore().Update(ctx, got, 1, 3), storage.ErrVersionMismatch)
+	require.NoError(t, store.Update(ctx, got, 1, 2))
 
-	updated, err := s.storage.GetRequestSummaryStore().Get(ctx, summary.RequestID)
+	updated, err := store.Get(ctx, summary.RequestID)
 	require.NoError(t, err)
-	assert.Equal(t, int32(2), updated.Version)
-	assert.Equal(t, entity.RequestStatusLanded, updated.Status)
-	assert.Equal(t, "terminal detail", updated.LastError)
-	assert.Equal(t, map[string]string{"source": "test"}, updated.Metadata)
+	assert.Equal(t, entity.RequestSummary{
+		RequestID:         summary.RequestID,
+		Queue:             "summary-q-updated",
+		ChangeURIs:        []string{"change/updated"},
+		ReceivedAtMs:      200,
+		Status:            entity.RequestStatusLanded,
+		RequestVersion:    2,
+		StatusTimestampMs: 300,
+		Version:           2,
+		LastError:         "terminal detail",
+		Metadata:          map[string]string{"source": "test"},
+	}, updated)
+
+	stale := updated
+	stale.Queue = "stale-q"
+	stale.ChangeURIs = []string{"change/stale"}
+	stale.ReceivedAtMs = 400
+	stale.Status = entity.RequestStatusError
+	stale.RequestVersion = 3
+	stale.StatusTimestampMs = 500
+	stale.LastError = "stale detail"
+	stale.Metadata = map[string]string{"source": "stale"}
+	require.ErrorIs(t, store.Update(ctx, stale, 1, 3), storage.ErrVersionMismatch)
+
+	afterStale, err := store.Get(ctx, summary.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, updated, afterStale)
+
+	updated.ChangeURIs = nil
+	updated.Metadata = nil
+	require.NoError(t, store.Update(ctx, updated, 2, 3))
+
+	normalizedNil, err := store.Get(ctx, summary.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{}, normalizedNil.ChangeURIs)
+	assert.Equal(t, map[string]string{}, normalizedNil.Metadata)
+	assert.Equal(t, int32(3), normalizedNil.Version)
+
+	normalizedNil.ChangeURIs = []string{}
+	normalizedNil.Metadata = map[string]string{}
+	require.NoError(t, store.Update(ctx, normalizedNil, 3, 4))
+
+	normalizedEmpty, err := store.Get(ctx, summary.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{}, normalizedEmpty.ChangeURIs)
+	assert.Equal(t, map[string]string{}, normalizedEmpty.Metadata)
+	assert.Equal(t, int32(4), normalizedEmpty.Version)
 }
 
 func (s *StorageContractSuite) TestStorage_RequestQueueSummaryListAndCursor() {
@@ -462,15 +651,49 @@ func (s *StorageContractSuite) TestStorage_RequestQueueSummaryListAndCursor() {
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
 	got.Status = entity.RequestStatusLanded
+	got.ChangeURIs = []string{"uri/replacement/1", "uri/replacement/2"}
 	got.LastError = "done"
 	got.Metadata = map[string]string{"result": "landed"}
 	require.NoError(t, store.Update(ctx, got, 1, 2))
-	require.ErrorIs(t, store.Update(ctx, got, 1, 3), storage.ErrVersionMismatch)
 	updated, err := store.Get(ctx, got.Queue, got.ReceivedAtMs, got.RequestID)
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), updated.Version)
+	assert.Equal(t, []string{"uri/replacement/1", "uri/replacement/2"}, updated.ChangeURIs)
 	assert.Equal(t, entity.RequestStatusLanded, updated.Status)
 	assert.Equal(t, "done", updated.LastError)
+	assert.Equal(t, map[string]string{"result": "landed"}, updated.Metadata)
+
+	stale := updated
+	stale.ChangeURIs = []string{}
+	stale.Status = entity.RequestStatusError
+	stale.LastError = "stale"
+	stale.Metadata = map[string]string{}
+	require.ErrorIs(t, store.Update(ctx, stale, 1, 3), storage.ErrVersionMismatch)
+	unchanged, err := store.Get(ctx, got.Queue, got.ReceivedAtMs, got.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, updated, unchanged)
+
+	updated.ChangeURIs = nil
+	updated.Metadata = nil
+	require.NoError(t, store.Update(ctx, updated, 2, 3))
+	normalized, err := store.Get(ctx, got.Queue, got.ReceivedAtMs, got.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, int32(3), normalized.Version)
+	assert.NotNil(t, normalized.ChangeURIs)
+	assert.Empty(t, normalized.ChangeURIs)
+	assert.NotNil(t, normalized.Metadata)
+	assert.Empty(t, normalized.Metadata)
+
+	normalized.ChangeURIs = []string{}
+	normalized.Metadata = map[string]string{}
+	require.NoError(t, store.Update(ctx, normalized, 3, 4))
+	emptyCollections, err := store.Get(ctx, got.Queue, got.ReceivedAtMs, got.RequestID)
+	require.NoError(t, err)
+	assert.Equal(t, int32(4), emptyCollections.Version)
+	assert.NotNil(t, emptyCollections.ChangeURIs)
+	assert.Empty(t, emptyCollections.ChangeURIs)
+	assert.NotNil(t, emptyCollections.Metadata)
+	assert.Empty(t, emptyCollections.Metadata)
 
 	firstPage, err := store.List(ctx, storage.RequestQueueSummaryQuery{
 		Queue: "queue-summary", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, Limit: 2,

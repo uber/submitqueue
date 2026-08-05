@@ -41,7 +41,7 @@ func NewRequestStore(db *sql.DB, scope tally.Scope) storage.RequestStore {
 
 // Get retrieves a land request by ID. Returns ErrNotFound if the request is not found.
 func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, retErr error) {
-	op := metrics.Begin(r.scope, "get")
+	op := metrics.Begin(r.scope, "get", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	var req entity.Request
@@ -69,7 +69,7 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 
 // Create creates a new land request. The request must have a unique ID already assigned. Returns ErrAlreadyExists if the request ID already exists.
 func (r *requestStore) Create(ctx context.Context, request entity.Request) (retErr error) {
-	op := metrics.Begin(r.scope, "create")
+	op := metrics.Begin(r.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	// Marshal the change URIs to JSON
@@ -93,36 +93,40 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) (retE
 	return nil
 }
 
-// UpdateState updates the state of a land request to newState and the version to newVersion
-// if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
-// Version arithmetic is owned by the caller; this is a pure conditional write.
-func (r *requestStore) UpdateState(ctx context.Context, id string, oldVersion, newVersion int32, newState entity.RequestState) (retErr error) {
-	op := metrics.Begin(r.scope, "update_state")
+// Update replaces every non-key field of a land request and writes newVersion if the current persisted version matches oldVersion.
+// If versions do not match, returns ErrVersionMismatch. Version arithmetic is owned by the caller; this is a pure conditional write.
+func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVersion, newVersion int32) (retErr error) {
+	op := metrics.Begin(r.scope, "update_state", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	changeURIsJSON, err := json.Marshal(request.Change.URIs)
+	if err != nil {
+		return fmt.Errorf("failed to marshal change URIs for request id=%s: %w", request.ID, err)
+	}
+
 	result, err := r.db.ExecContext(ctx,
-		"UPDATE request SET state = ?, version = ? WHERE id = ? AND version = ?",
-		newState, newVersion, id, oldVersion,
+		"UPDATE request SET queue = ?, change_uri = ?, land_strategy = ?, state = ?, version = ? WHERE id = ? AND version = ?",
+		request.Queue, changeURIsJSON, request.LandStrategy, request.State, newVersion, request.ID, oldVersion,
 	)
 	if err != nil {
 		return fmt.Errorf(
-			"failed to update request state for id=%q oldVersion=%d newVersion=%d newState=%v: %w",
-			id, oldVersion, newVersion, newState, err,
+			"failed to update request for id=%q oldVersion=%d newVersion=%d: %w",
+			request.ID, oldVersion, newVersion, err,
 		)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf(
-			"failed to get rows affected from update for id=%q oldVersion=%d newVersion=%d newState=%v: %w",
-			id, oldVersion, newVersion, newState, err,
+			"failed to get rows affected from update for id=%q oldVersion=%d newVersion=%d: %w",
+			request.ID, oldVersion, newVersion, err,
 		)
 	}
 
 	if rowsAffected != 1 {
 		return fmt.Errorf(
-			"version mismatch for request update: id=%q expected_version=%d newState=%v: %w",
-			id, oldVersion, newState, storage.ErrVersionMismatch,
+			"version mismatch for request update: id=%q expected_version=%d: %w",
+			request.ID, oldVersion, storage.ErrVersionMismatch,
 		)
 	}
 

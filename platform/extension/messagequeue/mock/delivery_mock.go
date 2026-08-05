@@ -139,6 +139,20 @@ func (mr *MockDeliveryMockRecorder) Nack(ctx, requeueAfterMillis any) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Nack", reflect.TypeOf((*MockDelivery)(nil).Nack), ctx, requeueAfterMillis)
 }
 
+// Postpone mocks base method.
+func (m *MockDelivery) Postpone(ctx context.Context, delayMs int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Postpone", ctx, delayMs)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Postpone indicates an expected call of Postpone.
+func (mr *MockDeliveryMockRecorder) Postpone(ctx, delayMs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Postpone", reflect.TypeOf((*MockDelivery)(nil).Postpone), ctx, delayMs)
+}
+
 // ReceivedAt mocks base method.
 func (m *MockDelivery) ReceivedAt() int64 {
 	m.ctrl.T.Helper()

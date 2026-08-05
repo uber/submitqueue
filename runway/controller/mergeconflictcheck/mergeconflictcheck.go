@@ -76,11 +76,8 @@ func NewController(p Params) *Controller {
 
 // Process deserializes the merge request, performs a dry-run merge check, and
 // publishes the result. Returns nil to ack, or an error to nack.
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (retErr error) {
+func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	const opName = "process"
-
-	op := metrics.Begin(c.metricsScope, opName)
-	defer func() { op.Complete(retErr) }()
 
 	msg := delivery.Message()
 
@@ -106,15 +103,24 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) (r
 
 	result, err := m.CheckMergeability(ctx, request)
 	if err != nil {
-		if !errors.Is(err, merger.ErrConflict) {
+		if !merger.IsTerminal(err) {
 			metrics.NamedCounter(c.metricsScope, opName, "check_errors", 1)
 			return fmt.Errorf("failed to check mergeability for %s: %w", request.GetId(), err)
 		}
-		metrics.NamedCounter(c.metricsScope, opName, "merge_conflicts", 1)
-		c.logger.Infow("merge conflict detected",
-			"id", request.GetId(),
-			"queue_name", request.GetQueueName(),
-		)
+		if errors.Is(err, merger.ErrInvalidRequest) {
+			metrics.NamedCounter(c.metricsScope, opName, "invalid_requests", 1)
+			c.logger.Infow("invalid merge request",
+				"id", request.GetId(),
+				"queue_name", request.GetQueueName(),
+				"err", err,
+			)
+		} else {
+			metrics.NamedCounter(c.metricsScope, opName, "merge_conflicts", 1)
+			c.logger.Infow("merge conflict detected",
+				"id", request.GetId(),
+				"queue_name", request.GetQueueName(),
+			)
+		}
 		result = &runwaymq.MergeResult{
 			Id:      request.GetId(),
 			Outcome: runwaypb.Outcome_FAILED,

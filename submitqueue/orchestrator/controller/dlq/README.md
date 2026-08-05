@@ -18,7 +18,7 @@ The recognised error condition is handled explicitly in `dlq.go`:
 
 - `storage.ErrNotFound` → logged at warn and treated as success. The request or batch never persisted; there is nothing to reconcile.
 
-Everything else — including `storage.ErrVersionMismatch` on the CAS — is returned plain and, after the always-retryable processor wrap, redelivered until it either succeeds or hits the attempt cap. There is no point in pre-classifying retryability at this layer when the processor forces every non-nil error retryable anyway.
+Everything else — including `storage.ErrVersionMismatch` on the CAS — is returned without controller-level classification and redelivered until it either succeeds or hits the attempt cap. `ErrVersionMismatch` is already retryable at its declaration, while the always-retryable processor makes every other non-nil reconciliation error retryable too.
 
 ## Request log entries are published to Gateway
 
@@ -31,7 +31,7 @@ Two controller shapes cover the eleven primary pipeline topics:
 | Controller | Topics | Decoded ID | Terminal state |
 |---|---|---|---|
 | `NewDLQRequestController` | `start`, `validate`, `batch`, `cancel`, `log` | `RequestID` | `RequestStateError` |
-| `NewDLQBatchController` | `score`, `speculate`, `build`, `merge`, `conclude` | `BatchID` | `BatchStateFailed` + fan-out to member requests as `RequestStateError` |
+| `NewDLQBatchController` | `speculate`, `build`, `merge`, `conclude` | `BatchID` | `BatchStateFailed` + fan-out to member requests as `RequestStateError` |
 
 `buildsignal` carries a `Build` payload and has its own small dedicated controller. The split exists because the DLQ message payload shape mirrors the primary topic's payload shape (the queue framework preserves bytes verbatim under the `_dlq` topic name), so the decoder is what changes per topic — not the reconciliation step. The package-level `RequestIDDecoder` interface plus `DecodeLandRequestID` / `DecodeCancelRequestID` / `DecodeRequestID` cover the three payload shapes used by request-scoped topics.
 

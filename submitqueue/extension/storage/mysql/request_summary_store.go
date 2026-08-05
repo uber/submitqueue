@@ -40,12 +40,12 @@ func NewRequestSummaryStore(db *sql.DB, scope tally.Scope) storage.RequestSummar
 }
 
 func (s *requestSummaryStore) Create(ctx context.Context, summary entity.RequestSummary) (retErr error) {
-	op := metrics.Begin(s.scope, "create")
+	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	changeURIsJSON, metadataJSON, err := marshalSummaryJSON(summary.ChangeURIs, summary.Metadata)
 	if err != nil {
-		return fmt.Errorf("failed to marshal request summary request_id=%s: %w", summary.RequestID, err)
+		return fmt.Errorf("failed to marshal request summary metadata request_id=%s: %w", summary.RequestID, err)
 	}
 
 	_, err = s.db.ExecContext(ctx, `
@@ -70,7 +70,7 @@ func (s *requestSummaryStore) Create(ctx context.Context, summary entity.Request
 }
 
 func (s *requestSummaryStore) Get(ctx context.Context, requestID string) (ret entity.RequestSummary, retErr error) {
-	op := metrics.Begin(s.scope, "get")
+	op := metrics.Begin(s.scope, "get", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	var changeURIsJSON []byte
@@ -100,22 +100,23 @@ func (s *requestSummaryStore) Get(ctx context.Context, requestID string) (ret en
 }
 
 func (s *requestSummaryStore) Update(ctx context.Context, summary entity.RequestSummary, oldVersion, newVersion int32) (retErr error) {
-	op := metrics.Begin(s.scope, "update")
+	op := metrics.Begin(s.scope, "update", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
-	metadata := normalizeMetadata(summary.Metadata)
-	metadataJSON, err := json.Marshal(metadata)
+	changeURIsJSON, metadataJSON, err := marshalSummaryJSON(summary.ChangeURIs, summary.Metadata)
 	if err != nil {
-		return fmt.Errorf("failed to marshal request summary metadata request_id=%s: %w", summary.RequestID, err)
+		return fmt.Errorf("failed to marshal request summary request_id=%s: %w", summary.RequestID, err)
 	}
 
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE request_summary
-		SET status = ?, request_version = ?, status_timestamp_ms = ?,
-			version = ?, last_error = ?, metadata = ?
+		SET queue = ?, change_uris = ?, received_at_ms = ?, status = ?,
+			request_version = ?, status_timestamp_ms = ?, version = ?,
+			last_error = ?, metadata = ?
 		WHERE request_id = ? AND version = ?`,
-		summary.Status, summary.RequestVersion, summary.StatusTimestampMs,
-		newVersion, summary.LastError, metadataJSON,
+		summary.Queue, changeURIsJSON, summary.ReceivedAtMs, summary.Status,
+		summary.RequestVersion, summary.StatusTimestampMs, newVersion,
+		summary.LastError, metadataJSON,
 		summary.RequestID, oldVersion,
 	)
 	if err != nil {

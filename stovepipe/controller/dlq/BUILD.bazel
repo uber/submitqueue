@@ -26,7 +26,7 @@ go_test(
     deps = [
         "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
-        "//platform/extension/messagequeue/mock:go_default_library",
+        "//platform/consumer/mock:go_default_library",
         "//stovepipe/core/messagequeue:go_default_library",
         "//stovepipe/entity:go_default_library",
         "//stovepipe/extension/storage:go_default_library",

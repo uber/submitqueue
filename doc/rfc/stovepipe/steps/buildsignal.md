@@ -1,8 +1,8 @@
 # Buildsignal stage
 
-`buildsignal` polls the build-runner until a build reaches a terminal state, records the status, and — once the build is terminal — publishes the build id to `record`. See [workflow.md](doc/rfc/stovepipe/workflow.md) for where it sits in the pipeline and [build.md](doc/rfc/stovepipe/steps/build.md) for how the build it polls was triggered.
+`buildsignal` polls the build-runner until a build reaches a terminal state, records the status, and — once the build is terminal — releases the queue's build slot, projects the outcome onto the `Request`, and publishes the **request id** to `record`. See [workflow.md](doc/rfc/stovepipe/workflow.md) for where it sits in the pipeline and [build.md](doc/rfc/stovepipe/steps/build.md) for how the build it polls was triggered.
 
-It handles only the poll loop: it does not decide build strategy, write greenness, or map targets to projects — those are `process`'s, `record`'s, and `analyze`'s jobs.
+It handles only the poll loop: it does not decide build strategy, write greenness, or map targets to projects — those are `process`'s, `record`'s, and `analyze`'s jobs. It reports the *fact* (this request's build ended succeeded, failed, or cancelled); `record` derives what that fact *means* for greenness.
 
 `buildsignal` is structurally the same controller as `submitqueue/orchestrator/controller/buildsignal/buildsignal.go`, and the "Flow", "Status delivery", and "Polling primitive" sections of [doc/rfc/submitqueue/build-runner.md](doc/rfc/submitqueue/build-runner.md) are the reference rationale it reuses directly. The entity and storage shapes it depends on are defined in [build.md](doc/rfc/stovepipe/steps/build.md#entity-and-storage-additions-needed); this doc introduces none of its own.
 
@@ -10,9 +10,13 @@ It handles only the poll loop: it does not decide build strategy, write greennes
 
 `buildsignal` consumes a build id, published by `build` — once per phase, since Phase 1 (whole-repo) and Phase 2 (per-project) each run their own `build` → `buildsignal` cycle against builds tied to the same `Request` (see [workflow.md](doc/rfc/stovepipe/workflow.md#workflow)).
 
-Its logic does not branch on phase: it loads the `Build`, polls it toward terminal, persists the result, and publishes the build id onward to `record`. What differs between phases is what `record` does with that publish (whole-repo vs. per-project greenness) — not anything `buildsignal` decides.
+Its logic does not branch on phase: it loads the `Build`, polls it toward terminal, persists the result, and publishes the request id onward to `record`. What differs between phases is what `record` does with that publish (whole-repo vs. per-project greenness) — not anything `buildsignal` decides.
 
-`buildsignal` is the sole writer of `Build.Status`/`Build.Version` after `build` creates the row (see [build.md](doc/rfc/stovepipe/steps/build.md#input-partitioning-and-the-single-writer-property)); it only reads `Request` via `RequestStore.Get` (for `R.Queue`, to resolve the build-runner) and never writes it.
+`buildsignal` is the sole writer of `Build.Status`/`Build.Version` after `build` creates the row (see [build.md](doc/rfc/stovepipe/steps/build.md#input-partitioning-and-the-single-writer-property)). It reads `Request` via `RequestStore.Get` (for `R.Queue`, to resolve the build-runner) and writes it exactly once, at the terminal transition, to record the build's outcome — the one `Request.State` write outside `process` and the DLQ reconciler.
+
+Its early-exit guard is deliberately narrower than `State.IsTerminal()`: it proceeds when the request is `processing` **or** already carries a build outcome. The second case matters because a redelivery after the outcome was stamped but before the `record` publish landed must re-publish rather than drop the signal; everything it re-runs is a no-op (the status is unchanged, the outcome is already recorded, the slot is not released twice) and the `record` publish is idempotent.
+
+The states the guard actually rejects are terminal-without-an-outcome — today `superseded` alone, which `process` sets only from `accepted`, so it cannot reach the poll loop at all. The guard is kept rather than dropped because the slot release in step 7a is conditioned on *not* already having an outcome, so a superseded request arriving here would decrement a slot that superseding never claimed.
 
 ## Algorithm
 
@@ -20,17 +24,20 @@ For a delivery carrying build id `B`:
 
 ```
 1. Load Build B from the build store.
-   - ErrNotFound       -> retryable (build's Create not visible yet; redelivery converges).
+   - ErrNotFound       -> return raw; non-retryable (storage is read-after-write consistent; see [storage README](stovepipe/extension/storage/README.md)).
    - other store error -> return raw; classifier decides.
 
 2. Load Request R = store.Get(Build.RequestID) — needed for R.Queue to resolve the build-runner.
-   - ErrNotFound -> retryable, like step 1: the Build's existence proves the Request write is older,
-     so a miss here is almost certainly a lagging read; redelivery converges. A genuinely orphaned
-     Build (integrity fault) still dead-letters at MaxAttempts — the same terminal outcome, without
-     rejecting straight to DLQ on a stale read.
+   - ErrNotFound -> return raw; non-retryable, same as step 1 — the Build's existence proves the
+     Request write is already committed, so a miss here is a storage defect, not a lagging read.
 
-3. If R.State is terminal (superseded / recorded-green / recorded-not-green): ack and return.
-   - the Request is done (record already ran, or the head was superseded); stop polling.
+3. If R.State is neither processing nor already an outcome: ack and return.
+   - a request reaches the poll loop only after process admitted it, so it is processing —
+     or already carries this build's outcome on a redelivery, which falls through so the
+     signal is re-published to record instead of dropped.
+   - the only other terminal-without-an-outcome state is superseded, and process supersedes
+     solely from accepted, so it cannot occur here. Guarded anyway: step 7a would otherwise
+     release a build slot the request never claimed, since superseding consumes none.
    - mirrors submitqueue's halted-batch short-circuit in buildsignal.go.
 
 4. Resolve the build-runner: buildRunner = Factory.For(Config{QueueName: R.Queue}).
@@ -49,26 +56,42 @@ For a delivery carrying build id `B`:
      continue with the STORED status as authoritative (see Edge cases).
    - otherwise persist via BuildStore.Update(ctx, Build{...Status: status}, oldVersion, newVersion):
      - newVersion = Build.Version + 1; assign Build.Version = newVersion only on success.
-     - ErrVersionMismatch -> retryable (a concurrent writer moved the row; reload and re-check).
+     - ErrVersionMismatch -> return with its declaration-level retryable classification (a concurrent writer moved the row; reload and re-check).
      - with the write-once rule, accepted -> running -> {succeeded|failed|cancelled} is monotonic
        by mechanism, not by assumption about the backend.
 
-7. If the stored status is terminal: publish B (the build key, Build.ID) to the record topic,
-   partitioned by request id; ack, return. No re-publish to buildsignal.
-   - record loads the Build directly by this key (Build->Request gives it R for the per-Queue writes),
-     so no reverse lookup from Request to its builds is ever needed.
-   - a redelivery republishes the same terminal signal; record is idempotent.
-   - publish failure -> return raw (non-retryable); status is persisted, operational republish recovers.
+7. If the stored status is terminal, and R does not already carry an outcome:
+   a. Release the queue's build slot: CAS-decrement Queue.in_flight_count, clamped at zero.
+      - failure here aborts the step: R must not go terminal while still holding a slot.
+   b. CAS R from processing to the outcome the stored status projects onto it:
+      succeeded -> succeeded, failed -> failed, cancelled -> cancelled. First writer wins.
+   Then publish R.ID to the record topic, partitioned by request id; ack, return.
+   No re-publish to buildsignal.
+   - record loads the Request directly by this key and derives greenness from its outcome,
+     so it never reaches a Build and no reverse lookup from Request to its builds is needed.
+   - the message id is the request id, so a redelivery republishing the same terminal signal
+     dedups into the original message; record is idempotent regardless.
+   - publish failure -> return raw (non-retryable); the outcome is persisted, operational
+     republish recovers.
 
 8. Else PublishAfter(B -> buildsignal, delayMs), partitioned by build id:
    - delayMs = pollDelay(status): shorter while running, longer while accepted.
    - a fresh message (retry_count resets to 0), not a nack — polling is not failure.
+   - the message id must be unique per tick. The queue dedups on (topic, partition_key, id)
+     and the delivery being processed is still un-acked, so its row is present: reusing B as
+     the message id makes every re-poll collide with the message that scheduled it and be
+     silently discarded, ending the poll loop after one tick.
+   - publish failure -> return raw (non-retryable), same posture as step 7.
    - ack.
 ```
 
+**Why the slot is released before the outcome write, and why a failed release aborts it**: `Queue` and `Request` are separate entities with no cross-entity transaction, so the ordering picks which crash failure mode we accept. Both rules serve one invariant — *the request must not go terminal while still holding a slot* — because a terminal request is skipped by redelivery and by the DLQ reconciler alike, so nothing would ever decrement it. Failing this way leaves the request non-terminal: redelivery re-runs both steps and decrements again, transiently over-admitting by one slot until the zero clamp reconverges. Over-admission is the failure mode this pipeline already prefers, for the same reason and in the same words as the DLQ reconciler (see [process.md](doc/rfc/stovepipe/steps/process.md#in_flight_count-integrity)).
+
+**Why `buildsignal` releases the slot rather than `record`**: the gate `process` claims is a *build* slot — it exists to bound concurrent builds per Queue — and once the build is terminal the build is over. Releasing here also keeps the invariant *a terminal `Request` has already released its slot*, which is what makes the DLQ reconciler's early-return on terminal requests safe.
+
 **Why `record` hears only terminal signals**: `record` has no non-terminal work — by its own contract a non-terminal signal would be a pure no-op — and step 7 already branches on terminality to decide whether to keep polling, so gating the publish costs nothing and spares `record` a no-op delivery on every poll tick of every running build. Crash-safety is unaffected: a crash between the terminal `Update` and the publish redelivers the message; step 5 re-polls (the runner reports the same terminal status), step 6 no-ops, step 7 publishes. This is a deliberate divergence from SubmitQueue, whose buildsignal republishes to `speculate` on every tick — sound there because speculate is a state machine that may act on any signal; stovepipe has no such consumer.
 
-**Why step 6 guards on status and makes terminal write-once**: an unchanged status skips the CAS write entirely, so a long build being polled every couple of seconds doesn't churn `Build.Version` on every tick — the version only advances on a real state transition. The write-once rule exists because CAS alone cannot provide it: optimistic locking defends against *concurrent* writers, but a later delivery that polls a flaky backend and sees a different terminal status would CAS cleanly against the current version and overwrite (see Edge cases). A given `Build` has a single poll partition (see [Partitioning](doc/rfc/stovepipe/steps/build.md#partitioning)), so the only writer racing the CAS is a redelivery of the same message (e.g. after a lapsed visibility lease); `ErrVersionMismatch` there is handled as retryable and converges.
+**Why step 6 guards on status and makes terminal write-once**: an unchanged status skips the CAS write entirely, so a long build being polled every couple of seconds doesn't churn `Build.Version` on every tick — the version only advances on a real state transition. The write-once rule exists because CAS alone cannot provide it: optimistic locking defends against *concurrent* writers, but a later delivery that polls a flaky backend and sees a different terminal status would CAS cleanly against the current version and overwrite (see Edge cases). A given `Build` has a single poll partition (see [Partitioning](doc/rfc/stovepipe/steps/build.md#partitioning)), so the only writer racing the CAS is a redelivery of the same message (e.g. after a lapsed visibility lease); `ErrVersionMismatch` carries a retryable classification and converges on redelivery.
 
 ## Status: shaped like SubmitQueue's, not shared code
 
@@ -98,24 +121,23 @@ Package-level `var`s (not `const`s) so tests can shorten them; the server always
 
 ## Error classification
 
-Per `platform/errs`'s non-retryable-by-default rule (see [platform/errs/README.md](platform/errs/README.md)), a plain returned error is already non-retryable and rejects straight to DLQ, where the fail-closed path forces a conservative not-green so a Request never wedges its Queue's slot ([workflow.md](doc/rfc/stovepipe/workflow.md#fail-closed-on-unprocessable-work)). So this section documents only the departures from that default, not every failure the algorithm can hit:
+Per `platform/errs`'s non-retryable-by-default rule (see [platform/errs/README.md](platform/errs/README.md)), a plain returned error is already non-retryable and rejects straight to DLQ, where the fail-closed path forces a conservative terminal `failed` so a Request never wedges its Queue's slot ([workflow.md](doc/rfc/stovepipe/workflow.md#fail-closed-on-unprocessable-work)). So this section documents only the departures from that default, not every failure the algorithm can hit:
 
 | Failure | Disposition | Why |
 |---|---|---|
-| `Build` not found | retryable (`errs.NewRetryableError`) | `build`'s `Create` not visible yet; redelivery converges. |
-| `Request` not found | retryable (`errs.NewRetryableError`) | The Build's existence proves the Request write is older, so a miss is a stale read; a genuine orphan still dead-letters at `MaxAttempts`. |
 | `Status` call | raw error; classifier decides | Deliberately left open rather than fixed either way — runner timeout/connection is transient, "runner not deployed for this queue" is not, and only a backend classifier can tell them apart. |
-| `Update` CAS conflict (`ErrVersionMismatch`) | retryable | A concurrent (redelivered) writer moved the row; reload and re-check converges. |
-| `PublishAfter` re-poll | retryable | The poll heartbeat; it runs only after status/persist/record all succeeded, so a transient enqueue blip is worth replaying to `MaxAttempts` before dead-lettering. |
+| `Update` CAS conflict (`ErrVersionMismatch`) | declaration-level retryable | A concurrent (redelivered) writer moved the row; reload and re-check converges. |
 
-Everything else — factory lookup, an `Update` store error other than a CAS conflict, and the publish to `record` — is returned raw with no override, because the default is already correct: a queue with no registered runner is a config error, and storage/queue failures dead-letter and let DLQ reconciliation recover.
+`Build`/`Request` not found (`storage.ErrNotFound`) are **not** in this table: storage is required to be read-after-write consistent (see [storage README](stovepipe/extension/storage/README.md)), so a miss here is already the correct default (non-retryable, straight to DLQ) rather than a departure worth overriding.
+
+Everything else — factory lookup, an `Update` store error other than a CAS conflict, and both publishes — is returned raw with no override, because the default is already correct: a queue with no registered runner is a config error, and storage/queue failures dead-letter and let DLQ reconciliation recover. The `PublishAfter` re-poll is included in that: per `platform/errs` rule 4 a failed queue publish is not wrapped retryable just because replaying it is convenient, which would turn a permanent enqueue failure into an infinite retry instead of dead-lettering.
 
 ## Idempotency
 
 Every branch is safe under at-least-once redelivery:
 
-- **Build not found** — retryable; converges as the row becomes visible.
-- **Status already persisted** — a redelivery re-runs the whole algorithm from step 1, including a redundant `Status` poll (harmless — the runner reports the same thing); step 6 no-ops on the unchanged status, and the delivery proceeds to re-schedule the poll (non-terminal) or republish to `record` (terminal, idempotent). No corruption.
+- **Build not found** — non-retryable; storage's read-after-write guarantee means a miss here is a storage defect, not a lag condition to retry through.
+- **Status already persisted** — a redelivery re-runs the whole algorithm from step 1, including a redundant `Status` poll (harmless — the runner reports the same thing); step 6 no-ops on the unchanged status, and the delivery proceeds to re-schedule the poll (non-terminal) or republish the request id to `record` (terminal, idempotent). No corruption.
 - **Terminal already published** — a redelivery reloads, re-polls, no-ops at step 6, republishes the same terminal signal to `record` (idempotent), and acks. Harmless.
 - **`PublishAfter` failed, then retried** — the nacked delivery re-runs from step 1; there is no way to resume mid-algorithm, so it re-polls the runner too, but the row already carries the non-terminal status and step 6 no-ops. Only the final enqueue does new work.
 
@@ -128,10 +150,10 @@ The window to guard is between persisting status (step 6) and ack (steps 7–8);
 
 ## Fail-closed interaction
 
-A build that never reaches terminal `Status` — runner outage, a build the runner lost — must not wedge its `Request` forever, since callers gate deployments on greenness reaching a recorded terminal state. `buildsignal` does not implement the forcing function: per [workflow.md](doc/rfc/stovepipe/workflow.md#fail-closed-on-unprocessable-work) and the `in_flight_count` slot lifecycle in [process.md](doc/rfc/stovepipe/steps/process.md#concurrency-lifecycle), a `Request` stuck at `buildsignal` past `MaxAttempts` dead-letters, and the DLQ reconciler forces a conservative not-green and releases the Queue's slot. This is the same posture SubmitQueue's build/buildsignal pair relies on: terminal status is what releases the slot and lets validation progress.
+A build that never reaches terminal `Status` — runner outage, a build the runner lost — must not wedge its `Request` forever, since callers gate deployments on greenness reaching a recorded terminal state. `buildsignal` does not implement the forcing function: per [workflow.md](doc/rfc/stovepipe/workflow.md#fail-closed-on-unprocessable-work) and the `in_flight_count` slot lifecycle in [process.md](doc/rfc/stovepipe/steps/process.md#concurrency-lifecycle), a `Request` stuck at `buildsignal` past `MaxAttempts` dead-letters, and the DLQ reconciler forces a conservative terminal `failed` and releases the Queue's slot. This is the same posture SubmitQueue's build/buildsignal pair relies on: terminal status is what releases the slot and lets validation progress.
 
 One boundary of that posture is worth stating: the `MaxAttempts` path fires only when polls *fail*. A runner that keeps answering a healthy non-terminal status forever — a hung build on a backend with no timeout of its own — never errors, so the `PublishAfter` chain (which resets `retry_count` by design) re-polls indefinitely and nothing dead-letters; SubmitQueue's poll loop shares this property. Bounding it requires a poll deadline — a `max_validation_ms` past which `buildsignal` treats the build as failed and lets the normal terminal path run — which pairs naturally with the lease idea [process.md](doc/rfc/stovepipe/steps/process.md#per-queue-concurrency-gate) floats for `in_flight_count`. Deferred with it; until then a too-old non-terminal `Build` is an operational alert, not a self-healing path.
 
 ## Entity, storage, and queue additions
 
-No additions beyond [build.md](doc/rfc/stovepipe/steps/build.md#entity-and-storage-additions-needed): `buildsignal` calls `BuildStore.Get`/`Update` and `RequestStore.Get` against the `Build`/`Request` shapes defined there — `Build.ID` being the runner-assigned id it hands straight back to `Status` — and consumes/re-produces the `BuildSignal` message on `TopicKeyBuildSignal` introduced there. The message it publishes to `record`, and the `record` topic key itself, are owned by the `record` stage and land with `record.md`; `buildsignal` only needs that the **build id** (the build key, so `record` loads the `Build` directly) reaches the record topic once the build is terminal, partitioned by request id.
+No additions beyond [build.md](doc/rfc/stovepipe/steps/build.md#entity-and-storage-additions-needed): `buildsignal` calls `BuildStore.Get`/`Update` and `RequestStore.Get`/`Update` against the `Build`/`Request` shapes defined there — `Build.ID` being the runner-assigned id it hands straight back to `Status` — plus `QueueStore.Get`/`Update` to release the build slot, and consumes/re-produces the `BuildSignal` message on `TopicKeyBuildSignal` introduced there. `Request.State` gains the three build outcomes (`succeeded`, `failed`, `cancelled`), all terminal. The message it publishes to `record`, and the `record` topic key itself, are owned by the `record` stage and land with `record.md`; `buildsignal` only needs that the **request id** reaches the record topic once the build is terminal, partitioned by request id.

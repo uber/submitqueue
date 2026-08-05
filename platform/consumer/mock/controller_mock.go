@@ -84,6 +84,18 @@ func (mr *MockDeliveryMockRecorder) ExtendVisibilityTimeout(ctx, durationMillis 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtendVisibilityTimeout", reflect.TypeOf((*MockDelivery)(nil).ExtendVisibilityTimeout), ctx, durationMillis)
 }
 
+// Hold mocks base method.
+func (m *MockDelivery) Hold(delayMs int64) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "Hold", delayMs)
+}
+
+// Hold indicates an expected call of Hold.
+func (mr *MockDeliveryMockRecorder) Hold(delayMs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Hold", reflect.TypeOf((*MockDelivery)(nil).Hold), delayMs)
+}
+
 // Message mocks base method.
 func (m *MockDelivery) Message() messagequeue.Message {
 	m.ctrl.T.Helper()

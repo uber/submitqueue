@@ -26,6 +26,7 @@ import (
 	"github.com/uber/submitqueue/platform/base/mergestrategy"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
@@ -78,12 +79,12 @@ func newMockStorage(ctrl *gomock.Controller) *storagemock.MockStorage {
 }
 
 // makeDelivery builds a MockDelivery wrapping a serialized LandRequest.
-func makeDelivery(t *testing.T, ctrl *gomock.Controller, lr entity.LandRequest) *queuemock.MockDelivery {
+func makeDelivery(t *testing.T, ctrl *gomock.Controller, lr entity.LandRequest) *consumermock.MockDelivery {
 	payload, err := lr.ToBytes()
 	require.NoError(t, err)
 
 	msg := entityqueue.NewMessage(lr.ID, payload, lr.Queue, nil)
-	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 	return delivery
@@ -119,7 +120,7 @@ func TestController_Process_InvalidJSON(t *testing.T) {
 
 	invalidPayload := []byte(`{"invalid": json"}`)
 	msg := entityqueue.NewMessage("invalid-msg", invalidPayload, "partition1", nil)
-	delivery := queuemock.NewMockDelivery(ctrl)
+	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()
 	delivery.EXPECT().Attempt().Return(1).AnyTimes()
 

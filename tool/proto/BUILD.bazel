@@ -70,6 +70,7 @@ go_proto_generated_files(
         "//stovepipe/core/messagequeue/proto:build.proto",
         "//stovepipe/core/messagequeue/proto:buildsignal.proto",
         "//stovepipe/core/messagequeue/proto:process.proto",
+        "//stovepipe/core/messagequeue/proto:record.proto",
     ],
     gen_services = False,
     imports = [
