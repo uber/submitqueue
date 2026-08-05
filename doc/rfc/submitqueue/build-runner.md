@@ -10,7 +10,7 @@ The build stage needs a vendor-agnostic abstraction for talking to a Build Runne
 
 ## Flow
 
-`build` triggers the runner and hands the `buildID` to the `buildsignal` poll loop. The loop calls `Status` on its own partition per build until the build is terminal: terminal results wake the batch state machine via `speculate`; non-terminal results re-enqueue the same `buildID` after a delay (`PublishAfter`). A webhook-capable backend can publish a status message into the same queue — the consumer cannot tell a push from a poll.
+`build` triggers the runner and hands the `buildID` to the `buildsignal` poll loop. The loop calls `Status` on its own partition per build until the build is terminal: terminal results wake the batch state machine via `speculate`; non-terminal results hold the delivery, so the same message redelivers after a delay. A webhook-capable backend can publish a status message into the same queue — the consumer cannot tell a push from a poll.
 
 ```
    ┌────────────────────────────────────────────────────┐
@@ -29,8 +29,8 @@ The build stage needs a vendor-agnostic abstraction for talking to a Build Runne
            ▼                                    ▼
    ┌───────────────┐          ┌──────────────────────────────────┐
    │ terminal      │          │ non-terminal                     │
-   │   → speculate │          │   → PublishAfter(buildID, delay) │
-   │   re-evaluate │          │   re-enqueues to buildsignal     │
+   │   → speculate │          │   → hold(delay)                  │
+   │   re-evaluate │          │   same message redelivers        │
    └───────────────┘          └──────────────────────────────────┘
 ```
 
@@ -88,20 +88,13 @@ This makes polling behave like everything else in the orchestrator:
 - **Independent partitions** — slow polls on one build don't block others.
 - **Restart-safe** — pending polls live in the queue, not in memory.
 - **Retry-native** — a `Status` call that errors out is `Nack`'d and redelivered with the queue's normal backoff, separate from polling cadence.
-- **Tunable cadence** — re-publish delay can vary by status (longer for `Accepted`, shorter for `Running`).
+- **Tunable cadence** — the hold delay can vary by status (longer for `Accepted`, shorter for `Running`).
 
-### Polling primitive: `PublishAfter`, not `Nack`
+### Polling primitive: hold, not `Nack`
 
-Postponing the next poll needs a "publish-with-delay" verb. Two candidates exist in or near the queue extension:
+Postponing the next poll needs a "check back later" verb, and the consumer framework provides one: the controller records a hold on its delivery and returns success, and the framework postpones the message — it redelivers after the delay, and the redelivery is exempt from `retry_count` accounting (see [consumer-hold.md](../consumer-hold.md)). `Nack` remains the primitive for genuine `Status` failures, with its normal bounded-retry-then-DLQ behaviour. The two signals stay separate: `retry_count` means "consecutive failures," never "polls so far."
 
-- **`Publisher.PublishAfter(topic, msg, delayMs)`** — a new primitive. A fresh message, made visible only after `delayMs`. The SQL-backed queue already has the column needed (`invisible_until`); `PublishAfter` is `Publish` with a non-zero delay.
-- **`Delivery.Nack(requeueAfterMs)`** — the existing primitive. Re-uses the same message, sets it invisible until `now + delay`, increments `retry_count`.
-
-Both deliver the same surface behaviour: one message per build at a time, redelivered after the chosen delay. The difference is what `retry_count` means.
-
-`Nack` is "this delivery failed, try again," and `retry_count` feeds `MaxAttempts` and DLQ. Using it for "build not yet done" overloads that counter — every poll bumps a number that is supposed to flag problems.
-
-`PublishAfter` is "postpone this work." Each poll cycle is a fresh message with `retry_count = 0`. `Nack` stays available for true `Status` failures with its normal bounded-retry-then-DLQ behaviour. The two signals stay separate.
+An earlier revision of this design reached the same separation with `Publisher.PublishAfter` — ack the delivery, publish a fresh copy of the same message with delayed visibility. Hold supersedes it: no publisher in the poll loop, no fresh message ids to mint around the queue's publish dedup, no new log row per tick, and the loop's continuation no longer depends on an enqueue succeeding (a failed postpone write lapses into a normal visibility-timeout redelivery).
 
 **Why not `Nack` with `MaxAttempts = ∞`** (one message per build, just keep cycling)? The mechanism works. Three things break:
 
@@ -109,9 +102,7 @@ Both deliver the same surface behaviour: one message per build at a time, redeli
 - **Conflated metric.** `retry_count` is the obvious dashboard signal for "this consumer is having trouble." With infinite-retry polling, a `retry_count` of 500 might mean "build has been running 30 minutes" *or* "Status has errored 500 times" — operationally indistinguishable.
 - **Visibility-timeout coupling.** If the consumer crashes mid-poll before its `Nack`, the queue's visibility timeout redelivers the message and bumps `retry_count`. One number ends up counting legitimate polls, real errors, *and* consumer crashes — three signals fused.
 
-`PublishAfter` costs one new queue primitive. It buys back the queue's diagnostic semantics.
-
-Trade-off acknowledged: `PublishAfter` writes more — Ack deletes the old message, PublishAfter inserts a new one — vs `Nack` updating one row in place. At minute cadence the difference is noise; at second cadence it is real but small.
+Hold keeps all three signals separate for free: a deliberate postpone resets the failure streak, so `retry_count` counts only consecutive genuine failures.
 
 ### Push, when a backend supports it
 

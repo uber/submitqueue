@@ -36,8 +36,8 @@ import (
 )
 
 // testHarness wires a Controller against mock queues for two topic keys
-// (buildsignal and speculate) so individual tests can assert which
-// Publish / PublishAfter happens.
+// (buildsignal and speculate) so individual tests can assert which publish
+// or hold happens.
 type testHarness struct {
 	controller   *Controller
 	br           *buildrunnermock.MockBuildRunner
@@ -93,8 +93,9 @@ func newTestHarness(t *testing.T, ctrl *gomock.Controller) *testHarness {
 
 // buildDelivery builds a delivery whose payload is the build's ID, matching
 // the on-queue contract: only the identifier travels, the consumer loads the
-// full Build from storage.
-func buildDelivery(t *testing.T, ctrl *gomock.Controller, b entity.Build) consumer.Delivery {
+// full Build from storage. Tests that expect a hold add the expectation on
+// the returned mock.
+func buildDelivery(t *testing.T, ctrl *gomock.Controller, b entity.Build) *consumermock.MockDelivery {
 	t.Helper()
 	payload, err := entity.BuildID{ID: b.ID}.ToBytes()
 	require.NoError(t, err)
@@ -117,8 +118,8 @@ func TestController_Identity(t *testing.T) {
 }
 
 // TestController_Process_Terminal verifies a terminal poll persists the
-// status, publishes the batch ID to speculate, and does NOT re-publish to
-// buildsignal.
+// status, publishes the batch ID to speculate, and does NOT hold the
+// delivery for another poll.
 func TestController_Process_Terminal(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -150,7 +151,7 @@ func TestController_Process_Terminal(t *testing.T) {
 					assert.Equal(t, build.BatchID, bid.ID)
 					return nil
 				}).Times(1)
-			// No PublishAfter expected on terminal.
+			// No Hold expected on terminal — any Hold call fails the test.
 
 			err := h.controller.Process(context.Background(), buildDelivery(t, ctrl, build))
 			require.NoError(t, err)
@@ -159,8 +160,8 @@ func TestController_Process_Terminal(t *testing.T) {
 }
 
 // TestController_Process_NonTerminal verifies a non-terminal poll persists
-// the status, publishes to speculate, AND re-publishes to buildsignal via
-// PublishAfter with the per-status delay.
+// the status, publishes to speculate, AND holds the delivery for the next
+// poll with the per-status delay.
 func TestController_Process_NonTerminal(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -185,17 +186,11 @@ func TestController_Process_NonTerminal(t *testing.T) {
 			h.batchStore.EXPECT().Get(gomock.Any(), build.BatchID).Return(entity.Batch{ID: build.BatchID, State: entity.BatchStateSpeculating}, nil)
 			h.buildStore.EXPECT().Update(gomock.Any(), updatedBuild).Return(nil)
 			h.speculatePub.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).Return(nil).Times(1)
-			h.signalPub.EXPECT().
-				PublishAfter(gomock.Any(), "buildsignal", gomock.AssignableToTypeOf(entityqueue.Message{}), tt.wantDelayMs).
-				DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message, _ int64) error {
-					bid, err := entity.BuildIDFromBytes(msg.Payload)
-					require.NoError(t, err)
-					// Re-published payload carries only the build ID.
-					assert.Equal(t, build.ID, bid.ID)
-					return nil
-				}).Times(1)
 
-			err := h.controller.Process(context.Background(), buildDelivery(t, ctrl, build))
+			d := buildDelivery(t, ctrl, build)
+			d.EXPECT().Hold(tt.wantDelayMs)
+
+			err := h.controller.Process(context.Background(), d)
 			require.NoError(t, err)
 		})
 	}
@@ -210,7 +205,7 @@ func TestController_Process_StatusError(t *testing.T) {
 	h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(build, nil)
 	h.batchStore.EXPECT().Get(gomock.Any(), build.BatchID).Return(entity.Batch{ID: build.BatchID, State: entity.BatchStateSpeculating}, nil)
 	h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: build.ID}).Return(entity.BuildStatusUnknown, nil, errors.New("provider down"))
-	// No Update, no Publish, no PublishAfter expected.
+	// No Update, no Publish, no Hold expected.
 
 	err := h.controller.Process(context.Background(), buildDelivery(t, ctrl, build))
 	require.Error(t, err)
@@ -231,36 +226,12 @@ func TestController_Process_UpdateError(t *testing.T) {
 	h.batchStore.EXPECT().Get(gomock.Any(), build.BatchID).Return(entity.Batch{ID: build.BatchID, State: entity.BatchStateSpeculating}, nil)
 	h.buildStore.EXPECT().Update(gomock.Any(), updatedBuild).
 		Return(errors.New("db unreachable"))
-	// No Publish / PublishAfter expected after the store failure.
+	// No Publish / Hold expected after the store failure.
 
 	err := h.controller.Process(context.Background(), buildDelivery(t, ctrl, build))
 	require.Error(t, err)
 	// Non-retryable: rejects to DLQ on first failure; republish is the recovery path.
 	assert.False(t, errs.IsRetryable(err))
-}
-
-// TestController_Process_RepublishError verifies that a failure to re-publish
-// the delayed poll message surfaces an error. The preceding
-// status/persist/speculate steps all succeed.
-func TestController_Process_RepublishError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	h := newTestHarness(t, ctrl)
-
-	build := entity.Build{ID: "b-5", BatchID: "batch-5", Status: entity.BuildStatusAccepted}
-	updatedBuild := build
-	updatedBuild.Status = entity.BuildStatusRunning
-
-	h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(build, nil)
-	h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: build.ID}).Return(entity.BuildStatusRunning, entity.BuildMetadata{}, nil)
-	h.batchStore.EXPECT().Get(gomock.Any(), build.BatchID).Return(entity.Batch{ID: build.BatchID, State: entity.BatchStateSpeculating}, nil)
-	h.buildStore.EXPECT().Update(gomock.Any(), updatedBuild).Return(nil)
-	h.speculatePub.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).Return(nil).Times(1)
-	h.signalPub.EXPECT().
-		PublishAfter(gomock.Any(), "buildsignal", gomock.Any(), PollDelayRunningMs).
-		Return(errors.New("queue unavailable")).Times(1)
-
-	err := h.controller.Process(context.Background(), buildDelivery(t, ctrl, build))
-	require.Error(t, err)
 }
 
 // TestController_Process_GetError verifies that a failure to load the Build
@@ -315,9 +286,9 @@ func TestController_Process_HaltedShortCircuit(t *testing.T) {
 			h.buildStore.EXPECT().Get(gomock.Any(), build.ID).Return(build, nil)
 			h.br.EXPECT().Status(gomock.Any(), entity.BuildID{ID: build.ID}).Return(entity.BuildStatusRunning, entity.BuildMetadata{}, nil)
 			h.batchStore.EXPECT().Get(gomock.Any(), build.BatchID).Return(entity.Batch{ID: build.BatchID, State: state}, nil)
-			// Halted: no Update, no speculate Publish, no buildsignal
-			// PublishAfter. The harness publishers have no expectations, so any
-			// publish fails the test.
+			// Halted: no Update, no speculate Publish, no Hold. The
+			// harness publishers have no expectations, so any publish fails
+			// the test.
 
 			require.NoError(t, h.controller.Process(context.Background(), buildDelivery(t, ctrl, build)))
 		})
