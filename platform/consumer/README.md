@@ -133,7 +133,6 @@ Several mechanisms can delay work; they mean different things. Pick by what you'
 | "I'm still working — keep my lease" | `delivery.ExtendVisibilityTimeout(...)` | blocked behind the in-flight delivery |
 | "Done for now — wake this partition in N ms" | `delivery.Hold(N)` then `return nil` | paused behind the postponed message (barrier), redelivers first in order |
 | "Stop this controller/partition from outside" (tests, operators) | consumer gate (`platform/extension/consumergate`) | parked in flight until the gate opens |
-| "Defer *other* work" — a delayed message to another topic or key | `Publisher.PublishAfter` | not involved — it's a fresh publish |
 
 Gate vs hold, since both pause a partition: the **gate** is an external, event-ended stop — someone stops the controller at the door, before `Process` ever sees the message. **Hold** is a controller-chosen, timer-ended wait — the controller saw the work and decided to come back later. Business logic never closes or opens gates; a controller that needs to back off uses hold.
 

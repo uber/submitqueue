@@ -28,18 +28,6 @@ type Publisher interface {
 	// Publish sends a message to the specified topic.
 	Publish(ctx context.Context, topic string, message entityqueue.Message) error
 
-	// PublishAfter sends a message that becomes visible to subscribers only
-	// after delayMs from now. It is a fresh publish — not a redelivery — so
-	// it does not consume a delivery_state retry slot. delayMs <= 0 is
-	// equivalent to Publish.
-	//
-	// Use for deferring *other* work — a delayed message to another topic or
-	// key. A consumer deferring its own current delivery should use
-	// Delivery.Postpone instead; use Nack with a delay for "this delivery
-	// failed, try again" — the signals stay separate so retry_count and DLQ
-	// behaviour remain meaningful.
-	PublishAfter(ctx context.Context, topic string, message entityqueue.Message, delayMs int64) error
-
 	// Close gracefully shuts down the publisher, flushing pending messages.
 	Close() error
 }
