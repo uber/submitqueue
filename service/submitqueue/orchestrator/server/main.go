@@ -312,7 +312,7 @@ func newConsumerGate(logger *zap.Logger) consumergate.Gate {
 		return consumergatenoop.New()
 	}
 	logger.Info("consumer gate configured", zap.String("dir", dir))
-	return consumergatefile.New(dir, consumergate.DefaultConfig())
+	return consumergatefile.New(dir)
 }
 
 // newChangeProvider creates a routing ChangeProvider containing GitHub and Phab ChangeProviders.

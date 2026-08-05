@@ -1122,49 +1122,34 @@ func TestConsumer_ConsumeLoopSurvivesCallerDeadline(t *testing.T) {
 }
 
 // fakeGate is a channel-instrumented consumergate.Gate so tests can await the
-// park/release transitions instead of sleeping.
+// park/unpark transitions instead of sleeping.
 type fakeGate struct {
-	mu      sync.Mutex
-	closed  map[consumergate.Key]bool
-	changed chan struct{}
-	err     error
+	mu     sync.Mutex
+	closed map[consumergate.Key]bool
+	err    error
 
 	parked   chan consumergate.Parked
-	released chan string // message IDs
+	unparked chan string // message IDs
 }
 
 func newFakeGate() *fakeGate {
 	return &fakeGate{
 		closed:   make(map[consumergate.Key]bool),
-		changed:  make(chan struct{}),
 		parked:   make(chan consumergate.Parked, 16),
-		released: make(chan string, 16),
+		unparked: make(chan string, 16),
 	}
 }
 
 func (f *fakeGate) close(key consumergate.Key) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.closed[key] {
-		return
-	}
 	f.closed[key] = true
-	f.signalChanged()
 }
 
 func (f *fakeGate) open(key consumergate.Key) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if !f.closed[key] {
-		return
-	}
 	delete(f.closed, key)
-	f.signalChanged()
-}
-
-func (f *fakeGate) signalChanged() {
-	close(f.changed)
-	f.changed = make(chan struct{})
 }
 
 func (f *fakeGate) setErr(err error) {
@@ -1181,45 +1166,29 @@ func (f *fakeGate) isClosed(consumerGroup, partitionKey string) bool {
 }
 
 // Enter implements consumergate.Gate. It checks the err field first, then
-// returns an unblocked entry for an open gate or a blocked entry for a closed
-// one. The blocked entry's Watch mimics the contract: it stamps the entered
-// identity on the parked descriptor, announces it on the parked channel, and a
-// monitor goroutine waits for gate-state change signals until the gate opens or
-// ctx is cancelled; on open it sends the message ID on the released channel and
-// yields nil on the watch channel.
+// returns an entry whose Blocked reflects the gate state at Enter time. Park
+// stamps the entered identity onto the descriptor and announces it on the
+// parked channel; Unpark announces the message ID on the unparked channel.
 func (f *fakeGate) Enter(_ context.Context, key consumergate.Key) (consumergate.Entry, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
 		return nil, f.err
 	}
-	if !f.isClosed(key.ConsumerGroup, key.PartitionKey) {
-		return fakeOpenEntry{}, nil
-	}
-	return &fakeBlockedEntry{gate: f, key: key}, nil
+	return &fakeEntry{gate: f, key: key, blocked: f.isClosed(key.ConsumerGroup, key.PartitionKey)}, nil
 }
 
-// fakeOpenEntry is the entry handed out for an open fake gate.
-type fakeOpenEntry struct{}
-
-func (fakeOpenEntry) Blocked() bool { return false }
-
-func (fakeOpenEntry) Watch(context.Context, consumergate.DeliveryDescriptor) <-chan error {
-	ch := make(chan error, 1)
-	ch <- nil
-	return ch
+// fakeEntry is the entry handed out by fakeGate.Enter.
+type fakeEntry struct {
+	gate    *fakeGate
+	key     consumergate.Key
+	blocked bool
 }
 
-// fakeBlockedEntry is the entry handed out for a closed fake gate.
-type fakeBlockedEntry struct {
-	gate *fakeGate
-	key  consumergate.Key
-}
+func (e *fakeEntry) Blocked() bool { return e.blocked }
 
-func (*fakeBlockedEntry) Blocked() bool { return true }
-
-func (e *fakeBlockedEntry) Watch(ctx context.Context, descriptor consumergate.DeliveryDescriptor) <-chan error {
-	parked := consumergate.Parked{
+func (e *fakeEntry) Park(_ context.Context, descriptor consumergate.DeliveryDescriptor) error {
+	e.gate.parked <- consumergate.Parked{
 		ConsumerGroup: e.key.ConsumerGroup,
 		Topic:         descriptor.Topic,
 		MessageID:     descriptor.MessageID,
@@ -1227,32 +1196,12 @@ func (e *fakeBlockedEntry) Watch(ctx context.Context, descriptor consumergate.De
 		Payload:       descriptor.Payload,
 		Attempt:       descriptor.Attempt,
 	}
-	// Record synchronously so the parked descriptor is observable by the time
-	// Watch returns, mirroring the file store's synchronous recordParked.
-	e.gate.parked <- parked
+	return nil
+}
 
-	ch := make(chan error, 1)
-	go func() {
-		for {
-			e.gate.mu.Lock()
-			closed := e.gate.isClosed(e.key.ConsumerGroup, e.key.PartitionKey)
-			changed := e.gate.changed
-			e.gate.mu.Unlock()
-			if !closed {
-				e.gate.released <- parked.MessageID
-				ch <- nil
-				return
-			}
-
-			select {
-			case <-ctx.Done():
-				ch <- ctx.Err()
-				return
-			case <-changed:
-			}
-		}
-	}()
-	return ch
+func (e *fakeEntry) Unpark(_ context.Context, descriptor consumergate.DeliveryDescriptor) error {
+	e.gate.unparked <- descriptor.MessageID
+	return nil
 }
 
 // startGatedConsumer builds a consumer with the fake gate directly as the 5th
@@ -1280,13 +1229,24 @@ func startGatedConsumer(t *testing.T, ctrl *gomock.Controller, gate consumergate
 	return c, deliveryChan
 }
 
-// gatedDelivery builds a MockDelivery that also tolerates visibility
-// extensions while parked.
-func gatedDelivery(ctrl *gomock.Controller, msg entityqueue.Message) (*queuemock.MockDelivery, chan struct{}) {
+// gatedDelivery builds a MockDelivery for a delivery a closed gate will
+// postpone: the returned channel closes when the framework postpones it with
+// the gate re-check delay. No Ack/Nack/Reject expectations are set, so any of
+// those calls fails the test.
+func gatedDelivery(t *testing.T, ctrl *gomock.Controller, msg entityqueue.Message) (*queuemock.MockDelivery, chan struct{}) {
+	t.Helper()
 	mockDel := queuemock.NewMockDelivery(ctrl)
-	done := setupDelivery(mockDel, msg, nil, nil)
-	mockDel.EXPECT().ExtendVisibilityTimeout(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	return mockDel, done
+	mockDel.EXPECT().Message().Return(msg).AnyTimes()
+	mockDel.EXPECT().Attempt().Return(1).AnyTimes()
+	mockDel.EXPECT().ReceivedAt().Return(time.Now().UnixMilli()).AnyTimes()
+	mockDel.EXPECT().Metadata().Return(nil).AnyTimes()
+	mockDel.EXPECT().DeliveryID().Return(msg.ID).AnyTimes()
+	postponed := make(chan struct{})
+	mockDel.EXPECT().Postpone(gomock.Any(), defaultGateRecheckDelayMs).DoAndReturn(func(context.Context, int64) error {
+		close(postponed)
+		return nil
+	})
+	return mockDel, postponed
 }
 
 func TestConsumer_Gate_OpenGatePassesThrough(t *testing.T) {
@@ -1300,7 +1260,8 @@ func TestConsumer_Gate_OpenGatePassesThrough(t *testing.T) {
 	})
 
 	msg := entityqueue.NewMessage("msg-1", []byte("payload"), "partition1", nil)
-	mockDel, done := gatedDelivery(ctrl, msg)
+	mockDel := queuemock.NewMockDelivery(ctrl)
+	done := setupDelivery(mockDel, msg, nil, nil)
 
 	deliveryChan <- mockDel
 	<-done
@@ -1311,7 +1272,7 @@ func TestConsumer_Gate_OpenGatePassesThrough(t *testing.T) {
 	require.NoError(t, c.Stop(30000))
 }
 
-func TestConsumer_Gate_ParksThenReleases(t *testing.T) {
+func TestConsumer_Gate_BlockedParksAndPostpones(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	gate := newFakeGate()
 	gate.close(consumergate.Key{ConsumerGroup: "test-group"})
@@ -1323,11 +1284,12 @@ func TestConsumer_Gate_ParksThenReleases(t *testing.T) {
 	})
 
 	msg := entityqueue.NewMessage("msg-1", []byte("payload"), "partition1", nil)
-	mockDel, done := gatedDelivery(ctrl, msg)
+	mockDel, postponed := gatedDelivery(t, ctrl, msg)
 	deliveryChan <- mockDel
 
-	// The parked record is written before the gate blocks, so awaiting it
-	// proves the gate caught the message before the controller saw it.
+	// The parked record is written before the delivery is postponed, so
+	// awaiting it proves the gate caught the message before the controller
+	// saw it.
 	parked := <-gate.parked
 	assert.Equal(t, "test-group", parked.ConsumerGroup)
 	assert.Equal(t, TopicKey("start").String(), parked.Topic)
@@ -1335,14 +1297,21 @@ func TestConsumer_Gate_ParksThenReleases(t *testing.T) {
 	assert.Equal(t, "partition1", parked.PartitionKey)
 	assert.Equal(t, []byte("payload"), parked.Payload)
 	assert.Equal(t, 1, parked.Attempt)
+
+	// The delivery is postponed with the re-check delay and never processed.
+	<-postponed
 	assert.False(t, processed.Load(), "controller must not run while its gate is closed")
 
-	// Open the gate: the parked delivery proceeds, the release is recorded,
-	// and the message is acked.
+	// Open the gate and feed the redelivery (postpone finalizes the original
+	// delivery; the queue redelivers the same message as a fresh attempt).
+	// The redelivery unparks the record and is processed and acked.
 	gate.open(consumergate.Key{ConsumerGroup: "test-group"})
-	assert.Equal(t, "msg-1", <-gate.released)
+	redelivery := queuemock.NewMockDelivery(ctrl)
+	done := setupDelivery(redelivery, msg, nil, nil)
+	deliveryChan <- redelivery
 	<-done
 	assert.True(t, processed.Load())
+	assert.Equal(t, "msg-1", <-gate.unparked, "the admit path must remove the parked record")
 
 	require.NoError(t, c.Stop(30000))
 }
@@ -1359,16 +1328,18 @@ func TestConsumer_Gate_PartitionScoped(t *testing.T) {
 	})
 
 	gatedMsg := entityqueue.NewMessage("gated-msg", []byte("p"), "gated-partition", nil)
-	gatedDel, gatedDone := gatedDelivery(ctrl, gatedMsg)
+	gatedDel, gatedPostponed := gatedDelivery(t, ctrl, gatedMsg)
 	openMsg := entityqueue.NewMessage("open-msg", []byte("p"), "open-partition", nil)
-	openDel, openDone := gatedDelivery(ctrl, openMsg)
+	openDel := queuemock.NewMockDelivery(ctrl)
+	openDone := setupDelivery(openDel, openMsg, nil, nil)
 
 	deliveryChan <- gatedDel
 	parked := <-gate.parked
 	assert.Equal(t, "gated-msg", parked.MessageID)
+	<-gatedPostponed
 
 	// Unrelated traffic keeps flowing through the same controller while one
-	// partition is parked.
+	// partition is gated.
 	deliveryChan <- openDel
 	<-openDone
 	_, ok := handled.Load("open-msg")
@@ -1376,7 +1347,11 @@ func TestConsumer_Gate_PartitionScoped(t *testing.T) {
 	_, ok = handled.Load("gated-msg")
 	assert.False(t, ok)
 
+	// Open the gate; the redelivery of the gated message processes.
 	gate.open(consumergate.Key{ConsumerGroup: "test-group", PartitionKey: "gated-partition"})
+	redelivery := queuemock.NewMockDelivery(ctrl)
+	gatedDone := setupDelivery(redelivery, gatedMsg, nil, nil)
+	deliveryChan <- redelivery
 	<-gatedDone
 	_, ok = handled.Load("gated-msg")
 	assert.True(t, ok)
@@ -1384,7 +1359,7 @@ func TestConsumer_Gate_PartitionScoped(t *testing.T) {
 	require.NoError(t, c.Stop(30000))
 }
 
-func TestConsumer_Gate_ShutdownWhileParked(t *testing.T) {
+func TestConsumer_Gate_StopWhileGated(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	gate := newFakeGate()
 	gate.close(consumergate.Key{ConsumerGroup: "test-group"})
@@ -1396,16 +1371,15 @@ func TestConsumer_Gate_ShutdownWhileParked(t *testing.T) {
 	})
 
 	msg := entityqueue.NewMessage("msg-1", []byte("payload"), "partition1", nil)
-	mockDel, _ := gatedDelivery(ctrl, msg)
+	mockDel, postponed := gatedDelivery(t, ctrl, msg)
 	deliveryChan <- mockDel
-	<-gate.parked
+	<-postponed
 
-	// Stopping while parked must not stall shutdown, must not invoke the
-	// controller, and must not ack/nack — the delivery is left in-flight for
-	// redelivery after its visibility lapses.
+	// Nothing is held in memory while a gate is closed — the delivery was
+	// postponed back to the queue — so Stop must not stall and the controller
+	// must never have run.
 	require.NoError(t, c.Stop(30000))
 	assert.False(t, processed.Load())
-	assert.Empty(t, gate.released, "a delivery dropped at shutdown is not released")
 }
 
 func TestConsumer_Gate_FailsOpenOnReadError(t *testing.T) {
@@ -1421,7 +1395,8 @@ func TestConsumer_Gate_FailsOpenOnReadError(t *testing.T) {
 	})
 
 	msg := entityqueue.NewMessage("msg-1", []byte("payload"), "partition1", nil)
-	mockDel, done := gatedDelivery(ctrl, msg)
+	mockDel := queuemock.NewMockDelivery(ctrl)
+	done := setupDelivery(mockDel, msg, nil, nil)
 
 	deliveryChan <- mockDel
 	<-done

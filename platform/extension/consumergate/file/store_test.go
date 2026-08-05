@@ -19,31 +19,11 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/platform/extension/consumergate"
 )
-
-// testCfg keeps Wait tests fast: 5ms poll interval.
-var testCfg = consumergate.Config{PollIntervalMs: 5}
-
-// awaitParked indefinitely waits for a parked record to appear in the store, returning the records.
-// It will wait up until the test times out.
-func awaitParked(t *testing.T, store *Store, ctx context.Context, consumerGroup string) []consumergate.Parked {
-	t.Helper()
-	ticker := time.NewTicker(time.Duration(testCfg.PollIntervalMs) * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		records, err := store.ListParked(ctx, consumerGroup)
-		require.NoError(t, err)
-		if len(records) > 0 {
-			return records
-		}
-		<-ticker.C
-	}
-}
 
 func TestIsGated(t *testing.T) {
 	ctx := context.Background()
@@ -107,7 +87,7 @@ func TestIsGated(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			store := New(t.TempDir(), testCfg)
+			store := New(t.TempDir())
 			for _, key := range tt.close {
 				require.NoError(t, store.Close(ctx, key, consumergate.Metadata{Reason: "test", CreatedBy: "unit", CreatedAtMs: 1}))
 			}
@@ -120,7 +100,7 @@ func TestIsGated(t *testing.T) {
 
 func TestOpenClosesGate(t *testing.T) {
 	ctx := context.Background()
-	store := New(t.TempDir(), testCfg)
+	store := New(t.TempDir())
 	key := consumergate.Key{ConsumerGroup: "orchestrator-batch", PartitionKey: "queue-a"}
 
 	require.NoError(t, store.Close(ctx, key, consumergate.Metadata{Reason: "pause", CreatedBy: "unit", CreatedAtMs: 1}))
@@ -138,14 +118,14 @@ func TestOpenClosesGate(t *testing.T) {
 }
 
 func TestCloseRequiresConsumerGroup(t *testing.T) {
-	store := New(t.TempDir(), testCfg)
+	store := New(t.TempDir())
 	err := store.Close(context.Background(), consumergate.Key{}, consumergate.Metadata{})
 	require.Error(t, err)
 }
 
 func TestParkedRecordLifecycle(t *testing.T) {
 	ctx := context.Background()
-	store := New(t.TempDir(), testCfg)
+	store := New(t.TempDir())
 
 	parked := consumergate.Parked{
 		ConsumerGroup: "runway-mergeconflictcheck",
@@ -181,7 +161,7 @@ func TestParkedRecordLifecycle(t *testing.T) {
 }
 
 func TestListParkedEmpty(t *testing.T) {
-	store := New(t.TempDir(), testCfg)
+	store := New(t.TempDir())
 	records, err := store.ListParked(context.Background(), "no-such-group")
 	require.NoError(t, err)
 	assert.Empty(t, records)
@@ -190,7 +170,7 @@ func TestListParkedEmpty(t *testing.T) {
 func TestListParkedSkipsTempFiles(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	store := New(dir, testCfg)
+	store := New(dir)
 
 	parked := consumergate.Parked{
 		ConsumerGroup: "group",
@@ -211,7 +191,7 @@ func TestListParkedSkipsTempFiles(t *testing.T) {
 }
 
 func TestMissingDirIsNotGated(t *testing.T) {
-	store := New(filepath.Join(t.TempDir(), "does-not-exist"), testCfg)
+	store := New(filepath.Join(t.TempDir(), "does-not-exist"))
 	gated, err := store.isGated("group", "part")
 	require.NoError(t, err)
 	assert.False(t, gated)
@@ -219,48 +199,51 @@ func TestMissingDirIsNotGated(t *testing.T) {
 
 func TestEnter_OpenGateUnblocked(t *testing.T) {
 	ctx := context.Background()
-	store := New(t.TempDir(), testCfg)
+	store := New(t.TempDir())
 
-	entry, err := store.Enter(ctx, consumergate.Key{ConsumerGroup: "group", PartitionKey: "part"})
-	require.NoError(t, err)
-	assert.False(t, entry.Blocked())
-	require.NoError(t, consumergate.Wait(ctx, entry, consumergate.DeliveryDescriptor{
+	descriptor := consumergate.DeliveryDescriptor{
 		Topic:     "topic",
 		MessageID: "msg-1",
 		Payload:   []byte("hello"),
 		Attempt:   1,
-	}))
+	}
 
-	// No parked record should exist — the gate was open.
+	entry, err := store.Enter(ctx, consumergate.Key{ConsumerGroup: "group", PartitionKey: "part"})
+	require.NoError(t, err)
+	assert.False(t, entry.Blocked())
+
+	// Unparking a never-parked delivery is a no-op on the admit path.
+	require.NoError(t, entry.Unpark(ctx, descriptor))
+
 	records, err := store.ListParked(ctx, "group")
 	require.NoError(t, err)
 	assert.Empty(t, records)
 }
 
-func TestEnter_ClosedGateParksThenReleases(t *testing.T) {
+func TestEnter_ClosedGateParkAndRelease(t *testing.T) {
 	ctx := context.Background()
-	store := New(t.TempDir(), testCfg)
+	store := New(t.TempDir())
 	key := consumergate.Key{ConsumerGroup: "group"}
 
 	require.NoError(t, store.Close(ctx, key, consumergate.Metadata{Reason: "test", CreatedBy: "unit", CreatedAtMs: 1}))
+
+	descriptor := consumergate.DeliveryDescriptor{
+		Topic:     "topic",
+		MessageID: "msg-1",
+		Payload:   []byte("hello"),
+		Attempt:   1,
+	}
 
 	entry, err := store.Enter(ctx, consumergate.Key{ConsumerGroup: "group", PartitionKey: "part"})
 	require.NoError(t, err)
 	require.True(t, entry.Blocked())
 
-	// Wait records the parked delivery before blocking; the caller supplies
-	// only the delivery content, the store stamps the entered identity.
-	waitDone := make(chan error, 1)
-	go func() {
-		waitDone <- consumergate.Wait(ctx, entry, consumergate.DeliveryDescriptor{
-			Topic:     "topic",
-			MessageID: "msg-1",
-			Payload:   []byte("hello"),
-			Attempt:   1,
-		})
-	}()
+	// Park records the delivery; the caller supplies only the delivery
+	// content, the store stamps the entered identity and ParkedAtMs.
+	require.NoError(t, entry.Park(ctx, descriptor))
 
-	records := awaitParked(t, store, ctx, "group")
+	records, err := store.ListParked(ctx, "group")
+	require.NoError(t, err)
 	require.Len(t, records, 1)
 	assert.Equal(t, "group", records[0].ConsumerGroup)
 	assert.Equal(t, "part", records[0].PartitionKey)
@@ -270,52 +253,21 @@ func TestEnter_ClosedGateParksThenReleases(t *testing.T) {
 	assert.Equal(t, 1, records[0].Attempt)
 	assert.NotZero(t, records[0].ParkedAtMs)
 
-	// Assert Wait has not returned yet.
-	select {
-	case <-waitDone:
-		t.Fatal("Wait returned before the gate was opened")
-	default:
-	}
-
-	// Open the gate — Wait should return nil and remove the active parked
-	// record before returning.
-	require.NoError(t, store.Open(ctx, key))
-	require.NoError(t, <-waitDone)
-
+	// Re-parking on a re-check overwrites the record, not duplicates it.
+	descriptor.Attempt = 1 // postponed redeliveries restart at attempt 1
+	require.NoError(t, entry.Park(ctx, descriptor))
 	records, err = store.ListParked(ctx, "group")
 	require.NoError(t, err)
-	assert.Empty(t, records)
-}
+	require.Len(t, records, 1)
 
-func TestEnter_ClosedGateCtxCancel(t *testing.T) {
-	store := New(t.TempDir(), testCfg)
-	key := consumergate.Key{ConsumerGroup: "group"}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	require.NoError(t, store.Close(ctx, key, consumergate.Metadata{Reason: "test", CreatedBy: "unit", CreatedAtMs: 1}))
-
-	entry, err := store.Enter(ctx, consumergate.Key{ConsumerGroup: "group", PartitionKey: "part"})
+	// Open the gate; the next Enter is unblocked and Unpark removes the record.
+	require.NoError(t, store.Open(ctx, key))
+	entry, err = store.Enter(ctx, consumergate.Key{ConsumerGroup: "group", PartitionKey: "part"})
 	require.NoError(t, err)
-	require.True(t, entry.Blocked())
+	require.False(t, entry.Blocked())
+	require.NoError(t, entry.Unpark(ctx, descriptor))
 
-	waitDone := make(chan error, 1)
-	go func() {
-		waitDone <- consumergate.Wait(ctx, entry, consumergate.DeliveryDescriptor{
-			Topic:     "topic",
-			MessageID: "msg-1",
-			Payload:   []byte("hello"),
-			Attempt:   1,
-		})
-	}()
-
-	// Wait until the parked record appears, then cancel.
-	awaitParked(t, store, ctx, "group")
-
-	cancel()
-	require.ErrorIs(t, <-waitDone, context.Canceled)
-
-	// Cancellation ends the active wait, so its parked record is removed.
-	records, err := store.ListParked(context.Background(), "group")
+	records, err = store.ListParked(ctx, "group")
 	require.NoError(t, err)
 	assert.Empty(t, records)
 }
@@ -325,7 +277,7 @@ func TestEnter_MediumError(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "not-a-dir")
 	require.NoError(t, os.WriteFile(dir, []byte("x"), 0o644))
 
-	store := New(dir, testCfg)
+	store := New(dir)
 	_, err := store.Enter(context.Background(), consumergate.Key{ConsumerGroup: "group", PartitionKey: "part"})
 	require.Error(t, err)
 }
