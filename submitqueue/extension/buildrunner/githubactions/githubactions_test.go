@@ -29,6 +29,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/uber/submitqueue/platform/base/change"
+	platformgithubactions "github.com/uber/submitqueue/platform/extension/buildrunner/githubactions"
 	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	changesetfake "github.com/uber/submitqueue/submitqueue/core/changeset/fake"
@@ -53,35 +54,30 @@ func newTestRunner(t *testing.T, handler http.Handler, resolver ...changeset.Res
 		buildrunner.Config{QueueName: "my-queue"},
 		"main",
 		map[string]string{"custom": "value"},
-		&client{
-			httpClient: c,
-			owner:      "uber",
-			repo:       "submitqueue",
-			workflowID: "submitqueue-ci.yml",
-		},
+		platformgithubactions.NewClient(c, "uber", "submitqueue", "submitqueue-ci.yml"),
 		r,
 		zap.NewNop().Sugar(),
 	)
 }
 
-func TestNewBuildRunner_ValidatesConfig(t *testing.T) {
-	_, err := NewBuildRunner(Params{Logger: zap.NewNop().Sugar()})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "http client is required")
+func TestNewBuildRunner_DefaultsRef(t *testing.T) {
+	br := NewBuildRunner(Params{
+		Client: platformgithubactions.NewClient(http.DefaultClient, "uber", "submitqueue", "submitqueue-ci.yml"),
+		Logger: zap.NewNop().Sugar(),
+	})
+
+	r := br.(*runner)
+	assert.Equal(t, "main", r.ref)
 }
 
 func TestNewBuildRunner_BindsQueueConfigAndExtraInputs(t *testing.T) {
-	br, err := NewBuildRunner(Params{
+	br := NewBuildRunner(Params{
 		Config:      buildrunner.Config{QueueName: "queue-a"},
-		HTTPClient:  http.DefaultClient,
+		Client:      platformgithubactions.NewClient(http.DefaultClient, "uber", "submitqueue", "submitqueue-ci.yml"),
 		Logger:      zap.NewNop().Sugar(),
-		Owner:       "uber",
-		Repo:        "submitqueue",
-		WorkflowID:  "submitqueue-ci.yml",
 		Ref:         "main",
 		ExtraInputs: map[string]string{"runner": "ubuntu-latest"},
 	})
-	require.NoError(t, err)
 
 	r := br.(*runner)
 	assert.Equal(t, "queue-a", r.cfg.QueueName)
@@ -101,7 +97,7 @@ func TestTrigger_DispatchesWorkflowAndReturnsRunID(t *testing.T) {
 		capturedMethod = req.Method
 		capturedPath = req.URL.String()
 		capturedBody, _ = io.ReadAll(req.Body)
-		_ = json.NewEncoder(w).Encode(dispatchWorkflowResponse{
+		_ = json.NewEncoder(w).Encode(platformgithubactions.DispatchWorkflowResponse{
 			WorkflowRunID: 42,
 			RunURL:        "https://api.github.com/repos/uber/submitqueue/actions/runs/42",
 			HTMLURL:       "https://github.com/uber/submitqueue/actions/runs/42",
@@ -117,7 +113,7 @@ func TestTrigger_DispatchesWorkflowAndReturnsRunID(t *testing.T) {
 	assert.Equal(t, http.MethodPost, capturedMethod)
 	assert.Equal(t, "/repos/uber/submitqueue/actions/workflows/submitqueue-ci.yml/dispatches", capturedPath)
 
-	var req dispatchWorkflowRequest
+	var req platformgithubactions.DispatchWorkflowRequest
 	require.NoError(t, json.Unmarshal(capturedBody, &req))
 	assert.Equal(t, "main", req.Ref)
 	assert.True(t, req.ReturnRunDetails)
@@ -137,13 +133,13 @@ func TestTrigger_EmptyBaseProducesJSONArray(t *testing.T) {
 	resolver := changesetfake.New().Set("head-batch", change.Change{URIs: []string{"u"}})
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		capturedBody, _ = io.ReadAll(req.Body)
-		_ = json.NewEncoder(w).Encode(dispatchWorkflowResponse{WorkflowRunID: 7})
+		_ = json.NewEncoder(w).Encode(platformgithubactions.DispatchWorkflowResponse{WorkflowRunID: 7})
 	}), resolver)
 
 	_, err := r.Trigger(context.Background(), nil, entity.Batch{ID: "head-batch"}, nil)
 	require.NoError(t, err)
 
-	var req dispatchWorkflowRequest
+	var req platformgithubactions.DispatchWorkflowRequest
 	require.NoError(t, json.Unmarshal(capturedBody, &req))
 	assert.Equal(t, "[]", req.Inputs[InputKeyBaseURIs])
 	assert.NotContains(t, req.Inputs, InputKeyMetadata)
@@ -151,7 +147,7 @@ func TestTrigger_EmptyBaseProducesJSONArray(t *testing.T) {
 
 func TestTrigger_ErrorsWhenDispatchResponseHasNoRunID(t *testing.T) {
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		_ = json.NewEncoder(w).Encode(dispatchWorkflowResponse{})
+		_ = json.NewEncoder(w).Encode(platformgithubactions.DispatchWorkflowResponse{})
 	}))
 
 	_, err := r.Trigger(context.Background(), nil, entity.Batch{ID: "head-batch"}, nil)
@@ -163,7 +159,7 @@ func TestStatus_GetsRunAndMapsState(t *testing.T) {
 	r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		assert.Equal(t, http.MethodGet, req.Method)
 		assert.Equal(t, "/repos/uber/submitqueue/actions/runs/42", req.URL.Path)
-		_ = json.NewEncoder(w).Encode(workflowRun{
+		_ = json.NewEncoder(w).Encode(platformgithubactions.WorkflowRun{
 			ID:           42,
 			DisplayTitle: "SubmitQueue gha-trace",
 			Status:       "in_progress",

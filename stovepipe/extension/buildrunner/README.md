@@ -8,4 +8,6 @@ Vendor-agnostic interface through which Stovepipe triggers and polls builds agai
 
 Implementations return plain, unclassified errors — the calling controller decides retryable-vs-not and user-vs-infra, per `platform/errs`.
 
+Real backends (`buildkite`, `githubactions`) are thin adapters over a shared platform client (`platform/extension/buildrunner/{backend}`) — see that package's README for the HTTP client and vendor-specific details.
+
 See [doc/rfc/stovepipe/steps/build.md](../../../doc/rfc/stovepipe/steps/build.md#why-separate-contracts) for why this is a separate contract from SubmitQueue's own `buildrunner` rather than a shared one. To add a backend, create `buildrunner/{backend}/`, implement `BuildRunner`, and return it from a `New(...)` constructor.

@@ -3,14 +3,12 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "go_default_library",
     srcs = ["buildkite.go"],
-    importpath = "github.com/uber/submitqueue/submitqueue/extension/buildrunner/buildkite",
+    importpath = "github.com/uber/submitqueue/stovepipe/extension/buildrunner/buildkite",
     visibility = ["//visibility:public"],
     deps = [
-        "//platform/base/change:go_default_library",
         "//platform/extension/buildrunner/buildkite:go_default_library",
-        "//submitqueue/core/changeset:go_default_library",
-        "//submitqueue/entity:go_default_library",
-        "//submitqueue/extension/buildrunner:go_default_library",
+        "//stovepipe/entity:go_default_library",
+        "//stovepipe/extension/buildrunner:go_default_library",
         "@org_uber_go_zap//:go_default_library",
     ],
 )
@@ -20,13 +18,10 @@ go_test(
     srcs = ["buildkite_test.go"],
     embed = [":go_default_library"],
     deps = [
-        "//platform/base/change:go_default_library",
         "//platform/extension/buildrunner/buildkite:go_default_library",
         "//platform/http:go_default_library",
-        "//submitqueue/core/changeset:go_default_library",
-        "//submitqueue/core/changeset/fake:go_default_library",
-        "//submitqueue/entity:go_default_library",
-        "//submitqueue/extension/buildrunner:go_default_library",
+        "//stovepipe/entity:go_default_library",
+        "//stovepipe/extension/buildrunner:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
         "@org_uber_go_zap//:go_default_library",

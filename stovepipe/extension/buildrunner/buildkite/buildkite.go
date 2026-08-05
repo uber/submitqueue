@@ -19,14 +19,15 @@
 // build number as the build ID. Status and Cancel parse the number directly
 // from the build ID — no local state is required.
 //
-// The Buildkite build receives base and head change URIs as JSON-encoded
-// environment variables (SQ_BASE_URIS, SQ_HEAD_URIS, SQ_QUEUE). The pipeline
-// script fetches each PR's diff with the GitHub API, applies them with
-// `git apply -3`, produces one commit per layer (base, head), then runs CI.
+// The Buildkite build receives the head and base URIs as environment
+// variables (STOVEPIPE_HEAD_URI, STOVEPIPE_BASE_URI, STOVEPIPE_QUEUE). The
+// pipeline script checks out headURI and, when baseURI is non-empty, diffs
+// against it for an incremental build.
 //
-// Caller-supplied BuildMetadata is forwarded to the build as SQ_METADATA
-// (JSON-encoded). Buildkite echoes env vars back on the build object, so
-// Status recovers and returns the original metadata without any local state.
+// Caller-supplied BuildMetadata is forwarded to the build as
+// STOVEPIPE_METADATA (JSON-encoded). Buildkite echoes env vars back on the
+// build object, so Status recovers and returns the original metadata without
+// any local state.
 package buildkite
 
 import (
@@ -36,41 +37,35 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/uber/submitqueue/platform/base/change"
 	platformbuildkite "github.com/uber/submitqueue/platform/extension/buildrunner/buildkite"
-	"github.com/uber/submitqueue/submitqueue/core/changeset"
-	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
+	"github.com/uber/submitqueue/stovepipe/entity"
+	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
 )
 
 // Env var keys set on every triggered Buildkite build.
 const (
-	// EnvKeyBaseURIs carries the JSON-encoded ordered list of change URIs from
-	// the dependency batches. The pipeline script applies these first and
-	// commits the result as the "base" layer.
-	EnvKeyBaseURIs = "SQ_BASE_URIS"
+	// EnvKeyHeadURI carries the URI of the commit under validation.
+	EnvKeyHeadURI = "STOVEPIPE_HEAD_URI"
 
-	// EnvKeyHeadURIs carries the JSON-encoded ordered list of change URIs from
-	// the batch under test. Applied on top of the base layer, committed
-	// separately.
-	EnvKeyHeadURIs = "SQ_HEAD_URIS"
+	// EnvKeyBaseURI carries the incremental baseline URI, empty for a full
+	// build.
+	EnvKeyBaseURI = "STOVEPIPE_BASE_URI"
 
-	// EnvKeyQueue carries the SQ queue name so the pipeline script can select
+	// EnvKeyQueue carries the queue name so the pipeline script can select
 	// queue-specific test targets.
-	EnvKeyQueue = "SQ_QUEUE"
+	EnvKeyQueue = "STOVEPIPE_QUEUE"
 
 	// EnvKeyMetadata carries the JSON-encoded BuildMetadata provided by the
 	// caller to Trigger. Buildkite echoes env vars on the build object, so
 	// Status can recover and return the original metadata without local state.
-	EnvKeyMetadata = "SQ_METADATA"
+	EnvKeyMetadata = "STOVEPIPE_METADATA"
 )
 
 // runner implements buildrunner.BuildRunner.
 type runner struct {
-	cfg      buildrunner.Config
-	client   *platformbuildkite.Client
-	resolver changeset.Resolver
-	logger   *zap.SugaredLogger
+	cfg    buildrunner.Config
+	client *platformbuildkite.Client
+	logger *zap.SugaredLogger
 }
 
 var _ buildrunner.BuildRunner = (*runner)(nil)
@@ -85,8 +80,6 @@ type Params struct {
 	// it once via platformbuildkite.NewClient, with the pipeline's base URL
 	// (via platform/http.BaseURLTransport) and auth already configured.
 	Client *platformbuildkite.Client
-	// Resolver resolves a batch's changes (base and head batches).
-	Resolver changeset.Resolver
 	// Logger is the structured logger.
 	Logger *zap.SugaredLogger
 }
@@ -94,45 +87,26 @@ type Params struct {
 // NewBuildRunner constructs a Buildkite-backed BuildRunner bound to a single
 // pipeline.
 func NewBuildRunner(params Params) buildrunner.BuildRunner {
-	return newRunner(params.Config, params.Client, params.Resolver, params.Logger.Named("buildkite_buildrunner"))
+	return newRunner(params.Config, params.Client, params.Logger.Named("buildkite_buildrunner"))
 }
 
 // newRunner constructs a runner. Used by NewBuildRunner and by tests.
-func newRunner(cfg buildrunner.Config, c *platformbuildkite.Client, resolver changeset.Resolver, logger *zap.SugaredLogger) *runner {
+func newRunner(cfg buildrunner.Config, c *platformbuildkite.Client, logger *zap.SugaredLogger) *runner {
 	return &runner{
-		cfg:      cfg,
-		client:   c,
-		resolver: resolver,
-		logger:   logger,
+		cfg:    cfg,
+		client: c,
+		logger: logger,
 	}
 }
 
-// Trigger calls the Buildkite API to create the build and returns the Buildkite
-// build number as the build ID. Errors are propagated to the caller so the
-// queue consumer can nack and retry.
-func (r *runner) Trigger(ctx context.Context, base []entity.Batch, head entity.Batch, metadata entity.BuildMetadata) (entity.BuildID, error) {
-	baseChanges, err := buildrunner.ResolveBatches(ctx, r.resolver, base)
-	if err != nil {
-		return entity.BuildID{}, fmt.Errorf("buildkite: resolve base: %w", err)
-	}
-	headChanges, err := r.resolver.ChangesForBatch(ctx, head)
-	if err != nil {
-		return entity.BuildID{}, fmt.Errorf("buildkite: resolve head: %w", err)
-	}
-
-	baseJSON, err := json.Marshal(flattenURIs(baseChanges))
-	if err != nil {
-		return entity.BuildID{}, fmt.Errorf("buildkite: marshal base URIs: %w", err)
-	}
-	headJSON, err := json.Marshal(flattenURIs(headChanges))
-	if err != nil {
-		return entity.BuildID{}, fmt.Errorf("buildkite: marshal head URIs: %w", err)
-	}
-
+// Trigger calls the Buildkite API to create the build and returns the
+// Buildkite build number as the build ID. Errors are propagated to the
+// caller so the queue consumer can nack and retry.
+func (r *runner) Trigger(ctx context.Context, baseURI, headURI string, metadata entity.BuildMetadata) (entity.BuildID, error) {
 	env := map[string]string{
-		EnvKeyBaseURIs: string(baseJSON),
-		EnvKeyHeadURIs: string(headJSON),
-		EnvKeyQueue:    r.cfg.QueueName,
+		EnvKeyHeadURI: headURI,
+		EnvKeyBaseURI: baseURI,
+		EnvKeyQueue:   r.cfg.QueueName,
 	}
 	if len(metadata) > 0 {
 		metaJSON, err := json.Marshal(metadata)
@@ -143,7 +117,7 @@ func (r *runner) Trigger(ctx context.Context, base []entity.Batch, head entity.B
 	}
 
 	req := platformbuildkite.CreateBuildRequest{
-		Message: "submitqueue speculative build",
+		Message: "stovepipe build",
 		Env:     env,
 	}
 
@@ -176,8 +150,8 @@ func (r *runner) Status(ctx context.Context, buildID entity.BuildID) (entity.Bui
 	return mapState(resp.State), meta, nil
 }
 
-// Cancel calls the Buildkite API to cancel the build. A no-op on already-terminal
-// builds (Buildkite returns 422 for those).
+// Cancel calls the Buildkite API to cancel the build. A no-op on
+// already-terminal builds (Buildkite returns 422 for those).
 func (r *runner) Cancel(ctx context.Context, buildID entity.BuildID) error {
 	number, err := platformbuildkite.ParseBuildNumber(buildID.ID)
 	if err != nil {
@@ -191,15 +165,6 @@ func (r *runner) Cancel(ctx context.Context, buildID entity.BuildID) error {
 		"buildkite_number", number,
 	)
 	return nil
-}
-
-// flattenURIs concatenates the URI lists from all changes into a single slice.
-func flattenURIs(changes []change.Change) []string {
-	uris := make([]string, 0, len(changes))
-	for _, c := range changes {
-		uris = append(uris, c.URIs...)
-	}
-	return uris
 }
 
 // decodeMetadata recovers the caller-supplied BuildMetadata from the env vars
@@ -231,7 +196,7 @@ func mapState(state string) entity.BuildStatus {
 	default:
 		// Unrecognised Buildkite state. Do NOT assume terminal: Unknown is
 		// non-terminal, so the buildsignal poll loop keeps waiting rather than
-		// failing the batch on a state this code does not understand.
+		// failing the build on a state this code does not understand.
 		return entity.BuildStatusUnknown
 	}
 }
