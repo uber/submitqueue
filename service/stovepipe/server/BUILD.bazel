@@ -20,6 +20,7 @@ go_library(
         "//stovepipe/controller/buildsignal:go_default_library",
         "//stovepipe/controller/dlq:go_default_library",
         "//stovepipe/controller/process:go_default_library",
+        "//stovepipe/controller/record:go_default_library",
         "//stovepipe/core/messagequeue:go_default_library",
         "//stovepipe/extension/buildrunner:go_default_library",
         "//stovepipe/extension/buildrunner/fake:go_default_library",

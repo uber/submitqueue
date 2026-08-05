@@ -42,6 +42,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/controller/buildsignal"
 	"github.com/uber/submitqueue/stovepipe/controller/dlq"
 	"github.com/uber/submitqueue/stovepipe/controller/process"
+	"github.com/uber/submitqueue/stovepipe/controller/record"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
 	buildrunnerfake "github.com/uber/submitqueue/stovepipe/extension/buildrunner/fake"
@@ -394,6 +395,12 @@ func registerPrimaryControllers(
 	}
 	count++
 
+	recordController := record.NewController(logger, scope, store, stovepipemq.TopicKeyRecord, "stovepipe-record")
+	if err := c.Register(recordController); err != nil {
+		return count, fmt.Errorf("failed to register record controller: %w", err)
+	}
+	count++
+
 	return count, nil
 }
 
@@ -421,8 +428,8 @@ func registerDLQControllers(
 // publishes to the process topic and the process consumer subscribes to it; process publishes
 // to the build topic and the build consumer subscribes to it; build publishes to the buildsignal
 // topic and the buildsignal consumer subscribes to it, and also republishes to itself while
-// polling. buildsignal publishes to the record topic once a build reaches a terminal status; it
-// has no Subscription yet since no consumer for it exists until the record stage lands.
+// polling. buildsignal publishes to the record topic once a build reaches a terminal status,
+// and the record consumer subscribes to it.
 func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRegistry, error) {
 	return consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{
@@ -453,6 +460,9 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Key:   stovepipemq.TopicKeyRecord,
 			Name:  "record",
 			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "stovepipe-record",
+			),
 		},
 		{
 			Key:          dlq.TopicKey(stovepipemq.TopicKeyProcess),
