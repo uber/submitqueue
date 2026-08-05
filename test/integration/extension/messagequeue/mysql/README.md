@@ -49,7 +49,7 @@ Signal names describe behavioral concerns, not implementation details, so they r
 ## Test categories
 
 - **Publish/subscribe basics** — ordering, metadata, partitioning, late subscribers, idempotency
-- **Visibility and retry** — timeout expiry, `ExtendVisibilityTimeout`, nack with delay
+- **Visibility and retry** — timeout expiry, `ExtendVisibilityTimeout`, nack redelivery
 - **Crash recovery** — worker crash with in-flight messages, reject + crash, retry-limit + crash
 - **Consumer groups** — independent state, multiple workers in a group, load balancing
 - **Rebalance** — even distribution, subscriber leave, odd partitions, excess subscribers

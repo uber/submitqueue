@@ -245,7 +245,7 @@ DLQ messages are stored in the same `queue_messages` table under a different top
 
 **6. Ack** — Set `acked = TRUE` in delivery state. Watermark advancement is deferred to the poll loop for reduced per-ack latency. All operations are idempotent.
 
-**7. Nack** — Set `invisible_until = now + delay` for retry after backoff
+**7. Nack** — Set `invisible_until = now`; the message is immediately eligible for redelivery (the visibility timeout is what spaces retries)
 
 **8. DLQ** — If `retry_count >= MaxAttempts`: atomically move message to DLQ topic (INSERT with DLQ topic + DELETE from original topic in transaction). MoveToDLQ must succeed before marking acked — otherwise the message would be lost from both main queue and DLQ.
 
@@ -271,13 +271,13 @@ By default, the poll loop fetches a batch of messages (`BatchSize`, default 10) 
 
 ### Non-Blocking Nack
 
-When a message is nacked, its `invisible_until` is set to a future timestamp. On the next poll, the nacked message is skipped (not deliverable) while subsequent messages are still delivered normally. A nacked message does not block, starve, or delay any other message in the partition.
+A nacked message becomes immediately eligible for redelivery; while it is invisible (in flight, or waiting out a visibility lapse), subsequent messages are still delivered normally. A nacked message does not block, starve, or delay any other message in the partition. (A *postponed* message is deliberately the opposite: it acts as a barrier its partition waits behind — see the messagequeue README.)
 
 Example with 5 messages at offsets 1-5, all delivered:
-- Message 3 is nacked with 30s delay
+- Message 3 is nacked
 - Messages 1, 2, 4, 5 can be acked independently
 - Watermark advances to 2 (contiguous from head), stops at 3 (not acked)
-- After 30s, message 3 becomes deliverable again, is redelivered
+- Message 3 is redelivered on a subsequent poll
 - Once message 3 is acked, watermark jumps from 2 to 5
 
 ### Strict Serialization (Opt-In)

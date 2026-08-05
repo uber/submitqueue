@@ -115,7 +115,7 @@ func setupDelivery(del *queuemock.MockDelivery, msg entityqueue.Message, ackErr,
 		close(done)
 		return ackErr
 	}).MaxTimes(1)
-	del.EXPECT().Nack(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, requeueAfterMillis int64) error {
+	del.EXPECT().Nack(gomock.Any()).DoAndReturn(func(ctx context.Context) error {
 		close(done)
 		return nackErr
 	}).MaxTimes(1)
@@ -458,7 +458,7 @@ func TestConsumer_ProcessDelivery_Hold(t *testing.T) {
 					return tt.postponeErr
 				})
 			case "nack":
-				mockDel.EXPECT().Nack(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, requeueAfterMillis int64) error {
+				mockDel.EXPECT().Nack(gomock.Any()).DoAndReturn(func(ctx context.Context) error {
 					close(done)
 					return nil
 				})
@@ -922,7 +922,7 @@ func TestConsumer_PerPartitionProcessing(t *testing.T) {
 	mockDelA.EXPECT().Metadata().Return(nil).AnyTimes()
 	mockDelA.EXPECT().DeliveryID().Return(msgA.ID).AnyTimes()
 	mockDelA.EXPECT().Ack(gomock.Any()).Return(nil).MaxTimes(1)
-	mockDelA.EXPECT().Nack(gomock.Any(), gomock.Any()).Return(nil).MaxTimes(1)
+	mockDelA.EXPECT().Nack(gomock.Any()).Return(nil).MaxTimes(1)
 
 	deliveryChan <- mockDelA
 

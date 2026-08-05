@@ -630,46 +630,6 @@ func (s *SQLQueueIntegrationSuite) TestVisibilityTimeoutAndRetry() {
 	t.Logf("Successfully tested ExtendVisibilityTimeout and visibility timeout retry")
 }
 
-func (s *SQLQueueIntegrationSuite) TestNackWithDelay() {
-	t := s.T()
-
-	q, err := queueMySQL.NewQueue(queueMySQL.Params{
-		DB:           s.db,
-		Logger:       zaptest.NewLogger(t),
-		MetricsScope: tally.NoopScope,
-	})
-	require.NoError(t, err)
-	defer q.Close()
-
-	publisher := q.Publisher()
-	subscriber := q.Subscriber()
-
-	topic := "nack_topic"
-
-	// Subscribe
-	subConfig := testSubConfig("worker-1", "nack-consumer")
-	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
-	require.NoError(t, err)
-
-	// Publish message
-	msg := entityqueue.NewMessage("nack-msg", []byte("test"), "nack-partition", nil)
-	require.NoError(t, publisher.Publish(s.ctx, topic, msg))
-
-	// Receive and Nack with delay
-	nackDelay := 2 * time.Second
-
-	delivery := receive(t, deliveryChan)
-	t.Logf("Received message, nacking with %s delay", nackDelay)
-	nackErr := delivery.Nack(s.ctx, int64(nackDelay.Milliseconds()))
-	require.NoError(t, nackErr)
-
-	// Should receive again after nack delay — subscriber polls and finds msg visible
-	delivery2 := receive(t, deliveryChan)
-	t.Logf("Received message again after nack delay")
-	assert.Equal(t, "nack-msg", delivery2.Message().ID)
-	require.NoError(t, delivery2.Ack(s.ctx))
-}
-
 func (s *SQLQueueIntegrationSuite) TestIdempotentPublish() {
 	t := s.T()
 
@@ -1103,7 +1063,7 @@ func (s *SQLQueueIntegrationSuite) TestDeadLetterQueue() {
 		assert.Equal(t, "poison-msg", delivery.Message().ID)
 
 		// Nack without delay to retry immediately
-		require.NoError(t, delivery.Nack(s.ctx, 0))
+		require.NoError(t, delivery.Nack(s.ctx))
 	}
 
 	// After MaxAttempts, message should be moved to DLQ topic
@@ -2010,7 +1970,7 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_MoreSubscribersThanPartitions()
 // TestNackDoesNotBlockOtherMessages verifies that nacking a message does not
 // block delivery of subsequent messages in the same partition. The nacked
 // message should be skipped (invisible) while later messages are delivered.
-func (s *SQLQueueIntegrationSuite) TestNackDoesNotBlockOtherMessages() {
+func (s *SQLQueueIntegrationSuite) TestInFlightMessageDoesNotBlockOtherMessages() {
 	t := s.T()
 
 	q, err := queueMySQL.NewQueue(queueMySQL.Params{
@@ -2022,26 +1982,29 @@ func (s *SQLQueueIntegrationSuite) TestNackDoesNotBlockOtherMessages() {
 	topic := "nack_nonblocking_topic"
 	partition := "nack-nb-part"
 
-	// Subscribe with batch=10 to fetch multiple messages per poll
+	// Subscribe with batch=10 to fetch multiple messages per poll. The default
+	// 60s visibility timeout keeps msg-1 invisible for the whole test.
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "nack-nb-cg")
 	subConfig.PollIntervalMs = 50
 	subConfig.BatchSize = 10
 	deliveryCh, err := q.Subscriber().Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
-	// Publish 3 messages in order
-	for i := 1; i <= 3; i++ {
+	// Publish the first message alone and receive it, leaving it in flight
+	// (un-finalized, invisible) at the lowest offset of the partition.
+	msg1 := entityqueue.NewMessage("msg-1", []byte("payload-1"), partition, nil)
+	require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg1))
+	d1 := receive(t, deliveryCh)
+	assert.Equal(t, "msg-1", d1.Message().ID)
+	t.Logf("msg-1 in flight (invisible), publishing later offsets")
+
+	// Later offsets must still be deliverable despite the invisible msg-1 —
+	// the opposite of a postponed message, which is a barrier.
+	for i := 2; i <= 3; i++ {
 		msg := entityqueue.NewMessage(fmt.Sprintf("msg-%d", i), []byte(fmt.Sprintf("payload-%d", i)), partition, nil)
 		require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg))
 	}
 
-	// Receive first message and nack it with a long delay
-	d1 := receive(t, deliveryCh)
-	assert.Equal(t, "msg-1", d1.Message().ID)
-	require.NoError(t, d1.Nack(s.ctx, 30000)) // 30s delay — won't come back during test
-	t.Logf("Nacked msg-1 with 30s delay")
-
-	// Messages 2 and 3 should still be deliverable despite msg-1 being nacked
 	d2 := receive(t, deliveryCh)
 	assert.Equal(t, "msg-2", d2.Message().ID)
 	require.NoError(t, d2.Ack(s.ctx))
@@ -2052,7 +2015,8 @@ func (s *SQLQueueIntegrationSuite) TestNackDoesNotBlockOtherMessages() {
 	require.NoError(t, d3.Ack(s.ctx))
 	t.Logf("Received and acked msg-3")
 
-	t.Logf("Verified: nacked message did not block subsequent messages")
+	require.NoError(t, d1.Ack(s.ctx))
+	t.Logf("Verified: an in-flight (invisible) message did not block subsequent messages")
 }
 
 // TestPostponeBlocksPartitionUntilDue verifies the postpone barrier: while a
@@ -2103,7 +2067,7 @@ func (s *SQLQueueIntegrationSuite) TestPostponeBlocksPartitionUntilDue() {
 	}
 
 	// Barrier: messages 2 and 3 must not be delivered while msg-1 waits —
-	// the opposite of the nacked case above.
+	// the opposite of the in-flight case above.
 	assertNoDelivery(t, deliveryCh, signalCh, queueMySQL.SignalDeliveryCheck, 3)
 	t.Logf("Confirmed: partition blocked behind postponed msg-1")
 
@@ -2165,7 +2129,7 @@ func (s *SQLQueueIntegrationSuite) TestPostponeResetsRetryBudget() {
 		delivery := receive(t, deliveryChan)
 		assert.Equal(t, attempt, delivery.Attempt())
 		assert.Equal(t, "wait-then-poison", delivery.Message().ID)
-		require.NoError(t, delivery.Nack(s.ctx, 0))
+		require.NoError(t, delivery.Nack(s.ctx))
 		t.Logf("Attempt %d: nacked", delivery.Attempt())
 	}
 
@@ -2270,7 +2234,7 @@ func (s *SQLQueueIntegrationSuite) TestMultipleConsumerGroupsIndependentState() 
 	// CG-alpha: nack msg-1, ack msg-2
 	d1a := receive(t, ch1)
 	assert.Equal(t, "shared-1", d1a.Message().ID)
-	require.NoError(t, d1a.Nack(s.ctx, 200)) // short nack delay
+	require.NoError(t, d1a.Nack(s.ctx))
 	t.Logf("cg-alpha nacked shared-1")
 
 	d2a := receive(t, ch1)
@@ -2454,14 +2418,14 @@ func (s *SQLQueueIntegrationSuite) TestCrashAfterRetryLimitDoesNotLoseMessages()
 	require.NoError(t, deliveries["msg-A"].Ack(s.ctx))
 	t.Logf("Acked msg-A")
 
-	// Nack B with short delay so it becomes visible quickly for redelivery
-	require.NoError(t, deliveries["msg-B"].Nack(s.ctx, 100))
+	// Nack B — immediately visible again for redelivery
+	require.NoError(t, deliveries["msg-B"].Nack(s.ctx))
 	t.Logf("Nacked msg-B, waiting for retry-limit to trigger auto-DLQ")
 
 	// Do NOT ack msg-C — simulating in-flight at crash time.
 
 	// Wait for msg-B to be redelivered and auto-DLQ'd by the poll loop.
-	// The poll loop picks up msg-B after 100ms nack delay, sees retry_count >= MaxAttempts, moves to DLQ.
+	// The poll loop picks up the nacked msg-B, sees retry_count >= MaxAttempts, moves it to DLQ.
 	// We just need to wait long enough for that to happen before crashing.
 	// A short sleep is acceptable here as we're waiting for the subscriber's
 	// internal processing, not for a test condition. But let's use receive

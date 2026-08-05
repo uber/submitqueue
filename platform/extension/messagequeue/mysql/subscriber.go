@@ -238,7 +238,7 @@ func (d *sqlDelivery) Ack(ctx context.Context) error {
 }
 
 // Nack implements extqueue.Delivery.Nack
-func (d *sqlDelivery) Nack(ctx context.Context, requeueAfterMillis int64) error {
+func (d *sqlDelivery) Nack(ctx context.Context) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -246,8 +246,9 @@ func (d *sqlDelivery) Nack(ctx context.Context, requeueAfterMillis int64) error 
 		return &ErrAlreadyAcknowledged{DeliveryID: d.deliveryID}
 	}
 
-	// Mark as nacked in delivery state (per consumer group, with delay and retry_count)
-	if err := d.subscriber.deliveryStateStore.MarkNacked(ctx, d.consumerGroup, d.topic, d.partitionKey, d.offset, requeueAfterMillis); err != nil {
+	// Mark as nacked in delivery state (per consumer group): immediately
+	// eligible for redelivery on the next poll.
+	if err := d.subscriber.deliveryStateStore.MarkNacked(ctx, d.consumerGroup, d.topic, d.partitionKey, d.offset); err != nil {
 		return err
 	}
 
@@ -255,7 +256,6 @@ func (d *sqlDelivery) Nack(ctx context.Context, requeueAfterMillis int64) error 
 		"topic", d.topic,
 		"partition_key", d.partitionKey,
 		"message_id", d.messageID,
-		"requeue_after_millis", requeueAfterMillis,
 	)
 
 	d.acknowledged = true
