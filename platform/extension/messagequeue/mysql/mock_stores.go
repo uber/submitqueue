@@ -251,6 +251,21 @@ func (mr *MockpartitionLeaseStoreMockRecorder) DiscoverAndAcquirePartitions(ctx,
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DiscoverAndAcquirePartitions", reflect.TypeOf((*MockpartitionLeaseStore)(nil).DiscoverAndAcquirePartitions), ctx, topic, subscriberName, consumerGroup, leaseDurationMs, maxPartitions)
 }
 
+// GetAllLeases mocks base method.
+func (m *MockpartitionLeaseStore) GetAllLeases(ctx context.Context, topic, consumerGroup string) ([]leaseInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAllLeases", ctx, topic, consumerGroup)
+	ret0, _ := ret[0].([]leaseInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAllLeases indicates an expected call of GetAllLeases.
+func (mr *MockpartitionLeaseStoreMockRecorder) GetAllLeases(ctx, topic, consumerGroup any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllLeases", reflect.TypeOf((*MockpartitionLeaseStore)(nil).GetAllLeases), ctx, topic, consumerGroup)
+}
+
 // GetLeasedPartitions mocks base method.
 func (m *MockpartitionLeaseStore) GetLeasedPartitions(ctx context.Context, topic, subscriberName, consumerGroup string) ([]string, error) {
 	m.ctrl.T.Helper()
