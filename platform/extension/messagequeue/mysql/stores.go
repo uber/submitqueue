@@ -103,6 +103,17 @@ type offsetStore interface {
 	GetMinAckedOffset(ctx context.Context, topic string, partitionKey string) (offset int64, found bool, err error)
 }
 
+// leaseInfo describes one partition's current lease row (internal use only)
+type leaseInfo struct {
+	// PartitionKey is the partition this lease covers
+	PartitionKey string
+	// LeasedBy is the subscriber name currently holding the lease
+	LeasedBy string
+	// LeaseRenewedAt is the epoch milliseconds of the last renewal; a lease
+	// is stale (stealable) once this is older than the lease duration
+	LeaseRenewedAt int64
+}
+
 // partitionLeaseStore handles partition lease operations (internal use only)
 type partitionLeaseStore interface {
 	// TryAcquireLease attempts to acquire or renew a lease for a partition
@@ -119,6 +130,12 @@ type partitionLeaseStore interface {
 
 	// GetLeasedPartitions returns all partitions currently leased by this worker
 	GetLeasedPartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string) ([]string, error)
+
+	// GetAllLeases returns the lease row for every partition currently leased
+	// under (topic, consumerGroup) by any subscriber. One PK-prefix read that
+	// lets acquisition skip partitions validly held by other subscribers
+	// instead of write-probing every lease row each discovery tick.
+	GetAllLeases(ctx context.Context, topic string, consumerGroup string) ([]leaseInfo, error)
 
 	// DiscoverAndAcquirePartitions discovers partitions from messages table and tries to acquire leases.
 	// Returns the number of new leases acquired and the full list of discovered partitions.
