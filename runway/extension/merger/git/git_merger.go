@@ -30,6 +30,12 @@
 //   - DEFAULT:       resolved to the instance's configured DefaultStrategy
 //     before any step runs.
 //
+// Authorship: the committer is always the merger's configured identity, since
+// it is what applied the change. The author is the person who wrote it —
+// carried across automatically by cherry-pick under REBASE, and set explicitly
+// on the commits SQUASH_REBASE and MERGE mint, from the author recorded on the
+// commit each change's URI pins. See author.go.
+//
 // Atomicity: for a committing merge nothing reaches the remote until the final
 // push (PROMOTE excepted, which is itself a single atomic fast-forward ref
 // update). A step that fails to apply aborts the in-progress git operation and
@@ -577,7 +583,13 @@ func (m *gitMerger) squashChange(ctx context.Context, step *runwaymq.MergeStep, 
 	if _, err := m.run(ctx, nil, "reset", "--soft", preSHA); err != nil {
 		return "", false, fmt.Errorf("git reset --soft %s: %w", preSHA, err)
 	}
-	if _, err := m.run(ctx, nil, "commit", "-m", squashMessage(step, ref)); err != nil {
+	// The squash is a new commit, so it carries no authorship of its own.
+	// Credit it to the change's own author rather than to the merger.
+	author, err := m.commitAuthor(ctx, ref.SHA)
+	if err != nil {
+		return "", false, err
+	}
+	if _, err := m.runAs(ctx, author, nil, "commit", "-m", squashMessage(step, ref)); err != nil {
 		return "", false, fmt.Errorf("git commit (squash): %w", err)
 	}
 	sha, err := m.headSHA(ctx)
@@ -607,7 +619,14 @@ func (m *gitMerger) applyMerge(ctx context.Context, rs resolvedStep) ([]*runwaym
 		if m.allowUnrelatedHistories {
 			args = append(args, "--allow-unrelated-histories")
 		}
-		out, err := m.runCombined(ctx, nil, append(args, ref.SHA)...)
+		// The merge commit is minted by the merger, so it would otherwise be
+		// authored by the service. Credit it to the change being merged; the
+		// change's own commits keep their authors through the second parent.
+		author, err := m.commitAuthor(ctx, ref.SHA)
+		if err != nil {
+			return nil, err
+		}
+		out, err := m.runCombinedAs(ctx, author, nil, append(args, ref.SHA)...)
 		if err != nil {
 			// Read the index before aborting clears it; a non-zero exit alone
 			// does not establish that anything collided.
@@ -938,7 +957,13 @@ func (m *gitMerger) push(ctx context.Context) error {
 // run executes a `git` command in the checkout. Returns captured stdout and an
 // error that includes captured stderr for diagnostics.
 func (m *gitMerger) run(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
-	cmd := m.command(ctx, args...)
+	return m.runAs(ctx, authorIdent{}, stdin, args...)
+}
+
+// runAs is run with any commit the command creates credited to the given
+// author. A zero author leaves the committer identity to author it too.
+func (m *gitMerger) runAs(ctx context.Context, author authorIdent, stdin []byte, args ...string) ([]byte, error) {
+	cmd := m.commandAs(ctx, author, args...)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
@@ -954,7 +979,13 @@ func (m *gitMerger) run(ctx context.Context, stdin []byte, args ...string) ([]by
 // runCombined is like run but returns combined stdout+stderr both on success
 // and failure. Used when the caller needs to inspect git's diagnostic output.
 func (m *gitMerger) runCombined(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
-	cmd := m.command(ctx, args...)
+	return m.runCombinedAs(ctx, authorIdent{}, stdin, args...)
+}
+
+// runCombinedAs is runCombined with any commit the command creates credited to
+// the given author.
+func (m *gitMerger) runCombinedAs(ctx context.Context, author authorIdent, stdin []byte, args ...string) ([]byte, error) {
+	cmd := m.commandAs(ctx, author, args...)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
@@ -964,6 +995,13 @@ func (m *gitMerger) runCombined(ctx context.Context, stdin []byte, args ...strin
 // command builds a git command with the committer identity injected via -c
 // flags, on top of the pinned runtime and scrubbed environment.
 func (m *gitMerger) command(ctx context.Context, args ...string) *exec.Cmd {
+	return m.commandAs(ctx, authorIdent{}, args...)
+}
+
+// commandAs is command with the author supplied through the environment. The
+// committer identity is injected either way, so the author overrides only who
+// the commit is credited to, never who is recorded as having applied it.
+func (m *gitMerger) commandAs(ctx context.Context, author authorIdent, args ...string) *exec.Cmd {
 	withIdentity := make([]string, 0, len(args)+6)
 	withIdentity = append(withIdentity,
 		"-c", "user.name="+m.committerName,
@@ -971,7 +1009,9 @@ func (m *gitMerger) command(ctx context.Context, args ...string) *exec.Cmd {
 		"-c", "commit.gpgsign=false",
 	)
 	withIdentity = append(withIdentity, args...)
-	return newGitCommand(ctx, m.runtime, m.checkoutPath, withIdentity...)
+	cmd := newGitCommand(ctx, m.runtime, m.checkoutPath, withIdentity...)
+	cmd.Env = append(cmd.Env, author.env()...)
+	return cmd
 }
 
 // newGitCommand constructs a Git command without inheriting the caller's

@@ -55,6 +55,16 @@ Fetching by SHA guarantees the merger applies exactly the commit a URI names —
 
 `PROMOTE` is exclusive because a pre-existing commit cannot descend from commits an earlier transforming step produced, and it advances the ref to an exact SHA rather than to the locally-built HEAD. Mixing it with any other step is rejected as an invalid request.
 
+## Authorship
+
+Git records an author and a committer separately, and the merger keeps them apart: the committer is always the merger's configured identity, because it is what applied the change, while the author is the person who wrote it.
+
+`REBASE` gets this for free — cherry-pick carries each commit's author across, so every landed commit keeps whoever wrote it. The strategies that mint a fresh commit do not: the squash commit and the `--no-ff` merge commit are new objects, and without attribution both would be credited to the service. Each is therefore authored as the author recorded on the commit its change's URI pins. For a change spanning several commits by different people, that is the head commit's author — the one identity the request actually names.
+
+The author is read out of the local object store, so this costs no network and needs nothing on the wire: every referenced commit is already fetched and verified before a step is applied. A commit that records no usable author (either half missing) falls back to the committer identity rather than failing the merge.
+
+The author travels to git through `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` rather than `git commit --author`, because `git merge` has no `--author` flag and because the environment keeps the name and address as separate values — a single `Name <address>` string has to be parsed back apart, which a display name containing an angle bracket breaks.
+
 ## Importing an unrelated history
 
 A repository migration arrives as an ordinary change in the target repo whose branch carries the source repo's entire history. Living in the target repo is what makes its commits fetchable; it says nothing about ancestry, and the two graphs still share no common ancestor, so git refuses the merge by default.
