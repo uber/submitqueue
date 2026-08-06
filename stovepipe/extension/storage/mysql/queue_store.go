@@ -29,17 +29,24 @@ import (
 type queueStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewQueueStore creates a new MySQL-backed QueueStore.
-func NewQueueStore(db *sql.DB, scope tally.Scope) storage.QueueStore {
-	return &queueStore{db: db, scope: scope}
+func NewQueueStore(db *sql.DB, scope tally.Scope, queue string) storage.QueueStore {
+	return &queueStore{db: db, scope: scope, queue: queue}
 }
 
 // Create persists a new queue row. Returns ErrAlreadyExists if the name already exists.
 func (q *queueStore) Create(ctx context.Context, queue entity.Queue) (retErr error) {
 	op := metrics.Begin(q.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
+
+	if queue.Name != q.queue {
+		return fmt.Errorf("queue row name %q does not match the store's bound queue %q", queue.Name, q.queue)
+	}
 
 	_, err := q.db.ExecContext(ctx,
 		`INSERT INTO queue (name, last_green_uri, in_flight_count, latest_request_id, version)
@@ -63,6 +70,10 @@ func (q *queueStore) Create(ctx context.Context, queue entity.Queue) (retErr err
 func (q *queueStore) Get(ctx context.Context, name string) (ret entity.Queue, retErr error) {
 	op := metrics.Begin(q.scope, "get", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
+
+	if name != q.queue {
+		return entity.Queue{}, fmt.Errorf("queue row name %q does not match the store's bound queue %q: %w", name, q.queue, storage.ErrNotFound)
+	}
 
 	var queue entity.Queue
 	err := q.db.QueryRowContext(ctx,
@@ -91,6 +102,10 @@ func (q *queueStore) Get(ctx context.Context, name string) (ret entity.Queue, re
 func (q *queueStore) Update(ctx context.Context, queue entity.Queue, oldVersion, newVersion int32) (retErr error) {
 	op := metrics.Begin(q.scope, "update", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
+
+	if queue.Name != q.queue {
+		return fmt.Errorf("queue row name %q does not match the store's bound queue %q", queue.Name, q.queue)
+	}
 
 	result, err := q.db.ExecContext(ctx,
 		`UPDATE queue

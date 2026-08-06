@@ -41,30 +41,30 @@ func (m *MockRequestURIStore) EXPECT() *MockRequestURIStoreMockRecorder {
 }
 
 // Create mocks base method.
-func (m *MockRequestURIStore) Create(ctx context.Context, queue, uri, id string) error {
+func (m *MockRequestURIStore) Create(ctx context.Context, uri, id string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Create", ctx, queue, uri, id)
+	ret := m.ctrl.Call(m, "Create", ctx, uri, id)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Create indicates an expected call of Create.
-func (mr *MockRequestURIStoreMockRecorder) Create(ctx, queue, uri, id any) *gomock.Call {
+func (mr *MockRequestURIStoreMockRecorder) Create(ctx, uri, id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockRequestURIStore)(nil).Create), ctx, queue, uri, id)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockRequestURIStore)(nil).Create), ctx, uri, id)
 }
 
 // GetIDByURI mocks base method.
-func (m *MockRequestURIStore) GetIDByURI(ctx context.Context, queue, uri string) (string, error) {
+func (m *MockRequestURIStore) GetIDByURI(ctx context.Context, uri string) (string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetIDByURI", ctx, queue, uri)
+	ret := m.ctrl.Call(m, "GetIDByURI", ctx, uri)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetIDByURI indicates an expected call of GetIDByURI.
-func (mr *MockRequestURIStoreMockRecorder) GetIDByURI(ctx, queue, uri any) *gomock.Call {
+func (mr *MockRequestURIStoreMockRecorder) GetIDByURI(ctx, uri any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetIDByURI", reflect.TypeOf((*MockRequestURIStore)(nil).GetIDByURI), ctx, queue, uri)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetIDByURI", reflect.TypeOf((*MockRequestURIStore)(nil).GetIDByURI), ctx, uri)
 }

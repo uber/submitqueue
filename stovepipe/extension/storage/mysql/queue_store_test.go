@@ -35,7 +35,7 @@ func setupQueueStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.QueueS
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	store := NewQueueStore(db, testMetrics())
+	store := NewQueueStore(db, testMetrics(), "monorepo/main")
 
 	return db, mock, store
 }
@@ -136,10 +136,10 @@ func TestQueueStore_Get(t *testing.T) {
 		},
 		{
 			name:      "not found",
-			queueName: "missing",
+			queueName: want.Name,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectQuery("SELECT name, last_green_uri, in_flight_count, latest_request_id, version FROM queue").
-					WithArgs("missing").
+					WithArgs(want.Name).
 					WillReturnError(sql.ErrNoRows)
 			},
 			wantErr:   true,
@@ -147,10 +147,10 @@ func TestQueueStore_Get(t *testing.T) {
 		},
 		{
 			name:      "query error",
-			queueName: "bad",
+			queueName: want.Name,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectQuery("SELECT name, last_green_uri, in_flight_count, latest_request_id, version FROM queue").
-					WithArgs("bad").
+					WithArgs(want.Name).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,

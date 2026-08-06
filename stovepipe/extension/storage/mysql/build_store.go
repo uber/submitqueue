@@ -30,11 +30,14 @@ import (
 type buildStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewBuildStore creates a new MySQL-backed BuildStore.
-func NewBuildStore(db *sql.DB, scope tally.Scope) storage.BuildStore {
-	return &buildStore{db: db, scope: scope}
+func NewBuildStore(db *sql.DB, scope tally.Scope, queue string) storage.BuildStore {
+	return &buildStore{db: db, scope: scope, queue: queue}
 }
 
 // Create persists a new build. Returns ErrAlreadyExists if the build ID already exists.
@@ -43,8 +46,9 @@ func (b *buildStore) Create(ctx context.Context, build entity.Build) (retErr err
 	defer func() { op.Complete(retErr) }()
 
 	_, err := b.db.ExecContext(ctx,
-		`INSERT INTO build (id, request_id, status, version)
-		 VALUES (?, ?, ?, ?)`,
+		`INSERT INTO build (queue, id, request_id, status, version)
+		 VALUES (?, ?, ?, ?, ?)`,
+		b.queue,
 		build.ID,
 		build.RequestID,
 		build.Status,
@@ -68,8 +72,8 @@ func (b *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retE
 	var build entity.Build
 	err := b.db.QueryRowContext(ctx,
 		`SELECT id, request_id, status, version
-		 FROM build WHERE id = ?`,
-		id,
+		 FROM build WHERE queue = ? AND id = ?`,
+		b.queue, id,
 	).Scan(
 		&build.ID,
 		&build.RequestID,
@@ -98,9 +102,10 @@ func (b *buildStore) Update(ctx context.Context, build entity.Build, oldVersion,
 	result, err := b.db.ExecContext(ctx,
 		`UPDATE build
 		 SET status = ?, version = ?
-		 WHERE id = ? AND version = ?`,
+		 WHERE queue = ? AND id = ? AND version = ?`,
 		build.Status,
 		newVersion,
+		b.queue,
 		build.ID,
 		oldVersion,
 	)
