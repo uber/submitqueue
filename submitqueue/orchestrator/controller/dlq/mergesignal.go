@@ -33,7 +33,7 @@ import (
 type mergeSignalController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	store         storage.Storage
+	stores        storage.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -46,7 +46,7 @@ var _ consumer.Controller = (*mergeSignalController)(nil)
 func NewDLQMergeSignalController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	stores storage.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -55,7 +55,7 @@ func NewDLQMergeSignalController(
 	return &mergeSignalController{
 		logger:        logger.Named(name),
 		metricsScope:  scope.SubScope(name),
-		store:         store,
+		stores:        stores,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -74,6 +74,13 @@ func (c *mergeSignalController) Process(ctx context.Context, delivery consumer.D
 		return fmt.Errorf("failed to decode merge result from dlq payload: %w", err)
 	}
 
+	store, err := c.stores.For(storage.Config{QueueName: result.GetQueueName()})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		// Non-retryable: a missing or unresolvable queue is a malformed message.
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", result.GetQueueName(), err)
+	}
+
 	dmeta := delivery.Metadata()
 	c.logger.Warnw("dlq message received",
 		"batch_id", result.Id,
@@ -83,7 +90,7 @@ func (c *mergeSignalController) Process(ctx context.Context, delivery consumer.D
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
 
-	if err := failBatch(ctx, c.store, c.registry, c.logger, result.Id, dmeta["dlq.last_error"]); err != nil {
+	if err := failBatch(ctx, store, c.registry, c.logger, result.Id, dmeta["dlq.last_error"]); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
 		return err
 	}

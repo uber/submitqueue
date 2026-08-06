@@ -36,16 +36,23 @@ func TestNewStorage(t *testing.T) {
 	s, err := NewStorage(db, testMetrics())
 	require.NoError(t, err)
 
-	assert.NotNil(t, s.GetRequestStore())
-	assert.NotNil(t, s.GetRequestBatchStore())
-	assert.NotNil(t, s.GetChangeStore())
-	assert.NotNil(t, s.GetBatchStore())
-	assert.NotNil(t, s.GetBatchDependentStore())
-	assert.NotNil(t, s.GetBuildStore())
 	assert.NotNil(t, s.GetRequestLogStore())
 	assert.NotNil(t, s.GetRequestSummaryStore())
-	assert.NotNil(t, s.GetRequestQueueSummaryStore())
 	assert.NotNil(t, s.GetRequestURIStore())
+
+	bound, err := s.For("monorepo")
+	require.NoError(t, err)
+	assert.NotNil(t, bound.GetRequestStore())
+	assert.NotNil(t, bound.GetRequestBatchStore())
+	assert.NotNil(t, bound.GetChangeStore())
+	assert.NotNil(t, bound.GetBatchStore())
+	assert.NotNil(t, bound.GetBatchDependentStore())
+	assert.NotNil(t, bound.GetQueueBatchStateStore())
+	assert.NotNil(t, bound.GetBuildStore())
+	assert.NotNil(t, bound.GetRequestQueueSummaryStore())
+
+	_, err = s.For("")
+	assert.Error(t, err, "resolving an empty queue name must fail")
 }
 
 func TestMysqlStorage_Close(t *testing.T) {

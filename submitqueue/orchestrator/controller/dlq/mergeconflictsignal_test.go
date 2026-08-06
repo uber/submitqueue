@@ -34,7 +34,7 @@ func TestDLQMergeConflictSignalController_InterfaceAndAccessors(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 
-	c := NewDLQMergeConflictSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-mergeconflictsignal-dlq")
+	c := NewDLQMergeConflictSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-mergeconflictsignal-dlq")
 
 	assert.Equal(t, "merge-conflict-check-signal_dlq", c.Name())
 	assert.Equal(t, consumer.TopicKey("merge-conflict-check-signal_dlq"), c.TopicKey())
@@ -59,7 +59,7 @@ func TestDLQMergeConflictSignalController_Process_ReconcilesRequest(t *testing.T
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	c := NewDLQMergeConflictSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, registry, TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-mergeconflictsignal-dlq")
+	c := NewDLQMergeConflictSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-mergeconflictsignal-dlq")
 
 	payload, err := runwaymq.Marshal(&runwaymq.MergeResult{Id: "q/1", Outcome: runwaypb.Outcome_FAILED, Reason: "boom"})
 	require.NoError(t, err)
@@ -73,7 +73,7 @@ func TestDLQMergeConflictSignalController_Process_MalformedPayloadFails(t *testi
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
-	c := NewDLQMergeConflictSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-mergeconflictsignal-dlq")
+	c := NewDLQMergeConflictSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-mergeconflictsignal-dlq")
 
 	delivery := newMockDelivery(ctrl, []byte("garbage"))
 	require.Error(t, c.Process(context.Background(), delivery))

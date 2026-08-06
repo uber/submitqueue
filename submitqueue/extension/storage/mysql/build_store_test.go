@@ -35,7 +35,7 @@ func setupBuildStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.BuildS
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	store := NewBuildStore(db, testMetrics())
+	store := NewBuildStore(db, testMetrics(), "monorepo")
 
 	return db, mock, store
 }

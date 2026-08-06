@@ -67,7 +67,7 @@ func Transition(ctx context.Context, store storage.Storage, batch entity.Batch, 
 		return updated, fmt.Errorf("failed to put queue batch state record for batch %s under state %s: %w", updated.ID, newState, err)
 	}
 	if oldState != newState {
-		if err := store.GetQueueBatchStateStore().Delete(ctx, updated.Queue, oldState, updated.ID); err != nil {
+		if err := store.GetQueueBatchStateStore().Delete(ctx, oldState, updated.ID); err != nil {
 			return updated, fmt.Errorf("failed to delete queue batch state record for batch %s under state %s: %w", updated.ID, oldState, err)
 		}
 	}

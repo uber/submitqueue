@@ -35,7 +35,7 @@ func setupRequestBatchStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage
 
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	return db, mock, NewRequestBatchStore(db, testMetrics())
+	return db, mock, NewRequestBatchStore(db, testMetrics(), "monorepo")
 }
 
 func TestRequestBatchStore_GetByRequestID(t *testing.T) {

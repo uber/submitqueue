@@ -36,10 +36,16 @@ import (
 
 // newQueueBatchStateStore returns a QueueBatchStateStore mock that accepts any
 // membership-record write; cancel never lists record buckets.
+// staticStorageFactory resolves every queue to one fixed store aggregate.
+type staticStorageFactory struct{ store storage.Storage }
+
+// For returns the fixed store aggregate for any queue.
+func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
+
 func newQueueBatchStateStore(ctrl *gomock.Controller) *storagemock.MockQueueBatchStateStore {
 	s := storagemock.NewMockQueueBatchStateStore(ctrl)
 	s.EXPECT().Put(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	s.EXPECT().Delete(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	s.EXPECT().Delete(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	return s
 }
 
@@ -80,7 +86,7 @@ func newRegistry(t *testing.T, ctrl *gomock.Controller) (consumer.TopicRegistry,
 }
 
 func newController(t *testing.T, store storage.Storage, registry consumer.TopicRegistry) *Controller {
-	return NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, registry, topickey.TopicKeyCancel, "orchestrator-cancel")
+	return NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, registry, topickey.TopicKeyCancel, "orchestrator-cancel")
 }
 
 func newDelivery(t *testing.T, ctrl *gomock.Controller, payload []byte, partitionKey string) consumer.Delivery {
@@ -761,8 +767,8 @@ func TestFindBatches(t *testing.T) {
 			store.EXPECT().GetRequestBatchStore().Return(requestBatchStore)
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
-			controller := &Controller{metricsScope: tally.NoopScope, store: store}
-			got, err := controller.findBatches(context.Background(), request)
+			controller := &Controller{metricsScope: tally.NoopScope}
+			got, err := controller.findBatches(context.Background(), store, request)
 			if tt.errMsg != "" {
 				assert.ErrorContains(t, err, tt.errMsg)
 				return

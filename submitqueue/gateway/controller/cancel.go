@@ -52,12 +52,12 @@ type cancelController struct {
 // NewCancelController creates a new instance of the gateway cancel controller.
 // The controller writes a RequestStatusCancelling log entry through the shared materializer and
 // publishes cancel requests to the topic registered under topickey.TopicKeyCancel.
-func NewCancelController(logger *zap.SugaredLogger, scope tally.Scope, store storage.Storage, registry consumer.TopicRegistry) CancelController {
+func NewCancelController(logger *zap.SugaredLogger, scope tally.Scope, summaries storage.RequestSummaryStore, materializer *requestcore.Materializer, registry consumer.TopicRegistry) CancelController {
 	return &cancelController{
 		logger:              logger,
 		metricsScope:        scope,
-		requestSummaryStore: store.GetRequestSummaryStore(),
-		materializer:        requestcore.NewMaterializer(store),
+		requestSummaryStore: summaries,
+		materializer:        materializer,
 		registry:            registry,
 	}
 }

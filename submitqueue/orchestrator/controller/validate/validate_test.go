@@ -42,6 +42,12 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
+// staticStorageFactory resolves every queue to one fixed store aggregate.
+type staticStorageFactory struct{ store storage.Storage }
+
+// For returns the fixed store aggregate for any queue.
+func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
+
 func requestWithState(request entity.Request, state entity.RequestState) entity.Request {
 	request.State = state
 	return request
@@ -90,7 +96,7 @@ func newMockStorage(ctrl *gomock.Controller, request entity.Request) (*storagemo
 // simulate overlap or assert the claim override these with their own EXPECTs.
 func newMockChangeStore(ctrl *gomock.Controller) *storagemock.MockChangeStore {
 	cs := storagemock.NewMockChangeStore(ctrl)
-	cs.EXPECT().GetByURI(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	cs.EXPECT().GetByURI(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	cs.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	return cs
 }
@@ -130,7 +136,7 @@ func newTestController(
 	cpFactory := changeprovidermock.NewMockFactory(ctrl)
 	cpFactory.EXPECT().For(gomock.Any()).Return(cp, nil).AnyTimes()
 
-	return NewController(logger, scope, store, registry, cpFactory, nil, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
+	return NewController(logger, scope, staticStorageFactory{store: store}, registry, cpFactory, nil, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
 }
 
 func TestNewController(t *testing.T) {
@@ -212,7 +218,7 @@ func TestController_Process_PublishesCheckToRunway(t *testing.T) {
 	cpFactory := changeprovidermock.NewMockFactory(ctrl)
 	cpFactory.EXPECT().For(gomock.Any()).Return(&mockChangeProvider{}, nil).AnyTimes()
 
-	controller := NewController(logger, tally.NoopScope, store, registry, cpFactory, nil, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
+	controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, registry, cpFactory, nil, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := consumermock.NewMockDelivery(ctrl)
@@ -259,7 +265,7 @@ func TestController_Process_ClaimsChangeRecordsWithDetails(t *testing.T) {
 	}
 	cs := storagemock.NewMockChangeStore(ctrl)
 	// Duplicate-detection read finds no overlap.
-	cs.EXPECT().GetByURI(gomock.Any(), request.Queue, uri).Return(nil, nil).AnyTimes()
+	cs.EXPECT().GetByURI(gomock.Any(), uri).Return(nil, nil).AnyTimes()
 	// Capture the record passed to Create; assert identity + details.
 	cs.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, rec entity.ChangeRecord) error {
@@ -486,7 +492,7 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 			// One GetByURI per URI on the request, in order. Controller short-circuits on first
 			// live duplicate, so .AnyTimes() lets unmatched URIs go un-queried.
 			for _, u := range uris {
-				cs.EXPECT().GetByURI(gomock.Any(), queueName, u).Return(tt.byURI[u], nil).MaxTimes(1)
+				cs.EXPECT().GetByURI(gomock.Any(), u).Return(tt.byURI[u], nil).MaxTimes(1)
 			}
 			// When no duplicate is found, the controller continues to fetch change info
 			// and claims each fetched change via Create. Accept any Create.
@@ -530,7 +536,7 @@ func TestController_Process_ChangeStoreQueryFailure(t *testing.T) {
 	store, _ := newMockStorage(ctrl, request)
 
 	cs := storagemock.NewMockChangeStore(ctrl)
-	cs.EXPECT().GetByURI(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("change store down"))
+	cs.EXPECT().GetByURI(gomock.Any(), gomock.Any()).Return(nil, fmt.Errorf("change store down"))
 
 	controller := newTestController(t, ctrl, store, cs, nil)
 
@@ -619,7 +625,7 @@ func TestController_Process_CustomValidatorPasses(t *testing.T) {
 		QueueName: request.Queue,
 	}).Return(mockValidator, nil)
 
-	controller := NewController(logger, tally.NoopScope, store, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
+	controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := consumermock.NewMockDelivery(ctrl)
@@ -678,7 +684,7 @@ func TestController_Process_CustomValidatorFails(t *testing.T) {
 		QueueName: request.Queue,
 	}).Return(mockValidator, nil)
 
-	controller := NewController(logger, tally.NoopScope, store, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
+	controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := consumermock.NewMockDelivery(ctrl)
@@ -730,7 +736,7 @@ func TestController_Process_CustomValidatorFailure_TerminationPublishFails(t *te
 		QueueName: request.Queue,
 	}).Return(mockValidator, nil)
 
-	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()

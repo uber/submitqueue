@@ -34,7 +34,7 @@ func setupChangeStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.Chang
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	store := NewChangeStore(db, testMetrics())
+	store := NewChangeStore(db, testMetrics(), "monorepo")
 
 	return db, mock, store
 }
@@ -165,7 +165,7 @@ func TestChangeStore_GetByURI(t *testing.T) {
 
 			tt.setup(mock)
 
-			got, err := store.GetByURI(context.Background(), record.Queue, record.URI)
+			got, err := store.GetByURI(context.Background(), record.URI)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {

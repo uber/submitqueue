@@ -28,9 +28,9 @@ import (
 // ListByStates call issues while hydrating candidate IDs.
 const hydrateConcurrency = 16
 
-// ListByStates returns the queue's batches whose current state is one of the given
-// states, read through the queue's membership records: each requested state bucket
-// is listed, candidate IDs are deduplicated across buckets, every candidate is
+// ListByStates returns the bound queue's batches whose current state is one of the
+// given states, read through the queue's membership records: each requested state
+// bucket is listed, candidate IDs are deduplicated across buckets, every candidate is
 // hydrated by key with bounded concurrency, and the result keeps only batches whose
 // hydrated State is in states. Classification always uses the hydrated state — a
 // record found in a stale bucket can therefore never misreport a batch, only route
@@ -39,7 +39,7 @@ const hydrateConcurrency = 16
 // A candidate ID whose batch does not exist is returned as an error rather than
 // skipped: batch rows are never deleted, so a dangling record means the store is
 // inconsistent, not that the batch concluded.
-func ListByStates(ctx context.Context, store storage.Storage, queue string, states []entity.BatchState) ([]entity.Batch, error) {
+func ListByStates(ctx context.Context, store storage.Storage, states []entity.BatchState) ([]entity.Batch, error) {
 	wanted := make(map[entity.BatchState]bool, len(states))
 	seen := make(map[string]bool)
 	var ids []string
@@ -49,9 +49,9 @@ func ListByStates(ctx context.Context, store storage.Storage, queue string, stat
 		}
 		wanted[state] = true
 
-		records, err := store.GetQueueBatchStateStore().List(ctx, queue, state)
+		records, err := store.GetQueueBatchStateStore().List(ctx, state)
 		if err != nil {
-			return nil, fmt.Errorf("failed to list queue batch state records for queue %s state %s: %w", queue, state, err)
+			return nil, fmt.Errorf("failed to list queue batch state records for state %s: %w", state, err)
 		}
 		for _, record := range records {
 			if seen[record.BatchID] {
@@ -69,7 +69,7 @@ func ListByStates(ctx context.Context, store storage.Storage, queue string, stat
 		g.Go(func() error {
 			batch, err := store.GetBatchStore().Get(gctx, id)
 			if err != nil {
-				return fmt.Errorf("failed to get batch %s of queue %s: %w", id, queue, err)
+				return fmt.Errorf("failed to get batch %s: %w", id, err)
 			}
 			hydrated[i] = batch
 			return nil

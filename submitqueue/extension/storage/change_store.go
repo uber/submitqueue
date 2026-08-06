@@ -39,13 +39,13 @@ type ChangeStore interface {
 	// cross-request overlap is detected by GetByURI, not by Create.
 	Create(ctx context.Context, record entity.ChangeRecord) error
 
-	// GetByURI returns every ChangeRecord for the given (queue, uri). Multiple
-	// requests can have claimed the same URI over time, so the slice may have
-	// any number of entries; an empty slice means no claim has ever been
-	// recorded for this URI in this queue.
+	// GetByURI returns every ChangeRecord the bound queue holds for the given
+	// URI. Multiple requests can have claimed the same URI over time, so the
+	// slice may have any number of entries; an empty slice means no claim has
+	// ever been recorded for this URI in this queue.
 	//
 	// The store does not filter by request_id or by the owning request's
 	// state — callers that want to skip self filter by RequestID, and callers
 	// that want only live owners consult RequestStore for liveness.
-	GetByURI(ctx context.Context, queue string, uri string) ([]entity.ChangeRecord, error)
+	GetByURI(ctx context.Context, uri string) ([]entity.ChangeRecord, error)
 }

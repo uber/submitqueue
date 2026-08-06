@@ -56,16 +56,16 @@ func (mr *MockChangeStoreMockRecorder) Create(ctx, record any) *gomock.Call {
 }
 
 // GetByURI mocks base method.
-func (m *MockChangeStore) GetByURI(ctx context.Context, queue, uri string) ([]entity.ChangeRecord, error) {
+func (m *MockChangeStore) GetByURI(ctx context.Context, uri string) ([]entity.ChangeRecord, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetByURI", ctx, queue, uri)
+	ret := m.ctrl.Call(m, "GetByURI", ctx, uri)
 	ret0, _ := ret[0].([]entity.ChangeRecord)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetByURI indicates an expected call of GetByURI.
-func (mr *MockChangeStoreMockRecorder) GetByURI(ctx, queue, uri any) *gomock.Call {
+func (mr *MockChangeStoreMockRecorder) GetByURI(ctx, uri any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByURI", reflect.TypeOf((*MockChangeStore)(nil).GetByURI), ctx, queue, uri)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByURI", reflect.TypeOf((*MockChangeStore)(nil).GetByURI), ctx, uri)
 }

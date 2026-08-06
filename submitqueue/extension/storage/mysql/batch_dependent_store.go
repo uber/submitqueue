@@ -32,11 +32,14 @@ import (
 type batchDependentStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewBatchDependentStore creates a new MySQL-backed BatchDependentStore.
-func NewBatchDependentStore(db *sql.DB, scope tally.Scope) storage.BatchDependentStore {
-	return &batchDependentStore{db: db, scope: scope}
+func NewBatchDependentStore(db *sql.DB, scope tally.Scope, queue string) storage.BatchDependentStore {
+	return &batchDependentStore{db: db, scope: scope, queue: queue}
 }
 
 // Get retrieves the batch dependent by batch ID. Returns ErrNotFound if the batch dependent is not found.

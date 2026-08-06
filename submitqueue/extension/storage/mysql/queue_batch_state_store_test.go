@@ -34,7 +34,7 @@ func setupQueueBatchStateStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, stor
 
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	return db, mock, NewQueueBatchStateStore(db, testMetrics())
+	return db, mock, NewQueueBatchStateStore(db, testMetrics(), "monorepo")
 }
 
 func TestQueueBatchStateStore_List(t *testing.T) {
@@ -99,7 +99,7 @@ func TestQueueBatchStateStore_List(t *testing.T) {
 			defer db.Close()
 			tt.setup(mock)
 
-			got, err := store.List(context.Background(), record1.Queue, record1.State)
+			got, err := store.List(context.Background(), record1.State)
 			if tt.errMsg != "" {
 				assert.ErrorContains(t, err, tt.errMsg)
 			} else {
@@ -203,7 +203,7 @@ func TestQueueBatchStateStore_Delete(t *testing.T) {
 			defer db.Close()
 			tt.setup(mock)
 
-			err := store.Delete(context.Background(), record.Queue, record.State, record.BatchID)
+			err := store.Delete(context.Background(), record.State, record.BatchID)
 			if tt.errMsg != "" {
 				assert.ErrorContains(t, err, tt.errMsg)
 			} else {

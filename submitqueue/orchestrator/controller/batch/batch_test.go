@@ -78,19 +78,27 @@ func newSequentialCounter(ctrl *gomock.Controller) *countermock.MockCounter {
 func newQueueBatchStateStore(ctrl *gomock.Controller, active ...entity.Batch) *storagemock.MockQueueBatchStateStore {
 	s := storagemock.NewMockQueueBatchStateStore(ctrl)
 	s.EXPECT().Put(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	s.EXPECT().Delete(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	s.EXPECT().List(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, queue string, state entity.BatchState) ([]entity.QueueBatchState, error) {
+	s.EXPECT().Delete(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	s.EXPECT().List(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, state entity.BatchState) ([]entity.QueueBatchState, error) {
 			var records []entity.QueueBatchState
 			for _, b := range active {
-				if b.Queue == queue && b.State == state {
-					records = append(records, entity.QueueBatchState{Queue: queue, State: state, BatchID: b.ID})
+				if b.State == state {
+					records = append(records, entity.QueueBatchState{Queue: b.Queue, State: state, BatchID: b.ID})
 				}
 			}
 			return records, nil
 		},
 	).AnyTimes()
 	return s
+}
+
+// storageFactoryFor returns a storage.Factory mock that resolves any queue to
+// the given queue-scoped store aggregate.
+func storageFactoryFor(ctrl *gomock.Controller, store storage.Storage) *storagemock.MockFactory {
+	f := storagemock.NewMockFactory(ctrl)
+	f.EXPECT().For(gomock.Any()).Return(store, nil).AnyTimes()
+	return f
 }
 
 // testRequest returns a standard test request for batch tests.
@@ -167,7 +175,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 	analyzerFactory := conflictmock.NewMockFactory(ctrl)
 	analyzerFactory.EXPECT().For(gomock.Any()).Return(analyzer, nil).AnyTimes()
 
-	return NewController(logger, scope, registry, cnt, mockStorage, analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch")
+	return NewController(logger, scope, registry, cnt, storageFactoryFor(ctrl, mockStorage), analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch")
 }
 
 func TestNewController(t *testing.T) {
@@ -273,7 +281,7 @@ func TestController_Process_StampsQueueOnSpeculatePayload(t *testing.T) {
 	analyzerFactory.EXPECT().For(gomock.Any()).Return(all.New(), nil).AnyTimes()
 	controller := NewController(
 		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, newSequentialCounter(ctrl),
-		mockStorage, analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch",
+		storageFactoryFor(ctrl, mockStorage), analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch",
 	)
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
@@ -355,7 +363,7 @@ func TestController_Process_PublishesBatchedLog(t *testing.T) {
 	analyzerFactory.EXPECT().For(gomock.Any()).Return(all.New(), nil).AnyTimes()
 	controller := NewController(
 		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, newSequentialCounter(ctrl),
-		mockStorage, analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch",
+		storageFactoryFor(ctrl, mockStorage), analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch",
 	)
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
@@ -810,7 +818,7 @@ func TestController_Process_CASLostToCancel(t *testing.T) {
 	analyzerFactory.EXPECT().For(gomock.Any()).Return(all.New(), nil).AnyTimes()
 	controller := NewController(
 		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, newSequentialCounter(ctrl),
-		mockStorage, analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch",
+		storageFactoryFor(ctrl, mockStorage), analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch",
 	)
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
@@ -979,7 +987,7 @@ func TestController_Process_ReadiesBatchBeforePublishing(t *testing.T) {
 	analyzerFactory := conflictmock.NewMockFactory(ctrl)
 	analyzerFactory.EXPECT().For(conflict.Config{QueueName: request.Queue}).Return(all.New(), nil)
 	controller := NewController(
-		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, cnt, store, analyzerFactory,
+		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, cnt, storageFactoryFor(ctrl, store), analyzerFactory,
 		topickey.TopicKeyBatch, "orchestrator-batch",
 	)
 
@@ -1183,8 +1191,8 @@ func TestController_PopulateBatch_Errors(t *testing.T) {
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 			store.EXPECT().GetBatchDependentStore().Return(batchDependentStore).AnyTimes()
 
-			controller := &Controller{metricsScope: tally.NoopScope, store: store}
-			_, err := controller.populateBatch(context.Background(), batch)
+			controller := &Controller{metricsScope: tally.NoopScope}
+			_, err := controller.populateBatch(context.Background(), store, batch)
 			assert.ErrorContains(t, err, tt.errMsg)
 		})
 	}

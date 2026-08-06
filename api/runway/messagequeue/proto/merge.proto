@@ -126,4 +126,7 @@ message MergeResult {
     // merge populates each step's outputs with the revisions it produced; a
     // dry-run check leaves them empty.
     repeated StepResult steps = 4;
+    // queue_name echoes the caller-provided queue name from the request, so the
+    // consumer can route the result by queue without loading state first.
+    string queue_name = 5;
 }

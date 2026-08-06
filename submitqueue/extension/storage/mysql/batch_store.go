@@ -32,11 +32,14 @@ import (
 type batchStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewBatchStore creates a new MySQL-backed BatchStore.
-func NewBatchStore(db *sql.DB, scope tally.Scope) storage.BatchStore {
-	return &batchStore{db: db, scope: scope}
+func NewBatchStore(db *sql.DB, scope tally.Scope, queue string) storage.BatchStore {
+	return &batchStore{db: db, scope: scope, queue: queue}
 }
 
 // Get retrieves a batch by ID. Returns ErrNotFound if the batch is not found.
@@ -76,6 +79,10 @@ func (s *batchStore) Create(ctx context.Context, batch entity.Batch) (retErr err
 	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	if batch.Queue != s.queue {
+		return fmt.Errorf("batch %s queue %q does not match the store's bound queue %q", batch.ID, batch.Queue, s.queue)
+	}
+
 	containsJSON, err := json.Marshal(batch.Contains)
 	if err != nil {
 		return fmt.Errorf("failed to marshal contains=%v id=%s for Create batch entity: %w", batch.Contains, batch.ID, err)
@@ -107,6 +114,10 @@ func (s *batchStore) Create(ctx context.Context, batch entity.Batch) (retErr err
 func (s *batchStore) Update(ctx context.Context, batch entity.Batch, oldVersion, newVersion int32) (retErr error) {
 	op := metrics.Begin(s.scope, "update_state", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
+
+	if batch.Queue != s.queue {
+		return fmt.Errorf("batch %s queue %q does not match the store's bound queue %q", batch.ID, batch.Queue, s.queue)
+	}
 
 	containsJSON, err := json.Marshal(batch.Contains)
 	if err != nil {

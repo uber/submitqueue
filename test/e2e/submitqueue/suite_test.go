@@ -135,7 +135,9 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 	s.log.Logf("Schemas applied successfully")
 
 	// White-box handle on the operating store for point-in-time RequestState.
-	s.requestStore = storagemysql.NewRequestStore(s.db, tally.NoopScope)
+	// Reads are not yet queue-filtered, so a single bound instance serves every
+	// e2e queue's point-in-time RequestState checks.
+	s.requestStore = storagemysql.NewRequestStore(s.db, tally.NoopScope, "e2e-test-queue")
 
 	// Connect to Gateway gRPC service
 	var gatewayConn *grpc.ClientConn

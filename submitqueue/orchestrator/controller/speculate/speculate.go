@@ -57,7 +57,7 @@ import (
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	store         storage.Storage
+	stores        storage.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -73,7 +73,7 @@ const opName = "process"
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	stores storage.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -81,7 +81,7 @@ func NewController(
 	return &Controller{
 		logger:        logger.Named("speculate_controller"),
 		metricsScope:  scope.SubScope("speculate_controller"),
-		store:         store,
+		stores:        stores,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -99,7 +99,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to deserialize batch ID: %w", err)
 	}
 
-	batch, err := c.store.GetBatchStore().Get(ctx, bid.ID)
+	store, err := c.stores.For(storage.Config{QueueName: bid.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		// Non-retryable: a missing or unresolvable queue is a malformed message.
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", bid.Queue, err)
+	}
+
+	batch, err := store.GetBatchStore().Get(ctx, bid.ID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
@@ -116,7 +123,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// speculate to drive to terminal. Cancel in-flight builds, fan out to
 	// dependents, CAS to terminal Cancelled, and publish to conclude.
 	if batch.State == entity.BatchStateCancelling {
-		return c.cancelBatch(ctx, batch)
+		return c.cancelBatch(ctx, store, batch)
 	}
 
 	// Terminal state: re-fan-out for self-healing in case a previous publish
@@ -128,12 +135,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, opName, "self_heal_terminal", 1)
 		// Repair the membership record for the same crash window: a prior
 		// attempt may have CAS'd to terminal without completing the record move.
-		if err := corebatch.EnsureRecord(ctx, c.store, batch); err != nil {
+		if err := corebatch.EnsureRecord(ctx, store, batch); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 			return err
 		}
 		if batch.State == entity.BatchStateCancelled {
-			if err := c.respeculateDependents(ctx, batch); err != nil {
+			if err := c.respeculateDependents(ctx, store, batch); err != nil {
 				return err
 			}
 		}
@@ -145,7 +152,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, opName, "noop_merging", 1)
 		// A redelivery can land here after a tryFinalize attempt crashed
 		// between its CAS and the record move; repair before acking.
-		if err := corebatch.EnsureRecord(ctx, c.store, batch); err != nil {
+		if err := corebatch.EnsureRecord(ctx, store, batch); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 			return err
 		}
@@ -154,9 +161,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	switch batch.State {
 	case entity.BatchStateCreated:
-		return c.startSpeculation(ctx, batch)
+		return c.startSpeculation(ctx, store, batch)
 	case entity.BatchStateSpeculating:
-		return c.tryFinalize(ctx, batch)
+		return c.tryFinalize(ctx, store, batch)
 	default:
 		metrics.NamedCounter(c.metricsScope, opName, "unexpected_state", 1)
 		return fmt.Errorf("unexpected batch state %q for batch %s", batch.State, batch.ID)
@@ -165,7 +172,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 // startSpeculation kicks off CI for this batch on top of the speculative head
 // (batch.Dependencies assumed to all pass), then transitions to Speculating.
-func (c *Controller) startSpeculation(ctx context.Context, batch entity.Batch) error {
+func (c *Controller) startSpeculation(ctx context.Context, store storage.Storage, batch entity.Batch) error {
 	c.logger.Infow("starting speculation",
 		"batch_id", batch.ID,
 		"speculation_chain", append(append([]string{}, batch.Dependencies...), batch.ID),
@@ -178,7 +185,7 @@ func (c *Controller) startSpeculation(ctx context.Context, batch entity.Batch) e
 
 	// Optimistic CAS: if the version has already advanced (concurrent speculate),
 	// the next event will see the new state and behave correctly.
-	if _, err := corebatch.Transition(ctx, c.store, batch, entity.BatchStateSpeculating); err != nil {
+	if _, err := corebatch.Transition(ctx, store, batch, entity.BatchStateSpeculating); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return err
 	}
@@ -198,8 +205,8 @@ func (c *Controller) startSpeculation(ctx context.Context, batch entity.Batch) e
 // We will need to respeculate the failed paths — drop the failed dep
 // from the chain and re-issue speculation for the surviving ordering(s)
 // — instead of cascading the failure into requests that could still land.
-func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error {
-	deps, err := c.fetchDependencies(ctx, batch)
+func (c *Controller) tryFinalize(ctx context.Context, store storage.Storage, batch entity.Batch) error {
+	deps, err := c.fetchDependencies(ctx, store, batch)
 	if err != nil {
 		return err
 	}
@@ -218,7 +225,7 @@ func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error 
 				"dependency_id", d.ID,
 			)
 		case entity.BatchStateFailed:
-			return c.failOnDependency(ctx, batch, d)
+			return c.failOnDependency(ctx, store, batch, d)
 		default:
 			pending = append(pending, d.ID)
 		}
@@ -238,7 +245,7 @@ func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error 
 		return fmt.Errorf("failed to publish to merge: %w", err)
 	}
 
-	if _, err := corebatch.Transition(ctx, c.store, batch, entity.BatchStateMerging); err != nil {
+	if _, err := corebatch.Transition(ctx, store, batch, entity.BatchStateMerging); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return err
 	}
@@ -251,7 +258,7 @@ func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error 
 // the conclude queue so the request store and request log get reconciled.
 // Without this transition the batch would sit in Speculating forever — no
 // downstream event ever fires for it again.
-func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, dep entity.Batch) error {
+func (c *Controller) failOnDependency(ctx context.Context, store storage.Storage, batch entity.Batch, dep entity.Batch) error {
 	metrics.NamedCounter(c.metricsScope, opName, "dependency_failed", 1)
 	c.logger.Warnw("dependency in non-succeeding terminal state; failing batch",
 		"batch_id", batch.ID,
@@ -259,7 +266,7 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 		"dependency_state", string(dep.State),
 	)
 
-	batch, err := corebatch.Transition(ctx, c.store, batch, entity.BatchStateFailed)
+	batch, err := corebatch.Transition(ctx, store, batch, entity.BatchStateFailed)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return err
@@ -305,7 +312,7 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 // storage.ErrVersionMismatch on the terminal CAS is returned as-is because it
 // is intrinsically retryable; the redelivery will land in the
 // self-heal branch and complete the fan-out.
-func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error {
+func (c *Controller) cancelBatch(ctx context.Context, store storage.Storage, batch entity.Batch) error {
 	metrics.NamedCounter(c.metricsScope, opName, "cancel_batch", 1)
 	c.logger.Infow("cancelling batch",
 		"batch_id", batch.ID,
@@ -317,17 +324,17 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 	// collateral requests need a fresh request ID and a re-publish to TopicKeyStart so
 	// they can be re-batched without the cancelled change.
 
-	if err := c.cancelBuild(ctx, batch); err != nil {
+	if err := c.cancelBuild(ctx, store, batch); err != nil {
 		return err
 	}
 
-	batch, err := corebatch.Transition(ctx, c.store, batch, entity.BatchStateCancelled)
+	batch, err := corebatch.Transition(ctx, store, batch, entity.BatchStateCancelled)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return err
 	}
 
-	if err := c.respeculateDependents(ctx, batch); err != nil {
+	if err := c.respeculateDependents(ctx, store, batch); err != nil {
 		return err
 	}
 
@@ -349,8 +356,8 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 // system has no external runner, so the local state flip is the complete
 // cancellation. Once a runner exists, it must be invoked here before the
 // local Update.
-func (c *Controller) cancelBuild(ctx context.Context, batch entity.Batch) error {
-	build, err := c.store.GetBuildStore().Get(ctx, batch.ID)
+func (c *Controller) cancelBuild(ctx context.Context, store storage.Storage, batch entity.Batch) error {
+	build, err := store.GetBuildStore().Get(ctx, batch.ID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			metrics.NamedCounter(c.metricsScope, opName, "cancel_build_not_found", 1)
@@ -367,7 +374,7 @@ func (c *Controller) cancelBuild(ctx context.Context, batch entity.Batch) error 
 
 	updatedBuild := build
 	updatedBuild.Status = entity.BuildStatusCancelled
-	if err := c.store.GetBuildStore().Update(ctx, updatedBuild); err != nil {
+	if err := store.GetBuildStore().Update(ctx, updatedBuild); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to cancel build for batch %s: %w", batch.ID, err)
 	}
@@ -385,8 +392,8 @@ func (c *Controller) cancelBuild(ctx context.Context, batch entity.Batch) error 
 //
 // Called both from the cancelBatch terminal flow and from the terminal
 // self-heal branch on redelivery of an already-Cancelled batch.
-func (c *Controller) respeculateDependents(ctx context.Context, batch entity.Batch) error {
-	bd, err := c.store.GetBatchDependentStore().Get(ctx, batch.ID)
+func (c *Controller) respeculateDependents(ctx context.Context, store storage.Storage, batch entity.Batch) error {
+	bd, err := store.GetBatchDependentStore().Get(ctx, batch.ID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to get batch dependents for batch %s: %w", batch.ID, err)
@@ -412,10 +419,10 @@ func (c *Controller) respeculateDependents(ctx context.Context, batch entity.Bat
 // is surfaced as a retryable infra failure; missing dependencies should not
 // happen in practice, but if one does it is treated the same as a transient
 // fetch failure (i.e. the message is retried).
-func (c *Controller) fetchDependencies(ctx context.Context, batch entity.Batch) ([]entity.Batch, error) {
+func (c *Controller) fetchDependencies(ctx context.Context, store storage.Storage, batch entity.Batch) ([]entity.Batch, error) {
 	deps := make([]entity.Batch, 0, len(batch.Dependencies))
 	for _, depID := range batch.Dependencies {
-		d, err := c.store.GetBatchStore().Get(ctx, depID)
+		d, err := store.GetBatchStore().Get(ctx, depID)
 		if err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "dependency_fetch_errors", 1)
 			return nil, fmt.Errorf("failed to get dependency batch %s of %s: %w", depID, batch.ID, err)
