@@ -135,6 +135,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to get batch %s: %w", build.BatchID, err)
 	}
 
+	// The payload's queue must match the batch's authoritative queue; a
+	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
+	if buildID.Queue != "" && buildID.Queue != batch.Queue {
+		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1)
+		return fmt.Errorf("payload queue %q does not match queue %q of batch %s", buildID.Queue, batch.Queue, batch.ID)
+	}
+
 	buildRunner, err := c.buildRunners.For(buildrunner.Config{QueueName: batch.Queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "status_errors", 1)
@@ -169,8 +176,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to update status for build %s: %w", build.ID, err)
 	}
 
-	// Re-evaluate the batch state machine with the latest build status.
-	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, updatedBuild.BatchID, msg.PartitionKey); err != nil {
+	// Re-evaluate the batch state machine with the latest build status. The
+	// speculate topic is partitioned by queue like every other speculate
+	// publisher, so a queue's batches keep their serial processing guarantee.
+	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, updatedBuild.BatchID, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}
@@ -210,15 +219,16 @@ func pollDelay(status entity.BuildStatus) int64 {
 	}
 }
 
-// publishBatchID publishes a batch ID to the topic identified by key.
-func (c *Controller) publishBatchID(ctx context.Context, key consumer.TopicKey, batchID string, partitionKey string) error {
-	bid := entity.BatchID{ID: batchID}
+// publishBatchID publishes a batch ID to the topic identified by key, stamped
+// with and partitioned by the batch's queue.
+func (c *Controller) publishBatchID(ctx context.Context, key consumer.TopicKey, batchID string, queue string) error {
+	bid := entity.BatchID{ID: batchID, Queue: queue}
 	payload, err := bid.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(batchID, payload, partitionKey, nil)
+	msg := entityqueue.NewMessage(batchID, payload, queue, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

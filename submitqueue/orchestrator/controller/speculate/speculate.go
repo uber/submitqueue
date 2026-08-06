@@ -105,6 +105,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
 	}
 
+	// The payload's queue must match the batch's authoritative queue; a
+	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
+	if bid.Queue != "" && bid.Queue != batch.Queue {
+		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1)
+		return fmt.Errorf("payload queue %q does not match queue %q of batch %s", bid.Queue, batch.Queue, batch.ID)
+	}
+
 	// Cancelling intent: the cancel controller has handed this batch off to
 	// speculate to drive to terminal. Cancel in-flight builds, fan out to
 	// dependents, CAS to terminal Cancelled, and publish to conclude.
@@ -421,23 +428,24 @@ func (c *Controller) fetchDependencies(ctx context.Context, batch entity.Batch) 
 // fanout re-publishes downstream events for a batch that has already reached
 // a terminal state. Used for self-healing when a previous publish was lost:
 // re-sending to conclude guarantees request-state reconciliation.
-func (c *Controller) fanout(ctx context.Context, batchID, partitionKey string) error {
-	if err := c.publish(ctx, topickey.TopicKeyConclude, batchID, partitionKey); err != nil {
+func (c *Controller) fanout(ctx context.Context, batchID, queue string) error {
+	if err := c.publish(ctx, topickey.TopicKeyConclude, batchID, queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to conclude: %w", err)
 	}
 	return nil
 }
 
-// publish publishes a batch ID to the specified topic key.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID string, partitionKey string) error {
-	bid := entity.BatchID{ID: batchID}
+// publish publishes a batch ID to the specified topic key, stamped with and
+// partitioned by the batch's queue.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID string, queue string) error {
+	bid := entity.BatchID{ID: batchID, Queue: queue}
 	payload, err := bid.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(batchID, payload, partitionKey, nil)
+	msg := entityqueue.NewMessage(batchID, payload, queue, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

@@ -81,6 +81,8 @@ func BuildFromBytes(data []byte) (Build, error) {
 type BuildID struct {
 	// ID is the globally unique identifier for the build.
 	ID string `json:"id"`
+	// Queue is the name of the queue processing the batch this build verifies. Empty on payloads written before the field existed.
+	Queue string `json:"queue"`
 }
 
 // ToBytes serializes the BuildID to JSON bytes for queue message payload.

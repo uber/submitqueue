@@ -188,14 +188,15 @@ func (c *Controller) failRequest(ctx context.Context, request entity.Request, re
 	return nil
 }
 
-// publishRequestID publishes a request ID to the given topic key, partitioned by queue.
-func (c *Controller) publishRequestID(ctx context.Context, key consumer.TopicKey, requestID string, partitionKey string) error {
-	payload, err := entity.RequestID{ID: requestID}.ToBytes()
+// publishRequestID publishes a request ID to the given topic key, stamped with
+// and partitioned by the request's queue.
+func (c *Controller) publishRequestID(ctx context.Context, key consumer.TopicKey, requestID string, queue string) error {
+	payload, err := entity.RequestID{ID: requestID, Queue: queue}.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize request ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(requestID, payload, partitionKey, nil)
+	msg := entityqueue.NewMessage(requestID, payload, queue, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

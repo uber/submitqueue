@@ -130,15 +130,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	return nil
 }
 
-// publish publishes a request ID to the specified topic key.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, requestID string, partitionKey string) error {
-	rid := entity.RequestID{ID: requestID}
+// publish publishes a request ID to the specified topic key, stamped with and
+// partitioned by the request's queue.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, requestID string, queue string) error {
+	rid := entity.RequestID{ID: requestID, Queue: queue}
 	payload, err := rid.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize request ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(requestID, payload, partitionKey, nil)
+	msg := entityqueue.NewMessage(requestID, payload, queue, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

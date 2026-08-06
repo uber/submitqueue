@@ -187,6 +187,8 @@ func BatchFromBytes(data []byte) (Batch, error) {
 type BatchID struct {
 	// ID is the globally unique identifier for the batch.
 	ID string `json:"id"`
+	// Queue is the name of the queue processing the batch. Empty on payloads written before the field existed.
+	Queue string `json:"queue"`
 }
 
 // ToBytes serializes the BatchID to JSON bytes for queue message payload.
