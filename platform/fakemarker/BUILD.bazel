@@ -3,7 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "go_default_library",
     srcs = ["fakemarker.go"],
-    importpath = "github.com/uber/submitqueue/submitqueue/core/fakemarker",
+    importpath = "github.com/uber/submitqueue/platform/fakemarker",
     visibility = ["//visibility:public"],
     deps = ["//platform/base/change:go_default_library"],
 )

@@ -37,8 +37,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/uber/submitqueue/platform/fakemarker"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
-	"github.com/uber/submitqueue/submitqueue/core/fakemarker"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 )
