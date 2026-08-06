@@ -1967,6 +1967,136 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_MoreSubscribersThanPartitions()
 	t.Logf("More subscribers than partitions verified: 2 partitions, 4 subscribers, max 1 each")
 }
 
+// TestRebalance_NoStarvation_UnevenSplit reproduces the starvation case the
+// old independent ceil(P/N) caps admitted: with 12 partitions and 5
+// subscribers every cap was 3 (sum 15), so 3/3/3/3/0 was a stable end state
+// with nobody obliged to shed for the empty subscriber. Remainder-aware caps
+// are 3+3+2+2+2 (sum 12), so every subscriber must converge to at least
+// floor(12/5)=2 partitions.
+func (s *SQLQueueIntegrationSuite) TestRebalance_NoStarvation_UnevenSplit() {
+	t := s.T()
+
+	topic := "rebalance_starvation_topic"
+	consumerGroup := "rebalance-starvation-cg"
+
+	signalCh := make(chan queueMySQL.HookSignal, 100)
+
+	pubQ, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer pubQ.Close()
+
+	const partitionCount = 12
+	for i := 0; i < partitionCount; i++ {
+		pk := fmt.Sprintf("pk-%02d", i)
+		msg := entityqueue.NewMessage(fmt.Sprintf("rb-starve-%d", i), []byte("x"), pk, nil)
+		require.NoError(t, pubQ.Publisher().Publish(s.ctx, topic, msg))
+	}
+
+	subNames := []string{"s1", "s2", "s3", "s4", "s5"}
+	var queues []extqueue.Queue
+	for _, name := range subNames {
+		q, err := queueMySQL.NewQueue(queueMySQL.Params{
+			DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+			OnSignal: signalCh,
+		})
+		require.NoError(t, err)
+		queues = append(queues, q)
+		// Nothing is acked in this test; a high retry budget keeps the
+		// messages out of the DLQ so partitions stay discoverable while the
+		// group converges.
+		cfg := testSubConfig(name, consumerGroup)
+		cfg.Retry.MaxAttempts = 1000
+		_, err = q.Subscriber().Subscribe(s.ctx, topic, cfg)
+		require.NoError(t, err)
+	}
+	defer func() {
+		for _, q := range queues {
+			q.Close()
+		}
+	}()
+
+	waitForCondition(t, signalCh, func() bool {
+		leases, _ := getPartitionLeases(s.db, topic, consumerGroup)
+		total := 0
+		minOwned := partitionCount
+		maxOwned := 0
+		for _, name := range subNames {
+			owned := len(leases[name])
+			total += owned
+			if owned < minOwned {
+				minOwned = owned
+			}
+			if owned > maxOwned {
+				maxOwned = owned
+			}
+		}
+		return total == partitionCount && minOwned >= 2 && maxOwned <= 3
+	}, "12 partitions across 5 subscribers must split 3+3+2+2+2 — no subscriber starved")
+
+	t.Logf("No starvation: 12 partitions split with every subscriber owning 2-3")
+}
+
+// TestRebalance_OrphanSweep verifies the guarantee that no partition is left
+// unprocessed even when the fair-share arithmetic refuses to assign it.
+// Phantom heartbeat rows (never acquiring anything) inflate the active count
+// so the one real subscriber's cap is 1 with 3 partitions published — the
+// normal acquisition path claims one partition and stops. The periodic
+// uncapped orphan sweep (every 2x LeaseDurationMs) must pick up the other
+// two anyway, proven by every partition's message being delivered and acked.
+func (s *SQLQueueIntegrationSuite) TestRebalance_OrphanSweep() {
+	t := s.T()
+
+	topic := "rebalance_sweep_topic"
+	consumerGroup := "rebalance-sweep-cg"
+	partitions := []string{"pk-a", "pk-b", "pk-c"}
+
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	for i, pk := range partitions {
+		msg := entityqueue.NewMessage(fmt.Sprintf("sweep-%d", i), []byte("x"), pk, nil)
+		require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg))
+	}
+
+	// Two phantom subscribers that heartbeat but never acquire. Their
+	// heartbeat_at is stamped in the future so they stay "active" for the
+	// whole test without a refresh loop. Sorted, the real subscriber ranks
+	// last of 3, so its remainder-aware cap is 3/3 = 1.
+	futureMs := time.Now().Add(10 * time.Minute).UnixMilli()
+	for i := 0; i < 2; i++ {
+		_, err := s.db.ExecContext(s.ctx, `
+			INSERT INTO queue_subscriber_heartbeats (consumer_group, topic, subscriber_name, heartbeat_at, deregistered_at)
+			VALUES (?, ?, ?, ?, 0)
+			ON DUPLICATE KEY UPDATE heartbeat_at = VALUES(heartbeat_at), deregistered_at = 0
+		`, consumerGroup, topic, fmt.Sprintf("phantom-%d", i), futureMs)
+		require.NoError(t, err)
+	}
+
+	deliveryChan, err := q.Subscriber().Subscribe(s.ctx, topic, testSubConfig("worker-real", consumerGroup))
+	require.NoError(t, err)
+
+	// All three messages must arrive: one via the normal capped acquisition,
+	// the other two only after the sweep bypasses the cap (~2x the 3s test
+	// lease duration). Acking promptly proves processing, which is the
+	// guarantee — lease ownership may churn afterwards as rebalance sheds
+	// the over-cap sweep grabs.
+	received := make(map[string]bool)
+	receiveN(t, deliveryChan, len(partitions), func(delivery extqueue.Delivery, _ int) {
+		received[delivery.Message().PartitionKey] = true
+		require.NoError(t, delivery.Ack(s.ctx))
+	})
+	for _, pk := range partitions {
+		assert.True(t, received[pk], "partition %s must have been processed", pk)
+	}
+
+	t.Logf("Orphan sweep verified: all 3 partitions processed despite a fair-share cap of 1")
+}
+
 // TestNackDoesNotBlockOtherMessages verifies that nacking a message does not
 // block delivery of subsequent messages in the same partition. The nacked
 // message should be skipped (invisible) while later messages are delivered.
