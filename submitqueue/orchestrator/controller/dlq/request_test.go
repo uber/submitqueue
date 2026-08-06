@@ -33,6 +33,7 @@ import (
 func TestDLQRequestController_InterfaceAndAccessors(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, DecodeRequestID, TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
 
@@ -56,6 +57,7 @@ func TestDLQRequestController_Process_LandRequestPayload(t *testing.T) {
 	})
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, registry, DecodeLandRequestID, TopicKey(topickey.TopicKeyStart), "orchestrator-start-dlq")
@@ -82,6 +84,7 @@ func TestDLQRequestController_Process_CancelRequestPayload(t *testing.T) {
 	})
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, registry, DecodeCancelRequestID, TopicKey(topickey.TopicKeyCancel), "orchestrator-cancel-dlq")
@@ -109,6 +112,7 @@ func TestDLQRequestController_Process_RequestIDPayload(t *testing.T) {
 	})
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, registry, DecodeRequestID, TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")
@@ -129,6 +133,7 @@ func TestDLQRequestController_Process_DifferentTerminalOutcomeSkips(t *testing.T
 	}, nil)
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, DecodeRequestID, TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
@@ -144,6 +149,7 @@ func TestDLQRequestController_Process_MalformedPayloadFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	// no store calls expected
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, DecodeRequestID, TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
@@ -157,6 +163,7 @@ func TestDLQRequestController_Process_EmptyIDFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	// no store calls expected
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, DecodeRequestID, TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
