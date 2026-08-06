@@ -36,10 +36,14 @@ message MergeStep {
     // StepResult so a multi-step result is attributable -- and never interprets
     // its contents.
     string step_id = 1;
-    // change is the code change to apply for this step. A change may carry
-    // multiple URIs when the step represents stacked or grouped changes.
+    // change is the code change to apply for this step. It may carry multiple
+    // URIs, which are a stack: each URI is its own unit of change, applied in
+    // the order given, each on top of the last.
     uber.base.change.Change change = 2;
     // strategy is how this step's change is integrated into the merge target.
+    // It applies to every URI the change carries, the same way to each, so a
+    // step is never a mix of strategies. PROMOTE is the exception that admits
+    // only a single URI.
     uber.base.mergestrategy.Strategy strategy = 3;
 }
 

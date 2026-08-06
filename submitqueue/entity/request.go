@@ -82,7 +82,8 @@ type Request struct {
 	Queue string `json:"queue"`
 	// Change is a number of code changes (such as pull requests) to land into the target branch. Target branch is defined by the queue configuration.
 	Change change.Change `json:"change"`
-	// LandStrategy is the source control integration strategy to use for this land operation.
+	// LandStrategy is the source control integration strategy to use for this
+	// land operation. It applies to every URI of Change, the same way to each.
 	LandStrategy mergestrategy.MergeStrategy `json:"land_strategy"`
 
 	// ****************

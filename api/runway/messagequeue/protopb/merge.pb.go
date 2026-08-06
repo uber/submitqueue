@@ -107,10 +107,14 @@ type MergeStep struct {
 	// StepResult so a multi-step result is attributable -- and never interprets
 	// its contents.
 	StepId string `protobuf:"bytes,1,opt,name=step_id,json=stepId,proto3" json:"step_id,omitempty"`
-	// change is the code change to apply for this step. A change may carry
-	// multiple URIs when the step represents stacked or grouped changes.
+	// change is the code change to apply for this step. It may carry multiple
+	// URIs, which are a stack: each URI is its own unit of change, applied in
+	// the order given, each on top of the last.
 	Change *protopb.Change `protobuf:"bytes,2,opt,name=change,proto3" json:"change,omitempty"`
 	// strategy is how this step's change is integrated into the merge target.
+	// It applies to every URI the change carries, the same way to each, so a
+	// step is never a mix of strategies. PROMOTE is the exception that admits
+	// only a single URI.
 	Strategy      protopb1.Strategy `protobuf:"varint,3,opt,name=strategy,proto3,enum=uber.base.mergestrategy.Strategy" json:"strategy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

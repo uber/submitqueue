@@ -58,6 +58,14 @@ type Change struct {
 	//
 	// The commit SHA must be the full 40-character lowercase hex SHA; abbreviated
 	// SHAs are rejected because downstream staleness checks compare by strict equality.
+	//
+	// One URI is one unit of change -- a single pull request, revision, or
+	// commit -- and it is the granularity everything downstream operates at. A
+	// list is therefore an ordered set of distinct changes (a stack), not one
+	// change described several ways: they are applied in the order given, each
+	// on top of the last, and each yields its own result. An integration
+	// strategy chosen for a change applies to every URI in the list, the same
+	// way to each.
 	Uris          []string `protobuf:"bytes,1,rep,name=uris,proto3" json:"uris,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

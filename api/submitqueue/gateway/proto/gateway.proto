@@ -57,6 +57,8 @@ message LandRequest {
     // Change (such as a pull request) to land into the target branch. Target branch is defined by the queue configuration.
     uber.base.change.Change change = 2;
     // Source control integration strategy to use for this land operation. If not specified, the default queue strategy is used.
+    // It applies to every URI the change carries, the same way to each — a land
+    // request cannot pick a different strategy per URI.
     uber.base.mergestrategy.Strategy strategy = 4;
 }
 

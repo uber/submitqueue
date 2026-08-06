@@ -32,5 +32,11 @@ type Change struct {
 	//
 	// Head/commit SHAs must be the full 40-char lowercase hex form.
 	//
+	// One URI is one unit of change — a single pull request, revision, or
+	// commit. A list is an ordered set of distinct changes (a stack), not one
+	// change described several ways: order is significant, each entry applies
+	// on top of the last, and each yields its own result. An integration
+	// strategy chosen for a change applies to every URI in the list, the same
+	// way to each.
 	URIs []string `json:"uris"`
 }
