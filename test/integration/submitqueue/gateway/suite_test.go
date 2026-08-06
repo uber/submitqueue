@@ -43,6 +43,7 @@ import (
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/test/testutil"
 	"go.uber.org/zap"
@@ -171,7 +172,7 @@ func (s *GatewayIntegrationSuite) TestListAPI() {
 	t := s.T()
 	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
 	require.NoError(t, err)
-	materializer := corerequest.NewMaterializer(store)
+	materializer := corerequest.NewMaterializer(store.GetRequestLogStore(), store.GetRequestSummaryStore(), store.GetRequestURIStore(), mysqlFactory{backend: store})
 	for _, summary := range []entity.RequestSummary{
 		{RequestID: "test-queue/list-1", Queue: "test-queue", ChangeURIs: []string{"uri/1"}, ReceivedAtMs: 100, Status: entity.RequestStatusAccepted, StatusTimestampMs: 100, Version: 1, Metadata: map[string]string{}},
 		{RequestID: "test-queue/list-2", Queue: "test-queue", ChangeURIs: []string{"uri/2"}, ReceivedAtMs: 200, Status: entity.RequestStatusLanded, StatusTimestampMs: 200, Version: 1, Metadata: map[string]string{}},
@@ -295,4 +296,15 @@ func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 		"gateway log consumer should persist the published request log for sqid=%s", sqid)
 
 	s.log.Logf("Request log consumer test passed: entry persisted and readable via GetRequestSummaryByID")
+}
+
+// mysqlFactory adapts the MySQL storage backend's queue binding to the
+// storage.Factory seam, mirroring the host wiring.
+type mysqlFactory struct {
+	backend *mysqlstorage.Storage
+}
+
+// For returns the queue-scoped store aggregate bound to the queue named in config.
+func (f mysqlFactory) For(config storage.Config) (storage.Storage, error) {
+	return f.backend.For(config.QueueName)
 }

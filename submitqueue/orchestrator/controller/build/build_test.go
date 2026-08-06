@@ -40,6 +40,12 @@ import (
 )
 
 // batchIDPayload serializes a BatchID to JSON bytes for test message payloads.
+// staticStorageFactory resolves every queue to one fixed store aggregate.
+type staticStorageFactory struct{ store storage.Storage }
+
+// For returns the fixed store aggregate for any queue.
+func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
+
 func batchIDPayload(t *testing.T, id string) []byte {
 	payload, err := entity.BatchID{ID: id}.ToBytes()
 	require.NoError(t, err)
@@ -107,7 +113,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, store, staticBuildRunnerFactory{r: br}, registry, topickey.TopicKeyBuild, "orchestrator-build")
+	return NewController(logger, scope, staticStorageFactory{store: store}, staticBuildRunnerFactory{r: br}, registry, topickey.TopicKeyBuild, "orchestrator-build")
 }
 
 func TestNewController(t *testing.T) {
@@ -199,7 +205,7 @@ func TestController_Process_TriggersWithBaseAndHead(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, staticBuildRunnerFactory{r: br}, registry, topickey.TopicKeyBuild, "orchestrator-build")
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, staticBuildRunnerFactory{r: br}, registry, topickey.TopicKeyBuild, "orchestrator-build")
 
 	msg := entityqueue.NewMessage(headBatch.ID, batchIDPayload(t, headBatch.ID), headBatch.Queue, nil)
 	delivery := consumermock.NewMockDelivery(ctrl)
@@ -256,7 +262,7 @@ func TestController_Process_BuildStoreAlreadyExistsIsSwallowed(t *testing.T) {
 		[]consumer.TopicConfig{{Key: topickey.TopicKeyBuildSignal, Name: "buildsignal", Queue: mockQ}},
 	)
 	require.NoError(t, err)
-	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, staticBuildRunnerFactory{r: br}, registry, topickey.TopicKeyBuild, "orchestrator-build")
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, staticBuildRunnerFactory{r: br}, registry, topickey.TopicKeyBuild, "orchestrator-build")
 
 	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := consumermock.NewMockDelivery(ctrl)
@@ -288,7 +294,7 @@ func TestController_Process_TriggerFailure(t *testing.T) {
 		[]consumer.TopicConfig{{Key: topickey.TopicKeyBuildSignal, Name: "buildsignal", Queue: queuemock.NewMockQueue(ctrl)}},
 	)
 	require.NoError(t, err)
-	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, staticBuildRunnerFactory{r: br}, registry, topickey.TopicKeyBuild, "orchestrator-build")
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, staticBuildRunnerFactory{r: br}, registry, topickey.TopicKeyBuild, "orchestrator-build")
 
 	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, nil)
 	delivery := consumermock.NewMockDelivery(ctrl)

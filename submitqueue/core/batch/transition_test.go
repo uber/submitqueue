@@ -67,7 +67,7 @@ func TestTransition(t *testing.T) {
 				recordStore.EXPECT().Put(gomock.Any(), entity.QueueBatchState{
 					Queue: base.Queue, State: entity.BatchStateSpeculating, BatchID: base.ID,
 				}).Return(nil)
-				recordStore.EXPECT().Delete(gomock.Any(), base.Queue, entity.BatchStateCreated, base.ID).Return(nil)
+				recordStore.EXPECT().Delete(gomock.Any(), entity.BatchStateCreated, base.ID).Return(nil)
 			},
 			want: func() entity.Batch {
 				b := casTarget
@@ -115,7 +115,7 @@ func TestTransition(t *testing.T) {
 			setup: func(batchStore *storagemock.MockBatchStore, recordStore *storagemock.MockQueueBatchStateStore) {
 				batchStore.EXPECT().Update(gomock.Any(), casTarget, int32(3), int32(4)).Return(nil)
 				recordStore.EXPECT().Put(gomock.Any(), gomock.Any()).Return(nil)
-				recordStore.EXPECT().Delete(gomock.Any(), base.Queue, entity.BatchStateCreated, base.ID).Return(storeErr)
+				recordStore.EXPECT().Delete(gomock.Any(), entity.BatchStateCreated, base.ID).Return(storeErr)
 			},
 			want: func() entity.Batch {
 				b := casTarget

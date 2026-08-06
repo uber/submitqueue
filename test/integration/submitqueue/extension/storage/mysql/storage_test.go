@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	storagesuite "github.com/uber/submitqueue/test/integration/submitqueue/extension/storage"
 	"github.com/uber/submitqueue/test/testutil"
@@ -77,9 +78,11 @@ func (s *MySQLStorageIntegrationSuite) SetupSuite() {
 	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
 	require.NoError(t, err, "failed to create storage")
 
-	// Provide the storage instance to the contract suite
+	// Provide the storage backend to the contract suite: the queue-scoped
+	// factory adapter plus the global read-model stores.
 	s.SetContext(ctx)
-	s.SetStorage(store)
+	s.SetFactory(mysqlFactory{backend: store})
+	s.SetGlobalStores(store.GetRequestSummaryStore(), store.GetRequestURIStore())
 	s.SetLogger(s.log)
 
 	t.Cleanup(func() {
@@ -95,4 +98,15 @@ func (s *MySQLStorageIntegrationSuite) SetupSuite() {
 func (s *MySQLStorageIntegrationSuite) TearDownSuite() {
 	s.log.Logf("Tearing down MySQL Storage integration test suite")
 	// Cleanup handled automatically by testutil.ComposeStack
+}
+
+// mysqlFactory adapts the MySQL storage backend's queue binding to the
+// storage.Factory seam for the contract suite, mirroring the host wiring.
+type mysqlFactory struct {
+	backend *mysqlstorage.Storage
+}
+
+// For returns the queue-scoped store aggregate bound to the queue named in config.
+func (f mysqlFactory) For(config storage.Config) (storage.Storage, error) {
+	return f.backend.For(config.QueueName)
 }

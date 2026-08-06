@@ -38,15 +38,17 @@ import (
 // record followed by Delete of the old one, which keeps at least one record visible
 // throughout. All writes are idempotent so queue redeliveries can safely repeat them.
 type QueueBatchStateStore interface {
-	// List returns every record filed under (queue, state). An empty slice means the
-	// bucket is empty. Order is unspecified.
-	List(ctx context.Context, queue string, state entity.BatchState) ([]entity.QueueBatchState, error)
+	// List returns every record filed under the bound queue's given state bucket.
+	// An empty slice means the bucket is empty. Order is unspecified.
+	List(ctx context.Context, state entity.BatchState) ([]entity.QueueBatchState, error)
 
-	// Put persists a record. Writing an already-existing (queue, state, batchID) record
-	// is a no-op success, so the call is idempotent under redeliveries.
+	// Put persists a record. The record's Queue must match the instance's bound
+	// queue. Writing an already-existing (queue, state, batchID) record is a no-op
+	// success, so the call is idempotent under redeliveries.
 	Put(ctx context.Context, record entity.QueueBatchState) error
 
-	// Delete removes the record identified by (queue, state, batchID). Deleting an
-	// absent record is a no-op success, so the call is idempotent under redeliveries.
-	Delete(ctx context.Context, queue string, state entity.BatchState, batchID string) error
+	// Delete removes the bound queue's record identified by (state, batchID).
+	// Deleting an absent record is a no-op success, so the call is idempotent
+	// under redeliveries.
+	Delete(ctx context.Context, state entity.BatchState, batchID string) error
 }

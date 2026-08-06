@@ -38,7 +38,7 @@ import (
 type buildSignalController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	store         storage.Storage
+	stores        storage.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -51,7 +51,7 @@ var _ consumer.Controller = (*buildSignalController)(nil)
 func NewDLQBuildSignalController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	stores storage.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -60,7 +60,7 @@ func NewDLQBuildSignalController(
 	return &buildSignalController{
 		logger:        logger.Named(name),
 		metricsScope:  scope.SubScope(name),
-		store:         store,
+		stores:        stores,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -83,6 +83,13 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 		return fmt.Errorf("dlq payload decoded to empty build id")
 	}
 
+	store, err := c.stores.For(storage.Config{QueueName: bid.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		// Non-retryable: a missing or unresolvable queue is a malformed message.
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", bid.Queue, err)
+	}
+
 	dmeta := delivery.Metadata()
 	c.logger.Warnw("dlq message received",
 		"build_id", bid.ID,
@@ -92,7 +99,7 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
 
-	build, err := c.store.GetBuildStore().Get(ctx, bid.ID)
+	build, err := store.GetBuildStore().Get(ctx, bid.ID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			// The build was never persisted (e.g. the build controller crashed
@@ -118,7 +125,7 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 		return nil
 	}
 
-	if err := failBatch(ctx, c.store, c.registry, c.logger, build.BatchID, dmeta["dlq.last_error"]); err != nil {
+	if err := failBatch(ctx, store, c.registry, c.logger, build.BatchID, dmeta["dlq.last_error"]); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
 		return err
 	}

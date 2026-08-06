@@ -32,11 +32,14 @@ import (
 type requestStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewRequestStore creates a new MySQL-backed RequestStore.
-func NewRequestStore(db *sql.DB, scope tally.Scope) storage.RequestStore {
-	return &requestStore{db: db, scope: scope}
+func NewRequestStore(db *sql.DB, scope tally.Scope, queue string) storage.RequestStore {
+	return &requestStore{db: db, scope: scope, queue: queue}
 }
 
 // Get retrieves a land request by ID. Returns ErrNotFound if the request is not found.
@@ -72,6 +75,10 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) (retE
 	op := metrics.Begin(r.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	if request.Queue != r.queue {
+		return fmt.Errorf("request %s queue %q does not match the store's bound queue %q", request.ID, request.Queue, r.queue)
+	}
+
 	// Marshal the change URIs to JSON
 	changeURIsJSON, err := json.Marshal(request.Change.URIs)
 	if err != nil {
@@ -98,6 +105,10 @@ func (r *requestStore) Create(ctx context.Context, request entity.Request) (retE
 func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVersion, newVersion int32) (retErr error) {
 	op := metrics.Begin(r.scope, "update_state", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
+
+	if request.Queue != r.queue {
+		return fmt.Errorf("request %s queue %q does not match the store's bound queue %q", request.ID, request.Queue, r.queue)
+	}
 
 	changeURIsJSON, err := json.Marshal(request.Change.URIs)
 	if err != nil {

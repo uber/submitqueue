@@ -36,7 +36,7 @@ func setupBatchDependentStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, stora
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	store := NewBatchDependentStore(db, testMetrics())
+	store := NewBatchDependentStore(db, testMetrics(), "monorepo")
 
 	return db, mock, store
 }

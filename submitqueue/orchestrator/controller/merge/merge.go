@@ -50,7 +50,7 @@ import (
 type Controller struct {
 	logger         *zap.SugaredLogger
 	metricsScope   tally.Scope
-	store          storage.Storage
+	stores         storage.Factory
 	registry       consumer.TopicRegistry
 	runwayTopicKey consumer.TopicKey
 	topicKey       consumer.TopicKey
@@ -66,7 +66,7 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	stores storage.Factory,
 	registry consumer.TopicRegistry,
 	runwayTopicKey consumer.TopicKey,
 	topicKey consumer.TopicKey,
@@ -75,7 +75,7 @@ func NewController(
 	return &Controller{
 		logger:         logger.Named("merge_controller"),
 		metricsScope:   scope.SubScope("merge_controller"),
-		store:          store,
+		stores:         stores,
 		registry:       registry,
 		runwayTopicKey: runwayTopicKey,
 		topicKey:       topicKey,
@@ -101,7 +101,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to deserialize batch ID: %w", err)
 	}
 
-	batch, err := c.store.GetBatchStore().Get(ctx, bid.ID)
+	store, err := c.stores.For(storage.Config{QueueName: bid.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		// Non-retryable: a missing or unresolvable queue is a malformed message.
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", bid.Queue, err)
+	}
+
+	batch, err := store.GetBatchStore().Get(ctx, bid.ID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
@@ -140,7 +147,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Build the full payload runway needs to perform the merge. The batch id is
 	// the client-owned correlation id, so a redelivery republishes the same id
 	// and runway dedupes on it; the result is matched straight back to the batch.
-	req, err := c.buildMergeRequest(ctx, batch)
+	req, err := c.buildMergeRequest(ctx, store, batch)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to build merge request for batch %s: %w", batch.ID, err)
@@ -163,10 +170,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // buildMergeRequest loads the batch's member requests and assembles the runway
 // merge request: one MergeStep per request, in Contains order, attributed by
 // request id and carrying that request's change and land strategy.
-func (c *Controller) buildMergeRequest(ctx context.Context, batch entity.Batch) (*runwaymq.MergeRequest, error) {
+func (c *Controller) buildMergeRequest(ctx context.Context, store storage.Storage, batch entity.Batch) (*runwaymq.MergeRequest, error) {
 	steps := make([]*runwaymq.MergeStep, 0, len(batch.Contains))
 	for _, requestID := range batch.Contains {
-		request, err := c.store.GetRequestStore().Get(ctx, requestID)
+		request, err := store.GetRequestStore().Get(ctx, requestID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get request %s: %w", requestID, err)
 		}

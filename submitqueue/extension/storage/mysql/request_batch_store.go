@@ -31,11 +31,14 @@ import (
 type requestBatchStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewRequestBatchStore creates a MySQL-backed RequestBatchStore.
-func NewRequestBatchStore(db *sql.DB, scope tally.Scope) storage.RequestBatchStore {
-	return &requestBatchStore{db: db, scope: scope}
+func NewRequestBatchStore(db *sql.DB, scope tally.Scope, queue string) storage.RequestBatchStore {
+	return &requestBatchStore{db: db, scope: scope, queue: queue}
 }
 
 func (s *requestBatchStore) GetByRequestID(ctx context.Context, requestID string) (ret []entity.RequestBatch, retErr error) {

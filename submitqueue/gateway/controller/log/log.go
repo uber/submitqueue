@@ -23,7 +23,6 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -49,14 +48,14 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	materializer *requestcore.Materializer,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
 		logger:        logger.Named("log_controller"),
 		metricsScope:  scope.SubScope("log_controller"),
-		materializer:  requestcore.NewMaterializer(store),
+		materializer:  materializer,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}

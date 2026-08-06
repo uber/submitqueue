@@ -38,7 +38,7 @@ func setupRequestStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.Requ
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	store := NewRequestStore(db, testMetrics())
+	store := NewRequestStore(db, testMetrics(), "monorepo")
 
 	return db, mock, store
 }
@@ -202,7 +202,7 @@ func TestRequestStore_Update(t *testing.T) {
 	const oldVersion, newVersion = int32(1), int32(2)
 	request := entity.Request{
 		ID:           "monorepo/1",
-		Queue:        "monorepo-updated",
+		Queue:        "monorepo",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/submitqueue/pull/456/cafebabe"}},
 		LandStrategy: mergestrategy.MergeStrategySquashRebase,
 		State:        entity.RequestStateValidated,

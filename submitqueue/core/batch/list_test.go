@@ -58,9 +58,9 @@ func TestListByStates(t *testing.T) {
 			setup: func(batchStore *storagemock.MockBatchStore, recordStore *storagemock.MockQueueBatchStateStore) {
 				// b2 appears in both buckets (mid-move duplicate): it must be hydrated
 				// and returned exactly once.
-				recordStore.EXPECT().List(gomock.Any(), testQueue, entity.BatchStateCreated).
+				recordStore.EXPECT().List(gomock.Any(), entity.BatchStateCreated).
 					Return([]entity.QueueBatchState{record(entity.BatchStateCreated, "b1"), record(entity.BatchStateCreated, "b2")}, nil)
-				recordStore.EXPECT().List(gomock.Any(), testQueue, entity.BatchStateSpeculating).
+				recordStore.EXPECT().List(gomock.Any(), entity.BatchStateSpeculating).
 					Return([]entity.QueueBatchState{record(entity.BatchStateSpeculating, "b2"), record(entity.BatchStateSpeculating, "b3")}, nil)
 				batchStore.EXPECT().Get(gomock.Any(), "b1").Return(batchIn("b1", entity.BatchStateCreated), nil)
 				batchStore.EXPECT().Get(gomock.Any(), "b2").Return(batchIn("b2", entity.BatchStateSpeculating), nil)
@@ -77,7 +77,7 @@ func TestListByStates(t *testing.T) {
 			setup: func(batchStore *storagemock.MockBatchStore, recordStore *storagemock.MockQueueBatchStateStore) {
 				// A stale record files b1 under created, but the batch has moved on to
 				// speculating — a state outside the requested set, so it is dropped.
-				recordStore.EXPECT().List(gomock.Any(), testQueue, entity.BatchStateCreated).
+				recordStore.EXPECT().List(gomock.Any(), entity.BatchStateCreated).
 					Return([]entity.QueueBatchState{record(entity.BatchStateCreated, "b1")}, nil)
 				batchStore.EXPECT().Get(gomock.Any(), "b1").Return(batchIn("b1", entity.BatchStateSpeculating), nil)
 			},
@@ -87,9 +87,9 @@ func TestListByStates(t *testing.T) {
 			setup: func(batchStore *storagemock.MockBatchStore, recordStore *storagemock.MockQueueBatchStateStore) {
 				// Only a stale created record exists for b1, but its hydrated state is
 				// speculating — requested, so the batch is returned under its true state.
-				recordStore.EXPECT().List(gomock.Any(), testQueue, entity.BatchStateCreated).
+				recordStore.EXPECT().List(gomock.Any(), entity.BatchStateCreated).
 					Return([]entity.QueueBatchState{record(entity.BatchStateCreated, "b1")}, nil)
-				recordStore.EXPECT().List(gomock.Any(), testQueue, entity.BatchStateSpeculating).
+				recordStore.EXPECT().List(gomock.Any(), entity.BatchStateSpeculating).
 					Return(nil, nil)
 				batchStore.EXPECT().Get(gomock.Any(), "b1").Return(batchIn("b1", entity.BatchStateSpeculating), nil)
 			},
@@ -98,7 +98,7 @@ func TestListByStates(t *testing.T) {
 		"duplicate input states are listed once": {
 			states: []entity.BatchState{entity.BatchStateCreated, entity.BatchStateCreated},
 			setup: func(batchStore *storagemock.MockBatchStore, recordStore *storagemock.MockQueueBatchStateStore) {
-				recordStore.EXPECT().List(gomock.Any(), testQueue, entity.BatchStateCreated).
+				recordStore.EXPECT().List(gomock.Any(), entity.BatchStateCreated).
 					Return([]entity.QueueBatchState{record(entity.BatchStateCreated, "b1")}, nil).
 					Times(1)
 				batchStore.EXPECT().Get(gomock.Any(), "b1").Return(batchIn("b1", entity.BatchStateCreated), nil)
@@ -108,14 +108,14 @@ func TestListByStates(t *testing.T) {
 		"list failure surfaces": {
 			states: []entity.BatchState{entity.BatchStateCreated},
 			setup: func(batchStore *storagemock.MockBatchStore, recordStore *storagemock.MockQueueBatchStateStore) {
-				recordStore.EXPECT().List(gomock.Any(), testQueue, entity.BatchStateCreated).Return(nil, storeErr)
+				recordStore.EXPECT().List(gomock.Any(), entity.BatchStateCreated).Return(nil, storeErr)
 			},
 			wantErr: storeErr,
 		},
 		"hydrate failure surfaces": {
 			states: []entity.BatchState{entity.BatchStateCreated},
 			setup: func(batchStore *storagemock.MockBatchStore, recordStore *storagemock.MockQueueBatchStateStore) {
-				recordStore.EXPECT().List(gomock.Any(), testQueue, entity.BatchStateCreated).
+				recordStore.EXPECT().List(gomock.Any(), entity.BatchStateCreated).
 					Return([]entity.QueueBatchState{record(entity.BatchStateCreated, "b1")}, nil)
 				batchStore.EXPECT().Get(gomock.Any(), "b1").Return(entity.Batch{}, storeErr)
 			},
@@ -124,7 +124,7 @@ func TestListByStates(t *testing.T) {
 		"dangling record is an error, not a skip": {
 			states: []entity.BatchState{entity.BatchStateCreated},
 			setup: func(batchStore *storagemock.MockBatchStore, recordStore *storagemock.MockQueueBatchStateStore) {
-				recordStore.EXPECT().List(gomock.Any(), testQueue, entity.BatchStateCreated).
+				recordStore.EXPECT().List(gomock.Any(), entity.BatchStateCreated).
 					Return([]entity.QueueBatchState{record(entity.BatchStateCreated, "b1")}, nil)
 				batchStore.EXPECT().Get(gomock.Any(), "b1").Return(entity.Batch{}, storage.WrapNotFound(errors.New("no rows")))
 			},
@@ -137,7 +137,7 @@ func TestListByStates(t *testing.T) {
 			mockStorage, mockBatchStore, mockRecordStore := testStores(t)
 			tt.setup(mockBatchStore, mockRecordStore)
 
-			got, err := ListByStates(context.Background(), mockStorage, testQueue, tt.states)
+			got, err := ListByStates(context.Background(), mockStorage, tt.states)
 			if tt.wantErr != nil {
 				require.Error(t, err)
 				assert.ErrorIs(t, err, tt.wantErr)

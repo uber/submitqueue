@@ -31,11 +31,14 @@ import (
 type buildStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewBuildStore creates a new MySQL-backed BuildStore.
-func NewBuildStore(db *sql.DB, scope tally.Scope) storage.BuildStore {
-	return &buildStore{db: db, scope: scope}
+func NewBuildStore(db *sql.DB, scope tally.Scope, queue string) storage.BuildStore {
+	return &buildStore{db: db, scope: scope, queue: queue}
 }
 
 // Get retrieves a build by ID. Returns ErrNotFound if the build is not found.

@@ -44,7 +44,7 @@ import (
 type Controller struct {
 	logger          *zap.SugaredLogger
 	metricsScope    tally.Scope
-	store           storage.Storage
+	stores          storage.Factory
 	registry        consumer.TopicRegistry
 	changeProviders changeprovider.Factory
 	validators      validator.Factory
@@ -63,7 +63,7 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	stores storage.Factory,
 	registry consumer.TopicRegistry,
 	changeProviders changeprovider.Factory,
 	validators validator.Factory,
@@ -74,7 +74,7 @@ func NewController(
 	return &Controller{
 		logger:          logger.Named("validate_controller"),
 		metricsScope:    scope.SubScope("validate_controller"),
-		store:           store,
+		stores:          stores,
 		registry:        registry,
 		changeProviders: changeProviders,
 		validators:      validators,
@@ -98,8 +98,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to deserialize request ID: %w", err)
 	}
 
+	store, err := c.stores.For(storage.Config{QueueName: rid.Queue})
+	if err != nil {
+		coremetrics.NamedCounter(c.metricsScope, "process", "storage_resolve_errors", 1)
+		// Non-retryable: a missing or unresolvable queue is a malformed message.
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", rid.Queue, err)
+	}
+
 	// Fetch request from storage
-	request, err := c.store.GetRequestStore().Get(ctx, rid.ID)
+	request, err := store.GetRequestStore().Get(ctx, rid.ID)
 	if err != nil {
 		coremetrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
 		return fmt.Errorf("failed to get request %s: %w", rid.ID, err)
@@ -138,7 +145,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// claimed an overlapping URI in this queue. Per-queue partition leasing
 	// (see platform/consumer + platform/extension/messagequeue) guarantees serial processing within
 	// a queue, so the read-then-claim sequence below is race-free.
-	if dupID, err := c.checkDuplicate(ctx, request); err != nil {
+	if dupID, err := c.checkDuplicate(ctx, store, request); err != nil {
 		return err
 	} else if dupID != "" {
 		c.logger.Infow("duplicate request detected",
@@ -147,7 +154,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			"duplicate_id", dupID,
 		)
 		coremetrics.NamedCounter(c.metricsScope, "process", "duplicate_requests", 1)
-		return c.reject(ctx, request.ID, fmt.Sprintf("request %s is a duplicate of in-flight request %s", request.ID, dupID))
+		return c.reject(ctx, store, request.ID, fmt.Sprintf("request %s is a duplicate of in-flight request %s", request.ID, dupID))
 	}
 
 	// Fetch change metadata
@@ -186,7 +193,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 					"queue", request.Queue,
 					"error", err.Error(),
 				)
-				return c.reject(ctx, request.ID, fmt.Sprintf("custom validation failed: %v", err))
+				return c.reject(ctx, store, request.ID, fmt.Sprintf("custom validation failed: %v", err))
 			}
 		}
 	}
@@ -196,7 +203,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// rejected request never leaves a claim, and the record is written once with its
 	// details (immutable thereafter; no separate enrichment update). Create is
 	// idempotent per (queue, uri, request_id), so redelivery is a no-op.
-	if err := c.claimChanges(ctx, request, changeInfos); err != nil {
+	if err := c.claimChanges(ctx, store, request, changeInfos); err != nil {
 		coremetrics.NamedCounter(c.metricsScope, "process", "change_store_errors", 1)
 		return fmt.Errorf("failed to claim change records for request %s: %w", request.ID, err)
 	}
@@ -240,8 +247,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // Only an infra failure while terminating (storage/publish) is returned as an
 // error so the delivery is retried; the request itself is never re-queued for
 // validation once rejected.
-func (c *Controller) reject(ctx context.Context, requestID, reason string) error {
-	if _, err := corerequest.TerminateRequest(ctx, c.store, c.registry, requestID, entity.RequestStateError, reason, nil); err != nil {
+func (c *Controller) reject(ctx context.Context, store storage.Storage, requestID, reason string) error {
+	if _, err := corerequest.TerminateRequest(ctx, store, c.registry, requestID, entity.RequestStateError, reason, nil); err != nil {
 		coremetrics.NamedCounter(c.metricsScope, "process", "terminate_errors", 1)
 		return fmt.Errorf("failed to terminate rejected request %s: %w", requestID, err)
 	}
@@ -259,10 +266,10 @@ func (c *Controller) reject(ctx context.Context, requestID, reason string) error
 //
 // Per-URI / per-record reads keep the contract backend-agnostic; the typical request
 // has 1-5 URIs, so the loop is cheap.
-func (c *Controller) checkDuplicate(ctx context.Context, request entity.Request) (string, error) {
+func (c *Controller) checkDuplicate(ctx context.Context, store storage.Storage, request entity.Request) (string, error) {
 	seenOwners := make(map[string]struct{})
 	for _, uri := range request.Change.URIs {
-		records, err := c.store.GetChangeStore().GetByURI(ctx, request.Queue, uri)
+		records, err := store.GetChangeStore().GetByURI(ctx, uri)
 		if err != nil {
 			coremetrics.NamedCounter(c.metricsScope, "process", "change_store_query_errors", 1)
 			return "", fmt.Errorf("failed to query change store for request %s uri=%s: %w", request.ID, uri, err)
@@ -276,7 +283,7 @@ func (c *Controller) checkDuplicate(ctx context.Context, request entity.Request)
 			}
 			seenOwners[rec.RequestID] = struct{}{}
 
-			owner, err := c.store.GetRequestStore().Get(ctx, rec.RequestID)
+			owner, err := store.GetRequestStore().Get(ctx, rec.RequestID)
 			if errors.Is(err, storage.ErrNotFound) {
 				continue
 			}
@@ -340,7 +347,7 @@ func toProtoStrategy(s mergestrategy.MergeStrategy) strategypb.Strategy {
 // and its Details are written together in a single immutable Create — there is no
 // later mutation. Create is idempotent on its primary key, so a redelivery (or a
 // prior partial attempt) is a no-op and the first write wins.
-func (c *Controller) claimChanges(ctx context.Context, request entity.Request, infos []entity.ChangeInfo) error {
+func (c *Controller) claimChanges(ctx context.Context, store storage.Storage, request entity.Request, infos []entity.ChangeInfo) error {
 	now := time.Now().UnixMilli()
 	for _, info := range infos {
 		record := entity.ChangeRecord{
@@ -352,7 +359,7 @@ func (c *Controller) claimChanges(ctx context.Context, request entity.Request, i
 			UpdatedAt: now,
 			Version:   1,
 		}
-		if err := c.store.GetChangeStore().Create(ctx, record); err != nil {
+		if err := store.GetChangeStore().Create(ctx, record); err != nil {
 			return fmt.Errorf("failed to claim uri=%s for request %s: %w", info.URI, request.ID, err)
 		}
 	}

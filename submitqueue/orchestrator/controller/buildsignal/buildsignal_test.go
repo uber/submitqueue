@@ -30,6 +30,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	buildrunnermock "github.com/uber/submitqueue/submitqueue/extension/buildrunner/mock"
+	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
@@ -46,6 +47,12 @@ type testHarness struct {
 	signalPub    *queuemock.MockPublisher
 	speculatePub *queuemock.MockPublisher
 }
+
+// staticStorageFactory resolves every queue to one fixed store aggregate.
+type staticStorageFactory struct{ store storage.Storage }
+
+// For returns the fixed store aggregate for any queue.
+func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
 
 func newTestHarness(t *testing.T, ctrl *gomock.Controller) *testHarness {
 	br := buildrunnermock.NewMockBuildRunner(ctrl)
@@ -75,7 +82,7 @@ func newTestHarness(t *testing.T, ctrl *gomock.Controller) *testHarness {
 	c := NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		store,
+		staticStorageFactory{store: store},
 		brFactory,
 		registry,
 		topickey.TopicKeyBuildSignal,

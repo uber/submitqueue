@@ -36,7 +36,7 @@ func setupBatchStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.BatchS
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	store := NewBatchStore(db, testMetrics())
+	store := NewBatchStore(db, testMetrics(), "monorepo")
 
 	return db, mock, store
 }
@@ -202,7 +202,7 @@ func TestBatchStore_Update(t *testing.T) {
 	const oldVersion, newVersion = int32(1), int32(2)
 	batch := entity.Batch{
 		ID:           "monorepo/batch/1",
-		Queue:        "monorepo-updated",
+		Queue:        "monorepo",
 		Contains:     []string{"monorepo/3", "monorepo/4"},
 		Dependencies: []string{"monorepo/batch/1", "monorepo/batch/2"},
 		State:        entity.BatchStateMerging,

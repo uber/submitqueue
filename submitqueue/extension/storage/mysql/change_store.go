@@ -30,11 +30,14 @@ import (
 type changeStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewChangeStore creates a new MySQL-backed ChangeStore.
-func NewChangeStore(db *sql.DB, scope tally.Scope) storage.ChangeStore {
-	return &changeStore{db: db, scope: scope}
+func NewChangeStore(db *sql.DB, scope tally.Scope, queue string) storage.ChangeStore {
+	return &changeStore{db: db, scope: scope, queue: queue}
 }
 
 // Create inserts a single ChangeRecord. A primary-key conflict on
@@ -43,6 +46,10 @@ func NewChangeStore(db *sql.DB, scope tally.Scope) storage.ChangeStore {
 func (s *changeStore) Create(ctx context.Context, record entity.ChangeRecord) (retErr error) {
 	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
+
+	if record.Queue != s.queue {
+		return fmt.Errorf("change record uri=%s request_id=%s queue %q does not match the store's bound queue %q", record.URI, record.RequestID, record.Queue, s.queue)
+	}
 
 	detailsJSON, err := marshalDetails(record.Details)
 	if err != nil {
@@ -58,12 +65,14 @@ func (s *changeStore) Create(ctx context.Context, record entity.ChangeRecord) (r
 	return nil
 }
 
-// GetByURI returns every ChangeRecord for (queue, uri). queue leads the WHERE
-// clause to align with the (queue, uri, request_id) PK so this is a PK-prefix scan.
-func (s *changeStore) GetByURI(ctx context.Context, queue string, uri string) (ret []entity.ChangeRecord, retErr error) {
+// GetByURI returns every ChangeRecord for the bound queue's uri. queue leads the
+// WHERE clause to align with the (queue, uri, request_id) PK so this is a
+// PK-prefix scan.
+func (s *changeStore) GetByURI(ctx context.Context, uri string) (ret []entity.ChangeRecord, retErr error) {
 	op := metrics.Begin(s.scope, "get_by_uri", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	queue := s.queue
 	const query = "SELECT uri, request_id, queue, details, created_at, updated_at, version FROM `change` WHERE queue = ? AND uri = ?"
 	rows, err := s.db.QueryContext(ctx, query, queue, uri)
 	if err != nil {

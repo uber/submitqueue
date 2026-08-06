@@ -36,7 +36,7 @@ import (
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	store         storage.Storage
+	stores        storage.Factory
 	buildRunners  buildrunner.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
@@ -50,7 +50,7 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	stores storage.Factory,
 	buildRunners buildrunner.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
@@ -59,7 +59,7 @@ func NewController(
 	return &Controller{
 		logger:        logger.Named("build_controller"),
 		metricsScope:  scope.SubScope("build_controller"),
-		store:         store,
+		stores:        stores,
 		buildRunners:  buildRunners,
 		registry:      registry,
 		topicKey:      topicKey,
@@ -82,8 +82,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to deserialize batch ID: %w", err)
 	}
 
+	store, err := c.stores.For(storage.Config{QueueName: bid.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		// Non-retryable: a missing or unresolvable queue is a malformed message.
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", bid.Queue, err)
+	}
+
 	// Fetch batch from storage
-	batch, err := c.store.GetBatchStore().Get(ctx, bid.ID)
+	batch, err := store.GetBatchStore().Get(ctx, bid.ID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
@@ -121,7 +128,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	// Load the dependency batches (base) as identity; the build runner resolves
 	// each batch's changes itself. head is this batch.
-	base, err := c.loadBatches(ctx, batch.Dependencies)
+	base, err := c.loadBatches(ctx, store, batch.Dependencies)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to load dependency batches for batch %s: %w", batch.ID, err)
@@ -150,7 +157,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Persist the initial Build snapshot so the buildsignal poll loop has a
 	// row to Update against. ErrAlreadyExists is benign — a redelivery
 	// of this message after a previous successful Create.
-	if err := c.store.GetBuildStore().Create(ctx, build); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+	if err := store.GetBuildStore().Create(ctx, build); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to persist build %s: %w", build.ID, err)
 	}
@@ -176,13 +183,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // loadBatches loads each batch by ID, preserving order. Used to load the base
 // (dependency batches) identity handed to BuildRunner.Trigger; the build runner
 // resolves each batch's changes itself.
-func (c *Controller) loadBatches(ctx context.Context, batchIDs []string) ([]entity.Batch, error) {
+func (c *Controller) loadBatches(ctx context.Context, store storage.Storage, batchIDs []string) ([]entity.Batch, error) {
 	if len(batchIDs) == 0 {
 		return nil, nil
 	}
 	batches := make([]entity.Batch, 0, len(batchIDs))
 	for _, bID := range batchIDs {
-		b, err := c.store.GetBatchStore().Get(ctx, bID)
+		b, err := store.GetBatchStore().Get(ctx, bID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get batch %s: %w", bID, err)
 		}
