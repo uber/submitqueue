@@ -61,6 +61,9 @@ type Storage interface {
 	// GetBatchDependentStore returns the BatchDependentStore instance.
 	GetBatchDependentStore() BatchDependentStore
 
+	// GetQueueBatchStateStore returns the QueueBatchStateStore instance.
+	GetQueueBatchStateStore() QueueBatchStateStore
+
 	// GetBuildStore returns the BuildStore instance.
 	GetBuildStore() BuildStore
 
