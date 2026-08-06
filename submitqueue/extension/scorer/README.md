@@ -1,64 +1,17 @@
-# Scorer
+# scorer
 
-Vendor-agnostic interface for computing success probability scores for code changes.
+A `Scorer` returns the probability that a batch ultimately succeeds — reaches its terminal `Succeeded` state with its changes landed, not merely a passing build — as a number between 0.0 and 1.0. It is handed the batch identity and resolves the batch's changes itself through an injected `changeset.Resolver`, so callers pass an `entity.Batch` and nothing more.
 
-## Interface
+Callers may score every batch a queue is waiting on, so implementations should be cheap. A speculation run scores each batch at most once, but it does not carry results across runs; anything expensive belongs behind the implementation's own cache.
 
-### Scorer
-
-Computes a success probability for a given change.
-
-```go
-type Scorer interface {
-    Score(ctx context.Context, change entity.Change) (float64, error)
-}
-```
-
-- **change**: A `entity.Change` identifying the code change to score.
-- **Score**: Returns a probability between 0.0 and 1.0 indicating the likelihood of a successful land. Returns an error if scoring fails.
+Like the other extensions, a `Scorer` is selected **per queue** by the wiring layer through the `Config` (queue name) and `Factory` interface.
 
 ## Implementations
 
-### Heuristic
+**`heuristic`** scores a batch by extracting one number from its changes and matching that against ordered buckets, each mapping a `[Min, Max]` range to a probability. The extraction is a caller-supplied `ValueFunc` over the resolved `entity.BatchChanges`, so the same bucketing works for files touched, lines changed, or any other metric.
 
-Scores a change by extracting a numeric value via a `ValueFunc` and matching it against ordered buckets. Each bucket maps a `[Min, Max]` range to a probability.
+**`composite`** runs several named scorers and reduces their scores to one. The reduce function receives the scores keyed by scorer name, so it can weigh sources differently rather than treating them as interchangeable; `Min`, `Max`, and `Avg` are provided.
 
-```go
-s := heuristic.New(
-    []heuristic.Bucket{
-        {Min: 0, Max: 5, Score: 0.95},
-        {Min: 6, Max: 20, Score: 0.75},
-        {Min: 21, Max: 100, Score: 0.5},
-    },
-    func(ctx context.Context, change entity.Change) (int, error) {
-        // resolve the change into a numeric metric
-        return filesChanged, nil
-    },
-)
+## Adding a backend
 
-score, err := s.Score(ctx, change)
-```
-
-### Composite
-
-Combines multiple named scorers into a single score using a reduce function. The reduce function receives a `map[string]float64` mapping scorer names to their scores, enabling domain-aware aggregation.
-
-Built-in reduce functions: `Min`, `Max`, `Avg`.
-
-```go
-s := composite.New(
-    map[string]scorer.Scorer{
-        "files": fileScorer,
-        "deps":  depScorer,
-    },
-    composite.Min,
-)
-
-score, err := s.Score(ctx, change)
-```
-
-## Implementing a Backend
-
-1. Create `extension/scorer/{backend}/` directory
-2. Implement the `Scorer` interface
-3. Accept `entity.Change` and resolve it into whatever data the implementation needs
+Create a package under `scorer/<backend>/` whose `New(...)` returns a `scorer.Scorer`, injecting whatever it needs at construction — a `changeset.Resolver` to reach the batch's changes, a metrics scope, any client. Do not add a `Config` or `Factory` implementation here; per-queue routing and the factory adapter live in the wiring layer.
