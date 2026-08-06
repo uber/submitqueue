@@ -53,6 +53,14 @@ const (
 	// queries when many partitions are idle (e.g., 50 idle partitions at 100ms
 	// poll interval = 500 GC queries/sec without throttling).
 	gcIdleTickInterval = 100
+
+	// heartbeatPurgeAfterLeaseDurations sets the age threshold for purging
+	// abandoned heartbeat rows, as a multiple of LeaseDurationMs (10x = 5min
+	// at defaults). Well past every transient window in the protocol — a row
+	// that stale belongs to a subscriber that crashed without deregistering.
+	// Purging a live-but-stalled subscriber's row is harmless: its next
+	// heartbeat re-inserts it.
+	heartbeatPurgeAfterLeaseDurations = 10
 )
 
 // HookSignal identifies the type of subscriber lifecycle event.
@@ -564,6 +572,13 @@ func (s *subscriber) managePartitions(ctx context.Context, sub *subscription) {
 			}
 			if err := s.sendHeartbeat(ctx, sub); err != nil {
 				s.logger.Errorw("periodic heartbeat failed", append(logFields, "error", err)...)
+			}
+			// Purge heartbeat rows abandoned by subscribers that never
+			// deregistered (crashes) — without this the table grows
+			// monotonically, since every process registers under a fresh
+			// hostname-pid name.
+			if err := s.heartbeatStore.PurgeStale(ctx, sub.topic, cfg.ConsumerGroup, heartbeatPurgeAfterLeaseDurations*cfg.LeaseDurationMs); err != nil {
+				s.logger.Errorw("stale heartbeat purge failed", append(logFields, "error", err)...)
 			}
 			s.emitSignal(SignalPartitionUpdate)
 

@@ -391,6 +391,20 @@ func (mr *MocksubscriberHeartbeatStoreMockRecorder) Heartbeat(ctx, topic, subscr
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Heartbeat", reflect.TypeOf((*MocksubscriberHeartbeatStore)(nil).Heartbeat), ctx, topic, subscriberName, consumerGroup)
 }
 
+// PurgeStale mocks base method.
+func (m *MocksubscriberHeartbeatStore) PurgeStale(ctx context.Context, topic, consumerGroup string, olderThanMs int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PurgeStale", ctx, topic, consumerGroup, olderThanMs)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// PurgeStale indicates an expected call of PurgeStale.
+func (mr *MocksubscriberHeartbeatStoreMockRecorder) PurgeStale(ctx, topic, consumerGroup, olderThanMs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PurgeStale", reflect.TypeOf((*MocksubscriberHeartbeatStore)(nil).PurgeStale), ctx, topic, consumerGroup, olderThanMs)
+}
+
 // MockdeliveryStateStore is a mock of deliveryStateStore interface.
 type MockdeliveryStateStore struct {
 	ctrl     *gomock.Controller
