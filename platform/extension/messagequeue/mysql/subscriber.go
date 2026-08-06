@@ -485,6 +485,13 @@ func (s *subscriber) managePartitions(ctx context.Context, sub *subscription) {
 	leaseTicker := time.NewTicker(time.Duration(cfg.LeaseRenewalIntervalMs) * time.Millisecond)
 	defer leaseTicker.Stop()
 
+	// Orphan sweep pacing: an uncapped acquisition pass runs every two lease
+	// durations. Two lease durations is past every transient window in the
+	// protocol — an expiring lease, a crashed peer's heartbeat going stale —
+	// so anything still unleased at sweep time is genuinely unclaimed.
+	orphanSweepInterval := 2 * time.Duration(cfg.LeaseDurationMs) * time.Millisecond
+	lastOrphanSweep := time.Now()
+
 	// Send initial heartbeat so this subscriber is immediately visible to
 	// ActiveSubscribers. Without this, other subscribers compute incorrect
 	// fair shares until the first leaseTicker fires.
@@ -533,10 +540,26 @@ func (s *subscriber) managePartitions(ctx context.Context, sub *subscription) {
 
 			// Rebalance, renew, and heartbeat are independent operations.
 			// Each can fail without affecting the others — the next tick retries.
-			if err := s.rebalance(ctx, sub, leasedPartitions); err != nil {
+			// Renewal covers only the partitions kept after shedding; renewing
+			// a just-released lease would spuriously fail with ErrLeaseExpired.
+			released, err := s.rebalance(ctx, sub, leasedPartitions)
+			if err != nil {
 				s.logger.Errorw("rebalance failed", append(logFields, "error", err)...)
 			}
-			if err := s.renewLeases(ctx, sub, leasedPartitions); err != nil {
+			kept := leasedPartitions
+			if len(released) > 0 {
+				releasedSet := make(map[string]struct{}, len(released))
+				for _, pk := range released {
+					releasedSet[pk] = struct{}{}
+				}
+				kept = make([]string, 0, len(leasedPartitions))
+				for _, pk := range leasedPartitions {
+					if _, ok := releasedSet[pk]; !ok {
+						kept = append(kept, pk)
+					}
+				}
+			}
+			if err := s.renewLeases(ctx, sub, kept); err != nil {
 				s.logger.Errorw("lease renewal failed", append(logFields, "error", err)...)
 			}
 			if err := s.sendHeartbeat(ctx, sub); err != nil {
@@ -545,7 +568,18 @@ func (s *subscriber) managePartitions(ctx context.Context, sub *subscription) {
 			s.emitSignal(SignalPartitionUpdate)
 
 		case <-discoveryTicker.C:
-			if err := s.discoverAndReconcileWorkers(ctx, sub); err != nil {
+			// Orphan sweep: periodically run acquisition with no cap. In a
+			// healthy group the sweep is a no-op — TryAcquireLease cannot
+			// steal a valid lease — but a partition left unleased for any
+			// reason the cap arithmetic missed (divergent heartbeat views, a
+			// subscriber that heartbeats without acquiring) is picked up by
+			// whichever subscriber sweeps first. An over-cap grab is shed at
+			// the next rebalance once a peer has spare capacity to take it.
+			uncapped := time.Since(lastOrphanSweep) >= orphanSweepInterval
+			if uncapped {
+				lastOrphanSweep = time.Now()
+			}
+			if err := s.discoverAndReconcileWorkers(ctx, sub, uncapped); err != nil {
 				s.logger.Errorw("partition discovery failed, will retry on next tick", append(logFields, "error", err)...)
 			}
 			s.emitSignal(SignalPartitionUpdate)
@@ -554,8 +588,9 @@ func (s *subscriber) managePartitions(ctx context.Context, sub *subscription) {
 }
 
 // discoverAndReconcileWorkers discovers new partitions and reconciles workers.
-// Uses load-based fair share to limit how many partitions this subscriber acquires.
-func (s *subscriber) discoverAndReconcileWorkers(ctx context.Context, sub *subscription) error {
+// Uses fair share to limit how many partitions this subscriber acquires;
+// uncapped skips the fair-share cap entirely (the orphan sweep).
+func (s *subscriber) discoverAndReconcileWorkers(ctx context.Context, sub *subscription, uncapped bool) error {
 	cfg := sub.config
 
 	// Get current leased partitions for fair share computation.
@@ -565,15 +600,21 @@ func (s *subscriber) discoverAndReconcileWorkers(ctx context.Context, sub *subsc
 	}
 
 	// Use cached discovered partitions from last tick for fair share cap.
-	// On the first tick, lastDiscoveredPartitions is nil → fairShareCap uses
-	// only owned partitions, which gives unlimited cap for new subscribers.
+	// On the first tick, lastDiscoveredPartitions is nil → fairShareCap sees
+	// only owned partitions, so a joiner's first-tick cap floors at 1 and
+	// ramps once discovery is cached.
 	sub.workersMu.Lock()
 	cachedDiscovered := sub.lastDiscoveredPartitions
 	sub.workersMu.Unlock()
 
-	maxPartitions, err := s.fairShareCap(ctx, sub, leasedPartitions, cachedDiscovered)
-	if err != nil {
-		return fmt.Errorf("compute fair share cap: %w", err)
+	// maxPartitions == 0 means unlimited (the orphan sweep, or an
+	// uncontended single subscriber via fairShareCap).
+	maxPartitions := 0
+	if !uncapped {
+		maxPartitions, err = s.fairShareCap(ctx, sub, leasedPartitions, cachedDiscovered)
+		if err != nil {
+			return fmt.Errorf("compute fair share cap: %w", err)
+		}
 	}
 
 	// Discover and try to acquire leases for new partitions.
@@ -1026,8 +1067,12 @@ func (s *subscriber) deregisterHeartbeat(ctx context.Context, sub *subscription)
 }
 
 // rebalance checks if this subscriber holds more partitions than its fair share
-// and releases extras so other subscribers can pick them up.
-func (s *subscriber) rebalance(ctx context.Context, sub *subscription, owned []string) error {
+// and releases extras so other subscribers can pick them up. Returns the
+// partitions actually released so the caller renews only the remainder —
+// renewing a just-released lease would spuriously fail with ErrLeaseExpired.
+// The owned slice is never mutated (the caller shares it with lease renewal).
+// On error, partitions released before the failure are still returned.
+func (s *subscriber) rebalance(ctx context.Context, sub *subscription, owned []string) (released []string, retErr error) {
 	cfg := sub.config
 
 	// Use cached discovered partitions from the most recent discovery tick.
@@ -1037,20 +1082,24 @@ func (s *subscriber) rebalance(ctx context.Context, sub *subscription, owned []s
 
 	maxPart, err := s.fairShareCap(ctx, sub, owned, discoveredPartitions)
 	if err != nil {
-		return fmt.Errorf("compute fair share cap: %w", err)
+		return nil, fmt.Errorf("compute fair share cap: %w", err)
 	}
 	if maxPart == 0 || len(owned) <= maxPart {
-		return nil
+		return nil, nil
 	}
 
-	// Sort deterministically so the same partitions are released across runs.
-	sort.Strings(owned)
+	// Sort a copy deterministically so the same partitions are released
+	// across runs without reordering the caller's slice.
+	sortedOwned := make([]string, len(owned))
+	copy(sortedOwned, owned)
+	sort.Strings(sortedOwned)
 
 	// Release excess partitions
-	for _, pk := range owned[maxPart:] {
+	for _, pk := range sortedOwned[maxPart:] {
 		if err := s.leaseStore.ReleaseLease(ctx, sub.topic, pk, cfg.SubscriberName, cfg.ConsumerGroup); err != nil {
-			return fmt.Errorf("release partition %s during rebalance: %w", pk, err)
+			return released, fmt.Errorf("release partition %s during rebalance: %w", pk, err)
 		}
+		released = append(released, pk)
 
 		// Stop the worker immediately to prevent duplicate processing.
 		s.stopPartitionWorker(sub, pk)
@@ -1063,7 +1112,7 @@ func (s *subscriber) rebalance(ctx context.Context, sub *subscription, owned []s
 			"max_partitions", maxPart,
 		)
 	}
-	return nil
+	return released, nil
 }
 
 // fairShareCap computes the max partitions this subscriber should own.
@@ -1071,6 +1120,16 @@ func (s *subscriber) rebalance(ctx context.Context, sub *subscription, owned []s
 // owned is the caller-provided list of leased partitions.
 // discoveredPartitions is an optional pre-fetched list of all known partitions;
 // if nil, only owned partitions are used for fair share computation.
+//
+// The cap is remainder-aware: subscribers rank themselves in the sorted
+// active list, the first (P mod N) ranks get floor(P/N)+1, and the rest get
+// floor(P/N), so per-rank caps sum to exactly P. Independent ceil(P/N) caps
+// sum to more than P and admit stable starvation states — e.g. P=12, N=5
+// could settle at 3/3/3/3/0 with every subscriber at cap and nobody obliged
+// to shed for the empty one. With caps summing to P, a subscriber over its
+// cap implies another under its cap (rebalance sheds, the peer acquires),
+// and an unleased partition implies a subscriber with spare cap to claim it
+// — neither a starved subscriber nor a leftover partition is a stable state.
 func (s *subscriber) fairShareCap(ctx context.Context, sub *subscription, owned []string, discoveredPartitions []string) (int, error) {
 	cfg := sub.config
 
@@ -1081,8 +1140,6 @@ func (s *subscriber) fairShareCap(ctx context.Context, sub *subscription, owned 
 	if len(active) <= 1 {
 		return 0, nil
 	}
-
-	activeSubscribers := len(active)
 
 	// Count all known partitions as the union of owned + discovered.
 	// Using max(owned, discovered) would undercount when some partitions
@@ -1098,8 +1155,31 @@ func (s *subscriber) fairShareCap(ctx context.Context, sub *subscription, owned 
 	}
 	totalPartitions := len(partitionSet)
 
-	// ceil(totalPartitions / activeSubscribers)
-	maxPart := (totalPartitions + activeSubscribers - 1) / activeSubscribers
+	// Rank in the sorted active list. ActiveSubscribers row order is not
+	// guaranteed, so sorting is what lets every subscriber derive the same
+	// ranking from the same set without coordination.
+	sort.Strings(active)
+	n := len(active)
+	rank := -1
+	for i, name := range active {
+		if name == cfg.SubscriberName {
+			rank = i
+			break
+		}
+	}
+
+	var maxPart int
+	if rank < 0 {
+		// Own heartbeat not visible this tick (e.g. the write failed): fall
+		// back to a conservative ceil over n+1 contenders instead of
+		// claiming a rank that may belong to another subscriber.
+		maxPart = (totalPartitions + n) / (n + 1)
+	} else {
+		maxPart = totalPartitions / n
+		if rank < totalPartitions%n {
+			maxPart++
+		}
+	}
 	if maxPart < 1 {
 		maxPart = 1
 	}
