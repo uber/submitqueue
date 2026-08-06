@@ -13,6 +13,10 @@ Each controller applies the request's ordered steps via a `Merger` and publishes
 
 These topic keys and their wire contracts are owned by the queue's producer side and published under `api/runway/messagequeue/` (the external, cross-domain contract).
 
+### Merger backend
+
+The merge work is done by the [`merger`](../../runway/extension/merger) extension. By default the server wires the **noop** merger (always succeeds — for local dev and compose). Set `MERGE_CHECKOUT_PATH` to wire the real **git** merger, built from the `MERGE_*` / `GIT_*` environment (see Configuration); the git merger owns the checkout at that path and pushes to the configured remote/target.
+
 Because Runway only consumes queues and serves `Ping`, it needs a **queue** database but no application/storage database.
 
 ## Layout
@@ -36,6 +40,16 @@ The Runway controllers themselves live under [`runway/controller/`](../../runway
 | `QUEUE_MYSQL_DSN` | yes      | Queue database DSN                            | —                        |
 | `PORT`            | no       | gRPC listen address                           | `:8086`                  |
 | `HOSTNAME`        | no       | Subscriber name for the queue consumer        | `runway-<unix_ts>`       |
+| `MERGE_CHECKOUT_PATH` | no   | Absolute path to the git checkout the merger owns. When unset, the noop merger is used. | — (noop) |
+| `MERGE_REMOTE`    | no       | Git remote to fetch/push                       | `origin`                 |
+| `MERGE_TARGET`    | no       | Destination branch on the remote               | `main`                   |
+| `MERGE_DEFAULT_STRATEGY` | no | Strategy a `DEFAULT` step resolves to: `REBASE`, `SQUASH_REBASE`, `MERGE`, or `PROMOTE` | `REBASE` |
+| `MERGE_COMMITTER_NAME` | no  | Committer name for service-created commits      | `SubmitQueue Runway`     |
+| `MERGE_COMMITTER_EMAIL` | no | Committer email for service-created commits     | `runway@submitqueue.invalid` |
+| `GIT_EXECUTABLE` / `GIT_EXEC_PATH` / `GIT_TEMPLATE_DIR` | when `MERGE_CHECKOUT_PATH` set | Absolute paths to the pinned git runtime | — |
+| `MERGE_CHECK_STALENESS` | no | Verify each change's provider ref still points at the commit its URI names before applying | `true` |
+| `MERGE_ALLOW_UNRELATED_HISTORIES` | no | Let a `MERGE` step integrate a change sharing no ancestry with the target (repository imports). Leave off unless the queue exists to perform imports. | `false` |
+| `MERGE_FETCH_REFSPECS` | no | Comma-separated extra refspecs fetched each cycle. Only needed for a remote that refuses to serve an unadvertised commit by SHA. | — |
 
 ## Running
 
