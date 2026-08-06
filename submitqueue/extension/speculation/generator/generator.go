@@ -40,10 +40,11 @@ type Generator interface {
 	// queue that has moved on is a new snapshot and a new Generate, which is how
 	// batches are revised anyway — they are replaced, not edited in place.
 	//
-	// The snapshot must include every batch a head's direct dependencies
-	// reference. A snapshot that breaks that — or carries empty or duplicate
-	// batch IDs, or a head with an empty, duplicate, or self dependency — is
-	// malformed input and aborts with an error rather than a stream.
+	// A well-formed snapshot carries unique, non-empty batch IDs, includes every
+	// batch a head's direct dependencies reference, and gives no head an empty,
+	// duplicate, or self dependency. That is a precondition the caller owns: a
+	// generator may assume it and is not required to detect a breach, so a
+	// malformed snapshot yields undefined candidates rather than an error.
 	Generate(ctx context.Context, batches []entity.Batch) (Iterator, error)
 }
 
