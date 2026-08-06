@@ -339,6 +339,63 @@ func (s *StorageContractSuite) TestStorage_BatchUpdateReplacesAllNonKeyFields() 
 	assert.Equal(t, got, unchanged)
 }
 
+// TestStorage_QueueBatchStateRecordLifecycle exercises the QueueBatchStateStore
+// contract: Put idempotency, List isolation between (queue, state) buckets, the
+// Put-then-Delete record move, and Delete idempotency.
+func (s *StorageContractSuite) TestStorage_QueueBatchStateRecordLifecycle() {
+	t := s.T()
+	ctx := s.ctx
+	store := s.storage.GetQueueBatchStateStore()
+
+	created1 := entity.QueueBatchState{Queue: "qbs-queue-a", State: entity.BatchStateCreated, BatchID: "qbs-queue-a/batch/1"}
+	created2 := entity.QueueBatchState{Queue: "qbs-queue-a", State: entity.BatchStateCreated, BatchID: "qbs-queue-a/batch/2"}
+	speculating := entity.QueueBatchState{Queue: "qbs-queue-a", State: entity.BatchStateSpeculating, BatchID: "qbs-queue-a/batch/3"}
+	otherQueue := entity.QueueBatchState{Queue: "qbs-queue-b", State: entity.BatchStateCreated, BatchID: "qbs-queue-b/batch/1"}
+
+	require.NoError(t, store.Put(ctx, created1))
+	require.NoError(t, store.Put(ctx, created2))
+	require.NoError(t, store.Put(ctx, speculating))
+	require.NoError(t, store.Put(ctx, otherQueue))
+
+	// Re-putting an existing record is a no-op success.
+	require.NoError(t, store.Put(ctx, created1))
+
+	// List returns exactly one (queue, state) bucket: no other states, no other queues, no duplicates.
+	got, err := store.List(ctx, "qbs-queue-a", entity.BatchStateCreated)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []entity.QueueBatchState{created1, created2}, got)
+
+	got, err = store.List(ctx, "qbs-queue-a", entity.BatchStateSpeculating)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []entity.QueueBatchState{speculating}, got)
+
+	// An empty bucket lists empty, not an error.
+	got, err = store.List(ctx, "qbs-queue-a", entity.BatchStateMerging)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+
+	// A record move: file under the new state, then remove the old bucket's record.
+	moved := entity.QueueBatchState{Queue: created1.Queue, State: entity.BatchStateSpeculating, BatchID: created1.BatchID}
+	require.NoError(t, store.Put(ctx, moved))
+	require.NoError(t, store.Delete(ctx, created1.Queue, created1.State, created1.BatchID))
+
+	got, err = store.List(ctx, "qbs-queue-a", entity.BatchStateCreated)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []entity.QueueBatchState{created2}, got)
+
+	got, err = store.List(ctx, "qbs-queue-a", entity.BatchStateSpeculating)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []entity.QueueBatchState{speculating, moved}, got)
+
+	// Deleting an absent record is a no-op success.
+	require.NoError(t, store.Delete(ctx, created1.Queue, created1.State, created1.BatchID))
+
+	// The other queue is untouched by all of the above.
+	got, err = store.List(ctx, "qbs-queue-b", entity.BatchStateCreated)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []entity.QueueBatchState{otherQueue}, got)
+}
+
 // TestStorage_NotFound tests getting a non-existent request
 func (s *StorageContractSuite) TestStorage_NotFound() {
 	t := s.T()

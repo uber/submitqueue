@@ -85,6 +85,21 @@ func IsBatchStateHalted(s BatchState) bool {
 	return s.IsTerminal() || s == BatchStateCancelling
 }
 
+// AllBatchStates returns every named batch state, in lifecycle order.
+// BatchStateUnknown is excluded: it is the zero-value sentinel, not a state a batch can occupy.
+func AllBatchStates() []BatchState {
+	return []BatchState{
+		BatchStateCreating,
+		BatchStateCreated,
+		BatchStateSpeculating,
+		BatchStateMerging,
+		BatchStateSucceeded,
+		BatchStateFailed,
+		BatchStateCancelling,
+		BatchStateCancelled,
+	}
+}
+
 // ActiveBatchStates returns batch states eligible for active pipeline and cancellation lookups.
 // Creating is excluded because its reverse-index structure may still be incomplete.
 func ActiveBatchStates() []BatchState {

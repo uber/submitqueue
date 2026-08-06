@@ -62,6 +62,14 @@ func TestActiveBatchStates_ExcludesCreating(t *testing.T) {
 	assert.NotContains(t, ActiveBatchStates(), BatchStateCreating)
 }
 
+func TestAllBatchStates_SupersetOfStateSubsets(t *testing.T) {
+	all := AllBatchStates()
+	assert.NotContains(t, all, BatchStateUnknown)
+	assert.Subset(t, all, ActiveBatchStates())
+	assert.Subset(t, all, DependencyBatchStates())
+	assert.Subset(t, all, []BatchState{BatchStateSucceeded, BatchStateFailed, BatchStateCancelled})
+}
+
 func TestDependencyBatchStates_ExcludesCreating(t *testing.T) {
 	assert.NotContains(t, DependencyBatchStates(), BatchStateCreating)
 }
