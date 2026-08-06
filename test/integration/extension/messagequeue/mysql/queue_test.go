@@ -1814,6 +1814,15 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_SubscriberLeaves() {
 		return len(leases["s1"]) == 4
 	}, "S1 should reacquire all 4 partitions after S2 leaves")
 
+	// Deregistration hard-deletes the heartbeat row — subscriber names are
+	// unique per process, so rows would otherwise accumulate forever.
+	var s2Rows int
+	require.NoError(t, s.db.QueryRowContext(s.ctx, `
+		SELECT COUNT(*) FROM queue_subscriber_heartbeats
+		WHERE consumer_group = ? AND topic = ? AND subscriber_name = ?
+	`, consumerGroup, topic, "s2").Scan(&s2Rows))
+	assert.Equal(t, 0, s2Rows, "closed subscriber's heartbeat row must be deleted")
+
 	t.Logf("Subscriber leave verified: S1 owns all 4 partitions after S2 departed")
 }
 

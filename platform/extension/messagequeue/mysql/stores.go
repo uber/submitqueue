@@ -154,8 +154,18 @@ type subscriberHeartbeatStore interface {
 	// within this duration are considered dead.
 	ActiveSubscribers(ctx context.Context, topic string, consumerGroup string, staleDurationMs int64) ([]string, error)
 
-	// Deregister removes a subscriber's heartbeat entry
+	// Deregister removes a subscriber's heartbeat row. Hard delete: the row
+	// is not needed once the subscriber is gone, and subscriber names are
+	// unique per process (hostname-pid), so rows would otherwise accumulate
+	// forever across deploys. Re-subscribing re-inserts via Heartbeat.
 	Deregister(ctx context.Context, topic string, subscriberName string, consumerGroup string) error
+
+	// PurgeStale deletes heartbeat rows whose last heartbeat is older than
+	// olderThanMs. Backstop for subscribers that never deregistered
+	// (crashes, SIGKILL): without it the table grows monotonically since
+	// every process registers under a fresh name. Deleting a live-but-stalled
+	// subscriber's row is harmless — its next heartbeat re-inserts it.
+	PurgeStale(ctx context.Context, topic string, consumerGroup string, olderThanMs int64) error
 }
 
 // DeliveryState represents the full per-message delivery tracking state.
