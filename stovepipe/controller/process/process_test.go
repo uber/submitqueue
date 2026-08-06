@@ -53,6 +53,12 @@ type processMocks struct {
 	publisher     *mqmock.MockPublisher
 }
 
+// staticStorageFactory resolves every queue to one fixed store aggregate.
+type staticStorageFactory struct{ store storage.Storage }
+
+// For returns the fixed store aggregate for any queue.
+func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
+
 func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, processMocks) {
 	t.Helper()
 	return newControllerWithScope(t, ctrl, tally.NewTestScope("test", nil))
@@ -83,7 +89,7 @@ func newControllerWithScope(t *testing.T, ctrl *gomock.Controller, scope tally.S
 	c := NewController(
 		zap.NewNop().Sugar(),
 		scope,
-		store,
+		staticStorageFactory{store: store},
 		queueconfigdefault.NewStore(),
 		m.sourceFactory,
 		registry,

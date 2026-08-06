@@ -16,30 +16,57 @@ package mysql
 
 import (
 	"database/sql"
+	"fmt"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
 
+// Storage is the MySQL storage backend. It owns the shared connection pool and
+// binds queue-scoped store aggregates over the shared tables on demand via For.
+// The wiring layer adapts For into the storage.Factory seam; per-queue backend
+// routing stays a host decision.
+type Storage struct {
+	db    *sql.DB
+	scope tally.Scope
+}
+
+// NewStorage creates a new MySQL storage backend over the given connection pool.
+func NewStorage(db *sql.DB, scope tally.Scope) (*Storage, error) {
+	return &Storage{db: db, scope: scope}, nil
+}
+
+// For returns the queue-scoped store aggregate bound to queueName over the
+// shared pool. Every store the aggregate hands back reads and writes only that
+// queue's records.
+func (s *Storage) For(queueName string) (storage.Storage, error) {
+	if queueName == "" {
+		return nil, fmt.Errorf("queue name must not be empty")
+	}
+	return &mysqlStorage{
+		requestStore:    NewRequestStore(s.db, s.scope.SubScope("request_store"), queueName),
+		requestURIStore: NewRequestURIStore(s.db, s.scope.SubScope("request_uri_store"), queueName),
+		queueStore:      NewQueueStore(s.db, s.scope.SubScope("queue_store"), queueName),
+		buildStore:      NewBuildStore(s.db, s.scope.SubScope("build_store"), queueName),
+	}, nil
+}
+
+// Close closes the underlying database connection.
+func (s *Storage) Close() error {
+	return s.db.Close()
+}
+
+// mysqlStorage is the queue-scoped store aggregate returned by For.
 type mysqlStorage struct {
-	db              *sql.DB
 	requestStore    storage.RequestStore
 	requestURIStore storage.RequestURIStore
 	queueStore      storage.QueueStore
 	buildStore      storage.BuildStore
 }
 
-// NewStorage creates a new MySQL-backed storage.
-func NewStorage(db *sql.DB, scope tally.Scope) (storage.Storage, error) {
-	return &mysqlStorage{
-		db:              db,
-		requestStore:    NewRequestStore(db, scope.SubScope("request_store")),
-		requestURIStore: NewRequestURIStore(db, scope.SubScope("request_uri_store")),
-		queueStore:      NewQueueStore(db, scope.SubScope("queue_store")),
-		buildStore:      NewBuildStore(db, scope.SubScope("build_store")),
-	}, nil
-}
+// Verify mysqlStorage implements the queue-scoped aggregate at compile time.
+var _ storage.Storage = (*mysqlStorage)(nil)
 
 // GetRequestStore returns the MySQL-backed RequestStore.
 func (f *mysqlStorage) GetRequestStore() storage.RequestStore {
@@ -59,9 +86,4 @@ func (f *mysqlStorage) GetQueueStore() storage.QueueStore {
 // GetBuildStore returns the MySQL-backed BuildStore.
 func (f *mysqlStorage) GetBuildStore() storage.BuildStore {
 	return f.buildStore
-}
-
-// Close closes the underlying database connection.
-func (f *mysqlStorage) Close() error {
-	return f.db.Close()
 }

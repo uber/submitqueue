@@ -35,7 +35,7 @@ func setupBuildStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.BuildS
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	store := NewBuildStore(db, testMetrics())
+	store := NewBuildStore(db, testMetrics(), "monorepo/main")
 
 	return db, mock, store
 }
@@ -58,7 +58,7 @@ func TestBuildStore_Create(t *testing.T) {
 			name: "success",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO build").
-					WithArgs(build.ID, build.RequestID, build.Status, build.Version).
+					WithArgs("monorepo/main", build.ID, build.RequestID, build.Status, build.Version).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -66,7 +66,7 @@ func TestBuildStore_Create(t *testing.T) {
 			name: "duplicate id returns ErrAlreadyExists",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO build").
-					WithArgs(build.ID, build.RequestID, build.Status, build.Version).
+					WithArgs("monorepo/main", build.ID, build.RequestID, build.Status, build.Version).
 					WillReturnError(&mysql.MySQLError{Number: mysqlErrDuplicateEntry})
 			},
 			wantErr:   true,
@@ -76,7 +76,7 @@ func TestBuildStore_Create(t *testing.T) {
 			name: "other exec error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO build").
-					WithArgs(build.ID, build.RequestID, build.Status, build.Version).
+					WithArgs("monorepo/main", build.ID, build.RequestID, build.Status, build.Version).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,
@@ -127,7 +127,7 @@ func TestBuildStore_Get(t *testing.T) {
 				rows := sqlmock.NewRows([]string{"id", "request_id", "status", "version"}).
 					AddRow(want.ID, want.RequestID, string(want.Status), want.Version)
 				mock.ExpectQuery("SELECT id, request_id, status, version").
-					WithArgs(want.ID).
+					WithArgs("monorepo/main", want.ID).
 					WillReturnRows(rows)
 			},
 			want: want,
@@ -137,7 +137,7 @@ func TestBuildStore_Get(t *testing.T) {
 			id:   "missing",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectQuery("SELECT id, request_id, status, version").
-					WithArgs("missing").
+					WithArgs("monorepo/main", "missing").
 					WillReturnError(sql.ErrNoRows)
 			},
 			wantErr:   true,
@@ -148,7 +148,7 @@ func TestBuildStore_Get(t *testing.T) {
 			id:   "bad",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectQuery("SELECT id, request_id, status, version").
-					WithArgs("bad").
+					WithArgs("monorepo/main", "bad").
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,
@@ -191,7 +191,7 @@ func TestBuildStore_Update(t *testing.T) {
 			name: "success",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE build").
-					WithArgs(build.Status, newVersion, build.ID, oldVersion).
+					WithArgs(build.Status, newVersion, "monorepo/main", build.ID, oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -199,7 +199,7 @@ func TestBuildStore_Update(t *testing.T) {
 			name: "version mismatch",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE build").
-					WithArgs(build.Status, newVersion, build.ID, oldVersion).
+					WithArgs(build.Status, newVersion, "monorepo/main", build.ID, oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
 			wantErr:   true,
@@ -209,7 +209,7 @@ func TestBuildStore_Update(t *testing.T) {
 			name: "exec error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE build").
-					WithArgs(build.Status, newVersion, build.ID, oldVersion).
+					WithArgs(build.Status, newVersion, "monorepo/main", build.ID, oldVersion).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,
@@ -218,7 +218,7 @@ func TestBuildStore_Update(t *testing.T) {
 			name: "rows affected error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE build").
-					WithArgs(build.Status, newVersion, build.ID, oldVersion).
+					WithArgs(build.Status, newVersion, "monorepo/main", build.ID, oldVersion).
 					WillReturnResult(sqlmock.NewErrorResult(fmt.Errorf("driver error")))
 			},
 			wantErr: true,

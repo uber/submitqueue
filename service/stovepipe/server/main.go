@@ -249,11 +249,12 @@ func run() error {
 	scf := fakeSourceControlFactory{}
 	brf := fakeBuildRunnerFactory{}
 
-	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, store, registry, scf, brf)
+	storageFty := storageFactory{backend: store}
+	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, registry, scf, brf)
 	if err != nil {
 		return err
 	}
-	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, store, registry)
+	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, storageFty, registry)
 	if err != nil {
 		return err
 	}
@@ -282,7 +283,7 @@ func run() error {
 		scope,
 		newInMemoryCounter(),
 		scf,
-		store,
+		storageFty,
 		registry,
 	)
 	srv := &StovepipeServer{
@@ -359,7 +360,7 @@ func registerPrimaryControllers(
 	c consumer.Consumer,
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	store storage.Factory,
 	registry consumer.TopicRegistry,
 	scf sourcecontrol.Factory,
 	brf buildrunner.Factory,
@@ -402,7 +403,7 @@ func registerDLQControllers(
 	c consumer.Consumer,
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	store storage.Factory,
 	registry consumer.TopicRegistry,
 ) (int, error) {
 	var count int
@@ -460,4 +461,17 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-process-dlq"),
 		},
 	})
+}
+
+// storageFactory adapts the MySQL storage backend's queue binding to the
+// storage.Factory seam. Routing every queue to the single shared backend is
+// this host's policy; a deployment that splits queues across backends swaps
+// this adapter for a routing one.
+type storageFactory struct {
+	backend *storageMySQL.Storage
+}
+
+// For returns the queue-scoped store aggregate bound to the queue named in config.
+func (f storageFactory) For(config storage.Config) (storage.Storage, error) {
+	return f.backend.For(config.QueueName)
 }

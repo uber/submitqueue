@@ -43,7 +43,7 @@ import (
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	store         storage.Storage
+	stores        storage.Factory
 	queueConfigs  queueconfig.Store
 	sourceControl sourcecontrol.Factory
 	registry      consumer.TopicRegistry
@@ -61,7 +61,7 @@ const _opName = "process"
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	stores storage.Factory,
 	queueConfigs queueconfig.Store,
 	sourceControl sourcecontrol.Factory,
 	registry consumer.TopicRegistry,
@@ -71,7 +71,7 @@ func NewController(
 	return &Controller{
 		logger:        logger.Named("process_controller"),
 		metricsScope:  scope.SubScope("process_controller"),
-		store:         store,
+		stores:        stores,
 		queueConfigs:  queueConfigs,
 		sourceControl: sourceControl,
 		registry:      registry,
@@ -92,15 +92,29 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to deserialize process request: %w", err)
 	}
 
-	request, err := c.loadRequest(ctx, pr.Id)
+	store, err := c.stores.For(storage.Config{QueueName: pr.GetQueueName()})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_resolve_errors", 1)
+		// Non-retryable: a missing or unresolvable queue is a malformed message.
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", pr.GetQueueName(), err)
+	}
+
+	request, err := c.loadRequest(ctx, store, pr.Id)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
 		return err
 	}
 
+	// The payload's queue must match the request's authoritative queue; a
+	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
+	if pr.GetQueueName() != "" && pr.GetQueueName() != request.Queue {
+		metrics.NamedCounter(c.metricsScope, _opName, "queue_mismatch", 1)
+		return fmt.Errorf("payload queue %q does not match queue %q of request %s", pr.GetQueueName(), request.Queue, request.ID)
+	}
+
 	switch request.State {
 	case entity.RequestStateProcessing:
-		if err := c.publishBuild(ctx, request.ID); err != nil {
+		if err := c.publishBuild(ctx, request.ID, request.Queue); err != nil {
 			metrics.NamedCounter(c.metricsScope, _opName, "publish_errors", 1)
 			return fmt.Errorf("failed to publish request %s to build: %w", request.ID, err)
 		}
@@ -110,7 +124,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		// A stale redelivery has nothing left to do.
 		return nil
 	case entity.RequestStateAccepted:
-		return c.processAccepted(ctx, delivery, request)
+		return c.processAccepted(ctx, store, delivery, request)
 	default:
 		c.logger.Warnw("ignored request in unexpected state",
 			"request_id", request.ID,
@@ -124,8 +138,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // processAccepted coalesces older heads against queue.latest_request_id, then admits
 // the latest head when a build slot is available. The delivery is threaded down so a
 // closed gate can hold it.
-func (c *Controller) processAccepted(ctx context.Context, delivery consumer.Delivery, request entity.Request) error {
-	queueRow, err := c.loadQueue(ctx, request.Queue)
+func (c *Controller) processAccepted(ctx context.Context, store storage.Storage, delivery consumer.Delivery, request entity.Request) error {
+	queueRow, err := c.loadQueue(ctx, store, request.Queue)
 	if err != nil {
 		if !errs.IsRetryable(err) {
 			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
@@ -142,7 +156,7 @@ func (c *Controller) processAccepted(ctx context.Context, delivery consumer.Deli
 		return nil
 	}
 
-	superseded, err := c.coalesce(ctx, request, queueRow.LatestRequestID)
+	superseded, err := c.coalesce(ctx, store, request, queueRow.LatestRequestID)
 	if err != nil || superseded {
 		return err
 	}
@@ -154,13 +168,13 @@ func (c *Controller) processAccepted(ctx context.Context, delivery consumer.Deli
 		return fmt.Errorf("failed to load queue config for %s: %w", request.Queue, err)
 	}
 
-	return c.admitLatestHead(ctx, delivery, request, queueRow, cfg)
+	return c.admitLatestHead(ctx, store, delivery, request, queueRow, cfg)
 }
 
 // coalesce supersedes request when a newer head exists (RFC process step 5), returning
 // true so the caller acks. It returns false when request is still the latest head and
 // should proceed to the gate. Superseding consumes no build slot.
-func (c *Controller) coalesce(ctx context.Context, request entity.Request, latestRequestID string) (bool, error) {
+func (c *Controller) coalesce(ctx context.Context, store storage.Storage, request entity.Request, latestRequestID string) (bool, error) {
 	cmp, err := entity.CompareRequestID(request.Queue, request.ID, latestRequestID)
 	if err != nil {
 		return false, fmt.Errorf("failed to compare request ids for queue %s: %w", request.Queue, err)
@@ -168,7 +182,7 @@ func (c *Controller) coalesce(ctx context.Context, request entity.Request, lates
 	if cmp >= 0 {
 		return false, nil
 	}
-	if err := c.supersedeRequest(ctx, request); err != nil {
+	if err := c.supersedeRequest(ctx, store, request); err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
 		return false, err
 	}
@@ -185,7 +199,7 @@ func (c *Controller) coalesce(ctx context.Context, request entity.Request, lates
 // slot, mark the request processing, and publish it to build. Every queue-row reload
 // re-runs coalesce-then-gate, so a slot is never spent on a now-stale head; a closed gate
 // defers by holding the delivery (redeliver after the gate wait delay) rather than failing.
-func (c *Controller) admitLatestHead(ctx context.Context, delivery consumer.Delivery, request entity.Request, queueRow entity.Queue, cfg entity.QueueConfig) error {
+func (c *Controller) admitLatestHead(ctx context.Context, store storage.Storage, delivery consumer.Delivery, request entity.Request, queueRow entity.Queue, cfg entity.QueueConfig) error {
 	var sc sourcecontrol.SourceControl
 	var strategy entity.BuildStrategy
 	var baseURI string
@@ -211,7 +225,7 @@ func (c *Controller) admitLatestHead(ctx context.Context, delivery consumer.Deli
 			return err
 		}
 
-		err = c.claimBuildSlot(ctx, &queueRow)
+		err = c.claimBuildSlot(ctx, store, &queueRow)
 		if err == nil {
 			break
 		}
@@ -220,26 +234,26 @@ func (c *Controller) admitLatestHead(ctx context.Context, delivery consumer.Deli
 		}
 		// claimBuildSlot reloaded queueRow. Re-coalesce: supersede if a newer head arrived,
 		// otherwise loop to re-check the gate.
-		superseded, err := c.coalesce(ctx, request, queueRow.LatestRequestID)
+		superseded, err := c.coalesce(ctx, store, request, queueRow.LatestRequestID)
 		if err != nil || superseded {
 			return err
 		}
 	}
 
-	transitioned, err := c.markProcessing(ctx, &request, strategy, baseURI)
+	transitioned, err := c.markProcessing(ctx, store, &request, strategy, baseURI)
 	if err != nil {
 		// Slot claimed but never admitted: release best-effort so the slot isn't leaked
 		// (a redelivery would find the gate closed by its own claim and nothing decrements it).
-		c.releaseBuildSlot(ctx, request.Queue)
+		c.releaseBuildSlot(ctx, store, request.Queue)
 		return err
 	}
 	if !transitioned {
 		// Lost the admit race: another delivery advanced this request. Release and skip.
-		c.releaseBuildSlot(ctx, request.Queue)
+		c.releaseBuildSlot(ctx, store, request.Queue)
 		return nil
 	}
 
-	if err := c.publishBuild(ctx, request.ID); err != nil {
+	if err := c.publishBuild(ctx, request.ID, request.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish request %s to build: %w", request.ID, err)
 	}
@@ -291,8 +305,8 @@ func (c *Controller) deriveBuildStrategy(ctx context.Context, sc sourcecontrol.S
 
 // claimBuildSlot CAS-increments queue.in_flight_count by one. On version mismatch it
 // reloads queueRow and returns ErrVersionMismatch so the caller can retry.
-func (c *Controller) claimBuildSlot(ctx context.Context, queueRow *entity.Queue) error {
-	queueStore := c.store.GetQueueStore()
+func (c *Controller) claimBuildSlot(ctx context.Context, store storage.Storage, queueRow *entity.Queue) error {
+	queueStore := store.GetQueueStore()
 
 	updated := *queueRow
 	updated.InFlightCount = queueRow.InFlightCount + 1
@@ -318,8 +332,8 @@ func (c *Controller) claimBuildSlot(ctx context.Context, queueRow *entity.Queue)
 // update cannot discard them. transitioned is true only when this call performed the CAS; false
 // means a concurrent writer already advanced the request past accepted, so the caller must release
 // its claimed slot.
-func (c *Controller) markProcessing(ctx context.Context, request *entity.Request, strategy entity.BuildStrategy, baseURI string) (transitioned bool, err error) {
-	reqStore := c.store.GetRequestStore()
+func (c *Controller) markProcessing(ctx context.Context, store storage.Storage, request *entity.Request, strategy entity.BuildStrategy, baseURI string) (transitioned bool, err error) {
+	reqStore := store.GetRequestStore()
 
 	for {
 		if request.State != entity.RequestStateAccepted {
@@ -351,8 +365,8 @@ func (c *Controller) markProcessing(ctx context.Context, request *entity.Request
 // releaseBuildSlot CAS-decrements queue.in_flight_count to compensate a slot claimed but never
 // admitted. It decrements relatively (preserving a concurrent record decrement) and retries on
 // version conflicts. Best-effort: it only logs on a hard failure, since the caller is unwinding.
-func (c *Controller) releaseBuildSlot(ctx context.Context, queueName string) {
-	queueStore := c.store.GetQueueStore()
+func (c *Controller) releaseBuildSlot(ctx context.Context, store storage.Storage, queueName string) {
+	queueStore := store.GetQueueStore()
 
 	for {
 		queueRow, err := queueStore.Get(ctx, queueName)
@@ -386,8 +400,8 @@ func (c *Controller) releaseBuildSlot(ctx context.Context, queueName string) {
 }
 
 // supersedeRequest transitions a request from accepted to superseded, retrying on version conflicts.
-func (c *Controller) supersedeRequest(ctx context.Context, request entity.Request) error {
-	reqStore := c.store.GetRequestStore()
+func (c *Controller) supersedeRequest(ctx context.Context, store storage.Storage, request entity.Request) error {
+	reqStore := store.GetRequestStore()
 
 	for {
 		if request.State != entity.RequestStateAccepted {
@@ -434,20 +448,20 @@ func (c *Controller) holdForBuildSlot(delivery consumer.Delivery, request entity
 }
 
 // loadRequest returns the request for id.
-func (c *Controller) loadRequest(ctx context.Context, id string) (entity.Request, error) {
-	return loader.ByID(ctx, id, c.store.GetRequestStore().Get, "request")
+func (c *Controller) loadRequest(ctx context.Context, store storage.Storage, id string) (entity.Request, error) {
+	return loader.ByID(ctx, id, store.GetRequestStore().Get, "request")
 }
 
 // loadQueue returns the queue row for name.
-func (c *Controller) loadQueue(ctx context.Context, name string) (entity.Queue, error) {
-	return loader.ByID(ctx, name, c.store.GetQueueStore().Get, "queue")
+func (c *Controller) loadQueue(ctx context.Context, store storage.Storage, name string) (entity.Queue, error) {
+	return loader.ByID(ctx, name, store.GetQueueStore().Get, "queue")
 }
 
 // publishBuild publishes the admitted request ID to the build stage. The build
 // controller reloads the Request from storage to read its immutable strategy
 // and baseline.
-func (c *Controller) publishBuild(ctx context.Context, id string) error {
-	payload, err := stovepipemq.Marshal(&stovepipemq.BuildRequest{Id: id})
+func (c *Controller) publishBuild(ctx context.Context, id, queue string) error {
+	payload, err := stovepipemq.Marshal(&stovepipemq.BuildRequest{Id: id, QueueName: queue})
 	if err != nil {
 		return fmt.Errorf("failed to serialize build request: %w", err)
 	}

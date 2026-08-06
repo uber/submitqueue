@@ -44,7 +44,30 @@ var ErrAlreadyExists = errors.New("record already exists")
 // retry or converge instead of overwriting a concurrent change. It is intrinsically a retryable infrastructure error.
 var ErrVersionMismatch = errs.NewRetryableError(errors.New("version mismatch"))
 
-// Storage is a factory interface that aggregates all entity stores into a single injectable dependency.
+// Config identifies the queue a Storage instance is resolved for. Like every
+// other extension config, it carries only the queue name — everything an
+// implementation needs beyond that is injected at construction by the
+// integrator.
+type Config struct {
+	// QueueName is the name of the queue whose data the resolved Storage is
+	// scoped to.
+	QueueName string
+}
+
+// Factory resolves the queue-scoped Storage aggregate for a queue. Mirrors the
+// extension contract: the host wiring decides which backend serves which
+// queue; implementations bind the queue over their backend so a resolved
+// instance can only read and write that queue's data. Stovepipe has no
+// cross-queue read paths, so every store lives inside the aggregate.
+type Factory interface {
+	// For returns the Storage aggregate bound to the queue named in config.
+	For(config Config) (Storage, error)
+}
+
+// Storage aggregates the queue-scoped entity stores into a single injectable
+// dependency. An instance is resolved per queue through Factory and is bound
+// to that queue: entity arguments whose queue disagrees with the binding are
+// rejected, and reads never surface another queue's records.
 type Storage interface {
 	// GetRequestStore returns the RequestStore instance.
 	GetRequestStore() RequestStore
@@ -57,7 +80,4 @@ type Storage interface {
 
 	// GetBuildStore returns the BuildStore instance.
 	GetBuildStore() BuildStore
-
-	// Close closes the storage and all underlying connections. Should only be called once at the end of the program.
-	Close() error
 }

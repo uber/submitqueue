@@ -1,9 +1,10 @@
 -- build holds one CI build triggered for a request's commit. id is the runner-assigned build id
 -- minted at Trigger (e.g. a Buildkite build number), opaque and never parsed or derived.
 CREATE TABLE IF NOT EXISTS build (
+    queue       VARCHAR(255) NOT NULL,
     id          VARCHAR(255) NOT NULL,
     request_id  VARCHAR(255) NOT NULL,
     status      VARCHAR(64)  NOT NULL,
     version     INT          NOT NULL,
-    PRIMARY KEY (id)
+    PRIMARY KEY (queue, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

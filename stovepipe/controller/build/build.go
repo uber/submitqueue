@@ -42,7 +42,7 @@ import (
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	store         storage.Storage
+	stores        storage.Factory
 	buildRunners  buildrunner.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
@@ -59,7 +59,7 @@ const _opName = "build"
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	stores storage.Factory,
 	buildRunners buildrunner.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
@@ -68,7 +68,7 @@ func NewController(
 	return &Controller{
 		logger:        logger.Named("build_controller"),
 		metricsScope:  scope.SubScope("build_controller"),
-		store:         store,
+		stores:        stores,
 		buildRunners:  buildRunners,
 		registry:      registry,
 		topicKey:      topicKey,
@@ -89,10 +89,24 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to deserialize build request: %w", err)
 	}
 
-	request, err := c.loadRequest(ctx, br.Id)
+	store, err := c.stores.For(storage.Config{QueueName: br.GetQueueName()})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_resolve_errors", 1)
+		// Non-retryable: a missing or unresolvable queue is a malformed message.
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", br.GetQueueName(), err)
+	}
+
+	request, err := c.loadRequest(ctx, store, br.Id)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
 		return err
+	}
+
+	// The payload's queue must match the request's authoritative queue; a
+	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
+	if br.GetQueueName() != "" && br.GetQueueName() != request.Queue {
+		metrics.NamedCounter(c.metricsScope, _opName, "queue_mismatch", 1)
+		return fmt.Errorf("payload queue %q does not match queue %q of request %s", br.GetQueueName(), request.Queue, request.ID)
 	}
 
 	// A redelivery after the build outcome was already recorded, or after process
@@ -128,11 +142,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		Status:    entity.BuildStatusAccepted,
 		Version:   1,
 	}
-	if err := c.store.GetBuildStore().Create(ctx, build); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+	if err := store.GetBuildStore().Create(ctx, build); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
 		return fmt.Errorf("failed to persist build %s: %w", build.ID, err)
 	}
 
-	if err := c.publishBuildSignal(ctx, build.ID); err != nil {
+	if err := c.publishBuildSignal(ctx, build.ID, request.Queue); err != nil {
 		return fmt.Errorf("failed to publish build signal for %s: %w", build.ID, err)
 	}
 
@@ -146,14 +160,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 }
 
 // loadRequest returns the request for id.
-func (c *Controller) loadRequest(ctx context.Context, id string) (entity.Request, error) {
-	return loader.ByID(ctx, id, c.store.GetRequestStore().Get, "request")
+func (c *Controller) loadRequest(ctx context.Context, store storage.Storage, id string) (entity.Request, error) {
+	return loader.ByID(ctx, id, store.GetRequestStore().Get, "request")
 }
 
 // publishBuildSignal publishes buildID to the buildsignal stage, partitioned by
 // build id so each build's poll loop runs in its own partition.
-func (c *Controller) publishBuildSignal(ctx context.Context, buildID string) error {
-	payload, err := stovepipemq.Marshal(&stovepipemq.BuildSignal{Id: buildID})
+func (c *Controller) publishBuildSignal(ctx context.Context, buildID, queue string) error {
+	payload, err := stovepipemq.Marshal(&stovepipemq.BuildSignal{Id: buildID, QueueName: queue})
 	if err != nil {
 		return fmt.Errorf("failed to serialize build signal: %w", err)
 	}
