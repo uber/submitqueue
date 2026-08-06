@@ -19,6 +19,14 @@ Every URI is reduced to three things: the commit to apply, the ref the provider 
 
 An unrecognized scheme is a terminal invalid request.
 
+## What a request must agree on
+
+The supported providers are a property of this merger, not of the queue or of the wire contract: the URI scheme selects the parser, and a scheme with no case is a terminal invalid request. Nothing upstream filters on it, so an unsupported provider is first refused here.
+
+Beyond the scheme, every change in one request must come from the same provider. There is no sense in one merge being addressed through two of them, and the check runs before any git command, so an incoherent request costs nothing and leaves the checkout untouched.
+
+Whether a change actually belongs to the repository this merger serves is not checked here — the merger is constrained to its checkout and remote by configuration, and a change it cannot fetch is refused on those grounds.
+
 ## Object availability
 
 The default fetch refspec is `+refs/heads/*`, which does not cover a provider's change refs — a pull request head never also pushed as a branch, the normal case for a fork, is simply absent locally. Every referenced commit is therefore fetched and verified before any step is applied, so a request naming an unreachable commit fails without having touched the checkout.

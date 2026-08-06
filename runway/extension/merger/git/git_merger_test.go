@@ -630,6 +630,78 @@ func TestClassifyMergeFailure(t *testing.T) {
 	}
 }
 
+// --- change provider consistency ---
+
+// newUnrunnableMerger builds a Merger whose git executable does not exist, so
+// any git invocation fails loudly. A request rejected by this Merger with
+// ErrInvalidRequest was therefore rejected before it reached for git — a
+// stronger claim than observing that the remote did not move.
+func (f gitFixture) newUnrunnableMerger(t *testing.T) merger.Merger {
+	t.Helper()
+	return f.newMergerWith(t, func(p *Params) {
+		p.Runtime.Executable = filepath.Join(t.TempDir(), "no-such-git")
+	})
+}
+
+func TestMerge_RejectsInconsistentProvider(t *testing.T) {
+	const otherSHA = "89abcdef0123456789abcdef0123456789abcdef"
+
+	tests := []struct {
+		name string
+		req  *runwaymq.MergeRequest
+	}{
+		{
+			name: "two steps using different providers",
+			req: req("b",
+				stepOf(mergestrategypb.Strategy_REBASE, "s1", "github://github.example.com/uber/one/pull/1/"+fakeSHA),
+				stepOf(mergestrategypb.Strategy_REBASE, "s2", "git://git.example.com/uber/one/refs%2Fheads%2Fmain/"+otherSHA),
+			),
+		},
+		{
+			name: "one change spanning two providers",
+			req: req("b", stepOf(mergestrategypb.Strategy_REBASE, "s1",
+				"github://github.example.com/uber/one/pull/1/"+fakeSHA,
+				"git://git.example.com/uber/one/refs%2Fheads%2Fmain/"+otherSHA,
+			)),
+		},
+		{
+			name: "unsupported provider",
+			req:  req("b", stepOf(mergestrategypb.Strategy_REBASE, "s1", "phab://phab.example.com/D123/456")),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := setupGitFixture(t)
+			m := f.newUnrunnableMerger(t)
+
+			_, err := m.Merge(context.Background(), tt.req)
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, merger.ErrInvalidRequest),
+				"want ErrInvalidRequest before any git runs, got %v", err)
+			assert.False(t, errors.Is(err, merger.ErrConflict))
+		})
+	}
+}
+
+func TestMerge_AcceptsMultipleChangesFromOneProvider(t *testing.T) {
+	// Guard against over-rejecting: several steps and several URIs are normal,
+	// so long as they are all addressed through one provider.
+	f := setupGitFixture(t)
+	a := f.pushPRCommit(t, "feature/a", "a.txt", "a\n", "add a")
+	b := f.pushPRCommit(t, "feature/b", "b.txt", "b\n", "add b")
+	c := f.pushPRCommit(t, "feature/c", "c.txt", "c\n", "add c")
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.Merge(context.Background(), req("b",
+		stepOf(mergestrategypb.Strategy_REBASE, "s1", uri(a), uri(b)),
+		stepOf(mergestrategypb.Strategy_REBASE, "s2", uri(c)),
+	))
+	require.NoError(t, err)
+	assert.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
+	assert.Len(t, f.remoteCommitsSinceSeed(t), 3)
+}
+
 // --- repo migration (unrelated histories) ---
 //
 // A repository migration reaches Runway as an ordinary change in the target
@@ -991,26 +1063,29 @@ func TestMerge_StalenessCheckOffByDefault(t *testing.T) {
 
 func TestResolveChange(t *testing.T) {
 	tests := []struct {
-		name      string
-		uri       string
-		wantSHA   string
-		wantRef   string
-		wantLabel string
-		wantErr   bool
+		name         string
+		uri          string
+		wantProvider string
+		wantSHA      string
+		wantRef      string
+		wantLabel    string
+		wantErr      bool
 	}{
 		{
-			name:      "github pull request",
-			uri:       "github://github.example.com/uber/submitqueue/pull/42/" + fakeSHA,
-			wantSHA:   fakeSHA,
-			wantRef:   "refs/pull/42/head",
-			wantLabel: "uber/submitqueue#42",
+			name:         "github pull request",
+			uri:          "github://github.example.com/uber/submitqueue/pull/42/" + fakeSHA,
+			wantProvider: "github",
+			wantSHA:      fakeSHA,
+			wantRef:      "refs/pull/42/head",
+			wantLabel:    "uber/submitqueue#42",
 		},
 		{
-			name:      "git ref",
-			uri:       "git://git.example.com/uber/monorepo/refs%2Fheads%2Fmain/" + fakeSHA,
-			wantSHA:   fakeSHA,
-			wantRef:   "refs/heads/main",
-			wantLabel: "uber/monorepo@refs/heads/main",
+			name:         "git ref",
+			uri:          "git://git.example.com/uber/monorepo/refs%2Fheads%2Fmain/" + fakeSHA,
+			wantProvider: "git",
+			wantSHA:      fakeSHA,
+			wantRef:      "refs/heads/main",
+			wantLabel:    "uber/monorepo@refs/heads/main",
 		},
 		{name: "unsupported scheme", uri: "phab://phab.example.com/D123/456", wantErr: true},
 		{name: "no scheme", uri: "not-a-uri", wantErr: true},
@@ -1026,6 +1101,7 @@ func TestResolveChange(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+			assert.Equal(t, tt.wantProvider, got.Provider)
 			assert.Equal(t, tt.wantSHA, got.SHA)
 			assert.Equal(t, tt.wantRef, got.Ref)
 			assert.Equal(t, tt.wantLabel, got.Label)
