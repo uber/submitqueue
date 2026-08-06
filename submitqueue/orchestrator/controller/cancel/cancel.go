@@ -60,6 +60,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -311,9 +312,9 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 	)
 
 	if batch.State != entity.BatchStateCancelling {
-		newVersion := batch.Version + 1
-		batch.State = entity.BatchStateCancelling
-		if err := c.store.GetBatchStore().Update(ctx, batch, batch.Version, newVersion); err != nil {
+		var err error
+		batch, err = corebatch.Transition(ctx, c.store, batch, entity.BatchStateCancelling)
+		if err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "batch_update_errors", 1)
 			// storage.ErrVersionMismatch here means the batch advanced concurrently
 			// (e.g. speculate / merge progressed). Returned as-is because the
@@ -322,10 +323,15 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 			// again.
 			return fmt.Errorf("failed to mark batch %s as cancelling: %w", batch.ID, err)
 		}
-		batch.Version = newVersion
 		metrics.NamedCounter(c.metricsScope, opName, "batch_cancelling", 1)
 	} else {
 		metrics.NamedCounter(c.metricsScope, opName, "batch_already_cancelling", 1)
+		// A prior pass wrote the intent but may have crashed before completing
+		// the membership record move; repair before re-publishing.
+		if err := corebatch.EnsureRecord(ctx, c.store, batch); err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "batch_update_errors", 1)
+			return err
+		}
 	}
 
 	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, batch.ID, batch.Queue); err != nil {

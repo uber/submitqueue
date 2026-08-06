@@ -23,6 +23,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -118,6 +119,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// leave them stuck waiting on a Cancelled dep.
 	if batch.State.IsTerminal() {
 		metrics.NamedCounter(c.metricsScope, opName, "self_heal_terminal", 1)
+		// Repair the membership record for the same crash window: a prior
+		// attempt may have CAS'd to terminal without completing the record move.
+		if err := corebatch.EnsureRecord(ctx, c.store, batch); err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return err
+		}
 		if batch.State == entity.BatchStateCancelled {
 			if err := c.respeculateDependents(ctx, batch); err != nil {
 				return err
@@ -129,6 +136,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Merging is owned by the merge controller, which has its own self-heal.
 	if batch.State == entity.BatchStateMerging {
 		metrics.NamedCounter(c.metricsScope, opName, "noop_merging", 1)
+		// A redelivery can land here after a tryFinalize attempt crashed
+		// between its CAS and the record move; repair before acking.
+		if err := corebatch.EnsureRecord(ctx, c.store, batch); err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
+			return err
+		}
 		return nil
 	}
 
@@ -158,11 +171,9 @@ func (c *Controller) startSpeculation(ctx context.Context, batch entity.Batch) e
 
 	// Optimistic CAS: if the version has already advanced (concurrent speculate),
 	// the next event will see the new state and behave correctly.
-	newVersion := batch.Version + 1
-	batch.State = entity.BatchStateSpeculating
-	if err := c.store.GetBatchStore().Update(ctx, batch, batch.Version, newVersion); err != nil {
+	if _, err := corebatch.Transition(ctx, c.store, batch, entity.BatchStateSpeculating); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to update batch %s state to speculating: %w", batch.ID, err)
+		return err
 	}
 
 	metrics.NamedCounter(c.metricsScope, opName, "started_speculation", 1)
@@ -220,11 +231,9 @@ func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error 
 		return fmt.Errorf("failed to publish to merge: %w", err)
 	}
 
-	newVersion := batch.Version + 1
-	batch.State = entity.BatchStateMerging
-	if err := c.store.GetBatchStore().Update(ctx, batch, batch.Version, newVersion); err != nil {
+	if _, err := corebatch.Transition(ctx, c.store, batch, entity.BatchStateMerging); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to update batch %s state to merging: %w", batch.ID, err)
+		return err
 	}
 
 	return nil
@@ -243,13 +252,11 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 		"dependency_state", string(dep.State),
 	)
 
-	newVersion := batch.Version + 1
-	batch.State = entity.BatchStateFailed
-	if err := c.store.GetBatchStore().Update(ctx, batch, batch.Version, newVersion); err != nil {
+	batch, err := corebatch.Transition(ctx, c.store, batch, entity.BatchStateFailed)
+	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to update batch %s state to failed: %w", batch.ID, err)
+		return err
 	}
-	batch.Version = newVersion
 
 	if err := c.publish(ctx, topickey.TopicKeyConclude, batch.ID, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
@@ -307,13 +314,11 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 		return err
 	}
 
-	newVersion := batch.Version + 1
-	batch.State = entity.BatchStateCancelled
-	if err := c.store.GetBatchStore().Update(ctx, batch, batch.Version, newVersion); err != nil {
+	batch, err := corebatch.Transition(ctx, c.store, batch, entity.BatchStateCancelled)
+	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to update batch %s state to cancelled: %w", batch.ID, err)
+		return err
 	}
-	batch.Version = newVersion
 
 	if err := c.respeculateDependents(ctx, batch); err != nil {
 		return err

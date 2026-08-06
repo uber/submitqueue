@@ -35,7 +35,4 @@ type BatchStore interface {
 	// if the current persisted version matches oldVersion. If versions do not match, returns ErrVersionMismatch.
 	// Version arithmetic is owned by the caller; the store performs a pure conditional write.
 	Update(ctx context.Context, batch entity.Batch, oldVersion, newVersion int32) error
-
-	// GetByQueueAndStates retrieves all batches that belong to the given queue and are in the given states.
-	GetByQueueAndStates(ctx context.Context, queue string, states []entity.BatchState) ([]entity.Batch, error)
 }

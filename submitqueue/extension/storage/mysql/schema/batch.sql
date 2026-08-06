@@ -5,6 +5,5 @@ CREATE TABLE IF NOT EXISTS batch (
     dependencies JSON NOT NULL,
     state VARCHAR(255) NOT NUll,
     version INT NOT NULL,
-    PRIMARY KEY (id),
-    INDEX idx_queue_state (queue, state)
+    PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

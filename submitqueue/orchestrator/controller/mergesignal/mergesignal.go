@@ -31,6 +31,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -115,10 +116,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	// Idempotency: a previous delivery already transitioned this batch to a
-	// terminal state. Re-fan-out in case that attempt missed the downstream
-	// publishes, then ack.
+	// terminal state. Repair the membership record (a prior attempt may have
+	// CAS'd without completing the record move), re-fan-out in case that
+	// attempt missed the downstream publishes, then ack.
 	if batch.State.IsTerminal() {
 		metrics.NamedCounter(c.metricsScope, opName, "skipped_terminal", 1)
+		if err := corebatch.EnsureRecord(ctx, c.store, batch); err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "state_update_errors", 1)
+			return err
+		}
 		return c.fanout(ctx, batch.ID, batch.Queue)
 	}
 
@@ -138,13 +144,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		)
 	}
 
-	newVersion := batch.Version + 1
-	batch.State = newState
-	if err := c.store.GetBatchStore().Update(ctx, batch, batch.Version, newVersion); err != nil {
+	batch, err = corebatch.Transition(ctx, c.store, batch, newState)
+	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "state_update_errors", 1)
-		return fmt.Errorf("failed to transition batch %s to %s: %w", batch.ID, newState, err)
+		return err
 	}
-	batch.Version = newVersion
 
 	return c.fanout(ctx, batch.ID, batch.Queue)
 }
