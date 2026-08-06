@@ -105,6 +105,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to get request %s: %w", rid.ID, err)
 	}
 
+	// The payload's queue must match the request's authoritative queue; a
+	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
+	if rid.Queue != "" && rid.Queue != request.Queue {
+		coremetrics.NamedCounter(c.metricsScope, "process", "queue_mismatch", 1)
+		return fmt.Errorf("payload queue %q does not match queue %q of request %s", rid.Queue, request.Queue, request.ID)
+	}
+
 	c.logger.Infow("received validate event",
 		"request_id", request.ID,
 		"queue", request.Queue,

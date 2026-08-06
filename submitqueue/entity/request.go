@@ -113,6 +113,8 @@ func RequestFromBytes(data []byte) (Request, error) {
 type RequestID struct {
 	// ID is the globally unique identifier for the land request.
 	ID string `json:"id"`
+	// Queue is the name of the queue processing the land request. Empty on payloads written before the field existed.
+	Queue string `json:"queue"`
 }
 
 // ToBytes serializes the RequestID to JSON bytes for queue message payload.

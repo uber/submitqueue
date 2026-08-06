@@ -155,26 +155,27 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 // fanout publishes the batch ID to conclude (so requests are updated) and to
 // speculate (so dependents can re-evaluate now that this batch is done).
-func (c *Controller) fanout(ctx context.Context, batchID, partitionKey string) error {
-	if err := c.publish(ctx, topickey.TopicKeyConclude, batchID, partitionKey); err != nil {
+func (c *Controller) fanout(ctx context.Context, batchID, queue string) error {
+	if err := c.publish(ctx, topickey.TopicKeyConclude, batchID, queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, "process", "publish_conclude_errors", 1)
 		return fmt.Errorf("failed to publish to conclude: %w", err)
 	}
-	if err := c.publish(ctx, topickey.TopicKeySpeculate, batchID, partitionKey); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeySpeculate, batchID, queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, "process", "publish_speculate_errors", 1)
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}
 	return nil
 }
 
-// publish publishes a batch ID to the given topic key, partitioned by queue.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID string, partitionKey string) error {
-	payload, err := entity.BatchID{ID: batchID}.ToBytes()
+// publish publishes a batch ID to the given topic key, stamped with and
+// partitioned by the batch's queue.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID string, queue string) error {
+	payload, err := entity.BatchID{ID: batchID, Queue: queue}.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(batchID, payload, partitionKey, nil)
+	msg := entityqueue.NewMessage(batchID, payload, queue, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

@@ -195,6 +195,100 @@ func TestController_Process_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestController_Process_QueueMismatchRejected asserts a payload whose queue
+// disagrees with the request's authoritative queue is rejected without
+// touching the counter, the batch store, or the publisher.
+func TestController_Process_QueueMismatchRejected(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	request := testRequest()
+
+	mockReqStore := storagemock.NewMockRequestStore(ctrl)
+	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
+
+	mockStorage := storagemock.NewMockStorage(ctrl)
+	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
+
+	// Counter with no EXPECTs — must not be called.
+	cnt := countermock.NewMockCounter(ctrl)
+	controller := newTestController(t, ctrl, cnt, mockStorage, nil, fmt.Errorf("should not publish"))
+
+	payload, err := entity.RequestID{ID: request.ID, Queue: "some-other-queue"}.ToBytes()
+	require.NoError(t, err)
+	msg := entityqueue.NewMessage(request.ID, payload, request.Queue, nil)
+	delivery := consumermock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	require.Error(t, controller.Process(context.Background(), delivery))
+}
+
+// TestController_Process_StampsQueueOnSpeculatePayload asserts the batch ID
+// published to speculate carries the batch's queue.
+func TestController_Process_StampsQueueOnSpeculatePayload(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	request := testRequest()
+
+	var speculateMsgs []entityqueue.Message
+	mockPub := queuemock.NewMockPublisher(ctrl)
+	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, topic string, msg entityqueue.Message) error {
+			if topic == "speculate" {
+				speculateMsgs = append(speculateMsgs, msg)
+			}
+			return nil
+		},
+	).AnyTimes()
+	mockQ := queuemock.NewMockQueue(ctrl)
+	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
+
+	registry, err := consumer.NewTopicRegistry(
+		[]consumer.TopicConfig{
+			{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
+		},
+	)
+	require.NoError(t, err)
+
+	mockBatchStore := storagemock.NewMockBatchStore(ctrl)
+	mockBatchStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockBatchStore.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockReqStore := storagemock.NewMockRequestStore(ctrl)
+	mockReqStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil).AnyTimes()
+	mockReqStore.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockBatchDependentStore := storagemock.NewMockBatchDependentStore(ctrl)
+	mockBatchDependentStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockRequestBatchStore := storagemock.NewMockRequestBatchStore(ctrl)
+	mockRequestBatchStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+
+	mockStorage := storagemock.NewMockStorage(ctrl)
+	mockStorage.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
+	mockStorage.EXPECT().GetBatchStore().Return(mockBatchStore).AnyTimes()
+	mockStorage.EXPECT().GetBatchDependentStore().Return(mockBatchDependentStore).AnyTimes()
+	mockStorage.EXPECT().GetRequestBatchStore().Return(mockRequestBatchStore).AnyTimes()
+	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
+
+	analyzerFactory := conflictmock.NewMockFactory(ctrl)
+	analyzerFactory.EXPECT().For(gomock.Any()).Return(all.New(), nil).AnyTimes()
+	controller := NewController(
+		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, newSequentialCounter(ctrl),
+		mockStorage, analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch",
+	)
+
+	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
+	delivery := consumermock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	require.NoError(t, controller.Process(context.Background(), delivery))
+	require.Len(t, speculateMsgs, 1)
+	bid, err := entity.BatchIDFromBytes(speculateMsgs[0].Payload)
+	require.NoError(t, err)
+	assert.Equal(t, request.Queue, bid.Queue)
+	assert.Equal(t, request.Queue, speculateMsgs[0].PartitionKey)
+}
+
 // TestController_Process_PublishesBatchedLog asserts the controller emits a
 // "batched" request log carrying the request ID, the post-CAS request version,
 // and the batch ID it was placed into.

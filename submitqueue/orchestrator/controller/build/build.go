@@ -89,6 +89,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
 	}
 
+	// The payload's queue must match the batch's authoritative queue; a
+	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
+	if bid.Queue != "" && bid.Queue != batch.Queue {
+		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1)
+		return fmt.Errorf("payload queue %q does not match queue %q of batch %s", bid.Queue, batch.Queue, batch.ID)
+	}
+
 	c.logger.Infow("received build event",
 		"batch_id", batch.ID,
 		"queue", batch.Queue,
@@ -151,7 +158,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Hand off to the buildsignal poll loop; it calls Status, updates the
 	// persisted Build, publishes to speculate, and holds its delivery
 	// between polls until terminal.
-	if err := c.publish(ctx, topickey.TopicKeyBuildSignal, build); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeyBuildSignal, build, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to buildsignal: %w", err)
 	}
@@ -184,11 +191,12 @@ func (c *Controller) loadBatches(ctx context.Context, batchIDs []string) ([]enti
 	return batches, nil
 }
 
-// publish publishes a build's ID to the specified topic key. Only the
-// identifier travels on the queue; the consumer loads the full Build from
-// storage, keeping the message small and the store the single source of truth.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, build entity.Build) error {
-	payload, err := entity.BuildID{ID: build.ID}.ToBytes()
+// publish publishes a build's ID to the specified topic key, stamped with the
+// batch's queue and partitioned by the batch ID. Only the identifier and its
+// queue travel on the queue; the consumer loads the full Build from storage,
+// keeping the message small and the store the single source of truth.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, build entity.Build, queue string) error {
+	payload, err := entity.BuildID{ID: build.ID, Queue: queue}.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize build ID: %w", err)
 	}

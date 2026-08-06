@@ -95,6 +95,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to get request %s: %w", rid.ID, err)
 	}
 
+	// The payload's queue must match the request's authoritative queue; a
+	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
+	if rid.Queue != "" && rid.Queue != request.Queue {
+		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1)
+		return fmt.Errorf("payload queue %q does not match queue %q of request %s", rid.Queue, request.Queue, request.ID)
+	}
+
 	c.logger.Infow("received batch event",
 		"request_id", request.ID,
 		"queue", request.Queue,
@@ -355,15 +362,16 @@ func (c *Controller) populateBatch(ctx context.Context, batch entity.Batch) (ent
 	return batch, nil
 }
 
-// publish publishes a batch ID to the specified topic key.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID string, partitionKey string) error {
-	bid := entity.BatchID{ID: batchID}
+// publish publishes a batch ID to the specified topic key, stamped with and
+// partitioned by the batch's queue.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID string, queue string) error {
+	bid := entity.BatchID{ID: batchID, Queue: queue}
 	payload, err := bid.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(batchID, payload, partitionKey, nil)
+	msg := entityqueue.NewMessage(batchID, payload, queue, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

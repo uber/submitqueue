@@ -86,13 +86,18 @@ func (c *cancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 	)
 
 	// Verify the sqid exists before recording intent or publishing.
-	if _, err := c.requestSummaryStore.Get(ctx, req.ID); err != nil {
+	summary, err := c.requestSummaryStore.Get(ctx, req.ID)
+	if err != nil {
 		if storage.IsNotFound(err) {
 			metrics.NamedCounter(c.metricsScope, opName, "not_found", 1)
 			return errs.NewUserError(&RequestNotFoundError{Sqid: req.ID})
 		}
 		return fmt.Errorf("failed to look up request summary for sqid=%s: %w", req.ID, err)
 	}
+
+	// Stamp the authoritative queue from the stored summary onto the payload,
+	// overriding whatever the caller supplied.
+	req.Queue = summary.Queue
 
 	// Record the user's intent in the request log before publishing. Writing direct to the
 	// store (rather than via the log topic) keeps the gateway-emitted entry consistent with
