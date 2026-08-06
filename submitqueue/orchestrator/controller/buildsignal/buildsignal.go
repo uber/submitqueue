@@ -186,7 +186,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Re-evaluate the batch state machine with the latest build status. The
 	// speculate topic is partitioned by queue like every other speculate
 	// publisher, so a queue's batches keep their serial processing guarantee.
-	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, updatedBuild.BatchID, batch.Queue); err != nil {
+	// The message ID is scoped to (batch, build): the queue backend dedupes a
+	// publish on (topic, partition, id) against rows not yet garbage-collected,
+	// so reusing the bare batch ID — the ID the batch controller's original
+	// speculate publish used on this same partition — would silently drop this
+	// nudge. A redelivered poll re-mints the same (batch, build) ID, which
+	// dedupes to the first publish, exactly as intended.
+	signalID := fmt.Sprintf("%s/build-signal/%s", updatedBuild.BatchID, updatedBuild.ID)
+	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, signalID, updatedBuild.BatchID, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}
@@ -227,15 +234,17 @@ func pollDelay(status entity.BuildStatus) int64 {
 }
 
 // publishBatchID publishes a batch ID to the topic identified by key, stamped
-// with and partitioned by the batch's queue.
-func (c *Controller) publishBatchID(ctx context.Context, key consumer.TopicKey, batchID string, queue string) error {
+// with and partitioned by the batch's queue. msgID is the caller-owned message
+// identity the queue backend dedupes on; it must be distinct from other
+// publishes of the same batch ID on the same partition.
+func (c *Controller) publishBatchID(ctx context.Context, key consumer.TopicKey, msgID string, batchID string, queue string) error {
 	bid := entity.BatchID{ID: batchID, Queue: queue}
 	payload, err := bid.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(batchID, payload, queue, nil)
+	msg := entityqueue.NewMessage(msgID, payload, queue, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

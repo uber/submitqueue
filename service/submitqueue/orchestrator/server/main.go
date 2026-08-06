@@ -182,7 +182,7 @@ func run() error {
 	// to its own set of extension implementations (conflict analyzer, …),
 	// falling back to a baseline profile for queues without an explicit entry.
 	storageFty := storageFactory{backend: store}
-	profiles, err := newProfiles(logger, scope, changeset.New(storageFty))
+	profiles, err := newProfiles(logger, scope, changeset.New(storageFty), storageFty)
 	if err != nil {
 		return fmt.Errorf("failed to build profiles: %w", err)
 	}
@@ -193,7 +193,7 @@ func run() error {
 	deps := orchestrator.Deps{
 		Logger:         logger.Sugar(),
 		Scope:          scope,
-		Storage:        storageFty,
+		Storage:        profiles.StorageFactory(),
 		Counter:        cnt,
 		BuildRunner:    profiles.BuildRunnerFactory(),
 		ChangeProvider: profiles.ChangeProviderFactory(),

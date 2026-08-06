@@ -27,6 +27,7 @@ import (
 	conflictfake "github.com/uber/submitqueue/submitqueue/extension/conflict/fake"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/fileoverlap"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/none"
+	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -43,6 +44,11 @@ type Profile struct {
 
 	// Analyzer detects conflicts between concurrent batches in this queue.
 	Analyzer conflict.Analyzer
+
+	// Storage resolves the queue-scoped store aggregate for this queue. Every
+	// profile points at the shared backend by default; a deployment that
+	// splits queues across storage backends overrides this per queue.
+	Storage storage.Factory
 }
 
 // Profiles maps a queue name to its extension Profile, falling back to a
@@ -86,6 +92,14 @@ func (p Profiles) AnalyzerFactory() conflict.Factory {
 	})
 }
 
+// StorageFactory returns a storage.Factory that routes each queue to its
+// profile's storage backend before binding the queue-scoped store aggregate.
+func (p Profiles) StorageFactory() storage.Factory {
+	return storageFunc(func(c storage.Config) (storage.Storage, error) {
+		return p.For(c.QueueName).Storage.For(c)
+	})
+}
+
 // Thin func-type adapters — the http.HandlerFunc trick applied to each
 // extension Factory interface. Each func type satisfies the Factory contract,
 // letting Profiles cross the host/library boundary without dedicated structs.
@@ -104,12 +118,16 @@ type analyzerFunc func(conflict.Config) (conflict.Analyzer, error)
 
 func (f analyzerFunc) For(c conflict.Config) (conflict.Analyzer, error) { return f(c) }
 
+type storageFunc func(storage.Config) (storage.Storage, error)
+
+func (f storageFunc) For(c storage.Config) (storage.Storage, error) { return f(c) }
+
 // newProfiles builds the per-queue extension profiles for the example.
 // Edge integrations (change provider) and the build runner form a shared
 // baseline; each per-queue profile starts from that baseline and overrides
 // only the extensions that differ — here the conflict analyzer.
 // Queues without an explicit profile fall back to the baseline.
-func newProfiles(logger *zap.Logger, scope tally.Scope, resolver changeset.Resolver) (Profiles, error) {
+func newProfiles(logger *zap.Logger, scope tally.Scope, resolver changeset.Resolver, stores storage.Factory) (Profiles, error) {
 	cp, err := newChangeProvider(logger, scope)
 	if err != nil {
 		return Profiles{}, fmt.Errorf("failed to create change provider: %w", err)
@@ -131,6 +149,7 @@ func newProfiles(logger *zap.Logger, scope tally.Scope, resolver changeset.Resol
 		// TODO: replace the delegate with a real analyzer (e.g. Tango target
 		// analysis). "all" serializes the queue conservatively.
 		Analyzer: conflictfake.New(all.New(), nil),
+		Storage:  stores,
 	}
 
 	// e2e-conflict-error-queue: every conflict analysis fails, exercising the
