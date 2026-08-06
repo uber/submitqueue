@@ -1,8 +1,14 @@
 # MySQL Schema
 
+## Queue-leading primary keys
+
+Every queue-scoped table leads its primary key with `queue`: `request` and `batch` on `(queue, id)`, `build` on `(queue, id)`, `batch_dependent` on `(queue, batch_id)`, `request_batch` on `(queue, request_id, batch_id)`, `change` on `(queue, uri, request_id)`, `queue_batch_state` on `(queue, state, batch_id)`, and `request_summary_by_queue` on `(queue, received_at_ms, request_id)`. A queue-bound store instance prefixes every read and stamps every write with its bound queue, so one queue's rows are unreachable through another queue's binding and the tables are shardable by queue. The `build` key also removes a cross-queue uniqueness assumption: build IDs are runner-minted, so two queues sharing one CI pipeline may legitimately mint the same identifier.
+
+The global read-model tables (`request_summary`, `request_log`, `change_uri_request_mapping`) keep queue-free keys — their lookups start from identifiers that arrive without queue context.
+
 ## batch table
 
-The `batch` table is keyed by `id` alone and carries no secondary index. Listing a queue's batches by state goes through the `queue_batch_state` table instead, so batch reads and writes stay pure primary-key operations.
+The `batch` table is keyed by `(queue, id)` and carries no secondary index. Listing a queue's batches by state goes through the `queue_batch_state` table instead, so batch reads and writes stay pure primary-key operations.
 
 ## queue_batch_state table
 

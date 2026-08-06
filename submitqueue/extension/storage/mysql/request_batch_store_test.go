@@ -58,7 +58,7 @@ func TestRequestBatchStore_GetByRequestID(t *testing.T) {
 		"query fails": {
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectQuery("SELECT request_id, batch_id, version FROM request_batch").
-					WithArgs(association1.RequestID).
+					WithArgs("monorepo", association1.RequestID).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			errMsg: "connection reset",
@@ -66,7 +66,7 @@ func TestRequestBatchStore_GetByRequestID(t *testing.T) {
 		"no associations": {
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectQuery("SELECT request_id, batch_id, version FROM request_batch").
-					WithArgs(association1.RequestID).
+					WithArgs("monorepo", association1.RequestID).
 					WillReturnRows(sqlmock.NewRows([]string{"request_id", "batch_id", "version"}))
 			},
 		},
@@ -75,7 +75,7 @@ func TestRequestBatchStore_GetByRequestID(t *testing.T) {
 				rows := sqlmock.NewRows([]string{"request_id", "batch_id", "version"}).
 					AddRow(association1.RequestID, association1.BatchID, "invalid")
 				mock.ExpectQuery("SELECT request_id, batch_id, version FROM request_batch").
-					WithArgs(association1.RequestID).
+					WithArgs("monorepo", association1.RequestID).
 					WillReturnRows(rows)
 			},
 			errMsg: "failed to scan request batch association",
@@ -86,7 +86,7 @@ func TestRequestBatchStore_GetByRequestID(t *testing.T) {
 					AddRow(association1.RequestID, association1.BatchID, association1.Version).
 					RowError(0, storeErr)
 				mock.ExpectQuery("SELECT request_id, batch_id, version FROM request_batch").
-					WithArgs(association1.RequestID).
+					WithArgs("monorepo", association1.RequestID).
 					WillReturnRows(rows)
 			},
 			errMsg: storeErr.Error(),
@@ -97,7 +97,7 @@ func TestRequestBatchStore_GetByRequestID(t *testing.T) {
 					AddRow(association1.RequestID, association1.BatchID, association1.Version).
 					AddRow(association2.RequestID, association2.BatchID, association2.Version)
 				mock.ExpectQuery("SELECT request_id, batch_id, version FROM request_batch").
-					WithArgs(association1.RequestID).
+					WithArgs("monorepo", association1.RequestID).
 					WillReturnRows(rows)
 			},
 			want: []entity.RequestBatch{association1, association2},
@@ -135,7 +135,7 @@ func TestRequestBatchStore_Create(t *testing.T) {
 		"duplicate association returns already exists": {
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO request_batch").
-					WithArgs(association.RequestID, association.BatchID, association.Version).
+					WithArgs("monorepo", association.RequestID, association.BatchID, association.Version).
 					WillReturnError(&mysql.MySQLError{Number: mysqlErrDuplicateEntry})
 			},
 			errMsg: storage.ErrAlreadyExists.Error(),
@@ -143,7 +143,7 @@ func TestRequestBatchStore_Create(t *testing.T) {
 		"insert fails": {
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO request_batch").
-					WithArgs(association.RequestID, association.BatchID, association.Version).
+					WithArgs("monorepo", association.RequestID, association.BatchID, association.Version).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			errMsg: "connection reset",
@@ -151,7 +151,7 @@ func TestRequestBatchStore_Create(t *testing.T) {
 		"success": {
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO request_batch").
-					WithArgs(association.RequestID, association.BatchID, association.Version).
+					WithArgs("monorepo", association.RequestID, association.BatchID, association.Version).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},

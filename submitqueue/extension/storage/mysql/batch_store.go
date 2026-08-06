@@ -52,8 +52,8 @@ func (s *batchStore) Get(ctx context.Context, id string) (ret entity.Batch, retE
 	var dependenciesJSON []byte
 
 	err := s.db.QueryRowContext(ctx,
-		"SELECT id, queue, contains, dependencies, state, version FROM batch WHERE id = ?",
-		id,
+		"SELECT id, queue, contains, dependencies, state, version FROM batch WHERE queue = ? AND id = ?",
+		s.queue, id,
 	).Scan(&batch.ID, &batch.Queue, &containsJSON, &dependenciesJSON, &batch.State, &batch.Version)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -130,8 +130,8 @@ func (s *batchStore) Update(ctx context.Context, batch entity.Batch, oldVersion,
 	}
 
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE batch SET queue = ?, contains = ?, dependencies = ?, state = ?, version = ? WHERE id = ? AND version = ?",
-		batch.Queue, containsJSON, dependenciesJSON, batch.State, newVersion, batch.ID, oldVersion,
+		"UPDATE batch SET contains = ?, dependencies = ?, state = ?, version = ? WHERE queue = ? AND id = ? AND version = ?",
+		containsJSON, dependenciesJSON, batch.State, newVersion, batch.Queue, batch.ID, oldVersion,
 	)
 	if err != nil {
 		return fmt.Errorf(

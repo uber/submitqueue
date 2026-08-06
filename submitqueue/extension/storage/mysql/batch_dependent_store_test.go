@@ -65,7 +65,7 @@ func TestBatchDependentStore_Get(t *testing.T) {
 				rows := sqlmock.NewRows([]string{"batch_id", "dependents", "version"}).
 					AddRow(want.BatchID, dependentsJSON, want.Version)
 				mock.ExpectQuery("SELECT batch_id, dependents, version FROM batch_dependent").
-					WithArgs(want.BatchID).
+					WithArgs("monorepo", want.BatchID).
 					WillReturnRows(rows)
 			},
 			want: want,
@@ -77,7 +77,7 @@ func TestBatchDependentStore_Get(t *testing.T) {
 				rows := sqlmock.NewRows([]string{"batch_id", "dependents", "version"}).
 					AddRow("monorepo/batch/nil", []byte("null"), int32(2))
 				mock.ExpectQuery("SELECT batch_id, dependents, version FROM batch_dependent").
-					WithArgs("monorepo/batch/nil").
+					WithArgs("monorepo", "monorepo/batch/nil").
 					WillReturnRows(rows)
 			},
 			want: entity.BatchDependent{
@@ -92,7 +92,7 @@ func TestBatchDependentStore_Get(t *testing.T) {
 				rows := sqlmock.NewRows([]string{"batch_id", "dependents", "version"}).
 					AddRow("monorepo/batch/empty", []byte("[]"), int32(3))
 				mock.ExpectQuery("SELECT batch_id, dependents, version FROM batch_dependent").
-					WithArgs("monorepo/batch/empty").
+					WithArgs("monorepo", "monorepo/batch/empty").
 					WillReturnRows(rows)
 			},
 			want: entity.BatchDependent{
@@ -106,7 +106,7 @@ func TestBatchDependentStore_Get(t *testing.T) {
 			batchID: "missing",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectQuery("SELECT batch_id, dependents, version FROM batch_dependent").
-					WithArgs("missing").
+					WithArgs("monorepo", "missing").
 					WillReturnError(sql.ErrNoRows)
 			},
 			wantErr:   true,
@@ -117,7 +117,7 @@ func TestBatchDependentStore_Get(t *testing.T) {
 			batchID: "bad",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectQuery("SELECT batch_id, dependents, version FROM batch_dependent").
-					WithArgs("bad").
+					WithArgs("monorepo", "bad").
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,
@@ -163,7 +163,7 @@ func TestBatchDependentStore_Create(t *testing.T) {
 			name: "success",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO batch_dependent").
-					WithArgs(bd.BatchID, sqlmock.AnyArg(), bd.Version).
+					WithArgs("monorepo", bd.BatchID, sqlmock.AnyArg(), bd.Version).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -171,7 +171,7 @@ func TestBatchDependentStore_Create(t *testing.T) {
 			name: "duplicate batch id returns ErrAlreadyExists",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO batch_dependent").
-					WithArgs(bd.BatchID, sqlmock.AnyArg(), bd.Version).
+					WithArgs("monorepo", bd.BatchID, sqlmock.AnyArg(), bd.Version).
 					WillReturnError(&mysql.MySQLError{Number: mysqlErrDuplicateEntry})
 			},
 			wantErr:   true,
@@ -181,7 +181,7 @@ func TestBatchDependentStore_Create(t *testing.T) {
 			name: "other exec error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO batch_dependent").
-					WithArgs(bd.BatchID, sqlmock.AnyArg(), bd.Version).
+					WithArgs("monorepo", bd.BatchID, sqlmock.AnyArg(), bd.Version).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,
@@ -229,7 +229,7 @@ func TestBatchDependentStore_Update(t *testing.T) {
 			entity: batchDependent,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE batch_dependent").
-					WithArgs([]byte(`["monorepo/batch/2","monorepo/batch/3"]`), newVersion, batchDependent.BatchID, oldVersion).
+					WithArgs([]byte(`["monorepo/batch/2","monorepo/batch/3"]`), newVersion, "monorepo", batchDependent.BatchID, oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -241,7 +241,7 @@ func TestBatchDependentStore_Update(t *testing.T) {
 			},
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE batch_dependent").
-					WithArgs([]byte("null"), newVersion, "monorepo/batch/nil", oldVersion).
+					WithArgs([]byte("null"), newVersion, "monorepo", "monorepo/batch/nil", oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -254,7 +254,7 @@ func TestBatchDependentStore_Update(t *testing.T) {
 			},
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE batch_dependent").
-					WithArgs([]byte("[]"), newVersion, "monorepo/batch/empty", oldVersion).
+					WithArgs([]byte("[]"), newVersion, "monorepo", "monorepo/batch/empty", oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -263,7 +263,7 @@ func TestBatchDependentStore_Update(t *testing.T) {
 			entity: batchDependent,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE batch_dependent").
-					WithArgs([]byte(`["monorepo/batch/2","monorepo/batch/3"]`), newVersion, batchDependent.BatchID, oldVersion).
+					WithArgs([]byte(`["monorepo/batch/2","monorepo/batch/3"]`), newVersion, "monorepo", batchDependent.BatchID, oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
 			wantErr:   true,
@@ -274,7 +274,7 @@ func TestBatchDependentStore_Update(t *testing.T) {
 			entity: batchDependent,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE batch_dependent").
-					WithArgs([]byte(`["monorepo/batch/2","monorepo/batch/3"]`), newVersion, batchDependent.BatchID, oldVersion).
+					WithArgs([]byte(`["monorepo/batch/2","monorepo/batch/3"]`), newVersion, "monorepo", batchDependent.BatchID, oldVersion).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,
@@ -284,7 +284,7 @@ func TestBatchDependentStore_Update(t *testing.T) {
 			entity: batchDependent,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE batch_dependent").
-					WithArgs([]byte(`["monorepo/batch/2","monorepo/batch/3"]`), newVersion, batchDependent.BatchID, oldVersion).
+					WithArgs([]byte(`["monorepo/batch/2","monorepo/batch/3"]`), newVersion, "monorepo", batchDependent.BatchID, oldVersion).
 					WillReturnResult(sqlmock.NewErrorResult(fmt.Errorf("driver error")))
 			},
 			wantErr: true,

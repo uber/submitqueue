@@ -411,6 +411,51 @@ func (s *StorageContractSuite) TestStorage_QueueBatchStateRecordLifecycle() {
 	assert.ElementsMatch(t, []entity.QueueBatchState{otherQueue}, got)
 }
 
+// TestStorage_QueueIsolation verifies a store aggregate bound to one queue can
+// neither read nor write another queue's records: cross-queue reads miss, and
+// writes whose entity queue disagrees with the binding are rejected.
+func (s *StorageContractSuite) TestStorage_QueueIsolation() {
+	t := s.T()
+	ctx := s.ctx
+	storeA := s.forQueue("iso-queue-a")
+	storeB := s.forQueue("iso-queue-b")
+
+	request := entity.Request{ID: "iso-a/1", Queue: "iso-queue-a", State: entity.RequestStateStarted, LandStrategy: mergestrategy.MergeStrategyMerge, Version: 1}
+	require.NoError(t, storeA.GetRequestStore().Create(ctx, request))
+	_, err := storeB.GetRequestStore().Get(ctx, request.ID)
+	require.ErrorIs(t, err, storage.ErrNotFound, "a request must be invisible through another queue's binding")
+	require.Error(t, storeB.GetRequestStore().Create(ctx, request), "a mismatched-queue write must be rejected")
+
+	batch := entity.Batch{ID: "iso-a/batch/1", Queue: "iso-queue-a", State: entity.BatchStateCreated, Version: 1}
+	require.NoError(t, storeA.GetBatchStore().Create(ctx, batch))
+	_, err = storeB.GetBatchStore().Get(ctx, batch.ID)
+	require.ErrorIs(t, err, storage.ErrNotFound)
+
+	// Builds are keyed by a runner-minted ID; the queue-leading key removes the
+	// cross-queue uniqueness assumption, so the same runner ID coexists per queue.
+	build := entity.Build{ID: "runner/iso/1", BatchID: batch.ID, Status: entity.BuildStatusRunning}
+	require.NoError(t, storeA.GetBuildStore().Create(ctx, build))
+	_, err = storeB.GetBuildStore().Get(ctx, build.ID)
+	require.ErrorIs(t, err, storage.ErrNotFound)
+	require.NoError(t, storeB.GetBuildStore().Create(ctx, build), "the same runner-minted build ID must coexist across queues")
+
+	dependent := entity.BatchDependent{BatchID: batch.ID, Dependents: []string{}, Version: 1}
+	require.NoError(t, storeA.GetBatchDependentStore().Create(ctx, dependent))
+	_, err = storeB.GetBatchDependentStore().Get(ctx, batch.ID)
+	require.ErrorIs(t, err, storage.ErrNotFound)
+
+	association := entity.RequestBatch{RequestID: request.ID, BatchID: batch.ID, Version: 1}
+	require.NoError(t, storeA.GetRequestBatchStore().Create(ctx, association))
+	crossQueue, err := storeB.GetRequestBatchStore().GetByRequestID(ctx, request.ID)
+	require.NoError(t, err)
+	assert.Empty(t, crossQueue, "associations must be invisible through another queue's binding")
+
+	// The owning queue still sees everything it wrote.
+	fromA, err := storeA.GetRequestStore().Get(ctx, request.ID)
+	require.NoError(t, err)
+	assert.Equal(t, request, fromA)
+}
+
 // TestStorage_NotFound tests getting a non-existent request
 func (s *StorageContractSuite) TestStorage_NotFound() {
 	t := s.T()

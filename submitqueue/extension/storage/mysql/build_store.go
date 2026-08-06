@@ -49,8 +49,8 @@ func (s *buildStore) Get(ctx context.Context, id string) (ret entity.Build, retE
 	var build entity.Build
 
 	err := s.db.QueryRowContext(ctx,
-		"SELECT id, batch_id, status FROM build WHERE id = ?",
-		id,
+		"SELECT id, batch_id, status FROM build WHERE queue = ? AND id = ?",
+		s.queue, id,
 	).Scan(&build.ID, &build.BatchID, &build.Status)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -69,8 +69,8 @@ func (s *buildStore) Create(ctx context.Context, build entity.Build) (retErr err
 	defer func() { op.Complete(retErr) }()
 
 	_, err := s.db.ExecContext(ctx,
-		"INSERT INTO build (id, batch_id, status) VALUES (?, ?, ?)",
-		build.ID, build.BatchID, build.Status,
+		"INSERT INTO build (queue, id, batch_id, status) VALUES (?, ?, ?, ?)",
+		s.queue, build.ID, build.BatchID, build.Status,
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
@@ -89,8 +89,8 @@ func (s *buildStore) Update(ctx context.Context, build entity.Build) (retErr err
 	defer func() { op.Complete(retErr) }()
 
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE build SET batch_id = ?, status = ? WHERE id = ?",
-		build.BatchID, build.Status, build.ID,
+		"UPDATE build SET batch_id = ?, status = ? WHERE queue = ? AND id = ?",
+		build.BatchID, build.Status, s.queue, build.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update build entity id=%q: %w", build.ID, err)
