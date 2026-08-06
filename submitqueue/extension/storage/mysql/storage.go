@@ -28,33 +28,35 @@ import (
 const mysqlErrDuplicateEntry = 1062
 
 type mysqlStorage struct {
-	db                  *sql.DB
-	requestStore        storage.RequestStore
-	requestBatchStore   storage.RequestBatchStore
-	changeStore         storage.ChangeStore
-	batchStore          storage.BatchStore
-	batchDependentStore storage.BatchDependentStore
-	buildStore          storage.BuildStore
-	requestLogStore     storage.RequestLogStore
-	requestSummaryStore storage.RequestSummaryStore
-	requestQueueStore   storage.RequestQueueSummaryStore
-	requestURIStore     storage.RequestURIStore
+	db                   *sql.DB
+	requestStore         storage.RequestStore
+	requestBatchStore    storage.RequestBatchStore
+	changeStore          storage.ChangeStore
+	batchStore           storage.BatchStore
+	batchDependentStore  storage.BatchDependentStore
+	queueBatchStateStore storage.QueueBatchStateStore
+	buildStore           storage.BuildStore
+	requestLogStore      storage.RequestLogStore
+	requestSummaryStore  storage.RequestSummaryStore
+	requestQueueStore    storage.RequestQueueSummaryStore
+	requestURIStore      storage.RequestURIStore
 }
 
 // NewStorage creates a new MySQL storage.
 func NewStorage(db *sql.DB, scope tally.Scope) (storage.Storage, error) {
 	return &mysqlStorage{
-		db:                  db,
-		requestStore:        NewRequestStore(db, scope.SubScope("request_store")),
-		requestBatchStore:   NewRequestBatchStore(db, scope.SubScope("request_batch_store")),
-		changeStore:         NewChangeStore(db, scope.SubScope("change_store")),
-		batchStore:          NewBatchStore(db, scope.SubScope("batch_store")),
-		batchDependentStore: NewBatchDependentStore(db, scope.SubScope("batch_dependent_store")),
-		buildStore:          NewBuildStore(db, scope.SubScope("build_store")),
-		requestLogStore:     NewRequestLogStore(db, scope.SubScope("request_log_store")),
-		requestSummaryStore: NewRequestSummaryStore(db, scope.SubScope("request_summary_store")),
-		requestQueueStore:   NewRequestQueueSummaryStore(db, scope.SubScope("request_queue_summary_store")),
-		requestURIStore:     NewRequestURIStore(db, scope.SubScope("request_uri_store")),
+		db:                   db,
+		requestStore:         NewRequestStore(db, scope.SubScope("request_store")),
+		requestBatchStore:    NewRequestBatchStore(db, scope.SubScope("request_batch_store")),
+		changeStore:          NewChangeStore(db, scope.SubScope("change_store")),
+		batchStore:           NewBatchStore(db, scope.SubScope("batch_store")),
+		batchDependentStore:  NewBatchDependentStore(db, scope.SubScope("batch_dependent_store")),
+		queueBatchStateStore: NewQueueBatchStateStore(db, scope.SubScope("queue_batch_state_store")),
+		buildStore:           NewBuildStore(db, scope.SubScope("build_store")),
+		requestLogStore:      NewRequestLogStore(db, scope.SubScope("request_log_store")),
+		requestSummaryStore:  NewRequestSummaryStore(db, scope.SubScope("request_summary_store")),
+		requestQueueStore:    NewRequestQueueSummaryStore(db, scope.SubScope("request_queue_summary_store")),
+		requestURIStore:      NewRequestURIStore(db, scope.SubScope("request_uri_store")),
 	}, nil
 }
 
@@ -81,6 +83,11 @@ func (f *mysqlStorage) GetBatchStore() storage.BatchStore {
 // GetBatchDependentStore returns the MySQL-backed BatchDependentStore.
 func (f *mysqlStorage) GetBatchDependentStore() storage.BatchDependentStore {
 	return f.batchDependentStore
+}
+
+// GetQueueBatchStateStore returns the MySQL-backed QueueBatchStateStore.
+func (f *mysqlStorage) GetQueueBatchStateStore() storage.QueueBatchStateStore {
+	return f.queueBatchStateStore
 }
 
 // GetBuildStore returns the MySQL-backed BuildStore.

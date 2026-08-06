@@ -24,6 +24,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
+	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -135,8 +136,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	// Get active batches for this queue and ask the conflict analyzer which
 	// of them the new batch must serialize behind. The dependency set drives
-	// the speculation graph downstream.
-	activeBatches, err := c.store.GetBatchStore().GetByQueueAndStates(ctx, request.Queue, entity.DependencyBatchStates())
+	// the speculation graph downstream. The read goes through the queue's
+	// per-state membership records; classification uses each batch's own
+	// hydrated state, so a stale record can never misreport a batch.
+	activeBatches, err := corebatch.ListByStates(ctx, c.store, request.Queue, entity.DependencyBatchStates())
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
 		return fmt.Errorf("failed to get active batches for queue=%s: %w", request.Queue, err)
@@ -246,6 +249,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to create batch in batch store: %w", err)
 	}
 
+	// File the queue's membership record for the new batch so it is
+	// discoverable by state from its first moment in the queue.
+	if err := corebatch.EnsureRecord(ctx, c.store, batch); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "queue_batch_state_errors", 1)
+		return err
+	}
+
 	for _, requestID := range batch.Contains {
 		association := entity.RequestBatch{
 			RequestID: requestID,
@@ -337,13 +347,11 @@ func (c *Controller) populateBatch(ctx context.Context, batch entity.Batch) (ent
 
 	// The batch's own reverse-index row now exists and every dependency lists this batch as a dependent.
 	// Structural initialization is complete, so transition Creating → Created to make the batch ready for processing once published to speculate.
-	newVersion := batch.Version + 1
-	batch.State = entity.BatchStateCreated
-	if err := c.store.GetBatchStore().Update(ctx, batch, batch.Version, newVersion); err != nil {
+	batch, err := corebatch.Transition(ctx, c.store, batch, entity.BatchStateCreated)
+	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
 		return entity.Batch{}, fmt.Errorf("failed to mark batch %s created: %w", batch.ID, err)
 	}
-	batch.Version = newVersion
 	return batch, nil
 }
 

@@ -32,6 +32,7 @@ import (
 func TestDLQMergeConflictSignalController_InterfaceAndAccessors(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 
 	c := NewDLQMergeConflictSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-mergeconflictsignal-dlq")
 
@@ -55,6 +56,7 @@ func TestDLQMergeConflictSignalController_Process_ReconcilesRequest(t *testing.T
 	})
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
 	c := NewDLQMergeConflictSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, registry, TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-mergeconflictsignal-dlq")
@@ -70,6 +72,7 @@ func TestDLQMergeConflictSignalController_Process_MalformedPayloadFails(t *testi
 	ctrl := gomock.NewController(t)
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	c := NewDLQMergeConflictSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, TopicKey(runwaymq.TopicKeyMergeConflictCheckSignal), "orchestrator-mergeconflictsignal-dlq")
 
 	delivery := newMockDelivery(ctrl, []byte("garbage"))

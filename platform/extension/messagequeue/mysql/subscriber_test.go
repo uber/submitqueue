@@ -793,3 +793,217 @@ func TestSubscriber_StopAllWorkers(t *testing.T) {
 		<-doneCh
 	}
 }
+
+func TestSubscriber_FairShareCap(t *testing.T) {
+	tests := []struct {
+		name       string
+		self       string
+		active     []string // as returned by the heartbeat store, deliberately unsorted
+		owned      []string
+		discovered []string
+		want       int
+	}{
+		{
+			// The starvation case: P=12, N=5. Independent ceil caps were 3
+			// for every rank (sum 15), so 3/3/3/3/0 was stable. Remainder
+			// caps are 3,3,2,2,2 (sum 12): rank 0 gets the remainder…
+			name:       "uneven split first rank gets remainder",
+			self:       "s1",
+			active:     []string{"s3", "s1", "s5", "s2", "s4"},
+			discovered: partitionKeysN(12),
+			want:       3,
+		},
+		{
+			// …and the last rank gets the floor, not zero-forever.
+			name:       "uneven split last rank gets floor",
+			self:       "s5",
+			active:     []string{"s3", "s1", "s5", "s2", "s4"},
+			discovered: partitionKeysN(12),
+			want:       2,
+		},
+		{
+			name:       "even split",
+			self:       "s2",
+			active:     []string{"s2", "s1"},
+			discovered: partitionKeysN(4),
+			want:       2,
+		},
+		{
+			name:       "single subscriber is unlimited",
+			self:       "s1",
+			active:     []string{"s1"},
+			discovered: partitionKeysN(4),
+			want:       0,
+		},
+		{
+			// P < N: the remainder share is 0 for high ranks, but the cap
+			// keeps the historical minimum of 1 — with fewer partitions than
+			// subscribers somebody idles regardless, and the floor preserves
+			// the maxPart=0-means-unlimited contract.
+			name:       "fewer partitions than subscribers floors at one",
+			self:       "s4",
+			active:     []string{"s1", "s2", "s3", "s4"},
+			discovered: partitionKeysN(2),
+			want:       1,
+		},
+		{
+			// Own heartbeat missing from the active list (write failed this
+			// interval): conservative ceil over n+1 contenders, never
+			// unlimited.
+			name:       "missing own heartbeat falls back to ceil",
+			self:       "s-missing",
+			active:     []string{"s1", "s2"},
+			discovered: partitionKeysN(9),
+			want:       3,
+		},
+		{
+			name:       "owned and discovered are unioned",
+			self:       "s1",
+			active:     []string{"s1", "s2"},
+			owned:      []string{"pk-00", "pk-extra"},
+			discovered: []string{"pk-00", "pk-01", "pk-02"},
+			want:       2, // union = 4 partitions, rank 0 of 2 -> 2
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockHB := NewMocksubscriberHeartbeatStore(ctrl)
+			mockHB.EXPECT().
+				ActiveSubscribers(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(tt.active, nil).
+				AnyTimes()
+
+			s := NewSubscriber(
+				zaptest.NewLogger(t).Sugar(), tally.NoopScope,
+				NewMockmessageStore(ctrl), NewMockoffsetStore(ctrl),
+				NewMockpartitionLeaseStore(ctrl), mockHB,
+				NewMockdeliveryStateStore(ctrl),
+			)
+			sub := &subscription{
+				topic:  "test-topic",
+				config: extqueue.DefaultSubscriptionConfig(tt.self, "test-cg"),
+			}
+
+			got, err := s.fairShareCap(context.Background(), sub, tt.owned, tt.discovered)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	// The anti-starvation invariant: whenever P >= N, per-rank caps sum to
+	// exactly P, so no combination of at-cap subscribers can leave a
+	// subscriber starved or a partition unclaimed.
+	t.Run("caps sum to partition total", func(t *testing.T) {
+		for n := 2; n <= 6; n++ {
+			for p := n; p <= 13; p++ {
+				active := make([]string, n)
+				for i := range active {
+					active[i] = fmt.Sprintf("s%d", i)
+				}
+
+				ctrl := gomock.NewController(t)
+				mockHB := NewMocksubscriberHeartbeatStore(ctrl)
+				mockHB.EXPECT().
+					ActiveSubscribers(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(active, nil).
+					AnyTimes()
+				s := NewSubscriber(
+					zaptest.NewLogger(t).Sugar(), tally.NoopScope,
+					NewMockmessageStore(ctrl), NewMockoffsetStore(ctrl),
+					NewMockpartitionLeaseStore(ctrl), mockHB,
+					NewMockdeliveryStateStore(ctrl),
+				)
+
+				sum := 0
+				for _, self := range active {
+					sub := &subscription{
+						topic:  "test-topic",
+						config: extqueue.DefaultSubscriptionConfig(self, "test-cg"),
+					}
+					cap, err := s.fairShareCap(context.Background(), sub, nil, partitionKeysN(p))
+					require.NoError(t, err)
+					sum += cap
+				}
+				require.Equal(t, p, sum, "n=%d p=%d", n, p)
+			}
+		}
+	})
+}
+
+// partitionKeysN generates n distinct partition keys.
+func partitionKeysN(n int) []string {
+	keys := make([]string, n)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("pk-%02d", i)
+	}
+	return keys
+}
+
+func TestSubscriber_RebalanceReleasesExcess(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	// Two active subscribers, four partitions: self is rank 0 -> cap 2.
+	mockHB := NewMocksubscriberHeartbeatStore(ctrl)
+	mockHB.EXPECT().
+		ActiveSubscribers(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]string{"s1", "s2"}, nil)
+
+	// The lexicographically largest partitions beyond the cap are released.
+	mockLease := NewMockpartitionLeaseStore(ctrl)
+	mockLease.EXPECT().
+		ReleaseLease(gomock.Any(), "test-topic", "pk-c", "s1", "test-cg").
+		Return(nil)
+	mockLease.EXPECT().
+		ReleaseLease(gomock.Any(), "test-topic", "pk-d", "s1", "test-cg").
+		Return(nil)
+
+	s := NewSubscriber(
+		zaptest.NewLogger(t).Sugar(), tally.NoopScope,
+		NewMockmessageStore(ctrl), NewMockoffsetStore(ctrl),
+		mockLease, mockHB, NewMockdeliveryStateStore(ctrl),
+	)
+	sub := &subscription{
+		topic:   "test-topic",
+		config:  extqueue.DefaultSubscriptionConfig("s1", "test-cg"),
+		workers: make(map[string]*partitionWorker),
+	}
+
+	owned := []string{"pk-d", "pk-a", "pk-c", "pk-b"}
+	released, err := s.rebalance(context.Background(), sub, owned)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"pk-c", "pk-d"}, released)
+	// The caller's slice is shared with lease renewal and must not be
+	// reordered (regression: rebalance used to sort it in place, making the
+	// subsequent renewal hit the released tail and log ErrLeaseExpired).
+	assert.Equal(t, []string{"pk-d", "pk-a", "pk-c", "pk-b"}, owned)
+}
+
+func TestSubscriber_RebalanceUnderCapReleasesNothing(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	mockHB := NewMocksubscriberHeartbeatStore(ctrl)
+	mockHB.EXPECT().
+		ActiveSubscribers(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]string{"s1", "s2"}, nil)
+
+	// No ReleaseLease expectations: owning exactly the cap sheds nothing.
+	s := NewSubscriber(
+		zaptest.NewLogger(t).Sugar(), tally.NoopScope,
+		NewMockmessageStore(ctrl), NewMockoffsetStore(ctrl),
+		NewMockpartitionLeaseStore(ctrl), mockHB, NewMockdeliveryStateStore(ctrl),
+	)
+	sub := &subscription{
+		topic:   "test-topic",
+		config:  extqueue.DefaultSubscriptionConfig("s1", "test-cg"),
+		workers: make(map[string]*partitionWorker),
+		// Four known partitions across two subscribers -> rank-0 cap is 2:
+		// owning exactly the cap must shed nothing.
+		lastDiscoveredPartitions: []string{"pk-a", "pk-b", "pk-c", "pk-d"},
+	}
+
+	released, err := s.rebalance(context.Background(), sub, []string{"pk-a", "pk-b"})
+	require.NoError(t, err)
+	assert.Empty(t, released)
+}

@@ -39,6 +39,7 @@ import (
 	"fmt"
 
 	"github.com/uber/submitqueue/platform/consumer"
+	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
 	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -129,6 +130,11 @@ func failBatch(ctx context.Context, store storage.Storage, registry consumer.Top
 		logger.Infow("dlq reconcile: batch already failed, repairing request fan-out",
 			"batch_id", batchID,
 		)
+		// A prior attempt may have CAS'd to Failed without completing the
+		// membership record move; repair it alongside the fan-out.
+		if err := corebatch.EnsureRecord(ctx, store, batch); err != nil {
+			return err
+		}
 	case entity.BatchStateSucceeded, entity.BatchStateCancelled:
 		logger.Infow("dlq reconcile: batch has a different terminal outcome, skipping",
 			"batch_id", batchID,
@@ -136,13 +142,12 @@ func failBatch(ctx context.Context, store storage.Storage, registry consumer.Top
 		)
 		return nil
 	default:
-		newVersion := batch.Version + 1
 		previousState := batch.State
-		batch.State = entity.BatchStateFailed
-		if err := store.GetBatchStore().Update(ctx, batch, batch.Version, newVersion); err != nil {
-			return fmt.Errorf("failed to update batch %s state to failed: %w", batchID, err)
+		updated, err := corebatch.Transition(ctx, store, batch, entity.BatchStateFailed)
+		if err != nil {
+			return err
 		}
-		batch.Version = newVersion
+		batch = updated
 		logger.Infow("dlq reconcile: batch marked failed",
 			"batch_id", batchID,
 			"previous_state", string(previousState),
