@@ -152,6 +152,20 @@ func (m *MockoffsetStore) EXPECT() *MockoffsetStoreMockRecorder {
 	return m.recorder
 }
 
+// DeleteOffset mocks base method.
+func (m *MockoffsetStore) DeleteOffset(ctx context.Context, topic, partitionKey, consumerGroup string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteOffset", ctx, topic, partitionKey, consumerGroup)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteOffset indicates an expected call of DeleteOffset.
+func (mr *MockoffsetStoreMockRecorder) DeleteOffset(ctx, topic, partitionKey, consumerGroup any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteOffset", reflect.TypeOf((*MockoffsetStore)(nil).DeleteOffset), ctx, topic, partitionKey, consumerGroup)
+}
+
 // GetAckedOffset mocks base method.
 func (m *MockoffsetStore) GetAckedOffset(ctx context.Context, topic, partitionKey, consumerGroup string) (int64, error) {
 	m.ctrl.T.Helper()
@@ -279,6 +293,20 @@ func (m *MockpartitionLeaseStore) GetLeasedPartitions(ctx context.Context, topic
 func (mr *MockpartitionLeaseStoreMockRecorder) GetLeasedPartitions(ctx, topic, subscriberName, consumerGroup any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLeasedPartitions", reflect.TypeOf((*MockpartitionLeaseStore)(nil).GetLeasedPartitions), ctx, topic, subscriberName, consumerGroup)
+}
+
+// PurgeStale mocks base method.
+func (m *MockpartitionLeaseStore) PurgeStale(ctx context.Context, topic, consumerGroup string, olderThanMs int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PurgeStale", ctx, topic, consumerGroup, olderThanMs)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// PurgeStale indicates an expected call of PurgeStale.
+func (mr *MockpartitionLeaseStoreMockRecorder) PurgeStale(ctx, topic, consumerGroup, olderThanMs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PurgeStale", reflect.TypeOf((*MockpartitionLeaseStore)(nil).PurgeStale), ctx, topic, consumerGroup, olderThanMs)
 }
 
 // ReleaseLease mocks base method.

@@ -228,6 +228,36 @@ func (s *sqlpartitionLeaseStore) GetAllLeases(ctx context.Context, topic string,
 	return leases, nil
 }
 
+// PurgeStale deletes lease rows not renewed within olderThanMs. See the
+// partitionLeaseStore interface doc.
+func (s *sqlpartitionLeaseStore) PurgeStale(ctx context.Context, topic string, consumerGroup string, olderThanMs int64) (retErr error) {
+	op := metrics.Begin(s.scope, "purge_stale", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
+
+	threshold := currentTimeMillis() - olderThanMs
+
+	result, err := s.db.ExecContext(ctx, fmt.Sprintf(`
+		DELETE FROM %s
+		WHERE consumer_group = ? AND topic = ? AND lease_renewed_at < ?
+	`, PartitionLeasesTableName), consumerGroup, topic, threshold)
+
+	if err != nil {
+		return fmt.Errorf("failed to purge stale leases: %w", err)
+	}
+
+	// RowsAffected error is swallowed because the DELETE itself succeeded;
+	// the count is for observability only.
+	if deleted, err := result.RowsAffected(); err == nil && deleted > 0 {
+		metrics.NamedCounter(s.scope, "purge_stale", "rows_deleted", deleted, metrics.NewTag("topic", topic))
+		s.logger.Debugw("purged stale leases",
+			logTopic, topic,
+			"deleted", deleted,
+		)
+	}
+
+	return nil
+}
+
 // DiscoverAndAcquirePartitions discovers partitions from messages table and tries to acquire leases.
 // Returns the number of new leases acquired and the full list of discovered partitions.
 // maxPartitions limits how many total partitions this subscriber can own (0 = unlimited)

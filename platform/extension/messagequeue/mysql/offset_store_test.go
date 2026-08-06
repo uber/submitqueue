@@ -188,3 +188,54 @@ func TestOffsetStore_GetMinAckedOffset(t *testing.T) {
 		})
 	}
 }
+
+func TestOffsetStore_DeleteOffset(t *testing.T) {
+	tests := []struct {
+		name    string
+		setup   func(mock sqlmock.Sqlmock)
+		wantErr bool
+	}{
+		{
+			name: "deletes the consumer group's offset row",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec("DELETE FROM queue_offsets").
+					WithArgs(testConsumerGroup, "test_topic", "part-1").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+		},
+		{
+			name: "idempotent - row already gone",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec("DELETE FROM queue_offsets").
+					WithArgs(testConsumerGroup, "test_topic", "part-1").
+					WillReturnResult(sqlmock.NewResult(0, 0))
+			},
+		},
+		{
+			name: "database error",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec("DELETE FROM queue_offsets").
+					WithArgs(testConsumerGroup, "test_topic", "part-1").
+					WillReturnError(fmt.Errorf("db error"))
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, store := setupoffsetStoreTest(t)
+			defer db.Close()
+
+			tt.setup(mock)
+
+			err := store.DeleteOffset(context.Background(), "test_topic", "part-1", testConsumerGroup)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
