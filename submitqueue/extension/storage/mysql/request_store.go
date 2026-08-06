@@ -51,8 +51,8 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 	var changeURIsJSON []byte
 
 	err := r.db.QueryRowContext(ctx,
-		"SELECT id, queue, change_uri, land_strategy, state, version FROM request WHERE id = ?",
-		id,
+		"SELECT id, queue, change_uri, land_strategy, state, version FROM request WHERE queue = ? AND id = ?",
+		r.queue, id,
 	).Scan(&req.ID, &req.Queue, &changeURIsJSON, &req.LandStrategy, &req.State, &req.Version)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -116,8 +116,8 @@ func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVe
 	}
 
 	result, err := r.db.ExecContext(ctx,
-		"UPDATE request SET queue = ?, change_uri = ?, land_strategy = ?, state = ?, version = ? WHERE id = ? AND version = ?",
-		request.Queue, changeURIsJSON, request.LandStrategy, request.State, newVersion, request.ID, oldVersion,
+		"UPDATE request SET change_uri = ?, land_strategy = ?, state = ?, version = ? WHERE queue = ? AND id = ? AND version = ?",
+		changeURIsJSON, request.LandStrategy, request.State, newVersion, request.Queue, request.ID, oldVersion,
 	)
 	if err != nil {
 		return fmt.Errorf(

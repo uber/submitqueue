@@ -218,9 +218,11 @@ func (s *E2EIntegrationSuite) awaitUnparked(consumerGroup, topic, messageID stri
 // operating store (mysql-app). Unlike the status timeline, RequestState is
 // point-in-time — the Request entity is updated in place under optimistic
 // locking, so only the current (terminal, once settled) value is observable.
-func (s *E2EIntegrationSuite) terminalState(sqid string) entity.RequestState {
+func (s *E2EIntegrationSuite) terminalState(queue, sqid string) entity.RequestState {
 	t := s.T()
-	req, err := s.requestStore.Get(s.ctx, sqid)
+	store, err := s.appStorage.For(queue)
+	require.NoError(t, err, "failed to resolve operating store for queue %s", queue)
+	req, err := store.GetRequestStore().Get(s.ctx, sqid)
 	require.NoError(t, err, "failed to get request %s from operating store", sqid)
 	return req.State
 }

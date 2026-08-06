@@ -43,7 +43,6 @@ import (
 	orchestratorpb "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb"
 	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemysql "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/test/testutil"
 	"google.golang.org/grpc"
@@ -60,7 +59,7 @@ type E2EIntegrationSuite struct {
 	orchestratorClient orchestratorpb.SubmitQueueOrchestratorClient
 	db                 *sql.DB                 // App database
 	queueDB            *sql.DB                 // Queue database
-	requestStore       storage.RequestStore    // White-box view of the internal RequestState (app DB)
+	appStorage         *storagemysql.Storage   // White-box view of the operating store (app DB), resolved per queue
 	gate               *consumergatefile.Store // Consumer-gate control plane (shared dir bind-mounted into services)
 }
 
@@ -135,9 +134,8 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 	s.log.Logf("Schemas applied successfully")
 
 	// White-box handle on the operating store for point-in-time RequestState.
-	// Reads are not yet queue-filtered, so a single bound instance serves every
-	// e2e queue's point-in-time RequestState checks.
-	s.requestStore = storagemysql.NewRequestStore(s.db, tally.NoopScope, "e2e-test-queue")
+	s.appStorage, err = storagemysql.NewStorage(s.db, tally.NoopScope)
+	require.NoError(t, err, "failed to create app storage backend")
 
 	// Connect to Gateway gRPC service
 	var gatewayConn *grpc.ClientConn
@@ -250,7 +248,7 @@ func (s *E2EIntegrationSuite) TestLand_HappyPath_ReachesLanded() {
 	// White-box (internal state): the operating store's authoritative
 	// RequestState settled on landed. RequestState is point-in-time, so this is a
 	// terminal check, not a sequence.
-	assert.Equal(s.T(), entity.RequestStateLanded, s.terminalState(sqid),
+	assert.Equal(s.T(), entity.RequestStateLanded, s.terminalState("e2e-test-queue", sqid),
 		"operating store should show request %s in terminal state landed", sqid)
 }
 
@@ -398,7 +396,7 @@ func (s *E2EIntegrationSuite) TestCancel_CaughtPreBatch_NeverLands() {
 		entity.RequestStatusCancelling,
 		entity.RequestStatusCancelled,
 	)
-	assert.Equal(t, entity.RequestStateCancelled, s.terminalState(sqid),
+	assert.Equal(t, entity.RequestStateCancelled, s.terminalState(queue, sqid),
 		"operating store should show request %s terminal cancelled while its check is parked", sqid)
 
 	// Start the controller again and prove the parked delivery cleared the gate.
@@ -411,7 +409,7 @@ func (s *E2EIntegrationSuite) TestCancel_CaughtPreBatch_NeverLands() {
 	s.awaitStatus(sentinel, entity.RequestStatusLanded)
 
 	// The stale check answer was dropped: the cancelled request never advanced.
-	assert.Equal(t, entity.RequestStateCancelled, s.terminalState(sqid),
+	assert.Equal(t, entity.RequestStateCancelled, s.terminalState(queue, sqid),
 		"request %s must stay terminal cancelled after its stale check signal is processed", sqid)
 	s.assertStatusesNever(sqid, entity.RequestStatusBatched, entity.RequestStatusLanded)
 }
