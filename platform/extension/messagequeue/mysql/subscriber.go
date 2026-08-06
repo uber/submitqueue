@@ -479,7 +479,7 @@ func (s *subscriber) managePartitions(ctx context.Context, sub *subscription) {
 		"subscriber_name", cfg.SubscriberName,
 	}
 
-	discoveryTicker := time.NewTicker(time.Duration(cfg.PollIntervalMs) * time.Millisecond)
+	discoveryTicker := time.NewTicker(time.Duration(cfg.PartitionDiscoveryIntervalMs) * time.Millisecond)
 	defer discoveryTicker.Stop()
 
 	leaseTicker := time.NewTicker(time.Duration(cfg.LeaseRenewalIntervalMs) * time.Millisecond)

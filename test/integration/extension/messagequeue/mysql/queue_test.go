@@ -102,8 +102,12 @@ func (s *SQLQueueIntegrationSuite) TearDownSuite() {
 // timeouts for fast integration tests. The defaults (30s lease, 60s visibility)
 // would make crash recovery tests wait 90s of real wall-clock time since the
 // subscriber can't find invisible messages until the DB timeout expires.
+// Partition discovery is likewise pinned to 100ms so initial lease
+// acquisition and rebalance convergence stay fast under the 1s production
+// default.
 func testSubConfig(subscriberName, consumerGroup string) extqueue.SubscriptionConfig {
 	cfg := extqueue.DefaultSubscriptionConfig(subscriberName, consumerGroup)
+	cfg.PartitionDiscoveryIntervalMs = 100
 	cfg.VisibilityTimeoutMs = 2000
 	cfg.LeaseDurationMs = 3000
 	cfg.LeaseRenewalIntervalMs = 1000
@@ -344,6 +348,7 @@ func (s *SQLQueueIntegrationSuite) TestPublishAndSubscribe() {
 
 	// Subscribe first with config
 	subConfig := extqueue.DefaultSubscriptionConfig("test-worker-1", "test-consumer")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
@@ -414,6 +419,7 @@ func (s *SQLQueueIntegrationSuite) TestSubscriberPerPartitionIsolation() {
 
 	// Subscribe with short poll interval for fast test
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "isolation-consumer")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	subConfig.PollIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
@@ -481,6 +487,7 @@ func (s *SQLQueueIntegrationSuite) TestSubscriberPartitionOrderPreserved() {
 
 	// Subscribe and receive all
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "order-consumer")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	subConfig.PollIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
@@ -521,6 +528,7 @@ func (s *SQLQueueIntegrationSuite) TestMultiplePartitions() {
 
 	// Subscribe
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "multi-partition-consumer")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
@@ -650,6 +658,7 @@ func (s *SQLQueueIntegrationSuite) TestIdempotentPublish() {
 
 	// Subscribe
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "idempotent-consumer")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
@@ -696,6 +705,7 @@ func (s *SQLQueueIntegrationSuite) TestConcurrentPublishers() {
 
 	// Subscribe
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "concurrent-consumer")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
@@ -825,10 +835,12 @@ func (s *SQLQueueIntegrationSuite) TestMultipleConsumerGroups() {
 
 	// Subscribe both groups
 	subConfig1 := extqueue.DefaultSubscriptionConfig("worker-1", "group-A")
+	subConfig1.PartitionDiscoveryIntervalMs = 100
 	deliveryChan1, err := subscriber1.Subscribe(s.ctx, topic, subConfig1)
 	require.NoError(t, err)
 
 	subConfig2 := extqueue.DefaultSubscriptionConfig("worker-1", "group-B")
+	subConfig2.PartitionDiscoveryIntervalMs = 100
 	deliveryChan2, err := subscriber2.Subscribe(s.ctx, topic, subConfig2)
 	require.NoError(t, err)
 
@@ -904,10 +916,12 @@ func (s *SQLQueueIntegrationSuite) TestMultipleWorkersInConsumerGroup() {
 
 	// Subscribe both workers
 	subConfig1 := extqueue.DefaultSubscriptionConfig("worker-1", consumerGroup)
+	subConfig1.PartitionDiscoveryIntervalMs = 100
 	deliveryChan1, err := subscriber1.Subscribe(s.ctx, topic, subConfig1)
 	require.NoError(t, err)
 
 	subConfig2 := extqueue.DefaultSubscriptionConfig("worker-2", consumerGroup)
+	subConfig2.PartitionDiscoveryIntervalMs = 100
 	deliveryChan2, err := subscriber2.Subscribe(s.ctx, topic, subConfig2)
 	require.NoError(t, err)
 
@@ -979,6 +993,7 @@ func (s *SQLQueueIntegrationSuite) TestConcurrentSubscribers() {
 
 		subscriber := q.Subscriber()
 		subConfig := extqueue.DefaultSubscriptionConfig(fmt.Sprintf("worker-%d", i), consumerGroup)
+		subConfig.PartitionDiscoveryIntervalMs = 100
 		deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 		require.NoError(t, err)
 		deliveryChans = append(deliveryChans, deliveryChan)
@@ -1078,6 +1093,7 @@ func (s *SQLQueueIntegrationSuite) TestDeadLetterQueue() {
 	t.Logf("Subscribing to DLQ topic: %s", dlqTopic)
 
 	dlqConfig := extqueue.DefaultSubscriptionConfig("worker-1", "dlq-consumer")
+	dlqConfig.PartitionDiscoveryIntervalMs = 100
 	dlqDeliveryChan, err := subscriber.Subscribe(s.ctx, dlqTopic, dlqConfig)
 	require.NoError(t, err)
 
@@ -1129,6 +1145,7 @@ func (s *SQLQueueIntegrationSuite) TestMessageOrderingWithinPartition() {
 
 	// Subscribe first
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "ordering-consumer")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
@@ -1191,6 +1208,7 @@ func (s *SQLQueueIntegrationSuite) TestLateSubscriber() {
 	// Now subscribe (late subscriber)
 	subscriber := q.Subscriber()
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "late-consumer")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 	t.Logf("Late subscriber joined after messages published")
@@ -1232,6 +1250,7 @@ func (s *SQLQueueIntegrationSuite) TestEmptyTopicSubscribe() {
 
 	// Subscribe to empty topic (no messages published yet)
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "empty-consumer")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	subConfig.PollIntervalMs = 100 // 100 milliseconds
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
@@ -1490,6 +1509,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_ConsumerLagAfterPartialAck() {
 
 	// Subscribe and ack only 2
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", consumerGroup)
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	subConfig.PollIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
@@ -1539,6 +1559,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_LeasesAndOffsets() {
 	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("lo-1", []byte("a"), "p1", nil)))
 
 	subConfig := extqueue.DefaultSubscriptionConfig("admin-worker-1", consumerGroup)
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	subConfig.PollIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
@@ -1615,6 +1636,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_ResetOffsetAndReleaseLease() {
 	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("r1", []byte("a"), "rp1", nil)))
 
 	subConfig := extqueue.DefaultSubscriptionConfig("reset-worker", consumerGroup)
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	subConfig.PollIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
@@ -2115,6 +2137,7 @@ func (s *SQLQueueIntegrationSuite) TestInFlightMessageDoesNotBlockOtherMessages(
 	// Subscribe with batch=10 to fetch multiple messages per poll. The default
 	// 60s visibility timeout keeps msg-1 invisible for the whole test.
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "nack-nb-cg")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	subConfig.PollIntervalMs = 50
 	subConfig.BatchSize = 10
 	deliveryCh, err := q.Subscriber().Subscribe(s.ctx, topic, subConfig)
@@ -2172,6 +2195,7 @@ func (s *SQLQueueIntegrationSuite) TestPostponeBlocksPartitionUntilDue() {
 	// Subscribe with batch=10 so the barrier — not the batch size — is what
 	// keeps later offsets back.
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "postpone-cg")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	subConfig.PollIntervalMs = 50
 	subConfig.BatchSize = 10
 	deliveryCh, err := q.Subscriber().Subscribe(s.ctx, topic, subConfig)
@@ -2268,6 +2292,7 @@ func (s *SQLQueueIntegrationSuite) TestPostponeResetsRetryBudget() {
 
 	dlqTopic := topic + subConfig.DLQ.TopicSuffix
 	dlqConfig := extqueue.DefaultSubscriptionConfig("worker-1", "postpone-budget-cg")
+	dlqConfig.PartitionDiscoveryIntervalMs = 100
 	dlqDeliveryChan, err := q.Subscriber().Subscribe(s.ctx, dlqTopic, dlqConfig)
 	require.NoError(t, err)
 
@@ -2299,6 +2324,7 @@ func (s *SQLQueueIntegrationSuite) TestBatchSizeOneStrictSerialization() {
 
 	// Subscribe with batchSize=1 for strict serialization
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "serial-cg")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	subConfig.PollIntervalMs = 50
 	subConfig.BatchSize = 1
 	deliveryCh, err := q.Subscriber().Subscribe(s.ctx, topic, subConfig)
@@ -2346,8 +2372,10 @@ func (s *SQLQueueIntegrationSuite) TestMultipleConsumerGroupsIndependentState() 
 
 	// Two consumer groups subscribing to the same topic
 	cfg1 := extqueue.DefaultSubscriptionConfig("worker-1", "cg-alpha")
+	cfg1.PartitionDiscoveryIntervalMs = 100
 	cfg1.PollIntervalMs = 50
 	cfg2 := extqueue.DefaultSubscriptionConfig("worker-2", "cg-beta")
+	cfg2.PartitionDiscoveryIntervalMs = 100
 	cfg2.PollIntervalMs = 50
 
 	ch1, err := q.Subscriber().Subscribe(s.ctx, topic, cfg1)
@@ -2480,6 +2508,7 @@ func (s *SQLQueueIntegrationSuite) TestCrashAfterRejectDoesNotLoseMessages() {
 	// Verify DLQ contains msg-B
 	dlqTopic := topic + subConfig.DLQ.TopicSuffix
 	dlqConfig := extqueue.DefaultSubscriptionConfig("worker-2", "crash-reject-cg")
+	dlqConfig.PartitionDiscoveryIntervalMs = 100
 	dlqConfig.PollIntervalMs = 100
 	dlqChan, err := q2.Subscriber().Subscribe(s.ctx, dlqTopic, dlqConfig)
 	require.NoError(t, err)
@@ -2637,6 +2666,7 @@ func (s *SQLQueueIntegrationSuite) TestWatermarkAdvancesContiguously() {
 	}
 
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "watermark-cg")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	subConfig.PollIntervalMs = 100
 	subConfig.VisibilityTimeoutMs = 30000 // long visibility so nothing re-delivers
 	subConfig.BatchSize = 10
