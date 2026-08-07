@@ -79,7 +79,23 @@ Redelivery is safe: once imported, the source head is contained in the target, s
 
 `Merge` commits and reports outputs; `CheckMergeability` runs the identical apply but never pushes, then resets the checkout to discard the local commits and reports empty outputs. A multi-step check commits its intermediate steps locally so it sees the same conflict surface a real merge would.
 
-For a committing merge nothing reaches the remote until the final push (a `PROMOTE` is itself a single atomic fast-forward ref update). A step that fails to apply aborts its in-progress git operation and returns without pushing. If the push fails because the remote tip moved between reset and push, the whole reset/apply/push cycle is retried up to a bounded number of attempts; detection re-fetches the tip and compares it to the SHA the cycle was based on.
+For a committing merge nothing reaches the remote until every step has applied cleanly (a `PROMOTE` is itself a single atomic fast-forward ref update). A step that fails to apply aborts its in-progress git operation and returns without pushing. With head-branch updates enabled a merge writes two things rather than one — the head branches first, then the target — and only the target's push is the point of no return. If the push fails because the remote tip moved between reset and push, the whole reset/apply/push cycle is retried up to a bounded number of attempts; detection re-fetches the tip and compares it to the SHA the cycle was based on.
+
+## Head branches
+
+A provider decides whether a change merged while it processes the push to the target branch, comparing the change's recorded head against what that push makes reachable. `MERGE` and `PROMOTE` satisfy that on their own — the first keeps the change's head reachable through second-parent history, the second fast-forwards the target to it. The picking strategies do not: `REBASE` and `SQUASH_REBASE` produce new commits, so the change's original head appears nowhere in the target's history and the change is recorded as closed after it has, in every meaningful sense, landed.
+
+Enabling head-branch updates closes that gap. Before the target is pushed, each change's head branch is moved to the commit that change became — its last replayed commit under `REBASE`, its single squashed commit under `SQUASH_REBASE`. The provider records that new head, and when the target push arrives moments later it finds exactly that commit reachable, so it marks the change merged. Nothing here knows what a pull request is: the branch is found by matching the change's pinned head SHA against the remote's branch tips, so the same mechanism serves a GitHub pull request, a GitLab merge request, or a bare branch.
+
+**The ordering is the mechanism.** Moving the head branch *after* the target has been pushed leaves the provider comparing against the pre-merge head at the only moment it looks, and it records the change closed rather than merged — even though the branch ends up on a commit that is demonstrably in the target. Doing both in a single atomic push behaves the same way, since the provider still evaluates the target update against the head it had recorded beforehand. Only a separate, earlier push works.
+
+Three cases are declined rather than guessed at. A change whose head matches **no branch** on this remote is normally one proposed from a fork, whose branch lives in another repository and is not this merger's to move — such a change lands normally. A head matching **several branches** is ambiguous, and the URI does not say which one the change was proposed from, so rewriting a guess risks clobbering an unrelated branch. The **target branch itself** is never a candidate, so a change whose head coincides with the target tip cannot make the merger rewrite the branch it just landed on.
+
+Each push carries a lease against the SHA the change's URI pinned, so an author who pushes in the window between reading the remote's branches and updating them fails the lease instead of losing their work. A failure to move a branch fails the merge, before the target is pushed: landing a change while knowing its head could not be moved produces exactly the half-merged state the option exists to prevent. The three declined cases above are not failures and do not stop the merge.
+
+A branch a failed attempt already moved is remembered for the next one. Once moved, it no longer sits at the SHA the URI pinned, so a retry could not find it by matching tips and would strand it on a commit that never landed; the attempt's resolved branch and the value the next lease must name are carried forward instead.
+
+Off by default — moving a branch the merger was not asked to move is a surprise unless a deployment opted in.
 
 ## Failure classification
 
