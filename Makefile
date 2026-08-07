@@ -134,6 +134,11 @@ clean-proto: ## Clean generated proto files
 deps: tidy-go ## Download and tidy Go dependencies
 	@echo "Dependencies installed!"
 
+e2e-git-test: ## Run the hermetic git E2E (real merger against a bare repo; no credentials)
+	@echo "Running hermetic git end-to-end tests..."
+	@$(BAZEL) test //test/e2e/submitqueue:go_default_test --test_output=errors \\
+		--test_filter='TestGitMergeE2E'
+
 e2e-test: ## Run end-to-end tests (hermetic; Bazel builds all inputs; runs in parallel)
 	@echo "Running end-to-end tests (parallel)..."
 	@$(BAZEL) test //test/e2e/... --test_output=errors
@@ -396,20 +401,16 @@ query-deps:
 query-targets:
 	@$(BAZEL) query //...
 
-# Run gateway client (connects to any running gateway service)
-run-client-submitqueue-gateway:
+run-client-submitqueue-gateway: ## Run the gateway client against a running gateway (SERVER_ADDR, MESSAGE)
 	@$(BAZEL) run //service/submitqueue/gateway/client:gateway -- -addr $(or $(SERVER_ADDR),localhost:8081) -message "$(or $(MESSAGE),ping)"
 
-# Run orchestrator client (connects to any running orchestrator service)
-run-client-submitqueue-orchestrator:
+run-client-submitqueue-orchestrator: ## Run the orchestrator client against a running orchestrator (SERVER_ADDR, MESSAGE)
 	@$(BAZEL) run //service/submitqueue/orchestrator/client:orchestrator -- -addr $(or $(SERVER_ADDR),localhost:8082) -message "$(or $(MESSAGE),ping)"
 
-# Run stovepipe client (connects to any running stovepipe service)
-run-client-stovepipe:
+run-client-stovepipe: ## Run the Stovepipe client against a running Stovepipe (SERVER_ADDR, MESSAGE)
 	@$(BAZEL) run //service/stovepipe/client:stovepipe -- -addr $(or $(SERVER_ADDR),localhost:8083) -message "$(or $(MESSAGE),ping)"
 
-# Run runway client (connects to any running runway service)
-run-client-runway:
+run-client-runway: ## Run the Runway client against a running Runway (SERVER_ADDR, MESSAGE)
 	@$(BAZEL) run //service/runway/client:runway -- -addr $(or $(SERVER_ADDR),localhost:8086) -message "$(or $(MESSAGE),ping)"
 
 run-queue-admin: ## Run queue-admin CLI (use ARGS to pass arguments, e.g. make run-queue-admin ARGS="list-topics")
@@ -436,4 +437,4 @@ tidy-go: ## Run go mod tidy
 help: ## Show this help message
 	@echo "Available targets:"
 	@echo ""
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-30s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-30s\033[0m %s\n", $$1, $$2}'

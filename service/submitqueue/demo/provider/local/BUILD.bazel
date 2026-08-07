@@ -1,0 +1,14 @@
+"""Demo provider configuration for a plain git remote (no provider).
+
+Consumed by the hermetic git E2E, which bind-mounts this directory into the
+orchestrator and runway containers.
+"""
+
+filegroup(
+    name = "config",
+    srcs = [
+        "merge.yaml",
+        "profiles.yaml",
+    ],
+    visibility = ["//test:__subpackages__"],
+)
