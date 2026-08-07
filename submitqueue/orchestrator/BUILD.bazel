@@ -14,6 +14,7 @@ go_library(
         "//submitqueue/extension/buildrunner:go_default_library",
         "//submitqueue/extension/changeprovider:go_default_library",
         "//submitqueue/extension/conflict:go_default_library",
+        "//submitqueue/extension/speculation/speculator:go_default_library",
         "//submitqueue/extension/storage:go_default_library",
         "//submitqueue/extension/validator:go_default_library",
         "//submitqueue/orchestrator/controller:go_default_library",
