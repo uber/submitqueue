@@ -1,0 +1,22 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["main.go"],
+    importpath = "github.com/uber/submitqueue/service/submitqueue/demo/pr",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//api/base/change/protopb:go_default_library",
+        "//api/base/mergestrategy/protopb:go_default_library",
+        "//api/submitqueue/gateway/protopb:go_default_library",
+        "//platform/base/change/github:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_grpc//credentials/insecure:go_default_library",
+    ],
+)
+
+go_binary(
+    name = "pr",
+    embed = [":go_default_library"],
+    visibility = ["//visibility:public"],
+)

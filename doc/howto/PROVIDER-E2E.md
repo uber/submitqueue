@@ -25,7 +25,7 @@ For a **fine-grained** token, grant these repository permissions. Each is here b
 | Metadata | Read | mandatory on every fine-grained token; GitHub adds it for you |
 | Contents | Read and write | the git merger — clone, fetch, push to the target branch, and force-move each landed change's head branch |
 | Pull requests | Read | the change provider reads pull request metadata, and `land -pr` reads the head commit |
-| Pull requests | Read **and write** | only for `make demo-prs`, which opens pull requests |
+| Pull requests | Read **and write** | only for `make demo-pr`, which opens pull requests |
 | Actions | Read and write | only if you switch the build runner to GitHub Actions — dispatch a run, poll it, cancel it |
 
 A **classic** PAT needs `repo`, plus `workflow` if you use the GitHub Actions build runner.
@@ -88,6 +88,35 @@ make land PRS="https://github.com/<you>/<repo>/pull/1 \
 ```
 
 The order of `PRS` is the stack order. All three land as **one push** to `main` — there is no window where a reader sees the stack half-applied — and all three show as merged. Tier 2 asserts the single-push property mechanically, by counting ref updates in the target's reflog.
+
+## Simulating traffic
+
+Opening pull requests by hand gets old fast. `demo-pr` creates them, enqueues them, and shows you where each one is:
+
+```bash
+make demo-pr                      # 3 independent PRs, each enqueued as it is created
+make demo-pr COUNT=8              # more traffic
+make demo-pr STACKED=true         # one stack, enqueued as a single request
+make demo-pr LAND=false           # create only, print the land command
+```
+
+Each pull request is enqueued the moment it exists, so the queue is already working on the first while the last is still being opened. That overlap is the point: a queue holding one request at a time never batches, never analyzes a conflict against another batch, and never speculates. Nothing is awaited until every request is in.
+
+Then it watches all of them at once, redrawing a table as they move:
+
+```
+  REQUEST                  CHANGES    STATUS         ELAPSED
+  ------------------------ ---------- ------------ ----------
+  demo-queue/12            #31        landed             34s
+  demo-queue/13            #32        processing         31s
+  demo-queue/14            #33        batched            28s
+```
+
+`STACKED=true` is the exception to the overlap: one request carries the whole chain, so it can only go in once every pull request in it exists. That is the atomic-stack path — the whole set reaches `main` in a single push.
+
+It talks to GitHub over the REST API with the same `GITHUB_TOKEN`, so it needs no clone and no git binary. Each run tags its branches with a timestamp so repeated runs do not collide, and each change edits its own file so independent changes do not conflict by accident.
+
+The command exits non-zero if any request settles anywhere other than `landed`, so it works in a script. Piped to a file it prints a fresh table whenever something moves instead of redrawing in place.
 
 ## Watching it work
 
