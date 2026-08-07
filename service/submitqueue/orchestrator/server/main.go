@@ -199,6 +199,7 @@ func run() error {
 		BuildRunner:    profiles.BuildRunnerFactory(),
 		ChangeProvider: profiles.ChangeProviderFactory(),
 		Analyzer:       profiles.AnalyzerFactory(),
+		Speculator:     profiles.SpeculatorFactory(),
 		Validator:      validatorfake.NewFactory(),
 	}
 

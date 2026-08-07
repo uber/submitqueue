@@ -135,6 +135,20 @@ func (mr *MockStorageMockRecorder) GetChangeStore() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetChangeStore", reflect.TypeOf((*MockStorage)(nil).GetChangeStore))
 }
 
+// GetPathBuildStore mocks base method.
+func (m *MockStorage) GetPathBuildStore() storage.PathBuildStore {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetPathBuildStore")
+	ret0, _ := ret[0].(storage.PathBuildStore)
+	return ret0
+}
+
+// GetPathBuildStore indicates an expected call of GetPathBuildStore.
+func (mr *MockStorageMockRecorder) GetPathBuildStore() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPathBuildStore", reflect.TypeOf((*MockStorage)(nil).GetPathBuildStore))
+}
+
 // GetQueueBatchStateStore mocks base method.
 func (m *MockStorage) GetQueueBatchStateStore() storage.QueueBatchStateStore {
 	m.ctrl.T.Helper()

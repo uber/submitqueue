@@ -2,6 +2,8 @@ CREATE TABLE IF NOT EXISTS build (
     queue VARCHAR(255) NOT NULL,
     id VARCHAR(255) NOT NULL,
     batch_id VARCHAR(255) NOT NULL,
+    path_id VARCHAR(255) NOT NULL,
+    attempt INT NOT NULL,
     status VARCHAR(64) NOT NULL,
     PRIMARY KEY (queue, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

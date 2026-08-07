@@ -58,6 +58,7 @@ func (s *Storage) For(queueName string) (storage.Storage, error) {
 		queueBatchStateStore:    NewQueueBatchStateStore(s.db, s.scope.SubScope("queue_batch_state_store"), queueName),
 		buildStore:              NewBuildStore(s.db, s.scope.SubScope("build_store"), queueName),
 		speculationPathSetStore: NewSpeculationPathSetStore(s.db, s.scope.SubScope("speculation_path_set_store"), queueName),
+		pathBuildStore:          NewPathBuildStore(s.db, s.scope.SubScope("path_build_store"), queueName),
 		requestQueueStore:       NewRequestQueueSummaryStore(s.db, s.scope.SubScope("request_queue_summary_store"), queueName),
 		requestSummaryStore:     NewRequestSummaryStore(s.db, s.scope.SubScope("request_summary_store"), queueName),
 		requestLogStore:         NewRequestLogStore(s.db, s.scope.SubScope("request_log_store"), queueName),
@@ -80,6 +81,7 @@ type boundStorage struct {
 	queueBatchStateStore    storage.QueueBatchStateStore
 	buildStore              storage.BuildStore
 	speculationPathSetStore storage.SpeculationPathSetStore
+	pathBuildStore          storage.PathBuildStore
 	requestQueueStore       storage.RequestQueueSummaryStore
 	requestSummaryStore     storage.RequestSummaryStore
 	requestLogStore         storage.RequestLogStore
@@ -127,6 +129,11 @@ func (f *boundStorage) GetBuildStore() storage.BuildStore {
 // GetSpeculationPathSetStore returns the bound MySQL-backed SpeculationPathSetStore.
 func (f *boundStorage) GetSpeculationPathSetStore() storage.SpeculationPathSetStore {
 	return f.speculationPathSetStore
+}
+
+// GetPathBuildStore returns the bound MySQL-backed PathBuildStore.
+func (f *boundStorage) GetPathBuildStore() storage.PathBuildStore {
+	return f.pathBuildStore
 }
 
 // GetRequestQueueSummaryStore returns the bound MySQL-backed RequestQueueSummaryStore.

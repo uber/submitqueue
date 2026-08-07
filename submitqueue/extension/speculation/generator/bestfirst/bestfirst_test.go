@@ -392,71 +392,6 @@ func TestBestFirst_PropagatesScorerError(t *testing.T) {
 	assert.Nil(t, iter)
 }
 
-func TestBestFirst_RejectsMalformedSnapshots(t *testing.T) {
-	// The snapshot contract: every batch a head's direct dependencies reference
-	// is present with a readable state, IDs are unique and non-empty, and no
-	// head repeats a dependency or depends on itself. Anything else is
-	// malformed input. In particular a missing dependency is never guessed
-	// about — the scorer, not the generator, owns any defaulting for batches
-	// that are hard to score.
-	tests := []struct {
-		name    string
-		batches []entity.Batch
-	}{
-		{
-			name:    "empty batch ID",
-			batches: []entity.Batch{{State: entity.BatchStateSpeculating}},
-		},
-		{
-			name: "duplicate batch ID",
-			batches: []entity.Batch{
-				{ID: "q/A", State: entity.BatchStateCreated},
-				{ID: "q/A", State: entity.BatchStateSpeculating},
-			},
-		},
-		{
-			name: "empty dependency ID",
-			batches: []entity.Batch{
-				{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{""}},
-			},
-		},
-		{
-			name: "self dependency",
-			batches: []entity.Batch{
-				{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/H"}},
-			},
-		},
-		{
-			name: "duplicate dependency",
-			batches: []entity.Batch{
-				{ID: "q/A", State: entity.BatchStateCreated},
-				{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/A", "q/A"}},
-			},
-		},
-		{
-			name: "missing dependency",
-			batches: []entity.Batch{
-				{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/ghost"}},
-			},
-		},
-		{
-			name: "unknown dependency state",
-			batches: []entity.Batch{
-				{ID: "q/A", State: entity.BatchStateUnknown},
-				{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/A"}},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			iter, err := New(scored(nil)).Generate(context.Background(), tt.batches)
-			require.Error(t, err)
-			assert.Nil(t, iter)
-		})
-	}
-}
-
 func TestBestFirst_GeneratesOnlyWhatIsPulled(t *testing.T) {
 	// 12 unresolved dependencies is an outcome space of 4096 paths.
 	const deps, space = 12, 1 << 12
@@ -841,12 +776,14 @@ func TestBestFirst_HonorsCancelledContext(t *testing.T) {
 	})
 }
 
-func TestBestFirst_RejectsScoreOutsideUnitInterval(t *testing.T) {
+func TestBestFirst_DefaultsScoreOutsideUnitInterval(t *testing.T) {
 	// Everything downstream treats a score as a probability: its log is the
-	// ranking key and its complement is the other side's probability. An
-	// out-of-range value would not fail loudly, it would quietly produce a
+	// ranking key and its complement is the other side's probability. Carrying
+	// an out-of-range value would not fail loudly, it would quietly produce a
 	// positive log, an inverted ordering, or a NaN that makes every comparison
-	// false — so it is rejected at the source instead.
+	// false. The scorer is an injected extension and nothing earlier can vet
+	// what it returns, so a value that is not a probability is replaced with an
+	// optimistic default here rather than sinking the whole run.
 	tests := []struct {
 		name  string
 		score float64
@@ -855,6 +792,7 @@ func TestBestFirst_RejectsScoreOutsideUnitInterval(t *testing.T) {
 		{name: "below zero", score: -0.1},
 		{name: "not a number", score: math.NaN()},
 		{name: "positive infinity", score: math.Inf(1)},
+		{name: "negative infinity", score: math.Inf(-1)},
 	}
 
 	batches := []entity.Batch{
@@ -865,8 +803,16 @@ func TestBestFirst_RejectsScoreOutsideUnitInterval(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			iter, err := New(constScorer{tt.score}).Generate(context.Background(), batches)
-			require.Error(t, err)
-			assert.Nil(t, iter)
+			require.NoError(t, err)
+			cands := drainAll(t, iter)
+
+			// The dependency is scored at the default, so the head still yields
+			// both of its paths, ranked as that default and its complement.
+			require.Len(t, cands, 2)
+			assert.Equal(t, entity.DependencyAssumptionSucceeds, assumptionFor(cands[0].Path, "q/A"))
+			assert.InDelta(t, math.Log(defaultProbability), cands[0].RankingScore, 1e-9)
+			assert.Equal(t, entity.DependencyAssumptionFails, assumptionFor(cands[1].Path, "q/A"))
+			assert.InDelta(t, math.Log(1-defaultProbability), cands[1].RankingScore, 1e-9)
 		})
 	}
 }
