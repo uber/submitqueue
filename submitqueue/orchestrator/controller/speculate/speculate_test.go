@@ -29,6 +29,7 @@ import (
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -37,16 +38,41 @@ import (
 
 // newQueueBatchStateStore returns a QueueBatchStateStore mock that accepts any
 // membership-record write; these tests never list record buckets.
+// staticStorageFactory resolves every queue to one fixed store aggregate.
+type staticStorageFactory struct{ store storage.Storage }
+
+// For returns the fixed store aggregate for any queue.
+func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
+
 func newQueueBatchStateStore(ctrl *gomock.Controller) *storagemock.MockQueueBatchStateStore {
 	s := storagemock.NewMockQueueBatchStateStore(ctrl)
 	s.EXPECT().Put(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	s.EXPECT().Delete(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	s.EXPECT().Delete(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	// An empty List keeps the speculation run quiet: the queue lists no
+	// in-flight batches, so the run returns before reading any path set or
+	// asking the Speculator. run_test.go covers the run itself.
+	s.EXPECT().List(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	return s
 }
 
 func batchWithState(batch entity.Batch, state entity.BatchState) entity.Batch {
 	batch.State = state
 	return batch
+}
+
+// quietSpeculator proposes nothing, which is what tests focused on the verdict
+// state machine want: the run happens but changes no paths.
+type quietSpeculator struct{}
+
+func (quietSpeculator) Speculate(context.Context, []entity.Batch, []entity.SpeculationPathSet) ([]entity.Speculation, error) {
+	return nil, nil
+}
+
+// staticSpeculatorFactory returns a fixed Speculator for any queue.
+type staticSpeculatorFactory struct{ s speculator.Speculator }
+
+func (f staticSpeculatorFactory) For(speculator.Config) (speculator.Speculator, error) {
+	return f.s, nil
 }
 
 // batchIDPayload serializes a BatchID to JSON bytes for test message payloads.
@@ -94,7 +120,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, store, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
+	return NewController(logger, scope, staticStorageFactory{store: store}, staticSpeculatorFactory{s: quietSpeculator{}}, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
 }
 
 // runProcess builds a delivery for batchID and invokes Process once.
@@ -301,7 +327,7 @@ func TestController_Process_TerminalSelfHeals(t *testing.T) {
 			require.NoError(t, err)
 
 			logger := zaptest.NewLogger(t).Sugar()
-			controller := NewController(logger, tally.NoopScope, store, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
+			controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, staticSpeculatorFactory{s: quietSpeculator{}}, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
 
 			require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
 		})
@@ -357,7 +383,7 @@ func TestController_Process_CancelledTerminalSelfHealsDependents(t *testing.T) {
 	require.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
-	controller := NewController(logger, tally.NoopScope, store, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
+	controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, staticSpeculatorFactory{s: quietSpeculator{}}, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
 
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
 
@@ -429,7 +455,7 @@ func TestController_Process_CancellingTerminalFlow(t *testing.T) {
 	require.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
-	controller := NewController(logger, tally.NoopScope, store, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
+	controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, staticSpeculatorFactory{s: quietSpeculator{}}, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
 
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
 
@@ -541,7 +567,7 @@ func TestController_Process_CancellingNoDependents(t *testing.T) {
 	require.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
-	controller := NewController(logger, tally.NoopScope, store, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
+	controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, staticSpeculatorFactory{s: quietSpeculator{}}, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
 
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
 }
@@ -583,7 +609,7 @@ func TestController_Process_CancellingTerminalCASVersionMismatch(t *testing.T) {
 	require.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
-	controller := NewController(logger, tally.NoopScope, store, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
+	controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, staticSpeculatorFactory{s: quietSpeculator{}}, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
 
 	err = runProcess(t, ctrl, controller, batch.ID)
 	require.Error(t, err)
@@ -626,9 +652,11 @@ func TestController_Process_StorageFailure(t *testing.T) {
 }
 
 // Publish failure must not advance the batch state.
+// A failed merge publish must abort before the batch is moved to Merging:
+// a batch recorded as merging that Runway was never told about would stall.
 func TestController_Process_PublishFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	batch := testBatch(entity.BatchStateCreated)
+	batch := testBatch(entity.BatchStateSpeculating)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)

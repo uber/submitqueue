@@ -47,6 +47,7 @@ import (
 	"github.com/uber/submitqueue/runway/controller/merge"
 	"github.com/uber/submitqueue/runway/controller/mergeconflictcheck"
 	"github.com/uber/submitqueue/runway/extension/merger"
+	"github.com/uber/submitqueue/runway/extension/merger/fake"
 	gitmerger "github.com/uber/submitqueue/runway/extension/merger/git"
 	"github.com/uber/submitqueue/runway/extension/merger/noop"
 	"go.uber.org/zap"
@@ -302,11 +303,27 @@ func run() error {
 	return err
 }
 
-// newMergerFactory returns a merger.Factory for the server. When
-// MERGE_CHECKOUT_PATH is set it wires the git-backed merger built from the
-// MERGE_* / GIT_* environment; otherwise it falls back to the noop merger so
-// local development and compose runs need no git checkout.
+// newMergerFactory returns a merger.Factory for the server. MERGER selects the
+// implementation explicitly; when it is unset the choice falls back to the merge
+// environment — MERGE_CHECKOUT_PATH wires the git-backed merger built from the
+// MERGE_* / GIT_* environment, and its absence wires the noop merger so local
+// development and compose runs need no git checkout.
 func newMergerFactory(logger *zap.Logger, scope tally.Scope) (merger.Factory, error) {
+	switch impl := strings.ToLower(strings.TrimSpace(os.Getenv("MERGER"))); impl {
+	case "fake":
+		// Marker-driven outcomes, for e2e tests that need Runway to fail on
+		// demand without a git checkout. Never production.
+		logger.Info("MERGER=fake; using marker-driven fake merger")
+		return &fakeMergerFactory{merger: fake.New()}, nil
+	case "noop":
+		logger.Info("MERGER=noop; using noop merger")
+		return &noopMergerFactory{}, nil
+	case "", "git":
+		// Fall through to the merge-environment default below.
+	default:
+		return nil, fmt.Errorf("invalid MERGER %q", impl)
+	}
+
 	checkoutPath := os.Getenv("MERGE_CHECKOUT_PATH")
 	if checkoutPath == "" {
 		logger.Info("MERGE_CHECKOUT_PATH not set; using noop merger")
@@ -367,6 +384,16 @@ type noopMergerFactory struct{}
 
 func (f *noopMergerFactory) For(_ merger.Config) (merger.Merger, error) {
 	return noop.New(), nil
+}
+
+// fakeMergerFactory shares one fake merger across queues so the synthetic
+// revision ids it mints stay unique for the lifetime of the process.
+type fakeMergerFactory struct {
+	merger merger.Merger
+}
+
+func (f *fakeMergerFactory) For(_ merger.Config) (merger.Merger, error) {
+	return f.merger, nil
 }
 
 // parseStrategy maps the MERGE_DEFAULT_STRATEGY env value to a concrete merge

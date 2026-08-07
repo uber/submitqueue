@@ -59,7 +59,7 @@ var (
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	store         storage.Storage
+	stores        storage.Factory
 	buildRunners  buildrunner.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
@@ -76,7 +76,7 @@ const _opName = "buildsignal"
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	stores storage.Factory,
 	buildRunners buildrunner.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
@@ -85,7 +85,7 @@ func NewController(
 	return &Controller{
 		logger:        logger.Named("buildsignal_controller"),
 		metricsScope:  scope.SubScope("buildsignal_controller"),
-		store:         store,
+		stores:        stores,
 		buildRunners:  buildRunners,
 		registry:      registry,
 		topicKey:      topicKey,
@@ -109,16 +109,30 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to deserialize build signal: %w", err)
 	}
 
-	build, err := c.loadBuild(ctx, sig.Id)
+	store, err := c.stores.For(storage.Config{QueueName: sig.GetQueueName()})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_resolve_errors", 1)
+		// Non-retryable: a missing or unresolvable queue is a malformed message.
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", sig.GetQueueName(), err)
+	}
+
+	build, err := c.loadBuild(ctx, store, sig.Id)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
 		return err
 	}
 
-	request, err := c.loadRequest(ctx, build.RequestID)
+	request, err := c.loadRequest(ctx, store, build.RequestID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
 		return err
+	}
+
+	// The payload's queue must match the request's authoritative queue; a
+	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
+	if sig.GetQueueName() != "" && sig.GetQueueName() != request.Queue {
+		metrics.NamedCounter(c.metricsScope, _opName, "queue_mismatch", 1)
+		return fmt.Errorf("payload queue %q does not match queue %q of request %s", sig.GetQueueName(), request.Queue, request.ID)
 	}
 
 	// A request only reaches the poll loop after process admitted it, so it is
@@ -147,16 +161,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to poll status for build %s: %w", build.ID, err)
 	}
 
-	effective, err := c.reconcile(ctx, build, status)
+	effective, err := c.reconcile(ctx, store, build, status)
 	if err != nil {
 		return err
 	}
 
 	if effective.IsTerminal() {
-		if err := c.finishRequest(ctx, &request, effective); err != nil {
+		if err := c.finishRequest(ctx, store, &request, effective); err != nil {
 			return err
 		}
-		if err := c.publishRecord(ctx, request.ID); err != nil {
+		if err := c.publishRecord(ctx, request.ID, request.Queue); err != nil {
 			return fmt.Errorf("failed to publish record for request %s: %w", request.ID, err)
 		}
 		c.logger.Infow("build reached terminal status",
@@ -194,17 +208,17 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // the request non-terminal, so redelivery re-runs both steps and decrements again
 // — transiently over-admitting by one until releaseBuildSlot's zero clamp
 // reconverges, which is the failure mode this pipeline prefers.
-func (c *Controller) finishRequest(ctx context.Context, request *entity.Request, status entity.BuildStatus) error {
+func (c *Controller) finishRequest(ctx context.Context, store storage.Storage, request *entity.Request, status entity.BuildStatus) error {
 	if request.State.HasBuildOutcome() {
 		return nil
 	}
 
-	if err := c.releaseBuildSlot(ctx, request.Queue); err != nil {
+	if err := c.releaseBuildSlot(ctx, store, request.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
 		return err
 	}
 
-	if err := c.markOutcome(ctx, request, outcomeState(status)); err != nil {
+	if err := c.markOutcome(ctx, store, request, outcomeState(status)); err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
 		return err
 	}
@@ -229,8 +243,8 @@ func outcomeState(status entity.BuildStatus) entity.RequestState {
 // conflicts. First writer wins: once any outcome is recorded a later caller leaves it
 // alone, so duplicate builds for one request (which build.md accepts) cannot flip the
 // verdict back and forth.
-func (c *Controller) markOutcome(ctx context.Context, request *entity.Request, state entity.RequestState) error {
-	reqStore := c.store.GetRequestStore()
+func (c *Controller) markOutcome(ctx context.Context, store storage.Storage, request *entity.Request, state entity.RequestState) error {
+	reqStore := store.GetRequestStore()
 
 	for {
 		if request.State != entity.RequestStateProcessing {
@@ -265,8 +279,8 @@ func (c *Controller) markOutcome(ctx context.Context, request *entity.Request, s
 // (preserving concurrent updates), clamps at zero, and retries on version conflicts.
 // Unlike process's unwind-path release this is not best-effort: the caller must not
 // mark the request terminal if the slot was not freed, so a hard failure is returned.
-func (c *Controller) releaseBuildSlot(ctx context.Context, queueName string) error {
-	queueStore := c.store.GetQueueStore()
+func (c *Controller) releaseBuildSlot(ctx context.Context, store storage.Storage, queueName string) error {
+	queueStore := store.GetQueueStore()
 
 	for {
 		queueRow, err := queueStore.Get(ctx, queueName)
@@ -295,7 +309,7 @@ func (c *Controller) releaseBuildSlot(ctx context.Context, queueName string) err
 // should drive the rest of Process: the polled status when persisted (or
 // already unchanged), or the stored status when a stored terminal status is
 // write-once-protected against a differing poll.
-func (c *Controller) reconcile(ctx context.Context, build entity.Build, status entity.BuildStatus) (entity.BuildStatus, error) {
+func (c *Controller) reconcile(ctx context.Context, store storage.Storage, build entity.Build, status entity.BuildStatus) (entity.BuildStatus, error) {
 	if status == build.Status {
 		return build.Status, nil
 	}
@@ -309,20 +323,20 @@ func (c *Controller) reconcile(ctx context.Context, build entity.Build, status e
 	newVersion := build.Version + 1
 	updated := build
 	updated.Status = status
-	if err := c.store.GetBuildStore().Update(ctx, updated, build.Version, newVersion); err != nil {
+	if err := store.GetBuildStore().Update(ctx, updated, build.Version, newVersion); err != nil {
 		return "", fmt.Errorf("failed to persist status for build %s: %w", build.ID, err)
 	}
 	return status, nil
 }
 
 // loadBuild returns the build for id.
-func (c *Controller) loadBuild(ctx context.Context, id string) (entity.Build, error) {
-	return loader.ByID(ctx, id, c.store.GetBuildStore().Get, "build")
+func (c *Controller) loadBuild(ctx context.Context, store storage.Storage, id string) (entity.Build, error) {
+	return loader.ByID(ctx, id, store.GetBuildStore().Get, "build")
 }
 
 // loadRequest returns the request for id.
-func (c *Controller) loadRequest(ctx context.Context, id string) (entity.Request, error) {
-	return loader.ByID(ctx, id, c.store.GetRequestStore().Get, "request")
+func (c *Controller) loadRequest(ctx context.Context, store storage.Storage, id string) (entity.Request, error) {
+	return loader.ByID(ctx, id, store.GetRequestStore().Get, "request")
 }
 
 // pollDelay returns the delay before the next Status call for a non-terminal status.
@@ -340,8 +354,8 @@ func pollDelay(status entity.BuildStatus) int64 {
 // id. The message id is the request id too, so a redelivery republishing the
 // same terminal signal dedups into the original message rather than enqueuing a
 // second one.
-func (c *Controller) publishRecord(ctx context.Context, requestID string) error {
-	payload, err := stovepipemq.Marshal(&stovepipemq.Record{Id: requestID})
+func (c *Controller) publishRecord(ctx context.Context, requestID, queue string) error {
+	payload, err := stovepipemq.Marshal(&stovepipemq.Record{Id: requestID, QueueName: queue})
 	if err != nil {
 		return fmt.Errorf("failed to serialize record: %w", err)
 	}

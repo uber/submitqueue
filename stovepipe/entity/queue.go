@@ -31,6 +31,11 @@ type Queue struct {
 	// whole-repo validation recorded green (health degree 0). Empty until the first such outcome.
 	LastGreenURI string `json:"last_green_uri"`
 
+	// LastGreenRequestID is the request that established LastGreenURI. The bookmark only
+	// moves forward: a green outcome adopts the pair only when this id is empty or older
+	// than the candidate's, compared by ingest order via CompareRequestID.
+	LastGreenRequestID string `json:"last_green_request_id"`
+
 	// InFlightCount is the number of trunk validations admitted by process but not yet terminal.
 	InFlightCount int32 `json:"in_flight_count"`
 

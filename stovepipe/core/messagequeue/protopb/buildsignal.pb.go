@@ -46,7 +46,11 @@ type BuildSignal struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// id is the build id to poll: the runner-assigned id minted by
 	// BuildRunner.Trigger (entity.Build.ID / entity.BuildID.ID).
-	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// queue_name is the name of the queue processing the batch's request,
+	// carried so the consumer can route by queue without loading state first.
+	// Empty on payloads written before the field existed.
+	QueueName     string `protobuf:"bytes,2,opt,name=queue_name,json=queueName,proto3" json:"queue_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -88,13 +92,22 @@ func (x *BuildSignal) GetId() string {
 	return ""
 }
 
+func (x *BuildSignal) GetQueueName() string {
+	if x != nil {
+		return x.QueueName
+	}
+	return ""
+}
+
 var File_buildsignal_proto protoreflect.FileDescriptor
 
 const file_buildsignal_proto_rawDesc = "" +
 	"\n" +
-	"\x11buildsignal.proto\x12\x1buber.stovepipe.messagequeue\x1a.api/base/messagequeue/proto/messagequeue.proto\".\n" +
+	"\x11buildsignal.proto\x12\x1buber.stovepipe.messagequeue\x1a.api/base/messagequeue/proto/messagequeue.proto\"M\n" +
 	"\vBuildSignal\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id:\x0f\x8a\xb5\x18\vbuildsignalB\x82\x01\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
+	"\n" +
+	"queue_name\x18\x02 \x01(\tR\tqueueName:\x0f\x8a\xb5\x18\vbuildsignalB\x82\x01\n" +
 	"+com.uber.submitqueue.stovepipe.messagequeueB\x10BuildSignalProtoP\x01Z?github.com/uber/submitqueue/stovepipe/core/messagequeue/protopbb\x06proto3"
 
 var (

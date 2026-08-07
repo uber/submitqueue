@@ -69,6 +69,7 @@ subConfig.DLQ.TopicSuffix = "_dlq"                    // DLQ topic suffix
 | `SubscriberName` | Unique worker identifier for partition leasing (e.g., hostname, pod name) |
 | `ConsumerGroup` | Consumer group for independent offset tracking |
 | `PollIntervalMs` | How often to poll for new messages |
+| `PartitionDiscoveryIntervalMs` | How often to discover partitions, attempt lease acquisition, and reconcile workers |
 | `BatchSize` | Maximum messages to fetch per poll. Set to `1` for strict serialization |
 | `VisibilityTimeoutMs` | How long messages are invisible after fetch. Must exceed max processing time for `BatchSize=1` |
 | `LeaseRenewalIntervalMs` | How often to renew partition leases |

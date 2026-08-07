@@ -172,7 +172,7 @@ integration-test-submitqueue-orchestrator: ## Run Orchestrator integration tests
 license-fix: ## Add missing license headers to source files
 	@$(BAZEL) run //tool/linter/licenseheader -- --fix
 
-lint: lint-fmt lint-license ## Run all linters
+lint: lint-fmt lint-license lint-queue-shard ## Run all linters
 	@echo "All lint checks passed."
 
 lint-fmt: fmt ## Check code formatting (fails if unformatted)
@@ -181,6 +181,9 @@ lint-fmt: fmt ## Check code formatting (fails if unformatted)
 
 lint-license: ## Check license headers on all source files
 	@$(BAZEL) run //tool/linter/licenseheader -- --check
+
+lint-queue-shard: ## Check every table's primary key leads with the queue column
+	@$(BAZEL) run //tool/linter/queueshard
 
 local-submitqueue-clean: ## Stop and remove all local services, volumes, and images
 	@echo "Cleaning all services and data..."

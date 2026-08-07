@@ -34,4 +34,8 @@ message BuildSignal {
     // id is the build id to poll: the runner-assigned id minted by
     // BuildRunner.Trigger (entity.Build.ID / entity.BuildID.ID).
     string id = 1;
+    // queue_name is the name of the queue processing the batch's request,
+    // carried so the consumer can route by queue without loading state first.
+    // Empty on payloads written before the field existed.
+    string queue_name = 2;
 }

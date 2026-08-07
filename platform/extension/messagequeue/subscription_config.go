@@ -30,6 +30,14 @@ type SubscriptionConfig struct {
 	// PollIntervalMs is how often to poll for new messages (in milliseconds).
 	PollIntervalMs int64
 
+	// PartitionDiscoveryIntervalMs is how often to discover partitions,
+	// attempt lease acquisition, and reconcile partition workers (in
+	// milliseconds). Separate from PollIntervalMs: message polling needs low
+	// latency, while discovery drives topic-wide queries whose volume
+	// multiplies with subscribers and topics and whose outcome only changes
+	// on membership or partition changes.
+	PartitionDiscoveryIntervalMs int64
+
 	// BatchSize is the maximum number of messages to fetch per poll.
 	BatchSize int
 
@@ -98,13 +106,14 @@ func DLQSubscriptionConfig(subscriberName, consumerGroup string) SubscriptionCon
 // DefaultSubscriptionConfig returns a SubscriptionConfig with sensible defaults.
 func DefaultSubscriptionConfig(subscriberName, consumerGroup string) SubscriptionConfig {
 	return SubscriptionConfig{
-		SubscriberName:         subscriberName,
-		ConsumerGroup:          consumerGroup,
-		PollIntervalMs:         100, // 100ms
-		BatchSize:              10,
-		VisibilityTimeoutMs:    60000, // 60s
-		LeaseRenewalIntervalMs: 10000, // 10s
-		LeaseDurationMs:        30000, // 30s
+		SubscriberName:               subscriberName,
+		ConsumerGroup:                consumerGroup,
+		PollIntervalMs:               100,  // 100ms
+		PartitionDiscoveryIntervalMs: 1000, // 1s
+		BatchSize:                    10,
+		VisibilityTimeoutMs:          60000, // 60s
+		LeaseRenewalIntervalMs:       10000, // 10s
+		LeaseDurationMs:              30000, // 30s
 		Retry: RetryConfig{
 			MaxAttempts:       3,
 			InitialBackoffMs:  1000,  // 1s

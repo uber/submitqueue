@@ -36,12 +36,15 @@ import (
 	"github.com/uber/submitqueue/platform/extension/consumergate"
 	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
 	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
+	"github.com/uber/submitqueue/platform/extension/counter"
 	mysqlcounter "github.com/uber/submitqueue/platform/extension/counter/mysql"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/service/submitqueue/gateway/server/mapper"
+	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	yamlqueueconfig "github.com/uber/submitqueue/submitqueue/extension/queueconfig/yaml"
+	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/submitqueue/gateway/controller"
 	logctrl "github.com/uber/submitqueue/submitqueue/gateway/controller/log"
@@ -224,8 +227,8 @@ func run() error {
 	}
 	defer appDB.Close()
 
-	// Initialize counter from shared app database connection
-	cnt := mysqlcounter.NewCounter(appDB, scope.SubScope("counter"))
+	// Initialize counter factory from shared app database connection
+	cnt := counterFactory{db: appDB, scope: scope.SubScope("counter")}
 
 	// Open queue database connection
 	queueDSN := os.Getenv("QUEUE_MYSQL_DSN")
@@ -321,23 +324,16 @@ func run() error {
 		return fmt.Errorf("failed to load queue configs: %w", err)
 	}
 
-	// Create controllers and wrap them for gRPC
+	// Create controllers and wrap them for gRPC. Every store is queue-scoped and
+	// resolves through the factory adapter; land/cancel/log share one materializer.
+	storageFty := storageFactory{backend: store}
+	materializer := requestcore.NewMaterializer(storageFty)
 	pingController := controller.NewPingController(logger, scope)
-	landController := controller.NewLandController(logger.Sugar(), scope, cnt, store, queueConfigs, registry)
-	cancelController := controller.NewCancelController(logger.Sugar(), scope, store, registry)
-	requestSummaryController := controller.NewRequestSummaryController(
-		logger.Sugar(),
-		scope,
-		store.GetRequestSummaryStore(),
-		store.GetRequestURIStore(),
-	)
-	listController := controller.NewListController(logger.Sugar(), scope, store.GetRequestQueueSummaryStore(), queueConfigs)
-	requestHistoryController := controller.NewRequestHistoryController(
-		logger.Sugar(),
-		scope,
-		store.GetRequestLogStore(),
-		store.GetRequestURIStore(),
-	)
+	landController := controller.NewLandController(logger.Sugar(), scope, cnt, storageFty, materializer, queueConfigs, registry)
+	cancelController := controller.NewCancelController(logger.Sugar(), scope, storageFty, materializer, registry)
+	requestSummaryController := controller.NewRequestSummaryController(logger.Sugar(), scope, storageFty)
+	listController := controller.NewListController(logger.Sugar(), scope, storageFty, queueConfigs)
+	requestHistoryController := controller.NewRequestHistoryController(logger.Sugar(), scope, storageFty)
 	gatewayServer := &GatewayServer{
 		pingController:           pingController,
 		landController:           landController,
@@ -367,7 +363,7 @@ func run() error {
 		newConsumerGate(logger),
 	)
 
-	logController := logctrl.NewController(logger.Sugar(), scope, store, topickey.TopicKeyLog, "gateway-log")
+	logController := logctrl.NewController(logger.Sugar(), scope, materializer, topickey.TopicKeyLog, "gateway-log")
 	if err := logConsumer.Register(logController); err != nil {
 		return fmt.Errorf("failed to register log controller: %w", err)
 	}
@@ -456,4 +452,34 @@ func newConsumerGate(logger *zap.Logger) consumergate.Gate {
 	}
 	logger.Info("consumer gate configured", zap.String("dir", dir))
 	return consumergatefile.New(dir)
+}
+
+// storageFactory adapts the MySQL storage backend's queue binding to the
+// storage.Factory seam. Routing every queue to the single shared backend is
+// this host's policy; a deployment that splits queues across backends swaps
+// this adapter for a routing one.
+type storageFactory struct {
+	backend *mysqlstorage.Storage
+}
+
+// For returns the queue-scoped store aggregate bound to the queue named in config.
+func (f storageFactory) For(config storage.Config) (storage.Storage, error) {
+	return f.backend.For(config.QueueName)
+}
+
+// counterFactory adapts the MySQL counter backend to the counter.Factory seam.
+// Routing every queue to the single shared database is this host's policy; a
+// deployment that splits queues across backends swaps this adapter for a
+// routing one.
+type counterFactory struct {
+	db    *sql.DB
+	scope tally.Scope
+}
+
+// For returns the Counter bound to the queue named in config.
+func (f counterFactory) For(config counter.Config) (counter.Counter, error) {
+	if config.QueueName == "" {
+		return nil, fmt.Errorf("queue name must not be empty")
+	}
+	return mysqlcounter.NewCounter(f.db, f.scope, config.QueueName), nil
 }

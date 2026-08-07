@@ -36,7 +36,7 @@ func setupBatchStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.BatchS
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	store := NewBatchStore(db, testMetrics())
+	store := NewBatchStore(db, testMetrics(), "monorepo")
 
 	return db, mock, store
 }
@@ -70,7 +70,7 @@ func TestBatchStore_Get(t *testing.T) {
 				rows := sqlmock.NewRows([]string{"id", "queue", "contains", "dependencies", "state", "version"}).
 					AddRow(want.ID, want.Queue, containsJSON, dependenciesJSON, string(want.State), want.Version)
 				mock.ExpectQuery("SELECT id, queue, contains, dependencies, state, version FROM batch").
-					WithArgs(want.ID).
+					WithArgs("monorepo", want.ID).
 					WillReturnRows(rows)
 			},
 			want: want,
@@ -80,7 +80,7 @@ func TestBatchStore_Get(t *testing.T) {
 			id:   "missing",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectQuery("SELECT id, queue, contains, dependencies, state, version FROM batch").
-					WithArgs("missing").
+					WithArgs("monorepo", "missing").
 					WillReturnError(sql.ErrNoRows)
 			},
 			wantErr:   true,
@@ -91,7 +91,7 @@ func TestBatchStore_Get(t *testing.T) {
 			id:   "bad",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectQuery("SELECT id, queue, contains, dependencies, state, version FROM batch").
-					WithArgs("bad").
+					WithArgs("monorepo", "bad").
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,
@@ -103,7 +103,7 @@ func TestBatchStore_Get(t *testing.T) {
 				rows := sqlmock.NewRows([]string{"id", "queue", "contains", "dependencies", "state", "version"}).
 					AddRow(want.ID, want.Queue, []byte("not json"), dependenciesJSON, string(want.State), want.Version)
 				mock.ExpectQuery("SELECT id, queue, contains, dependencies, state, version FROM batch").
-					WithArgs("malformed").
+					WithArgs("monorepo", "malformed").
 					WillReturnRows(rows)
 			},
 			wantErr: true,
@@ -202,7 +202,7 @@ func TestBatchStore_Update(t *testing.T) {
 	const oldVersion, newVersion = int32(1), int32(2)
 	batch := entity.Batch{
 		ID:           "monorepo/batch/1",
-		Queue:        "monorepo-updated",
+		Queue:        "monorepo",
 		Contains:     []string{"monorepo/3", "monorepo/4"},
 		Dependencies: []string{"monorepo/batch/1", "monorepo/batch/2"},
 		State:        entity.BatchStateMerging,
@@ -225,7 +225,7 @@ func TestBatchStore_Update(t *testing.T) {
 			batch: batch,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE batch").
-					WithArgs(batch.Queue, containsJSON, dependenciesJSON, batch.State, newVersion, batch.ID, oldVersion).
+					WithArgs(containsJSON, dependenciesJSON, batch.State, newVersion, batch.Queue, batch.ID, oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -234,7 +234,7 @@ func TestBatchStore_Update(t *testing.T) {
 			batch: batch,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE batch").
-					WithArgs(batch.Queue, containsJSON, dependenciesJSON, batch.State, newVersion, batch.ID, oldVersion).
+					WithArgs(containsJSON, dependenciesJSON, batch.State, newVersion, batch.Queue, batch.ID, oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
 			wantErr:   true,
@@ -245,7 +245,7 @@ func TestBatchStore_Update(t *testing.T) {
 			batch: batch,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE batch").
-					WithArgs(batch.Queue, containsJSON, dependenciesJSON, batch.State, newVersion, batch.ID, oldVersion).
+					WithArgs(containsJSON, dependenciesJSON, batch.State, newVersion, batch.Queue, batch.ID, oldVersion).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,
@@ -255,7 +255,7 @@ func TestBatchStore_Update(t *testing.T) {
 			batch: batch,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE batch").
-					WithArgs(batch.Queue, containsJSON, dependenciesJSON, batch.State, newVersion, batch.ID, oldVersion).
+					WithArgs(containsJSON, dependenciesJSON, batch.State, newVersion, batch.Queue, batch.ID, oldVersion).
 					WillReturnResult(sqlmock.NewErrorResult(fmt.Errorf("driver error")))
 			},
 			wantErr: true,
@@ -270,7 +270,7 @@ func TestBatchStore_Update(t *testing.T) {
 			},
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE batch").
-					WithArgs(batch.Queue, []byte("null"), []byte("null"), batch.State, newVersion, batch.ID, oldVersion).
+					WithArgs([]byte("null"), []byte("null"), batch.State, newVersion, batch.Queue, batch.ID, oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -286,7 +286,7 @@ func TestBatchStore_Update(t *testing.T) {
 			},
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE batch").
-					WithArgs(batch.Queue, []byte("[]"), []byte("[]"), batch.State, newVersion, batch.ID, oldVersion).
+					WithArgs([]byte("[]"), []byte("[]"), batch.State, newVersion, batch.Queue, batch.ID, oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},

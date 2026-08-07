@@ -43,7 +43,6 @@ import (
 	orchestratorpb "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb"
 	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemysql "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/test/testutil"
 	"google.golang.org/grpc"
@@ -60,7 +59,7 @@ type E2EIntegrationSuite struct {
 	orchestratorClient orchestratorpb.SubmitQueueOrchestratorClient
 	db                 *sql.DB                 // App database
 	queueDB            *sql.DB                 // Queue database
-	requestStore       storage.RequestStore    // White-box view of the internal RequestState (app DB)
+	appStorage         *storagemysql.Storage   // White-box view of the operating store (app DB), resolved per queue
 	gate               *consumergatefile.Store // Consumer-gate control plane (shared dir bind-mounted into services)
 }
 
@@ -135,7 +134,8 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 	s.log.Logf("Schemas applied successfully")
 
 	// White-box handle on the operating store for point-in-time RequestState.
-	s.requestStore = storagemysql.NewRequestStore(s.db, tally.NoopScope)
+	s.appStorage, err = storagemysql.NewStorage(s.db, tally.NoopScope)
+	require.NoError(t, err, "failed to create app storage backend")
 
 	// Connect to Gateway gRPC service
 	var gatewayConn *grpc.ClientConn
@@ -227,18 +227,18 @@ func (s *E2EIntegrationSuite) TestPingOrchestrator() {
 // storage only via that cross-service publish→consume→persist path, so its
 // presence in GetRequestHistoryByID proves the path works.
 func (s *E2EIntegrationSuite) TestLand_HappyPath_ReachesLanded() {
-	sqid := s.land("e2e-test-queue", "github://github.example.com/uber/e2e-service/pull/123/abcdef0123456789abcdef0123456789abcdef01")
-	s.log.Logf("Land (happy path) succeeded: sqid=%s; waiting for landed", sqid)
+	req := s.land("e2e-test-queue", "github://github.example.com/uber/e2e-service/pull/123/abcdef0123456789abcdef0123456789abcdef01")
+	s.log.Logf("Land (happy path) succeeded: sqid=%s; waiting for landed", req.sqid)
 
 	// Black-box: the customer-facing status reaches landed.
-	s.awaitStatus(sqid, entity.RequestStatusLanded)
+	s.awaitStatus(req, entity.RequestStatusLanded)
 
 	// Black-box history: all status entries for a request share its request_id
 	// partition on the log topic, and the terminal "landed" is published last.
 	// Once "landed" is observed, GetRequestHistoryByID must expose the earlier statuses.
 	// This is a tolerant ordered-subsequence match because the pipeline does not
 	// emit every possible display status.
-	s.assertStatusesInOrder(sqid,
+	s.assertStatusesInOrder(req,
 		entity.RequestStatusAccepted,
 		entity.RequestStatusStarted,
 		entity.RequestStatusBatched,
@@ -248,8 +248,8 @@ func (s *E2EIntegrationSuite) TestLand_HappyPath_ReachesLanded() {
 	// White-box (internal state): the operating store's authoritative
 	// RequestState settled on landed. RequestState is point-in-time, so this is a
 	// terminal check, not a sequence.
-	assert.Equal(s.T(), entity.RequestStateLanded, s.terminalState(sqid),
-		"operating store should show request %s in terminal state landed", sqid)
+	assert.Equal(s.T(), entity.RequestStateLanded, s.terminalState(req),
+		"operating store should show request %s in terminal state landed", req.sqid)
 }
 
 // TestReadAPIs validates all five request read endpoints against receipts
@@ -260,24 +260,26 @@ func (s *E2EIntegrationSuite) TestReadAPIs() {
 		queue     = "e2e-test-queue"
 		changeURI = "github://uber/e2e-read-apis/pull/456/abcdef0123456789abcdef0123456789abcdef01"
 	)
-	firstSqid := s.land(queue, changeURI)
-	secondSqid := s.land(queue, changeURI)
-	s.awaitStatus(firstSqid, entity.RequestStatusLanded)
-	s.awaitStatus(secondSqid, entity.RequestStatusError)
+	first := s.land(queue, changeURI)
+	second := s.land(queue, changeURI)
+	firstSqid, secondSqid := first.sqid, second.sqid
 
-	firstSummary, err := s.gatewayClient.GetRequestSummaryByID(s.ctx, &gatewaypb.GetRequestSummaryByIDRequest{Sqid: firstSqid})
+	s.awaitStatus(first, entity.RequestStatusLanded)
+	s.awaitStatus(second, entity.RequestStatusError)
+
+	firstSummary, err := s.gatewayClient.GetRequestSummaryByID(s.ctx, &gatewaypb.GetRequestSummaryByIDRequest{Sqid: firstSqid, Queue: queue})
 	require.NoError(t, err)
 	require.NotNil(t, firstSummary.Request)
 	assert.Equal(t, firstSqid, firstSummary.Request.Sqid)
 	assert.Equal(t, queue, firstSummary.Request.Queue)
 	assert.Equal(t, []string{changeURI}, firstSummary.Request.ChangeUris)
 
-	secondSummary, err := s.gatewayClient.GetRequestSummaryByID(s.ctx, &gatewaypb.GetRequestSummaryByIDRequest{Sqid: secondSqid})
+	secondSummary, err := s.gatewayClient.GetRequestSummaryByID(s.ctx, &gatewaypb.GetRequestSummaryByIDRequest{Sqid: secondSqid, Queue: queue})
 	require.NoError(t, err)
 	require.NotNil(t, secondSummary.Request)
 	assert.Contains(t, secondSummary.Request.LastError, firstSqid)
 
-	summariesByChange, err := s.gatewayClient.GetRequestSummaryByChangeURI(s.ctx, &gatewaypb.GetRequestSummaryByChangeURIRequest{ChangeUri: changeURI})
+	summariesByChange, err := s.gatewayClient.GetRequestSummaryByChangeURI(s.ctx, &gatewaypb.GetRequestSummaryByChangeURIRequest{ChangeUri: changeURI, Queue: queue})
 	require.NoError(t, err)
 	require.Len(t, summariesByChange.Requests, 2)
 	expectedNewestFirst := []string{firstSqid, secondSqid}
@@ -312,12 +314,12 @@ func (s *E2EIntegrationSuite) TestReadAPIs() {
 	}
 	assert.Equal(t, expectedNewestFirst, listedSqids)
 
-	historyByID, err := s.gatewayClient.GetRequestHistoryByID(s.ctx, &gatewaypb.GetRequestHistoryByIDRequest{Sqid: firstSqid})
+	historyByID, err := s.gatewayClient.GetRequestHistoryByID(s.ctx, &gatewaypb.GetRequestHistoryByIDRequest{Sqid: firstSqid, Queue: queue})
 	require.NoError(t, err)
 	require.NotEmpty(t, historyByID.Events)
 	assert.Equal(t, string(entity.RequestStatusAccepted), historyByID.Events[0].Status)
 
-	historyByChange, err := s.gatewayClient.GetRequestHistoryByChangeURI(s.ctx, &gatewaypb.GetRequestHistoryByChangeURIRequest{ChangeUri: changeURI})
+	historyByChange, err := s.gatewayClient.GetRequestHistoryByChangeURI(s.ctx, &gatewaypb.GetRequestHistoryByChangeURIRequest{ChangeUri: changeURI, Queue: queue})
 	require.NoError(t, err)
 	require.Len(t, historyByChange.Histories, 2)
 	assert.Equal(t, []string{firstSqid, secondSqid}, []string{historyByChange.Histories[0].Sqid, historyByChange.Histories[1].Sqid})
@@ -376,10 +378,10 @@ func (s *E2EIntegrationSuite) TestCancel_CaughtPreBatch_NeverLands() {
 	// stack with a delivery still parked. Opening twice is a no-op.
 	defer s.openGate(gateGroup, queue)
 
-	sqid := s.land(queue, "github://github.example.com/uber/e2e-cancel/pull/9999/abcdef0123456789abcdef0123456789abcdef01")
-	s.log.Logf("Land (cancel path) succeeded: sqid=%s; awaiting parked check", sqid)
+	req := s.land(queue, "github://github.example.com/uber/e2e-cancel/pull/9999/abcdef0123456789abcdef0123456789abcdef01")
+	s.log.Logf("Land (cancel path) succeeded: sqid=%s; awaiting parked check", req.sqid)
 
-	parked := s.awaitParked(gateGroup, gateTopic, sqid)
+	parked := s.awaitParked(gateGroup, gateTopic, req.sqid)
 	assert.Equal(t, queue, parked.PartitionKey, "check message should be partitioned by queue")
 	assert.NotEmpty(t, parked.Payload, "parked record should carry the check payload")
 
@@ -387,21 +389,21 @@ func (s *E2EIntegrationSuite) TestCancel_CaughtPreBatch_NeverLands() {
 	// cancel now. The request cannot be batched until the check is answered,
 	// so the cancel controller takes the not-batched path to terminal
 	// Cancelled.
-	_, err := s.gatewayClient.Cancel(s.ctx, &gatewaypb.CancelRequest{Sqid: sqid, Reason: "e2e cancel test"})
+	_, err := s.gatewayClient.Cancel(s.ctx, &gatewaypb.CancelRequest{Sqid: req.sqid, Queue: queue, Reason: "e2e cancel test"})
 	require.NoError(t, err, "Cancel failed")
 
-	s.awaitStatus(sqid, entity.RequestStatusCancelled)
-	s.assertStatusesInOrder(sqid,
+	s.awaitStatus(req, entity.RequestStatusCancelled)
+	s.assertStatusesInOrder(req,
 		entity.RequestStatusAccepted,
 		entity.RequestStatusCancelling,
 		entity.RequestStatusCancelled,
 	)
-	assert.Equal(t, entity.RequestStateCancelled, s.terminalState(sqid),
-		"operating store should show request %s terminal cancelled while its check is parked", sqid)
+	assert.Equal(t, entity.RequestStateCancelled, s.terminalState(req),
+		"operating store should show request %s terminal cancelled while its check is parked", req.sqid)
 
 	// Start the controller again and prove the parked delivery cleared the gate.
 	s.openGate(gateGroup, queue)
-	s.awaitUnparked(gateGroup, gateTopic, sqid)
+	s.awaitUnparked(gateGroup, gateTopic, req.sqid)
 
 	// Sentinel on the same queue: its landing proves the stale signal ahead of
 	// it on the same partitions was consumed.
@@ -409,7 +411,7 @@ func (s *E2EIntegrationSuite) TestCancel_CaughtPreBatch_NeverLands() {
 	s.awaitStatus(sentinel, entity.RequestStatusLanded)
 
 	// The stale check answer was dropped: the cancelled request never advanced.
-	assert.Equal(t, entity.RequestStateCancelled, s.terminalState(sqid),
-		"request %s must stay terminal cancelled after its stale check signal is processed", sqid)
-	s.assertStatusesNever(sqid, entity.RequestStatusBatched, entity.RequestStatusLanded)
+	assert.Equal(t, entity.RequestStateCancelled, s.terminalState(req),
+		"request %s must stay terminal cancelled after its stale check signal is processed", req.sqid)
+	s.assertStatusesNever(req, entity.RequestStatusBatched, entity.RequestStatusLanded)
 }

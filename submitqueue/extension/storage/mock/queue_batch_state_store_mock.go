@@ -42,32 +42,32 @@ func (m *MockQueueBatchStateStore) EXPECT() *MockQueueBatchStateStoreMockRecorde
 }
 
 // Delete mocks base method.
-func (m *MockQueueBatchStateStore) Delete(ctx context.Context, queue string, state entity.BatchState, batchID string) error {
+func (m *MockQueueBatchStateStore) Delete(ctx context.Context, state entity.BatchState, batchID string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Delete", ctx, queue, state, batchID)
+	ret := m.ctrl.Call(m, "Delete", ctx, state, batchID)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Delete indicates an expected call of Delete.
-func (mr *MockQueueBatchStateStoreMockRecorder) Delete(ctx, queue, state, batchID any) *gomock.Call {
+func (mr *MockQueueBatchStateStoreMockRecorder) Delete(ctx, state, batchID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockQueueBatchStateStore)(nil).Delete), ctx, queue, state, batchID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockQueueBatchStateStore)(nil).Delete), ctx, state, batchID)
 }
 
 // List mocks base method.
-func (m *MockQueueBatchStateStore) List(ctx context.Context, queue string, state entity.BatchState) ([]entity.QueueBatchState, error) {
+func (m *MockQueueBatchStateStore) List(ctx context.Context, state entity.BatchState) ([]entity.QueueBatchState, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "List", ctx, queue, state)
+	ret := m.ctrl.Call(m, "List", ctx, state)
 	ret0, _ := ret[0].([]entity.QueueBatchState)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // List indicates an expected call of List.
-func (mr *MockQueueBatchStateStoreMockRecorder) List(ctx, queue, state any) *gomock.Call {
+func (mr *MockQueueBatchStateStoreMockRecorder) List(ctx, state any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "List", reflect.TypeOf((*MockQueueBatchStateStore)(nil).List), ctx, queue, state)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "List", reflect.TypeOf((*MockQueueBatchStateStore)(nil).List), ctx, state)
 }
 
 // Put mocks base method.

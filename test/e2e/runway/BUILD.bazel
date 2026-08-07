@@ -1,0 +1,35 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "go_default_test",
+    srcs = [
+        "harness_test.go",
+        "suite_test.go",
+    ],
+    data = [
+        "//platform/extension/messagequeue/mysql/schema",
+        "//service/runway/server:docker-compose.yml",
+        "//service/runway/server:docker_test_context",
+    ],
+    tags = [
+        "e2e",
+        "integration",
+        "requires-network",
+    ],
+    deps = [
+        "//api/base/change/protopb:go_default_library",
+        "//api/base/mergestrategy/protopb:go_default_library",
+        "//api/runway/messagequeue:go_default_library",
+        "//api/runway/messagequeue/protopb:go_default_library",
+        "//platform/base/messagequeue:go_default_library",
+        "//platform/extension/messagequeue:go_default_library",
+        "//platform/extension/messagequeue/mysql:go_default_library",
+        "//test/testutil:go_default_library",
+        "@com_github_go_sql_driver_mysql//:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_stretchr_testify//suite:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_uber_go_zap//zaptest:go_default_library",
+    ],
+)

@@ -21,12 +21,12 @@ import (
 
 // ProtoToGetRequestHistoryByIDRequest maps the wire request to the entity request the controller operates on.
 func ProtoToGetRequestHistoryByIDRequest(req *pb.GetRequestHistoryByIDRequest) entity.GetRequestHistoryByIDRequest {
-	return entity.GetRequestHistoryByIDRequest{ID: req.GetSqid()}
+	return entity.GetRequestHistoryByIDRequest{ID: req.GetSqid(), Queue: req.GetQueue()}
 }
 
 // ProtoToGetRequestHistoryByChangeURIRequest maps the wire request to the entity request the controller operates on.
 func ProtoToGetRequestHistoryByChangeURIRequest(req *pb.GetRequestHistoryByChangeURIRequest) entity.GetRequestHistoryByChangeURIRequest {
-	return entity.GetRequestHistoryByChangeURIRequest{ChangeURI: req.GetChangeUri()}
+	return entity.GetRequestHistoryByChangeURIRequest{ChangeURI: req.GetChangeUri(), Queue: req.GetQueue()}
 }
 
 // HistoryEventsToProto maps retained request-log events to wire history events.

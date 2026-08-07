@@ -24,12 +24,12 @@ import (
 
 func TestProtoToGetRequestHistoryRequests(t *testing.T) {
 	assert.Equal(t,
-		entity.GetRequestHistoryByIDRequest{ID: "q/1"},
-		ProtoToGetRequestHistoryByIDRequest(&pb.GetRequestHistoryByIDRequest{Sqid: "q/1"}),
+		entity.GetRequestHistoryByIDRequest{ID: "q/1", Queue: "q"},
+		ProtoToGetRequestHistoryByIDRequest(&pb.GetRequestHistoryByIDRequest{Sqid: "q/1", Queue: "q"}),
 	)
 	assert.Equal(t,
-		entity.GetRequestHistoryByChangeURIRequest{ChangeURI: "uri"},
-		ProtoToGetRequestHistoryByChangeURIRequest(&pb.GetRequestHistoryByChangeURIRequest{ChangeUri: "uri"}),
+		entity.GetRequestHistoryByChangeURIRequest{ChangeURI: "uri", Queue: "q"},
+		ProtoToGetRequestHistoryByChangeURIRequest(&pb.GetRequestHistoryByChangeURIRequest{ChangeUri: "uri", Queue: "q"}),
 	)
 }
 

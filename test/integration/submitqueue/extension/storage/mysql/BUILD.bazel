@@ -12,6 +12,7 @@ go_test(
         "requires-network",
     ],
     deps = [
+        "//submitqueue/extension/storage:go_default_library",
         "//submitqueue/extension/storage/mysql:go_default_library",
         "//test/integration/submitqueue/extension/storage:go_default_library",
         "//test/testutil:go_default_library",

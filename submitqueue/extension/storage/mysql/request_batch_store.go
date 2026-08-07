@@ -31,11 +31,14 @@ import (
 type requestBatchStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewRequestBatchStore creates a MySQL-backed RequestBatchStore.
-func NewRequestBatchStore(db *sql.DB, scope tally.Scope) storage.RequestBatchStore {
-	return &requestBatchStore{db: db, scope: scope}
+func NewRequestBatchStore(db *sql.DB, scope tally.Scope, queue string) storage.RequestBatchStore {
+	return &requestBatchStore{db: db, scope: scope, queue: queue}
 }
 
 func (s *requestBatchStore) GetByRequestID(ctx context.Context, requestID string) (ret []entity.RequestBatch, retErr error) {
@@ -43,8 +46,8 @@ func (s *requestBatchStore) GetByRequestID(ctx context.Context, requestID string
 	defer func() { op.Complete(retErr) }()
 
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT request_id, batch_id, version FROM request_batch WHERE request_id = ? ORDER BY batch_id",
-		requestID,
+		"SELECT request_id, batch_id, version FROM request_batch WHERE queue = ? AND request_id = ? ORDER BY batch_id",
+		s.queue, requestID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get request batch associations requestID=%s: %w", requestID, err)
@@ -70,8 +73,8 @@ func (s *requestBatchStore) Create(ctx context.Context, association entity.Reque
 	defer func() { op.Complete(retErr) }()
 
 	_, err := s.db.ExecContext(ctx,
-		"INSERT INTO request_batch (request_id, batch_id, version) VALUES (?, ?, ?)",
-		association.RequestID, association.BatchID, association.Version,
+		"INSERT INTO request_batch (queue, request_id, batch_id, version) VALUES (?, ?, ?, ?)",
+		s.queue, association.RequestID, association.BatchID, association.Version,
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError

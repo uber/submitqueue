@@ -26,41 +26,38 @@ import (
 	"go.uber.org/zap"
 )
 
-// RequestIDDecoder extracts the affected request ID from the raw payload bytes
-// of a DLQ message. Different primary topics carry different payload shapes
-// (LandRequest on start, CancelRequest on cancel, RequestID on validate /
-// batch), so the caller injects the right decoder for the topic being
-// reconciled. Returning an empty ID is treated as a decode failure.
-type RequestIDDecoder func(payload []byte) (string, error)
+// RequestIDDecoder extracts the affected request's identity — its ID and its
+// queue — from the raw payload bytes of a DLQ message. Different primary
+// topics carry different payload shapes (LandRequest on start, CancelRequest
+// on cancel, RequestID on validate / batch), so the caller injects the right
+// decoder for the topic being reconciled. Returning an empty ID is treated as
+// a decode failure.
+type RequestIDDecoder func(payload []byte) (entity.RequestID, error)
 
 // DecodeLandRequestID extracts the request ID from a LandRequest payload
 // (the shape used by the start topic).
-func DecodeLandRequestID(payload []byte) (string, error) {
+func DecodeLandRequestID(payload []byte) (entity.RequestID, error) {
 	lr, err := entity.LandRequestFromBytes(payload)
 	if err != nil {
-		return "", err
+		return entity.RequestID{}, err
 	}
-	return lr.ID, nil
+	return entity.RequestID{ID: lr.ID, Queue: lr.Queue}, nil
 }
 
 // DecodeCancelRequestID extracts the request ID from a CancelRequest payload
 // (the shape used by the cancel topic).
-func DecodeCancelRequestID(payload []byte) (string, error) {
+func DecodeCancelRequestID(payload []byte) (entity.RequestID, error) {
 	cr, err := entity.CancelRequestFromBytes(payload)
 	if err != nil {
-		return "", err
+		return entity.RequestID{}, err
 	}
-	return cr.ID, nil
+	return entity.RequestID{ID: cr.ID, Queue: cr.Queue}, nil
 }
 
 // DecodeRequestID extracts the request ID from a RequestID payload (the shape
 // used by the validate and batch topics).
-func DecodeRequestID(payload []byte) (string, error) {
-	rid, err := entity.RequestIDFromBytes(payload)
-	if err != nil {
-		return "", err
-	}
-	return rid.ID, nil
+func DecodeRequestID(payload []byte) (entity.RequestID, error) {
+	return entity.RequestIDFromBytes(payload)
 }
 
 // requestController is the DLQ reconciler for request-scoped pipeline stages.
@@ -71,7 +68,7 @@ func DecodeRequestID(payload []byte) (string, error) {
 type requestController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	store         storage.Storage
+	stores        storage.Factory
 	registry      consumer.TopicRegistry
 	decode        RequestIDDecoder
 	topicKey      consumer.TopicKey
@@ -87,7 +84,7 @@ var _ consumer.Controller = (*requestController)(nil)
 func NewDLQRequestController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	stores storage.Factory,
 	registry consumer.TopicRegistry,
 	decode RequestIDDecoder,
 	topicKey consumer.TopicKey,
@@ -97,7 +94,7 @@ func NewDLQRequestController(
 	return &requestController{
 		logger:        logger.Named(name),
 		metricsScope:  scope.SubScope(name),
-		store:         store,
+		stores:        stores,
 		registry:      registry,
 		decode:        decode,
 		topicKey:      topicKey,
@@ -111,7 +108,7 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 
 	msg := delivery.Message()
 
-	requestID, err := c.decode(msg.Payload)
+	rid, err := c.decode(msg.Payload)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		// Malformed DLQ payload is non-retryable: a re-delivery will decode the
@@ -120,21 +117,28 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 		// acked and dropped after the error is logged.
 		return fmt.Errorf("failed to decode dlq payload: %w", err)
 	}
-	if requestID == "" {
+	if rid.ID == "" {
 		metrics.NamedCounter(c.metricsScope, opName, "empty_id_errors", 1)
 		return fmt.Errorf("dlq payload decoded to empty request id")
 	}
 
+	store, err := c.stores.For(storage.Config{QueueName: rid.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		// Non-retryable: a missing or unresolvable queue is a malformed message.
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", rid.Queue, err)
+	}
+
 	dmeta := delivery.Metadata()
 	c.logger.Warnw("dlq message received",
-		"request_id", requestID,
+		"request_id", rid.ID,
 		"attempt", delivery.Attempt(),
 		"dlq_original_topic", dmeta["dlq.original_topic"],
 		"dlq_failure_count", dmeta["dlq.failure_count"],
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
 
-	if err := failRequest(ctx, c.store, c.registry, c.logger, requestID, dmeta["dlq.last_error"]); err != nil {
+	if err := failRequest(ctx, store, c.registry, c.logger, rid.ID, dmeta["dlq.last_error"]); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
 		return err
 	}

@@ -49,10 +49,18 @@ func pollUntil(interval time.Duration, condition func() bool) {
 	}
 }
 
-// land submits a request with the default REBASE strategy and returns its sqid.
+// request identifies one landed request. A sqid is only resolvable within its own
+// queue, so the read APIs take both and the harness carries the pair together
+// rather than threading a bare sqid.
+type request struct {
+	queue string
+	sqid  string
+}
+
+// land submits a request with the default REBASE strategy and returns its identity.
 // URIs may carry "sq-fake=<token>" markers to steer negative paths (see
-// submitqueue/core/fakemarker); the happy path uses a plain change URI.
-func (s *E2EIntegrationSuite) land(queue string, uris ...string) string {
+// platform/fakemarker); the happy path uses a plain change URI.
+func (s *E2EIntegrationSuite) land(queue string, uris ...string) request {
 	t := s.T()
 	resp, err := s.gatewayClient.Land(s.ctx, &gatewaypb.LandRequest{
 		Queue:    queue,
@@ -61,47 +69,47 @@ func (s *E2EIntegrationSuite) land(queue string, uris ...string) string {
 	})
 	require.NoError(t, err, "Land failed for queue %s", queue)
 	require.NotEmpty(t, resp.Sqid, "Land returned an empty sqid for queue %s", queue)
-	return resp.Sqid
+	return request{queue: queue, sqid: resp.Sqid}
 }
 
 // currentStatus reads the request's current customer-facing status via
 // GetRequestSummaryByID. A transport error is returned so callers can keep polling.
-func (s *E2EIntegrationSuite) currentStatus(sqid string) (entity.RequestStatus, error) {
-	resp, err := s.gatewayClient.GetRequestSummaryByID(s.ctx, &gatewaypb.GetRequestSummaryByIDRequest{Sqid: sqid})
+func (s *E2EIntegrationSuite) currentStatus(req request) (entity.RequestStatus, error) {
+	resp, err := s.gatewayClient.GetRequestSummaryByID(s.ctx, &gatewaypb.GetRequestSummaryByIDRequest{Sqid: req.sqid, Queue: req.queue})
 	if err != nil {
 		return entity.RequestStatusUnknown, err
 	}
 	if resp.Request == nil {
-		return entity.RequestStatusUnknown, fmt.Errorf("GetRequestSummaryByID(%s) returned no request", sqid)
+		return entity.RequestStatusUnknown, fmt.Errorf("GetRequestSummaryByID(%s) returned no request", req.sqid)
 	}
 	return entity.RequestStatus(resp.Request.Status), nil
 }
 
 // awaitStatus polls GetRequestSummaryByID until the request reaches exactly want.
-func (s *E2EIntegrationSuite) awaitStatus(sqid string, want entity.RequestStatus) {
+func (s *E2EIntegrationSuite) awaitStatus(req request, want entity.RequestStatus) {
 	pollUntil(persistPollInterval, func() bool {
-		got, err := s.currentStatus(sqid)
+		got, err := s.currentStatus(req)
 		if err != nil {
-			s.log.Logf("GetRequestSummaryByID(%s) not ready yet: %v", sqid, err)
+			s.log.Logf("GetRequestSummaryByID(%s) not ready yet: %v", req.sqid, err)
 			return false
 		}
-		s.log.Logf("GetRequestSummaryByID(%s) = %q (want %q)", sqid, got, want)
+		s.log.Logf("GetRequestSummaryByID(%s) = %q (want %q)", req.sqid, got, want)
 		return got == want
 	})
 }
 
 // awaitTerminal polls GetRequestSummaryByID until the request reaches a terminal status
 // (landed, error, or cancelled) and returns it.
-func (s *E2EIntegrationSuite) awaitTerminal(sqid string) entity.RequestStatus {
+func (s *E2EIntegrationSuite) awaitTerminal(req request) entity.RequestStatus {
 	var last entity.RequestStatus
 	pollUntil(persistPollInterval, func() bool {
-		got, err := s.currentStatus(sqid)
+		got, err := s.currentStatus(req)
 		if err != nil {
-			s.log.Logf("GetRequestSummaryByID(%s) not ready yet: %v", sqid, err)
+			s.log.Logf("GetRequestSummaryByID(%s) not ready yet: %v", req.sqid, err)
 			return false
 		}
 		last = got
-		s.log.Logf("GetRequestSummaryByID(%s) = %q (awaiting terminal)", sqid, got)
+		s.log.Logf("GetRequestSummaryByID(%s) = %q (awaiting terminal)", req.sqid, got)
 		return isTerminalStatus(got)
 	})
 	return last
@@ -109,10 +117,10 @@ func (s *E2EIntegrationSuite) awaitTerminal(sqid string) entity.RequestStatus {
 
 // timeline returns the ordered customer-facing status history through
 // GetRequestHistoryByID.
-func (s *E2EIntegrationSuite) timeline(sqid string) []entity.RequestStatus {
+func (s *E2EIntegrationSuite) timeline(req request) []entity.RequestStatus {
 	t := s.T()
-	resp, err := s.gatewayClient.GetRequestHistoryByID(s.ctx, &gatewaypb.GetRequestHistoryByIDRequest{Sqid: sqid})
-	require.NoError(t, err, "GetRequestHistoryByID failed for %s", sqid)
+	resp, err := s.gatewayClient.GetRequestHistoryByID(s.ctx, &gatewaypb.GetRequestHistoryByIDRequest{Sqid: req.sqid, Queue: req.queue})
+	require.NoError(t, err, "GetRequestHistoryByID failed for %s", req.sqid)
 	statuses := make([]entity.RequestStatus, len(resp.Events))
 	for i, event := range resp.Events {
 		statuses[i] = entity.RequestStatus(event.Status)
@@ -124,9 +132,9 @@ func (s *E2EIntegrationSuite) timeline(sqid string) []entity.RequestStatus {
 // the GetRequestHistoryByID status timeline. It tolerates intermediate statuses (so it is
 // not a change-detector), asserting only the relative order of the statuses that
 // matter.
-func (s *E2EIntegrationSuite) assertStatusesInOrder(sqid string, want ...entity.RequestStatus) {
+func (s *E2EIntegrationSuite) assertStatusesInOrder(req request, want ...entity.RequestStatus) {
 	t := s.T()
-	got := s.timeline(sqid)
+	got := s.timeline(req)
 	matched := 0
 	for _, st := range got {
 		if matched < len(want) && st == want[matched] {
@@ -135,17 +143,17 @@ func (s *E2EIntegrationSuite) assertStatusesInOrder(sqid string, want ...entity.
 	}
 	assert.Equalf(t, len(want), matched,
 		"GetRequestHistoryByID for %s should contain %v as an ordered subsequence; got %v",
-		sqid, want, got)
+		req.sqid, want, got)
 }
 
 // assertStatusesNever asserts that none of the banned statuses ever appeared
 // in the GetRequestHistoryByID status timeline.
-func (s *E2EIntegrationSuite) assertStatusesNever(sqid string, banned ...entity.RequestStatus) {
+func (s *E2EIntegrationSuite) assertStatusesNever(req request, banned ...entity.RequestStatus) {
 	t := s.T()
-	got := s.timeline(sqid)
+	got := s.timeline(req)
 	for _, b := range banned {
 		assert.NotContainsf(t, got, b,
-			"GetRequestHistoryByID for %s must never contain %q; got %v", sqid, b, got)
+			"GetRequestHistoryByID for %s must never contain %q; got %v", req.sqid, b, got)
 	}
 }
 
@@ -218,18 +226,20 @@ func (s *E2EIntegrationSuite) awaitUnparked(consumerGroup, topic, messageID stri
 // operating store (mysql-app). Unlike the status timeline, RequestState is
 // point-in-time — the Request entity is updated in place under optimistic
 // locking, so only the current (terminal, once settled) value is observable.
-func (s *E2EIntegrationSuite) terminalState(sqid string) entity.RequestState {
+func (s *E2EIntegrationSuite) terminalState(req request) entity.RequestState {
 	t := s.T()
-	req, err := s.requestStore.Get(s.ctx, sqid)
-	require.NoError(t, err, "failed to get request %s from operating store", sqid)
-	return req.State
+	store, err := s.appStorage.For(req.queue)
+	require.NoError(t, err, "failed to resolve operating store for queue %s", req.queue)
+	got, err := store.GetRequestStore().Get(s.ctx, req.sqid)
+	require.NoError(t, err, "failed to get request %s from operating store", req.sqid)
+	return got.State
 }
 
 // lastError returns the LastError reported by GetRequestSummaryByID.
-func (s *E2EIntegrationSuite) lastError(sqid string) string {
+func (s *E2EIntegrationSuite) lastError(req request) string {
 	t := s.T()
-	resp, err := s.gatewayClient.GetRequestSummaryByID(s.ctx, &gatewaypb.GetRequestSummaryByIDRequest{Sqid: sqid})
-	require.NoError(t, err, "GetRequestSummaryByID failed for %s", sqid)
+	resp, err := s.gatewayClient.GetRequestSummaryByID(s.ctx, &gatewaypb.GetRequestSummaryByIDRequest{Sqid: req.sqid, Queue: req.queue})
+	require.NoError(t, err, "GetRequestSummaryByID failed for %s", req.sqid)
 	require.NotNil(t, resp.Request)
 	return resp.Request.LastError
 }

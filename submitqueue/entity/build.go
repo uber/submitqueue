@@ -55,12 +55,25 @@ func (s BuildStatus) IsTerminal() bool {
 
 // Build represents a build scheduled for a batch along a specific speculation path.
 // All fields except the Status are immutable after creation.
+//
+// It is keyed by the runner's build ID, which is the identifier every stage
+// downstream of the trigger already holds: a poll, a webhook, and a runner-side
+// log line all name a build, none of them names a speculation path. The path
+// coordinates ride along on the record so those stages never have to
+// understand speculation to do their job.
 type Build struct {
 	// ID is the identifier minted by the queue's build runner when the build
 	// is triggered; this is the primary storage key.
 	ID string
 	// BatchID is the batch for which this build is scheduled.
 	BatchID string
+	// PathID is the speculation path this build verifies, as carried by
+	// SpeculationPathEntry.ID.
+	PathID string
+	// Attempt is which build attempt for that path this is, starting at 1.
+	// A path may be built more than once, so ID names the run while
+	// (PathID, Attempt) names the slot it occupies.
+	Attempt int
 	// Status represents the state of the build lifecycle this build is in.
 	Status BuildStatus
 }
@@ -81,6 +94,8 @@ func BuildFromBytes(data []byte) (Build, error) {
 type BuildID struct {
 	// ID is the globally unique identifier for the build.
 	ID string `json:"id"`
+	// Queue is the name of the queue processing the batch this build verifies. Empty on payloads written before the field existed.
+	Queue string `json:"queue"`
 }
 
 // ToBytes serializes the BuildID to JSON bytes for queue message payload.

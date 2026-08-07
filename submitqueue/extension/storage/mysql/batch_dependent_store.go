@@ -32,11 +32,14 @@ import (
 type batchDependentStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewBatchDependentStore creates a new MySQL-backed BatchDependentStore.
-func NewBatchDependentStore(db *sql.DB, scope tally.Scope) storage.BatchDependentStore {
-	return &batchDependentStore{db: db, scope: scope}
+func NewBatchDependentStore(db *sql.DB, scope tally.Scope, queue string) storage.BatchDependentStore {
+	return &batchDependentStore{db: db, scope: scope, queue: queue}
 }
 
 // Get retrieves the batch dependent by batch ID. Returns ErrNotFound if the batch dependent is not found.
@@ -48,8 +51,8 @@ func (s *batchDependentStore) Get(ctx context.Context, batchID string) (ret enti
 	var dependentsJSON []byte
 
 	err := s.db.QueryRowContext(ctx,
-		"SELECT batch_id, dependents, version FROM batch_dependent WHERE batch_id = ?",
-		batchID,
+		"SELECT batch_id, dependents, version FROM batch_dependent WHERE queue = ? AND batch_id = ?",
+		s.queue, batchID,
 	).Scan(&bd.BatchID, &dependentsJSON, &bd.Version)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -77,8 +80,8 @@ func (s *batchDependentStore) Create(ctx context.Context, batchDependent entity.
 	}
 
 	_, err = s.db.ExecContext(ctx,
-		"INSERT INTO batch_dependent (batch_id, dependents, version) VALUES (?, ?, ?)",
-		batchDependent.BatchID, dependentsJSON, batchDependent.Version,
+		"INSERT INTO batch_dependent (queue, batch_id, dependents, version) VALUES (?, ?, ?, ?)",
+		s.queue, batchDependent.BatchID, dependentsJSON, batchDependent.Version,
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
@@ -104,8 +107,8 @@ func (s *batchDependentStore) Update(ctx context.Context, batchDependent entity.
 	}
 
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE batch_dependent SET dependents = ?, version = ? WHERE batch_id = ? AND version = ?",
-		dependentsJSON, newVersion, batchDependent.BatchID, oldVersion,
+		"UPDATE batch_dependent SET dependents = ?, version = ? WHERE queue = ? AND batch_id = ? AND version = ?",
+		dependentsJSON, newVersion, s.queue, batchDependent.BatchID, oldVersion,
 	)
 	if err != nil {
 		return fmt.Errorf(

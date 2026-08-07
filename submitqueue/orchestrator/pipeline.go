@@ -27,6 +27,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"github.com/uber/submitqueue/submitqueue/extension/validator"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller"
@@ -56,11 +57,11 @@ type Deps struct {
 	// Scope is the metrics scope for all controllers.
 	Scope tally.Scope
 
-	// Storage provides request, batch, and change stores.
-	Storage storage.Storage
+	// Storage resolves the queue-scoped store aggregate per queue.
+	Storage storage.Factory
 
-	// Counter provides distributed batch counters.
-	Counter counter.Counter
+	// Counter resolves the queue-scoped batch counter per queue.
+	Counter counter.Factory
 
 	// BuildRunner resolves the build runner for each queue.
 	BuildRunner buildrunner.Factory
@@ -70,6 +71,9 @@ type Deps struct {
 
 	// Analyzer resolves the conflict analyzer for each queue.
 	Analyzer conflict.Factory
+
+	// Speculator resolves the speculator for each queue.
+	Speculator speculator.Factory
 
 	// Validator resolves the validator for each queue.
 	Validator validator.Factory
@@ -146,7 +150,7 @@ var Stages = []pipeline.Stage[Deps]{
 		Name:          "speculate",
 		ConsumerGroup: "orchestrator",
 		New: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
-			return speculate.NewController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
+			return speculate.NewController(d.Logger, d.Scope, d.Storage, d.Speculator, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 		DLQ: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
 			return dlq.NewDLQBatchController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil

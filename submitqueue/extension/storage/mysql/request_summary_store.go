@@ -32,16 +32,23 @@ import (
 type requestSummaryStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewRequestSummaryStore creates a MySQL-backed RequestSummaryStore.
-func NewRequestSummaryStore(db *sql.DB, scope tally.Scope) storage.RequestSummaryStore {
-	return &requestSummaryStore{db: db, scope: scope}
+func NewRequestSummaryStore(db *sql.DB, scope tally.Scope, queue string) storage.RequestSummaryStore {
+	return &requestSummaryStore{db: db, scope: scope, queue: queue}
 }
 
 func (s *requestSummaryStore) Create(ctx context.Context, summary entity.RequestSummary) (retErr error) {
 	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
+
+	if summary.Queue != s.queue {
+		return fmt.Errorf("request summary request_id=%s queue %q does not match the store's bound queue %q", summary.RequestID, summary.Queue, s.queue)
+	}
 
 	changeURIsJSON, metadataJSON, err := marshalSummaryJSON(summary.ChangeURIs, summary.Metadata)
 	if err != nil {
@@ -50,18 +57,18 @@ func (s *requestSummaryStore) Create(ctx context.Context, summary entity.Request
 
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO request_summary (
-			request_id, queue, change_uris, received_at_ms, status, request_version,
+			queue, request_id, change_uris, received_at_ms, status, request_version,
 			status_timestamp_ms, version,
 			last_error, metadata
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		summary.RequestID, summary.Queue, changeURIsJSON, summary.ReceivedAtMs, summary.Status,
+		summary.Queue, summary.RequestID, changeURIsJSON, summary.ReceivedAtMs, summary.Status,
 		summary.RequestVersion, summary.StatusTimestampMs, summary.Version,
 		summary.LastError, metadataJSON,
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
 		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrDuplicateEntry {
-			return fmt.Errorf("request summary request_id=%s: %w", summary.RequestID, storage.ErrAlreadyExists)
+			return fmt.Errorf("request summary queue=%s request_id=%s: %w", summary.Queue, summary.RequestID, storage.ErrAlreadyExists)
 		}
 		return fmt.Errorf("failed to insert request summary request_id=%s: %w", summary.RequestID, err)
 	}
@@ -76,13 +83,13 @@ func (s *requestSummaryStore) Get(ctx context.Context, requestID string) (ret en
 	var changeURIsJSON []byte
 	var metadataJSON []byte
 	err := s.db.QueryRowContext(ctx, `
-		SELECT request_id, queue, change_uris, received_at_ms, status, request_version,
+		SELECT queue, request_id, change_uris, received_at_ms, status, request_version,
 			status_timestamp_ms, version,
 			last_error, metadata
 		FROM request_summary
-		WHERE request_id = ?`, requestID,
+		WHERE queue = ? AND request_id = ?`, s.queue, requestID,
 	).Scan(
-		&ret.RequestID, &ret.Queue, &changeURIsJSON, &ret.ReceivedAtMs, &ret.Status,
+		&ret.Queue, &ret.RequestID, &changeURIsJSON, &ret.ReceivedAtMs, &ret.Status,
 		&ret.RequestVersion, &ret.StatusTimestampMs, &ret.Version,
 		&ret.LastError, &metadataJSON,
 	)
@@ -90,7 +97,7 @@ func (s *requestSummaryStore) Get(ctx context.Context, requestID string) (ret en
 		return entity.RequestSummary{}, storage.WrapNotFound(err)
 	}
 	if err != nil {
-		return entity.RequestSummary{}, fmt.Errorf("failed to get request summary request_id=%s: %w", requestID, err)
+		return entity.RequestSummary{}, fmt.Errorf("failed to get request summary queue=%s request_id=%s: %w", s.queue, requestID, err)
 	}
 	if err := unmarshalSummaryJSON(changeURIsJSON, metadataJSON, &ret.ChangeURIs, &ret.Metadata); err != nil {
 		return entity.RequestSummary{}, fmt.Errorf("failed to decode request summary request_id=%s: %w", requestID, err)
@@ -103,6 +110,10 @@ func (s *requestSummaryStore) Update(ctx context.Context, summary entity.Request
 	op := metrics.Begin(s.scope, "update", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	if summary.Queue != s.queue {
+		return fmt.Errorf("request summary request_id=%s queue %q does not match the store's bound queue %q", summary.RequestID, summary.Queue, s.queue)
+	}
+
 	changeURIsJSON, metadataJSON, err := marshalSummaryJSON(summary.ChangeURIs, summary.Metadata)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request summary request_id=%s: %w", summary.RequestID, err)
@@ -110,14 +121,14 @@ func (s *requestSummaryStore) Update(ctx context.Context, summary entity.Request
 
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE request_summary
-		SET queue = ?, change_uris = ?, received_at_ms = ?, status = ?,
+		SET change_uris = ?, received_at_ms = ?, status = ?,
 			request_version = ?, status_timestamp_ms = ?, version = ?,
 			last_error = ?, metadata = ?
-		WHERE request_id = ? AND version = ?`,
-		summary.Queue, changeURIsJSON, summary.ReceivedAtMs, summary.Status,
+		WHERE queue = ? AND request_id = ? AND version = ?`,
+		changeURIsJSON, summary.ReceivedAtMs, summary.Status,
 		summary.RequestVersion, summary.StatusTimestampMs, newVersion,
 		summary.LastError, metadataJSON,
-		summary.RequestID, oldVersion,
+		summary.Queue, summary.RequestID, oldVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update request summary request_id=%s old_version=%d new_version=%d: %w", summary.RequestID, oldVersion, newVersion, err)

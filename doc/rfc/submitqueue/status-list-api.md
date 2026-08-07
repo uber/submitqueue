@@ -22,7 +22,7 @@ The append-only request log is not shaped for the second or third query. Serving
 
 1. The gateway exposes `GetRequestSummaryByID` for sqid lookup and `GetRequestSummaryByChangeURI` for exact change URI lookup.
 2. A change URI lookup returns all requests containing that exact URI, ordered by receipt time descending.
-3. Change URIs are treated as globally meaningful identifiers. `GetRequestSummaryByChangeURI` does not require a queue.
+3. Every read selector is queue-scoped. `GetRequestSummaryByID` and `GetRequestSummaryByChangeURI` both require a queue alongside the sqid or change URI, so every table is shardable by queue. A change URI landed into several queues matches separately in each, and looking it up across queues is one call per queue.
 4. `List` accepts one queue and a required receipt-time range. It does not accept sqid or URI selectors.
 5. The `List` time range is based only on gateway receipt time, not lifecycle overlap.
 6. The request-summary RPCs and `List` return the same materialized current state and immutable request context. Neither endpoint returns the request-log timeline.
@@ -49,7 +49,7 @@ rpc GetRequestSummaryByID(GetRequestSummaryByIDRequest) returns (GetRequestSumma
 rpc GetRequestSummaryByChangeURI(GetRequestSummaryByChangeURIRequest) returns (GetRequestSummaryByChangeURIResponse) {}
 ```
 
-`GetRequestSummaryByID` requires a non-empty sqid. `GetRequestSummaryByChangeURI` requires a non-empty exact change URI.
+`GetRequestSummaryByID` requires a non-empty sqid and a non-empty queue. `GetRequestSummaryByChangeURI` requires a non-empty exact change URI and a non-empty queue. A sqid is only resolvable within its own queue, so naming a queue the request does not belong to is reported as not found rather than as a mismatch.
 
 An sqid lookup returns exactly one request summary when found. A change URI lookup returns every matching request summary ordered by `(received_at_ms DESC, sqid DESC)`. The sqid tie-breaker makes the result deterministic when requests share a millisecond.
 
@@ -81,11 +81,11 @@ The gateway owns the append-only request log and three new logical read models. 
 
 ### Request Summary by Sqid
 
-The authoritative request summary is keyed by sqid. It contains immutable request context plus the current materialized request-log winner and the reconciliation state needed to compare a later log entry without rereading historical logs.
+The authoritative request summary is keyed by `(queue, sqid)`. It contains immutable request context plus the current materialized request-log winner and the reconciliation state needed to compare a later log entry without rereading historical logs.
 
 The immutable context is queue, change URIs, and receipt time. The mutable response state is status, last error, and metadata. The internal `accepting` admission state is not returned by the API. The projection version fields used for optimistic conditional writes are internal and are not part of the API response.
 
-The sqid key supports authoritative lookup and conditional status updates for one request without a secondary index.
+The key supports authoritative lookup and conditional status updates for one request without a secondary index, and leads with the queue so the table is shardable by queue.
 
 ### Request Summaries by Queue
 
@@ -97,11 +97,11 @@ The logical key covers the `List` queue predicate, receipt-time range, newest-fi
 
 ### Requests by Change URI
 
-The URI reverse mapping is logically keyed by `(change_uri, received_at_ms, sqid)` and must support a bounded descending scan over `(received_at_ms, sqid)`. As with the queue projection, a backend may use a reverse range scan or descending-encoded key components while exposing cursors and results in the original values. The mapping contains immutable lookup data and does not duplicate mutable status fields.
+The URI reverse mapping is logically keyed by `(queue, change_uri, received_at_ms, sqid)` and must support a bounded descending scan over `(received_at_ms, sqid)` within one queue. As with the queue projection, a backend may use a reverse range scan or descending-encoded key components while exposing cursors and results in the original values. The mapping contains immutable lookup data and does not duplicate mutable status fields.
 
 The mapping repeats `received_at_ms` because receipt time is part of the promised newest-first ordering. This allows the gateway to perform a bounded ordered scan before resolving the matching authoritative summaries. Without receipt time in the mapping, the gateway would have to fetch and sort every request associated with a URI before enforcing the result maximum.
 
-The logical key supports the bounded `GetRequestSummaryByChangeURI(change_uri)` newest-first scan and deterministic sqid tie-breaker without fetching every matching summary first.
+The logical key supports the bounded `GetRequestSummaryByChangeURI(queue, change_uri)` newest-first scan and deterministic sqid tie-breaker without fetching every matching summary first, and leads with the queue so the table is shardable by queue.
 
 The URI is stored in the canonical form received from the validated Land request. URI normalization rules belong to the change contract or source-control integration and are not introduced by this read model.
 

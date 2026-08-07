@@ -27,25 +27,34 @@ import (
 
 // Materializer appends request logs and projects the winning public request state.
 // It owns winner selection, optimistic concurrency, and public projection repair.
+// Every store it touches is queue-scoped, so each call resolves the aggregate once
+// from the queue carried on the log being persisted.
 type Materializer struct {
-	store storage.Storage
+	stores storage.Factory
 }
 
 // NewMaterializer creates a request read-model materializer.
-func NewMaterializer(store storage.Storage) *Materializer {
-	return &Materializer{store: store}
+func NewMaterializer(stores storage.Factory) *Materializer {
+	return &Materializer{stores: stores}
 }
 
 // PersistLog appends one audit log and materializes its winning state.
 // Projection errors are returned so queue deliveries are retried rather than silently dropping the side write.
 // Because the append happens first, retrying after a projection failure may retain another copy of the event in History.
 func (m *Materializer) PersistLog(ctx context.Context, log entity.RequestLog) error {
-	if err := m.store.GetRequestLogStore().Insert(ctx, log); err != nil {
+	stores, err := m.stores.For(storage.Config{QueueName: log.Queue})
+	if err != nil {
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", log.Queue, err)
+	}
+	logs := stores.GetRequestLogStore()
+	summaries := stores.GetRequestSummaryStore()
+
+	if err := logs.Insert(ctx, log); err != nil {
 		return fmt.Errorf("failed to insert request log request_id=%s: %w", log.RequestID, err)
 	}
 
 	for {
-		summary, err := m.store.GetRequestSummaryStore().Get(ctx, log.RequestID)
+		summary, err := summaries.Get(ctx, log.RequestID)
 		if err != nil {
 			return fmt.Errorf("failed to get request summary request_id=%s: %w", log.RequestID, err)
 		}
@@ -60,7 +69,7 @@ func (m *Materializer) PersistLog(ctx context.Context, log entity.RequestLog) er
 			updated.LastError = log.LastError
 			updated.Metadata = cloneMetadata(log.Metadata)
 
-			if err := m.store.GetRequestSummaryStore().Update(ctx, updated, oldVersion, newVersion); err != nil {
+			if err := summaries.Update(ctx, updated, oldVersion, newVersion); err != nil {
 				if errors.Is(err, storage.ErrVersionMismatch) {
 					continue
 				}
@@ -70,7 +79,7 @@ func (m *Materializer) PersistLog(ctx context.Context, log entity.RequestLog) er
 			summary = updated
 		}
 
-		if err := m.repairPublicProjections(ctx, summary); err != nil {
+		if err := m.repairPublicProjections(ctx, stores, summary); err != nil {
 			return err
 		}
 		return nil
@@ -79,15 +88,16 @@ func (m *Materializer) PersistLog(ctx context.Context, log entity.RequestLog) er
 
 // repairPublicProjections activates and repairs the public query projections.
 // URI mappings are created before the queue summary, which acts as the marker that activation completed.
-func (m *Materializer) repairPublicProjections(ctx context.Context, authoritative entity.RequestSummary) error {
+func (m *Materializer) repairPublicProjections(ctx context.Context, stores storage.Storage, authoritative entity.RequestSummary) error {
 	desired := queueSummaryFromSummary(authoritative)
+	queueSummaries := stores.GetRequestQueueSummaryStore()
 	for {
-		current, err := m.store.GetRequestQueueSummaryStore().Get(ctx, desired.Queue, desired.ReceivedAtMs, desired.RequestID)
+		current, err := queueSummaries.Get(ctx, desired.ReceivedAtMs, desired.RequestID)
 		if errors.Is(err, storage.ErrNotFound) {
-			if err := m.createURIMappings(ctx, authoritative); err != nil {
+			if err := m.createURIMappings(ctx, stores, authoritative); err != nil {
 				return err
 			}
-			if err := m.store.GetRequestQueueSummaryStore().Create(ctx, desired); err != nil {
+			if err := queueSummaries.Create(ctx, desired); err != nil {
 				if errors.Is(err, storage.ErrAlreadyExists) {
 					continue
 				}
@@ -105,7 +115,7 @@ func (m *Materializer) repairPublicProjections(ctx context.Context, authoritativ
 			// Another materializer already projected a newer authoritative snapshot.
 			return nil
 		}
-		if err := m.store.GetRequestQueueSummaryStore().Update(ctx, desired, current.Version, desired.Version); err != nil {
+		if err := queueSummaries.Update(ctx, desired, current.Version, desired.Version); err != nil {
 			if errors.Is(err, storage.ErrVersionMismatch) {
 				continue
 			}
@@ -115,14 +125,16 @@ func (m *Materializer) repairPublicProjections(ctx context.Context, authoritativ
 	}
 }
 
-func (m *Materializer) createURIMappings(ctx context.Context, summary entity.RequestSummary) error {
+func (m *Materializer) createURIMappings(ctx context.Context, stores storage.Storage, summary entity.RequestSummary) error {
+	uris := stores.GetRequestURIStore()
 	for _, changeURI := range summary.ChangeURIs {
 		mapping := entity.RequestURI{
 			ChangeURI:    changeURI,
+			Queue:        summary.Queue,
 			ReceivedAtMs: summary.ReceivedAtMs,
 			RequestID:    summary.RequestID,
 		}
-		if err := m.store.GetRequestURIStore().Create(ctx, mapping); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+		if err := uris.Create(ctx, mapping); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
 			return fmt.Errorf("failed to create request URI mapping request_id=%s change_uri=%s: %w", summary.RequestID, changeURI, err)
 		}
 	}

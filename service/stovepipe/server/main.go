@@ -34,6 +34,7 @@ import (
 	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
 	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
 	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
+	"github.com/uber/submitqueue/platform/extension/counter"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/service/stovepipe/server/mapper"
@@ -42,6 +43,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/controller/buildsignal"
 	"github.com/uber/submitqueue/stovepipe/controller/dlq"
 	"github.com/uber/submitqueue/stovepipe/controller/process"
+	"github.com/uber/submitqueue/stovepipe/controller/record"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
 	buildrunnerfake "github.com/uber/submitqueue/stovepipe/extension/buildrunner/fake"
@@ -83,18 +85,46 @@ func (s *StovepipeServer) Ingest(ctx context.Context, req *pb.IngestRequest) (*p
 type inMemoryCounter struct {
 	mu     sync.Mutex
 	values map[string]int64
+	queue  string
 }
 
-func newInMemoryCounter() *inMemoryCounter {
-	return &inMemoryCounter{values: make(map[string]int64)}
+func newInMemoryCounter(queue string) *inMemoryCounter {
+	return &inMemoryCounter{values: make(map[string]int64), queue: queue}
 }
 
 // Next returns the next value in the sequence for the given domain, starting at 1.
 func (c *inMemoryCounter) Next(_ context.Context, domain string) (int64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.values[domain]++
-	return c.values[domain], nil
+	key := c.queue + "\x00" + domain
+	c.values[key]++
+	return c.values[key], nil
+}
+
+// inMemoryCounterFactory is the example counter.Factory: one process-local sequence
+// set per queue, minted on first use. A real deployment supplies a persistent factory.
+type inMemoryCounterFactory struct {
+	mu       sync.Mutex
+	counters map[string]*inMemoryCounter
+}
+
+func newInMemoryCounterFactory() *inMemoryCounterFactory {
+	return &inMemoryCounterFactory{counters: make(map[string]*inMemoryCounter)}
+}
+
+// For returns the process-local Counter bound to the queue named in config.
+func (f *inMemoryCounterFactory) For(config counter.Config) (counter.Counter, error) {
+	if config.QueueName == "" {
+		return nil, fmt.Errorf("queue name must not be empty")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if existing, ok := f.counters[config.QueueName]; ok {
+		return existing, nil
+	}
+	created := newInMemoryCounter(config.QueueName)
+	f.counters[config.QueueName] = created
+	return created, nil
 }
 
 // fakeSourceControlFactory is the example SourceControl factory. It seeds each queue with a
@@ -249,11 +279,12 @@ func run() error {
 	scf := fakeSourceControlFactory{}
 	brf := fakeBuildRunnerFactory{}
 
-	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, store, registry, scf, brf)
+	storageFty := storageFactory{backend: store}
+	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, registry, scf, brf)
 	if err != nil {
 		return err
 	}
-	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, store, registry)
+	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, storageFty, registry)
 	if err != nil {
 		return err
 	}
@@ -280,9 +311,9 @@ func run() error {
 	ingestController := controller.NewIngestController(
 		logger.Sugar(),
 		scope,
-		newInMemoryCounter(),
+		newInMemoryCounterFactory(),
 		scf,
-		store,
+		storageFty,
 		registry,
 	)
 	srv := &StovepipeServer{
@@ -359,7 +390,7 @@ func registerPrimaryControllers(
 	c consumer.Consumer,
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	store storage.Factory,
 	registry consumer.TopicRegistry,
 	scf sourcecontrol.Factory,
 	brf buildrunner.Factory,
@@ -393,6 +424,12 @@ func registerPrimaryControllers(
 	}
 	count++
 
+	recordController := record.NewController(logger, scope, store, stovepipemq.TopicKeyRecord, "stovepipe-record")
+	if err := c.Register(recordController); err != nil {
+		return count, fmt.Errorf("failed to register record controller: %w", err)
+	}
+	count++
+
 	return count, nil
 }
 
@@ -402,7 +439,7 @@ func registerDLQControllers(
 	c consumer.Consumer,
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	store storage.Factory,
 	registry consumer.TopicRegistry,
 ) (int, error) {
 	var count int
@@ -420,8 +457,8 @@ func registerDLQControllers(
 // publishes to the process topic and the process consumer subscribes to it; process publishes
 // to the build topic and the build consumer subscribes to it; build publishes to the buildsignal
 // topic and the buildsignal consumer subscribes to it, and also republishes to itself while
-// polling. buildsignal publishes to the record topic once a build reaches a terminal status; it
-// has no Subscription yet since no consumer for it exists until the record stage lands.
+// polling. buildsignal publishes to the record topic once a build reaches a terminal status,
+// and the record consumer subscribes to it.
 func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRegistry, error) {
 	return consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{
@@ -452,6 +489,9 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Key:   stovepipemq.TopicKeyRecord,
 			Name:  "record",
 			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "stovepipe-record",
+			),
 		},
 		{
 			Key:          dlq.TopicKey(stovepipemq.TopicKeyProcess),
@@ -460,4 +500,17 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-process-dlq"),
 		},
 	})
+}
+
+// storageFactory adapts the MySQL storage backend's queue binding to the
+// storage.Factory seam. Routing every queue to the single shared backend is
+// this host's policy; a deployment that splits queues across backends swaps
+// this adapter for a routing one.
+type storageFactory struct {
+	backend *storageMySQL.Storage
+}
+
+// For returns the queue-scoped store aggregate bound to the queue named in config.
+func (f storageFactory) For(config storage.Config) (storage.Storage, error) {
+	return f.backend.For(config.QueueName)
 }

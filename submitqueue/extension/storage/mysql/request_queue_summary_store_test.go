@@ -35,7 +35,7 @@ func setupRequestQueueSummaryStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, 
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	store := NewRequestQueueSummaryStore(db, testMetrics())
+	store := NewRequestQueueSummaryStore(db, testMetrics(), "monorepo")
 
 	return db, mock, store
 }
@@ -166,7 +166,7 @@ func TestRequestQueueSummaryStore_Get(t *testing.T) {
 				requestID = "missing"
 			}
 
-			got, err := store.Get(context.Background(), "monorepo", 1000, requestID)
+			got, err := store.Get(context.Background(), 1000, requestID)
 			if tt.wantErr {
 				require.Error(t, err)
 				if tt.wantErrIs != nil {
@@ -324,7 +324,6 @@ func TestRequestQueueSummaryStore_List(t *testing.T) {
 		{
 			name: "without cursor",
 			query: storage.RequestQueueSummaryQuery{
-				Queue:               "monorepo",
 				ReceivedAtOrAfterMs: 0,
 				ReceivedBeforeMs:    2000,
 				Limit:               10,
@@ -350,7 +349,6 @@ func TestRequestQueueSummaryStore_List(t *testing.T) {
 		{
 			name: "with cursor",
 			query: storage.RequestQueueSummaryQuery{
-				Queue:               "monorepo",
 				ReceivedAtOrAfterMs: 0,
 				ReceivedBeforeMs:    2000,
 				Limit:               10,
@@ -371,7 +369,6 @@ func TestRequestQueueSummaryStore_List(t *testing.T) {
 		{
 			name: "query error",
 			query: storage.RequestQueueSummaryQuery{
-				Queue:               "monorepo",
 				ReceivedAtOrAfterMs: 0,
 				ReceivedBeforeMs:    2000,
 				Limit:               10,

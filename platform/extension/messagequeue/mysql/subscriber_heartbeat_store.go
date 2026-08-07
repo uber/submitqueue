@@ -101,18 +101,16 @@ func (s *sqlSubscriberHeartbeatStore) ActiveSubscribers(ctx context.Context, top
 	return names, nil
 }
 
-// Deregister soft-deletes a subscriber's heartbeat entry by setting deregistered_at.
-// Idempotent: no-op if already deregistered.
+// Deregister removes a subscriber's heartbeat row (hard delete — see the
+// subscriberHeartbeatStore interface doc). Idempotent: no-op if already gone.
 func (s *sqlSubscriberHeartbeatStore) Deregister(ctx context.Context, topic string, subscriberName string, consumerGroup string) (retErr error) {
 	op := metrics.Begin(s.scope, "deregister", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
-	now := s.nowFunc().UnixMilli()
-
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
-		UPDATE %s SET deregistered_at = ?
-		WHERE consumer_group = ? AND topic = ? AND subscriber_name = ? AND deregistered_at = 0
-	`, SubscriberHeartbeatsTableName), now, consumerGroup, topic, subscriberName)
+		DELETE FROM %s
+		WHERE consumer_group = ? AND topic = ? AND subscriber_name = ?
+	`, SubscriberHeartbeatsTableName), consumerGroup, topic, subscriberName)
 
 	if err != nil {
 		return fmt.Errorf("failed to deregister subscriber: %w", err)
@@ -122,6 +120,36 @@ func (s *sqlSubscriberHeartbeatStore) Deregister(ctx context.Context, topic stri
 		logTopic, topic,
 		"subscriber_name", subscriberName,
 	)
+
+	return nil
+}
+
+// PurgeStale deletes heartbeat rows older than olderThanMs for the topic and
+// consumer group. See the subscriberHeartbeatStore interface doc.
+func (s *sqlSubscriberHeartbeatStore) PurgeStale(ctx context.Context, topic string, consumerGroup string, olderThanMs int64) (retErr error) {
+	op := metrics.Begin(s.scope, "purge_stale", metrics.StorageLatencyBuckets)
+	defer func() { op.Complete(retErr) }()
+
+	threshold := s.nowFunc().UnixMilli() - olderThanMs
+
+	result, err := s.db.ExecContext(ctx, fmt.Sprintf(`
+		DELETE FROM %s
+		WHERE consumer_group = ? AND topic = ? AND heartbeat_at < ?
+	`, SubscriberHeartbeatsTableName), consumerGroup, topic, threshold)
+
+	if err != nil {
+		return fmt.Errorf("failed to purge stale heartbeats: %w", err)
+	}
+
+	// RowsAffected error is swallowed because the DELETE itself succeeded;
+	// the count is for observability only.
+	if deleted, err := result.RowsAffected(); err == nil && deleted > 0 {
+		metrics.NamedCounter(s.scope, "purge_stale", "rows_deleted", deleted, metrics.NewTag("topic", topic))
+		s.logger.Debugw("purged stale heartbeats",
+			logTopic, topic,
+			"deleted", deleted,
+		)
+	}
 
 	return nil
 }

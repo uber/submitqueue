@@ -40,8 +40,8 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	registry      consumer.TopicRegistry
-	counter       counter.Counter
-	store         storage.Storage
+	counters      counter.Factory
+	stores        storage.Factory
 	analyzers     conflict.Factory
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -52,13 +52,18 @@ var _ consumer.Controller = (*Controller)(nil)
 
 const opName = "process"
 
+// counterDomainBatch names the per-queue sequence that mints batch IDs. The batch
+// ID is built independently as "<queue>/batch/<counter_value>", so the domain is a
+// sequence name only and never appears in the ID.
+const counterDomainBatch = "batch"
+
 // NewController creates a new batch controller for the orchestrator.
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	registry consumer.TopicRegistry,
-	counter counter.Counter,
-	store storage.Storage,
+	counters counter.Factory,
+	stores storage.Factory,
 	analyzers conflict.Factory,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -67,8 +72,8 @@ func NewController(
 		logger:        logger.Named("batch_controller"),
 		metricsScope:  scope.SubScope("batch_controller"),
 		registry:      registry,
-		counter:       counter,
-		store:         store,
+		counters:      counters,
+		stores:        stores,
 		analyzers:     analyzers,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -88,11 +93,25 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to deserialize request ID: %w", err)
 	}
 
+	store, err := c.stores.For(storage.Config{QueueName: rid.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		// Non-retryable: a missing or unresolvable queue is a malformed message.
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", rid.Queue, err)
+	}
+
 	// Fetch request from storage
-	request, err := c.store.GetRequestStore().Get(ctx, rid.ID)
+	request, err := store.GetRequestStore().Get(ctx, rid.ID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to get request %s: %w", rid.ID, err)
+	}
+
+	// The payload's queue must match the request's authoritative queue; a
+	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
+	if rid.Queue != "" && rid.Queue != request.Queue {
+		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1)
+		return fmt.Errorf("payload queue %q does not match queue %q of request %s", rid.Queue, request.Queue, request.ID)
 	}
 
 	c.logger.Infow("received batch event",
@@ -120,7 +139,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// TODO: if capacity is full, wait here for other requests to accumulate to batch them together, or include a request into an existing batch if it's not too late.
 
 	// Generate a globally unique batch ID.
-	seq, err := c.counter.Next(ctx, "batch/"+request.Queue)
+	queueCounter, err := c.counters.For(counter.Config{QueueName: request.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "counter_errors", 1)
+		return fmt.Errorf("failed to resolve counter for queue=%s: %w", request.Queue, err)
+	}
+	seq, err := queueCounter.Next(ctx, counterDomainBatch)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "counter_errors", 1)
 		return fmt.Errorf("failed to generate batch ID for queue=%s: %w", request.Queue, err)
@@ -139,7 +163,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// the speculation graph downstream. The read goes through the queue's
 	// per-state membership records; classification uses each batch's own
 	// hydrated state, so a stale record can never misreport a batch.
-	activeBatches, err := corebatch.ListByStates(ctx, c.store, request.Queue, entity.DependencyBatchStates())
+	activeBatches, err := corebatch.ListByStates(ctx, store, entity.DependencyBatchStates())
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
 		return fmt.Errorf("failed to get active batches for queue=%s: %w", request.Queue, err)
@@ -225,7 +249,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// reconciled by conclude as if it had no requests to act on.
 	newRequestVersion := request.Version + 1
 	request.State = entity.RequestStateBatched
-	if err := c.store.GetRequestStore().Update(ctx, request, request.Version, newRequestVersion); err != nil {
+	if err := store.GetRequestStore().Update(ctx, request, request.Version, newRequestVersion); err != nil {
 		// ErrVersionMismatch == cancel (or another writer) advanced R first. Ack
 		// the message: there is nothing for us to do, and retrying would not help
 		// since the new state of R is now visible to the cancel pipeline.
@@ -244,14 +268,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	request.Version = newRequestVersion
 
 	// Persist the batch before creating references to it. A Creating batch is not eligible for dependency analysis or normal processing.
-	if err := c.store.GetBatchStore().Create(ctx, batch); err != nil {
+	if err := store.GetBatchStore().Create(ctx, batch); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
 		return fmt.Errorf("failed to create batch in batch store: %w", err)
 	}
 
 	// File the queue's membership record for the new batch so it is
 	// discoverable by state from its first moment in the queue.
-	if err := corebatch.EnsureRecord(ctx, c.store, batch); err != nil {
+	if err := corebatch.EnsureRecord(ctx, store, batch); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "queue_batch_state_errors", 1)
 		return err
 	}
@@ -262,14 +286,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			BatchID:   batch.ID,
 			Version:   1,
 		}
-		if err := c.store.GetRequestBatchStore().Create(ctx, association); err != nil {
+		if err := store.GetRequestBatchStore().Create(ctx, association); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "request_batch_store_errors", 1)
 			metrics.NamedCounter(c.metricsScope, opName, "batch_abandoned_creating", 1)
 			return fmt.Errorf("failed to associate request %s with batch %s: %w", requestID, batch.ID, err)
 		}
 	}
 
-	batch, err = c.populateBatch(ctx, batch)
+	batch, err = c.populateBatch(ctx, store, batch)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "batch_abandoned_creating", 1)
 		// Retries intentionally mint a new batch ID. Failures may therefore leave unpublished Creating or Created attempts behind.
@@ -290,7 +314,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// so a redelivery that creates a fresh batch re-emits "batched" with a
 	// different batch_id but is deduped to the first entry — acceptable, the
 	// request is batched either way.
-	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusBatched, request.Version, "", map[string]string{
+	logEntry := entity.NewRequestLog(request.Queue, request.ID, entity.RequestStatusBatched, request.Version, "", map[string]string{
 		"batch_id": batch.ID,
 	})
 	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID); err != nil {
@@ -317,19 +341,19 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 }
 
 // populateBatch creates the reverse-index structure and marks a Creating batch ready for publication.
-func (c *Controller) populateBatch(ctx context.Context, batch entity.Batch) (entity.Batch, error) {
+func (c *Controller) populateBatch(ctx context.Context, store storage.Storage, batch entity.Batch) (entity.Batch, error) {
 	batchDependent := entity.BatchDependent{
 		BatchID:    batch.ID,
 		Dependents: []string{},
 		Version:    1,
 	}
-	if err := c.store.GetBatchDependentStore().Create(ctx, batchDependent); err != nil {
+	if err := store.GetBatchDependentStore().Create(ctx, batchDependent); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1)
 		return entity.Batch{}, fmt.Errorf("failed to create batch dependent index for new batchID=%s: %w", batch.ID, err)
 	}
 
 	for _, dependencyID := range batch.Dependencies {
-		existing, err := c.store.GetBatchDependentStore().Get(ctx, dependencyID)
+		existing, err := store.GetBatchDependentStore().Get(ctx, dependencyID)
 		if err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1)
 			return entity.Batch{}, fmt.Errorf("failed to get batch dependent for batchID=%s: %w", dependencyID, err)
@@ -339,7 +363,7 @@ func (c *Controller) populateBatch(ctx context.Context, batch entity.Batch) (ent
 		updated.Dependents = append([]string(nil), existing.Dependents...)
 		updated.Dependents = append(updated.Dependents, batch.ID)
 		newVersion := existing.Version + 1
-		if err := c.store.GetBatchDependentStore().Update(ctx, updated, existing.Version, newVersion); err != nil {
+		if err := store.GetBatchDependentStore().Update(ctx, updated, existing.Version, newVersion); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "batch_dependent_store_errors", 1)
 			return entity.Batch{}, fmt.Errorf("failed to update batch dependent index for existing batchID=%s and new batchID=%s: %w", dependencyID, batch.ID, err)
 		}
@@ -347,7 +371,7 @@ func (c *Controller) populateBatch(ctx context.Context, batch entity.Batch) (ent
 
 	// The batch's own reverse-index row now exists and every dependency lists this batch as a dependent.
 	// Structural initialization is complete, so transition Creating → Created to make the batch ready for processing once published to speculate.
-	batch, err := corebatch.Transition(ctx, c.store, batch, entity.BatchStateCreated)
+	batch, err := corebatch.Transition(ctx, store, batch, entity.BatchStateCreated)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
 		return entity.Batch{}, fmt.Errorf("failed to mark batch %s created: %w", batch.ID, err)
@@ -355,15 +379,16 @@ func (c *Controller) populateBatch(ctx context.Context, batch entity.Batch) (ent
 	return batch, nil
 }
 
-// publish publishes a batch ID to the specified topic key.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID string, partitionKey string) error {
-	bid := entity.BatchID{ID: batchID}
+// publish publishes a batch ID to the specified topic key, stamped with and
+// partitioned by the batch's queue.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID string, queue string) error {
+	bid := entity.BatchID{ID: batchID, Queue: queue}
 	payload, err := bid.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(batchID, payload, partitionKey, nil)
+	msg := entityqueue.NewMessage(batchID, payload, queue, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

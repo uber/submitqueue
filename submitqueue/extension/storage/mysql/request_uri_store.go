@@ -31,25 +31,32 @@ import (
 type requestURIStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewRequestURIStore creates a MySQL-backed RequestURIStore.
-func NewRequestURIStore(db *sql.DB, scope tally.Scope) storage.RequestURIStore {
-	return &requestURIStore{db: db, scope: scope}
+func NewRequestURIStore(db *sql.DB, scope tally.Scope, queue string) storage.RequestURIStore {
+	return &requestURIStore{db: db, scope: scope, queue: queue}
 }
 
 func (s *requestURIStore) Create(ctx context.Context, mapping entity.RequestURI) (retErr error) {
 	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	if mapping.Queue != s.queue {
+		return fmt.Errorf("request URI change_uri=%s queue %q does not match the store's bound queue %q", mapping.ChangeURI, mapping.Queue, s.queue)
+	}
+
 	_, err := s.db.ExecContext(ctx,
-		"INSERT INTO change_uri_request_mapping (change_uri, received_at_ms, request_id) VALUES (?, ?, ?)",
-		mapping.ChangeURI, mapping.ReceivedAtMs, mapping.RequestID,
+		"INSERT INTO change_uri_request_mapping (queue, change_uri, received_at_ms, request_id) VALUES (?, ?, ?, ?)",
+		mapping.Queue, mapping.ChangeURI, mapping.ReceivedAtMs, mapping.RequestID,
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
 		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrDuplicateEntry {
-			return fmt.Errorf("request URI change_uri=%s received_at_ms=%d request_id=%s: %w", mapping.ChangeURI, mapping.ReceivedAtMs, mapping.RequestID, storage.ErrAlreadyExists)
+			return fmt.Errorf("request URI queue=%s change_uri=%s received_at_ms=%d request_id=%s: %w", mapping.Queue, mapping.ChangeURI, mapping.ReceivedAtMs, mapping.RequestID, storage.ErrAlreadyExists)
 		}
 		return fmt.Errorf("failed to insert request URI request_id=%s change_uri=%s: %w", mapping.RequestID, mapping.ChangeURI, err)
 	}
@@ -61,20 +68,20 @@ func (s *requestURIStore) ListByURI(ctx context.Context, changeURI string, limit
 	defer func() { op.Complete(retErr) }()
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT change_uri, received_at_ms, request_id
+		SELECT queue, change_uri, received_at_ms, request_id
 		FROM change_uri_request_mapping
-		WHERE change_uri = ?
+		WHERE queue = ? AND change_uri = ?
 		ORDER BY received_at_ms DESC, request_id DESC
-		LIMIT ?`, changeURI, limit)
+		LIMIT ?`, s.queue, changeURI, limit)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list request URIs change_uri=%s: %w", changeURI, err)
+		return nil, fmt.Errorf("failed to list request URIs queue=%s change_uri=%s: %w", s.queue, changeURI, err)
 	}
 	defer rows.Close()
 
 	results := make([]entity.RequestURI, 0)
 	for rows.Next() {
 		var mapping entity.RequestURI
-		if err := rows.Scan(&mapping.ChangeURI, &mapping.ReceivedAtMs, &mapping.RequestID); err != nil {
+		if err := rows.Scan(&mapping.Queue, &mapping.ChangeURI, &mapping.ReceivedAtMs, &mapping.RequestID); err != nil {
 			return nil, fmt.Errorf("failed to scan request URI change_uri=%s: %w", changeURI, err)
 		}
 		results = append(results, mapping)

@@ -279,7 +279,10 @@ type CancelRequest struct {
 	// Globally unique identifier of the land request to cancel, returned by a prior Land call.
 	Sqid string `protobuf:"bytes,1,opt,name=sqid,proto3" json:"sqid,omitempty"`
 	// Optional human-readable reason for the cancellation. Recorded for observability.
-	Reason        string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	Reason string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	// Name of the queue processing the request. Required. A sqid is only resolvable within its own queue,
+	// so naming a queue the request does not belong to is reported as not found.
+	Queue         string `protobuf:"bytes,3,opt,name=queue,proto3" json:"queue,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -324,6 +327,13 @@ func (x *CancelRequest) GetSqid() string {
 func (x *CancelRequest) GetReason() string {
 	if x != nil {
 		return x.Reason
+	}
+	return ""
+}
+
+func (x *CancelRequest) GetQueue() string {
+	if x != nil {
+		return x.Queue
 	}
 	return ""
 }
@@ -473,7 +483,10 @@ func (x *RequestSummary) GetMetadata() map[string]string {
 type GetRequestSummaryByIDRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Globally unique identifier for the request.
-	Sqid          string `protobuf:"bytes,1,opt,name=sqid,proto3" json:"sqid,omitempty"`
+	Sqid string `protobuf:"bytes,1,opt,name=sqid,proto3" json:"sqid,omitempty"`
+	// Name of the queue processing the request. Required. A sqid is only resolvable within its own queue,
+	// so naming a queue the request does not belong to is reported as not found.
+	Queue         string `protobuf:"bytes,2,opt,name=queue,proto3" json:"queue,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -511,6 +524,13 @@ func (*GetRequestSummaryByIDRequest) Descriptor() ([]byte, []int) {
 func (x *GetRequestSummaryByIDRequest) GetSqid() string {
 	if x != nil {
 		return x.Sqid
+	}
+	return ""
+}
+
+func (x *GetRequestSummaryByIDRequest) GetQueue() string {
+	if x != nil {
+		return x.Queue
 	}
 	return ""
 }
@@ -565,7 +585,10 @@ func (x *GetRequestSummaryByIDResponse) GetRequest() *RequestSummary {
 type GetRequestSummaryByChangeURIRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Exact change URI supplied in a Land request.
-	ChangeUri     string `protobuf:"bytes,1,opt,name=change_uri,json=changeUri,proto3" json:"change_uri,omitempty"`
+	ChangeUri string `protobuf:"bytes,1,opt,name=change_uri,json=changeUri,proto3" json:"change_uri,omitempty"`
+	// Name of the queue to search. Required. Results are scoped to this queue: a change URI landed
+	// into several queues is looked up one queue at a time.
+	Queue         string `protobuf:"bytes,2,opt,name=queue,proto3" json:"queue,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -603,6 +626,13 @@ func (*GetRequestSummaryByChangeURIRequest) Descriptor() ([]byte, []int) {
 func (x *GetRequestSummaryByChangeURIRequest) GetChangeUri() string {
 	if x != nil {
 		return x.ChangeUri
+	}
+	return ""
+}
+
+func (x *GetRequestSummaryByChangeURIRequest) GetQueue() string {
+	if x != nil {
+		return x.Queue
 	}
 	return ""
 }
@@ -794,7 +824,10 @@ func (x *ListResponse) GetNextPageToken() string {
 type GetRequestHistoryByIDRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Globally unique identifier for the request.
-	Sqid          string `protobuf:"bytes,1,opt,name=sqid,proto3" json:"sqid,omitempty"`
+	Sqid string `protobuf:"bytes,1,opt,name=sqid,proto3" json:"sqid,omitempty"`
+	// Name of the queue processing the request. Required. A sqid is only resolvable within its own queue,
+	// so naming a queue the request does not belong to is reported as not found.
+	Queue         string `protobuf:"bytes,2,opt,name=queue,proto3" json:"queue,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -832,6 +865,13 @@ func (*GetRequestHistoryByIDRequest) Descriptor() ([]byte, []int) {
 func (x *GetRequestHistoryByIDRequest) GetSqid() string {
 	if x != nil {
 		return x.Sqid
+	}
+	return ""
+}
+
+func (x *GetRequestHistoryByIDRequest) GetQueue() string {
+	if x != nil {
+		return x.Queue
 	}
 	return ""
 }
@@ -959,7 +999,10 @@ func (x *GetRequestHistoryByIDResponse) GetEvents() []*HistoryEvent {
 type GetRequestHistoryByChangeURIRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Exact change URI supplied in a Land request.
-	ChangeUri     string `protobuf:"bytes,1,opt,name=change_uri,json=changeUri,proto3" json:"change_uri,omitempty"`
+	ChangeUri string `protobuf:"bytes,1,opt,name=change_uri,json=changeUri,proto3" json:"change_uri,omitempty"`
+	// Name of the queue to search. Required. Results are scoped to this queue: a change URI landed
+	// into several queues is looked up one queue at a time.
+	Queue         string `protobuf:"bytes,2,opt,name=queue,proto3" json:"queue,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -997,6 +1040,13 @@ func (*GetRequestHistoryByChangeURIRequest) Descriptor() ([]byte, []int) {
 func (x *GetRequestHistoryByChangeURIRequest) GetChangeUri() string {
 	if x != nil {
 		return x.ChangeUri
+	}
+	return ""
+}
+
+func (x *GetRequestHistoryByChangeURIRequest) GetQueue() string {
+	if x != nil {
+		return x.Queue
 	}
 	return ""
 }
@@ -1284,10 +1334,11 @@ const file_gateway_proto_rawDesc = "" +
 	"\x06change\x18\x02 \x01(\v2\x18.uber.base.change.ChangeR\x06change\x12=\n" +
 	"\bstrategy\x18\x04 \x01(\x0e2!.uber.base.mergestrategy.StrategyR\bstrategy\"\"\n" +
 	"\fLandResponse\x12\x12\n" +
-	"\x04sqid\x18\x01 \x01(\tR\x04sqid\";\n" +
+	"\x04sqid\x18\x01 \x01(\tR\x04sqid\"Q\n" +
 	"\rCancelRequest\x12\x12\n" +
 	"\x04sqid\x18\x01 \x01(\tR\x04sqid\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x10\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x14\n" +
+	"\x05queue\x18\x03 \x01(\tR\x05queue\"\x10\n" +
 	"\x0eCancelResponse\"\xc9\x02\n" +
 	"\x0eRequestSummary\x12\x12\n" +
 	"\x04sqid\x18\x01 \x01(\tR\x04sqid\x12\x14\n" +
@@ -1301,14 +1352,16 @@ const file_gateway_proto_rawDesc = "" +
 	"\bmetadata\x18\a \x03(\v26.uber.submitqueue.gateway.RequestSummary.MetadataEntryR\bmetadata\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"2\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"H\n" +
 	"\x1cGetRequestSummaryByIDRequest\x12\x12\n" +
-	"\x04sqid\x18\x01 \x01(\tR\x04sqid\"c\n" +
+	"\x04sqid\x18\x01 \x01(\tR\x04sqid\x12\x14\n" +
+	"\x05queue\x18\x02 \x01(\tR\x05queue\"c\n" +
 	"\x1dGetRequestSummaryByIDResponse\x12B\n" +
-	"\arequest\x18\x01 \x01(\v2(.uber.submitqueue.gateway.RequestSummaryR\arequest\"D\n" +
+	"\arequest\x18\x01 \x01(\v2(.uber.submitqueue.gateway.RequestSummaryR\arequest\"Z\n" +
 	"#GetRequestSummaryByChangeURIRequest\x12\x1d\n" +
 	"\n" +
-	"change_uri\x18\x01 \x01(\tR\tchangeUri\"l\n" +
+	"change_uri\x18\x01 \x01(\tR\tchangeUri\x12\x14\n" +
+	"\x05queue\x18\x02 \x01(\tR\x05queue\"l\n" +
 	"$GetRequestSummaryByChangeURIResponse\x12D\n" +
 	"\brequests\x18\x01 \x03(\v2(.uber.submitqueue.gateway.RequestSummaryR\brequests\"\xc3\x01\n" +
 	"\vListRequest\x12\x14\n" +
@@ -1320,9 +1373,10 @@ const file_gateway_proto_rawDesc = "" +
 	"page_token\x18\x05 \x01(\tR\tpageToken\"|\n" +
 	"\fListResponse\x12D\n" +
 	"\brequests\x18\x01 \x03(\v2(.uber.submitqueue.gateway.RequestSummaryR\brequests\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"2\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"H\n" +
 	"\x1cGetRequestHistoryByIDRequest\x12\x12\n" +
-	"\x04sqid\x18\x01 \x01(\tR\x04sqid\"\xf7\x01\n" +
+	"\x04sqid\x18\x01 \x01(\tR\x04sqid\x12\x14\n" +
+	"\x05queue\x18\x02 \x01(\tR\x05queue\"\xf7\x01\n" +
 	"\fHistoryEvent\x12!\n" +
 	"\ftimestamp_ms\x18\x01 \x01(\x03R\vtimestampMs\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x1d\n" +
@@ -1333,10 +1387,11 @@ const file_gateway_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"_\n" +
 	"\x1dGetRequestHistoryByIDResponse\x12>\n" +
-	"\x06events\x18\x01 \x03(\v2&.uber.submitqueue.gateway.HistoryEventR\x06events\"D\n" +
+	"\x06events\x18\x01 \x03(\v2&.uber.submitqueue.gateway.HistoryEventR\x06events\"Z\n" +
 	"#GetRequestHistoryByChangeURIRequest\x12\x1d\n" +
 	"\n" +
-	"change_uri\x18\x01 \x01(\tR\tchangeUri\"d\n" +
+	"change_uri\x18\x01 \x01(\tR\tchangeUri\x12\x14\n" +
+	"\x05queue\x18\x02 \x01(\tR\x05queue\"d\n" +
 	"\x0eRequestHistory\x12\x12\n" +
 	"\x04sqid\x18\x01 \x01(\tR\x04sqid\x12>\n" +
 	"\x06events\x18\x02 \x03(\v2&.uber.submitqueue.gateway.HistoryEventR\x06events\"n\n" +

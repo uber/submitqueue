@@ -22,7 +22,7 @@ import (
 )
 
 func TestNewRequestLog_NilMetadata(t *testing.T) {
-	log := NewRequestLog("queue1/100", RequestStatusStarted, 0, "", nil)
+	log := NewRequestLog("queue1", "queue1/100", RequestStatusStarted, 0, "", nil)
 
 	assert.NotNil(t, log.Metadata)
 	assert.Empty(t, log.Metadata)

@@ -21,6 +21,8 @@ import "encoding/json"
 type CancelRequest struct {
 	// ID is the globally unique identifier of the request to cancel. Format: "<queue>/<counter_value>".
 	ID string `json:"id"`
+	// Queue is the name of the queue processing the request to cancel. Empty on payloads written before the field existed.
+	Queue string `json:"queue"`
 	// Reason is an optional free-form explanation of why the cancellation was requested.
 	Reason string `json:"reason"`
 }

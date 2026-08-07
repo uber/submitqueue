@@ -20,44 +20,48 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
+	"github.com/uber/submitqueue/submitqueue/core/publish"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
 
 // Controller handles speculate queue messages.
 //
-// Naive happy-path algorithm: assume every in-flight build will pass and
-// treat batch.Dependencies + [batch.ID] as the single speculation chain.
-// Per invocation, the controller advances the batch one step in the
-// state machine:
+// Each message is a dirty signal: it names the batch that changed, but only so
+// the queue wakes up. The controller then re-plans that whole queue from a
+// single read — see run — asking the Speculator which paths are worth building
+// within the budget and cancelling the ones a resolved dependency has ruled
+// out. Nothing carries over between runs, so duplicated or reordered signals
+// are harmless and a later run repairs whatever an earlier one left half-done.
 //
-//   - Created → publish to build, transition to Speculating.
-//   - Speculating       → if all deps are Succeeded, publish to merge and
+// Batch verdicts are still the naive per-batch state machine below, which
+// advances the triggering batch one step:
+//
+//   - Created → admit to Speculating so the Speculator can act on it.
+//   - Speculating → if all deps are Succeeded, publish to merge and
 //     transition to Merging; otherwise no-op (or fail-fast if a dep is
 //     in a non-succeeding terminal state).
-//   - Cancelling        → cancel any in-flight Build entity, respeculate
-//     dependents, CAS to terminal Cancelled, publish to conclude. The
-//     cancel controller hands the batch off in this state and speculate
-//     drives it to terminal.
-//   - Merging           → no-op (owned by the merge controller).
-//   - Terminal          → re-fan-out to conclude for self-healing in case a
-//     prior publish was lost. For terminal Cancelled, also re-fan-out
-//     dependents so a crash between the terminal CAS and the dependent
-//     publish does not strand them.
+//   - Cancelling → cancel any in-flight Build entity, respeculate
+//     dependents, CAS to terminal Cancelled, publish to conclude.
+//   - Merging → no-op (owned by the merge controller).
+//   - Terminal → re-fan-out to conclude for self-healing in case a
+//     prior publish was lost.
 //
-// The controller is re-triggered on every relevant downstream event
-// (buildsignal, merge), so each call simply re-evaluates the current
-// state and either advances or waits.
+// Waiting on every dependency is strictly stricter than waiting on the ones a
+// passed path assumed, so this is correct while the path-aware finalization
+// that replaces it is written — it just does not yet collect the speedup the
+// paths are earning.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	store         storage.Storage
+	stores        storage.Factory
+	speculators   speculator.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -66,14 +70,15 @@ type Controller struct {
 // Verify Controller implements consumer.Controller interface at compile time.
 var _ consumer.Controller = (*Controller)(nil)
 
-// opName is the metric operation name shared by every emit in this file.
+// opName is the metric operation name shared by every emit in this package.
 const opName = "process"
 
 // NewController creates a new speculate controller for the orchestrator.
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	stores storage.Factory,
+	speculators speculator.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -81,14 +86,16 @@ func NewController(
 	return &Controller{
 		logger:        logger.Named("speculate_controller"),
 		metricsScope:  scope.SubScope("speculate_controller"),
-		store:         store,
+		stores:        stores,
+		speculators:   speculators,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
 }
 
-// Process advances a batch one step along the naive happy-path.
+// Process re-plans the triggering batch's queue, then advances that batch one
+// step along the legacy per-batch state machine (see the package doc).
 // Returns nil to ack (success), or error to nack (retry).
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
@@ -99,17 +106,31 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to deserialize batch ID: %w", err)
 	}
 
-	batch, err := c.store.GetBatchStore().Get(ctx, bid.ID)
+	store, err := c.stores.For(storage.Config{QueueName: bid.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		// Non-retryable: a missing or unresolvable queue is a malformed message.
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", bid.Queue, err)
+	}
+
+	batch, err := store.GetBatchStore().Get(ctx, bid.ID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
+	}
+
+	// The payload's queue must match the batch's authoritative queue; a
+	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
+	if bid.Queue != "" && bid.Queue != batch.Queue {
+		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1)
+		return fmt.Errorf("payload queue %q does not match queue %q of batch %s", bid.Queue, batch.Queue, batch.ID)
 	}
 
 	// Cancelling intent: the cancel controller has handed this batch off to
 	// speculate to drive to terminal. Cancel in-flight builds, fan out to
 	// dependents, CAS to terminal Cancelled, and publish to conclude.
 	if batch.State == entity.BatchStateCancelling {
-		return c.cancelBatch(ctx, batch)
+		return c.cancelBatch(ctx, store, batch)
 	}
 
 	// Terminal state: re-fan-out for self-healing in case a previous publish
@@ -121,16 +142,39 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, opName, "self_heal_terminal", 1)
 		// Repair the membership record for the same crash window: a prior
 		// attempt may have CAS'd to terminal without completing the record move.
-		if err := corebatch.EnsureRecord(ctx, c.store, batch); err != nil {
+		if err := corebatch.EnsureRecord(ctx, store, batch); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 			return err
 		}
 		if batch.State == entity.BatchStateCancelled {
-			if err := c.respeculateDependents(ctx, batch); err != nil {
+			if err := c.respeculateDependents(ctx, store, batch); err != nil {
 				return err
 			}
 		}
 		return c.fanout(ctx, batch.ID, batch.Queue)
+	}
+
+	// A Created batch is admitted before the run so the Speculator can see it:
+	// proposals may only target Speculating heads.
+	wasCreated := batch.State == entity.BatchStateCreated
+	if wasCreated {
+		admitted, err := c.admit(ctx, store, batch)
+		if err != nil {
+			return err
+		}
+		batch = admitted
+	}
+
+	if err := c.run(ctx, store, batch.Queue); err != nil {
+		return err
+	}
+
+	// A freshly admitted head stops here rather than falling through to the
+	// finalizer. The run above funded its first paths and nothing has been
+	// built yet — finalizing on the same message would let a batch with no
+	// dependencies merge before any build had run.
+	if wasCreated {
+		return nil
 	}
 
 	// Merging is owned by the merge controller, which has its own self-heal.
@@ -138,46 +182,45 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, opName, "noop_merging", 1)
 		// A redelivery can land here after a tryFinalize attempt crashed
 		// between its CAS and the record move; repair before acking.
-		if err := corebatch.EnsureRecord(ctx, c.store, batch); err != nil {
+		if err := corebatch.EnsureRecord(ctx, store, batch); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 			return err
 		}
 		return nil
 	}
 
-	switch batch.State {
-	case entity.BatchStateCreated:
-		return c.startSpeculation(ctx, batch)
-	case entity.BatchStateSpeculating:
-		return c.tryFinalize(ctx, batch)
-	default:
-		metrics.NamedCounter(c.metricsScope, opName, "unexpected_state", 1)
-		return fmt.Errorf("unexpected batch state %q for batch %s", batch.State, batch.ID)
+	if batch.State == entity.BatchStateSpeculating {
+		return c.tryFinalize(ctx, store, batch)
 	}
+
+	metrics.NamedCounter(c.metricsScope, opName, "unexpected_state", 1)
+	return fmt.Errorf("unexpected batch state %q for batch %s", batch.State, batch.ID)
 }
 
-// startSpeculation kicks off CI for this batch on top of the speculative head
-// (batch.Dependencies assumed to all pass), then transitions to Speculating.
-func (c *Controller) startSpeculation(ctx context.Context, batch entity.Batch) error {
-	c.logger.Infow("starting speculation",
-		"batch_id", batch.ID,
-		"speculation_chain", append(append([]string{}, batch.Dependencies...), batch.ID),
-	)
-
-	if err := c.publish(ctx, topickey.TopicKeyBuild, batch.ID, batch.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
-		return fmt.Errorf("failed to publish to build: %w", err)
-	}
-
-	// Optimistic CAS: if the version has already advanced (concurrent speculate),
-	// the next event will see the new state and behave correctly.
-	if _, err := corebatch.Transition(ctx, c.store, batch, entity.BatchStateSpeculating); err != nil {
+// admit moves a batch from Created to Speculating, which is what makes it
+// visible to the Speculator as an action target. It returns the batch with the
+// new state and version so the caller keeps writing against a current copy.
+//
+// It no longer dispatches anything itself: which paths to build for this head
+// is the run's decision, taken over the whole queue rather than one batch at a
+// time.
+func (c *Controller) admit(ctx context.Context, store storage.Storage, batch entity.Batch) (entity.Batch, error) {
+	newVersion := batch.Version + 1
+	batch.State = entity.BatchStateSpeculating
+	if err := store.GetBatchStore().Update(ctx, batch, batch.Version, newVersion); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return err
+		return batch, fmt.Errorf("failed to update batch %s state to speculating: %w", batch.ID, err)
 	}
+	batch.Version = newVersion
+	batch.State = entity.BatchStateSpeculating
 
-	metrics.NamedCounter(c.metricsScope, opName, "started_speculation", 1)
-	return nil
+	metrics.NamedCounter(c.metricsScope, opName, "admitted", 1)
+	c.logger.Infow("admitted batch to speculation",
+		"batch_id", batch.ID,
+		"queue", batch.Queue,
+		"dependencies", batch.Dependencies,
+	)
+	return batch, nil
 }
 
 // tryFinalize publishes to merge and transitions to Merging iff every
@@ -191,8 +234,8 @@ func (c *Controller) startSpeculation(ctx context.Context, batch entity.Batch) e
 // We will need to respeculate the failed paths — drop the failed dep
 // from the chain and re-issue speculation for the surviving ordering(s)
 // — instead of cascading the failure into requests that could still land.
-func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error {
-	deps, err := c.fetchDependencies(ctx, batch)
+func (c *Controller) tryFinalize(ctx context.Context, store storage.Storage, batch entity.Batch) error {
+	deps, err := c.fetchDependencies(ctx, store, batch)
 	if err != nil {
 		return err
 	}
@@ -211,7 +254,7 @@ func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error 
 				"dependency_id", d.ID,
 			)
 		case entity.BatchStateFailed:
-			return c.failOnDependency(ctx, batch, d)
+			return c.failOnDependency(ctx, store, batch, d)
 		default:
 			pending = append(pending, d.ID)
 		}
@@ -226,12 +269,12 @@ func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error 
 		return nil
 	}
 
-	if err := c.publish(ctx, topickey.TopicKeyMerge, batch.ID, batch.Queue); err != nil {
+	if err := c.publishBatchID(ctx, topickey.TopicKeyMerge, batch.ID, batch.Queue, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to merge: %w", err)
 	}
 
-	if _, err := corebatch.Transition(ctx, c.store, batch, entity.BatchStateMerging); err != nil {
+	if _, err := corebatch.Transition(ctx, store, batch, entity.BatchStateMerging); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return err
 	}
@@ -244,7 +287,7 @@ func (c *Controller) tryFinalize(ctx context.Context, batch entity.Batch) error 
 // the conclude queue so the request store and request log get reconciled.
 // Without this transition the batch would sit in Speculating forever — no
 // downstream event ever fires for it again.
-func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, dep entity.Batch) error {
+func (c *Controller) failOnDependency(ctx context.Context, store storage.Storage, batch entity.Batch, dep entity.Batch) error {
 	metrics.NamedCounter(c.metricsScope, opName, "dependency_failed", 1)
 	c.logger.Warnw("dependency in non-succeeding terminal state; failing batch",
 		"batch_id", batch.ID,
@@ -252,13 +295,13 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 		"dependency_state", string(dep.State),
 	)
 
-	batch, err := corebatch.Transition(ctx, c.store, batch, entity.BatchStateFailed)
+	batch, err := corebatch.Transition(ctx, store, batch, entity.BatchStateFailed)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return err
 	}
 
-	if err := c.publish(ctx, topickey.TopicKeyConclude, batch.ID, batch.Queue); err != nil {
+	if err := c.publishBatchID(ctx, topickey.TopicKeyConclude, batch.ID, batch.Queue, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to conclude: %w", err)
 	}
@@ -298,7 +341,7 @@ func (c *Controller) failOnDependency(ctx context.Context, batch entity.Batch, d
 // storage.ErrVersionMismatch on the terminal CAS is returned as-is because it
 // is intrinsically retryable; the redelivery will land in the
 // self-heal branch and complete the fan-out.
-func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error {
+func (c *Controller) cancelBatch(ctx context.Context, store storage.Storage, batch entity.Batch) error {
 	metrics.NamedCounter(c.metricsScope, opName, "cancel_batch", 1)
 	c.logger.Infow("cancelling batch",
 		"batch_id", batch.ID,
@@ -310,21 +353,21 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 	// collateral requests need a fresh request ID and a re-publish to TopicKeyStart so
 	// they can be re-batched without the cancelled change.
 
-	if err := c.cancelBuild(ctx, batch); err != nil {
+	if err := c.cancelBuild(ctx, store, batch); err != nil {
 		return err
 	}
 
-	batch, err := corebatch.Transition(ctx, c.store, batch, entity.BatchStateCancelled)
+	batch, err := corebatch.Transition(ctx, store, batch, entity.BatchStateCancelled)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return err
 	}
 
-	if err := c.respeculateDependents(ctx, batch); err != nil {
+	if err := c.respeculateDependents(ctx, store, batch); err != nil {
 		return err
 	}
 
-	if err := c.publish(ctx, topickey.TopicKeyConclude, batch.ID, batch.Queue); err != nil {
+	if err := c.publishBatchID(ctx, topickey.TopicKeyConclude, batch.ID, batch.Queue, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to conclude: %w", err)
 	}
@@ -342,8 +385,8 @@ func (c *Controller) cancelBatch(ctx context.Context, batch entity.Batch) error 
 // system has no external runner, so the local state flip is the complete
 // cancellation. Once a runner exists, it must be invoked here before the
 // local Update.
-func (c *Controller) cancelBuild(ctx context.Context, batch entity.Batch) error {
-	build, err := c.store.GetBuildStore().Get(ctx, batch.ID)
+func (c *Controller) cancelBuild(ctx context.Context, store storage.Storage, batch entity.Batch) error {
+	build, err := store.GetBuildStore().Get(ctx, batch.ID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			metrics.NamedCounter(c.metricsScope, opName, "cancel_build_not_found", 1)
@@ -360,7 +403,7 @@ func (c *Controller) cancelBuild(ctx context.Context, batch entity.Batch) error 
 
 	updatedBuild := build
 	updatedBuild.Status = entity.BuildStatusCancelled
-	if err := c.store.GetBuildStore().Update(ctx, updatedBuild); err != nil {
+	if err := store.GetBuildStore().Update(ctx, updatedBuild); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to cancel build for batch %s: %w", batch.ID, err)
 	}
@@ -378,8 +421,8 @@ func (c *Controller) cancelBuild(ctx context.Context, batch entity.Batch) error 
 //
 // Called both from the cancelBatch terminal flow and from the terminal
 // self-heal branch on redelivery of an already-Cancelled batch.
-func (c *Controller) respeculateDependents(ctx context.Context, batch entity.Batch) error {
-	bd, err := c.store.GetBatchDependentStore().Get(ctx, batch.ID)
+func (c *Controller) respeculateDependents(ctx context.Context, store storage.Storage, batch entity.Batch) error {
+	bd, err := store.GetBatchDependentStore().Get(ctx, batch.ID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to get batch dependents for batch %s: %w", batch.ID, err)
@@ -392,7 +435,7 @@ func (c *Controller) respeculateDependents(ctx context.Context, batch entity.Bat
 		// reads, consumer-pool parallelism / backpressure, and the existing
 		// state-machine dispatch in Process all argue for the publish. Revisit
 		// if the extra message hop ever shows up as latency or cost.
-		if err := c.publish(ctx, topickey.TopicKeySpeculate, depID, batch.Queue); err != nil {
+		if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, depID, batch.Queue, batch.Queue); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 			return fmt.Errorf("failed to publish dependent batch %s to speculate: %w", depID, err)
 		}
@@ -405,10 +448,10 @@ func (c *Controller) respeculateDependents(ctx context.Context, batch entity.Bat
 // is surfaced as a retryable infra failure; missing dependencies should not
 // happen in practice, but if one does it is treated the same as a transient
 // fetch failure (i.e. the message is retried).
-func (c *Controller) fetchDependencies(ctx context.Context, batch entity.Batch) ([]entity.Batch, error) {
+func (c *Controller) fetchDependencies(ctx context.Context, store storage.Storage, batch entity.Batch) ([]entity.Batch, error) {
 	deps := make([]entity.Batch, 0, len(batch.Dependencies))
 	for _, depID := range batch.Dependencies {
-		d, err := c.store.GetBatchStore().Get(ctx, depID)
+		d, err := store.GetBatchStore().Get(ctx, depID)
 		if err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "dependency_fetch_errors", 1)
 			return nil, fmt.Errorf("failed to get dependency batch %s of %s: %w", depID, batch.ID, err)
@@ -421,39 +464,31 @@ func (c *Controller) fetchDependencies(ctx context.Context, batch entity.Batch) 
 // fanout re-publishes downstream events for a batch that has already reached
 // a terminal state. Used for self-healing when a previous publish was lost:
 // re-sending to conclude guarantees request-state reconciliation.
-func (c *Controller) fanout(ctx context.Context, batchID, partitionKey string) error {
-	if err := c.publish(ctx, topickey.TopicKeyConclude, batchID, partitionKey); err != nil {
+func (c *Controller) fanout(ctx context.Context, batchID, queue string) error {
+	if err := c.publishBatchID(ctx, topickey.TopicKeyConclude, batchID, queue, queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to conclude: %w", err)
 	}
 	return nil
 }
 
-// publish publishes a batch ID to the specified topic key.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID string, partitionKey string) error {
-	bid := entity.BatchID{ID: batchID}
-	payload, err := bid.ToBytes()
+// publishBatchID publishes a batch ID to the topic behind key, stamped with
+// the batch's queue and partitioned by partitionKey. The batch ID doubles as
+// the message ID, so the queue deduplicates repeat publishes for the same
+// batch against rows it has not collected yet.
+//
+// queue and partitionKey are separate because they answer different questions.
+// queue is what the payload asserts the batch belongs to, and the consumer
+// resolves its storage from it, so it must always be the real queue. The
+// partition key only decides what stays serialized behind what: most publishes
+// want the queue, so a queue's batches are processed in order, but the build
+// dispatch partitions by batch so heads dispatch in parallel.
+func (c *Controller) publishBatchID(ctx context.Context, key consumer.TopicKey, batchID, queue, partitionKey string) error {
+	payload, err := entity.BatchID{ID: batchID, Queue: queue}.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
-
-	msg := entityqueue.NewMessage(batchID, payload, partitionKey, nil)
-
-	q, ok := c.registry.Queue(key)
-	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", key)
-	}
-
-	topicName, ok := c.registry.TopicName(key)
-	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", key)
-	}
-
-	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
-		return fmt.Errorf("failed to publish message: %w", err)
-	}
-
-	return nil
+	return publish.Message(ctx, c.registry, key, batchID, payload, partitionKey)
 }
 
 // Name returns the controller name for logging and metrics.

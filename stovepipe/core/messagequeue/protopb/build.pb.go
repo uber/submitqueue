@@ -45,7 +45,11 @@ const (
 type BuildRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// id is the request id to build. Format: "request/<queue>/<counter>".
-	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// queue_name is the name of the queue processing the request, carried so
+	// the consumer can route by queue without loading state first. Empty on
+	// payloads written before the field existed.
+	QueueName     string `protobuf:"bytes,2,opt,name=queue_name,json=queueName,proto3" json:"queue_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -87,13 +91,22 @@ func (x *BuildRequest) GetId() string {
 	return ""
 }
 
+func (x *BuildRequest) GetQueueName() string {
+	if x != nil {
+		return x.QueueName
+	}
+	return ""
+}
+
 var File_build_proto protoreflect.FileDescriptor
 
 const file_build_proto_rawDesc = "" +
 	"\n" +
-	"\vbuild.proto\x12\x1buber.stovepipe.messagequeue\x1a.api/base/messagequeue/proto/messagequeue.proto\")\n" +
+	"\vbuild.proto\x12\x1buber.stovepipe.messagequeue\x1a.api/base/messagequeue/proto/messagequeue.proto\"H\n" +
 	"\fBuildRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id:\t\x8a\xb5\x18\x05buildB|\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
+	"\n" +
+	"queue_name\x18\x02 \x01(\tR\tqueueName:\t\x8a\xb5\x18\x05buildB|\n" +
 	"+com.uber.submitqueue.stovepipe.messagequeueB\n" +
 	"BuildProtoP\x01Z?github.com/uber/submitqueue/stovepipe/core/messagequeue/protopbb\x06proto3"
 

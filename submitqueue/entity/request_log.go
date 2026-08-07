@@ -97,6 +97,9 @@ const (
 type RequestLog struct {
 	// RequestID is the ID of the request this log entry belongs to. References entity.Request.ID.
 	RequestID string `json:"request_id"`
+	// Queue is the name of the queue processing the request. It is unique together
+	// with RequestID: a request ID is only unique within its own queue.
+	Queue string `json:"queue"`
 	// TimestampMs is the time this log entry was created, in milliseconds since Unix epoch.
 	TimestampMs int64 `json:"timestamp_ms"`
 	// Status is the request status at the time this log entry was created. It may contain requests states from the state machine and also display-friendly intermediate statuses.
@@ -114,15 +117,17 @@ type RequestLog struct {
 
 // NewRequestLog creates a new RequestLog with the given fields.
 // TimestampMs is set to the current time. If metadata is nil, it will be initialized as an empty map.
+// queue is the queue processing the request; it scopes requestID, which is only unique within it.
 // requestVersion is the version of the request entity, should only be set if reporting a request state as a status, otherwise it should be 0.
 // lastError is the last error message associated with the status at the time of this log entry, empty string if no error.
 // metadata is a set of key-value pairs providing additional context for this log entry. Not constrained to any specific format or schema, used for display or debugging purposes.
-func NewRequestLog(requestID string, status RequestStatus, requestVersion int32, lastError string, metadata map[string]string) RequestLog {
+func NewRequestLog(queue string, requestID string, status RequestStatus, requestVersion int32, lastError string, metadata map[string]string) RequestLog {
 	if metadata == nil {
 		metadata = make(map[string]string)
 	}
 	return RequestLog{
 		RequestID:      requestID,
+		Queue:          queue,
 		TimestampMs:    time.Now().UnixMilli(),
 		Status:         status,
 		RequestVersion: requestVersion,

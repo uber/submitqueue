@@ -38,7 +38,7 @@ func setupRequestStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.Requ
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	store := NewRequestStore(db, testMetrics())
+	store := NewRequestStore(db, testMetrics(), "monorepo")
 
 	return db, mock, store
 }
@@ -70,7 +70,7 @@ func TestRequestStore_Get(t *testing.T) {
 				rows := sqlmock.NewRows([]string{"id", "queue", "change_uri", "land_strategy", "state", "version"}).
 					AddRow(want.ID, want.Queue, changeURIsJSON, string(want.LandStrategy), string(want.State), want.Version)
 				mock.ExpectQuery("SELECT id, queue, change_uri, land_strategy, state, version FROM request").
-					WithArgs(want.ID).
+					WithArgs("monorepo", want.ID).
 					WillReturnRows(rows)
 			},
 			want: want,
@@ -80,7 +80,7 @@ func TestRequestStore_Get(t *testing.T) {
 			id:   "missing",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectQuery("SELECT id, queue, change_uri, land_strategy, state, version FROM request").
-					WithArgs("missing").
+					WithArgs("monorepo", "missing").
 					WillReturnError(sql.ErrNoRows)
 			},
 			wantErr:   true,
@@ -91,7 +91,7 @@ func TestRequestStore_Get(t *testing.T) {
 			id:   "bad",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectQuery("SELECT id, queue, change_uri, land_strategy, state, version FROM request").
-					WithArgs("bad").
+					WithArgs("monorepo", "bad").
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,
@@ -103,7 +103,7 @@ func TestRequestStore_Get(t *testing.T) {
 				rows := sqlmock.NewRows([]string{"id", "queue", "change_uri", "land_strategy", "state", "version"}).
 					AddRow(want.ID, want.Queue, []byte("not json"), string(want.LandStrategy), string(want.State), want.Version)
 				mock.ExpectQuery("SELECT id, queue, change_uri, land_strategy, state, version FROM request").
-					WithArgs("malformed").
+					WithArgs("monorepo", "malformed").
 					WillReturnRows(rows)
 			},
 			wantErr: true,
@@ -202,7 +202,7 @@ func TestRequestStore_Update(t *testing.T) {
 	const oldVersion, newVersion = int32(1), int32(2)
 	request := entity.Request{
 		ID:           "monorepo/1",
-		Queue:        "monorepo-updated",
+		Queue:        "monorepo",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/submitqueue/pull/456/cafebabe"}},
 		LandStrategy: mergestrategy.MergeStrategySquashRebase,
 		State:        entity.RequestStateValidated,
@@ -223,7 +223,7 @@ func TestRequestStore_Update(t *testing.T) {
 			request: request,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE request").
-					WithArgs(request.Queue, changeURIsJSON, request.LandStrategy, request.State, newVersion, request.ID, oldVersion).
+					WithArgs(changeURIsJSON, request.LandStrategy, request.State, newVersion, request.Queue, request.ID, oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -232,7 +232,7 @@ func TestRequestStore_Update(t *testing.T) {
 			request: request,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE request").
-					WithArgs(request.Queue, changeURIsJSON, request.LandStrategy, request.State, newVersion, request.ID, oldVersion).
+					WithArgs(changeURIsJSON, request.LandStrategy, request.State, newVersion, request.Queue, request.ID, oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
 			wantErr:   true,
@@ -243,7 +243,7 @@ func TestRequestStore_Update(t *testing.T) {
 			request: request,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE request").
-					WithArgs(request.Queue, changeURIsJSON, request.LandStrategy, request.State, newVersion, request.ID, oldVersion).
+					WithArgs(changeURIsJSON, request.LandStrategy, request.State, newVersion, request.Queue, request.ID, oldVersion).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,
@@ -253,7 +253,7 @@ func TestRequestStore_Update(t *testing.T) {
 			request: request,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE request").
-					WithArgs(request.Queue, changeURIsJSON, request.LandStrategy, request.State, newVersion, request.ID, oldVersion).
+					WithArgs(changeURIsJSON, request.LandStrategy, request.State, newVersion, request.Queue, request.ID, oldVersion).
 					WillReturnResult(sqlmock.NewErrorResult(fmt.Errorf("driver error")))
 			},
 			wantErr: true,
@@ -263,7 +263,7 @@ func TestRequestStore_Update(t *testing.T) {
 			request: entity.Request{ID: request.ID, Queue: request.Queue, LandStrategy: request.LandStrategy, State: request.State, Version: request.Version},
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE request").
-					WithArgs(request.Queue, []byte("null"), request.LandStrategy, request.State, newVersion, request.ID, oldVersion).
+					WithArgs([]byte("null"), request.LandStrategy, request.State, newVersion, request.Queue, request.ID, oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -279,7 +279,7 @@ func TestRequestStore_Update(t *testing.T) {
 			},
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE request").
-					WithArgs(request.Queue, []byte("[]"), request.LandStrategy, request.State, newVersion, request.ID, oldVersion).
+					WithArgs([]byte("[]"), request.LandStrategy, request.State, newVersion, request.Queue, request.ID, oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},

@@ -41,6 +41,7 @@ func newTestHeartbeatStore(ctrl *gomock.Controller) *MocksubscriberHeartbeatStor
 	mockHB.EXPECT().Heartbeat(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockHB.EXPECT().ActiveSubscribers(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]string{"self"}, nil).AnyTimes()
 	mockHB.EXPECT().Deregister(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockHB.EXPECT().PurgeStale(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	return mockHB
 }
 
@@ -1006,4 +1007,66 @@ func TestSubscriber_RebalanceUnderCapReleasesNothing(t *testing.T) {
 	released, err := s.rebalance(context.Background(), sub, []string{"pk-a", "pk-b"})
 	require.NoError(t, err)
 	assert.Empty(t, released)
+}
+
+func TestUpdateDrainedTracking(t *testing.T) {
+	now := time.UnixMilli(1_000_000)
+	earlier := now.Add(-time.Minute)
+	grace := 30 * time.Second
+
+	tests := []struct {
+		name        string
+		prev        map[string]time.Time
+		owned       []string
+		discovered  []string
+		wantTracked map[string]time.Time
+		wantExpired []string
+	}{
+		{
+			name:        "owned and discovered is not tracked",
+			owned:       []string{"p1"},
+			discovered:  []string{"p1"},
+			wantTracked: map[string]time.Time{},
+		},
+		{
+			name:        "freshly drained starts tracking now",
+			owned:       []string{"p1"},
+			discovered:  nil,
+			wantTracked: map[string]time.Time{"p1": now},
+		},
+		{
+			name:        "already tracked keeps original since time",
+			prev:        map[string]time.Time{"p1": now.Add(-10 * time.Second)},
+			owned:       []string{"p1"},
+			wantTracked: map[string]time.Time{"p1": now.Add(-10 * time.Second)},
+		},
+		{
+			name:        "drained past grace expires sorted",
+			prev:        map[string]time.Time{"p-b": earlier, "p-a": earlier, "p-young": now.Add(-time.Second)},
+			owned:       []string{"p-b", "p-a", "p-young"},
+			wantTracked: map[string]time.Time{"p-a": earlier, "p-b": earlier, "p-young": now.Add(-time.Second)},
+			wantExpired: []string{"p-a", "p-b"},
+		},
+		{
+			name:        "rediscovered partition resets the clock",
+			prev:        map[string]time.Time{"p1": earlier},
+			owned:       []string{"p1"},
+			discovered:  []string{"p1"},
+			wantTracked: map[string]time.Time{},
+		},
+		{
+			name:        "no longer owned is dropped from tracking",
+			prev:        map[string]time.Time{"gone": earlier},
+			owned:       []string{"p1"},
+			wantTracked: map[string]time.Time{"p1": now},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tracked, expired := updateDrainedTracking(tt.prev, tt.owned, tt.discovered, grace, now)
+			assert.Equal(t, tt.wantTracked, tracked)
+			assert.Equal(t, tt.wantExpired, expired)
+		})
+	}
 }

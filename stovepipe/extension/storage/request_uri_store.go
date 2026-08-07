@@ -25,12 +25,13 @@ import (
 // table — the two are written independently (no cross-table transaction), keeping the contract
 // satisfiable by key/value backends. The caller orchestrates "create request, then map URI".
 type RequestURIStore interface {
-	// Create records that request id validates the commit uri for queue. Returns ErrAlreadyExists
-	// if (queue, uri) is already mapped — the signal a caller uses to detect that the commit is
-	// already being validated by another request.
-	Create(ctx context.Context, queue, uri, id string) error
+	// Create records that request id validates the commit uri for the bound
+	// queue. Returns ErrAlreadyExists if the queue already maps the uri — the
+	// signal a caller uses to detect that the commit is already being validated
+	// by another request.
+	Create(ctx context.Context, uri, id string) error
 
-	// GetIDByURI returns the id of the request validating (queue, uri).
+	// GetIDByURI returns the id of the request validating the bound queue's uri.
 	// Returns ErrNotFound if no request is mapped to that commit.
-	GetIDByURI(ctx context.Context, queue, uri string) (string, error)
+	GetIDByURI(ctx context.Context, uri string) (string, error)
 }

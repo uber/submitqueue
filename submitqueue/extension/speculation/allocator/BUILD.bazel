@@ -1,0 +1,12 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["allocator.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/extension/speculation/allocator",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//submitqueue/entity:go_default_library",
+        "//submitqueue/extension/speculation/generator:go_default_library",
+    ],
+)

@@ -32,11 +32,14 @@ import (
 type batchStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewBatchStore creates a new MySQL-backed BatchStore.
-func NewBatchStore(db *sql.DB, scope tally.Scope) storage.BatchStore {
-	return &batchStore{db: db, scope: scope}
+func NewBatchStore(db *sql.DB, scope tally.Scope, queue string) storage.BatchStore {
+	return &batchStore{db: db, scope: scope, queue: queue}
 }
 
 // Get retrieves a batch by ID. Returns ErrNotFound if the batch is not found.
@@ -49,8 +52,8 @@ func (s *batchStore) Get(ctx context.Context, id string) (ret entity.Batch, retE
 	var dependenciesJSON []byte
 
 	err := s.db.QueryRowContext(ctx,
-		"SELECT id, queue, contains, dependencies, state, version FROM batch WHERE id = ?",
-		id,
+		"SELECT id, queue, contains, dependencies, state, version FROM batch WHERE queue = ? AND id = ?",
+		s.queue, id,
 	).Scan(&batch.ID, &batch.Queue, &containsJSON, &dependenciesJSON, &batch.State, &batch.Version)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -75,6 +78,10 @@ func (s *batchStore) Get(ctx context.Context, id string) (ret entity.Batch, retE
 func (s *batchStore) Create(ctx context.Context, batch entity.Batch) (retErr error) {
 	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
+
+	if batch.Queue != s.queue {
+		return fmt.Errorf("batch %s queue %q does not match the store's bound queue %q", batch.ID, batch.Queue, s.queue)
+	}
 
 	containsJSON, err := json.Marshal(batch.Contains)
 	if err != nil {
@@ -108,6 +115,10 @@ func (s *batchStore) Update(ctx context.Context, batch entity.Batch, oldVersion,
 	op := metrics.Begin(s.scope, "update_state", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	if batch.Queue != s.queue {
+		return fmt.Errorf("batch %s queue %q does not match the store's bound queue %q", batch.ID, batch.Queue, s.queue)
+	}
+
 	containsJSON, err := json.Marshal(batch.Contains)
 	if err != nil {
 		return fmt.Errorf("failed to marshal contains=%v id=%s for Update batch entity: %w", batch.Contains, batch.ID, err)
@@ -119,8 +130,8 @@ func (s *batchStore) Update(ctx context.Context, batch entity.Batch, oldVersion,
 	}
 
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE batch SET queue = ?, contains = ?, dependencies = ?, state = ?, version = ? WHERE id = ? AND version = ?",
-		batch.Queue, containsJSON, dependenciesJSON, batch.State, newVersion, batch.ID, oldVersion,
+		"UPDATE batch SET contains = ?, dependencies = ?, state = ?, version = ? WHERE queue = ? AND id = ? AND version = ?",
+		containsJSON, dependenciesJSON, batch.State, newVersion, batch.Queue, batch.ID, oldVersion,
 	)
 	if err != nil {
 		return fmt.Errorf(

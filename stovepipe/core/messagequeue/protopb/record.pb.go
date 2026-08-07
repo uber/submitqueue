@@ -47,7 +47,11 @@ type Record struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// id is the request id whose build reached a terminal status. Format:
 	// "request/<queue>/<counter>" (entity.Request.ID).
-	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// queue_name is the name of the queue processing the request, carried so
+	// the consumer can route by queue without loading state first. Empty on
+	// payloads written before the field existed.
+	QueueName     string `protobuf:"bytes,2,opt,name=queue_name,json=queueName,proto3" json:"queue_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -89,13 +93,22 @@ func (x *Record) GetId() string {
 	return ""
 }
 
+func (x *Record) GetQueueName() string {
+	if x != nil {
+		return x.QueueName
+	}
+	return ""
+}
+
 var File_record_proto protoreflect.FileDescriptor
 
 const file_record_proto_rawDesc = "" +
 	"\n" +
-	"\frecord.proto\x12\x1buber.stovepipe.messagequeue\x1a.api/base/messagequeue/proto/messagequeue.proto\"$\n" +
+	"\frecord.proto\x12\x1buber.stovepipe.messagequeue\x1a.api/base/messagequeue/proto/messagequeue.proto\"C\n" +
 	"\x06Record\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id:\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
+	"\n" +
+	"queue_name\x18\x02 \x01(\tR\tqueueName:\n" +
 	"\x8a\xb5\x18\x06recordB}\n" +
 	"+com.uber.submitqueue.stovepipe.messagequeueB\vRecordProtoP\x01Z?github.com/uber/submitqueue/stovepipe/core/messagequeue/protopbb\x06proto3"
 

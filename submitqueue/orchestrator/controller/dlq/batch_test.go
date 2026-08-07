@@ -33,7 +33,7 @@ func TestDLQBatchController_InterfaceAndAccessors(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 
-	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")
+	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")
 
 	assert.Equal(t, "submitqueue-merge_dlq", c.Name())
 	assert.Equal(t, consumer.TopicKey("submitqueue-merge_dlq"), c.TopicKey())
@@ -67,7 +67,7 @@ func TestDLQBatchController_Process_FailsAndFansOut(t *testing.T) {
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), store, registry, TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")
+	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")
 
 	payload, err := entity.BatchID{ID: "q/batch/9"}.ToBytes()
 	require.NoError(t, err)
@@ -81,7 +81,7 @@ func TestDLQBatchController_Process_MalformedPayloadFails(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
-	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")
+	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")
 
 	delivery := newMockDelivery(ctrl, []byte("garbage"))
 	err := c.Process(context.Background(), delivery)
@@ -93,7 +93,7 @@ func TestDLQBatchController_Process_EmptyIDFails(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
-	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")
+	c := NewDLQBatchController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyMerge), "orchestrator-merge-dlq")
 
 	payload, err := entity.BatchID{ID: ""}.ToBytes()
 	require.NoError(t, err)

@@ -24,15 +24,15 @@ import (
 
 func TestProtoToGetRequestSummaryByIDRequest(t *testing.T) {
 	assert.Equal(t,
-		entity.GetRequestSummaryByIDRequest{ID: "test-queue/42"},
-		ProtoToGetRequestSummaryByIDRequest(&pb.GetRequestSummaryByIDRequest{Sqid: "test-queue/42"}),
+		entity.GetRequestSummaryByIDRequest{ID: "test-queue/42", Queue: "test-queue"},
+		ProtoToGetRequestSummaryByIDRequest(&pb.GetRequestSummaryByIDRequest{Sqid: "test-queue/42", Queue: "test-queue"}),
 	)
 }
 
 func TestProtoToGetRequestSummaryByChangeURIRequest(t *testing.T) {
 	assert.Equal(t,
-		entity.GetRequestSummaryByChangeURIRequest{ChangeURI: "github://uber/repo/pull/1/abc"},
-		ProtoToGetRequestSummaryByChangeURIRequest(&pb.GetRequestSummaryByChangeURIRequest{ChangeUri: "github://uber/repo/pull/1/abc"}),
+		entity.GetRequestSummaryByChangeURIRequest{ChangeURI: "github://uber/repo/pull/1/abc", Queue: "test-queue"},
+		ProtoToGetRequestSummaryByChangeURIRequest(&pb.GetRequestSummaryByChangeURIRequest{ChangeUri: "github://uber/repo/pull/1/abc", Queue: "test-queue"}),
 	)
 }
 

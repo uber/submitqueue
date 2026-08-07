@@ -152,6 +152,20 @@ func (m *MockoffsetStore) EXPECT() *MockoffsetStoreMockRecorder {
 	return m.recorder
 }
 
+// DeleteOffset mocks base method.
+func (m *MockoffsetStore) DeleteOffset(ctx context.Context, topic, partitionKey, consumerGroup string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteOffset", ctx, topic, partitionKey, consumerGroup)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteOffset indicates an expected call of DeleteOffset.
+func (mr *MockoffsetStoreMockRecorder) DeleteOffset(ctx, topic, partitionKey, consumerGroup any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteOffset", reflect.TypeOf((*MockoffsetStore)(nil).DeleteOffset), ctx, topic, partitionKey, consumerGroup)
+}
+
 // GetAckedOffset mocks base method.
 func (m *MockoffsetStore) GetAckedOffset(ctx context.Context, topic, partitionKey, consumerGroup string) (int64, error) {
 	m.ctrl.T.Helper()
@@ -251,6 +265,21 @@ func (mr *MockpartitionLeaseStoreMockRecorder) DiscoverAndAcquirePartitions(ctx,
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DiscoverAndAcquirePartitions", reflect.TypeOf((*MockpartitionLeaseStore)(nil).DiscoverAndAcquirePartitions), ctx, topic, subscriberName, consumerGroup, leaseDurationMs, maxPartitions)
 }
 
+// GetAllLeases mocks base method.
+func (m *MockpartitionLeaseStore) GetAllLeases(ctx context.Context, topic, consumerGroup string) ([]leaseInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAllLeases", ctx, topic, consumerGroup)
+	ret0, _ := ret[0].([]leaseInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAllLeases indicates an expected call of GetAllLeases.
+func (mr *MockpartitionLeaseStoreMockRecorder) GetAllLeases(ctx, topic, consumerGroup any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllLeases", reflect.TypeOf((*MockpartitionLeaseStore)(nil).GetAllLeases), ctx, topic, consumerGroup)
+}
+
 // GetLeasedPartitions mocks base method.
 func (m *MockpartitionLeaseStore) GetLeasedPartitions(ctx context.Context, topic, subscriberName, consumerGroup string) ([]string, error) {
 	m.ctrl.T.Helper()
@@ -264,6 +293,20 @@ func (m *MockpartitionLeaseStore) GetLeasedPartitions(ctx context.Context, topic
 func (mr *MockpartitionLeaseStoreMockRecorder) GetLeasedPartitions(ctx, topic, subscriberName, consumerGroup any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLeasedPartitions", reflect.TypeOf((*MockpartitionLeaseStore)(nil).GetLeasedPartitions), ctx, topic, subscriberName, consumerGroup)
+}
+
+// PurgeStale mocks base method.
+func (m *MockpartitionLeaseStore) PurgeStale(ctx context.Context, topic, consumerGroup string, olderThanMs int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PurgeStale", ctx, topic, consumerGroup, olderThanMs)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// PurgeStale indicates an expected call of PurgeStale.
+func (mr *MockpartitionLeaseStoreMockRecorder) PurgeStale(ctx, topic, consumerGroup, olderThanMs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PurgeStale", reflect.TypeOf((*MockpartitionLeaseStore)(nil).PurgeStale), ctx, topic, consumerGroup, olderThanMs)
 }
 
 // ReleaseLease mocks base method.
@@ -374,6 +417,20 @@ func (m *MocksubscriberHeartbeatStore) Heartbeat(ctx context.Context, topic, sub
 func (mr *MocksubscriberHeartbeatStoreMockRecorder) Heartbeat(ctx, topic, subscriberName, consumerGroup any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Heartbeat", reflect.TypeOf((*MocksubscriberHeartbeatStore)(nil).Heartbeat), ctx, topic, subscriberName, consumerGroup)
+}
+
+// PurgeStale mocks base method.
+func (m *MocksubscriberHeartbeatStore) PurgeStale(ctx context.Context, topic, consumerGroup string, olderThanMs int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PurgeStale", ctx, topic, consumerGroup, olderThanMs)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// PurgeStale indicates an expected call of PurgeStale.
+func (mr *MocksubscriberHeartbeatStoreMockRecorder) PurgeStale(ctx, topic, consumerGroup, olderThanMs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PurgeStale", reflect.TypeOf((*MocksubscriberHeartbeatStore)(nil).PurgeStale), ctx, topic, consumerGroup, olderThanMs)
 }
 
 // MockdeliveryStateStore is a mock of deliveryStateStore interface.

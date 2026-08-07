@@ -38,6 +38,12 @@ import (
 )
 
 // newTestController creates a controller with test dependencies.
+// staticStorageFactory resolves every queue to one fixed store aggregate.
+type staticStorageFactory struct{ store storage.Storage }
+
+// For returns the fixed store aggregate for any queue.
+func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
+
 func newTestController(
 	t *testing.T,
 	ctrl *gomock.Controller,
@@ -65,7 +71,7 @@ func newTestController(
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, store, registry, topickey.TopicKeyStart, "orchestrator-start")
+	return NewController(logger, scope, staticStorageFactory{store: store}, registry, topickey.TopicKeyStart, "orchestrator-start")
 }
 
 // newMockStorage creates a MockStorage with a MockRequestStore that succeeds on Create.

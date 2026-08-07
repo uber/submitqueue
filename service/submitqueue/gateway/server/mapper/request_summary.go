@@ -22,7 +22,8 @@ import (
 // ProtoToGetRequestSummaryByIDRequest maps the wire request to the entity request the controller operates on.
 func ProtoToGetRequestSummaryByIDRequest(req *pb.GetRequestSummaryByIDRequest) entity.GetRequestSummaryByIDRequest {
 	return entity.GetRequestSummaryByIDRequest{
-		ID: req.GetSqid(),
+		ID:    req.GetSqid(),
+		Queue: req.GetQueue(),
 	}
 }
 
@@ -30,6 +31,7 @@ func ProtoToGetRequestSummaryByIDRequest(req *pb.GetRequestSummaryByIDRequest) e
 func ProtoToGetRequestSummaryByChangeURIRequest(req *pb.GetRequestSummaryByChangeURIRequest) entity.GetRequestSummaryByChangeURIRequest {
 	return entity.GetRequestSummaryByChangeURIRequest{
 		ChangeURI: req.GetChangeUri(),
+		Queue:     req.GetQueue(),
 	}
 }
 

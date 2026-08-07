@@ -102,11 +102,26 @@ func (s *SQLQueueIntegrationSuite) TearDownSuite() {
 // timeouts for fast integration tests. The defaults (30s lease, 60s visibility)
 // would make crash recovery tests wait 90s of real wall-clock time since the
 // subscriber can't find invisible messages until the DB timeout expires.
+// Partition discovery is likewise pinned to 100ms so initial lease
+// acquisition and rebalance convergence stay fast under the 1s production
+// default.
 func testSubConfig(subscriberName, consumerGroup string) extqueue.SubscriptionConfig {
 	cfg := extqueue.DefaultSubscriptionConfig(subscriberName, consumerGroup)
+	cfg.PartitionDiscoveryIntervalMs = 100
 	cfg.VisibilityTimeoutMs = 2000
 	cfg.LeaseDurationMs = 3000
 	cfg.LeaseRenewalIntervalMs = 1000
+	return cfg
+}
+
+// rebalanceTestConfig pins a high retry budget on top of testSubConfig.
+// Rebalance tests publish messages they never ack; under the default budget
+// those messages dead-letter mid-test, draining the partitions — and a
+// drained partition's lease is released after the idle grace, dissolving the
+// exact lease distribution the assertions wait on.
+func rebalanceTestConfig(subscriberName, consumerGroup string) extqueue.SubscriptionConfig {
+	cfg := testSubConfig(subscriberName, consumerGroup)
+	cfg.Retry.MaxAttempts = 1000
 	return cfg
 }
 
@@ -344,6 +359,7 @@ func (s *SQLQueueIntegrationSuite) TestPublishAndSubscribe() {
 
 	// Subscribe first with config
 	subConfig := extqueue.DefaultSubscriptionConfig("test-worker-1", "test-consumer")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
@@ -414,6 +430,7 @@ func (s *SQLQueueIntegrationSuite) TestSubscriberPerPartitionIsolation() {
 
 	// Subscribe with short poll interval for fast test
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "isolation-consumer")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	subConfig.PollIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
@@ -481,6 +498,7 @@ func (s *SQLQueueIntegrationSuite) TestSubscriberPartitionOrderPreserved() {
 
 	// Subscribe and receive all
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "order-consumer")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	subConfig.PollIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
@@ -521,6 +539,7 @@ func (s *SQLQueueIntegrationSuite) TestMultiplePartitions() {
 
 	// Subscribe
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "multi-partition-consumer")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
@@ -650,6 +669,7 @@ func (s *SQLQueueIntegrationSuite) TestIdempotentPublish() {
 
 	// Subscribe
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "idempotent-consumer")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
@@ -696,6 +716,7 @@ func (s *SQLQueueIntegrationSuite) TestConcurrentPublishers() {
 
 	// Subscribe
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "concurrent-consumer")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
@@ -825,10 +846,12 @@ func (s *SQLQueueIntegrationSuite) TestMultipleConsumerGroups() {
 
 	// Subscribe both groups
 	subConfig1 := extqueue.DefaultSubscriptionConfig("worker-1", "group-A")
+	subConfig1.PartitionDiscoveryIntervalMs = 100
 	deliveryChan1, err := subscriber1.Subscribe(s.ctx, topic, subConfig1)
 	require.NoError(t, err)
 
 	subConfig2 := extqueue.DefaultSubscriptionConfig("worker-1", "group-B")
+	subConfig2.PartitionDiscoveryIntervalMs = 100
 	deliveryChan2, err := subscriber2.Subscribe(s.ctx, topic, subConfig2)
 	require.NoError(t, err)
 
@@ -904,10 +927,12 @@ func (s *SQLQueueIntegrationSuite) TestMultipleWorkersInConsumerGroup() {
 
 	// Subscribe both workers
 	subConfig1 := extqueue.DefaultSubscriptionConfig("worker-1", consumerGroup)
+	subConfig1.PartitionDiscoveryIntervalMs = 100
 	deliveryChan1, err := subscriber1.Subscribe(s.ctx, topic, subConfig1)
 	require.NoError(t, err)
 
 	subConfig2 := extqueue.DefaultSubscriptionConfig("worker-2", consumerGroup)
+	subConfig2.PartitionDiscoveryIntervalMs = 100
 	deliveryChan2, err := subscriber2.Subscribe(s.ctx, topic, subConfig2)
 	require.NoError(t, err)
 
@@ -979,6 +1004,7 @@ func (s *SQLQueueIntegrationSuite) TestConcurrentSubscribers() {
 
 		subscriber := q.Subscriber()
 		subConfig := extqueue.DefaultSubscriptionConfig(fmt.Sprintf("worker-%d", i), consumerGroup)
+		subConfig.PartitionDiscoveryIntervalMs = 100
 		deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 		require.NoError(t, err)
 		deliveryChans = append(deliveryChans, deliveryChan)
@@ -1078,6 +1104,7 @@ func (s *SQLQueueIntegrationSuite) TestDeadLetterQueue() {
 	t.Logf("Subscribing to DLQ topic: %s", dlqTopic)
 
 	dlqConfig := extqueue.DefaultSubscriptionConfig("worker-1", "dlq-consumer")
+	dlqConfig.PartitionDiscoveryIntervalMs = 100
 	dlqDeliveryChan, err := subscriber.Subscribe(s.ctx, dlqTopic, dlqConfig)
 	require.NoError(t, err)
 
@@ -1129,6 +1156,7 @@ func (s *SQLQueueIntegrationSuite) TestMessageOrderingWithinPartition() {
 
 	// Subscribe first
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "ordering-consumer")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 
@@ -1191,6 +1219,7 @@ func (s *SQLQueueIntegrationSuite) TestLateSubscriber() {
 	// Now subscribe (late subscriber)
 	subscriber := q.Subscriber()
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "late-consumer")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
 	t.Logf("Late subscriber joined after messages published")
@@ -1232,6 +1261,7 @@ func (s *SQLQueueIntegrationSuite) TestEmptyTopicSubscribe() {
 
 	// Subscribe to empty topic (no messages published yet)
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "empty-consumer")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	subConfig.PollIntervalMs = 100 // 100 milliseconds
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
@@ -1490,6 +1520,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_ConsumerLagAfterPartialAck() {
 
 	// Subscribe and ack only 2
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", consumerGroup)
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	subConfig.PollIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
@@ -1539,6 +1570,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_LeasesAndOffsets() {
 	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("lo-1", []byte("a"), "p1", nil)))
 
 	subConfig := extqueue.DefaultSubscriptionConfig("admin-worker-1", consumerGroup)
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	subConfig.PollIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
@@ -1615,6 +1647,7 @@ func (s *SQLQueueIntegrationSuite) TestAdmin_ResetOffsetAndReleaseLease() {
 	require.NoError(t, publisher.Publish(s.ctx, topic, entityqueue.NewMessage("r1", []byte("a"), "rp1", nil)))
 
 	subConfig := extqueue.DefaultSubscriptionConfig("reset-worker", consumerGroup)
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	subConfig.PollIntervalMs = 100
 	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
 	require.NoError(t, err)
@@ -1710,7 +1743,7 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_EvenDistribution() {
 	require.NoError(t, err)
 	defer q1.Close()
 
-	_, err = q1.Subscriber().Subscribe(s.ctx, topic, testSubConfig("s1", consumerGroup))
+	_, err = q1.Subscriber().Subscribe(s.ctx, topic, rebalanceTestConfig("s1", consumerGroup))
 	require.NoError(t, err)
 
 	waitForCondition(t, signalCh, func() bool {
@@ -1726,7 +1759,7 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_EvenDistribution() {
 	require.NoError(t, err)
 	defer q2.Close()
 
-	_, err = q2.Subscriber().Subscribe(s.ctx, topic, testSubConfig("s2", consumerGroup))
+	_, err = q2.Subscriber().Subscribe(s.ctx, topic, rebalanceTestConfig("s2", consumerGroup))
 	require.NoError(t, err)
 
 	waitForCondition(t, signalCh, func() bool {
@@ -1773,9 +1806,9 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_SubscriberLeaves() {
 	require.NoError(t, err)
 	// no defer close — we close explicitly below
 
-	_, err = q1.Subscriber().Subscribe(s.ctx, topic, testSubConfig("s1", consumerGroup))
+	_, err = q1.Subscriber().Subscribe(s.ctx, topic, rebalanceTestConfig("s1", consumerGroup))
 	require.NoError(t, err)
-	_, err = q2.Subscriber().Subscribe(s.ctx, topic, testSubConfig("s2", consumerGroup))
+	_, err = q2.Subscriber().Subscribe(s.ctx, topic, rebalanceTestConfig("s2", consumerGroup))
 	require.NoError(t, err)
 
 	waitForCondition(t, signalCh, func() bool {
@@ -1791,6 +1824,15 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_SubscriberLeaves() {
 		leases, _ := getPartitionLeases(s.db, topic, consumerGroup)
 		return len(leases["s1"]) == 4
 	}, "S1 should reacquire all 4 partitions after S2 leaves")
+
+	// Deregistration hard-deletes the heartbeat row — subscriber names are
+	// unique per process, so rows would otherwise accumulate forever.
+	var s2Rows int
+	require.NoError(t, s.db.QueryRowContext(s.ctx, `
+		SELECT COUNT(*) FROM queue_subscriber_heartbeats
+		WHERE consumer_group = ? AND topic = ? AND subscriber_name = ?
+	`, consumerGroup, topic, "s2").Scan(&s2Rows))
+	assert.Equal(t, 0, s2Rows, "closed subscriber's heartbeat row must be deleted")
 
 	t.Logf("Subscriber leave verified: S1 owns all 4 partitions after S2 departed")
 }
@@ -1829,9 +1871,9 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_OddPartitions() {
 	require.NoError(t, err)
 	defer q2.Close()
 
-	_, err = q1.Subscriber().Subscribe(s.ctx, topic, testSubConfig("s1", consumerGroup))
+	_, err = q1.Subscriber().Subscribe(s.ctx, topic, rebalanceTestConfig("s1", consumerGroup))
 	require.NoError(t, err)
-	_, err = q2.Subscriber().Subscribe(s.ctx, topic, testSubConfig("s2", consumerGroup))
+	_, err = q2.Subscriber().Subscribe(s.ctx, topic, rebalanceTestConfig("s2", consumerGroup))
 	require.NoError(t, err)
 
 	// maxPart = ceil(5/2) = 3. One gets 3, the other gets 2.
@@ -1882,7 +1924,7 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_NoOrphans() {
 		})
 		require.NoError(t, err)
 		queues[i] = q
-		_, err = q.Subscriber().Subscribe(s.ctx, topic, testSubConfig(name, consumerGroup))
+		_, err = q.Subscriber().Subscribe(s.ctx, topic, rebalanceTestConfig(name, consumerGroup))
 		require.NoError(t, err)
 	}
 	defer queues[0].Close()
@@ -1942,7 +1984,7 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_MoreSubscribersThanPartitions()
 		})
 		require.NoError(t, err)
 		queues = append(queues, q)
-		_, err = q.Subscriber().Subscribe(s.ctx, topic, testSubConfig(name, consumerGroup))
+		_, err = q.Subscriber().Subscribe(s.ctx, topic, rebalanceTestConfig(name, consumerGroup))
 		require.NoError(t, err)
 	}
 	defer func() {
@@ -2006,7 +2048,7 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_NoStarvation_UnevenSplit() {
 		// Nothing is acked in this test; a high retry budget keeps the
 		// messages out of the DLQ so partitions stay discoverable while the
 		// group converges.
-		cfg := testSubConfig(name, consumerGroup)
+		cfg := rebalanceTestConfig(name, consumerGroup)
 		cfg.Retry.MaxAttempts = 1000
 		_, err = q.Subscriber().Subscribe(s.ctx, topic, cfg)
 		require.NoError(t, err)
@@ -2077,7 +2119,7 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_OrphanSweep() {
 		require.NoError(t, err)
 	}
 
-	deliveryChan, err := q.Subscriber().Subscribe(s.ctx, topic, testSubConfig("worker-real", consumerGroup))
+	deliveryChan, err := q.Subscriber().Subscribe(s.ctx, topic, rebalanceTestConfig("worker-real", consumerGroup))
 	require.NoError(t, err)
 
 	// All three messages must arrive: one via the normal capped acquisition,
@@ -2095,6 +2137,66 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_OrphanSweep() {
 	}
 
 	t.Logf("Orphan sweep verified: all 3 partitions processed despite a fair-share cap of 1")
+}
+
+// TestIdleLeaseRelease verifies the full lifecycle of a short-lived partition
+// key: consume everything, wait out garbage collection and the idle grace,
+// and the subscriber must release the lease and delete its offsets row (no
+// ghost worker, no leaked rows). A message published afterwards must
+// resurrect the partition through normal discovery and be delivered.
+func (s *SQLQueueIntegrationSuite) TestIdleLeaseRelease() {
+	t := s.T()
+
+	topic := "idle_release_topic"
+	consumerGroup := "idle-release-cg"
+	partition := "pk-idle"
+
+	signalCh := make(chan queueMySQL.HookSignal, 100)
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+		OnSignal: signalCh,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	// Fast poll so the idle GC pass (every 100 idle ticks) fires quickly;
+	// idle grace is 2x the 3s test lease duration.
+	cfg := testSubConfig("worker-idle", consumerGroup)
+	cfg.PollIntervalMs = 50
+
+	deliveryChan, err := q.Subscriber().Subscribe(s.ctx, topic, cfg)
+	require.NoError(t, err)
+
+	msg := entityqueue.NewMessage("idle-1", []byte("x"), partition, nil)
+	require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg))
+
+	delivery := receive(t, deliveryChan)
+	require.Equal(t, "idle-1", delivery.Message().ID)
+	require.NoError(t, delivery.Ack(s.ctx))
+
+	// After GC removes the acked message and the drained grace elapses, the
+	// lease row and this group's offsets row must both be gone.
+	rowCount := func(table string) int {
+		var n int
+		require.NoError(t, s.db.QueryRowContext(s.ctx,
+			"SELECT COUNT(*) FROM "+table+" WHERE consumer_group = ? AND topic = ?",
+			consumerGroup, topic).Scan(&n))
+		return n
+	}
+	waitForCondition(t, signalCh, func() bool {
+		return rowCount("queue_partition_leases") == 0 && rowCount("queue_offsets") == 0
+	}, "drained partition's lease and offsets rows should be released after the idle grace")
+
+	// Resurrection: a new message re-creates the partition through normal
+	// discovery and is delivered like any other.
+	msg2 := entityqueue.NewMessage("idle-2", []byte("y"), partition, nil)
+	require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg2))
+
+	delivery2 := receive(t, deliveryChan)
+	require.Equal(t, "idle-2", delivery2.Message().ID)
+	require.NoError(t, delivery2.Ack(s.ctx))
+
+	t.Logf("Idle lease released and partition resurrected on new traffic")
 }
 
 // TestNackDoesNotBlockOtherMessages verifies that nacking a message does not
@@ -2115,6 +2217,7 @@ func (s *SQLQueueIntegrationSuite) TestInFlightMessageDoesNotBlockOtherMessages(
 	// Subscribe with batch=10 to fetch multiple messages per poll. The default
 	// 60s visibility timeout keeps msg-1 invisible for the whole test.
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "nack-nb-cg")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	subConfig.PollIntervalMs = 50
 	subConfig.BatchSize = 10
 	deliveryCh, err := q.Subscriber().Subscribe(s.ctx, topic, subConfig)
@@ -2172,6 +2275,7 @@ func (s *SQLQueueIntegrationSuite) TestPostponeBlocksPartitionUntilDue() {
 	// Subscribe with batch=10 so the barrier — not the batch size — is what
 	// keeps later offsets back.
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "postpone-cg")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	subConfig.PollIntervalMs = 50
 	subConfig.BatchSize = 10
 	deliveryCh, err := q.Subscriber().Subscribe(s.ctx, topic, subConfig)
@@ -2268,6 +2372,7 @@ func (s *SQLQueueIntegrationSuite) TestPostponeResetsRetryBudget() {
 
 	dlqTopic := topic + subConfig.DLQ.TopicSuffix
 	dlqConfig := extqueue.DefaultSubscriptionConfig("worker-1", "postpone-budget-cg")
+	dlqConfig.PartitionDiscoveryIntervalMs = 100
 	dlqDeliveryChan, err := q.Subscriber().Subscribe(s.ctx, dlqTopic, dlqConfig)
 	require.NoError(t, err)
 
@@ -2299,6 +2404,7 @@ func (s *SQLQueueIntegrationSuite) TestBatchSizeOneStrictSerialization() {
 
 	// Subscribe with batchSize=1 for strict serialization
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "serial-cg")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	subConfig.PollIntervalMs = 50
 	subConfig.BatchSize = 1
 	deliveryCh, err := q.Subscriber().Subscribe(s.ctx, topic, subConfig)
@@ -2346,8 +2452,10 @@ func (s *SQLQueueIntegrationSuite) TestMultipleConsumerGroupsIndependentState() 
 
 	// Two consumer groups subscribing to the same topic
 	cfg1 := extqueue.DefaultSubscriptionConfig("worker-1", "cg-alpha")
+	cfg1.PartitionDiscoveryIntervalMs = 100
 	cfg1.PollIntervalMs = 50
 	cfg2 := extqueue.DefaultSubscriptionConfig("worker-2", "cg-beta")
+	cfg2.PartitionDiscoveryIntervalMs = 100
 	cfg2.PollIntervalMs = 50
 
 	ch1, err := q.Subscriber().Subscribe(s.ctx, topic, cfg1)
@@ -2480,6 +2588,7 @@ func (s *SQLQueueIntegrationSuite) TestCrashAfterRejectDoesNotLoseMessages() {
 	// Verify DLQ contains msg-B
 	dlqTopic := topic + subConfig.DLQ.TopicSuffix
 	dlqConfig := extqueue.DefaultSubscriptionConfig("worker-2", "crash-reject-cg")
+	dlqConfig.PartitionDiscoveryIntervalMs = 100
 	dlqConfig.PollIntervalMs = 100
 	dlqChan, err := q2.Subscriber().Subscribe(s.ctx, dlqTopic, dlqConfig)
 	require.NoError(t, err)
@@ -2637,6 +2746,7 @@ func (s *SQLQueueIntegrationSuite) TestWatermarkAdvancesContiguously() {
 	}
 
 	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "watermark-cg")
+	subConfig.PartitionDiscoveryIntervalMs = 100
 	subConfig.PollIntervalMs = 100
 	subConfig.VisibilityTimeoutMs = 30000 // long visibility so nothing re-delivers
 	subConfig.BatchSize = 10

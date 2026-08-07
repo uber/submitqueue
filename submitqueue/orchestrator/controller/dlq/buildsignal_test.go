@@ -34,7 +34,7 @@ func TestDLQBuildSignalController_InterfaceAndAccessors(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 
-	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
+	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
 
 	assert.Equal(t, "buildsignal_dlq", c.Name())
 	assert.Equal(t, consumer.TopicKey("buildsignal_dlq"), c.TopicKey())
@@ -46,7 +46,8 @@ func TestDLQBuildSignalController_Process_FansOutToBatch(t *testing.T) {
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
 	buildStore.EXPECT().Get(gomock.Any(), "build-1").Return(entity.Build{
-		ID: "build-1", BatchID: "q/batch/2", Status: entity.BuildStatusRunning,
+		ID: "build-1", BatchID: "q/batch/2", PathID: "path-1", Attempt: 1,
+		Status: entity.BuildStatusRunning,
 	}, nil)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
@@ -74,7 +75,7 @@ func TestDLQBuildSignalController_Process_FansOutToBatch(t *testing.T) {
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, registry, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
+	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
 
 	payload, err := entity.BuildID{ID: "build-1"}.ToBytes()
 	require.NoError(t, err)
@@ -93,7 +94,7 @@ func TestDLQBuildSignalController_Process_BuildNotFoundIsNoOp(t *testing.T) {
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
 
-	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
+	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
 
 	payload, err := entity.BuildID{ID: "build-1"}.ToBytes()
 	require.NoError(t, err)
@@ -114,7 +115,7 @@ func TestDLQBuildSignalController_Process_BuildMissingBatchIsNoOp(t *testing.T) 
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
 
-	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
+	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
 
 	payload, err := entity.BuildID{ID: "build-1"}.ToBytes()
 	require.NoError(t, err)
@@ -128,7 +129,7 @@ func TestDLQBuildSignalController_Process_MalformedPayloadFails(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
-	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
+	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
 
 	delivery := newMockDelivery(ctrl, []byte("garbage"))
 	err := c.Process(context.Background(), delivery)

@@ -52,19 +52,19 @@ type ListController interface {
 var _ ListController = (*listController)(nil)
 
 type listController struct {
-	logger                   *zap.SugaredLogger
-	metricsScope             tally.Scope
-	requestQueueSummaryStore storage.RequestQueueSummaryStore
-	queueConfigs             queueconfig.Store
+	logger       *zap.SugaredLogger
+	metricsScope tally.Scope
+	stores       storage.Factory
+	queueConfigs queueconfig.Store
 }
 
 // NewListController creates a gateway list controller.
-func NewListController(logger *zap.SugaredLogger, scope tally.Scope, requestQueueSummaryStore storage.RequestQueueSummaryStore, queueConfigs queueconfig.Store) ListController {
+func NewListController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.Factory, queueConfigs queueconfig.Store) ListController {
 	return &listController{
-		logger:                   logger,
-		metricsScope:             scope.SubScope("list_controller"),
-		requestQueueSummaryStore: requestQueueSummaryStore,
-		queueConfigs:             queueConfigs,
+		logger:       logger,
+		metricsScope: scope.SubScope("list_controller"),
+		stores:       stores,
+		queueConfigs: queueConfigs,
 	}
 }
 
@@ -93,8 +93,12 @@ func (c *listController) List(ctx context.Context, req entity.ListRequest) (resu
 		return entity.ListResult{}, fmt.Errorf("page_size must be between 0 and %d: %w", maxListPageSize, ErrInvalidRequest)
 	}
 
+	store, err := c.stores.For(storage.Config{QueueName: req.Queue})
+	if err != nil {
+		return entity.ListResult{}, fmt.Errorf("failed to resolve storage for queue %q: %w", req.Queue, err)
+	}
+
 	query := storage.RequestQueueSummaryQuery{
-		Queue:               req.Queue,
 		ReceivedAtOrAfterMs: req.ReceivedAtOrAfterMs,
 		ReceivedBeforeMs:    req.ReceivedBeforeMs,
 		Limit:               pageSize + 1,
@@ -111,7 +115,7 @@ func (c *listController) List(ctx context.Context, req entity.ListRequest) (resu
 		query.Cursor = storage.RequestQueueSummaryCursor{ReceivedAtMs: token.LastReceivedAtMs, RequestID: token.LastRequestID}
 	}
 
-	summaries, err := c.requestQueueSummaryStore.List(ctx, query)
+	summaries, err := store.GetRequestQueueSummaryStore().List(ctx, query)
 	if err != nil {
 		return entity.ListResult{}, fmt.Errorf("failed to list queue=%s: %w", req.Queue, err)
 	}

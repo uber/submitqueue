@@ -29,19 +29,24 @@ import (
 type queueBatchStateStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewQueueBatchStateStore creates a new MySQL-backed QueueBatchStateStore.
-func NewQueueBatchStateStore(db *sql.DB, scope tally.Scope) storage.QueueBatchStateStore {
-	return &queueBatchStateStore{db: db, scope: scope}
+func NewQueueBatchStateStore(db *sql.DB, scope tally.Scope, queue string) storage.QueueBatchStateStore {
+	return &queueBatchStateStore{db: db, scope: scope, queue: queue}
 }
 
-// List returns every record filed under (queue, state). The WHERE clause is a
-// prefix of the (queue, state, batch_id) PK, so this is a PK-prefix scan.
-func (s *queueBatchStateStore) List(ctx context.Context, queue string, state entity.BatchState) (ret []entity.QueueBatchState, retErr error) {
+// List returns every record filed under the bound queue's state bucket. The
+// WHERE clause is a prefix of the (queue, state, batch_id) PK, so this is a
+// PK-prefix scan.
+func (s *queueBatchStateStore) List(ctx context.Context, state entity.BatchState) (ret []entity.QueueBatchState, retErr error) {
 	op := metrics.Begin(s.scope, "list", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	queue := s.queue
 	const query = "SELECT queue, state, batch_id FROM queue_batch_state WHERE queue = ? AND state = ?"
 	rows, err := s.db.QueryContext(ctx, query, queue, string(state))
 	if err != nil {
@@ -70,6 +75,10 @@ func (s *queueBatchStateStore) Put(ctx context.Context, record entity.QueueBatch
 	op := metrics.Begin(s.scope, "put", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	if record.Queue != s.queue {
+		return fmt.Errorf("queue batch state record batch_id=%s queue %q does not match the store's bound queue %q", record.BatchID, record.Queue, s.queue)
+	}
+
 	const query = "INSERT IGNORE INTO queue_batch_state (queue, state, batch_id) VALUES (?, ?, ?)"
 	if _, err := s.db.ExecContext(ctx, query, record.Queue, string(record.State), record.BatchID); err != nil {
 		return fmt.Errorf("failed to put queue batch state record queue=%s state=%s batch_id=%s: %w", record.Queue, record.State, record.BatchID, err)
@@ -77,12 +86,14 @@ func (s *queueBatchStateStore) Put(ctx context.Context, record entity.QueueBatch
 	return nil
 }
 
-// Delete removes the record identified by (queue, state, batchID). Deleting an
-// absent record is a no-op success — rows-affected is intentionally not checked.
-func (s *queueBatchStateStore) Delete(ctx context.Context, queue string, state entity.BatchState, batchID string) (retErr error) {
+// Delete removes the bound queue's record identified by (state, batchID).
+// Deleting an absent record is a no-op success — rows-affected is intentionally
+// not checked.
+func (s *queueBatchStateStore) Delete(ctx context.Context, state entity.BatchState, batchID string) (retErr error) {
 	op := metrics.Begin(s.scope, "delete", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	queue := s.queue
 	const query = "DELETE FROM queue_batch_state WHERE queue = ? AND state = ? AND batch_id = ?"
 	if _, err := s.db.ExecContext(ctx, query, queue, string(state), batchID); err != nil {
 		return fmt.Errorf("failed to delete queue batch state record queue=%s state=%s batch_id=%s: %w", queue, state, batchID, err)

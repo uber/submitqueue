@@ -37,16 +37,20 @@ import (
 	"github.com/uber/submitqueue/platform/extension/consumergate"
 	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
 	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
+	"github.com/uber/submitqueue/platform/extension/counter"
 	mysqlcounter "github.com/uber/submitqueue/platform/extension/counter/mysql"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/platform/pipeline"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
+	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	cpfake "github.com/uber/submitqueue/submitqueue/extension/changeprovider/fake"
 	githubprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/github"
 	phabprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/phabricator"
 	routingprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/routing"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
+	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	validatorfake "github.com/uber/submitqueue/submitqueue/extension/validator/fake"
 	"github.com/uber/submitqueue/submitqueue/orchestrator"
@@ -139,7 +143,7 @@ func run() error {
 	}
 	defer appDB.Close()
 
-	cnt := mysqlcounter.NewCounter(appDB, scope.SubScope("counter"))
+	cnt := counterFactory{db: appDB, scope: scope.SubScope("counter")}
 
 	store, err := mysqlstorage.NewStorage(appDB, scope.SubScope("storage"))
 	if err != nil {
@@ -180,7 +184,8 @@ func run() error {
 	// Build per-queue extension profiles (host-private). Each queue resolves
 	// to its own set of extension implementations (conflict analyzer, …),
 	// falling back to a baseline profile for queues without an explicit entry.
-	profiles, err := newProfiles(logger, scope, changeset.New(store.GetRequestStore(), store.GetChangeStore()))
+	storageFty := storageFactory{backend: store}
+	profiles, err := newProfiles(logger, scope, changeset.New(storageFty), storageFty)
 	if err != nil {
 		return fmt.Errorf("failed to build profiles: %w", err)
 	}
@@ -191,12 +196,17 @@ func run() error {
 	deps := orchestrator.Deps{
 		Logger:         logger.Sugar(),
 		Scope:          scope,
-		Storage:        store,
+		Storage:        profiles.StorageFactory(),
 		Counter:        cnt,
 		BuildRunner:    profiles.BuildRunnerFactory(),
 		ChangeProvider: profiles.ChangeProviderFactory(),
 		Analyzer:       profiles.AnalyzerFactory(),
-		Validator:      validatorfake.NewFactory(),
+		// Speculation is wired but inert: the placeholder below proposes
+		// nothing, so no path is ever funded and no speculative build starts.
+		// The wiring change at the top of this stack replaces it with real
+		// per-queue speculators composed from each profile's scorer.
+		Speculator: noopSpeculators{},
+		Validator:  validatorfake.NewFactory(),
 	}
 
 	// Assemble the pipeline: one call builds the topic registry, creates
@@ -430,4 +440,51 @@ func parseTimeout(envVal string, defaultVal time.Duration) time.Duration {
 		return d
 	}
 	return defaultVal
+}
+
+// storageFactory adapts the MySQL storage backend's queue binding to the
+// storage.Factory seam. Routing every queue to the single shared backend is
+// this host's policy; a deployment that splits queues across backends swaps
+// this adapter for a routing one.
+type storageFactory struct {
+	backend *mysqlstorage.Storage
+}
+
+// For returns the queue-scoped store aggregate bound to the queue named in config.
+func (f storageFactory) For(config storage.Config) (storage.Storage, error) {
+	return f.backend.For(config.QueueName)
+}
+
+// counterFactory adapts the MySQL counter backend to the counter.Factory seam.
+// Routing every queue to the single shared database is this host's policy; a
+// deployment that splits queues across backends swaps this adapter for a
+// routing one.
+type counterFactory struct {
+	db    *sql.DB
+	scope tally.Scope
+}
+
+// For returns the Counter bound to the queue named in config.
+func (f counterFactory) For(config counter.Config) (counter.Counter, error) {
+	if config.QueueName == "" {
+		return nil, fmt.Errorf("queue name must not be empty")
+	}
+	return mysqlcounter.NewCounter(f.db, f.scope, config.QueueName), nil
+}
+
+// noopSpeculators resolves every queue to a speculator that proposes nothing.
+// It keeps the speculate stage inert — no path funded, no build started —
+// until per-queue speculators are composed in the profiles.
+type noopSpeculators struct{}
+
+// For returns the propose-nothing speculator for any queue.
+func (noopSpeculators) For(speculator.Config) (speculator.Speculator, error) {
+	return noopSpeculator{}, nil
+}
+
+type noopSpeculator struct{}
+
+// Speculate proposes no actions, whatever the queue looks like.
+func (noopSpeculator) Speculate(context.Context, []entity.Batch, []entity.SpeculationPathSet) ([]entity.Speculation, error) {
+	return nil, nil
 }

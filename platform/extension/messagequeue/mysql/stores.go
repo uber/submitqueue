@@ -101,6 +101,23 @@ type offsetStore interface {
 	// Used by the subscriber to compute the GC threshold without messageStore
 	// needing to query the offsets table.
 	GetMinAckedOffset(ctx context.Context, topic string, partitionKey string) (offset int64, found bool, err error)
+
+	// DeleteOffset removes one consumer group's offset row for a partition.
+	// Callers use this when retiring a fully-drained partition; Initialize
+	// recreates the row if the partition ever receives messages again.
+	// Idempotent: no-op if the row is already gone.
+	DeleteOffset(ctx context.Context, topic string, partitionKey string, consumerGroup string) error
+}
+
+// leaseInfo describes one partition's current lease row (internal use only)
+type leaseInfo struct {
+	// PartitionKey is the partition this lease covers
+	PartitionKey string
+	// LeasedBy is the subscriber name currently holding the lease
+	LeasedBy string
+	// LeaseRenewedAt is the epoch milliseconds of the last renewal; a lease
+	// is stale (stealable) once this is older than the lease duration
+	LeaseRenewedAt int64
 }
 
 // partitionLeaseStore handles partition lease operations (internal use only)
@@ -120,6 +137,20 @@ type partitionLeaseStore interface {
 	// GetLeasedPartitions returns all partitions currently leased by this worker
 	GetLeasedPartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string) ([]string, error)
 
+	// GetAllLeases returns the lease row for every partition currently leased
+	// under (topic, consumerGroup) by any subscriber. One PK-prefix read that
+	// lets acquisition skip partitions validly held by other subscribers
+	// instead of write-probing every lease row each discovery tick.
+	GetAllLeases(ctx context.Context, topic string, consumerGroup string) ([]leaseInfo, error)
+
+	// PurgeStale deletes lease rows not renewed within olderThanMs. Backstop
+	// for holders that crashed while owning a drained partition: acquisition
+	// only probes discovered partitions, so a stale lease on a partition
+	// with no messages is otherwise never refreshed or removed. Deleting a
+	// stale row is equivalent to lease expiry — a concurrent renewal makes
+	// the row fresh and the age predicate skips it.
+	PurgeStale(ctx context.Context, topic string, consumerGroup string, olderThanMs int64) error
+
 	// DiscoverAndAcquirePartitions discovers partitions from messages table and tries to acquire leases.
 	// Returns the number of new leases acquired and the full list of discovered partitions.
 	// leaseDurationMs is how long the lease is valid (in milliseconds)
@@ -137,8 +168,18 @@ type subscriberHeartbeatStore interface {
 	// within this duration are considered dead.
 	ActiveSubscribers(ctx context.Context, topic string, consumerGroup string, staleDurationMs int64) ([]string, error)
 
-	// Deregister removes a subscriber's heartbeat entry
+	// Deregister removes a subscriber's heartbeat row. Hard delete: the row
+	// is not needed once the subscriber is gone, and subscriber names are
+	// unique per process (hostname-pid), so rows would otherwise accumulate
+	// forever across deploys. Re-subscribing re-inserts via Heartbeat.
 	Deregister(ctx context.Context, topic string, subscriberName string, consumerGroup string) error
+
+	// PurgeStale deletes heartbeat rows whose last heartbeat is older than
+	// olderThanMs. Backstop for subscribers that never deregistered
+	// (crashes, SIGKILL): without it the table grows monotonically since
+	// every process registers under a fresh name. Deleting a live-but-stalled
+	// subscriber's row is harmless — its next heartbeat re-inserts it.
+	PurgeStale(ctx context.Context, topic string, consumerGroup string, olderThanMs int64) error
 }
 
 // DeliveryState represents the full per-message delivery tracking state.

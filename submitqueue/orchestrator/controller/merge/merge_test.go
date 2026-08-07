@@ -36,10 +36,17 @@ import (
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 )
 
 // batchIDPayload serializes a BatchID to JSON bytes for test message payloads.
+// staticStorageFactory resolves every queue to one fixed store aggregate.
+type staticStorageFactory struct{ store storage.Storage }
+
+// For returns the fixed store aggregate for any queue.
+func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
+
 func batchIDPayload(t *testing.T, id string) []byte {
 	payload, err := entity.BatchID{ID: id}.ToBytes()
 	require.NoError(t, err)
@@ -58,7 +65,7 @@ func newController(t *testing.T, store *storagemock.MockStorage, registry consum
 	return NewController(
 		zaptest.NewLogger(t).Sugar(),
 		tally.NoopScope,
-		store,
+		staticStorageFactory{store: store},
 		registry,
 		runwaymq.TopicKeyMerge,
 		topickey.TopicKeyMerge,

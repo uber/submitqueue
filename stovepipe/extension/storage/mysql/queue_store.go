@@ -29,11 +29,14 @@ import (
 type queueStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewQueueStore creates a new MySQL-backed QueueStore.
-func NewQueueStore(db *sql.DB, scope tally.Scope) storage.QueueStore {
-	return &queueStore{db: db, scope: scope}
+func NewQueueStore(db *sql.DB, scope tally.Scope, queue string) storage.QueueStore {
+	return &queueStore{db: db, scope: scope, queue: queue}
 }
 
 // Create persists a new queue row. Returns ErrAlreadyExists if the name already exists.
@@ -41,14 +44,19 @@ func (q *queueStore) Create(ctx context.Context, queue entity.Queue) (retErr err
 	op := metrics.Begin(q.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	if queue.Name != q.queue {
+		return fmt.Errorf("queue row name %q does not match the store's bound queue %q", queue.Name, q.queue)
+	}
+
 	_, err := q.db.ExecContext(ctx,
-		`INSERT INTO queue (name, last_green_uri, in_flight_count, latest_request_id, version)
-		 VALUES (?, ?, ?, ?, ?)`,
+		`INSERT INTO queue (name, last_green_uri, in_flight_count, latest_request_id, version, last_green_request_id)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
 		queue.Name,
 		queue.LastGreenURI,
 		queue.InFlightCount,
 		queue.LatestRequestID,
 		queue.Version,
+		queue.LastGreenRequestID,
 	)
 	if err != nil {
 		if isDuplicateEntry(err) {
@@ -64,9 +72,13 @@ func (q *queueStore) Get(ctx context.Context, name string) (ret entity.Queue, re
 	op := metrics.Begin(q.scope, "get", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	if name != q.queue {
+		return entity.Queue{}, fmt.Errorf("queue row name %q does not match the store's bound queue %q: %w", name, q.queue, storage.ErrNotFound)
+	}
+
 	var queue entity.Queue
 	err := q.db.QueryRowContext(ctx,
-		"SELECT name, last_green_uri, in_flight_count, latest_request_id, version FROM queue WHERE name = ?",
+		"SELECT name, last_green_uri, in_flight_count, latest_request_id, version, last_green_request_id FROM queue WHERE name = ?",
 		name,
 	).Scan(
 		&queue.Name,
@@ -74,6 +86,7 @@ func (q *queueStore) Get(ctx context.Context, name string) (ret entity.Queue, re
 		&queue.InFlightCount,
 		&queue.LatestRequestID,
 		&queue.Version,
+		&queue.LastGreenRequestID,
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -92,14 +105,19 @@ func (q *queueStore) Update(ctx context.Context, queue entity.Queue, oldVersion,
 	op := metrics.Begin(q.scope, "update", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	if queue.Name != q.queue {
+		return fmt.Errorf("queue row name %q does not match the store's bound queue %q", queue.Name, q.queue)
+	}
+
 	result, err := q.db.ExecContext(ctx,
 		`UPDATE queue
-		 SET last_green_uri = ?, in_flight_count = ?, latest_request_id = ?, version = ?
+		 SET last_green_uri = ?, in_flight_count = ?, latest_request_id = ?, version = ?, last_green_request_id = ?
 		 WHERE name = ? AND version = ?`,
 		queue.LastGreenURI,
 		queue.InFlightCount,
 		queue.LatestRequestID,
 		newVersion,
+		queue.LastGreenRequestID,
 		queue.Name,
 		oldVersion,
 	)

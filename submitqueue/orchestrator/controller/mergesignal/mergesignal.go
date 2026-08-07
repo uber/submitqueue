@@ -42,7 +42,7 @@ import (
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	store         storage.Storage
+	stores        storage.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -55,7 +55,7 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	stores storage.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -63,7 +63,7 @@ func NewController(
 	return &Controller{
 		logger:        logger.Named("mergesignal_controller"),
 		metricsScope:  scope.SubScope("mergesignal_controller"),
-		store:         store,
+		stores:        stores,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -91,7 +91,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to deserialize merge result: %w", err)
 	}
 
-	batch, err := c.store.GetBatchStore().Get(ctx, result.Id)
+	store, err := c.stores.For(storage.Config{QueueName: result.GetQueueName()})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		// Non-retryable: a missing or unresolvable queue is a malformed message.
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", result.GetQueueName(), err)
+	}
+
+	batch, err := store.GetBatchStore().Get(ctx, result.Id)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to get batch %s: %w", result.Id, err)
@@ -121,7 +128,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// attempt missed the downstream publishes, then ack.
 	if batch.State.IsTerminal() {
 		metrics.NamedCounter(c.metricsScope, opName, "skipped_terminal", 1)
-		if err := corebatch.EnsureRecord(ctx, c.store, batch); err != nil {
+		if err := corebatch.EnsureRecord(ctx, store, batch); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "state_update_errors", 1)
 			return err
 		}
@@ -144,7 +151,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		)
 	}
 
-	batch, err = corebatch.Transition(ctx, c.store, batch, newState)
+	batch, err = corebatch.Transition(ctx, store, batch, newState)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "state_update_errors", 1)
 		return err
@@ -155,26 +162,27 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 // fanout publishes the batch ID to conclude (so requests are updated) and to
 // speculate (so dependents can re-evaluate now that this batch is done).
-func (c *Controller) fanout(ctx context.Context, batchID, partitionKey string) error {
-	if err := c.publish(ctx, topickey.TopicKeyConclude, batchID, partitionKey); err != nil {
+func (c *Controller) fanout(ctx context.Context, batchID, queue string) error {
+	if err := c.publish(ctx, topickey.TopicKeyConclude, batchID, queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, "process", "publish_conclude_errors", 1)
 		return fmt.Errorf("failed to publish to conclude: %w", err)
 	}
-	if err := c.publish(ctx, topickey.TopicKeySpeculate, batchID, partitionKey); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeySpeculate, batchID, queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, "process", "publish_speculate_errors", 1)
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}
 	return nil
 }
 
-// publish publishes a batch ID to the given topic key, partitioned by queue.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID string, partitionKey string) error {
-	payload, err := entity.BatchID{ID: batchID}.ToBytes()
+// publish publishes a batch ID to the given topic key, stamped with and
+// partitioned by the batch's queue.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID string, queue string) error {
+	payload, err := entity.BatchID{ID: batchID, Queue: queue}.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(batchID, payload, partitionKey, nil)
+	msg := entityqueue.NewMessage(batchID, payload, queue, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

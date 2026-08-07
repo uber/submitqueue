@@ -128,6 +128,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		}
 	}
 
+	// Echo the request's queue name so the consumer can route the result by
+	// queue without loading state first.
+	result.QueueName = request.GetQueueName()
+
 	if err := c.publish(ctx, runwaymq.TopicKeyMergeSignal, result, msg.PartitionKey); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish merge result for %s: %w", request.GetId(), err)
