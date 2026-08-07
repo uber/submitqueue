@@ -80,4 +80,7 @@ type Storage interface {
 
 	// GetBuildStore returns the BuildStore instance.
 	GetBuildStore() BuildStore
+
+	// GetValidationFactStore returns the ValidationFactStore instance.
+	GetValidationFactStore() ValidationFactStore
 }

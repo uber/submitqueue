@@ -398,3 +398,155 @@ func (s *QueueStoreContractSuite) TestQueueStore_QueueIsolation() {
 	_, err = storeA.Get(s.ctx, nameB)
 	assert.True(t, storage.IsNotFound(err))
 }
+
+// ValidationFactStoreContractSuite defines contract tests for storage.ValidationFactStore.
+// All ValidationFactStore implementations must pass these tests.
+type ValidationFactStoreContractSuite struct {
+	suite.Suite
+	ctx     context.Context
+	factory storage.Factory
+	log     *testutil.TestLogger
+}
+
+// SetContext sets the context for tests.
+func (s *ValidationFactStoreContractSuite) SetContext(ctx context.Context) {
+	s.ctx = ctx
+}
+
+// SetFactory provides the Factory that resolves the store under test per queue.
+func (s *ValidationFactStoreContractSuite) SetFactory(factory storage.Factory) {
+	s.factory = factory
+}
+
+// SetLogger sets the logger for tests.
+func (s *ValidationFactStoreContractSuite) SetLogger(log *testutil.TestLogger) {
+	s.log = log
+}
+
+func (s *ValidationFactStoreContractSuite) storeFor(queue string) storage.ValidationFactStore {
+	store, err := s.factory.For(storage.Config{QueueName: queue})
+	s.Require().NoError(err)
+	return store.GetValidationFactStore()
+}
+
+// TestValidationFactStore_CreateAndGet verifies Create persists every field, readable via Get.
+func (s *ValidationFactStoreContractSuite) TestValidationFactStore_CreateAndGet() {
+	t := s.T()
+	const queue = "contract/fact-create"
+
+	fact := entity.ValidationFact{
+		URI:       "git://remote/contract/fact-create/aaaa",
+		Degree:    entity.DegreeGreen,
+		RequestID: "request/contract/fact-create/1",
+		CreatedAt: 1735689600000,
+	}
+	require.NoError(t, s.storeFor(queue).Create(s.ctx, fact))
+
+	got, err := s.storeFor(queue).Get(s.ctx, fact.URI, fact.Project)
+	require.NoError(t, err)
+	assert.Equal(t, fact, got)
+}
+
+// TestValidationFactStore_CreateAlreadyExists verifies facts are create-only: a second
+// Create for the same identity is rejected and leaves the stored fact untouched.
+func (s *ValidationFactStoreContractSuite) TestValidationFactStore_CreateAlreadyExists() {
+	t := s.T()
+	const queue = "contract/fact-exists"
+
+	first := entity.ValidationFact{
+		URI:       "git://remote/contract/fact-exists/aaaa",
+		Degree:    entity.DegreeGreen,
+		RequestID: "request/contract/fact-exists/1",
+		CreatedAt: 1735689600000,
+	}
+	require.NoError(t, s.storeFor(queue).Create(s.ctx, first))
+
+	err := s.storeFor(queue).Create(s.ctx, entity.ValidationFact{
+		URI:       first.URI,
+		Degree:    entity.DegreeBroken,
+		RequestID: "request/contract/fact-exists/2",
+		CreatedAt: 1735689700000,
+	})
+	assert.ErrorIs(t, err, storage.ErrAlreadyExists)
+
+	// First writer wins: the losing degree must not have overwritten the stored fact.
+	got, err := s.storeFor(queue).Get(s.ctx, first.URI, first.Project)
+	require.NoError(t, err)
+	assert.Equal(t, first, got)
+}
+
+// TestValidationFactStore_GetNotFound verifies Get returns ErrNotFound for an unvalidated URI.
+func (s *ValidationFactStoreContractSuite) TestValidationFactStore_GetNotFound() {
+	t := s.T()
+
+	_, err := s.storeFor("contract/fact-missing").Get(s.ctx, "git://remote/contract/nope", "")
+	assert.True(t, storage.IsNotFound(err))
+}
+
+// TestValidationFactStore_ProjectIsPartOfIdentity verifies facts for different projects at the
+// same URI coexist rather than colliding.
+func (s *ValidationFactStoreContractSuite) TestValidationFactStore_ProjectIsPartOfIdentity() {
+	t := s.T()
+	const queue = "contract/fact-project"
+	const uri = "git://remote/contract/fact-project/aaaa"
+
+	wholeRepo := entity.ValidationFact{
+		URI:       uri,
+		Degree:    entity.DegreeGreen,
+		RequestID: "request/contract/fact-project/1",
+		CreatedAt: 1735689600000,
+	}
+	scoped := entity.ValidationFact{
+		URI:       uri,
+		Project:   "billing",
+		Degree:    entity.DegreeBroken,
+		RequestID: "request/contract/fact-project/1",
+		CreatedAt: 1735689600000,
+	}
+	require.NoError(t, s.storeFor(queue).Create(s.ctx, wholeRepo))
+	require.NoError(t, s.storeFor(queue).Create(s.ctx, scoped))
+
+	gotWhole, err := s.storeFor(queue).Get(s.ctx, uri, "")
+	require.NoError(t, err)
+	assert.Equal(t, wholeRepo, gotWhole)
+
+	gotScoped, err := s.storeFor(queue).Get(s.ctx, uri, "billing")
+	require.NoError(t, err)
+	assert.Equal(t, scoped, gotScoped)
+}
+
+// TestValidationFactStore_QueueIsolation verifies one queue's fact is unreachable through
+// another queue's binding, even at an identical URI.
+func (s *ValidationFactStoreContractSuite) TestValidationFactStore_QueueIsolation() {
+	t := s.T()
+	const (
+		queueA = "contract/fact-isolation-a"
+		queueB = "contract/fact-isolation-b"
+		uri    = "git://remote/shared/aaaa"
+	)
+
+	factA := entity.ValidationFact{
+		URI:       uri,
+		Degree:    entity.DegreeGreen,
+		RequestID: "request/contract/fact-isolation-a/1",
+		CreatedAt: 1735689600000,
+	}
+	require.NoError(t, s.storeFor(queueA).Create(s.ctx, factA))
+
+	// The same URI is a distinct identity under a different queue, so it neither
+	// collides on Create nor leaks on Get.
+	_, err := s.storeFor(queueB).Get(s.ctx, uri, "")
+	assert.True(t, storage.IsNotFound(err))
+
+	factB := entity.ValidationFact{
+		URI:       uri,
+		Degree:    entity.DegreeBroken,
+		RequestID: "request/contract/fact-isolation-b/1",
+		CreatedAt: 1735689700000,
+	}
+	require.NoError(t, s.storeFor(queueB).Create(s.ctx, factB))
+
+	gotA, err := s.storeFor(queueA).Get(s.ctx, uri, "")
+	require.NoError(t, err)
+	assert.Equal(t, factA, gotA)
+}

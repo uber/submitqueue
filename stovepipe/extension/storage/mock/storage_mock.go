@@ -134,3 +134,17 @@ func (mr *MockStorageMockRecorder) GetRequestURIStore() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRequestURIStore", reflect.TypeOf((*MockStorage)(nil).GetRequestURIStore))
 }
+
+// GetValidationFactStore mocks base method.
+func (m *MockStorage) GetValidationFactStore() storage.ValidationFactStore {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetValidationFactStore")
+	ret0, _ := ret[0].(storage.ValidationFactStore)
+	return ret0
+}
+
+// GetValidationFactStore indicates an expected call of GetValidationFactStore.
+func (mr *MockStorageMockRecorder) GetValidationFactStore() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetValidationFactStore", reflect.TypeOf((*MockStorage)(nil).GetValidationFactStore))
+}
