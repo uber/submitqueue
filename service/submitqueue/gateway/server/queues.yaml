@@ -17,5 +17,9 @@ queues:
   # orchestrator example server.
   - name: e2e-conflict-error-queue
   # Used by the hermetic git E2E, where Runway is wired to a real git merger
-  # against a bare repository. See service/submitqueue/example/provider/local.
+  # against a bare repository. See service/submitqueue/demo/provider/local.
   - name: e2e-git-queue
+  # Used by the provider demo stack (make local-provider-start), where the whole
+  # pipeline runs against a real repository. See
+  # service/submitqueue/demo/provider and doc/howto/PROVIDER-E2E.md.
+  - name: demo-queue

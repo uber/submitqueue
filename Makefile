@@ -6,11 +6,16 @@ COMPOSE = docker-compose
 
 # SubmitQueue compose files
 COMPOSE_FILE = service/submitqueue/docker-compose.yml
+PROVIDER_COMPOSE_FILE = service/submitqueue/docker-compose.provider.yml
 GATEWAY_COMPOSE_FILE = service/submitqueue/gateway/server/docker-compose.yml
 ORCHESTRATOR_COMPOSE_FILE = service/submitqueue/orchestrator/server/docker-compose.yml
 
 # Fixed project name for local manual testing (tests use unique random names)
 SUBMITQUEUE_LOCAL_PROJECT = submitqueue
+
+# Separate project for the provider demo stack, so it can run alongside the plain
+# local stack without the two sharing containers or volumes.
+PROVIDER_LOCAL_PROJECT = submitqueue-provider
 
 # Stovepipe compose file (single Ping-only service)
 STOVEPIPE_COMPOSE_FILE = service/stovepipe/docker-compose.yml
@@ -40,6 +45,17 @@ PROTO_PACKAGES = api/base/change api/base/mergestrategy api/base/messagequeue ap
 
 # Set REPO_ROOT for docker-compose
 export REPO_ROOT := $(shell pwd)
+
+# Which provider the demo stack targets. Selects a configuration directory rather
+# than a code path, so adding a provider means adding a directory — see
+# service/submitqueue/demo/provider/README.md.
+PROVIDER ?= github
+export SQ_PROVIDER_CONFIG_DIR ?= $(REPO_ROOT)/service/submitqueue/demo/provider/$(PROVIDER)
+
+# Defaults for `make land` against the provider demo stack.
+QUEUE ?= demo-queue
+STRATEGY ?= SQUASH_REBASE
+GATEWAY_ADDR ?= localhost:8081
 
 # Fails if git working tree is dirty. Usage: $(call assert_clean,fix command)
 define assert_clean
@@ -136,7 +152,7 @@ deps: tidy-go ## Download and tidy Go dependencies
 
 e2e-git-test: ## Run the hermetic git E2E (real merger against a bare repo; no credentials)
 	@echo "Running hermetic git end-to-end tests..."
-	@$(BAZEL) test //test/e2e/submitqueue:go_default_test --test_output=errors \\
+	@$(BAZEL) test //test/e2e/submitqueue:go_default_test --test_output=errors \
 		--test_filter='TestGitMergeE2E'
 
 e2e-test: ## Run end-to-end tests (hermetic; Bazel builds all inputs; runs in parallel)
@@ -173,6 +189,26 @@ integration-test-submitqueue-gateway: ## Run Gateway integration tests
 integration-test-submitqueue-orchestrator: ## Run Orchestrator integration tests
 	@echo "Running Orchestrator integration tests..."
 	@$(BAZEL) test //test/integration/submitqueue/orchestrator:go_default_test --test_output=streamed
+
+land: ## Land a change or a stack (PR=<url>, PRS="<url> <url>", or URI=<change-uri>)
+	@if [ -z "$(PR)$(PRS)$(URI)$(URIS)" ]; then \
+		echo "Usage: make land PR=https://github.com/owner/repo/pull/7"; \
+		echo "   stack: make land PRS=\"<url-1> <url-2> <url-3>\"   (order is the stack order)"; \
+		echo "   by uri: make land URI=github://github.com/owner/repo/pull/7/<sha>"; \
+		echo "   opts: QUEUE=$(QUEUE) STRATEGY=$(STRATEGY) GATEWAY_ADDR=$(GATEWAY_ADDR)"; \
+		exit 2; \
+	fi
+	@$(BAZEL) run //service/submitqueue/gateway/client:gateway -- \
+		-addr $(GATEWAY_ADDR) land \
+		-queue $(QUEUE) \
+		-strategy $(STRATEGY) \
+		$(if $(PR),-pr $(PR)) $(foreach p,$(PRS),-pr $(p)) \
+		$(if $(URI),-uri $(URI)) $(foreach u,$(URIS),-uri $(u))
+
+land-status: ## Read a landed request's status (SQID=... [QUEUE=demo-queue])
+	@if [ -z "$(SQID)" ]; then echo "Usage: make land-status SQID=demo-queue/1 [QUEUE=demo-queue]"; exit 2; fi
+	@$(BAZEL) run //service/submitqueue/gateway/client:gateway -- \
+		-addr $(GATEWAY_ADDR) status -queue $(QUEUE) -sqid $(SQID)
 
 license-fix: ## Add missing license headers to source files
 	@$(BAZEL) run //tool/linter/licenseheader -- --fix
@@ -216,6 +252,26 @@ local-submitqueue-gateway-stop: ## Stop Gateway service
 	@echo "Stopping Gateway services..."
 	@$(COMPOSE) -f $(GATEWAY_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
 	@echo "Gateway services stopped."
+
+local-provider-start: build-all-linux ## Start the full stack against a real provider (PROVIDER=github; needs GITHUB_TOKEN)
+	@echo "Starting full stack against provider '$(PROVIDER)' ($(SQ_PROVIDER_CONFIG_DIR))..."
+	@test -f "$(SQ_PROVIDER_CONFIG_DIR)/merge.yaml" \
+		|| { echo "No such provider '$(PROVIDER)': $(SQ_PROVIDER_CONFIG_DIR)/merge.yaml not found"; exit 2; }
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -p $(PROVIDER_LOCAL_PROJECT) up -d --build --wait
+	@echo "Applying database schemas..."
+	@$(MAKE) -s local-init-submitqueue-schemas SUBMITQUEUE_LOCAL_PROJECT=$(PROVIDER_LOCAL_PROJECT)
+	@echo ""
+	@echo "✅ Stack is running against provider '$(PROVIDER)'."
+	@echo ""
+	@echo "Gateway gRPC port: $$(docker port $(PROVIDER_LOCAL_PROJECT)-gateway-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'unknown')"
+	@echo ""
+	@echo "Land a change with:"
+	@echo "  make land PR=https://github.com/owner/repo/pull/7 GATEWAY_ADDR=localhost:<gateway port>"
+
+local-provider-stop: ## Stop the provider demo stack
+	@echo "Stopping provider stack..."
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -p $(PROVIDER_LOCAL_PROJECT) down
+	@echo "Provider stack stopped."
 
 local-init-submitqueue-schemas: ## Manually apply all database schemas
 	@echo "Applying storage schema to mysql-app..."

@@ -1,0 +1,39 @@
+# Extension profiles for the GitHub demo.
+#
+# Selects which implementation of each extension every queue resolves to. Holds
+# no secret: each integration names the environment variable carrying its
+# credential.
+
+defaults:
+  # Fake everywhere by default, so a queue that is not listed below cannot
+  # reach GitHub by accident.
+  changeProvider: {type: fake}
+  buildRunner: {type: fake}
+  analyzer: {type: all}
+
+queues:
+  - name: demo-queue
+    # Reads pull request metadata from GitHub's GraphQL API. For GitHub
+    # Enterprise, add `github: {baseUrl: https://ghe.example.com/api/v3}`.
+    changeProvider: {type: github}
+
+    # Serializes only batches that touch a shared file, so independent changes
+    # land in parallel. Swap for {type: all} to serialize the queue entirely, or
+    # {type: none} for maximum parallelism with no conflict detection.
+    analyzer: {type: fileoverlap}
+
+    # Every build succeeds instantly, so a land completes in seconds and the
+    # demo exercises the merge rather than waiting on CI.
+    buildRunner: {type: fake}
+    #
+    # To run real CI instead, replace the line above with the block below. It
+    # needs a workflow in the target repository that is triggerable by
+    # workflow_dispatch and accepts the sq_base_uris / sq_head_uris inputs, and
+    # a token with the `workflow` scope.
+    #
+    # buildRunner:
+    #   type: githubactions
+    #   owner: behinddwalls
+    #   repo: sq-demo
+    #   workflow: submitqueue-validate.yml
+    #   ref: main
