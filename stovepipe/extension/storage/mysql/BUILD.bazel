@@ -8,6 +8,7 @@ go_library(
         "request_store.go",
         "request_uri_store.go",
         "storage.go",
+        "validation_fact_store.go",
     ],
     importpath = "github.com/uber/submitqueue/stovepipe/extension/storage/mysql",
     visibility = ["//visibility:public"],
@@ -28,6 +29,7 @@ go_test(
         "request_store_test.go",
         "request_uri_store_test.go",
         "storage_test.go",
+        "validation_fact_store_test.go",
     ],
     embed = [":go_default_library"],
     deps = [

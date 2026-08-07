@@ -45,10 +45,11 @@ func (s *Storage) For(queueName string) (storage.Storage, error) {
 		return nil, fmt.Errorf("queue name must not be empty")
 	}
 	return &mysqlStorage{
-		requestStore:    NewRequestStore(s.db, s.scope.SubScope("request_store"), queueName),
-		requestURIStore: NewRequestURIStore(s.db, s.scope.SubScope("request_uri_store"), queueName),
-		queueStore:      NewQueueStore(s.db, s.scope.SubScope("queue_store"), queueName),
-		buildStore:      NewBuildStore(s.db, s.scope.SubScope("build_store"), queueName),
+		requestStore:        NewRequestStore(s.db, s.scope.SubScope("request_store"), queueName),
+		requestURIStore:     NewRequestURIStore(s.db, s.scope.SubScope("request_uri_store"), queueName),
+		queueStore:          NewQueueStore(s.db, s.scope.SubScope("queue_store"), queueName),
+		buildStore:          NewBuildStore(s.db, s.scope.SubScope("build_store"), queueName),
+		validationFactStore: NewValidationFactStore(s.db, s.scope.SubScope("validation_fact_store"), queueName),
 	}, nil
 }
 
@@ -59,10 +60,11 @@ func (s *Storage) Close() error {
 
 // mysqlStorage is the queue-scoped store aggregate returned by For.
 type mysqlStorage struct {
-	requestStore    storage.RequestStore
-	requestURIStore storage.RequestURIStore
-	queueStore      storage.QueueStore
-	buildStore      storage.BuildStore
+	requestStore        storage.RequestStore
+	requestURIStore     storage.RequestURIStore
+	queueStore          storage.QueueStore
+	buildStore          storage.BuildStore
+	validationFactStore storage.ValidationFactStore
 }
 
 // Verify mysqlStorage implements the queue-scoped aggregate at compile time.
@@ -86,4 +88,9 @@ func (f *mysqlStorage) GetQueueStore() storage.QueueStore {
 // GetBuildStore returns the MySQL-backed BuildStore.
 func (f *mysqlStorage) GetBuildStore() storage.BuildStore {
 	return f.buildStore
+}
+
+// GetValidationFactStore returns the MySQL-backed ValidationFactStore.
+func (f *mysqlStorage) GetValidationFactStore() storage.ValidationFactStore {
+	return f.validationFactStore
 }

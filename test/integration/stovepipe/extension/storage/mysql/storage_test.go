@@ -85,6 +85,15 @@ func TestMySQLStorage(t *testing.T) {
 		testSuite.SetLogger(testutil.NewTestLogger(t))
 		suite.Run(t, testSuite)
 	})
+
+	t.Run("ValidationFactStore", func(t *testing.T) {
+		resetStorage(t, db)
+		testSuite := new(MySQLValidationFactStoreSuite)
+		testSuite.SetContext(ctx)
+		testSuite.SetFactory(factory)
+		testSuite.SetLogger(testutil.NewTestLogger(t))
+		suite.Run(t, testSuite)
+	})
 }
 
 func resetStorage(t *testing.T, db *sql.DB) {
@@ -95,6 +104,7 @@ func resetStorage(t *testing.T, db *sql.DB) {
 		"TRUNCATE TABLE request",
 		"TRUNCATE TABLE build",
 		"TRUNCATE TABLE queue",
+		"TRUNCATE TABLE validation_fact",
 	} {
 		_, err := db.ExecContext(context.Background(), statement)
 		require.NoError(t, err)
@@ -249,6 +259,12 @@ func (s *MySQLRequestStoreSuite) TestURIMappingDistinctAcrossQueues() {
 // MySQLQueueStoreSuite exercises the MySQL-backed QueueStore by embedding the shared contract suite.
 type MySQLQueueStoreSuite struct {
 	storagesuite.QueueStoreContractSuite
+}
+
+// MySQLValidationFactStoreSuite exercises the MySQL-backed ValidationFactStore by embedding the
+// shared contract suite.
+type MySQLValidationFactStoreSuite struct {
+	storagesuite.ValidationFactStoreContractSuite
 }
 
 // MySQLBuildStoreSuite exercises the MySQL-backed BuildStore by embedding the shared contract suite.
