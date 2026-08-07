@@ -14,6 +14,7 @@ go_library(
         "land.go",
         "list.go",
         "merge_result.go",
+        "path_build.go",
         "push_result.go",
         "queue_batch_state.go",
         "queue_config.go",
