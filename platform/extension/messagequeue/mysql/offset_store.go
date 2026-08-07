@@ -132,3 +132,23 @@ func (s *sqloffsetStore) GetMinAckedOffset(ctx context.Context, topic string, pa
 
 	return minOffset, true, nil
 }
+
+// DeleteOffset removes one consumer group's offset row for a partition.
+// Idempotent — see the offsetStore interface doc.
+func (s *sqloffsetStore) DeleteOffset(ctx context.Context, topic string, partitionKey string, consumerGroup string) (retErr error) {
+	op := metrics.Begin(s.scope, "delete_offset", metrics.StorageLatencyBuckets,
+		metrics.NewTag("topic", topic),
+		metrics.NewTag("partition_key", partitionKey),
+		metrics.NewTag("consumer_group", consumerGroup))
+	defer func() { op.Complete(retErr) }()
+
+	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
+		DELETE FROM %s WHERE consumer_group = ? AND topic = ? AND partition_key = ?
+	`, OffsetsTableName), consumerGroup, topic, partitionKey)
+
+	if err != nil {
+		return fmt.Errorf("delete offset topic=%s partition=%s: %w", topic, partitionKey, err)
+	}
+
+	return nil
+}

@@ -61,6 +61,23 @@ const (
 	// Purging a live-but-stalled subscriber's row is harmless: its next
 	// heartbeat re-inserts it.
 	heartbeatPurgeAfterLeaseDurations = 10
+
+	// idleLeaseReleaseAfterLeaseDurations sets how long an owned partition
+	// must stay drained (no stored messages, hence absent from discovery)
+	// before its lease is released, as a multiple of LeaseDurationMs (2x =
+	// 60s at defaults). Long enough to keep ownership sticky across brief
+	// quiet spells on stable partition keys; short enough that short-lived
+	// keys (one batch, one request) don't hold leases, offset rows, and
+	// polling workers forever. A released partition rejoins through normal
+	// discovery as soon as a message arrives.
+	idleLeaseReleaseAfterLeaseDurations = 2
+
+	// leasePurgeAfterLeaseDurations sets the age threshold for purging
+	// abandoned lease rows, as a multiple of LeaseDurationMs. Covers holders
+	// that crashed while owning a drained partition: acquisition only probes
+	// discovered partitions, so nothing would ever steal (and thereby
+	// refresh or remove) a stale lease on a partition with no messages.
+	leasePurgeAfterLeaseDurations = 10
 )
 
 // HookSignal identifies the type of subscriber lifecycle event.
@@ -124,6 +141,14 @@ type subscription struct {
 	// DiscoverAndAcquirePartitions call. Used by fairShareCap during
 	// rebalance to avoid a redundant discovery query.
 	lastDiscoveredPartitions []string
+
+	// drainedSince tracks, per owned partition absent from discovery, when
+	// this subscriber first observed it drained (no stored messages left).
+	// Drives idle-lease release: partitions drained beyond the grace period
+	// are released so fully-consumed short-lived partition keys don't hold
+	// leases, offset rows, and polling workers forever. Only accessed by the
+	// single managePartitions goroutine — no locking needed.
+	drainedSince map[string]time.Time
 }
 
 // partitionWorker handles polling and delivering messages for a single partition.
@@ -580,6 +605,13 @@ func (s *subscriber) managePartitions(ctx context.Context, sub *subscription) {
 			if err := s.heartbeatStore.PurgeStale(ctx, sub.topic, cfg.ConsumerGroup, heartbeatPurgeAfterLeaseDurations*cfg.LeaseDurationMs); err != nil {
 				s.logger.Errorw("stale heartbeat purge failed", append(logFields, "error", err)...)
 			}
+			// Purge lease rows abandoned by holders that crashed while
+			// owning a drained partition — acquisition only probes
+			// discovered partitions, so nothing else ever refreshes or
+			// removes a stale lease on a partition with no messages.
+			if err := s.leaseStore.PurgeStale(ctx, sub.topic, cfg.ConsumerGroup, leasePurgeAfterLeaseDurations*cfg.LeaseDurationMs); err != nil {
+				s.logger.Errorw("stale lease purge failed", append(logFields, "error", err)...)
+			}
 			s.emitSignal(SignalPartitionUpdate)
 
 		case <-discoveryTicker.C:
@@ -650,8 +682,109 @@ func (s *subscriber) discoverAndReconcileWorkers(ctx context.Context, sub *subsc
 		return fmt.Errorf("get leased partitions after acquire: %w", err)
 	}
 
+	// Idle-lease release: an owned partition absent from discovery has no
+	// stored messages left — everything was consumed and garbage-collected.
+	// Held past the grace period, such a lease buys nothing (a worker
+	// polling an empty partition forever) and on topics with short-lived
+	// partition keys it leaks a lease row, an offsets row, and a goroutine
+	// per key ever used. Release drops the partition entirely: reconcile
+	// stops its worker, and if a message arrives later the partition
+	// reappears in discovery and is reacquired like any new partition.
+	grace := time.Duration(idleLeaseReleaseAfterLeaseDurations*cfg.LeaseDurationMs) * time.Millisecond
+	var expired []string
+	sub.drainedSince, expired = updateDrainedTracking(sub.drainedSince, leasedPartitions, discoveredPartitions, grace, time.Now())
+	if len(expired) > 0 {
+		released := make(map[string]struct{}, len(expired))
+		for _, pk := range expired {
+			// Delete this consumer group's offsets row first, while the
+			// lease still guarantees exclusive ownership — nobody else can
+			// be initializing the partition concurrently. Initialize
+			// recreates the row if the partition ever comes back.
+			if err := s.offsetStore.DeleteOffset(ctx, sub.topic, pk, cfg.ConsumerGroup); err != nil {
+				// Retried next tick — the lease is still held, so the
+				// partition stays tracked as drained.
+				s.logger.Errorw("delete offsets for drained partition failed",
+					"topic", sub.topic,
+					"partition_key", pk,
+					"error", err,
+				)
+				continue
+			}
+			if err := s.leaseStore.ReleaseLease(ctx, sub.topic, pk, cfg.SubscriberName, cfg.ConsumerGroup); err != nil {
+				// Offsets row already deleted — harmless (the partition is
+				// empty; Initialize recreates it on resurrection). Release
+				// is retried next tick.
+				s.logger.Errorw("release lease for drained partition failed",
+					"topic", sub.topic,
+					"partition_key", pk,
+					"error", err,
+				)
+				continue
+			}
+			released[pk] = struct{}{}
+			delete(sub.drainedSince, pk)
+
+			// Stop the worker immediately rather than waiting for the
+			// reconcile at the end of this tick: if a message arrived in the
+			// window just before the release, another subscriber can acquire
+			// the partition right away, and the old worker must not poll
+			// alongside it. Mirrors the shed path in rebalance.
+			s.stopPartitionWorker(sub, pk)
+
+			metrics.NamedCounter(s.scope, "idle_lease", "released", 1, metrics.NewTag("topic", sub.topic))
+			s.logger.Infow("released idle partition lease",
+				"topic", sub.topic,
+				"consumer_group", cfg.ConsumerGroup,
+				"partition_key", pk,
+			)
+		}
+		if len(released) > 0 {
+			kept := make([]string, 0, len(leasedPartitions))
+			for _, pk := range leasedPartitions {
+				if _, ok := released[pk]; !ok {
+					kept = append(kept, pk)
+				}
+			}
+			leasedPartitions = kept
+		}
+	}
+
 	s.reconcilePartitionWorkers(ctx, sub, leasedPartitions)
 	return nil
+}
+
+// updateDrainedTracking recomputes, for every owned partition absent from
+// this tick's discovery, when it was first observed drained. A partition is
+// drained only when zero of its messages remain stored — in-flight,
+// postponed, and unacked messages all keep rows in the messages table, so a
+// partition with any outstanding work is always discovered. Partitions that
+// reappear in discovery (or are no longer owned) are dropped from tracking;
+// first-seen times carry over so the clock accumulates across ticks. Returns
+// the updated tracking map and the partitions drained for at least grace
+// (release candidates), sorted for determinism.
+func updateDrainedTracking(prev map[string]time.Time, owned []string, discovered []string, grace time.Duration, now time.Time) (map[string]time.Time, []string) {
+	discoveredSet := make(map[string]struct{}, len(discovered))
+	for _, pk := range discovered {
+		discoveredSet[pk] = struct{}{}
+	}
+
+	next := make(map[string]time.Time)
+	var expired []string
+	for _, pk := range owned {
+		if _, live := discoveredSet[pk]; live {
+			continue
+		}
+		since, tracked := prev[pk]
+		if !tracked {
+			since = now
+		}
+		next[pk] = since
+		if now.Sub(since) >= grace {
+			expired = append(expired, pk)
+		}
+	}
+	sort.Strings(expired)
+	return next, expired
 }
 
 // reconcilePartitionWorkers diffs the current set of workers against the current

@@ -114,6 +114,17 @@ func testSubConfig(subscriberName, consumerGroup string) extqueue.SubscriptionCo
 	return cfg
 }
 
+// rebalanceTestConfig pins a high retry budget on top of testSubConfig.
+// Rebalance tests publish messages they never ack; under the default budget
+// those messages dead-letter mid-test, draining the partitions — and a
+// drained partition's lease is released after the idle grace, dissolving the
+// exact lease distribution the assertions wait on.
+func rebalanceTestConfig(subscriberName, consumerGroup string) extqueue.SubscriptionConfig {
+	cfg := testSubConfig(subscriberName, consumerGroup)
+	cfg.Retry.MaxAttempts = 1000
+	return cfg
+}
+
 // receive waits for a single delivery. Bazel's test timeout is the safety net
 // if the delivery never arrives.
 func receive(t *testing.T, deliveryChan <-chan extqueue.Delivery) extqueue.Delivery {
@@ -1732,7 +1743,7 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_EvenDistribution() {
 	require.NoError(t, err)
 	defer q1.Close()
 
-	_, err = q1.Subscriber().Subscribe(s.ctx, topic, testSubConfig("s1", consumerGroup))
+	_, err = q1.Subscriber().Subscribe(s.ctx, topic, rebalanceTestConfig("s1", consumerGroup))
 	require.NoError(t, err)
 
 	waitForCondition(t, signalCh, func() bool {
@@ -1748,7 +1759,7 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_EvenDistribution() {
 	require.NoError(t, err)
 	defer q2.Close()
 
-	_, err = q2.Subscriber().Subscribe(s.ctx, topic, testSubConfig("s2", consumerGroup))
+	_, err = q2.Subscriber().Subscribe(s.ctx, topic, rebalanceTestConfig("s2", consumerGroup))
 	require.NoError(t, err)
 
 	waitForCondition(t, signalCh, func() bool {
@@ -1795,9 +1806,9 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_SubscriberLeaves() {
 	require.NoError(t, err)
 	// no defer close — we close explicitly below
 
-	_, err = q1.Subscriber().Subscribe(s.ctx, topic, testSubConfig("s1", consumerGroup))
+	_, err = q1.Subscriber().Subscribe(s.ctx, topic, rebalanceTestConfig("s1", consumerGroup))
 	require.NoError(t, err)
-	_, err = q2.Subscriber().Subscribe(s.ctx, topic, testSubConfig("s2", consumerGroup))
+	_, err = q2.Subscriber().Subscribe(s.ctx, topic, rebalanceTestConfig("s2", consumerGroup))
 	require.NoError(t, err)
 
 	waitForCondition(t, signalCh, func() bool {
@@ -1860,9 +1871,9 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_OddPartitions() {
 	require.NoError(t, err)
 	defer q2.Close()
 
-	_, err = q1.Subscriber().Subscribe(s.ctx, topic, testSubConfig("s1", consumerGroup))
+	_, err = q1.Subscriber().Subscribe(s.ctx, topic, rebalanceTestConfig("s1", consumerGroup))
 	require.NoError(t, err)
-	_, err = q2.Subscriber().Subscribe(s.ctx, topic, testSubConfig("s2", consumerGroup))
+	_, err = q2.Subscriber().Subscribe(s.ctx, topic, rebalanceTestConfig("s2", consumerGroup))
 	require.NoError(t, err)
 
 	// maxPart = ceil(5/2) = 3. One gets 3, the other gets 2.
@@ -1913,7 +1924,7 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_NoOrphans() {
 		})
 		require.NoError(t, err)
 		queues[i] = q
-		_, err = q.Subscriber().Subscribe(s.ctx, topic, testSubConfig(name, consumerGroup))
+		_, err = q.Subscriber().Subscribe(s.ctx, topic, rebalanceTestConfig(name, consumerGroup))
 		require.NoError(t, err)
 	}
 	defer queues[0].Close()
@@ -1973,7 +1984,7 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_MoreSubscribersThanPartitions()
 		})
 		require.NoError(t, err)
 		queues = append(queues, q)
-		_, err = q.Subscriber().Subscribe(s.ctx, topic, testSubConfig(name, consumerGroup))
+		_, err = q.Subscriber().Subscribe(s.ctx, topic, rebalanceTestConfig(name, consumerGroup))
 		require.NoError(t, err)
 	}
 	defer func() {
@@ -2037,7 +2048,7 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_NoStarvation_UnevenSplit() {
 		// Nothing is acked in this test; a high retry budget keeps the
 		// messages out of the DLQ so partitions stay discoverable while the
 		// group converges.
-		cfg := testSubConfig(name, consumerGroup)
+		cfg := rebalanceTestConfig(name, consumerGroup)
 		cfg.Retry.MaxAttempts = 1000
 		_, err = q.Subscriber().Subscribe(s.ctx, topic, cfg)
 		require.NoError(t, err)
@@ -2108,7 +2119,7 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_OrphanSweep() {
 		require.NoError(t, err)
 	}
 
-	deliveryChan, err := q.Subscriber().Subscribe(s.ctx, topic, testSubConfig("worker-real", consumerGroup))
+	deliveryChan, err := q.Subscriber().Subscribe(s.ctx, topic, rebalanceTestConfig("worker-real", consumerGroup))
 	require.NoError(t, err)
 
 	// All three messages must arrive: one via the normal capped acquisition,
@@ -2126,6 +2137,66 @@ func (s *SQLQueueIntegrationSuite) TestRebalance_OrphanSweep() {
 	}
 
 	t.Logf("Orphan sweep verified: all 3 partitions processed despite a fair-share cap of 1")
+}
+
+// TestIdleLeaseRelease verifies the full lifecycle of a short-lived partition
+// key: consume everything, wait out garbage collection and the idle grace,
+// and the subscriber must release the lease and delete its offsets row (no
+// ghost worker, no leaked rows). A message published afterwards must
+// resurrect the partition through normal discovery and be delivered.
+func (s *SQLQueueIntegrationSuite) TestIdleLeaseRelease() {
+	t := s.T()
+
+	topic := "idle_release_topic"
+	consumerGroup := "idle-release-cg"
+	partition := "pk-idle"
+
+	signalCh := make(chan queueMySQL.HookSignal, 100)
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+		OnSignal: signalCh,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	// Fast poll so the idle GC pass (every 100 idle ticks) fires quickly;
+	// idle grace is 2x the 3s test lease duration.
+	cfg := testSubConfig("worker-idle", consumerGroup)
+	cfg.PollIntervalMs = 50
+
+	deliveryChan, err := q.Subscriber().Subscribe(s.ctx, topic, cfg)
+	require.NoError(t, err)
+
+	msg := entityqueue.NewMessage("idle-1", []byte("x"), partition, nil)
+	require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg))
+
+	delivery := receive(t, deliveryChan)
+	require.Equal(t, "idle-1", delivery.Message().ID)
+	require.NoError(t, delivery.Ack(s.ctx))
+
+	// After GC removes the acked message and the drained grace elapses, the
+	// lease row and this group's offsets row must both be gone.
+	rowCount := func(table string) int {
+		var n int
+		require.NoError(t, s.db.QueryRowContext(s.ctx,
+			"SELECT COUNT(*) FROM "+table+" WHERE consumer_group = ? AND topic = ?",
+			consumerGroup, topic).Scan(&n))
+		return n
+	}
+	waitForCondition(t, signalCh, func() bool {
+		return rowCount("queue_partition_leases") == 0 && rowCount("queue_offsets") == 0
+	}, "drained partition's lease and offsets rows should be released after the idle grace")
+
+	// Resurrection: a new message re-creates the partition through normal
+	// discovery and is delivered like any other.
+	msg2 := entityqueue.NewMessage("idle-2", []byte("y"), partition, nil)
+	require.NoError(t, q.Publisher().Publish(s.ctx, topic, msg2))
+
+	delivery2 := receive(t, deliveryChan)
+	require.Equal(t, "idle-2", delivery2.Message().ID)
+	require.NoError(t, delivery2.Ack(s.ctx))
+
+	t.Logf("Idle lease released and partition resurrected on new traffic")
 }
 
 // TestNackDoesNotBlockOtherMessages verifies that nacking a message does not

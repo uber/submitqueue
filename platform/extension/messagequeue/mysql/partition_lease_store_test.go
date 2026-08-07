@@ -17,6 +17,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -408,6 +409,57 @@ func TestPartitionLeaseStore_DiscoverAndAcquirePartitions(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tt.wantAcquired, acquired)
 			require.NotNil(t, discoveredPartitions)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestPartitionLeaseStore_PurgeStale(t *testing.T) {
+	tests := []struct {
+		name    string
+		setup   func(mock sqlmock.Sqlmock)
+		wantErr bool
+	}{
+		{
+			name: "deletes rows older than threshold",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec("DELETE FROM queue_partition_leases").
+					WithArgs(testConsumerGroup, "test_topic", sqlmock.AnyArg()).
+					WillReturnResult(sqlmock.NewResult(0, 2))
+			},
+		},
+		{
+			name: "no stale rows is a no-op",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec("DELETE FROM queue_partition_leases").
+					WithArgs(testConsumerGroup, "test_topic", sqlmock.AnyArg()).
+					WillReturnResult(sqlmock.NewResult(0, 0))
+			},
+		},
+		{
+			name: "database error",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec("DELETE FROM queue_partition_leases").
+					WithArgs(testConsumerGroup, "test_topic", sqlmock.AnyArg()).
+					WillReturnError(fmt.Errorf("db error"))
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, store := setuppartitionLeaseStoreTest(t)
+			defer db.Close()
+
+			tt.setup(mock)
+
+			err := store.PurgeStale(context.Background(), "test_topic", testConsumerGroup, 300_000)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}

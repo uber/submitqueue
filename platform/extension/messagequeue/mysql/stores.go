@@ -101,6 +101,12 @@ type offsetStore interface {
 	// Used by the subscriber to compute the GC threshold without messageStore
 	// needing to query the offsets table.
 	GetMinAckedOffset(ctx context.Context, topic string, partitionKey string) (offset int64, found bool, err error)
+
+	// DeleteOffset removes one consumer group's offset row for a partition.
+	// Callers use this when retiring a fully-drained partition; Initialize
+	// recreates the row if the partition ever receives messages again.
+	// Idempotent: no-op if the row is already gone.
+	DeleteOffset(ctx context.Context, topic string, partitionKey string, consumerGroup string) error
 }
 
 // leaseInfo describes one partition's current lease row (internal use only)
@@ -136,6 +142,14 @@ type partitionLeaseStore interface {
 	// lets acquisition skip partitions validly held by other subscribers
 	// instead of write-probing every lease row each discovery tick.
 	GetAllLeases(ctx context.Context, topic string, consumerGroup string) ([]leaseInfo, error)
+
+	// PurgeStale deletes lease rows not renewed within olderThanMs. Backstop
+	// for holders that crashed while owning a drained partition: acquisition
+	// only probes discovered partitions, so a stale lease on a partition
+	// with no messages is otherwise never refreshed or removed. Deleting a
+	// stale row is equivalent to lease expiry — a concurrent renewal makes
+	// the row fresh and the age predicate skips it.
+	PurgeStale(ctx context.Context, topic string, consumerGroup string, olderThanMs int64) error
 
 	// DiscoverAndAcquirePartitions discovers partitions from messages table and tries to acquire leases.
 	// Returns the number of new leases acquired and the full list of discovered partitions.
