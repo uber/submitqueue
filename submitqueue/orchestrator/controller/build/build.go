@@ -260,7 +260,7 @@ func (c *Controller) startPath(ctx context.Context, store storage.Storage, batch
 		return fmt.Errorf("failed to record build %s: %w", buildID.ID, err)
 	}
 
-	link := entity.PathBuild{PathID: entry.ID, Attempt: entry.Attempt, BuildID: buildID.ID}
+	link := entity.PathBuild{Queue: batch.Queue, PathID: entry.ID, Attempt: entry.Attempt, BuildID: buildID.ID}
 	if err := store.GetPathBuildStore().Create(ctx, link); err != nil {
 		if errors.Is(err, storage.ErrAlreadyExists) {
 			// Another dispatch named this attempt first. Its build is the one

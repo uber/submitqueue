@@ -46,7 +46,7 @@ func (c *Controller) dispatch(ctx context.Context, store storage.Storage, queue 
 		// at all, because nothing marked it changed.
 		set, exists := snap.pathSets[batch.ID]
 		if !exists {
-			set = entity.SpeculationPathSet{Head: batch.ID}
+			set = entity.SpeculationPathSet{Queue: queue, Head: batch.ID}
 		}
 
 		changed := snap.isDirty(batch.ID)
