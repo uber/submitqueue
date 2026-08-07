@@ -866,3 +866,109 @@ func (s *StorageContractSuite) TestStorage_RequestURIListIsBoundedAndOrdered() {
 	require.NoError(t, err)
 	assert.Empty(t, empty)
 }
+
+// speculationPathSet builds a two-path set for head over one dependency: one
+// path assuming the dependency succeeds, one assuming it fails.
+func speculationPathSet(head, dep string) entity.SpeculationPathSet {
+	succeeds := entity.SpeculationPath{
+		Head:         head,
+		Dependencies: []entity.PathDependency{{Batch: dep, Assumption: entity.DependencyAssumptionSucceeds}},
+	}
+	fails := entity.SpeculationPath{
+		Head:         head,
+		Dependencies: []entity.PathDependency{{Batch: dep, Assumption: entity.DependencyAssumptionFails}},
+	}
+	return entity.SpeculationPathSet{
+		Head: head,
+		Paths: []entity.SpeculationPathEntry{
+			{
+				ID:          succeeds.ID(),
+				Path:        succeeds,
+				Status:      entity.SpeculationPathStatusPending,
+				Attempt:     1,
+				Version:     1,
+				CreatedAtMs: 1000,
+				UpdatedAtMs: 1000,
+			},
+			{
+				ID:          fails.ID(),
+				Path:        fails,
+				Status:      entity.SpeculationPathStatusBuilding,
+				Attempt:     2,
+				Version:     3,
+				CreatedAtMs: 1000,
+				UpdatedAtMs: 2000,
+			},
+		},
+		Version: 1,
+	}
+}
+
+// TestStorage_SpeculationPathSetCreateAndGet tests that a set round-trips whole,
+// including each path's assumptions — a path's identity hashes them, so an
+// encoding that dropped or reordered them would silently change every path ID.
+func (s *StorageContractSuite) TestStorage_SpeculationPathSetCreateAndGet() {
+	t := s.T()
+	ctx := s.ctx
+	store := s.forQueue("test-queue").GetSpeculationPathSetStore()
+
+	want := speculationPathSet("sps/head/1", "sps/dep/1")
+	require.NoError(t, store.Create(ctx, want))
+
+	got, err := store.Get(ctx, want.Head)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+
+	for _, p := range got.Paths {
+		assert.Equal(t, p.Path.ID(), p.ID, "stored ID must still equal the hash of the stored path")
+	}
+}
+
+// TestStorage_SpeculationPathSetNotFound tests reading a head nothing has
+// speculated on yet — the normal state for a freshly created batch.
+func (s *StorageContractSuite) TestStorage_SpeculationPathSetNotFound() {
+	t := s.T()
+
+	_, err := s.forQueue("test-queue").GetSpeculationPathSetStore().Get(s.ctx, "sps/head/nonexistent")
+	assert.ErrorIs(t, err, storage.ErrNotFound)
+}
+
+// TestStorage_SpeculationPathSetCreateDuplicate tests that a head gets at most one set.
+func (s *StorageContractSuite) TestStorage_SpeculationPathSetCreateDuplicate() {
+	t := s.T()
+	ctx := s.ctx
+	store := s.forQueue("test-queue").GetSpeculationPathSetStore()
+
+	set := speculationPathSet("sps/head/duplicate", "sps/dep/1")
+	require.NoError(t, store.Create(ctx, set))
+	assert.ErrorIs(t, store.Create(ctx, set), storage.ErrAlreadyExists)
+}
+
+// TestStorage_SpeculationPathSetOptimisticLocking tests the compare-and-swap
+// contract. Speculate, build, and buildsignal all write the same row, so a
+// loser must be rejected outright rather than clobbering the winner's paths.
+func (s *StorageContractSuite) TestStorage_SpeculationPathSetOptimisticLocking() {
+	t := s.T()
+	ctx := s.ctx
+	store := s.forQueue("test-queue").GetSpeculationPathSetStore()
+
+	set := speculationPathSet("sps/head/cas", "sps/dep/1")
+	require.NoError(t, store.Create(ctx, set))
+
+	// Winner: replaces the set under the version it read.
+	winner := set
+	winner.Paths = winner.Paths[:1]
+	winner.Paths[0].Status = entity.SpeculationPathStatusPassed
+	require.NoError(t, store.Update(ctx, winner, 1, 2))
+
+	// Loser: still holds version 1, so its write is rejected.
+	loser := set
+	loser.Paths[0].Status = entity.SpeculationPathStatusFailed
+	assert.ErrorIs(t, store.Update(ctx, loser, 1, 2), storage.ErrVersionMismatch)
+
+	got, err := store.Get(ctx, set.Head)
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), got.Version)
+	require.Len(t, got.Paths, 1, "the losing write must not have restored the dropped path")
+	assert.Equal(t, entity.SpeculationPathStatusPassed, got.Paths[0].Status)
+}
