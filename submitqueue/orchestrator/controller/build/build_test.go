@@ -231,7 +231,7 @@ func TestProcess_TriggersWithThePathsBase(t *testing.T) {
 				return nil
 			}),
 		deps.pathBuilds.EXPECT().Create(gomock.Any(), entity.PathBuild{
-			PathID: entry.ID, Attempt: 1, BuildID: "build-1",
+			Queue: "test-queue", PathID: entry.ID, Attempt: 1, BuildID: "build-1",
 		}).Return(nil),
 		deps.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).
 			DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
@@ -270,7 +270,7 @@ func TestProcess_NeverWritesThePathSetAndIgnoresCancelling(t *testing.T) {
 		Return(entity.BuildID{ID: "build-1"}, nil)
 	deps.builds.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 	deps.pathBuilds.EXPECT().Create(gomock.Any(), entity.PathBuild{
-		PathID: pending.ID, Attempt: 1, BuildID: "build-1",
+		Queue: "test-queue", PathID: pending.ID, Attempt: 1, BuildID: "build-1",
 	}).Return(nil)
 	expectSignal(t, deps, "build-1")
 
@@ -336,7 +336,7 @@ func TestProcess_LostDispatchRaceHandsBothBuildsToThePollLoop(t *testing.T) {
 		deps.pathBuilds.EXPECT().Get(gomock.Any(), entry.ID, 1).
 			Return(entity.PathBuild{}, storage.ErrNotFound),
 		deps.pathBuilds.EXPECT().Create(gomock.Any(), entity.PathBuild{
-			PathID: entry.ID, Attempt: 1, BuildID: "build-surplus",
+			Queue: "test-queue", PathID: entry.ID, Attempt: 1, BuildID: "build-surplus",
 		}).Return(storage.ErrAlreadyExists),
 		deps.pathBuilds.EXPECT().Get(gomock.Any(), entry.ID, 1).
 			Return(entity.PathBuild{PathID: entry.ID, Attempt: 1, BuildID: "build-winner"}, nil),

@@ -159,6 +159,10 @@ func TestRun_FundsProposedPath(t *testing.T) {
 	h.pathSets.EXPECT().Create(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, set entity.SpeculationPathSet) error {
 			require.Len(t, set.Paths, 1)
+			// The set must name the queue it belongs to: the store is bound to
+			// one queue and refuses a write that disagrees, so an unstamped set
+			// means no head is ever funded.
+			assert.Equal(t, "q", set.Queue)
 			assert.Equal(t, path.ID(), set.Paths[0].ID)
 			assert.Equal(t, entity.SpeculationPathStatusPending, set.Paths[0].Status)
 			assert.Equal(t, 1, set.Paths[0].Attempt)
