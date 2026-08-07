@@ -15,10 +15,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
+	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 	buildfake "github.com/uber/submitqueue/submitqueue/extension/buildrunner/fake"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
@@ -27,6 +29,14 @@ import (
 	conflictfake "github.com/uber/submitqueue/submitqueue/extension/conflict/fake"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/fileoverlap"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/none"
+	"github.com/uber/submitqueue/submitqueue/extension/scorer"
+	"github.com/uber/submitqueue/submitqueue/extension/scorer/composite"
+	scorerfake "github.com/uber/submitqueue/submitqueue/extension/scorer/fake"
+	"github.com/uber/submitqueue/submitqueue/extension/scorer/heuristic"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/allocator/sticky"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/generator/bestfirst"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
+	specstandard "github.com/uber/submitqueue/submitqueue/extension/speculation/speculator/standard"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
@@ -49,6 +59,15 @@ type Profile struct {
 	// profile points at the shared backend by default; a deployment that
 	// splits queues across storage backends overrides this per queue.
 	Storage storage.Factory
+
+	// Scorer holds this queue's scoring profile. There is no scoring stage: the
+	// scorer feeds the queue's speculator, which ranks candidate paths by how
+	// likely their assumptions are to hold.
+	Scorer scorer.Scorer
+
+	// Speculator decides which of this queue's speculation paths to build and
+	// which running ones to preempt, within the build budget.
+	Speculator speculator.Speculator
 }
 
 // Profiles maps a queue name to its extension Profile, falling back to a
@@ -100,6 +119,14 @@ func (p Profiles) StorageFactory() storage.Factory {
 	})
 }
 
+// SpeculatorFactory returns a speculator.Factory that resolves the Speculator
+// for each queue from the profile registry.
+func (p Profiles) SpeculatorFactory() speculator.Factory {
+	return speculatorFunc(func(c speculator.Config) (speculator.Speculator, error) {
+		return p.For(c.QueueName).Speculator, nil
+	})
+}
+
 // Thin func-type adapters — the http.HandlerFunc trick applied to each
 // extension Factory interface. Each func type satisfies the Factory contract,
 // letting Profiles cross the host/library boundary without dedicated structs.
@@ -122,10 +149,14 @@ type storageFunc func(storage.Config) (storage.Storage, error)
 
 func (f storageFunc) For(c storage.Config) (storage.Storage, error) { return f(c) }
 
+type speculatorFunc func(speculator.Config) (speculator.Speculator, error)
+
+func (f speculatorFunc) For(c speculator.Config) (speculator.Speculator, error) { return f(c) }
+
 // newProfiles builds the per-queue extension profiles for the example.
 // Edge integrations (change provider) and the build runner form a shared
 // baseline; each per-queue profile starts from that baseline and overrides
-// only the extensions that differ — here the conflict analyzer.
+// only the extensions that differ — here the conflict analyzer and the scorer.
 // Queues without an explicit profile fall back to the baseline.
 func newProfiles(logger *zap.Logger, scope tally.Scope, resolver changeset.Resolver, stores storage.Factory) (Profiles, error) {
 	cp, err := newChangeProvider(logger, scope)
@@ -133,15 +164,23 @@ func newProfiles(logger *zap.Logger, scope tally.Scope, resolver changeset.Resol
 		return Profiles{}, fmt.Errorf("failed to create change provider: %w", err)
 	}
 
+	// batchLines buckets a batch by total lines changed across all its changes —
+	// larger batches are likelier to fail to land.
+	batchLines := func(_ context.Context, changes entity.BatchChanges) (int, error) {
+		return changes.TotalLinesChanged(), nil
+	}
+
 	// Baseline profile: shared edge integrations + a fake build runner (every
-	// build succeeds unless a head URI carries a failure marker). The build
-	// runner instance is shared by the build and buildsignal controllers (same
-	// profile, same instance) so a build's recorded outcome survives across
-	// their separate factory lookups.
+	// build succeeds unless a head URI carries a failure marker), plus permissive
+	// defaults for scorer and conflict. The build runner instance is shared by
+	// the build and buildsignal controllers (same profile, same instance) so a
+	// build's recorded outcome survives across their separate factory lookups.
 	//
-	// The analyzer is wrapped by conflictfake with a nil predicate
-	// (passthrough) — swap the predicate (e.g. conflictfake.FailAlways) on a
-	// queue to exercise the analyzer error path, as e2e-conflict-error-queue
+	// The scorer is wrapped by scorerfake so a change URI carrying
+	// "sq-fake=score-error" forces a scoring error end-to-end; it is a pure
+	// passthrough otherwise. The analyzer is wrapped by conflictfake with a nil
+	// predicate (passthrough) — swap the predicate (e.g. conflictfake.FailAlways)
+	// on a queue to exercise the analyzer error path, as e2e-conflict-error-queue
 	// below does.
 	base := Profile{
 		ChangeProvider: cp,
@@ -150,10 +189,30 @@ func newProfiles(logger *zap.Logger, scope tally.Scope, resolver changeset.Resol
 		// analysis). "all" serializes the queue conservatively.
 		Analyzer: conflictfake.New(all.New(), nil),
 		Storage:  stores,
+
+		Scorer: scorerfake.New(resolver, heuristic.New(
+			resolver,
+			[]heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.5}},
+			batchLines, scope.SubScope("scorer.default"),
+		)),
 	}
 
+	// test-queue: bucketed heuristic scorer; conservative (serialized) conflicts
+	// inherited from the baseline.
+	testQueue := base
+	testQueue.Scorer = scorerfake.New(resolver, heuristic.New(
+		resolver,
+		[]heuristic.Bucket{
+			{Min: 0, Max: 1, Score: 0.95},
+			{Min: 2, Max: 5, Score: 0.80},
+			{Min: 6, Max: 20, Score: 0.60},
+			{Min: 21, Max: 1<<31 - 1, Score: 0.40},
+		},
+		batchLines, scope.SubScope("scorer.test-queue"),
+	))
+
 	// e2e-conflict-error-queue: every conflict analysis fails, exercising the
-	// analyzer error path. Edge integrations inherit the baseline.
+	// analyzer error path. Scorer/edge integrations inherit the baseline.
 	conflictErrQueue := base
 	conflictErrQueue.Analyzer = conflictfake.New(all.New(), conflictfake.FailAlways)
 
@@ -162,16 +221,44 @@ func newProfiles(logger *zap.Logger, scope tally.Scope, resolver changeset.Resol
 	fileOverlapQueue := base
 	fileOverlapQueue.Analyzer = fileoverlap.New(resolver)
 
-	// e2e-test-queue: no conflicts (maximum parallelism).
+	// e2e-test-queue: composite scorer; no conflicts (maximum parallelism).
 	e2eQueue := base
 	e2eQueue.Analyzer = conflictfake.New(none.New(), nil)
+	e2eQueue.Scorer = scorerfake.New(resolver, composite.New(
+		map[string]scorer.Scorer{
+			"size": heuristic.New(resolver, []heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.8}}, batchLines, scope),
+			"flat": heuristic.New(resolver, []heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.6}}, batchLines, scope),
+		},
+		composite.Avg, scope.SubScope("scorer.e2e-test-queue"),
+	))
 
+	// The speculator is composed last, because it is built from whatever scorer
+	// the profile ended up with.
 	return Profiles{
-		defaultProfile: base,
+		defaultProfile: withSpeculator(base),
 		byQueue: map[string]Profile{
-			"e2e-test-queue":           e2eQueue,
-			"e2e-conflict-error-queue": conflictErrQueue,
-			"file-overlap-queue":       fileOverlapQueue,
+			"test-queue":               withSpeculator(testQueue),
+			"e2e-test-queue":           withSpeculator(e2eQueue),
+			"e2e-conflict-error-queue": withSpeculator(conflictErrQueue),
+			"file-overlap-queue":       withSpeculator(fileOverlapQueue),
 		},
 	}, nil
+}
+
+// defaultBuildBudget caps how many builds a queue may have occupying CI at
+// once. It is the only rationing lever the allocator has.
+//
+// TODO: move this onto entity.QueueConfig so operators can tune it per queue
+// without a code change. QueueConfig carries only the queue name today.
+const defaultBuildBudget = 4
+
+// withSpeculator returns the profile with its speculator composed from its own
+// scorer: bestfirst ranks a queue's candidate paths by how likely all their
+// assumptions are to hold, and sticky spends the build budget down that ranking
+// without preempting builds already running. Swapping either part changes the
+// policy without touching the speculate controller, which depends only on the
+// Speculator contract.
+func withSpeculator(p Profile) Profile {
+	p.Speculator = specstandard.New(bestfirst.New(p.Scorer), sticky.New(defaultBuildBudget))
+	return p
 }

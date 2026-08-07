@@ -43,13 +43,11 @@ import (
 	"github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/platform/pipeline"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
-	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	cpfake "github.com/uber/submitqueue/submitqueue/extension/changeprovider/fake"
 	githubprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/github"
 	phabprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/phabricator"
 	routingprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/routing"
-	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	validatorfake "github.com/uber/submitqueue/submitqueue/extension/validator/fake"
@@ -201,12 +199,8 @@ func run() error {
 		BuildRunner:    profiles.BuildRunnerFactory(),
 		ChangeProvider: profiles.ChangeProviderFactory(),
 		Analyzer:       profiles.AnalyzerFactory(),
-		// Speculation is wired but inert: the placeholder below proposes
-		// nothing, so no path is ever funded and no speculative build starts.
-		// The wiring change at the top of this stack replaces it with real
-		// per-queue speculators composed from each profile's scorer.
-		Speculator: noopSpeculators{},
-		Validator:  validatorfake.NewFactory(),
+		Speculator:     profiles.SpeculatorFactory(),
+		Validator:      validatorfake.NewFactory(),
 	}
 
 	// Assemble the pipeline: one call builds the topic registry, creates
@@ -470,21 +464,4 @@ func (f counterFactory) For(config counter.Config) (counter.Counter, error) {
 		return nil, fmt.Errorf("queue name must not be empty")
 	}
 	return mysqlcounter.NewCounter(f.db, f.scope, config.QueueName), nil
-}
-
-// noopSpeculators resolves every queue to a speculator that proposes nothing.
-// It keeps the speculate stage inert — no path funded, no build started —
-// until per-queue speculators are composed in the profiles.
-type noopSpeculators struct{}
-
-// For returns the propose-nothing speculator for any queue.
-func (noopSpeculators) For(speculator.Config) (speculator.Speculator, error) {
-	return noopSpeculator{}, nil
-}
-
-type noopSpeculator struct{}
-
-// Speculate proposes no actions, whatever the queue looks like.
-func (noopSpeculator) Speculate(context.Context, []entity.Batch, []entity.SpeculationPathSet) ([]entity.Speculation, error) {
-	return nil, nil
 }
