@@ -78,11 +78,10 @@ func (s *MySQLStorageIntegrationSuite) SetupSuite() {
 	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
 	require.NoError(t, err, "failed to create storage")
 
-	// Provide the storage backend to the contract suite: the queue-scoped
-	// factory adapter plus the global read-model stores.
+	// Provide the storage backend to the contract suite through the
+	// queue-scoped factory adapter.
 	s.SetContext(ctx)
 	s.SetFactory(mysqlFactory{backend: store})
-	s.SetGlobalStores(store.GetRequestSummaryStore(), store.GetRequestURIStore())
 	s.SetLogger(s.log)
 
 	t.Cleanup(func() {

@@ -38,19 +38,17 @@ type RequestHistoryController interface {
 var _ RequestHistoryController = (*requestHistoryController)(nil)
 
 type requestHistoryController struct {
-	logger          *zap.SugaredLogger
-	metricsScope    tally.Scope
-	requestLogStore storage.RequestLogStore
-	requestURIStore storage.RequestURIStore
+	logger       *zap.SugaredLogger
+	metricsScope tally.Scope
+	stores       storage.Factory
 }
 
 // NewRequestHistoryController creates a gateway request-history controller.
-func NewRequestHistoryController(logger *zap.SugaredLogger, scope tally.Scope, requestLogStore storage.RequestLogStore, requestURIStore storage.RequestURIStore) RequestHistoryController {
+func NewRequestHistoryController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.Factory) RequestHistoryController {
 	return &requestHistoryController{
-		logger:          logger,
-		metricsScope:    scope.SubScope("request_history_controller"),
-		requestLogStore: requestLogStore,
-		requestURIStore: requestURIStore,
+		logger:       logger,
+		metricsScope: scope.SubScope("request_history_controller"),
+		stores:       stores,
 	}
 }
 
@@ -62,8 +60,16 @@ func (c *requestHistoryController) GetRequestHistoryByID(ctx context.Context, re
 	if err := validateStoredIdentifier("sqid", req.ID); err != nil {
 		return nil, fmt.Errorf("GetRequestHistoryByID invalid request: %w", err)
 	}
+	if err := validateQueueIdentifier(req.Queue); err != nil {
+		return nil, fmt.Errorf("GetRequestHistoryByID invalid queue: %w", err)
+	}
 
-	logs, err := c.requestLogStore.List(ctx, req.ID)
+	stores, err := c.stores.For(storage.Config{QueueName: req.Queue})
+	if err != nil {
+		return nil, fmt.Errorf("GetRequestHistoryByID failed to resolve storage for queue %q: %w", req.Queue, err)
+	}
+
+	logs, err = stores.GetRequestLogStore().List(ctx, req.ID)
 	if err != nil {
 		if storage.IsNotFound(err) {
 			return nil, errs.NewUserError(&RequestNotFoundError{Sqid: req.ID})
@@ -86,8 +92,17 @@ func (c *requestHistoryController) GetRequestHistoryByChangeURI(ctx context.Cont
 	if err := validateStoredIdentifier("change URI", req.ChangeURI); err != nil {
 		return nil, fmt.Errorf("GetRequestHistoryByChangeURI invalid request: %w", err)
 	}
+	if err := validateQueueIdentifier(req.Queue); err != nil {
+		return nil, fmt.Errorf("GetRequestHistoryByChangeURI invalid queue: %w", err)
+	}
 
-	mappings, err := c.requestURIStore.ListByURI(ctx, req.ChangeURI, maxChangeRequestResults+1)
+	stores, err := c.stores.For(storage.Config{QueueName: req.Queue})
+	if err != nil {
+		return nil, fmt.Errorf("GetRequestHistoryByChangeURI failed to resolve storage for queue %q: %w", req.Queue, err)
+	}
+	logStore := stores.GetRequestLogStore()
+
+	mappings, err := stores.GetRequestURIStore().ListByURI(ctx, req.ChangeURI, maxChangeRequestResults+1)
 	if err != nil {
 		return nil, fmt.Errorf("GetRequestHistoryByChangeURI failed to list request mappings change_uri=%s: %w", req.ChangeURI, err)
 	}
@@ -100,7 +115,7 @@ func (c *requestHistoryController) GetRequestHistoryByChangeURI(ctx context.Cont
 
 	histories := make([]requestHistoryWithCounter, 0, len(mappings))
 	for _, mapping := range mappings {
-		logs, err := c.requestLogStore.List(ctx, mapping.RequestID)
+		logs, err := logStore.List(ctx, mapping.RequestID)
 		if err != nil {
 			if storage.IsNotFound(err) {
 				continue

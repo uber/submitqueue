@@ -18,6 +18,8 @@ The gateway exposes two read-only RPCs because an `sqid` selects one event list 
 message GetRequestHistoryByIDRequest {
     // Globally unique identifier for a request, as returned by Land.
     string sqid = 1;
+    // Queue processing the request. Required: a sqid is only resolvable within its own queue.
+    string queue = 2;
 }
 
 message HistoryEvent {
@@ -39,6 +41,8 @@ message GetRequestHistoryByIDResponse {
 message GetRequestHistoryByChangeURIRequest {
     // Exact change URI supplied to Land.
     string change_uri = 1;
+    // Queue to search. Required: results are scoped to one queue.
+    string queue = 2;
 }
 
 message RequestHistory {
@@ -118,6 +122,7 @@ Error behavior follows the conventions established by request-summary retrieval:
 
 - An empty `sqid` passed to `GetRequestHistoryByID` is an invalid request.
 - An empty `change_uri` passed to `GetRequestHistoryByChangeURI` is an invalid request.
+- An empty `queue` passed to either RPC is an invalid request. Both selectors are queue-scoped so that the retained history is shardable by queue; a sqid or change URI from another queue is reported as not found.
 - If no request-log records exist for an `sqid`, `GetRequestHistoryByID` returns the existing `RequestNotFoundError`.
 - If no retained request histories match a `change_uri`, `GetRequestHistoryByChangeURI` returns a change-URI-specific not-found user error.
 - A request-log storage failure is returned as an infrastructure error.
@@ -127,10 +132,13 @@ Using the existing request not-found error for `sqid` lookups keeps point lookup
 ## Flow
 
 ```text
-GetRequestHistoryByIDRequest(sqid)
+GetRequestHistoryByIDRequest(queue, sqid)
         |
         v
-validate sqid
+validate queue and sqid
+        |
+        v
+resolve the queue's stores
         |
         v
 RequestLogStore.List(sqid)
@@ -141,13 +149,16 @@ project each RequestLog to one HistoryEvent
         v
 GetRequestHistoryByIDResponse(events)
 
-GetRequestHistoryByChangeURIRequest(change_uri)
+GetRequestHistoryByChangeURIRequest(queue, change_uri)
         |
         v
-validate change_uri
+validate queue and change_uri
         |
         v
-resolve matching sqids
+resolve the queue's stores
+        |
+        v
+resolve matching sqids within the queue
         |
         v
 RequestLogStore.List(sqid) for each match

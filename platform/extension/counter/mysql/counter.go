@@ -27,29 +27,33 @@ import (
 type mysqlCounter struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this counter instance is bound to; every sequence
+	// it advances is scoped to it.
+	queue string
 }
 
-// NewCounter creates a new MySQL-backed Counter.
-func NewCounter(db *sql.DB, scope tally.Scope) counter.Counter {
-	return &mysqlCounter{db: db, scope: scope}
+// NewCounter creates a new MySQL-backed Counter bound to queue.
+func NewCounter(db *sql.DB, scope tally.Scope, queue string) counter.Counter {
+	return &mysqlCounter{db: db, scope: scope, queue: queue}
 }
 
-// Next atomically increments the counter for the given domain and returns the new value.
+// Next atomically increments the counter for the given domain within the bound queue
+// and returns the new value.
 // Uses MySQL's LAST_INSERT_ID() to set the value atomically and read the incremented value.
 func (c *mysqlCounter) Next(ctx context.Context, domain string) (ret int64, retErr error) {
 	op := metrics.Begin(c.scope, "next", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 	result, err := c.db.ExecContext(ctx,
-		"INSERT INTO counter (domain, value) VALUES (?, LAST_INSERT_ID(1)) ON DUPLICATE KEY UPDATE value = LAST_INSERT_ID(value + 1)",
-		domain,
+		"INSERT INTO counter (queue, domain, value) VALUES (?, ?, LAST_INSERT_ID(1)) ON DUPLICATE KEY UPDATE value = LAST_INSERT_ID(value + 1)",
+		c.queue, domain,
 	)
 	if err != nil {
-		return 0, fmt.Errorf("failed to increment counter for domain=%s: %w", domain, err)
+		return 0, fmt.Errorf("failed to increment counter for queue=%s domain=%s: %w", c.queue, domain, err)
 	}
 
 	value, err := result.LastInsertId()
 	if err != nil {
-		return 0, fmt.Errorf("failed to get counter value for domain=%s: %w", domain, err)
+		return 0, fmt.Errorf("failed to get counter value for queue=%s domain=%s: %w", c.queue, domain, err)
 	}
 
 	return value, nil

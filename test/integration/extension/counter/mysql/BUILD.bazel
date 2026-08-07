@@ -12,6 +12,7 @@ go_test(
         "requires-network",
     ],
     deps = [
+        "//platform/extension/counter:go_default_library",
         "//platform/extension/counter/mysql:go_default_library",
         "//test/integration/extension/counter:go_default_library",
         "//test/testutil:go_default_library",

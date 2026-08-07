@@ -24,6 +24,7 @@ import (
 func ProtoToCancelRequest(req *pb.CancelRequest) entity.CancelRequest {
 	return entity.CancelRequest{
 		ID:     req.GetSqid(),
+		Queue:  req.GetQueue(),
 		Reason: req.GetReason(),
 	}
 }

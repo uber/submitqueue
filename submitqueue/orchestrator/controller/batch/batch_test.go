@@ -29,6 +29,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
+	"github.com/uber/submitqueue/platform/extension/counter"
 	countermock "github.com/uber/submitqueue/platform/extension/counter/mock"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
@@ -100,6 +101,12 @@ func storageFactoryFor(ctrl *gomock.Controller, store storage.Storage) *storagem
 	f.EXPECT().For(gomock.Any()).Return(store, nil).AnyTimes()
 	return f
 }
+
+// staticCounterFactory resolves every queue to the same counter, so tests can keep
+// setting expectations on one mock regardless of which queue the controller resolves.
+type staticCounterFactory struct{ counter counter.Counter }
+
+func (f staticCounterFactory) For(counter.Config) (counter.Counter, error) { return f.counter, nil }
 
 // testRequest returns a standard test request for batch tests.
 func testRequest() entity.Request {
@@ -175,7 +182,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 	analyzerFactory := conflictmock.NewMockFactory(ctrl)
 	analyzerFactory.EXPECT().For(gomock.Any()).Return(analyzer, nil).AnyTimes()
 
-	return NewController(logger, scope, registry, cnt, storageFactoryFor(ctrl, mockStorage), analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch")
+	return NewController(logger, scope, registry, staticCounterFactory{counter: cnt}, storageFactoryFor(ctrl, mockStorage), analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch")
 }
 
 func TestNewController(t *testing.T) {
@@ -280,7 +287,7 @@ func TestController_Process_StampsQueueOnSpeculatePayload(t *testing.T) {
 	analyzerFactory := conflictmock.NewMockFactory(ctrl)
 	analyzerFactory.EXPECT().For(gomock.Any()).Return(all.New(), nil).AnyTimes()
 	controller := NewController(
-		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, newSequentialCounter(ctrl),
+		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, staticCounterFactory{counter: newSequentialCounter(ctrl)},
 		storageFactoryFor(ctrl, mockStorage), analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch",
 	)
 
@@ -362,7 +369,7 @@ func TestController_Process_PublishesBatchedLog(t *testing.T) {
 	analyzerFactory := conflictmock.NewMockFactory(ctrl)
 	analyzerFactory.EXPECT().For(gomock.Any()).Return(all.New(), nil).AnyTimes()
 	controller := NewController(
-		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, newSequentialCounter(ctrl),
+		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, staticCounterFactory{counter: newSequentialCounter(ctrl)},
 		storageFactoryFor(ctrl, mockStorage), analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch",
 	)
 
@@ -817,7 +824,7 @@ func TestController_Process_CASLostToCancel(t *testing.T) {
 	analyzerFactory := conflictmock.NewMockFactory(ctrl)
 	analyzerFactory.EXPECT().For(gomock.Any()).Return(all.New(), nil).AnyTimes()
 	controller := NewController(
-		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, newSequentialCounter(ctrl),
+		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, staticCounterFactory{counter: newSequentialCounter(ctrl)},
 		storageFactoryFor(ctrl, mockStorage), analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch",
 	)
 
@@ -941,7 +948,7 @@ func TestController_Process_ReadiesBatchBeforePublishing(t *testing.T) {
 	}
 
 	cnt := countermock.NewMockCounter(ctrl)
-	cnt.EXPECT().Next(gomock.Any(), "batch/"+request.Queue).Return(int64(7), nil)
+	cnt.EXPECT().Next(gomock.Any(), counterDomainBatch).Return(int64(7), nil)
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), request.ID).Return(request, nil)
@@ -987,7 +994,7 @@ func TestController_Process_ReadiesBatchBeforePublishing(t *testing.T) {
 	analyzerFactory := conflictmock.NewMockFactory(ctrl)
 	analyzerFactory.EXPECT().For(conflict.Config{QueueName: request.Queue}).Return(all.New(), nil)
 	controller := NewController(
-		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, cnt, storageFactoryFor(ctrl, store), analyzerFactory,
+		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, staticCounterFactory{counter: cnt}, storageFactoryFor(ctrl, store), analyzerFactory,
 		topickey.TopicKeyBatch, "orchestrator-batch",
 	)
 
@@ -1008,8 +1015,8 @@ func TestController_Process_RedeliveryMintsFreshBatchID(t *testing.T) {
 	secondRequest.Version = 2
 
 	cnt := countermock.NewMockCounter(ctrl)
-	cnt.EXPECT().Next(gomock.Any(), "batch/"+firstRequest.Queue).Return(int64(1), nil)
-	cnt.EXPECT().Next(gomock.Any(), "batch/"+firstRequest.Queue).Return(int64(2), nil)
+	cnt.EXPECT().Next(gomock.Any(), counterDomainBatch).Return(int64(1), nil)
+	cnt.EXPECT().Next(gomock.Any(), counterDomainBatch).Return(int64(2), nil)
 
 	requestStore := storagemock.NewMockRequestStore(ctrl)
 	requestStore.EXPECT().Get(gomock.Any(), firstRequest.ID).Return(firstRequest, nil)

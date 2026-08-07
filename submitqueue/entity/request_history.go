@@ -18,12 +18,18 @@ package entity
 type GetRequestHistoryByIDRequest struct {
 	// ID is the globally unique identifier of the request.
 	ID string
+	// Queue is the name of the queue processing the request. It scopes the lookup:
+	// a request is only resolvable within its own queue.
+	Queue string
 }
 
 // GetRequestHistoryByChangeURIRequest identifies retained histories by an exact pinned change URI.
 type GetRequestHistoryByChangeURIRequest struct {
 	// ChangeURI is the exact change URI supplied in a Land request.
 	ChangeURI string
+	// Queue is the name of the queue to search. It scopes the lookup: a change URI
+	// landed into several queues matches separately in each.
+	Queue string
 }
 
 // RequestHistory groups retained events for one request.

@@ -51,6 +51,9 @@ func newControllerStorageFixture(ctrl *gomock.Controller) *controllerStorageFixt
 		queueSummaries: make(map[string]entity.RequestQueueSummary),
 	}
 	fixture.storage.EXPECT().GetRequestQueueSummaryStore().Return(fixture.queueStore).AnyTimes()
+	fixture.storage.EXPECT().GetRequestSummaryStore().Return(fixture.summaryStore).AnyTimes()
+	fixture.storage.EXPECT().GetRequestLogStore().Return(fixture.logStore).AnyTimes()
+	fixture.storage.EXPECT().GetRequestURIStore().Return(fixture.uriStore).AnyTimes()
 
 	fixture.summaryStore.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, summary entity.RequestSummary) error {
 		fixture.mu.Lock()
@@ -157,13 +160,48 @@ func queueSummaryTestKey(queue string, receivedAtMs int64, requestID string) str
 // newFactory returns a storage.Factory that resolves every queue to the
 // fixture's queue-scoped aggregate.
 func (f *controllerStorageFixture) newFactory(ctrl *gomock.Controller) storage.Factory {
+	return factoryForStorage(ctrl, f.storage)
+}
+
+// factoryForStorage returns a storage.Factory resolving every queue to store.
+func factoryForStorage(ctrl *gomock.Controller, store *storagemock.MockStorage) storage.Factory {
 	factory := storagemock.NewMockFactory(ctrl)
-	factory.EXPECT().For(gomock.Any()).Return(f.storage, nil).AnyTimes()
+	factory.EXPECT().For(gomock.Any()).Return(store, nil).AnyTimes()
 	return factory
 }
 
+// storageWithSummaryStore returns a queue-scoped aggregate whose summary store is
+// the given mock; the other read-model stores accept any call and do nothing.
+func storageWithSummaryStore(ctrl *gomock.Controller, summaries *storagemock.MockRequestSummaryStore) *storagemock.MockStorage {
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetRequestSummaryStore().Return(summaries).AnyTimes()
+	return store
+}
+
+// readModelFactory returns a storage.Factory resolving every queue to an aggregate
+// exposing the given read-model stores. A nil store leaves its getter unstubbed, so
+// an unexpected call fails the test rather than silently returning a zero value.
+func readModelFactory(
+	ctrl *gomock.Controller,
+	summaries *storagemock.MockRequestSummaryStore,
+	logs *storagemock.MockRequestLogStore,
+	uris *storagemock.MockRequestURIStore,
+) storage.Factory {
+	store := storagemock.NewMockStorage(ctrl)
+	if summaries != nil {
+		store.EXPECT().GetRequestSummaryStore().Return(summaries).AnyTimes()
+	}
+	if logs != nil {
+		store.EXPECT().GetRequestLogStore().Return(logs).AnyTimes()
+	}
+	if uris != nil {
+		store.EXPECT().GetRequestURIStore().Return(uris).AnyTimes()
+	}
+	return factoryForStorage(ctrl, store)
+}
+
 // newMaterializer builds a request read-model materializer over the fixture's
-// global stores and its queue-scoped aggregate.
+// queue-scoped aggregate.
 func (f *controllerStorageFixture) newMaterializer(ctrl *gomock.Controller) *requestcore.Materializer {
-	return requestcore.NewMaterializer(f.logStore, f.summaryStore, f.uriStore, f.newFactory(ctrl))
+	return requestcore.NewMaterializer(f.newFactory(ctrl))
 }

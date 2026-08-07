@@ -30,13 +30,16 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
 
+// testSpecQueue is the queue every speculation-path-set store in this file is bound to.
+const testSpecQueue = "monorepo"
+
 func setupSpeculationPathSetStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.SpeculationPathSetStore) {
 	t.Helper()
 
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	store := NewSpeculationPathSetStore(db, testMetrics())
+	store := NewSpeculationPathSetStore(db, testMetrics(), testSpecQueue)
 
 	return db, mock, store
 }
@@ -54,7 +57,8 @@ func testPathSet(head string) entity.SpeculationPathSet {
 		Dependencies: []entity.PathDependency{{Batch: dep, Assumption: entity.DependencyAssumptionFails}},
 	}
 	return entity.SpeculationPathSet{
-		Head: head,
+		Queue: testSpecQueue,
+		Head:  head,
 		Paths: []entity.SpeculationPathEntry{
 			{
 				ID:          succeeds.ID(),
@@ -96,10 +100,10 @@ func TestSpeculationPathSetStore_Get(t *testing.T) {
 			name: "found",
 			head: want.Head,
 			setup: func(mock sqlmock.Sqlmock) {
-				rows := sqlmock.NewRows([]string{"head", "paths", "version"}).
-					AddRow(want.Head, pathsJSON, want.Version)
-				mock.ExpectQuery("SELECT head, paths, version FROM speculation_path_set").
-					WithArgs(want.Head).
+				rows := sqlmock.NewRows([]string{"queue", "head", "paths", "version"}).
+					AddRow(want.Queue, want.Head, pathsJSON, want.Version)
+				mock.ExpectQuery("SELECT queue, head, paths, version FROM speculation_path_set").
+					WithArgs(testSpecQueue, want.Head).
 					WillReturnRows(rows)
 			},
 			want: want,
@@ -108,8 +112,8 @@ func TestSpeculationPathSetStore_Get(t *testing.T) {
 			name: "not found",
 			head: "missing",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery("SELECT head, paths, version FROM speculation_path_set").
-					WithArgs("missing").
+				mock.ExpectQuery("SELECT queue, head, paths, version FROM speculation_path_set").
+					WithArgs(testSpecQueue, "missing").
 					WillReturnError(sql.ErrNoRows)
 			},
 			wantErr:   true,
@@ -119,10 +123,10 @@ func TestSpeculationPathSetStore_Get(t *testing.T) {
 			name: "malformed paths json",
 			head: "corrupt",
 			setup: func(mock sqlmock.Sqlmock) {
-				rows := sqlmock.NewRows([]string{"head", "paths", "version"}).
-					AddRow("corrupt", []byte("{not json"), 1)
-				mock.ExpectQuery("SELECT head, paths, version FROM speculation_path_set").
-					WithArgs("corrupt").
+				rows := sqlmock.NewRows([]string{"queue", "head", "paths", "version"}).
+					AddRow(testSpecQueue, "corrupt", []byte("{not json"), 1)
+				mock.ExpectQuery("SELECT queue, head, paths, version FROM speculation_path_set").
+					WithArgs(testSpecQueue, "corrupt").
 					WillReturnRows(rows)
 			},
 			wantErr: true,
@@ -131,8 +135,8 @@ func TestSpeculationPathSetStore_Get(t *testing.T) {
 			name: "query error",
 			head: "bad",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery("SELECT head, paths, version FROM speculation_path_set").
-					WithArgs("bad").
+				mock.ExpectQuery("SELECT queue, head, paths, version FROM speculation_path_set").
+					WithArgs(testSpecQueue, "bad").
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,
@@ -163,26 +167,31 @@ func TestSpeculationPathSetStore_Get(t *testing.T) {
 
 func TestSpeculationPathSetStore_Create(t *testing.T) {
 	set := testPathSet("monorepo/batch/2")
+	otherQueueSet := testPathSet("monorepo/batch/2")
+	otherQueueSet.Queue = "other-queue"
 
 	tests := []struct {
 		name      string
+		set       entity.SpeculationPathSet
 		setup     func(mock sqlmock.Sqlmock)
 		wantErr   bool
 		wantErrIs error
 	}{
 		{
 			name: "success",
+			set:  set,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO speculation_path_set").
-					WithArgs(set.Head, sqlmock.AnyArg(), set.Version).
+					WithArgs(set.Queue, set.Head, sqlmock.AnyArg(), set.Version).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
 		{
 			name: "duplicate head returns ErrAlreadyExists",
+			set:  set,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO speculation_path_set").
-					WithArgs(set.Head, sqlmock.AnyArg(), set.Version).
+					WithArgs(set.Queue, set.Head, sqlmock.AnyArg(), set.Version).
 					WillReturnError(&mysql.MySQLError{Number: mysqlErrDuplicateEntry})
 			},
 			wantErr:   true,
@@ -190,11 +199,18 @@ func TestSpeculationPathSetStore_Create(t *testing.T) {
 		},
 		{
 			name: "other exec error",
+			set:  set,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO speculation_path_set").
-					WithArgs(set.Head, sqlmock.AnyArg(), set.Version).
+					WithArgs(set.Queue, set.Head, sqlmock.AnyArg(), set.Version).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
+			wantErr: true,
+		},
+		{
+			name:    "queue mismatch is rejected without touching the database",
+			set:     otherQueueSet,
+			setup:   func(sqlmock.Sqlmock) {},
 			wantErr: true,
 		},
 	}
@@ -206,7 +222,7 @@ func TestSpeculationPathSetStore_Create(t *testing.T) {
 
 			tt.setup(mock)
 
-			err := store.Create(context.Background(), set)
+			err := store.Create(context.Background(), tt.set)
 			if tt.wantErr {
 				require.Error(t, err)
 				if tt.wantErrIs != nil {
@@ -223,26 +239,31 @@ func TestSpeculationPathSetStore_Create(t *testing.T) {
 func TestSpeculationPathSetStore_Update(t *testing.T) {
 	const oldVersion, newVersion = int32(3), int32(4)
 	set := testPathSet("monorepo/batch/2")
+	otherQueueSet := testPathSet("monorepo/batch/2")
+	otherQueueSet.Queue = "other-queue"
 
 	tests := []struct {
 		name      string
+		set       entity.SpeculationPathSet
 		setup     func(mock sqlmock.Sqlmock)
 		wantErr   bool
 		wantErrIs error
 	}{
 		{
 			name: "success",
+			set:  set,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE speculation_path_set").
-					WithArgs(sqlmock.AnyArg(), newVersion, set.Head, oldVersion).
+					WithArgs(sqlmock.AnyArg(), newVersion, set.Queue, set.Head, oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
 		{
 			name: "version mismatch",
+			set:  set,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE speculation_path_set").
-					WithArgs(sqlmock.AnyArg(), newVersion, set.Head, oldVersion).
+					WithArgs(sqlmock.AnyArg(), newVersion, set.Queue, set.Head, oldVersion).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
 			wantErr:   true,
@@ -250,20 +271,28 @@ func TestSpeculationPathSetStore_Update(t *testing.T) {
 		},
 		{
 			name: "exec error",
+			set:  set,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE speculation_path_set").
-					WithArgs(sqlmock.AnyArg(), newVersion, set.Head, oldVersion).
+					WithArgs(sqlmock.AnyArg(), newVersion, set.Queue, set.Head, oldVersion).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,
 		},
 		{
 			name: "rows affected error",
+			set:  set,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("UPDATE speculation_path_set").
-					WithArgs(sqlmock.AnyArg(), newVersion, set.Head, oldVersion).
+					WithArgs(sqlmock.AnyArg(), newVersion, set.Queue, set.Head, oldVersion).
 					WillReturnResult(sqlmock.NewErrorResult(fmt.Errorf("driver error")))
 			},
+			wantErr: true,
+		},
+		{
+			name:    "queue mismatch is rejected without touching the database",
+			set:     otherQueueSet,
+			setup:   func(sqlmock.Sqlmock) {},
 			wantErr: true,
 		},
 	}
@@ -275,7 +304,7 @@ func TestSpeculationPathSetStore_Update(t *testing.T) {
 
 			tt.setup(mock)
 
-			err := store.Update(context.Background(), set, oldVersion, newVersion)
+			err := store.Update(context.Background(), tt.set, oldVersion, newVersion)
 			if tt.wantErr {
 				require.Error(t, err)
 				if tt.wantErrIs != nil {
@@ -302,7 +331,7 @@ func TestSpeculationPathSetStore_UpdateIgnoresEntityVersion(t *testing.T) {
 
 	const oldVersion, newVersion = int32(3), int32(4)
 	mock.ExpectExec("UPDATE speculation_path_set").
-		WithArgs(sqlmock.AnyArg(), newVersion, set.Head, oldVersion).
+		WithArgs(sqlmock.AnyArg(), newVersion, set.Queue, set.Head, oldVersion).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	require.NoError(t, store.Update(context.Background(), set, oldVersion, newVersion))

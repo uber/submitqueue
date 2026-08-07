@@ -140,7 +140,7 @@ func TerminateRequest(
 		logVersion = request.Version
 	}
 
-	logEntry := entity.NewRequestLog(requestID, status, logVersion, lastError, metadata)
+	logEntry := entity.NewRequestLog(request.Queue, requestID, status, logVersion, lastError, metadata)
 	if err := PublishLog(ctx, registry, logEntry, requestID); err != nil {
 		return TerminationResult{}, fmt.Errorf("failed to publish request log for %s: %w", requestID, err)
 	}

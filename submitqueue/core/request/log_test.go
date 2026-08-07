@@ -50,7 +50,7 @@ func TestPublishLog_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	registry := newTestRegistry(t, ctrl, nil)
 
-	logEntry := entity.NewRequestLog("req/1", entity.RequestStatusStarted, 1, "", nil)
+	logEntry := entity.NewRequestLog("req", "req/1", entity.RequestStatusStarted, 1, "", nil)
 	err := PublishLog(context.Background(), registry, logEntry, "req/1")
 	require.NoError(t, err)
 }
@@ -59,7 +59,7 @@ func TestPublishLog_PublishFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	registry := newTestRegistry(t, ctrl, fmt.Errorf("connection refused"))
 
-	logEntry := entity.NewRequestLog("req/1", entity.RequestStatusStarted, 1, "", nil)
+	logEntry := entity.NewRequestLog("req", "req/1", entity.RequestStatusStarted, 1, "", nil)
 	err := PublishLog(context.Background(), registry, logEntry, "req/1")
 	require.Error(t, err)
 }
@@ -68,8 +68,7 @@ func TestPublishBatchLogs_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	registry := newTestRegistry(t, ctrl, nil)
 
-	err := PublishBatchLogs(context.Background(), registry,
-		[]string{"req/1", "req/2", "req/3"},
+	err := PublishBatchLogs(context.Background(), registry, "req", []string{"req/1", "req/2", "req/3"},
 		entity.RequestStatusBatched,
 		map[string]string{"batch_id": "b/1"},
 	)
@@ -99,8 +98,7 @@ func TestPublishBatchLogs_PartialFailure(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	err = PublishBatchLogs(context.Background(), registry,
-		[]string{"req/1", "req/2", "req/3"},
+	err = PublishBatchLogs(context.Background(), registry, "req", []string{"req/1", "req/2", "req/3"},
 		entity.RequestStatusBatched,
 		map[string]string{"batch_id": "b/1"},
 	)
@@ -111,7 +109,7 @@ func TestPublishBatchLogs_Empty(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	registry := newTestRegistry(t, ctrl, nil)
 
-	err := PublishBatchLogs(context.Background(), registry, nil, entity.RequestStatusBatched, nil)
+	err := PublishBatchLogs(context.Background(), registry, "req", nil, entity.RequestStatusBatched, nil)
 	require.NoError(t, err)
 }
 
@@ -149,11 +147,11 @@ func TestPublishLog_MessageIDScopedByStatus(t *testing.T) {
 		entity.RequestStatusCancelled,
 	} {
 		require.NoError(t, PublishLog(context.Background(), registry,
-			entity.NewRequestLog("req/1", st, 0, "", nil), "req/1"))
+			entity.NewRequestLog("req", "req/1", st, 0, "", nil), "req/1"))
 	}
 	// Re-emit "started" to simulate a retry of the same delivery — must reuse the same ID.
 	require.NoError(t, PublishLog(context.Background(), registry,
-		entity.NewRequestLog("req/1", entity.RequestStatusStarted, 0, "", nil), "req/1"))
+		entity.NewRequestLog("req", "req/1", entity.RequestStatusStarted, 0, "", nil), "req/1"))
 
 	require.Equal(t, []string{
 		"req/1/started",

@@ -25,12 +25,14 @@ import (
 	"github.com/uber/submitqueue/test/testutil"
 )
 
-// CounterContractSuite defines the contract tests for the counter.Counter interface.
+// CounterContractSuite defines the contract tests for the counter extension: the
+// queue-scoped Counter resolved through counter.Factory.
 // All counter implementations must pass these tests.
-// Implementation-specific tests should embed this suite and call SetCounter().
+// Implementation-specific tests should embed this suite and call SetFactory().
 type CounterContractSuite struct {
 	suite.Suite
 	ctx     context.Context
+	factory counter.Factory
 	counter counter.Counter
 	log     *testutil.TestLogger
 }
@@ -40,9 +42,18 @@ func (s *CounterContractSuite) SetContext(ctx context.Context) {
 	s.ctx = ctx
 }
 
-// SetCounter is called by implementation tests to provide the concrete counter instance
-func (s *CounterContractSuite) SetCounter(c counter.Counter) {
-	s.counter = c
+// SetFactory is called by implementation tests to provide the queue-scoped counter
+// factory under test. The suite's single-queue tests run against a default binding.
+func (s *CounterContractSuite) SetFactory(f counter.Factory) {
+	s.factory = f
+	s.counter = s.forQueue("contract-queue")
+}
+
+// forQueue resolves the counter bound to a queue, failing the test on resolution errors.
+func (s *CounterContractSuite) forQueue(queue string) counter.Counter {
+	c, err := s.factory.For(counter.Config{QueueName: queue})
+	s.Require().NoError(err)
+	return c
 }
 
 // SetLogger sets the logger for tests
@@ -136,4 +147,34 @@ func (s *CounterContractSuite) TestCounter_Concurrency() {
 		assert.Equal(t, sequences[i-1]+1, sequences[i],
 			"sequences should be contiguous at index %d: got %d and %d", i, sequences[i-1], sequences[i])
 	}
+}
+
+// TestCounter_QueueIsolation tests that the same domain in two queues is two
+// independent sequences: the queue leads the key, so one queue's counter must
+// never advance or observe another's.
+func (s *CounterContractSuite) TestCounter_QueueIsolation() {
+	t := s.T()
+	ctx := s.ctx
+
+	const domain = "request"
+	queueA := s.forQueue("isolation-queue-a")
+	queueB := s.forQueue("isolation-queue-b")
+
+	a1, err := queueA.Next(ctx, domain)
+	require.NoError(t, err)
+	a2, err := queueA.Next(ctx, domain)
+	require.NoError(t, err)
+	assert.Equal(t, a1+1, a2, "queue A advances its own sequence")
+
+	// Queue B starts its own sequence rather than continuing A's.
+	b1, err := queueB.Next(ctx, domain)
+	require.NoError(t, err)
+	assert.Equal(t, a1, b1, "the same domain in another queue is an independent sequence")
+
+	// Advancing B leaves A untouched.
+	_, err = queueB.Next(ctx, domain)
+	require.NoError(t, err)
+	a3, err := queueA.Next(ctx, domain)
+	require.NoError(t, err)
+	assert.Equal(t, a2+1, a3, "queue B's writes must not advance queue A")
 }

@@ -60,9 +60,10 @@ func PublishLog(ctx context.Context, registry consumer.TopicRegistry, logEntry e
 
 // PublishBatchLogs publishes a request log entry for each request ID in the batch to the log topic.
 // Each entry uses the request ID as the partition key to ensure per-request ordering.
-func PublishBatchLogs(ctx context.Context, registry consumer.TopicRegistry, requestIDs []string, status entity.RequestStatus, metadata map[string]string) error {
+// queue scopes every entry: a request ID is only unique within its own queue.
+func PublishBatchLogs(ctx context.Context, registry consumer.TopicRegistry, queue string, requestIDs []string, status entity.RequestStatus, metadata map[string]string) error {
 	for _, requestID := range requestIDs {
-		logEntry := entity.NewRequestLog(requestID, status, 0, "", metadata)
+		logEntry := entity.NewRequestLog(queue, requestID, status, 0, "", metadata)
 		if err := PublishLog(ctx, registry, logEntry, requestID); err != nil {
 			return fmt.Errorf("failed to publish request log for request %s: %w", requestID, err)
 		}

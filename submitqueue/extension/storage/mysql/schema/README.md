@@ -2,9 +2,11 @@
 
 ## Queue-leading primary keys
 
-Every queue-scoped table leads its primary key with `queue`: `request` and `batch` on `(queue, id)`, `build` on `(queue, id)`, `batch_dependent` on `(queue, batch_id)`, `request_batch` on `(queue, request_id, batch_id)`, `change` on `(queue, uri, request_id)`, `queue_batch_state` on `(queue, state, batch_id)`, and `request_summary_by_queue` on `(queue, received_at_ms, request_id)`. A queue-bound store instance prefixes every read and stamps every write with its bound queue, so one queue's rows are unreachable through another queue's binding and the tables are shardable by queue. The `build` key also removes a cross-queue uniqueness assumption: build IDs are runner-minted, so two queues sharing one CI pipeline may legitimately mint the same identifier.
+Every table leads its primary key with `queue`: `request` and `batch` on `(queue, id)`, `build` on `(queue, id)`, `batch_dependent` on `(queue, batch_id)`, `request_batch` on `(queue, request_id, batch_id)`, `change` on `(queue, uri, request_id)`, `queue_batch_state` on `(queue, state, batch_id)`, `speculation_path_set` on `(queue, head)`, `request_summary` on `(queue, request_id)`, `request_log` on `(queue, request_id, timestamp_ms, salt)`, `change_uri_request_mapping` on `(queue, change_uri, received_at_ms, request_id)`, and `request_summary_by_queue` on `(queue, received_at_ms, request_id)`. A queue-bound store instance prefixes every read and stamps every write with its bound queue, so one queue's rows are unreachable through another queue's binding and every table is shardable by queue. `//tool/linter/queueshard` enforces this, and also rejects any secondary index that does not itself lead with `queue`, since such an index would reintroduce a cross-queue access path.
 
-The global read-model tables (`request_summary`, `request_log`, `change_uri_request_mapping`) keep queue-free keys — their lookups start from identifiers that arrive without queue context.
+The `build` key also removes a cross-queue uniqueness assumption: build IDs are runner-minted, so two queues sharing one CI pipeline may legitimately mint the same identifier. `speculation_path_set` relies on the same property for its head: a batch ID is unique only within its queue.
+
+Because the queue is part of every key, the request identifier alone no longer addresses a row — the read APIs take the queue alongside the sqid or change URI, and the stores are resolved per queue through `storage.Factory`. No identifier is parsed to recover a queue.
 
 ## batch table
 
@@ -32,7 +34,7 @@ The gateway request read model uses three additive tables and requires no altera
 
 ### `request_summary`
 
-`request_summary` is keyed by `request_id` and serves direct Status lookup. It stores immutable receipt context plus the current materialized request-log winner and its optimistic-lock projection version.
+`request_summary` is keyed by `(queue, request_id)` and serves direct Status lookup within one queue. It stores immutable receipt context plus the current materialized request-log winner and its optimistic-lock projection version.
 
 ### `request_summary_by_queue`
 
@@ -40,7 +42,11 @@ The gateway request read model uses three additive tables and requires no altera
 
 ### `change_uri_request_mapping`
 
-`change_uri_request_mapping` is keyed by `(change_uri, received_at_ms, request_id)` and serves bounded newest-first Status lookup by change URI. The gateway reads at most 101 mappings to enforce the API maximum of 100 results without silently truncating.
+`change_uri_request_mapping` is keyed by `(queue, change_uri, received_at_ms, request_id)` and serves bounded newest-first Status lookup by change URI within one queue. The gateway reads at most 101 mappings to enforce the API maximum of 100 results without silently truncating. A change URI landed into several queues has independent mappings in each, so looking it up across queues is one call per queue.
+
+### `request_log`
+
+`request_log` is keyed by `(queue, request_id, timestamp_ms, salt)` and holds the append-only audit trail behind History. `salt` disambiguates entries sharing a request, queue and millisecond; it is part of the key but never exposed through the storage interface.
 
 ### JSON collections
 

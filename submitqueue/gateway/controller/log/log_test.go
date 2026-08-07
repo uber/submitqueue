@@ -34,13 +34,7 @@ import (
 // newUnusedMaterializer returns a materializer whose stores expect no calls,
 // for cases that fail before any persistence.
 func newUnusedMaterializer(ctrl *gomock.Controller) *requestcore.Materializer {
-	factory := storagemock.NewMockFactory(ctrl)
-	return requestcore.NewMaterializer(
-		storagemock.NewMockRequestLogStore(ctrl),
-		storagemock.NewMockRequestSummaryStore(ctrl),
-		storagemock.NewMockRequestURIStore(ctrl),
-		factory,
-	)
+	return requestcore.NewMaterializer(storagemock.NewMockFactory(ctrl))
 }
 
 func TestController_Process(t *testing.T) {
@@ -130,9 +124,12 @@ func newLogControllerStore(ctrl *gomock.Controller, insertErr, getErr, updateErr
 	queueStore := storagemock.NewMockRequestQueueSummaryStore(ctrl)
 	uriStore := storagemock.NewMockRequestURIStore(ctrl)
 	store.EXPECT().GetRequestQueueSummaryStore().Return(queueStore).AnyTimes()
+	store.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
+	store.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
+	store.EXPECT().GetRequestURIStore().Return(uriStore).AnyTimes()
 	factory := storagemock.NewMockFactory(ctrl)
 	factory.EXPECT().For(gomock.Any()).Return(store, nil).AnyTimes()
-	materializer := requestcore.NewMaterializer(logStore, summaryStore, uriStore, factory)
+	materializer := requestcore.NewMaterializer(factory)
 	logStore.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(insertErr)
 	if insertErr != nil {
 		return materializer
@@ -157,6 +154,6 @@ func newLogControllerStore(ctrl *gomock.Controller, insertErr, getErr, updateErr
 }
 
 func newRequestLog(requestID string, status entity.RequestStatus, requestVersion int32, lastError string, metadata map[string]string) *entity.RequestLog {
-	log := entity.NewRequestLog(requestID, status, requestVersion, lastError, metadata)
+	log := entity.NewRequestLog("test-queue", requestID, status, requestVersion, lastError, metadata)
 	return &log
 }
