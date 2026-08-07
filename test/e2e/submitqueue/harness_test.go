@@ -51,7 +51,7 @@ func pollUntil(interval time.Duration, condition func() bool) {
 
 // land submits a request with the default REBASE strategy and returns its sqid.
 // URIs may carry "sq-fake=<token>" markers to steer negative paths (see
-// submitqueue/core/fakemarker); the happy path uses a plain change URI.
+// platform/fakemarker); the happy path uses a plain change URI.
 func (s *E2EIntegrationSuite) land(queue string, uris ...string) string {
 	t := s.T()
 	resp, err := s.gatewayClient.Land(s.ctx, &gatewaypb.LandRequest{

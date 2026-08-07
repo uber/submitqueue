@@ -43,6 +43,10 @@ services:
       - "8080" # Random ephemeral port to avoid conflicts
     environment:
       - PORT=:8080
+      # Merger implementation. Empty (the default) resolves from the merge
+      # environment: git when MERGE_CHECKOUT_PATH is set, noop otherwise. The
+      # e2e suite sets SQ_RUNWAY_MERGER=fake to drive outcomes from the payload.
+      - MERGER=${SQ_RUNWAY_MERGER:-}
       # Queue infrastructure connection
       - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
       - HOSTNAME=runway-dev
