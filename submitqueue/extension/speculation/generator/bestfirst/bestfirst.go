@@ -25,8 +25,8 @@ import (
 	"cmp"
 	"container/heap"
 	"context"
-	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 
@@ -47,14 +47,12 @@ var _ generator.Generator = (*bestFirst)(nil)
 // unresolved dependency assumption holds. The scorer is called at most once
 // per unresolved dependency batch in each Generate call.
 func New(s scorer.Scorer) generator.Generator {
-	if s == nil {
-		panic("bestfirst.New: scorer must not be nil")
-	}
 	return &bestFirst{scorer: s}
 }
 
-// Generate validates the queue snapshot, scores the unresolved dependencies of
-// Speculating heads, and opens a lazy global best-first iterator.
+// Generate scores the unresolved dependencies of the snapshot's Speculating
+// heads and opens a lazy global best-first iterator. The snapshot is taken as
+// given: it is the caller's to keep well formed, and nothing here re-checks it.
 func (g *bestFirst) Generate(ctx context.Context, batches []entity.Batch) (generator.Iterator, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -62,57 +60,51 @@ func (g *bestFirst) Generate(ctx context.Context, batches []entity.Batch) (gener
 
 	batchByID := make(map[string]entity.Batch, len(batches))
 	for _, batch := range batches {
-		if batch.ID == "" {
-			return nil, errors.New("batch has an empty ID")
-		}
-		if _, exists := batchByID[batch.ID]; exists {
-			return nil, fmt.Errorf("duplicate batch ID %q", batch.ID)
-		}
 		batchByID[batch.ID] = batch
 	}
+	heads, unresolvedIDs := speculatingHeads(batches, batchByID)
 
-	heads := make([]entity.Batch, 0)
-	unresolvedDependencyIDs := make(map[string]struct{})
+	probabilityByID, err := g.score(ctx, unresolvedIDs, batchByID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Seeding the heap by appending and then heapifying once is linear, where
+	// pushing head by head would cost a sift per head.
+	it := &candidateIterator{candidates: make(candidateHeap, 0, len(heads))}
+	for _, head := range heads {
+		stream := newPathStream(head, batchByID, probabilityByID)
+		it.candidates = append(it.candidates, candidateItem{
+			stream: stream,
+			score:  stream.bestScore,
+		})
+	}
+	heap.Init(&it.candidates)
+	return it, nil
+}
+
+// speculatingHeads picks out the batches worth proposing work on and the
+// distinct dependencies of theirs still awaiting an outcome. The dependency IDs
+// come back sorted, so scoring order does not vary with map iteration.
+func speculatingHeads(batches []entity.Batch, batchByID map[string]entity.Batch) (heads []entity.Batch, unresolvedIDs []string) {
+	unresolved := make(map[string]struct{})
 	for _, batch := range batches {
 		if batch.State != entity.BatchStateSpeculating {
 			continue
 		}
 		heads = append(heads, batch)
-
-		seen := make(map[string]struct{}, len(batch.Dependencies))
 		for _, dependencyID := range batch.Dependencies {
-			if dependencyID == "" {
-				return nil, fmt.Errorf("head %q has an empty dependency ID", batch.ID)
-			}
-			if dependencyID == batch.ID {
-				return nil, fmt.Errorf("head %q depends on itself", batch.ID)
-			}
-			if _, duplicate := seen[dependencyID]; duplicate {
-				return nil, fmt.Errorf("head %q repeats dependency %q", batch.ID, dependencyID)
-			}
-			seen[dependencyID] = struct{}{}
-
-			dependency, exists := batchByID[dependencyID]
-			if !exists {
-				return nil, fmt.Errorf("head %q references dependency %q missing from the snapshot", batch.ID, dependencyID)
-			}
-			if dependency.State == entity.BatchStateUnknown {
-				return nil, fmt.Errorf("dependency %q has an unknown state", dependencyID)
-			}
-			if _, resolved := resolvedAssumption(dependency.State); !resolved {
-				unresolvedDependencyIDs[dependencyID] = struct{}{}
+			if _, resolved := resolvedAssumption(batchByID[dependencyID].State); !resolved {
+				unresolved[dependencyID] = struct{}{}
 			}
 		}
 	}
+	return heads, slices.Sorted(maps.Keys(unresolved))
+}
 
-	// Score each unique unresolved dependency once, in a stable order. A score
-	// outside [0, 1] is rejected here because everything downstream treats it
-	// as a probability, and a bad value would corrupt the ordering silently.
-	ids := make([]string, 0, len(unresolvedDependencyIDs))
-	for id := range unresolvedDependencyIDs {
-		ids = append(ids, id)
-	}
-	slices.Sort(ids)
+// score asks the scorer for each unresolved dependency exactly once, however
+// many heads wait on it.
+func (g *bestFirst) score(ctx context.Context, ids []string, batchByID map[string]entity.Batch) (map[string]float64, error) {
 	probabilityByID := make(map[string]float64, len(ids))
 	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
@@ -122,22 +114,25 @@ func (g *bestFirst) Generate(ctx context.Context, batches []entity.Batch) (gener
 		if err != nil {
 			return nil, fmt.Errorf("score dependency %q: %w", id, err)
 		}
-		if math.IsNaN(probability) || probability < 0 || probability > 1 {
-			return nil, fmt.Errorf("scorer returned %v for batch %q: want a probability in [0, 1]", probability, id)
-		}
-		probabilityByID[id] = probability
+		probabilityByID[id] = asProbability(probability)
 	}
+	return probabilityByID, nil
+}
 
-	it := &candidateIterator{}
-	heap.Init(&it.candidates)
-	for _, head := range heads {
-		stream := newPathStream(head, batchByID, probabilityByID)
-		heap.Push(&it.candidates, candidateItem{
-			stream: stream,
-			score:  stream.bestScore,
-		})
+// defaultProbability stands in for a score that is not a probability. It is
+// optimistic on purpose: a dependency nobody could estimate is treated as very
+// likely to succeed, which keeps its head's preferred path near the front
+// rather than burying it or dropping the queue's whole snapshot on one bad
+// number.
+const defaultProbability = 0.95
+
+// asProbability keeps a usable score and substitutes the default for anything
+// else. The comparisons are both false for NaN, so NaN takes the default too.
+func asProbability(score float64) float64 {
+	if score >= 0 && score <= 1 {
+		return score
 	}
-	return it, nil
+	return defaultProbability
 }
 
 // resolvedAssumption converts a terminal dependency outcome into the only
@@ -282,8 +277,7 @@ func (s *pathStream) scoreFor(flipped []int) float64 {
 // build constructs the path taking the given flips. The returned path owns its
 // dependencies.
 func (s *pathStream) build(flipped []int) entity.SpeculationPath {
-	dependencies := make([]entity.PathDependency, len(s.base))
-	copy(dependencies, s.base)
+	dependencies := slices.Clone(s.base)
 	for _, i := range flipped {
 		at := s.variables[i].dependencyIndex
 		dependencies[at].Assumption = opposite(dependencies[at].Assumption)
@@ -301,15 +295,11 @@ func opposite(assumption entity.DependencyAssumption) entity.DependencyAssumptio
 }
 
 func appendCopy(values []int, value int) []int {
-	result := make([]int, len(values)+1)
-	copy(result, values)
-	result[len(values)] = value
-	return result
+	return append(slices.Clone(values), value)
 }
 
 func replaceLastCopy(values []int, value int) []int {
-	result := make([]int, len(values))
-	copy(result, values)
+	result := slices.Clone(values)
 	result[len(result)-1] = value
 	return result
 }

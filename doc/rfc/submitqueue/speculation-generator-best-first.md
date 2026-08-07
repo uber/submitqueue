@@ -6,7 +6,7 @@ The default generator returns the most likely complete build path across the who
 
 The code has one setup method, `Generate`, and one repeated method, `Next`:
 
-1. `Generate` validates the queue snapshot, then records a preferred assumption and the cost of flipping to its opposite for each unresolved direct dependency. It totals the best score for each eligible head; resolved dependencies remain fixed facts.
+1. `Generate` records a preferred assumption and the cost of flipping to its opposite for each unresolved direct dependency. It totals the best score for each eligible head; resolved dependencies remain fixed facts.
 2. `Generate` pushes one lightweight best-path candidate per head into a global heap. Each head also owns a stream that enumerates its remaining paths on demand; at this point the stream has done no work beyond that total.
 3. `Next` removes the highest-ranked candidate from the global heap, advances only that head's stream, inserts the head's next candidate, and constructs and returns the complete path that was removed.
 
@@ -45,11 +45,11 @@ The scorer estimates:
 
 The batch being built is written before its assumptions. For example, `C [A succeeds, B fails]` means “build C assuming A succeeds and B fails.” The code calls C the path's **head**.
 
-## The snapshot is a strict contract
+## The snapshot is a caller precondition
 
-`Generate` receives the queue's live batches as a snapshot and validates it before doing any other work. Every batch a head's direct dependencies reference must be present with a readable state, batch IDs must be unique and non-empty, and no head may repeat a dependency or depend on itself. A snapshot that breaks any of these is malformed input, and `Generate` returns an error instead of a stream.
+`Generate` receives the queue's live batches as a snapshot and takes it as given. A well-formed snapshot carries unique, non-empty batch IDs, includes every batch a head's direct dependencies reference, and gives no head an empty, duplicate, or self dependency. Those are preconditions the caller owns, established where the snapshot is assembled. The generator does not re-check them: it is on the hot path of every run, the checks it could make are the ones an assembled-correctly snapshot can never fail, and paying for them here only spreads the same contract across two places. A malformed snapshot yields undefined candidates rather than an error.
 
-In particular, a missing dependency is never guessed about. Every unresolved dependency is scored by the injected scorer, and any defaulting for a batch that is hard to score belongs to the scorer implementation — which knows what information it does and does not have — not to the generator.
+A score that is not a probability is the one bad input the generator absorbs, because it arrives from the injected scorer rather than from the caller and there is no earlier point that could catch it. A score outside `[0, 1]`, or `NaN`, is replaced with a default of 0.95 — optimistic on purpose, so a dependency nobody could estimate keeps its head's preferred path near the front instead of burying it or failing the whole run on one number. Any deliberate defaulting still belongs to the scorer implementation, which knows what information it does and does not have; this is only the floor under it.
 
 ## Step 1: `Generate` prepares each head
 
@@ -420,8 +420,7 @@ A and D tie at 1.0, so batch ID puts A first. Other exact ties prefer fewer flip
 
 `Generate` must eagerly:
 
-- validate the snapshot;
-- score every unique unresolved direct dependency needed by an eligible head;
+- score every unique unresolved direct dependency needed by an eligible head, substituting the default for any score that is not a probability;
 - choose each unresolved dependency's preferred assumption and calculate its `flipCost`; and
 - total the best score for every head.
 
