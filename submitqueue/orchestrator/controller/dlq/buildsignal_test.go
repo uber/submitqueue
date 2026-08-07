@@ -46,7 +46,8 @@ func TestDLQBuildSignalController_Process_FansOutToBatch(t *testing.T) {
 
 	buildStore := storagemock.NewMockBuildStore(ctrl)
 	buildStore.EXPECT().Get(gomock.Any(), "build-1").Return(entity.Build{
-		ID: "build-1", BatchID: "q/batch/2", Status: entity.BuildStatusRunning,
+		ID: "build-1", BatchID: "q/batch/2", PathID: "path-1", Attempt: 1,
+		Status: entity.BuildStatusRunning,
 	}, nil)
 
 	batchStore := storagemock.NewMockBatchStore(ctrl)
