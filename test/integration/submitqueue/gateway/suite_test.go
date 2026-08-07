@@ -172,16 +172,19 @@ func (s *GatewayIntegrationSuite) TestListAPI() {
 	t := s.T()
 	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
 	require.NoError(t, err)
-	materializer := corerequest.NewMaterializer(store.GetRequestLogStore(), store.GetRequestSummaryStore(), store.GetRequestURIStore(), mysqlFactory{backend: store})
+	materializer := corerequest.NewMaterializer(mysqlFactory{backend: store})
+	queueStore, err := store.For("test-queue")
+	require.NoError(t, err)
 	for _, summary := range []entity.RequestSummary{
 		{RequestID: "test-queue/list-1", Queue: "test-queue", ChangeURIs: []string{"uri/1"}, ReceivedAtMs: 100, Status: entity.RequestStatusAccepted, StatusTimestampMs: 100, Version: 1, Metadata: map[string]string{}},
 		{RequestID: "test-queue/list-2", Queue: "test-queue", ChangeURIs: []string{"uri/2"}, ReceivedAtMs: 200, Status: entity.RequestStatusLanded, StatusTimestampMs: 200, Version: 1, Metadata: map[string]string{}},
 	} {
 		publicStatus := summary.Status
 		summary.Status = entity.RequestStatusAccepting
-		require.NoError(t, store.GetRequestSummaryStore().Create(s.ctx, summary))
+		require.NoError(t, queueStore.GetRequestSummaryStore().Create(s.ctx, summary))
 		require.NoError(t, materializer.PersistLog(s.ctx, entity.RequestLog{
 			RequestID:   summary.RequestID,
+			Queue:       summary.Queue,
 			TimestampMs: summary.StatusTimestampMs,
 			Status:      publicStatus,
 			Metadata:    map[string]string{},
@@ -205,7 +208,7 @@ func (s *GatewayIntegrationSuite) TestListAPI() {
 func (s *GatewayIntegrationSuite) TestReadAPIErrorCodes() {
 	t := s.T()
 
-	_, err := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: "missing/1"})
+	_, err := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: "missing/1", Queue: "missing"})
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, status.Code(err))
 
@@ -220,29 +223,35 @@ func (s *GatewayIntegrationSuite) TestReadAPIErrorCodes() {
 	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
 	require.NoError(t, err)
 	const overflowChangeURI = "uri/read-api-overflow"
+	overflowStore, err := store.For("overflow")
+	require.NoError(t, err)
 	for i := 1; i <= 101; i++ {
-		require.NoError(t, store.GetRequestURIStore().Create(s.ctx, entity.RequestURI{
+		require.NoError(t, overflowStore.GetRequestURIStore().Create(s.ctx, entity.RequestURI{
 			ChangeURI:    overflowChangeURI,
+			Queue:        "overflow",
 			ReceivedAtMs: int64(i),
 			RequestID:    fmt.Sprintf("overflow/%d", i),
 		}))
 	}
 
-	_, err = s.client.GetRequestSummaryByChangeURI(s.ctx, &pb.GetRequestSummaryByChangeURIRequest{ChangeUri: overflowChangeURI})
+	_, err = s.client.GetRequestSummaryByChangeURI(s.ctx, &pb.GetRequestSummaryByChangeURIRequest{ChangeUri: overflowChangeURI, Queue: "overflow"})
 	require.Error(t, err)
 	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
 
-	_, err = s.client.GetRequestHistoryByChangeURI(s.ctx, &pb.GetRequestHistoryByChangeURIRequest{ChangeUri: overflowChangeURI})
+	_, err = s.client.GetRequestHistoryByChangeURI(s.ctx, &pb.GetRequestHistoryByChangeURIRequest{ChangeUri: overflowChangeURI, Queue: "overflow"})
 	require.Error(t, err)
 	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
 
 	const inconsistentChangeURI = "uri/read-api-inconsistent"
-	require.NoError(t, store.GetRequestURIStore().Create(s.ctx, entity.RequestURI{
+	inconsistentStore, err := store.For("missing-summary")
+	require.NoError(t, err)
+	require.NoError(t, inconsistentStore.GetRequestURIStore().Create(s.ctx, entity.RequestURI{
 		ChangeURI:    inconsistentChangeURI,
+		Queue:        "missing-summary",
 		ReceivedAtMs: 1,
 		RequestID:    "missing-summary/1",
 	}))
-	_, err = s.client.GetRequestSummaryByChangeURI(s.ctx, &pb.GetRequestSummaryByChangeURIRequest{ChangeUri: inconsistentChangeURI})
+	_, err = s.client.GetRequestSummaryByChangeURI(s.ctx, &pb.GetRequestSummaryByChangeURIRequest{ChangeUri: inconsistentChangeURI, Queue: "missing-summary"})
 	require.Error(t, err)
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
@@ -273,21 +282,24 @@ func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 	require.NoError(t, err, "failed to create topic registry")
 
 	const sqid = "log-consumer-test/1"
+	const logQueue = "log-consumer-test"
 	store, err := mysqlstorage.NewStorage(s.db, tally.NoopScope)
 	require.NoError(t, err)
+	logQueueStore, err := store.For(logQueue)
+	require.NoError(t, err)
 	summary := entity.RequestSummary{
-		RequestID: sqid, Queue: "log-consumer-test", ChangeURIs: []string{}, ReceivedAtMs: 1,
+		RequestID: sqid, Queue: logQueue, ChangeURIs: []string{}, ReceivedAtMs: 1,
 		Status: entity.RequestStatusAccepting, StatusTimestampMs: 1, Version: 1, Metadata: map[string]string{},
 	}
-	require.NoError(t, store.GetRequestSummaryStore().Create(s.ctx, summary))
-	logEntry := entity.NewRequestLog(sqid, entity.RequestStatusStarted, 1, "", nil)
+	require.NoError(t, logQueueStore.GetRequestSummaryStore().Create(s.ctx, summary))
+	logEntry := entity.NewRequestLog(logQueue, sqid, entity.RequestStatusStarted, 1, "", nil)
 	require.NoError(t, corerequest.PublishLog(s.ctx, registry, logEntry, sqid),
 		"failed to publish request log to log topic")
 
 	s.log.Logf("Published 'started' log for sqid=%s; waiting for gateway consumer to persist it", sqid)
 
 	require.Eventually(t, func() bool {
-		resp, statusErr := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: sqid})
+		resp, statusErr := s.client.GetRequestSummaryByID(s.ctx, &pb.GetRequestSummaryByIDRequest{Sqid: sqid, Queue: "log-consumer-test"})
 		if statusErr != nil {
 			return false
 		}

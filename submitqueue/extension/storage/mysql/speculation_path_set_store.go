@@ -32,11 +32,14 @@ import (
 type speculationPathSetStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewSpeculationPathSetStore creates a new MySQL-backed SpeculationPathSetStore.
-func NewSpeculationPathSetStore(db *sql.DB, scope tally.Scope) storage.SpeculationPathSetStore {
-	return &speculationPathSetStore{db: db, scope: scope}
+func NewSpeculationPathSetStore(db *sql.DB, scope tally.Scope, queue string) storage.SpeculationPathSetStore {
+	return &speculationPathSetStore{db: db, scope: scope, queue: queue}
 }
 
 // Get retrieves a head's path set, where head is the head batch's ID.
@@ -49,19 +52,19 @@ func (s *speculationPathSetStore) Get(ctx context.Context, head string) (ret ent
 	var pathsJSON []byte
 
 	err := s.db.QueryRowContext(ctx,
-		"SELECT head, paths, version FROM speculation_path_set WHERE head = ?",
-		head,
-	).Scan(&set.Head, &pathsJSON, &set.Version)
+		"SELECT queue, head, paths, version FROM speculation_path_set WHERE queue = ? AND head = ?",
+		s.queue, head,
+	).Scan(&set.Queue, &set.Head, &pathsJSON, &set.Version)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return entity.SpeculationPathSet{}, storage.WrapNotFound(err)
 	}
 	if err != nil {
-		return entity.SpeculationPathSet{}, fmt.Errorf("failed to get speculation path set entity head=%s from the database: %w", head, err)
+		return entity.SpeculationPathSet{}, fmt.Errorf("failed to get speculation path set entity queue=%s head=%s from the database: %w", s.queue, head, err)
 	}
 
 	if err := json.Unmarshal(pathsJSON, &set.Paths); err != nil {
-		return entity.SpeculationPathSet{}, fmt.Errorf("failed to unmarshal paths for speculation path set entity head=%s from the database: %w", head, err)
+		return entity.SpeculationPathSet{}, fmt.Errorf("failed to unmarshal paths for speculation path set entity queue=%s head=%s from the database: %w", s.queue, head, err)
 	}
 
 	return set, nil
@@ -72,21 +75,25 @@ func (s *speculationPathSetStore) Create(ctx context.Context, set entity.Specula
 	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	if set.Queue != s.queue {
+		return fmt.Errorf("speculation path set head=%s queue %q does not match the store's bound queue %q", set.Head, set.Queue, s.queue)
+	}
+
 	pathsJSON, err := json.Marshal(set.Paths)
 	if err != nil {
 		return fmt.Errorf("failed to marshal paths head=%s for Create speculation path set entity: %w", set.Head, err)
 	}
 
 	_, err = s.db.ExecContext(ctx,
-		"INSERT INTO speculation_path_set (head, paths, version) VALUES (?, ?, ?)",
-		set.Head, pathsJSON, set.Version,
+		"INSERT INTO speculation_path_set (queue, head, paths, version) VALUES (?, ?, ?, ?)",
+		set.Queue, set.Head, pathsJSON, set.Version,
 	)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
 		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrDuplicateEntry {
-			return fmt.Errorf("speculation path set entity head=%s: %w", set.Head, storage.ErrAlreadyExists)
+			return fmt.Errorf("speculation path set entity queue=%s head=%s: %w", set.Queue, set.Head, storage.ErrAlreadyExists)
 		}
-		return fmt.Errorf("failed to insert speculation path set entity head=%s: %w", set.Head, err)
+		return fmt.Errorf("failed to insert speculation path set entity queue=%s head=%s: %w", set.Queue, set.Head, err)
 	}
 
 	return nil
@@ -99,34 +106,38 @@ func (s *speculationPathSetStore) Update(ctx context.Context, set entity.Specula
 	op := metrics.Begin(s.scope, "update", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	if set.Queue != s.queue {
+		return fmt.Errorf("speculation path set head=%s queue %q does not match the store's bound queue %q", set.Head, set.Queue, s.queue)
+	}
+
 	pathsJSON, err := json.Marshal(set.Paths)
 	if err != nil {
 		return fmt.Errorf("failed to marshal paths head=%s for Update speculation path set entity: %w", set.Head, err)
 	}
 
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE speculation_path_set SET paths = ?, version = ? WHERE head = ? AND version = ?",
-		pathsJSON, newVersion, set.Head, oldVersion,
+		"UPDATE speculation_path_set SET paths = ?, version = ? WHERE queue = ? AND head = ? AND version = ?",
+		pathsJSON, newVersion, set.Queue, set.Head, oldVersion,
 	)
 	if err != nil {
 		return fmt.Errorf(
-			"failed to update speculation path set for head=%q oldVersion=%d newVersion=%d: %w",
-			set.Head, oldVersion, newVersion, err,
+			"failed to update speculation path set for queue=%q head=%q oldVersion=%d newVersion=%d: %w",
+			set.Queue, set.Head, oldVersion, newVersion, err,
 		)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf(
-			"failed to get rows affected from update for head=%q oldVersion=%d newVersion=%d: %w",
-			set.Head, oldVersion, newVersion, err,
+			"failed to get rows affected from update for queue=%q head=%q oldVersion=%d newVersion=%d: %w",
+			set.Queue, set.Head, oldVersion, newVersion, err,
 		)
 	}
 
 	if rowsAffected != 1 {
 		return fmt.Errorf(
-			"version mismatch for speculation path set update: head=%q expected_version=%d: %w",
-			set.Head, oldVersion, storage.ErrVersionMismatch,
+			"version mismatch for speculation path set update: queue=%q head=%q expected_version=%d: %w",
+			set.Queue, set.Head, oldVersion, storage.ErrVersionMismatch,
 		)
 	}
 

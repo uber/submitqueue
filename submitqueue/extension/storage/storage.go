@@ -67,11 +67,6 @@ type Factory interface {
 // dependency. An instance is resolved per queue through Factory and is bound
 // to that queue: entity arguments whose Queue field disagrees with the
 // binding are rejected, and reads never surface another queue's records.
-//
-// The cross-queue read-model stores (RequestLogStore, RequestSummaryStore,
-// RequestURIStore) are deliberately not part of this aggregate: their lookups
-// start from identifiers that arrive without queue context, so they are
-// injected individually as global seams.
 type Storage interface {
 	// GetRequestStore returns the RequestStore instance.
 	GetRequestStore() RequestStore
@@ -99,4 +94,13 @@ type Storage interface {
 
 	// GetRequestQueueSummaryStore returns the RequestQueueSummaryStore instance.
 	GetRequestQueueSummaryStore() RequestQueueSummaryStore
+
+	// GetRequestSummaryStore returns the RequestSummaryStore instance.
+	GetRequestSummaryStore() RequestSummaryStore
+
+	// GetRequestLogStore returns the RequestLogStore instance.
+	GetRequestLogStore() RequestLogStore
+
+	// GetRequestURIStore returns the RequestURIStore instance.
+	GetRequestURIStore() RequestURIStore
 }

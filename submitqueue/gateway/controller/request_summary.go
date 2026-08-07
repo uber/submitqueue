@@ -35,19 +35,17 @@ type RequestSummaryController interface {
 var _ RequestSummaryController = (*requestSummaryController)(nil)
 
 type requestSummaryController struct {
-	logger              *zap.SugaredLogger
-	metricsScope        tally.Scope
-	requestSummaryStore storage.RequestSummaryStore
-	requestURIStore     storage.RequestURIStore
+	logger       *zap.SugaredLogger
+	metricsScope tally.Scope
+	stores       storage.Factory
 }
 
 // NewRequestSummaryController creates a gateway request-summary controller.
-func NewRequestSummaryController(logger *zap.SugaredLogger, scope tally.Scope, requestSummaryStore storage.RequestSummaryStore, requestURIStore storage.RequestURIStore) RequestSummaryController {
+func NewRequestSummaryController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.Factory) RequestSummaryController {
 	return &requestSummaryController{
-		logger:              logger,
-		metricsScope:        scope.SubScope("request_summary_controller"),
-		requestSummaryStore: requestSummaryStore,
-		requestURIStore:     requestURIStore,
+		logger:       logger,
+		metricsScope: scope.SubScope("request_summary_controller"),
+		stores:       stores,
 	}
 }
 
@@ -59,8 +57,16 @@ func (c *requestSummaryController) GetRequestSummaryByID(ctx context.Context, re
 	if err := validateStoredIdentifier("sqid", req.ID); err != nil {
 		return entity.RequestSummary{}, fmt.Errorf("GetRequestSummaryByID invalid request: %w", err)
 	}
+	if err := validateQueueIdentifier(req.Queue); err != nil {
+		return entity.RequestSummary{}, fmt.Errorf("GetRequestSummaryByID invalid queue: %w", err)
+	}
 
-	summary, err := c.requestSummaryStore.Get(ctx, req.ID)
+	stores, err := c.stores.For(storage.Config{QueueName: req.Queue})
+	if err != nil {
+		return entity.RequestSummary{}, fmt.Errorf("GetRequestSummaryByID failed to resolve storage for queue %q: %w", req.Queue, err)
+	}
+
+	summary, err = stores.GetRequestSummaryStore().Get(ctx, req.ID)
 	if err != nil {
 		if storage.IsNotFound(err) {
 			return entity.RequestSummary{}, errs.NewUserError(&RequestNotFoundError{Sqid: req.ID})
@@ -86,8 +92,17 @@ func (c *requestSummaryController) GetRequestSummaryByChangeURI(ctx context.Cont
 	if err := validateStoredIdentifier("change URI", req.ChangeURI); err != nil {
 		return nil, fmt.Errorf("GetRequestSummaryByChangeURI invalid request: %w", err)
 	}
+	if err := validateQueueIdentifier(req.Queue); err != nil {
+		return nil, fmt.Errorf("GetRequestSummaryByChangeURI invalid queue: %w", err)
+	}
 
-	mappings, err := c.requestURIStore.ListByURI(ctx, req.ChangeURI, maxChangeRequestResults+1)
+	stores, err := c.stores.For(storage.Config{QueueName: req.Queue})
+	if err != nil {
+		return nil, fmt.Errorf("GetRequestSummaryByChangeURI failed to resolve storage for queue %q: %w", req.Queue, err)
+	}
+	summaryStore := stores.GetRequestSummaryStore()
+
+	mappings, err := stores.GetRequestURIStore().ListByURI(ctx, req.ChangeURI, maxChangeRequestResults+1)
 	if err != nil {
 		return nil, fmt.Errorf("GetRequestSummaryByChangeURI failed to list request mappings change_uri=%s: %w", req.ChangeURI, err)
 	}
@@ -100,7 +115,7 @@ func (c *requestSummaryController) GetRequestSummaryByChangeURI(ctx context.Cont
 
 	requests := make([]entity.RequestSummary, 0, len(mappings))
 	for _, mapping := range mappings {
-		summary, err := c.requestSummaryStore.Get(ctx, mapping.RequestID)
+		summary, err := summaryStore.Get(ctx, mapping.RequestID)
 		if err != nil {
 			if storage.IsNotFound(err) {
 				return nil, &InternalConsistencyError{Message: fmt.Sprintf("request summary missing for mapped change URI %q and sqid %q", req.ChangeURI, mapping.RequestID)}

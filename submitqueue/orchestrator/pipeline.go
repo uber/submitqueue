@@ -59,8 +59,8 @@ type Deps struct {
 	// Storage resolves the queue-scoped store aggregate per queue.
 	Storage storage.Factory
 
-	// Counter provides distributed batch counters.
-	Counter counter.Counter
+	// Counter resolves the queue-scoped batch counter per queue.
+	Counter counter.Factory
 
 	// BuildRunner resolves the build runner for each queue.
 	BuildRunner buildrunner.Factory

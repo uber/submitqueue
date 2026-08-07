@@ -44,8 +44,8 @@ func TestGetRequestSummaryByID(t *testing.T) {
 		Metadata:     map[string]string{"k": "v"},
 	}, nil)
 
-	controller := NewRequestSummaryController(zap.NewNop().Sugar(), tally.NoopScope, summaryStore, uriStore)
-	summary, err := controller.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "test-queue/1"})
+	controller := NewRequestSummaryController(zap.NewNop().Sugar(), tally.NoopScope, readModelFactory(ctrl, summaryStore, nil, uriStore))
+	summary, err := controller.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "test-queue/1", Queue: "test-queue"})
 
 	require.NoError(t, err)
 	assert.Equal(t, "test-queue/1", summary.RequestID)
@@ -68,8 +68,8 @@ func TestGetRequestSummaryByChangeURI(t *testing.T) {
 	summaryStore.EXPECT().Get(gomock.Any(), "queue/2").Return(entity.RequestSummary{RequestID: "queue/2", ReceivedAtMs: 200, Status: entity.RequestStatusLanded, ChangeURIs: []string{}}, nil)
 	summaryStore.EXPECT().Get(gomock.Any(), "queue/1").Return(entity.RequestSummary{RequestID: "queue/1", ReceivedAtMs: 100, Status: entity.RequestStatusError, ChangeURIs: []string{}}, nil)
 
-	controller := NewRequestSummaryController(zap.NewNop().Sugar(), tally.NoopScope, summaryStore, uriStore)
-	summaries, err := controller.GetRequestSummaryByChangeURI(context.Background(), entity.GetRequestSummaryByChangeURIRequest{ChangeURI: "uri"})
+	controller := NewRequestSummaryController(zap.NewNop().Sugar(), tally.NoopScope, readModelFactory(ctrl, summaryStore, nil, uriStore))
+	summaries, err := controller.GetRequestSummaryByChangeURI(context.Background(), entity.GetRequestSummaryByChangeURIRequest{ChangeURI: "uri", Queue: "queue"})
 
 	require.NoError(t, err)
 	require.Len(t, summaries, 2)
@@ -112,7 +112,7 @@ func TestStatusErrors(t *testing.T) {
 				summaryStore.EXPECT().Get(gomock.Any(), "missing/1").Return(entity.RequestSummary{}, storage.ErrNotFound)
 			},
 			call: func(c RequestSummaryController) error {
-				_, err := c.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "missing/1"})
+				_, err := c.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "missing/1", Queue: "missing"})
 				return err
 			},
 			wantNotFound: true,
@@ -127,7 +127,7 @@ func TestStatusErrors(t *testing.T) {
 				}, nil)
 			},
 			call: func(c RequestSummaryController) error {
-				_, err := c.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "queue/1"})
+				_, err := c.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "queue/1", Queue: "queue"})
 				return err
 			},
 			wantNotFound: true,
@@ -139,7 +139,7 @@ func TestStatusErrors(t *testing.T) {
 				summaryStore.EXPECT().Get(gomock.Any(), "queue/1").Return(entity.RequestSummary{}, backendErr)
 			},
 			call: func(c RequestSummaryController) error {
-				_, err := c.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "queue/1"})
+				_, err := c.GetRequestSummaryByID(context.Background(), entity.GetRequestSummaryByIDRequest{ID: "queue/1", Queue: "queue"})
 				return err
 			},
 		},
@@ -149,7 +149,7 @@ func TestStatusErrors(t *testing.T) {
 				uriStore.EXPECT().ListByURI(gomock.Any(), "uri", 101).Return([]entity.RequestURI{}, nil)
 			},
 			call: func(c RequestSummaryController) error {
-				_, err := c.GetRequestSummaryByChangeURI(context.Background(), entity.GetRequestSummaryByChangeURIRequest{ChangeURI: "uri"})
+				_, err := c.GetRequestSummaryByChangeURI(context.Background(), entity.GetRequestSummaryByChangeURIRequest{ChangeURI: "uri", Queue: "queue"})
 				return err
 			},
 			wantNotFound: true,
@@ -161,7 +161,7 @@ func TestStatusErrors(t *testing.T) {
 				uriStore.EXPECT().ListByURI(gomock.Any(), "uri", 101).Return(make([]entity.RequestURI, 101), nil)
 			},
 			call: func(c RequestSummaryController) error {
-				_, err := c.GetRequestSummaryByChangeURI(context.Background(), entity.GetRequestSummaryByChangeURIRequest{ChangeURI: "uri"})
+				_, err := c.GetRequestSummaryByChangeURI(context.Background(), entity.GetRequestSummaryByChangeURIRequest{ChangeURI: "uri", Queue: "queue"})
 				return err
 			},
 			wantTooMany: true,
@@ -174,7 +174,7 @@ func TestStatusErrors(t *testing.T) {
 				summaryStore.EXPECT().Get(gomock.Any(), "missing/1").Return(entity.RequestSummary{}, storage.ErrNotFound)
 			},
 			call: func(c RequestSummaryController) error {
-				_, err := c.GetRequestSummaryByChangeURI(context.Background(), entity.GetRequestSummaryByChangeURIRequest{ChangeURI: "uri"})
+				_, err := c.GetRequestSummaryByChangeURI(context.Background(), entity.GetRequestSummaryByChangeURIRequest{ChangeURI: "uri", Queue: "queue"})
 				return err
 			},
 			wantInternal: true,
@@ -189,7 +189,7 @@ func TestStatusErrors(t *testing.T) {
 			if tt.setup != nil {
 				tt.setup(summaryStore, uriStore)
 			}
-			controller := NewRequestSummaryController(zap.NewNop().Sugar(), tally.NoopScope, summaryStore, uriStore)
+			controller := NewRequestSummaryController(zap.NewNop().Sugar(), tally.NoopScope, readModelFactory(ctrl, summaryStore, nil, uriStore))
 
 			err := tt.call(controller)
 

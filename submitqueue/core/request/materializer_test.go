@@ -107,8 +107,8 @@ func TestMaterializer_PersistLog(t *testing.T) {
 		activated.StatusTimestampMs = 20
 		activated.Version = 2
 		queueStore.EXPECT().Get(gomock.Any(), int64(10), "q/1").Return(entity.RequestQueueSummary{}, storage.ErrNotFound)
-		uriStore.EXPECT().Create(gomock.Any(), entity.RequestURI{ChangeURI: "uri/1", ReceivedAtMs: 10, RequestID: "q/1"}).Return(nil)
-		uriStore.EXPECT().Create(gomock.Any(), entity.RequestURI{ChangeURI: "uri/2", ReceivedAtMs: 10, RequestID: "q/1"}).Return(nil)
+		uriStore.EXPECT().Create(gomock.Any(), entity.RequestURI{ChangeURI: "uri/1", Queue: "q", ReceivedAtMs: 10, RequestID: "q/1"}).Return(nil)
+		uriStore.EXPECT().Create(gomock.Any(), entity.RequestURI{ChangeURI: "uri/2", Queue: "q", ReceivedAtMs: 10, RequestID: "q/1"}).Return(nil)
 		queueStore.EXPECT().Create(gomock.Any(), queueSummaryFromSummary(activated)).Return(nil)
 		require.NoError(t, m.PersistLog(context.Background(), log))
 	})
@@ -256,9 +256,12 @@ func materializerStores(ctrl *gomock.Controller) (*Materializer, *storagemock.Mo
 	logStore := storagemock.NewMockRequestLogStore(ctrl)
 	queueScoped := storagemock.NewMockStorage(ctrl)
 	queueScoped.EXPECT().GetRequestQueueSummaryStore().Return(queueStore).AnyTimes()
+	queueScoped.EXPECT().GetRequestSummaryStore().Return(summaryStore).AnyTimes()
+	queueScoped.EXPECT().GetRequestURIStore().Return(uriStore).AnyTimes()
+	queueScoped.EXPECT().GetRequestLogStore().Return(logStore).AnyTimes()
 	factory := storagemock.NewMockFactory(ctrl)
 	factory.EXPECT().For(gomock.Any()).Return(queueScoped, nil).AnyTimes()
-	return NewMaterializer(logStore, summaryStore, uriStore, factory), summaryStore, queueStore, uriStore, logStore
+	return NewMaterializer(factory), summaryStore, queueStore, uriStore, logStore
 }
 
 func testRequestSummary() entity.RequestSummary {

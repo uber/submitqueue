@@ -155,8 +155,11 @@ type SpeculationPathEntry struct {
 // Every path in the set shares the same head and assumptions over the same
 // ordered dependency list.
 type SpeculationPathSet struct {
-	// Head is the primary key: the ID of the head batch these paths speculate
-	// on. Every path in the set carries this same head.
+	// Queue is the name of the queue the head batch belongs to. It is unique
+	// together with Head.
+	Queue string
+	// Head is the ID of the head batch these paths speculate on, unique within
+	// Queue. Every path in the set carries this same head.
 	Head string
 	// Paths is the head's chosen paths, live and recently finished.
 	Paths []SpeculationPathEntry

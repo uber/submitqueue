@@ -24,11 +24,11 @@ import (
 
 // SpeculationPathSetStore persists one head batch's chosen speculation paths.
 //
-// A set is keyed by its head batch ID and versioned as a whole: every path in
-// it shares that head, and the set is the unit of both replacement and
-// optimistic locking. There is no lookup by anything but the head — callers
-// that need a queue's live sets enumerate the heads from the batch listing they
-// already hold and read each set by key.
+// A set is keyed by its head batch ID within the bound queue and versioned as a
+// whole: every path in it shares that head, and the set is the unit of both
+// replacement and optimistic locking. There is no lookup by anything but the
+// head — callers that need a queue's live sets enumerate the heads from the
+// batch listing they already hold and read each set by key.
 type SpeculationPathSetStore interface {
 	// Get retrieves a head's path set, where head is the head batch's ID.
 	// Returns ErrNotFound if the head has no set yet, which is the normal state

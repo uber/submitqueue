@@ -42,23 +42,23 @@ type CancelController interface {
 var _ CancelController = (*cancelController)(nil)
 
 type cancelController struct {
-	logger              *zap.SugaredLogger
-	metricsScope        tally.Scope
-	requestSummaryStore storage.RequestSummaryStore
-	materializer        *requestcore.Materializer
-	registry            consumer.TopicRegistry
+	logger       *zap.SugaredLogger
+	metricsScope tally.Scope
+	stores       storage.Factory
+	materializer *requestcore.Materializer
+	registry     consumer.TopicRegistry
 }
 
 // NewCancelController creates a new instance of the gateway cancel controller.
 // The controller writes a RequestStatusCancelling log entry through the shared materializer and
 // publishes cancel requests to the topic registered under topickey.TopicKeyCancel.
-func NewCancelController(logger *zap.SugaredLogger, scope tally.Scope, summaries storage.RequestSummaryStore, materializer *requestcore.Materializer, registry consumer.TopicRegistry) CancelController {
+func NewCancelController(logger *zap.SugaredLogger, scope tally.Scope, stores storage.Factory, materializer *requestcore.Materializer, registry consumer.TopicRegistry) CancelController {
 	return &cancelController{
-		logger:              logger,
-		metricsScope:        scope,
-		requestSummaryStore: summaries,
-		materializer:        materializer,
-		registry:            registry,
+		logger:       logger,
+		metricsScope: scope,
+		stores:       stores,
+		materializer: materializer,
+		registry:     registry,
 	}
 }
 
@@ -79,25 +79,29 @@ func (c *cancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 	if req.ID == "" {
 		return fmt.Errorf("requires the request to have a sqid specified: %w", ErrInvalidRequest)
 	}
+	if err := validateQueueIdentifier(req.Queue); err != nil {
+		return fmt.Errorf("Cancel invalid queue: %w", err)
+	}
 
 	c.logger.Debugw("cancel request received",
 		"sqid", req.ID,
+		"queue", req.Queue,
 		"reason", req.Reason,
 	)
 
-	// Verify the sqid exists before recording intent or publishing.
-	summary, err := c.requestSummaryStore.Get(ctx, req.ID)
+	// Verify the sqid exists before recording intent or publishing. The lookup is scoped
+	// to the caller's queue, so a sqid from another queue is simply not found.
+	stores, err := c.stores.For(storage.Config{QueueName: req.Queue})
 	if err != nil {
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", req.Queue, err)
+	}
+	if _, err := stores.GetRequestSummaryStore().Get(ctx, req.ID); err != nil {
 		if storage.IsNotFound(err) {
 			metrics.NamedCounter(c.metricsScope, opName, "not_found", 1)
 			return errs.NewUserError(&RequestNotFoundError{Sqid: req.ID})
 		}
 		return fmt.Errorf("failed to look up request summary for sqid=%s: %w", req.ID, err)
 	}
-
-	// Stamp the authoritative queue from the stored summary onto the payload,
-	// overriding whatever the caller supplied.
-	req.Queue = summary.Queue
 
 	// Record the user's intent in the request log before publishing. Writing direct to the
 	// store (rather than via the log topic) keeps the gateway-emitted entry consistent with
@@ -106,7 +110,7 @@ func (c *cancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 	if req.Reason != "" {
 		metadata["reason"] = req.Reason
 	}
-	logEntry := entity.NewRequestLog(req.ID, entity.RequestStatusCancelling, 0, "", metadata)
+	logEntry := entity.NewRequestLog(req.Queue, req.ID, entity.RequestStatusCancelling, 0, "", metadata)
 	if err := c.materializer.PersistLog(ctx, logEntry); err != nil {
 		return fmt.Errorf("failed to insert cancelling log for sqid=%s: %w", req.ID, err)
 	}

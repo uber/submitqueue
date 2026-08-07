@@ -141,7 +141,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 	request.Version = newVersion
 
-	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusValidated, request.Version, "", nil)
+	logEntry := entity.NewRequestLog(request.Queue, request.ID, entity.RequestStatusValidated, request.Version, "", nil)
 	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "log_errors", 1)
 		return fmt.Errorf("failed to publish request log for %s: %w", request.ID, err)
@@ -188,7 +188,7 @@ func (c *Controller) failRequest(ctx context.Context, store storage.Storage, req
 		request.Version = newVersion
 	}
 
-	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusError, request.Version, reason, nil)
+	logEntry := entity.NewRequestLog(request.Queue, request.ID, entity.RequestStatusError, request.Version, reason, nil)
 	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID); err != nil {
 		return fmt.Errorf("failed to publish request log for %s: %w", request.ID, err)
 	}

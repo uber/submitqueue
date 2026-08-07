@@ -29,27 +29,17 @@ import (
 const mysqlErrDuplicateEntry = 1062
 
 // Storage is the MySQL storage backend. It owns the shared connection pool and
-// the global read-model stores, and binds queue-scoped store aggregates over
-// the shared tables on demand via For. The wiring layer adapts For into the
-// storage.Factory seam; per-queue backend routing stays a host decision.
+// binds queue-scoped store aggregates over the shared tables on demand via For.
+// The wiring layer adapts For into the storage.Factory seam; per-queue backend
+// routing stays a host decision.
 type Storage struct {
 	db    *sql.DB
 	scope tally.Scope
-
-	requestLogStore     storage.RequestLogStore
-	requestSummaryStore storage.RequestSummaryStore
-	requestURIStore     storage.RequestURIStore
 }
 
 // NewStorage creates a new MySQL storage backend over the given connection pool.
 func NewStorage(db *sql.DB, scope tally.Scope) (*Storage, error) {
-	return &Storage{
-		db:                  db,
-		scope:               scope,
-		requestLogStore:     NewRequestLogStore(db, scope.SubScope("request_log_store")),
-		requestSummaryStore: NewRequestSummaryStore(db, scope.SubScope("request_summary_store")),
-		requestURIStore:     NewRequestURIStore(db, scope.SubScope("request_uri_store")),
-	}, nil
+	return &Storage{db: db, scope: scope}, nil
 }
 
 // For returns the queue-scoped store aggregate bound to queueName over the
@@ -67,24 +57,12 @@ func (s *Storage) For(queueName string) (storage.Storage, error) {
 		batchDependentStore:     NewBatchDependentStore(s.db, s.scope.SubScope("batch_dependent_store"), queueName),
 		queueBatchStateStore:    NewQueueBatchStateStore(s.db, s.scope.SubScope("queue_batch_state_store"), queueName),
 		buildStore:              NewBuildStore(s.db, s.scope.SubScope("build_store"), queueName),
-		speculationPathSetStore: NewSpeculationPathSetStore(s.db, s.scope.SubScope("speculation_path_set_store")),
+		speculationPathSetStore: NewSpeculationPathSetStore(s.db, s.scope.SubScope("speculation_path_set_store"), queueName),
 		requestQueueStore:       NewRequestQueueSummaryStore(s.db, s.scope.SubScope("request_queue_summary_store"), queueName),
+		requestSummaryStore:     NewRequestSummaryStore(s.db, s.scope.SubScope("request_summary_store"), queueName),
+		requestLogStore:         NewRequestLogStore(s.db, s.scope.SubScope("request_log_store"), queueName),
+		requestURIStore:         NewRequestURIStore(s.db, s.scope.SubScope("request_uri_store"), queueName),
 	}, nil
-}
-
-// GetRequestLogStore returns the global MySQL-backed RequestLogStore.
-func (s *Storage) GetRequestLogStore() storage.RequestLogStore {
-	return s.requestLogStore
-}
-
-// GetRequestSummaryStore returns the global MySQL-backed RequestSummaryStore.
-func (s *Storage) GetRequestSummaryStore() storage.RequestSummaryStore {
-	return s.requestSummaryStore
-}
-
-// GetRequestURIStore returns the global MySQL-backed RequestURIStore.
-func (s *Storage) GetRequestURIStore() storage.RequestURIStore {
-	return s.requestURIStore
 }
 
 // Close closes the underlying database connection.
@@ -103,6 +81,9 @@ type boundStorage struct {
 	buildStore              storage.BuildStore
 	speculationPathSetStore storage.SpeculationPathSetStore
 	requestQueueStore       storage.RequestQueueSummaryStore
+	requestSummaryStore     storage.RequestSummaryStore
+	requestLogStore         storage.RequestLogStore
+	requestURIStore         storage.RequestURIStore
 }
 
 // Verify boundStorage implements the queue-scoped aggregate at compile time.
@@ -151,4 +132,19 @@ func (f *boundStorage) GetSpeculationPathSetStore() storage.SpeculationPathSetSt
 // GetRequestQueueSummaryStore returns the bound MySQL-backed RequestQueueSummaryStore.
 func (f *boundStorage) GetRequestQueueSummaryStore() storage.RequestQueueSummaryStore {
 	return f.requestQueueStore
+}
+
+// GetRequestSummaryStore returns the bound MySQL-backed RequestSummaryStore.
+func (f *boundStorage) GetRequestSummaryStore() storage.RequestSummaryStore {
+	return f.requestSummaryStore
+}
+
+// GetRequestLogStore returns the bound MySQL-backed RequestLogStore.
+func (f *boundStorage) GetRequestLogStore() storage.RequestLogStore {
+	return f.requestLogStore
+}
+
+// GetRequestURIStore returns the bound MySQL-backed RequestURIStore.
+func (f *boundStorage) GetRequestURIStore() storage.RequestURIStore {
+	return f.requestURIStore
 }

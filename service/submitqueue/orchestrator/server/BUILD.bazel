@@ -20,6 +20,7 @@ go_library(
         "//platform/extension/consumergate:go_default_library",
         "//platform/extension/consumergate/file:go_default_library",
         "//platform/extension/consumergate/noop:go_default_library",
+        "//platform/extension/counter:go_default_library",
         "//platform/extension/counter/mysql:go_default_library",
         "//platform/extension/messagequeue/mysql:go_default_library",
         "//platform/http:go_default_library",

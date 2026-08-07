@@ -31,17 +31,14 @@ import (
 )
 
 // StorageContractSuite defines the contract tests for the storage extension:
-// the queue-scoped aggregate resolved through storage.Factory plus the global
-// read-model stores. All storage implementations must pass these tests.
-// Implementation-specific tests should embed this suite and call SetFactory()
-// and SetGlobalStores().
+// the queue-scoped aggregate resolved through storage.Factory. All storage
+// implementations must pass these tests. Implementation-specific tests should
+// embed this suite and call SetFactory().
 type StorageContractSuite struct {
 	suite.Suite
-	ctx       context.Context
-	factory   storage.Factory
-	summaries storage.RequestSummaryStore
-	uris      storage.RequestURIStore
-	log       *testutil.TestLogger
+	ctx     context.Context
+	factory storage.Factory
+	log     *testutil.TestLogger
 }
 
 // SetContext sets the context for tests
@@ -53,13 +50,6 @@ func (s *StorageContractSuite) SetContext(ctx context.Context) {
 // storage factory under test.
 func (s *StorageContractSuite) SetFactory(factory storage.Factory) {
 	s.factory = factory
-}
-
-// SetGlobalStores is called by implementation tests to provide the global
-// read-model stores under test.
-func (s *StorageContractSuite) SetGlobalStores(summaries storage.RequestSummaryStore, uris storage.RequestURIStore) {
-	s.summaries = summaries
-	s.uris = uris
 }
 
 // forQueue resolves the queue-scoped store aggregate for a queue, failing the
@@ -668,12 +658,13 @@ func (s *StorageContractSuite) TestStorage_BuildCreateAndGet() {
 func (s *StorageContractSuite) TestStorage_RequestSummaryCreateGetAndCAS() {
 	t := s.T()
 	ctx := s.ctx
+	const queue = "summary-q"
 	summary := entity.RequestSummary{
-		RequestID: "summary/1", Queue: "summary-q", ChangeURIs: nil, ReceivedAtMs: 100,
+		RequestID: "summary/1", Queue: queue, ChangeURIs: nil, ReceivedAtMs: 100,
 		Status: entity.RequestStatusAccepted, RequestVersion: 1, StatusTimestampMs: 100, Version: 1,
 		LastError: "", Metadata: nil,
 	}
-	store := s.summaries
+	store := s.forQueue(queue).GetRequestSummaryStore()
 
 	require.NoError(t, store.Create(ctx, summary))
 	require.ErrorIs(t, store.Create(ctx, summary), storage.ErrAlreadyExists)
@@ -685,7 +676,6 @@ func (s *StorageContractSuite) TestStorage_RequestSummaryCreateGetAndCAS() {
 	_, err = store.Get(ctx, "summary/missing")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
-	got.Queue = "summary-q-updated"
 	got.ChangeURIs = []string{"change/updated"}
 	got.ReceivedAtMs = 200
 	got.Status = entity.RequestStatusLanded
@@ -699,7 +689,7 @@ func (s *StorageContractSuite) TestStorage_RequestSummaryCreateGetAndCAS() {
 	require.NoError(t, err)
 	assert.Equal(t, entity.RequestSummary{
 		RequestID:         summary.RequestID,
-		Queue:             "summary-q-updated",
+		Queue:             queue,
 		ChangeURIs:        []string{"change/updated"},
 		ReceivedAtMs:      200,
 		Status:            entity.RequestStatusLanded,
@@ -710,8 +700,9 @@ func (s *StorageContractSuite) TestStorage_RequestSummaryCreateGetAndCAS() {
 		Metadata:          map[string]string{"source": "test"},
 	}, updated)
 
+	// A stale version is rejected. The queue stays the bound one: it is part of the
+	// key now, so a summary cannot be moved between queues by an update.
 	stale := updated
-	stale.Queue = "stale-q"
 	stale.ChangeURIs = []string{"change/stale"}
 	stale.ReceivedAtMs = 400
 	stale.Status = entity.RequestStatusError
@@ -720,6 +711,11 @@ func (s *StorageContractSuite) TestStorage_RequestSummaryCreateGetAndCAS() {
 	stale.LastError = "stale detail"
 	stale.Metadata = map[string]string{"source": "stale"}
 	require.ErrorIs(t, store.Update(ctx, stale, 1, 3), storage.ErrVersionMismatch)
+
+	// A summary naming another queue is rejected by the binding outright.
+	otherQueue := updated
+	otherQueue.Queue = "summary-q-other"
+	assert.Error(t, store.Update(ctx, otherQueue, 2, 3))
 
 	afterStale, err := store.Get(ctx, summary.RequestID)
 	require.NoError(t, err)
@@ -846,11 +842,12 @@ func (s *StorageContractSuite) TestStorage_RequestQueueSummaryListAndCursor() {
 func (s *StorageContractSuite) TestStorage_RequestURIListIsBoundedAndOrdered() {
 	t := s.T()
 	ctx := s.ctx
-	store := s.uris
+	const queue = "uri-q"
+	store := s.forQueue(queue).GetRequestURIStore()
 	rows := []entity.RequestURI{
-		{ChangeURI: "uri/shared", ReceivedAtMs: 100, RequestID: "uri/1"},
-		{ChangeURI: "uri/shared", ReceivedAtMs: 200, RequestID: "uri/2"},
-		{ChangeURI: "uri/shared", ReceivedAtMs: 200, RequestID: "uri/3"},
+		{ChangeURI: "uri/shared", Queue: queue, ReceivedAtMs: 100, RequestID: "uri/1"},
+		{ChangeURI: "uri/shared", Queue: queue, ReceivedAtMs: 200, RequestID: "uri/2"},
+		{ChangeURI: "uri/shared", Queue: queue, ReceivedAtMs: 200, RequestID: "uri/3"},
 	}
 	for _, row := range rows {
 		require.NoError(t, store.Create(ctx, row))
@@ -865,11 +862,63 @@ func (s *StorageContractSuite) TestStorage_RequestURIListIsBoundedAndOrdered() {
 	empty, err := store.ListByURI(ctx, "uri/missing", 2)
 	require.NoError(t, err)
 	assert.Empty(t, empty)
+
+	// The same change URI in another queue is a distinct mapping set.
+	otherStore := s.forQueue("uri-q-other").GetRequestURIStore()
+	require.NoError(t, otherStore.Create(ctx, entity.RequestURI{
+		ChangeURI: "uri/shared", Queue: "uri-q-other", ReceivedAtMs: 100, RequestID: "other/1",
+	}), "the same change URI in another queue is a distinct row")
+	otherGot, err := otherStore.ListByURI(ctx, "uri/shared", 10)
+	require.NoError(t, err)
+	require.Len(t, otherGot, 1, "one queue's mappings must not surface through another's binding")
+	assert.Equal(t, "other/1", otherGot[0].RequestID)
+}
+
+// TestStorage_RequestLogAppendAndList tests the append-only audit trail and its
+// queue scoping: a request ID is unique only within its queue, so the same ID in
+// two queues is two independent histories.
+func (s *StorageContractSuite) TestStorage_RequestLogAppendAndList() {
+	t := s.T()
+	ctx := s.ctx
+	const queue = "log-q"
+	store := s.forQueue(queue).GetRequestLogStore()
+
+	_, err := store.List(ctx, "log/missing")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+
+	entries := []entity.RequestLog{
+		{RequestID: "log/1", Queue: queue, TimestampMs: 100, Status: entity.RequestStatusAccepted, Metadata: map[string]string{}},
+		{RequestID: "log/1", Queue: queue, TimestampMs: 200, Status: entity.RequestStatusStarted, LastError: "detail", Metadata: map[string]string{"k": "v"}},
+	}
+	for _, entry := range entries {
+		require.NoError(t, store.Insert(ctx, entry))
+	}
+
+	got, err := store.List(ctx, "log/1")
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, entity.RequestStatusAccepted, got[0].Status, "entries come back in timestamp order")
+	assert.Equal(t, entity.RequestStatusStarted, got[1].Status)
+
+	// A log carrying another queue's name is rejected by the binding.
+	assert.Error(t, store.Insert(ctx, entity.RequestLog{
+		RequestID: "log/1", Queue: "log-q-other", TimestampMs: 300, Status: entity.RequestStatusLanded, Metadata: map[string]string{},
+	}))
+
+	// The same request ID in another queue is an independent history.
+	otherStore := s.forQueue("log-q-other").GetRequestLogStore()
+	require.NoError(t, otherStore.Insert(ctx, entity.RequestLog{
+		RequestID: "log/1", Queue: "log-q-other", TimestampMs: 150, Status: entity.RequestStatusLanded, Metadata: map[string]string{},
+	}))
+	otherGot, err := otherStore.List(ctx, "log/1")
+	require.NoError(t, err)
+	require.Len(t, otherGot, 1, "one queue's log must not surface through another's binding")
+	assert.Equal(t, entity.RequestStatusLanded, otherGot[0].Status)
 }
 
 // speculationPathSet builds a two-path set for head over one dependency: one
 // path assuming the dependency succeeds, one assuming it fails.
-func speculationPathSet(head, dep string) entity.SpeculationPathSet {
+func speculationPathSet(queue, head, dep string) entity.SpeculationPathSet {
 	succeeds := entity.SpeculationPath{
 		Head:         head,
 		Dependencies: []entity.PathDependency{{Batch: dep, Assumption: entity.DependencyAssumptionSucceeds}},
@@ -879,7 +928,8 @@ func speculationPathSet(head, dep string) entity.SpeculationPathSet {
 		Dependencies: []entity.PathDependency{{Batch: dep, Assumption: entity.DependencyAssumptionFails}},
 	}
 	return entity.SpeculationPathSet{
-		Head: head,
+		Queue: queue,
+		Head:  head,
 		Paths: []entity.SpeculationPathEntry{
 			{
 				ID:          succeeds.ID(),
@@ -912,7 +962,7 @@ func (s *StorageContractSuite) TestStorage_SpeculationPathSetCreateAndGet() {
 	ctx := s.ctx
 	store := s.forQueue("test-queue").GetSpeculationPathSetStore()
 
-	want := speculationPathSet("sps/head/1", "sps/dep/1")
+	want := speculationPathSet("test-queue", "sps/head/1", "sps/dep/1")
 	require.NoError(t, store.Create(ctx, want))
 
 	got, err := store.Get(ctx, want.Head)
@@ -939,7 +989,7 @@ func (s *StorageContractSuite) TestStorage_SpeculationPathSetCreateDuplicate() {
 	ctx := s.ctx
 	store := s.forQueue("test-queue").GetSpeculationPathSetStore()
 
-	set := speculationPathSet("sps/head/duplicate", "sps/dep/1")
+	set := speculationPathSet("test-queue", "sps/head/duplicate", "sps/dep/1")
 	require.NoError(t, store.Create(ctx, set))
 	assert.ErrorIs(t, store.Create(ctx, set), storage.ErrAlreadyExists)
 }
@@ -952,7 +1002,7 @@ func (s *StorageContractSuite) TestStorage_SpeculationPathSetOptimisticLocking()
 	ctx := s.ctx
 	store := s.forQueue("test-queue").GetSpeculationPathSetStore()
 
-	set := speculationPathSet("sps/head/cas", "sps/dep/1")
+	set := speculationPathSet("test-queue", "sps/head/cas", "sps/dep/1")
 	require.NoError(t, store.Create(ctx, set))
 
 	// Winner: replaces the set under the version it read.
@@ -971,4 +1021,33 @@ func (s *StorageContractSuite) TestStorage_SpeculationPathSetOptimisticLocking()
 	assert.Equal(t, int32(2), got.Version)
 	require.Len(t, got.Paths, 1, "the losing write must not have restored the dropped path")
 	assert.Equal(t, entity.SpeculationPathStatusPassed, got.Paths[0].Status)
+}
+
+// TestStorage_SpeculationPathSetQueueIsolation tests that the same head in two
+// queues is two independent sets: a batch ID is only unique within its queue, so
+// one queue's binding must never surface or overwrite another's row.
+func (s *StorageContractSuite) TestStorage_SpeculationPathSetQueueIsolation() {
+	t := s.T()
+	ctx := s.ctx
+
+	const head = "sps/head/shared"
+	storeA := s.forQueue("queue-a").GetSpeculationPathSetStore()
+	storeB := s.forQueue("queue-b").GetSpeculationPathSetStore()
+
+	setA := speculationPathSet("queue-a", head, "sps/dep/a")
+	setB := speculationPathSet("queue-b", head, "sps/dep/b")
+	require.NoError(t, storeA.Create(ctx, setA))
+	require.NoError(t, storeB.Create(ctx, setB), "the same head in another queue is a distinct row")
+
+	gotA, err := storeA.Get(ctx, head)
+	require.NoError(t, err)
+	assert.Equal(t, setA, gotA)
+
+	gotB, err := storeB.Get(ctx, head)
+	require.NoError(t, err)
+	assert.Equal(t, setB, gotB)
+
+	// A set carrying another queue's name is rejected by the binding.
+	assert.Error(t, storeA.Create(ctx, setB))
+	assert.Error(t, storeA.Update(ctx, setB, 1, 2))
 }

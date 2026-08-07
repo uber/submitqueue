@@ -74,6 +74,9 @@ message CancelRequest {
     string sqid = 1;
     // Optional human-readable reason for the cancellation. Recorded for observability.
     string reason = 2;
+    // Name of the queue processing the request. Required. A sqid is only resolvable within its own queue,
+    // so naming a queue the request does not belong to is reported as not found.
+    string queue = 3;
 }
 
 // CancelResponse defines the response to a cancel request. Empty on success.
@@ -106,6 +109,9 @@ message RequestSummary {
 message GetRequestSummaryByIDRequest {
     // Globally unique identifier for the request.
     string sqid = 1;
+    // Name of the queue processing the request. Required. A sqid is only resolvable within its own queue,
+    // so naming a queue the request does not belong to is reported as not found.
+    string queue = 2;
 }
 
 // GetRequestSummaryByIDResponse contains the current materialized request view.
@@ -118,6 +124,9 @@ message GetRequestSummaryByIDResponse {
 message GetRequestSummaryByChangeURIRequest {
     // Exact change URI supplied in a Land request.
     string change_uri = 1;
+    // Name of the queue to search. Required. Results are scoped to this queue: a change URI landed
+    // into several queues is looked up one queue at a time.
+    string queue = 2;
 }
 
 // GetRequestSummaryByChangeURIResponse contains matching requests newest first.
@@ -152,6 +161,9 @@ message ListResponse {
 message GetRequestHistoryByIDRequest {
     // Globally unique identifier for the request.
     string sqid = 1;
+    // Name of the queue processing the request. Required. A sqid is only resolvable within its own queue,
+    // so naming a queue the request does not belong to is reported as not found.
+    string queue = 2;
 }
 
 // HistoryEvent is one retained append-only request-log event.
@@ -176,6 +188,9 @@ message GetRequestHistoryByIDResponse {
 message GetRequestHistoryByChangeURIRequest {
     // Exact change URI supplied in a Land request.
     string change_uri = 1;
+    // Name of the queue to search. Required. Results are scoped to this queue: a change URI landed
+    // into several queues is looked up one queue at a time.
+    string queue = 2;
 }
 
 // RequestHistory groups retained events for one request.

@@ -61,6 +61,11 @@ func IsUnrecognizedQueue(err error) bool {
 	return errors.As(err, &target)
 }
 
+// counterDomainRequest names the per-queue sequence that mints request IDs. The
+// sqid is built independently as "<queue>/<counter_value>", so the domain is a
+// sequence name only and never appears in the ID.
+const counterDomainRequest = "request"
+
 // LandController handles land business logic for the gateway
 type LandController interface {
 	Land(ctx context.Context, req entity.LandRequest) (entity.LandResult, error)
@@ -71,8 +76,8 @@ var _ LandController = (*landController)(nil)
 type landController struct {
 	logger       *zap.SugaredLogger
 	metricsScope tally.Scope
-	counter      counter.Counter
-	summaries    storage.RequestSummaryStore
+	counters     counter.Factory
+	stores       storage.Factory
 	materializer *requestcore.Materializer
 	queueConfigs queueconfig.Store
 	registry     consumer.TopicRegistry
@@ -81,12 +86,12 @@ type landController struct {
 // NewLandController creates a new instance of the gateway land controller.
 // The controller publishes land requests to the topic registered under
 // topickey.TopicKeyStart in the registry.
-func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter counter.Counter, summaries storage.RequestSummaryStore, materializer *requestcore.Materializer, queueConfigs queueconfig.Store, registry consumer.TopicRegistry) LandController {
+func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counters counter.Factory, stores storage.Factory, materializer *requestcore.Materializer, queueConfigs queueconfig.Store, registry consumer.TopicRegistry) LandController {
 	return &landController{
 		logger:       logger,
 		metricsScope: scope.SubScope("land_controller"),
-		counter:      counter,
-		summaries:    summaries,
+		counters:     counters,
+		stores:       stores,
 		materializer: materializer,
 		queueConfigs: queueConfigs,
 		registry:     registry,
@@ -118,7 +123,15 @@ func (c *landController) Land(ctx context.Context, req entity.LandRequest) (resu
 
 	// Generate a globally unique request ID for the land request.
 	// The inbound entity arrives with an empty ID; the controller owns minting it.
-	seq, err := c.counter.Next(ctx, "request/"+queue)
+	stores, err := c.stores.For(storage.Config{QueueName: queue})
+	if err != nil {
+		return entity.LandResult{}, fmt.Errorf("failed to resolve storage for queue=%s: %w", queue, err)
+	}
+	queueCounter, err := c.counters.For(counter.Config{QueueName: queue})
+	if err != nil {
+		return entity.LandResult{}, fmt.Errorf("failed to resolve counter for queue=%s: %w", queue, err)
+	}
+	seq, err := queueCounter.Next(ctx, counterDomainRequest)
 	if err != nil {
 		return entity.LandResult{}, fmt.Errorf("failed to generate request ID for queue=%s: %w", queue, err)
 	}
@@ -138,7 +151,7 @@ func (c *landController) Land(ctx context.Context, req entity.LandRequest) (resu
 		Version:           1,
 		Metadata:          map[string]string{},
 	}
-	if err := c.summaries.Create(ctx, summary); err != nil {
+	if err := stores.GetRequestSummaryStore().Create(ctx, summary); err != nil {
 		return entity.LandResult{}, fmt.Errorf("failed to create request receipt sqid=%s: %w", req.ID, err)
 	}
 
@@ -150,6 +163,7 @@ func (c *landController) Land(ctx context.Context, req entity.LandRequest) (resu
 
 	logEntry := entity.RequestLog{
 		RequestID:   req.ID,
+		Queue:       req.Queue,
 		TimestampMs: receivedAtMs,
 		Status:      entity.RequestStatusAccepted,
 		Metadata:    map[string]string{},

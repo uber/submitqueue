@@ -37,6 +37,7 @@ import (
 	"github.com/uber/submitqueue/platform/extension/consumergate"
 	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
 	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
+	"github.com/uber/submitqueue/platform/extension/counter"
 	mysqlcounter "github.com/uber/submitqueue/platform/extension/counter/mysql"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/platform/http"
@@ -140,7 +141,7 @@ func run() error {
 	}
 	defer appDB.Close()
 
-	cnt := mysqlcounter.NewCounter(appDB, scope.SubScope("counter"))
+	cnt := counterFactory{db: appDB, scope: scope.SubScope("counter")}
 
 	store, err := mysqlstorage.NewStorage(appDB, scope.SubScope("storage"))
 	if err != nil {
@@ -445,4 +446,21 @@ type storageFactory struct {
 // For returns the queue-scoped store aggregate bound to the queue named in config.
 func (f storageFactory) For(config storage.Config) (storage.Storage, error) {
 	return f.backend.For(config.QueueName)
+}
+
+// counterFactory adapts the MySQL counter backend to the counter.Factory seam.
+// Routing every queue to the single shared database is this host's policy; a
+// deployment that splits queues across backends swaps this adapter for a
+// routing one.
+type counterFactory struct {
+	db    *sql.DB
+	scope tally.Scope
+}
+
+// For returns the Counter bound to the queue named in config.
+func (f counterFactory) For(config counter.Config) (counter.Counter, error) {
+	if config.QueueName == "" {
+		return nil, fmt.Errorf("queue name must not be empty")
+	}
+	return mysqlcounter.NewCounter(f.db, f.scope, config.QueueName), nil
 }

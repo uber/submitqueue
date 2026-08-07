@@ -40,8 +40,8 @@ func TestGetRequestHistoryByID(t *testing.T) {
 		{RequestID: "queue/1", TimestampMs: 20, Status: entity.RequestStatusStarted, LastError: "retry", Metadata: map[string]string{"attempt": "1"}},
 	}, nil)
 
-	controller := NewRequestHistoryController(zap.NewNop().Sugar(), tally.NoopScope, logStore, uriStore)
-	events, err := controller.GetRequestHistoryByID(context.Background(), entity.GetRequestHistoryByIDRequest{ID: "queue/1"})
+	controller := NewRequestHistoryController(zap.NewNop().Sugar(), tally.NoopScope, readModelFactory(ctrl, nil, logStore, uriStore))
+	events, err := controller.GetRequestHistoryByID(context.Background(), entity.GetRequestHistoryByIDRequest{ID: "queue/1", Queue: "queue"})
 
 	require.NoError(t, err)
 	require.Len(t, events, 3)
@@ -68,8 +68,8 @@ func TestGetRequestHistoryByChangeURI(t *testing.T) {
 	logStore.EXPECT().List(gomock.Any(), "queue/1").Return([]entity.RequestLog{{RequestID: "queue/1", TimestampMs: 1, Status: entity.RequestStatusAccepted}}, nil)
 	logStore.EXPECT().List(gomock.Any(), "a/2").Return([]entity.RequestLog{{RequestID: "a/2", TimestampMs: 2, Status: entity.RequestStatusError}}, nil)
 
-	controller := NewRequestHistoryController(zap.NewNop().Sugar(), tally.NoopScope, logStore, uriStore)
-	histories, err := controller.GetRequestHistoryByChangeURI(context.Background(), entity.GetRequestHistoryByChangeURIRequest{ChangeURI: "uri"})
+	controller := NewRequestHistoryController(zap.NewNop().Sugar(), tally.NoopScope, readModelFactory(ctrl, nil, logStore, uriStore))
+	histories, err := controller.GetRequestHistoryByChangeURI(context.Background(), entity.GetRequestHistoryByChangeURIRequest{ChangeURI: "uri", Queue: "queue"})
 
 	require.NoError(t, err)
 	require.Len(t, histories, 4)
@@ -117,7 +117,7 @@ func TestHistoryErrors(t *testing.T) {
 				logStore.EXPECT().List(gomock.Any(), "missing/1").Return(nil, storage.ErrNotFound)
 			},
 			call: func(c RequestHistoryController) error {
-				_, err := c.GetRequestHistoryByID(context.Background(), entity.GetRequestHistoryByIDRequest{ID: "missing/1"})
+				_, err := c.GetRequestHistoryByID(context.Background(), entity.GetRequestHistoryByIDRequest{ID: "missing/1", Queue: "missing"})
 				return err
 			},
 			wantNotFound: true,
@@ -129,7 +129,7 @@ func TestHistoryErrors(t *testing.T) {
 				logStore.EXPECT().List(gomock.Any(), "queue/1").Return(nil, backendErr)
 			},
 			call: func(c RequestHistoryController) error {
-				_, err := c.GetRequestHistoryByID(context.Background(), entity.GetRequestHistoryByIDRequest{ID: "queue/1"})
+				_, err := c.GetRequestHistoryByID(context.Background(), entity.GetRequestHistoryByIDRequest{ID: "queue/1", Queue: "queue"})
 				return err
 			},
 		},
@@ -139,7 +139,7 @@ func TestHistoryErrors(t *testing.T) {
 				uriStore.EXPECT().ListByURI(gomock.Any(), "uri", 101).Return(nil, nil)
 			},
 			call: func(c RequestHistoryController) error {
-				_, err := c.GetRequestHistoryByChangeURI(context.Background(), entity.GetRequestHistoryByChangeURIRequest{ChangeURI: "uri"})
+				_, err := c.GetRequestHistoryByChangeURI(context.Background(), entity.GetRequestHistoryByChangeURIRequest{ChangeURI: "uri", Queue: "queue"})
 				return err
 			},
 			wantNotFound: true,
@@ -151,7 +151,7 @@ func TestHistoryErrors(t *testing.T) {
 				uriStore.EXPECT().ListByURI(gomock.Any(), "uri", 101).Return(make([]entity.RequestURI, 101), nil)
 			},
 			call: func(c RequestHistoryController) error {
-				_, err := c.GetRequestHistoryByChangeURI(context.Background(), entity.GetRequestHistoryByChangeURIRequest{ChangeURI: "uri"})
+				_, err := c.GetRequestHistoryByChangeURI(context.Background(), entity.GetRequestHistoryByChangeURIRequest{ChangeURI: "uri", Queue: "queue"})
 				return err
 			},
 			wantTooMany: true,
@@ -164,7 +164,7 @@ func TestHistoryErrors(t *testing.T) {
 				logStore.EXPECT().List(gomock.Any(), "queue/1").Return(nil, storage.ErrNotFound)
 			},
 			call: func(c RequestHistoryController) error {
-				_, err := c.GetRequestHistoryByChangeURI(context.Background(), entity.GetRequestHistoryByChangeURIRequest{ChangeURI: "uri"})
+				_, err := c.GetRequestHistoryByChangeURI(context.Background(), entity.GetRequestHistoryByChangeURIRequest{ChangeURI: "uri", Queue: "queue"})
 				return err
 			},
 			wantNotFound: true,
@@ -177,7 +177,7 @@ func TestHistoryErrors(t *testing.T) {
 				logStore.EXPECT().List(gomock.Any(), "malformed").Return([]entity.RequestLog{{RequestID: "malformed"}}, nil)
 			},
 			call: func(c RequestHistoryController) error {
-				_, err := c.GetRequestHistoryByChangeURI(context.Background(), entity.GetRequestHistoryByChangeURIRequest{ChangeURI: "uri"})
+				_, err := c.GetRequestHistoryByChangeURI(context.Background(), entity.GetRequestHistoryByChangeURIRequest{ChangeURI: "uri", Queue: "queue"})
 				return err
 			},
 			wantInternal: true,
@@ -192,7 +192,7 @@ func TestHistoryErrors(t *testing.T) {
 			if tt.setup != nil {
 				tt.setup(logStore, uriStore)
 			}
-			controller := NewRequestHistoryController(zap.NewNop().Sugar(), tally.NoopScope, logStore, uriStore)
+			controller := NewRequestHistoryController(zap.NewNop().Sugar(), tally.NoopScope, readModelFactory(ctrl, nil, logStore, uriStore))
 
 			err := tt.call(controller)
 

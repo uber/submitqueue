@@ -28,13 +28,16 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
 
+// testLogQueue is the queue every request-log store in this file is bound to.
+const testLogQueue = "monorepo"
+
 func setupRequestLogStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.RequestLogStore) {
 	t.Helper()
 
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	store := NewRequestLogStore(db, testMetrics())
+	store := NewRequestLogStore(db, testMetrics(), testLogQueue)
 
 	return db, mock, store
 }
@@ -42,6 +45,7 @@ func setupRequestLogStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.R
 func TestRequestLogStore_Insert(t *testing.T) {
 	log := entity.RequestLog{
 		RequestID:      "monorepo/1",
+		Queue:          testLogQueue,
 		TimestampMs:    1000,
 		Status:         entity.RequestStatusStarted,
 		RequestVersion: 1,
@@ -58,7 +62,7 @@ func TestRequestLogStore_Insert(t *testing.T) {
 			name: "success",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO request_log").
-					WithArgs(log.RequestID, log.TimestampMs, sqlmock.AnyArg(), log.Status, log.RequestVersion, log.LastError, sqlmock.AnyArg()).
+					WithArgs(log.Queue, log.RequestID, log.TimestampMs, sqlmock.AnyArg(), log.Status, log.RequestVersion, log.LastError, sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -66,7 +70,7 @@ func TestRequestLogStore_Insert(t *testing.T) {
 			name: "exec error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO request_log").
-					WithArgs(log.RequestID, log.TimestampMs, sqlmock.AnyArg(), log.Status, log.RequestVersion, log.LastError, sqlmock.AnyArg()).
+					WithArgs(log.Queue, log.RequestID, log.TimestampMs, sqlmock.AnyArg(), log.Status, log.RequestVersion, log.LastError, sqlmock.AnyArg()).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,
@@ -94,6 +98,7 @@ func TestRequestLogStore_Insert(t *testing.T) {
 func TestRequestLogStore_List(t *testing.T) {
 	log := entity.RequestLog{
 		RequestID:      "monorepo/1",
+		Queue:          testLogQueue,
 		TimestampMs:    1000,
 		Status:         entity.RequestStatusStarted,
 		RequestVersion: 1,
@@ -113,10 +118,10 @@ func TestRequestLogStore_List(t *testing.T) {
 			name:      "found",
 			requestID: log.RequestID,
 			setup: func(mock sqlmock.Sqlmock) {
-				rows := sqlmock.NewRows([]string{"request_id", "timestamp_ms", "status", "request_version", "last_error", "metadata"}).
-					AddRow(log.RequestID, log.TimestampMs, string(log.Status), log.RequestVersion, log.LastError, []byte(`{}`))
-				mock.ExpectQuery("SELECT request_id, timestamp_ms, status, request_version, last_error, metadata FROM request_log").
-					WithArgs(log.RequestID).
+				rows := sqlmock.NewRows([]string{"queue", "request_id", "timestamp_ms", "status", "request_version", "last_error", "metadata"}).
+					AddRow(log.Queue, log.RequestID, log.TimestampMs, string(log.Status), log.RequestVersion, log.LastError, []byte(`{}`))
+				mock.ExpectQuery("SELECT queue, request_id, timestamp_ms, status, request_version, last_error, metadata FROM request_log").
+					WithArgs(testLogQueue, log.RequestID).
 					WillReturnRows(rows)
 			},
 			want: []entity.RequestLog{log},
@@ -125,9 +130,9 @@ func TestRequestLogStore_List(t *testing.T) {
 			name:      "no rows returns ErrNotFound",
 			requestID: "missing",
 			setup: func(mock sqlmock.Sqlmock) {
-				rows := sqlmock.NewRows([]string{"request_id", "timestamp_ms", "status", "request_version", "last_error", "metadata"})
-				mock.ExpectQuery("SELECT request_id, timestamp_ms, status, request_version, last_error, metadata FROM request_log").
-					WithArgs("missing").
+				rows := sqlmock.NewRows([]string{"queue", "request_id", "timestamp_ms", "status", "request_version", "last_error", "metadata"})
+				mock.ExpectQuery("SELECT queue, request_id, timestamp_ms, status, request_version, last_error, metadata FROM request_log").
+					WithArgs(testLogQueue, "missing").
 					WillReturnRows(rows)
 			},
 			wantErr:   true,
@@ -137,8 +142,8 @@ func TestRequestLogStore_List(t *testing.T) {
 			name:      "query error",
 			requestID: "bad",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery("SELECT request_id, timestamp_ms, status, request_version, last_error, metadata FROM request_log").
-					WithArgs("bad").
+				mock.ExpectQuery("SELECT queue, request_id, timestamp_ms, status, request_version, last_error, metadata FROM request_log").
+					WithArgs(testLogQueue, "bad").
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,

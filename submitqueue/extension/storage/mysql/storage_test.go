@@ -36,10 +36,6 @@ func TestNewStorage(t *testing.T) {
 	s, err := NewStorage(db, testMetrics())
 	require.NoError(t, err)
 
-	assert.NotNil(t, s.GetRequestLogStore())
-	assert.NotNil(t, s.GetRequestSummaryStore())
-	assert.NotNil(t, s.GetRequestURIStore())
-
 	bound, err := s.For("monorepo")
 	require.NoError(t, err)
 	assert.NotNil(t, bound.GetRequestStore())
@@ -49,7 +45,11 @@ func TestNewStorage(t *testing.T) {
 	assert.NotNil(t, bound.GetBatchDependentStore())
 	assert.NotNil(t, bound.GetQueueBatchStateStore())
 	assert.NotNil(t, bound.GetBuildStore())
+	assert.NotNil(t, bound.GetSpeculationPathSetStore())
 	assert.NotNil(t, bound.GetRequestQueueSummaryStore())
+	assert.NotNil(t, bound.GetRequestSummaryStore())
+	assert.NotNil(t, bound.GetRequestLogStore())
+	assert.NotNil(t, bound.GetRequestURIStore())
 
 	_, err = s.For("")
 	assert.Error(t, err, "resolving an empty queue name must fail")

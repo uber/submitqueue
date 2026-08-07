@@ -18,12 +18,18 @@ package entity
 type GetRequestSummaryByIDRequest struct {
 	// ID is the globally unique identifier of the request. Format: "<queue>/<counter_value>".
 	ID string
+	// Queue is the name of the queue processing the request. It scopes the lookup:
+	// a request is only resolvable within its own queue.
+	Queue string
 }
 
 // GetRequestSummaryByChangeURIRequest identifies request summaries by an exact pinned change URI.
 type GetRequestSummaryByChangeURIRequest struct {
 	// ChangeURI is the exact change URI supplied in a Land request.
 	ChangeURI string
+	// Queue is the name of the queue to search. It scopes the lookup: a change URI
+	// landed into several queues matches separately in each.
+	Queue string
 }
 
 // RequestSummary is the gateway-owned materialized current view of a request.
@@ -75,6 +81,9 @@ type RequestQueueSummary struct {
 type RequestURI struct {
 	// ChangeURI is the exact canonical URI supplied at receipt.
 	ChangeURI string
+	// Queue is the name of the queue the request was received into. It scopes the
+	// mapping: the same change URI landed into several queues maps separately in each.
+	Queue string
 	// ReceivedAtMs is the immutable receipt timestamp in Unix milliseconds.
 	ReceivedAtMs int64
 	// RequestID is the globally unique request identifier.

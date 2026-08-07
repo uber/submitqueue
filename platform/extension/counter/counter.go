@@ -18,9 +18,29 @@ package counter
 
 import "context"
 
-// Counter provides atomic sequential number generation for a given domain.
+// Config identifies the queue a Counter instance is resolved for. Like every
+// other extension config, it carries only the queue name — everything an
+// implementation needs beyond that is injected at construction by the
+// integrator.
+type Config struct {
+	// QueueName is the name of the queue whose sequences the resolved Counter
+	// is scoped to.
+	QueueName string
+}
+
+// Factory resolves the queue-scoped Counter for a queue. Mirrors the extension
+// contract: the host wiring decides which backend serves which queue;
+// implementations bind the queue over their backend so a resolved instance can
+// only read and advance that queue's sequences.
+type Factory interface {
+	// For returns the Counter bound to the queue named in config.
+	For(config Config) (Counter, error)
+}
+
+// Counter provides atomic sequential number generation for a given domain
+// within the queue the instance is bound to.
 // Each call to Next returns the next value in the sequence for the specified domain.
-// The value is guaranteed to be unique within the domain throughout the system and persisted accordingly.
+// The value is guaranteed to be unique within the (queue, domain) pair throughout the system and persisted accordingly.
 type Counter interface {
 	// Next atomically increments the counter for the given domain and returns the new value.
 	// The first call for a new domain returns 1.

@@ -40,7 +40,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	registry      consumer.TopicRegistry
-	counter       counter.Counter
+	counters      counter.Factory
 	stores        storage.Factory
 	analyzers     conflict.Factory
 	topicKey      consumer.TopicKey
@@ -52,12 +52,17 @@ var _ consumer.Controller = (*Controller)(nil)
 
 const opName = "process"
 
+// counterDomainBatch names the per-queue sequence that mints batch IDs. The batch
+// ID is built independently as "<queue>/batch/<counter_value>", so the domain is a
+// sequence name only and never appears in the ID.
+const counterDomainBatch = "batch"
+
 // NewController creates a new batch controller for the orchestrator.
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	registry consumer.TopicRegistry,
-	counter counter.Counter,
+	counters counter.Factory,
 	stores storage.Factory,
 	analyzers conflict.Factory,
 	topicKey consumer.TopicKey,
@@ -67,7 +72,7 @@ func NewController(
 		logger:        logger.Named("batch_controller"),
 		metricsScope:  scope.SubScope("batch_controller"),
 		registry:      registry,
-		counter:       counter,
+		counters:      counters,
 		stores:        stores,
 		analyzers:     analyzers,
 		topicKey:      topicKey,
@@ -134,7 +139,12 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// TODO: if capacity is full, wait here for other requests to accumulate to batch them together, or include a request into an existing batch if it's not too late.
 
 	// Generate a globally unique batch ID.
-	seq, err := c.counter.Next(ctx, "batch/"+request.Queue)
+	queueCounter, err := c.counters.For(counter.Config{QueueName: request.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "counter_errors", 1)
+		return fmt.Errorf("failed to resolve counter for queue=%s: %w", request.Queue, err)
+	}
+	seq, err := queueCounter.Next(ctx, counterDomainBatch)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "counter_errors", 1)
 		return fmt.Errorf("failed to generate batch ID for queue=%s: %w", request.Queue, err)
@@ -304,7 +314,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// so a redelivery that creates a fresh batch re-emits "batched" with a
 	// different batch_id but is deduped to the first entry — acceptable, the
 	// request is batched either way.
-	logEntry := entity.NewRequestLog(request.ID, entity.RequestStatusBatched, request.Version, "", map[string]string{
+	logEntry := entity.NewRequestLog(request.Queue, request.ID, entity.RequestStatusBatched, request.Version, "", map[string]string{
 		"batch_id": batch.ID,
 	})
 	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID); err != nil {

@@ -36,6 +36,11 @@ import (
 // This error should be mapped to codes.InvalidArgument at the gRPC layer.
 var ErrInvalidRequest = errs.NewUserError(errors.New("invalid request"))
 
+// counterDomainRequest names the per-queue sequence that mints request IDs. It also
+// happens to be the leading segment of the ID, but the two are written independently
+// (see resolveID) so they cannot drift into each other.
+const counterDomainRequest = "request"
+
 // IsInvalidRequest returns true if any error in the error chain is ErrInvalidRequest.
 func IsInvalidRequest(err error) bool {
 	return errors.Is(err, ErrInvalidRequest)
@@ -51,7 +56,7 @@ func IsInvalidRequest(err error) bool {
 type IngestController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	counter       counter.Counter
+	counters      counter.Factory
 	sourceControl sourcecontrol.Factory
 	stores        storage.Factory
 	registry      consumer.TopicRegistry
@@ -62,7 +67,7 @@ type IngestController struct {
 func NewIngestController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	counter counter.Counter,
+	counters counter.Factory,
 	sourceControl sourcecontrol.Factory,
 	stores storage.Factory,
 	registry consumer.TopicRegistry,
@@ -70,7 +75,7 @@ func NewIngestController(
 	return &IngestController{
 		logger:        logger,
 		metricsScope:  scope.SubScope("ingest_controller"),
-		counter:       counter,
+		counters:      counters,
 		sourceControl: sourceControl,
 		stores:        stores,
 		registry:      registry,
@@ -167,14 +172,19 @@ func (c *IngestController) resolveID(ctx context.Context, store storage.Storage,
 		return "", fmt.Errorf("failed to look up existing request for queue=%s: %w", queue, err)
 	}
 
-	// Mint a globally unique request ID namespaced by the queue. The counter domain
-	// ("request/<queue>") doubles as the ID prefix, so the ID is "<domain>/<counter>".
-	domain := "request/" + queue
-	seq, err := c.counter.Next(ctx, domain)
+	// Mint a globally unique request ID namespaced by the queue. The ID format
+	// ("request/<queue>/<counter>") is written out here rather than derived from the counter
+	// domain: the domain is a per-queue sequence name only, and the two must stay independent
+	// so re-keying the counter cannot change the emitted ID.
+	queueCounter, err := c.counters.For(counter.Config{QueueName: queue})
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve counter for queue=%s: %w", queue, err)
+	}
+	seq, err := queueCounter.Next(ctx, counterDomainRequest)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate request ID for queue=%s: %w", queue, err)
 	}
-	id := fmt.Sprintf("%s/%d", domain, seq)
+	id := fmt.Sprintf("%s/%s/%d", counterDomainRequest, queue, seq)
 
 	if err := uriStore.Create(ctx, uri, id); err != nil {
 		if errors.Is(err, storage.ErrAlreadyExists) {

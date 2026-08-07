@@ -23,10 +23,20 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/platform/extension/counter"
 	mysqlcounter "github.com/uber/submitqueue/platform/extension/counter/mysql"
 	countersuite "github.com/uber/submitqueue/test/integration/extension/counter"
 	"github.com/uber/submitqueue/test/testutil"
 )
+
+// counterFactory binds the shared MySQL pool to a queue, mirroring how the service
+// wiring adapts the backend to the counter.Factory seam.
+type counterFactory struct{ db *sql.DB }
+
+// For returns the Counter bound to the queue named in config.
+func (f counterFactory) For(config counter.Config) (counter.Counter, error) {
+	return mysqlcounter.NewCounter(f.db, tally.NoopScope, config.QueueName), nil
+}
 
 // MySQLCounterIntegrationSuite tests the MySQL counter implementation
 // by embedding the shared contract suite.
@@ -73,12 +83,12 @@ func (s *MySQLCounterIntegrationSuite) SetupSuite() {
 
 	s.log.Logf("Schemas applied successfully")
 
-	// Create counter instance
-	cnt := mysqlcounter.NewCounter(s.db, tally.NoopScope)
+	// Create counter factory
+	fty := counterFactory{db: s.db}
 
-	// Provide the counter instance to the contract suite
+	// Provide the counter factory to the contract suite
 	s.SetContext(ctx)
-	s.SetCounter(cnt)
+	s.SetFactory(fty)
 	s.SetLogger(s.log)
 
 	t.Cleanup(func() {

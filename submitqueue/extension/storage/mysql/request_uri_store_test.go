@@ -29,13 +29,16 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
 
+// testURIQueue is the queue every request-URI store in this file is bound to.
+const testURIQueue = "monorepo"
+
 func setupRequestURIStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.RequestURIStore) {
 	t.Helper()
 
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	store := NewRequestURIStore(db, testMetrics())
+	store := NewRequestURIStore(db, testMetrics(), testURIQueue)
 
 	return db, mock, store
 }
@@ -43,6 +46,7 @@ func setupRequestURIStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.R
 func TestRequestURIStore_Create(t *testing.T) {
 	mapping := entity.RequestURI{
 		ChangeURI:    "github://github.example.com/uber/submitqueue/pull/123/deadbeef",
+		Queue:        testURIQueue,
 		ReceivedAtMs: 1000,
 		RequestID:    "monorepo/1",
 	}
@@ -57,7 +61,7 @@ func TestRequestURIStore_Create(t *testing.T) {
 			name: "success",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO change_uri_request_mapping").
-					WithArgs(mapping.ChangeURI, mapping.ReceivedAtMs, mapping.RequestID).
+					WithArgs(mapping.Queue, mapping.ChangeURI, mapping.ReceivedAtMs, mapping.RequestID).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 		},
@@ -65,7 +69,7 @@ func TestRequestURIStore_Create(t *testing.T) {
 			name: "duplicate mapping returns ErrAlreadyExists",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO change_uri_request_mapping").
-					WithArgs(mapping.ChangeURI, mapping.ReceivedAtMs, mapping.RequestID).
+					WithArgs(mapping.Queue, mapping.ChangeURI, mapping.ReceivedAtMs, mapping.RequestID).
 					WillReturnError(&mysql.MySQLError{Number: mysqlErrDuplicateEntry})
 			},
 			wantErr:   true,
@@ -75,7 +79,7 @@ func TestRequestURIStore_Create(t *testing.T) {
 			name: "other exec error",
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO change_uri_request_mapping").
-					WithArgs(mapping.ChangeURI, mapping.ReceivedAtMs, mapping.RequestID).
+					WithArgs(mapping.Queue, mapping.ChangeURI, mapping.ReceivedAtMs, mapping.RequestID).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,
@@ -106,6 +110,7 @@ func TestRequestURIStore_Create(t *testing.T) {
 func TestRequestURIStore_ListByURI(t *testing.T) {
 	mapping := entity.RequestURI{
 		ChangeURI:    "github://github.example.com/uber/submitqueue/pull/123/deadbeef",
+		Queue:        testURIQueue,
 		ReceivedAtMs: 1000,
 		RequestID:    "monorepo/1",
 	}
@@ -119,10 +124,10 @@ func TestRequestURIStore_ListByURI(t *testing.T) {
 		{
 			name: "found",
 			setup: func(mock sqlmock.Sqlmock) {
-				rows := sqlmock.NewRows([]string{"change_uri", "received_at_ms", "request_id"}).
-					AddRow(mapping.ChangeURI, mapping.ReceivedAtMs, mapping.RequestID)
-				mock.ExpectQuery("SELECT change_uri, received_at_ms, request_id").
-					WithArgs(mapping.ChangeURI, 10).
+				rows := sqlmock.NewRows([]string{"queue", "change_uri", "received_at_ms", "request_id"}).
+					AddRow(mapping.Queue, mapping.ChangeURI, mapping.ReceivedAtMs, mapping.RequestID)
+				mock.ExpectQuery("SELECT queue, change_uri, received_at_ms, request_id").
+					WithArgs(testURIQueue, mapping.ChangeURI, 10).
 					WillReturnRows(rows)
 			},
 			want: []entity.RequestURI{mapping},
@@ -130,9 +135,9 @@ func TestRequestURIStore_ListByURI(t *testing.T) {
 		{
 			name: "no rows returns empty slice",
 			setup: func(mock sqlmock.Sqlmock) {
-				rows := sqlmock.NewRows([]string{"change_uri", "received_at_ms", "request_id"})
-				mock.ExpectQuery("SELECT change_uri, received_at_ms, request_id").
-					WithArgs(mapping.ChangeURI, 10).
+				rows := sqlmock.NewRows([]string{"queue", "change_uri", "received_at_ms", "request_id"})
+				mock.ExpectQuery("SELECT queue, change_uri, received_at_ms, request_id").
+					WithArgs(testURIQueue, mapping.ChangeURI, 10).
 					WillReturnRows(rows)
 			},
 			want: []entity.RequestURI{},
@@ -140,8 +145,8 @@ func TestRequestURIStore_ListByURI(t *testing.T) {
 		{
 			name: "query error",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery("SELECT change_uri, received_at_ms, request_id").
-					WithArgs(mapping.ChangeURI, 10).
+				mock.ExpectQuery("SELECT queue, change_uri, received_at_ms, request_id").
+					WithArgs(testURIQueue, mapping.ChangeURI, 10).
 					WillReturnError(fmt.Errorf("connection reset"))
 			},
 			wantErr: true,

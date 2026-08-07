@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/extension/counter"
 	countermock "github.com/uber/submitqueue/platform/extension/counter/mock"
 	mqmock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
@@ -57,6 +58,12 @@ type staticStorageFactory struct{ store storage.Storage }
 // For returns the fixed store aggregate for any queue.
 func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
 
+// staticCounterFactory resolves every queue to the same counter, so tests can keep
+// setting expectations on one mock regardless of which queue the controller resolves.
+type staticCounterFactory struct{ counter counter.Counter }
+
+func (f staticCounterFactory) For(counter.Config) (counter.Counter, error) { return f.counter, nil }
+
 func newIngestController(t *testing.T, ctrl *gomock.Controller) (*IngestController, ingestMocks) {
 	t.Helper()
 
@@ -83,7 +90,7 @@ func newIngestController(t *testing.T, ctrl *gomock.Controller) (*IngestControll
 	})
 	require.NoError(t, err)
 
-	c := NewIngestController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), m.counter, m.factory, staticStorageFactory{store: store}, registry)
+	c := NewIngestController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), staticCounterFactory{counter: m.counter}, m.factory, staticStorageFactory{store: store}, registry)
 	return c, m
 }
 
@@ -125,7 +132,7 @@ func TestIngestController_Ingest(t *testing.T) {
 			setup: func(m ingestMocks) {
 				expectResolve(m)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("", storage.ErrNotFound)
-				m.counter.EXPECT().Next(gomock.Any(), "request/"+testQueue).Return(int64(7), nil)
+				m.counter.EXPECT().Next(gomock.Any(), counterDomainRequest).Return(int64(7), nil)
 				m.uriStore.EXPECT().Create(gomock.Any(), testURI, "request/monorepo/main/7").Return(nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), "request/monorepo/main/7").Return(entity.Request{}, storage.ErrNotFound)
 				m.reqStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
@@ -165,7 +172,7 @@ func TestIngestController_Ingest(t *testing.T) {
 			setup: func(m ingestMocks) {
 				expectResolve(m)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("", storage.ErrNotFound)
-				m.counter.EXPECT().Next(gomock.Any(), "request/"+testQueue).Return(int64(7), nil)
+				m.counter.EXPECT().Next(gomock.Any(), counterDomainRequest).Return(int64(7), nil)
 				m.uriStore.EXPECT().Create(gomock.Any(), testURI, "request/monorepo/main/7").Return(storage.ErrAlreadyExists)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("request/monorepo/main/3", nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), "request/monorepo/main/3").Return(entity.Request{ID: "request/monorepo/main/3", State: entity.RequestStateAccepted}, nil)
