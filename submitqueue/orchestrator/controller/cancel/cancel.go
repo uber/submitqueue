@@ -57,10 +57,10 @@ import (
 	"sort"
 
 	"github.com/uber-go/tally"
-	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
+	"github.com/uber/submitqueue/submitqueue/core/publish"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -359,29 +359,18 @@ func (c *Controller) cancelBatch(ctx context.Context, store storage.Storage, bat
 
 // publishBatchID publishes a BatchID-payload message to the specified topic
 // key, stamped with and partitioned by the batch's queue.
+//
+// The message ID is distinct per publish (publish.UniqueID). The queue
+// deduplicates on (topic, partition key, message ID) against every row it has
+// not collected yet, consumed ones included, so a bare batch ID would make the
+// redelivery re-publish documented above a silent no-op — leaving a batch
+// Cancelling with nothing driving it to terminal.
 func (c *Controller) publishBatchID(ctx context.Context, key consumer.TopicKey, batchID string, queue string) error {
-	bid := entity.BatchID{ID: batchID, Queue: queue}
-	payload, err := bid.ToBytes()
+	payload, err := entity.BatchID{ID: batchID, Queue: queue}.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
-
-	msg := entityqueue.NewMessage(batchID, payload, queue, nil)
-
-	q, ok := c.registry.Queue(key)
-	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", key)
-	}
-
-	topicName, ok := c.registry.TopicName(key)
-	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", key)
-	}
-
-	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
-		return fmt.Errorf("failed to publish message: %w", err)
-	}
-	return nil
+	return publish.Message(ctx, c.registry, key, publish.UniqueID(batchID), payload, queue)
 }
 
 // Name returns the controller name for logging and metrics.
