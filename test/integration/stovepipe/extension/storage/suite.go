@@ -87,10 +87,11 @@ func (s *QueueStoreContractSuite) TestQueueStore_CreateWithFields() {
 	const name = "contract/defaults"
 
 	toCreate := entity.Queue{
-		Name:            name,
-		LastGreenURI:    "git://remote/monorepo/main/green-bbbb",
-		LatestRequestID: "request/contract/defaults/99",
-		Version:         1,
+		Name:               name,
+		LastGreenURI:       "git://remote/monorepo/main/green-bbbb",
+		LastGreenRequestID: "request/contract/defaults/98",
+		LatestRequestID:    "request/contract/defaults/99",
+		Version:            1,
 	}
 	require.NoError(t, s.storeFor(name).Create(s.ctx, toCreate))
 
@@ -138,6 +139,7 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateCAS() {
 
 	updated := created
 	updated.LastGreenURI = "git://remote/monorepo/main/green-cccc"
+	updated.LastGreenRequestID = "request/contract/update-cas/41"
 	updated.LatestRequestID = "request/contract/update-cas/42"
 	updated.InFlightCount = 1
 	require.NoError(t, s.storeFor(name).Update(s.ctx, updated, 1, 2))
@@ -145,6 +147,7 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateCAS() {
 	got, err := s.storeFor(name).Get(s.ctx, name)
 	require.NoError(t, err)
 	assert.Equal(t, updated.LastGreenURI, got.LastGreenURI)
+	assert.Equal(t, "request/contract/update-cas/41", got.LastGreenRequestID)
 	assert.Equal(t, "request/contract/update-cas/42", got.LatestRequestID)
 	assert.Equal(t, int32(1), got.InFlightCount)
 	assert.Equal(t, int32(2), got.Version)
