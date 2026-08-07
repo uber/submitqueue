@@ -8,6 +8,8 @@ The `speculator` package defines the one speculation extension the speculate con
 
 Like the other extensions, a `Speculator` is selected **per queue** by the wiring layer through the `Config` (queue name) and `Factory` interface. Budget, clock, and any extra data are injected at construction by the integrator, not carried on the contract.
 
+[`standard`](standard/README.md) is the default implementation: it funds the most promising paths first until the build budget is spent.
+
 ## Adding a backend
 
 Create a package under `speculator/<backend>/` whose `New(...)` returns a `speculator.Speculator`, injecting whatever it needs at construction. Resolve any content it requires internally; do not add a `Config` or `Factory` implementation here — per-queue routing and the factory adapter live in the wiring layer.
