@@ -125,8 +125,8 @@ func rejectionReason(proposal entity.Speculation, snap snapshot) (rejection, boo
 // fewer, and every assumption a real value.
 //
 // A malformed path is not merely suboptimal, it is unmergeable — the merge
-// preconditions are read off the path's assumptions, so a path missing a
-// dependency would let its head merge without waiting for it.
+// preconditions are read off the path's assumptions (see mergeablePath), so a
+// path missing a dependency would let its head merge without waiting for it.
 func isWellFormed(path entity.SpeculationPath, head entity.Batch) bool {
 	if path.Head != head.ID {
 		return false

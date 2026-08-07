@@ -1,0 +1,237 @@
+// Copyright (c) 2025 Uber Technologies, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package speculate
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/uber/submitqueue/submitqueue/entity"
+)
+
+// passedPath returns a passed entry for a path over the given assumptions.
+func passedPath(assumptions ...entity.DependencyAssumption) entity.SpeculationPathEntry {
+	return entryFor(pathOver(assumptions...), entity.SpeculationPathStatusPassed)
+}
+
+func setOf(entries ...entity.SpeculationPathEntry) entity.SpeculationPathSet {
+	return entity.SpeculationPathSet{Head: head, Paths: entries}
+}
+
+// The payoff case: a head merges as soon as the dependencies its passed build
+// was stacked on have landed, without waiting for the ones it was built
+// without or told to ignore.
+func TestMergeablePath(t *testing.T) {
+	const (
+		succeeds = entity.DependencyAssumptionSucceeds
+		fails    = entity.DependencyAssumptionFails
+		ignored  = entity.DependencyAssumptionIgnored
+	)
+
+	tests := []struct {
+		name       string
+		assumption [2]entity.DependencyAssumption
+		dep1State  entity.BatchState
+		dep2State  entity.BatchState
+		want       bool
+	}{
+		{
+			name:       "waits for an assumed-succeeding dependency to merge",
+			assumption: [2]entity.DependencyAssumption{succeeds, ignored},
+			dep1State:  entity.BatchStateSpeculating,
+			want:       false,
+		},
+		{
+			name:       "merges once it has",
+			assumption: [2]entity.DependencyAssumption{succeeds, ignored},
+			dep1State:  entity.BatchStateSucceeded,
+			want:       true,
+		},
+		{
+			name:       "an assumed-failing dependency imposes no wait",
+			assumption: [2]entity.DependencyAssumption{fails, ignored},
+			dep1State:  entity.BatchStateSpeculating,
+			want:       true,
+		},
+		{
+			name:       "an ignored dependency imposes no wait",
+			assumption: [2]entity.DependencyAssumption{ignored, ignored},
+			dep1State:  entity.BatchStateSpeculating,
+			want:       true,
+		},
+		{
+			name:       "one unmerged dependency is enough to wait",
+			assumption: [2]entity.DependencyAssumption{succeeds, succeeds},
+			dep1State:  entity.BatchStateSucceeded,
+			dep2State:  entity.BatchStateSpeculating,
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dep2 := tt.dep2State
+			if dep2 == "" {
+				dep2 = entity.BatchStateSpeculating
+			}
+			set := setOf(passedPath(tt.assumption[0], tt.assumption[1]))
+			_, ok := mergeablePath(set, snapWith(tt.dep1State, dep2))
+			assert.Equal(t, tt.want, ok)
+		})
+	}
+}
+
+// A path that has not passed cannot carry the head out of the queue.
+func TestMergeablePath_IgnoresUnpassedPaths(t *testing.T) {
+	for _, status := range []entity.SpeculationPathStatus{
+		entity.SpeculationPathStatusPending,
+		entity.SpeculationPathStatusBuilding,
+		entity.SpeculationPathStatusFailed,
+		entity.SpeculationPathStatusCancelled,
+		entity.SpeculationPathStatusCancelling,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			set := setOf(entryFor(
+				pathOver(entity.DependencyAssumptionIgnored, entity.DependencyAssumptionIgnored), status))
+			_, ok := mergeablePath(set, snapWith(entity.BatchStateSucceeded, entity.BatchStateSucceeded))
+			assert.False(t, ok)
+		})
+	}
+}
+
+// A passed build whose assumptions reality has since contradicted is not a
+// licence to merge — it verified a world that did not happen.
+func TestMergeablePath_ExcludesBrokenPassedPath(t *testing.T) {
+	set := setOf(passedPath(entity.DependencyAssumptionFails, entity.DependencyAssumptionIgnored))
+
+	// The path was built without dep1, but dep1 landed after all.
+	_, ok := mergeablePath(set, snapWith(entity.BatchStateSucceeded, entity.BatchStateSpeculating))
+	assert.False(t, ok)
+}
+
+func TestHasNoViableFuture(t *testing.T) {
+	headBatch := entity.Batch{ID: head, Dependencies: []string{dep1, dep2}}
+	failed := entryFor(
+		pathOver(entity.DependencyAssumptionIgnored, entity.DependencyAssumptionIgnored),
+		entity.SpeculationPathStatusFailed)
+
+	t.Run("waits while a dependency is unresolved", func(t *testing.T) {
+		// An unresolved dependency means futures the queue has not tried yet.
+		snap := snapWith(entity.BatchStateSucceeded, entity.BatchStateSpeculating)
+		assert.False(t, hasNoViableFuture(headBatch, setOf(failed), snap))
+	})
+
+	t.Run("fails once everything is resolved and every live path failed", func(t *testing.T) {
+		snap := snapWith(entity.BatchStateSucceeded, entity.BatchStateSucceeded)
+		assert.True(t, hasNoViableFuture(headBatch, setOf(failed), snap))
+	})
+
+	t.Run("does not fail while a path is still running", func(t *testing.T) {
+		running := entryFor(
+			pathOver(entity.DependencyAssumptionIgnored, entity.DependencyAssumptionIgnored),
+			entity.SpeculationPathStatusBuilding)
+		running.ID = "still-running"
+		snap := snapWith(entity.BatchStateSucceeded, entity.BatchStateSucceeded)
+		assert.False(t, hasNoViableFuture(headBatch, setOf(failed, running), snap))
+	})
+
+	t.Run("does not fail a head with nothing funded", func(t *testing.T) {
+		snap := snapWith(entity.BatchStateSucceeded, entity.BatchStateSucceeded)
+		assert.False(t, hasNoViableFuture(headBatch, setOf(), snap),
+			"an unfunded head is waiting for the Speculator, not out of options")
+	})
+
+	t.Run("ignores broken paths when judging", func(t *testing.T) {
+		// This path assumed dep1 would fail; it succeeded, so the failed build
+		// tells us nothing about a future that can still happen.
+		brokenFail := entryFor(
+			pathOver(entity.DependencyAssumptionFails, entity.DependencyAssumptionIgnored),
+			entity.SpeculationPathStatusFailed)
+		snap := snapWith(entity.BatchStateSucceeded, entity.BatchStateSucceeded)
+		assert.False(t, hasNoViableFuture(headBatch, setOf(brokenFail), snap))
+	})
+}
+
+func TestDecide(t *testing.T) {
+	headBatch := entity.Batch{ID: head, Dependencies: []string{dep1, dep2}}
+	allResolved := snapWith(entity.BatchStateSucceeded, entity.BatchStateSucceeded)
+
+	passed := passedPath(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionSucceeds)
+	failed := entryFor(
+		pathOver(entity.DependencyAssumptionIgnored, entity.DependencyAssumptionIgnored),
+		entity.SpeculationPathStatusFailed)
+	building := entryFor(
+		pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionIgnored),
+		entity.SpeculationPathStatusBuilding)
+
+	assert.Equal(t, outcomeMerge, decide(headBatch, setOf(passed), allResolved))
+	assert.Equal(t, outcomeFail, decide(headBatch, setOf(failed), allResolved))
+	assert.Equal(t, outcomeWait, decide(headBatch, setOf(building), allResolved))
+
+	// A passed path wins over a failed sibling: one way through is enough.
+	assert.Equal(t, outcomeMerge, decide(headBatch, setOf(failed, passed), allResolved))
+}
+
+// Once a path has passed, its siblings cannot help the head but are still
+// holding CI slots the rest of the queue could use.
+func TestSupersede(t *testing.T) {
+	winner := passedPath(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionIgnored)
+	sibling := entryFor(
+		pathOver(entity.DependencyAssumptionFails, entity.DependencyAssumptionIgnored),
+		entity.SpeculationPathStatusBuilding)
+	finished := entryFor(
+		pathOver(entity.DependencyAssumptionIgnored, entity.DependencyAssumptionIgnored),
+		entity.SpeculationPathStatusFailed)
+
+	set := setOf(winner, sibling, finished)
+	assert.True(t, supersede(&set, winner.ID, 99))
+
+	assert.Equal(t, entity.SpeculationPathStatusPassed, set.Paths[0].Status, "the winner is untouched")
+	assert.Equal(t, entity.SpeculationPathStatusCancelling, set.Paths[1].Status)
+	assert.Equal(t, int64(99), set.Paths[1].UpdatedAtMs)
+	assert.Equal(t, entity.SpeculationPathStatusFailed, set.Paths[2].Status, "a finished path is left alone")
+
+	assert.False(t, supersede(&set, winner.ID, 100), "a second pass changes nothing")
+}
+
+func TestAllPathsStopped(t *testing.T) {
+	running := entryFor(pathOver(entity.DependencyAssumptionIgnored, entity.DependencyAssumptionIgnored),
+		entity.SpeculationPathStatusBuilding)
+	cancelling := entryFor(pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionIgnored),
+		entity.SpeculationPathStatusCancelling)
+	done := entryFor(pathOver(entity.DependencyAssumptionFails, entity.DependencyAssumptionIgnored),
+		entity.SpeculationPathStatusCancelled)
+
+	assert.True(t, allPathsStopped(setOf(done)))
+	assert.True(t, allPathsStopped(setOf()))
+	assert.False(t, allPathsStopped(setOf(running)))
+	assert.False(t, allPathsStopped(setOf(cancelling)),
+		"a cancelling build holds its CI slot until it actually stops")
+}
+
+func TestCancelAllPaths(t *testing.T) {
+	running := entryFor(pathOver(entity.DependencyAssumptionIgnored, entity.DependencyAssumptionIgnored),
+		entity.SpeculationPathStatusBuilding)
+	done := entryFor(pathOver(entity.DependencyAssumptionFails, entity.DependencyAssumptionIgnored),
+		entity.SpeculationPathStatusPassed)
+
+	set := setOf(running, done)
+	assert.True(t, cancelAllPaths(&set, 7))
+	assert.Equal(t, entity.SpeculationPathStatusCancelling, set.Paths[0].Status)
+	assert.Equal(t, entity.SpeculationPathStatusPassed, set.Paths[1].Status,
+		"a finished build has no slot to release")
+
+	assert.False(t, cancelAllPaths(&set, 8), "a second pass changes nothing")
+}

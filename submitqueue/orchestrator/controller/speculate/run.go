@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/uber/submitqueue/platform/metrics"
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
@@ -28,30 +27,30 @@ import (
 )
 
 // run re-plans a whole queue from a single read of its state, in the five
-// steps the package doc lays out: read, cancel broken paths, ask, check,
-// dispatch.
+// steps the package doc lays out: read, finalize, ask, check, dispatch.
 //
 // The batch on the triggering message only says which queue woke up; nothing
-// about the run depends on which batch it was, or on any earlier run. That is
-// what makes duplicated, delayed, and reordered signals harmless, and what
-// lets a later run repair anything an earlier one left half-done.
-//
-// Cancelling broken paths before asking is what keeps the Speculator's work
-// from being wasted: it reasons over the queue as the facts have already left
-// it, rather than over a picture this run is about to invalidate.
-func (c *Controller) run(ctx context.Context, store storage.Storage, queue string) error {
-	snap, err := c.read(ctx, store, queue)
+// about the plan depends on which batch it was, or on any earlier run. Its
+// identity is carried through only for crash recovery — see snapshot.trigger.
+func (c *Controller) run(ctx context.Context, store storage.Storage, trigger entity.Batch) error {
+	snap, err := c.read(ctx, store, trigger.Queue)
 	if err != nil {
 		return err
 	}
+	snap.trigger = trigger.ID
+
+	if err := c.finalize(ctx, &snap); err != nil {
+		return err
+	}
 	if len(snap.speculating) == 0 {
-		// No head is open to new work, so there is nothing to speculate about.
-		return nil
+		// No head is open to new work, so there is nothing to ask the
+		// Speculator. The dispatch step still runs: what the build stages saw about a
+		// merging or cancelling head's paths has to be persisted so those
+		// paths stop counting against the budget.
+		return c.dispatch(ctx, trigger.Queue, snap, nil)
 	}
 
-	c.cancelBrokenPaths(&snap)
-
-	proposals, err := c.ask(ctx, queue, snap)
+	proposals, err := c.ask(ctx, trigger.Queue, snap)
 	if err != nil {
 		return err
 	}
@@ -61,12 +60,12 @@ func (c *Controller) run(ctx context.Context, store storage.Storage, queue strin
 		metrics.NamedCounter(c.metricsScope, opName, "speculation_rejected", 1,
 			metrics.NewTag("reason", string(reason)))
 		c.logger.Warnw("dropped a speculator proposal",
-			"queue", queue,
+			"queue", trigger.Queue,
 			"reason", string(reason),
 		)
 	}
 
-	return c.dispatch(ctx, store, queue, snap, kept)
+	return c.dispatch(ctx, trigger.Queue, snap, kept)
 }
 
 // read builds the run's snapshot. Batches come first because their dependency
@@ -80,7 +79,9 @@ func (c *Controller) read(ctx context.Context, store storage.Storage, queue stri
 	}
 
 	snap := snapshot{
+		store:    store,
 		batches:  make(map[string]entity.Batch, len(inFlight)),
+		inFlight: inFlight,
 		pathSets: make(map[string]entity.SpeculationPathSet, len(inFlight)),
 		dirty:    make(map[string]bool, len(inFlight)),
 	}
@@ -161,8 +162,18 @@ func (c *Controller) updatePathsFromBuilds(ctx context.Context, store storage.St
 			// materializes after this read still gets its signal, so the poll
 			// loop finds it and stops it if its path no longer wants it.
 			//
-			// A pending path keeps the run's own intent: its dispatch is
-			// re-sent rather than abandoned.
+			// A cancelling path therefore has nothing this run must wait for,
+			// and is marked cancelled here; nothing else would ever finish the
+			// job, and left cancelling it would hold a budget slot forever. The
+			// slot may be released a few seconds before a mid-flight build
+			// actually stops — a transient budget overshoot on a build already
+			// being killed. A pending path keeps the run's own intent: its
+			// dispatch is re-sent rather than abandoned.
+			if entry.Status == entity.SpeculationPathStatusCancelling {
+				entry.Status = entity.SpeculationPathStatusCancelled
+				changed = true
+				metrics.NamedCounter(c.metricsScope, opName, "path_cancelled_undispatched", 1)
+			}
 			continue
 		}
 		if err != nil {
@@ -226,49 +237,20 @@ func terminalPathStatus(status entity.BuildStatus) entity.SpeculationPathStatus 
 	}
 }
 
-// cancelBrokenPaths marks cancelling, across every head in the snapshot, each
-// path with a broken assumption. Such a path can never merge its head, so this
-// is a fact, not a choice — and folding it in before the Speculator is asked
-// keeps it from proposing work on top of paths that are already dead, which
-// check would only throw away.
-func (c *Controller) cancelBrokenPaths(snap *snapshot) {
-	nowMs := time.Now().UnixMilli()
-
-	for _, batch := range snap.speculating {
-		set, exists := snap.pathSets[batch.ID]
-		if !exists {
-			continue
-		}
-		if cancelBrokenPathsInSet(&set, *snap, nowMs) {
-			snap.pathSets[batch.ID] = set
-			snap.markDirty(batch.ID)
-		}
-	}
-}
-
-// cancelBrokenPathsInSet marks cancelling every live path in one set with a
-// broken assumption, and reports whether anything changed. Cancelling rather
-// than cancelled, because the path's build may still be occupying CI — only
-// the signal that sees it stop can call it terminal.
-func cancelBrokenPathsInSet(set *entity.SpeculationPathSet, snap snapshot, nowMs int64) bool {
-	changed := false
-	for i := range set.Paths {
-		entry := &set.Paths[i]
-		if entry.Status.IsTerminal() || entry.Status == entity.SpeculationPathStatusCancelling {
-			continue
-		}
-		if !assumptionBroken(entry.Path, snap) {
-			continue
-		}
-		entry.Status = entity.SpeculationPathStatusCancelling
-		entry.UpdatedAtMs = nowMs
-		changed = true
-	}
-	return changed
-}
-
 // ask hands the snapshot to the queue's Speculator. Its answer is a proposal,
 // not an instruction: check decides what is actually enacted.
+//
+// The two arguments are deliberately different slices of the queue. Only
+// speculating heads are offered as action targets, because only they are open
+// to new work. Every in-flight path set is handed over, though, whatever
+// state its head is in: a path holds its CI slot until its build actually
+// stops, so a merging head's superseded siblings and a cancelling head's live
+// builds spend the budget just like a speculating head's do. Hiding them
+// would let the allocator count occupied slots as free and oversubscribe CI.
+//
+// Passing foreign sets cannot widen what gets proposed: a path ID hashes its
+// head, and check rejects any proposal aimed at a head that is not
+// speculating.
 func (c *Controller) ask(ctx context.Context, queue string, snap snapshot) ([]entity.Speculation, error) {
 	spec, err := c.speculators.For(speculator.Config{QueueName: queue})
 	if err != nil {
@@ -277,7 +259,7 @@ func (c *Controller) ask(ctx context.Context, queue string, snap snapshot) ([]en
 	}
 
 	sets := make([]entity.SpeculationPathSet, 0, len(snap.pathSets))
-	for _, batch := range snap.speculating {
+	for _, batch := range snap.inFlight {
 		if set, ok := snap.pathSets[batch.ID]; ok {
 			sets = append(sets, set)
 		}
