@@ -18,66 +18,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
-
-func TestRequest_SerializationRoundTrip(t *testing.T) {
-	tests := []struct {
-		name string
-		req  Request
-	}{
-		{
-			name: "accepted with resolved uri",
-			req: Request{
-				ID:      "request/monorepo/main/100",
-				Queue:   "monorepo/main",
-				URI:     "git://remote/monorepo/main/abcdef0123456789",
-				State:   RequestStateAccepted,
-				Version: 1,
-			},
-		},
-		{
-			name: "processing with strategy and baseline",
-			req: Request{
-				ID:            "request/monorepo/main/101",
-				Queue:         "monorepo/main",
-				URI:           "git://remote/monorepo/main/bbbb2222",
-				State:         RequestStateProcessing,
-				BuildStrategy: BuildStrategyIncrementalSinceGreen,
-				BaseURI:       "git://remote/monorepo/main/green-aaaa",
-				Version:       2,
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			data, err := tt.req.ToBytes()
-			require.NoError(t, err)
-
-			deserialized, err := RequestFromBytes(data)
-			require.NoError(t, err)
-
-			assert.Equal(t, tt.req, deserialized)
-		})
-	}
-}
-
-func TestRequestFromBytes_InvalidJSON(t *testing.T) {
-	_, err := RequestFromBytes([]byte(`{"invalid": json"}`))
-	assert.Error(t, err)
-}
-
-func TestRequestFromBytes_EmptyData(t *testing.T) {
-	req, err := RequestFromBytes([]byte(`{}`))
-	require.NoError(t, err)
-
-	assert.Empty(t, req.ID)
-	assert.Empty(t, req.Queue)
-	assert.Empty(t, req.URI)
-	assert.Equal(t, RequestStateUnknown, req.State)
-	assert.Equal(t, int32(0), req.Version)
-}
 
 func TestRequestState_IsTerminal(t *testing.T) {
 	tests := []struct {
@@ -121,16 +62,4 @@ func TestRequestState_HasBuildOutcome(t *testing.T) {
 			assert.Equal(t, tt.expected, tt.state.HasBuildOutcome())
 		})
 	}
-}
-
-func TestRequestID_SerializationRoundTrip(t *testing.T) {
-	original := RequestID{ID: "request/monorepo/main/100"}
-
-	data, err := original.ToBytes()
-	require.NoError(t, err)
-
-	deserialized, err := RequestIDFromBytes(data)
-	require.NoError(t, err)
-
-	assert.Equal(t, original, deserialized)
 }

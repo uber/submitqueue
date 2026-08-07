@@ -57,7 +57,7 @@ var (
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	store         storage.Storage
+	stores        storage.Factory
 	buildRunners  buildrunner.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
@@ -71,7 +71,7 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	stores storage.Factory,
 	buildRunners buildrunner.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
@@ -80,7 +80,7 @@ func NewController(
 	return &Controller{
 		logger:        logger.Named("buildsignal_controller"),
 		metricsScope:  scope.SubScope("buildsignal_controller"),
-		store:         store,
+		stores:        stores,
 		buildRunners:  buildRunners,
 		registry:      registry,
 		topicKey:      topicKey,
@@ -111,10 +111,17 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to deserialize build ID: %w", err)
 	}
 
+	store, err := c.stores.For(storage.Config{QueueName: buildID.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		// Non-retryable: a missing or unresolvable queue is a malformed message.
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", buildID.Queue, err)
+	}
+
 	// Only the build ID travels on the queue; load the full Build from
 	// storage, which is the single source of truth for its BatchID and the
 	// snapshot the poll loop updates.
-	build, err := c.store.GetBuildStore().Get(ctx, buildID.ID)
+	build, err := store.GetBuildStore().Get(ctx, buildID.ID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to get build %s: %w", buildID.ID, err)
@@ -129,10 +136,17 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	// Load the batch first: it gives us the queue (needed to build the right
 	// BuildRunner) and lets us short-circuit halted batches before polling.
-	batch, err := c.store.GetBatchStore().Get(ctx, build.BatchID)
+	batch, err := store.GetBatchStore().Get(ctx, build.BatchID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to get batch %s: %w", build.BatchID, err)
+	}
+
+	// The payload's queue must match the batch's authoritative queue; a
+	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
+	if buildID.Queue != "" && buildID.Queue != batch.Queue {
+		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1)
+		return fmt.Errorf("payload queue %q does not match queue %q of batch %s", buildID.Queue, batch.Queue, batch.ID)
 	}
 
 	buildRunner, err := c.buildRunners.For(buildrunner.Config{QueueName: batch.Queue})
@@ -164,13 +178,22 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	updatedBuild := build
 	updatedBuild.Status = status
 
-	if err := c.store.GetBuildStore().Update(ctx, updatedBuild); err != nil {
+	if err := store.GetBuildStore().Update(ctx, updatedBuild); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to update status for build %s: %w", build.ID, err)
 	}
 
-	// Re-evaluate the batch state machine with the latest build status.
-	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, updatedBuild.BatchID, msg.PartitionKey); err != nil {
+	// Re-evaluate the batch state machine with the latest build status. The
+	// speculate topic is partitioned by queue like every other speculate
+	// publisher, so a queue's batches keep their serial processing guarantee.
+	// The message ID is scoped to (batch, build): the queue backend dedupes a
+	// publish on (topic, partition, id) against rows not yet garbage-collected,
+	// so reusing the bare batch ID — the ID the batch controller's original
+	// speculate publish used on this same partition — would silently drop this
+	// nudge. A redelivered poll re-mints the same (batch, build) ID, which
+	// dedupes to the first publish, exactly as intended.
+	signalID := fmt.Sprintf("%s/build-signal/%s", updatedBuild.BatchID, updatedBuild.ID)
+	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, signalID, updatedBuild.BatchID, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}
@@ -210,15 +233,18 @@ func pollDelay(status entity.BuildStatus) int64 {
 	}
 }
 
-// publishBatchID publishes a batch ID to the topic identified by key.
-func (c *Controller) publishBatchID(ctx context.Context, key consumer.TopicKey, batchID string, partitionKey string) error {
-	bid := entity.BatchID{ID: batchID}
+// publishBatchID publishes a batch ID to the topic identified by key, stamped
+// with and partitioned by the batch's queue. msgID is the caller-owned message
+// identity the queue backend dedupes on; it must be distinct from other
+// publishes of the same batch ID on the same partition.
+func (c *Controller) publishBatchID(ctx context.Context, key consumer.TopicKey, msgID string, batchID string, queue string) error {
+	bid := entity.BatchID{ID: batchID, Queue: queue}
 	payload, err := bid.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(batchID, payload, partitionKey, nil)
+	msg := entityqueue.NewMessage(msgID, payload, queue, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

@@ -36,9 +36,10 @@ type Delivery interface {
 	Ack(ctx context.Context) error
 
 	// Nack negatively acknowledges the message, indicating processing failure.
-	// The message will be requeued for redelivery after requeueAfterMillis.
-	// If requeueAfterMillis is 0, the message is requeued immediately.
-	Nack(ctx context.Context, requeueAfterMillis int64) error
+	// The message is requeued for redelivery immediately; the visibility
+	// timeout is what spaces retries (a crash or missed ack redelivers on the
+	// same schedule). The redelivery counts toward the failure budget.
+	Nack(ctx context.Context) error
 
 	// Postpone finishes this delivery as "processed successfully, redeliver
 	// later": the message becomes invisible for delayMs and acts as a barrier —

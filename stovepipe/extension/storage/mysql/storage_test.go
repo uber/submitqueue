@@ -36,10 +36,15 @@ func TestNewStorage(t *testing.T) {
 	s, err := NewStorage(db, testMetrics())
 	require.NoError(t, err)
 
-	assert.NotNil(t, s.GetRequestStore())
-	assert.NotNil(t, s.GetRequestURIStore())
-	assert.NotNil(t, s.GetQueueStore())
-	assert.NotNil(t, s.GetBuildStore())
+	bound, err := s.For("monorepo/main")
+	require.NoError(t, err)
+	assert.NotNil(t, bound.GetRequestStore())
+	assert.NotNil(t, bound.GetRequestURIStore())
+	assert.NotNil(t, bound.GetQueueStore())
+	assert.NotNil(t, bound.GetBuildStore())
+
+	_, err = s.For("")
+	assert.Error(t, err, "resolving an empty queue name must fail")
 }
 
 func TestMysqlStorage_Close(t *testing.T) {

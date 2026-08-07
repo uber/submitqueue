@@ -39,7 +39,7 @@ import (
 type batchController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	store         storage.Storage
+	stores        storage.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -53,7 +53,7 @@ var _ consumer.Controller = (*batchController)(nil)
 func NewDLQBatchController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	stores storage.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -62,7 +62,7 @@ func NewDLQBatchController(
 	return &batchController{
 		logger:        logger.Named(name),
 		metricsScope:  scope.SubScope(name),
-		store:         store,
+		stores:        stores,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -85,6 +85,13 @@ func (c *batchController) Process(ctx context.Context, delivery consumer.Deliver
 		return fmt.Errorf("dlq payload decoded to empty batch id")
 	}
 
+	store, err := c.stores.For(storage.Config{QueueName: bid.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		// Non-retryable: a missing or unresolvable queue is a malformed message.
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", bid.Queue, err)
+	}
+
 	dmeta := delivery.Metadata()
 	c.logger.Warnw("dlq message received",
 		"batch_id", bid.ID,
@@ -94,7 +101,7 @@ func (c *batchController) Process(ctx context.Context, delivery consumer.Deliver
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
 
-	if err := failBatch(ctx, c.store, c.registry, c.logger, bid.ID, dmeta["dlq.last_error"]); err != nil {
+	if err := failBatch(ctx, store, c.registry, c.logger, bid.ID, dmeta["dlq.last_error"]); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
 		return err
 	}

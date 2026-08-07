@@ -50,15 +50,19 @@ func TestMySQLStorage(t *testing.T) {
 	schemaDir := testutil.SchemaDir("stovepipe/extension/storage/mysql/schema")
 	testutil.ApplySchema(t, log, db, schemaDir)
 
-	store, err := mysqlstorage.NewStorage(db, tally.NoopScope)
+	backend, err := mysqlstorage.NewStorage(db, tally.NoopScope)
 	require.NoError(t, err, "failed to create storage")
+	factory := mysqlFactory{backend: backend}
 
 	t.Run("RequestStore", func(t *testing.T) {
 		resetStorage(t, db)
+		bound, err := backend.For("monorepo/main")
+		require.NoError(t, err)
 		suite.Run(t, &MySQLRequestStoreSuite{
 			ctx:      ctx,
-			store:    store.GetRequestStore(),
-			uriStore: store.GetRequestURIStore(),
+			backend:  backend,
+			store:    bound.GetRequestStore(),
+			uriStore: bound.GetRequestURIStore(),
 		})
 	})
 
@@ -66,7 +70,7 @@ func TestMySQLStorage(t *testing.T) {
 		resetStorage(t, db)
 		testSuite := new(MySQLQueueStoreSuite)
 		testSuite.SetContext(ctx)
-		testSuite.SetQueueStore(store.GetQueueStore())
+		testSuite.SetFactory(factory)
 		testSuite.SetLogger(testutil.NewTestLogger(t))
 		suite.Run(t, testSuite)
 	})
@@ -75,7 +79,9 @@ func TestMySQLStorage(t *testing.T) {
 		resetStorage(t, db)
 		testSuite := new(MySQLBuildStoreSuite)
 		testSuite.SetContext(ctx)
-		testSuite.SetBuildStore(store.GetBuildStore())
+		bound, err := backend.For("contract/queue")
+		require.NoError(t, err)
+		testSuite.SetBuildStore(bound.GetBuildStore())
 		testSuite.SetLogger(testutil.NewTestLogger(t))
 		suite.Run(t, testSuite)
 	})
@@ -99,6 +105,7 @@ func resetStorage(t *testing.T, db *sql.DB) {
 type MySQLRequestStoreSuite struct {
 	suite.Suite
 	ctx      context.Context
+	backend  *mysqlstorage.Storage
 	store    storage.RequestStore
 	uriStore storage.RequestURIStore
 }
@@ -169,7 +176,7 @@ func (s *MySQLRequestStoreSuite) TestUpdateCAS() {
 }
 
 func (s *MySQLRequestStoreSuite) TestUpdateNotFoundIsVersionMismatch() {
-	missing := entity.Request{ID: "request/monorepo/main/missing", State: entity.RequestStateAccepted}
+	missing := entity.Request{ID: "request/monorepo/main/missing", Queue: "monorepo/main", State: entity.RequestStateAccepted}
 	err := s.store.Update(s.ctx, missing, 1, 2)
 	require.ErrorIs(s.T(), err, storage.ErrVersionMismatch)
 }
@@ -193,15 +200,15 @@ func (s *MySQLRequestStoreSuite) TestURIMappingCreateAndGet() {
 		uri   = "git://remote/monorepo/main/bbbb2222"
 		id    = "request/monorepo/main/3"
 	)
-	require.NoError(s.T(), s.uriStore.Create(s.ctx, queue, uri, id))
+	require.NoError(s.T(), s.uriStore.Create(s.ctx, uri, id))
 
-	got, err := s.uriStore.GetIDByURI(s.ctx, queue, uri)
+	got, err := s.uriStore.GetIDByURI(s.ctx, uri)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), id, got)
 }
 
 func (s *MySQLRequestStoreSuite) TestGetIDByURINotFound() {
-	_, err := s.uriStore.GetIDByURI(s.ctx, "monorepo/main", "git://remote/monorepo/main/unmapped")
+	_, err := s.uriStore.GetIDByURI(s.ctx, "git://remote/monorepo/main/unmapped")
 	require.True(s.T(), storage.IsNotFound(err))
 }
 
@@ -210,25 +217,33 @@ func (s *MySQLRequestStoreSuite) TestURIMappingDuplicate() {
 		queue = "monorepo/main"
 		uri   = "git://remote/monorepo/main/cccc3333"
 	)
-	require.NoError(s.T(), s.uriStore.Create(s.ctx, queue, uri, "request/monorepo/main/4"))
+	require.NoError(s.T(), s.uriStore.Create(s.ctx, uri, "request/monorepo/main/4"))
 
 	// A second request claiming the same (queue, uri) is rejected — the dedup signal.
-	err := s.uriStore.Create(s.ctx, queue, uri, "request/monorepo/main/5")
+	err := s.uriStore.Create(s.ctx, uri, "request/monorepo/main/5")
 	require.ErrorIs(s.T(), err, storage.ErrAlreadyExists)
 }
 
 func (s *MySQLRequestStoreSuite) TestURIMappingDistinctAcrossQueues() {
 	const uri = "git://remote/monorepo/shared/dddd4444"
-	require.NoError(s.T(), s.uriStore.Create(s.ctx, "queue-a", uri, "request/queue-a/1"))
-	require.NoError(s.T(), s.uriStore.Create(s.ctx, "queue-b", uri, "request/queue-b/1"))
+	boundA, err := s.backend.For("queue-a")
+	require.NoError(s.T(), err)
+	boundB, err := s.backend.For("queue-b")
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), boundA.GetRequestURIStore().Create(s.ctx, uri, "request/queue-a/1"))
+	require.NoError(s.T(), boundB.GetRequestURIStore().Create(s.ctx, uri, "request/queue-b/1"))
 
-	idA, err := s.uriStore.GetIDByURI(s.ctx, "queue-a", uri)
+	idA, err := boundA.GetRequestURIStore().GetIDByURI(s.ctx, uri)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "request/queue-a/1", idA)
 
-	idB, err := s.uriStore.GetIDByURI(s.ctx, "queue-b", uri)
+	idB, err := boundB.GetRequestURIStore().GetIDByURI(s.ctx, uri)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "request/queue-b/1", idB)
+
+	// The other queue's mapping is invisible through this queue's binding.
+	_, err = boundA.GetRequestURIStore().GetIDByURI(s.ctx, "git://remote/monorepo/shared/only-b")
+	require.True(s.T(), storage.IsNotFound(err))
 }
 
 // MySQLQueueStoreSuite exercises the MySQL-backed QueueStore by embedding the shared contract suite.
@@ -239,4 +254,15 @@ type MySQLQueueStoreSuite struct {
 // MySQLBuildStoreSuite exercises the MySQL-backed BuildStore by embedding the shared contract suite.
 type MySQLBuildStoreSuite struct {
 	storagesuite.BuildStoreContractSuite
+}
+
+// mysqlFactory adapts the MySQL storage backend's queue binding to the
+// storage.Factory seam for the contract suite, mirroring the host wiring.
+type mysqlFactory struct {
+	backend *mysqlstorage.Storage
+}
+
+// For returns the queue-scoped store aggregate bound to the queue named in config.
+func (f mysqlFactory) For(config storage.Config) (storage.Storage, error) {
+	return f.backend.For(config.QueueName)
 }

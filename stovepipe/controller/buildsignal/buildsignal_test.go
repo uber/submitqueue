@@ -54,6 +54,12 @@ type buildsignalMocks struct {
 	publisher     *mqmock.MockPublisher
 }
 
+// staticStorageFactory resolves every queue to one fixed store aggregate.
+type staticStorageFactory struct{ store storage.Storage }
+
+// For returns the fixed store aggregate for any queue.
+func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
+
 func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildsignalMocks) {
 	t.Helper()
 
@@ -80,7 +86,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildsig
 	})
 	require.NoError(t, err)
 
-	c := NewController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), store, m.runnerFactory, registry, stovepipemq.TopicKeyBuildSignal, "stovepipe-buildsignal")
+	c := NewController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), staticStorageFactory{store: store}, m.runnerFactory, registry, stovepipemq.TopicKeyBuildSignal, "stovepipe-buildsignal")
 	return c, m
 }
 
@@ -423,7 +429,7 @@ func TestPublishRecordCarriesRequestID(t *testing.T) {
 			return nil
 		})
 
-	require.NoError(t, c.publishRecord(context.Background(), testID))
+	require.NoError(t, c.publishRecord(context.Background(), testID, "monorepo/main"))
 
 	var payload stovepipemq.Record
 	require.NoError(t, stovepipemq.Unmarshal(got.Payload, &payload))

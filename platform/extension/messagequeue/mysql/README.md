@@ -33,7 +33,7 @@ subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "orchestrator")
 deliveryCh, _ := q.Subscriber().Subscribe(ctx, "merge_events", subConfig)
 for delivery := range deliveryCh {
     if err := process(delivery.Message()); err != nil {
-        delivery.Nack(ctx, 0)  // Retry
+        delivery.Nack(ctx)  // Retry
         continue
     }
     delivery.Ack(ctx)
@@ -69,6 +69,7 @@ subConfig.DLQ.TopicSuffix = "_dlq"                    // DLQ topic suffix
 | `SubscriberName` | Unique worker identifier for partition leasing (e.g., hostname, pod name) |
 | `ConsumerGroup` | Consumer group for independent offset tracking |
 | `PollIntervalMs` | How often to poll for new messages |
+| `PartitionDiscoveryIntervalMs` | How often to discover partitions, attempt lease acquisition, and reconcile workers |
 | `BatchSize` | Maximum messages to fetch per poll. Set to `1` for strict serialization |
 | `VisibilityTimeoutMs` | How long messages are invisible after fetch. Must exceed max processing time for `BatchSize=1` |
 | `LeaseRenewalIntervalMs` | How often to renew partition leases |
@@ -194,4 +195,4 @@ Requires Docker running:
 bazel test //test/integration/extension/messagequeue/... --test_output=streamed
 ```
 
-Integration tests cover: publish/subscribe, partition isolation, ordering, visibility timeout, nack with delay, idempotent publish, concurrent publishers, crash recovery, multiple consumer groups, rebalancing, DLQ, graceful shutdown, non-blocking nack, strict serialization (`BatchSize=1`), and independent consumer group state.
+Integration tests cover: publish/subscribe, partition isolation, ordering, visibility timeout, idempotent publish, concurrent publishers, crash recovery, multiple consumer groups, rebalancing, DLQ, graceful shutdown, non-blocking in-flight messages, the postpone barrier, strict serialization (`BatchSize=1`), and independent consumer group state.

@@ -30,14 +30,18 @@ import (
 	"github.com/uber/submitqueue/test/testutil"
 )
 
-// StorageContractSuite defines the contract tests for the storage.Storage interface.
-// All storage implementations must pass these tests.
-// Implementation-specific tests should embed this suite and call SetStorage().
+// StorageContractSuite defines the contract tests for the storage extension:
+// the queue-scoped aggregate resolved through storage.Factory plus the global
+// read-model stores. All storage implementations must pass these tests.
+// Implementation-specific tests should embed this suite and call SetFactory()
+// and SetGlobalStores().
 type StorageContractSuite struct {
 	suite.Suite
-	ctx     context.Context
-	storage storage.Storage
-	log     *testutil.TestLogger
+	ctx       context.Context
+	factory   storage.Factory
+	summaries storage.RequestSummaryStore
+	uris      storage.RequestURIStore
+	log       *testutil.TestLogger
 }
 
 // SetContext sets the context for tests
@@ -45,9 +49,25 @@ func (s *StorageContractSuite) SetContext(ctx context.Context) {
 	s.ctx = ctx
 }
 
-// SetStorage is called by implementation tests to provide the concrete storage instance
-func (s *StorageContractSuite) SetStorage(store storage.Storage) {
-	s.storage = store
+// SetFactory is called by implementation tests to provide the queue-scoped
+// storage factory under test.
+func (s *StorageContractSuite) SetFactory(factory storage.Factory) {
+	s.factory = factory
+}
+
+// SetGlobalStores is called by implementation tests to provide the global
+// read-model stores under test.
+func (s *StorageContractSuite) SetGlobalStores(summaries storage.RequestSummaryStore, uris storage.RequestURIStore) {
+	s.summaries = summaries
+	s.uris = uris
+}
+
+// forQueue resolves the queue-scoped store aggregate for a queue, failing the
+// test on resolution errors.
+func (s *StorageContractSuite) forQueue(queue string) storage.Storage {
+	store, err := s.factory.For(storage.Config{QueueName: queue})
+	s.Require().NoError(err)
+	return store
 }
 
 // SetLogger sets the logger for tests
@@ -72,11 +92,11 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet() {
 	}
 
 	// Create request
-	err := s.storage.GetRequestStore().Create(ctx, request)
+	err := s.forQueue("test-queue").GetRequestStore().Create(ctx, request)
 	require.NoError(t, err, "failed to create request")
 
 	// Get request back
-	retrieved, err := s.storage.GetRequestStore().Get(ctx, request.ID)
+	retrieved, err := s.forQueue("test-queue").GetRequestStore().Get(ctx, request.ID)
 	require.NoError(t, err, "failed to get request")
 
 	// Verify fields
@@ -113,11 +133,11 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet_StackedPRs() {
 	}
 
 	// Create request
-	err := s.storage.GetRequestStore().Create(ctx, request)
+	err := s.forQueue("test-queue").GetRequestStore().Create(ctx, request)
 	require.NoError(t, err, "failed to create request with stacked PRs")
 
 	// Get request back
-	retrieved, err := s.storage.GetRequestStore().Get(ctx, request.ID)
+	retrieved, err := s.forQueue("test-queue").GetRequestStore().Get(ctx, request.ID)
 	require.NoError(t, err, "failed to get request with stacked PRs")
 
 	// Verify the stacked URIs are preserved
@@ -141,19 +161,18 @@ func (s *StorageContractSuite) TestStorage_Update() {
 	}
 
 	// Create initial request
-	err := s.storage.GetRequestStore().Create(ctx, request)
+	err := s.forQueue("test-queue").GetRequestStore().Create(ctx, request)
 	require.NoError(t, err)
 
 	updated := request
-	updated.Queue = "updated-queue"
 	updated.Change.URIs = []string{"github://github.example.com/uber/monorepo/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
 	updated.LandStrategy = mergestrategy.MergeStrategySquashRebase
 	updated.State = entity.RequestStateProcessing
-	err = s.storage.GetRequestStore().Update(ctx, updated, request.Version, request.Version+1)
+	err = s.forQueue("test-queue").GetRequestStore().Update(ctx, updated, request.Version, request.Version+1)
 	require.NoError(t, err, "failed to update request")
 
 	// Verify update
-	retrieved, err := s.storage.GetRequestStore().Get(ctx, request.ID)
+	retrieved, err := s.forQueue("test-queue").GetRequestStore().Get(ctx, request.ID)
 	require.NoError(t, err)
 	updated.Version = request.Version + 1
 	assert.Equal(t, updated, retrieved)
@@ -173,30 +192,28 @@ func (s *StorageContractSuite) TestStorage_OptimisticLocking() {
 	}
 
 	// Create request
-	err := s.storage.GetRequestStore().Create(ctx, request)
+	err := s.forQueue("test-queue").GetRequestStore().Create(ctx, request)
 	require.NoError(t, err)
 
 	// Update with correct version.
 	updated := request
-	updated.Queue = "updated-queue"
 	updated.Change.URIs = []string{"github://github.example.com/uber/monorepo/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
 	updated.LandStrategy = mergestrategy.MergeStrategySquashRebase
 	updated.State = entity.RequestStateProcessing
-	err = s.storage.GetRequestStore().Update(ctx, updated, 1, 2)
+	err = s.forQueue("test-queue").GetRequestStore().Update(ctx, updated, 1, 2)
 	require.NoError(t, err, "update with correct version should succeed")
 
 	// Try to replace every field with a stale version.
 	stale := request
-	stale.Queue = "stale-queue"
 	stale.Change.URIs = []string{"github://github.example.com/uber/monorepo/pull/3/cccccccccccccccccccccccccccccccccccccccc"}
 	stale.LandStrategy = mergestrategy.MergeStrategyRebase
 	stale.State = entity.RequestStateLanded
-	err = s.storage.GetRequestStore().Update(ctx, stale, 1, 3)
+	err = s.forQueue("test-queue").GetRequestStore().Update(ctx, stale, 1, 3)
 	assert.Error(t, err, "update with stale version should fail")
 	assert.ErrorIs(t, err, storage.ErrVersionMismatch, "should return ErrVersionMismatch")
 
 	// Verify no field was changed by the stale update.
-	retrieved, err := s.storage.GetRequestStore().Get(ctx, request.ID)
+	retrieved, err := s.forQueue("test-queue").GetRequestStore().Get(ctx, request.ID)
 	require.NoError(t, err)
 	updated.Version = 2
 	assert.Equal(t, updated, retrieved)
@@ -225,13 +242,13 @@ func (s *StorageContractSuite) TestStorage_UpdateChangeURIs() {
 				LandStrategy: mergestrategy.MergeStrategyMerge,
 				Version:      1,
 			}
-			require.NoError(t, s.storage.GetRequestStore().Create(ctx, request))
+			require.NoError(t, s.forQueue("test-queue").GetRequestStore().Create(ctx, request))
 
 			updated := request
 			updated.Change.URIs = tt.uris
-			require.NoError(t, s.storage.GetRequestStore().Update(ctx, updated, request.Version, request.Version+1))
+			require.NoError(t, s.forQueue("test-queue").GetRequestStore().Update(ctx, updated, request.Version, request.Version+1))
 
-			retrieved, err := s.storage.GetRequestStore().Get(ctx, request.ID)
+			retrieved, err := s.forQueue("test-queue").GetRequestStore().Get(ctx, request.ID)
 			require.NoError(t, err)
 			assert.Equal(t, tt.uris, retrieved.Change.URIs)
 		})
@@ -248,22 +265,22 @@ func (s *StorageContractSuite) TestStorage_BatchDependentUpdate() {
 		Dependents: []string{"test/dependent/1"},
 		Version:    1,
 	}
-	require.NoError(t, s.storage.GetBatchDependentStore().Create(ctx, batchDependent))
+	require.NoError(t, s.forQueue("test-queue").GetBatchDependentStore().Create(ctx, batchDependent))
 
 	nilDependents := batchDependent
 	nilDependents.Dependents = nil
-	require.NoError(t, s.storage.GetBatchDependentStore().Update(ctx, nilDependents, 1, 2))
+	require.NoError(t, s.forQueue("test-queue").GetBatchDependentStore().Update(ctx, nilDependents, 1, 2))
 
-	retrieved, err := s.storage.GetBatchDependentStore().Get(ctx, batchDependent.BatchID)
+	retrieved, err := s.forQueue("test-queue").GetBatchDependentStore().Get(ctx, batchDependent.BatchID)
 	require.NoError(t, err)
 	assert.Nil(t, retrieved.Dependents)
 	assert.Equal(t, int32(2), retrieved.Version)
 
 	emptyDependents := retrieved
 	emptyDependents.Dependents = []string{}
-	require.NoError(t, s.storage.GetBatchDependentStore().Update(ctx, emptyDependents, 2, 3))
+	require.NoError(t, s.forQueue("test-queue").GetBatchDependentStore().Update(ctx, emptyDependents, 2, 3))
 
-	retrieved, err = s.storage.GetBatchDependentStore().Get(ctx, batchDependent.BatchID)
+	retrieved, err = s.forQueue("test-queue").GetBatchDependentStore().Get(ctx, batchDependent.BatchID)
 	require.NoError(t, err)
 	assert.Empty(t, retrieved.Dependents)
 	assert.NotNil(t, retrieved.Dependents)
@@ -271,10 +288,10 @@ func (s *StorageContractSuite) TestStorage_BatchDependentUpdate() {
 
 	staleUpdate := retrieved
 	staleUpdate.Dependents = []string{"test/dependent/stale"}
-	err = s.storage.GetBatchDependentStore().Update(ctx, staleUpdate, 2, 4)
+	err = s.forQueue("test-queue").GetBatchDependentStore().Update(ctx, staleUpdate, 2, 4)
 	assert.ErrorIs(t, err, storage.ErrVersionMismatch)
 
-	retrieved, err = s.storage.GetBatchDependentStore().Get(ctx, batchDependent.BatchID)
+	retrieved, err = s.forQueue("test-queue").GetBatchDependentStore().Get(ctx, batchDependent.BatchID)
 	require.NoError(t, err)
 	assert.Empty(t, retrieved.Dependents)
 	assert.NotNil(t, retrieved.Dependents)
@@ -284,7 +301,7 @@ func (s *StorageContractSuite) TestStorage_BatchDependentUpdate() {
 func (s *StorageContractSuite) TestStorage_BatchUpdateReplacesAllNonKeyFields() {
 	t := s.T()
 	ctx := s.ctx
-	store := s.storage.GetBatchStore()
+	store := s.forQueue("batch-update").GetBatchStore()
 	batch := entity.Batch{
 		ID:           "batch-update/batch/1",
 		Queue:        "batch-update",
@@ -296,7 +313,6 @@ func (s *StorageContractSuite) TestStorage_BatchUpdateReplacesAllNonKeyFields() 
 	require.NoError(t, store.Create(ctx, batch))
 
 	nilCollections := batch
-	nilCollections.Queue = "batch-update-nil"
 	nilCollections.Contains = nil
 	nilCollections.Dependencies = nil
 	nilCollections.State = entity.BatchStateSpeculating
@@ -304,14 +320,13 @@ func (s *StorageContractSuite) TestStorage_BatchUpdateReplacesAllNonKeyFields() 
 
 	got, err := store.Get(ctx, batch.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "batch-update-nil", got.Queue)
+	assert.Equal(t, "batch-update", got.Queue)
 	assert.Nil(t, got.Contains)
 	assert.Nil(t, got.Dependencies)
 	assert.Equal(t, entity.BatchStateSpeculating, got.State)
 	assert.Equal(t, int32(2), got.Version)
 
 	emptyCollections := got
-	emptyCollections.Queue = "batch-update-empty"
 	emptyCollections.Contains = []string{}
 	emptyCollections.Dependencies = []string{}
 	emptyCollections.State = entity.BatchStateMerging
@@ -319,7 +334,7 @@ func (s *StorageContractSuite) TestStorage_BatchUpdateReplacesAllNonKeyFields() 
 
 	got, err = store.Get(ctx, batch.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "batch-update-empty", got.Queue)
+	assert.Equal(t, "batch-update", got.Queue)
 	assert.NotNil(t, got.Contains)
 	assert.Empty(t, got.Contains)
 	assert.NotNil(t, got.Dependencies)
@@ -328,7 +343,6 @@ func (s *StorageContractSuite) TestStorage_BatchUpdateReplacesAllNonKeyFields() 
 	assert.Equal(t, int32(3), got.Version)
 
 	stale := got
-	stale.Queue = "stale-queue"
 	stale.Contains = []string{"stale/request"}
 	stale.Dependencies = []string{"stale/batch"}
 	stale.State = entity.BatchStateFailed
@@ -339,13 +353,116 @@ func (s *StorageContractSuite) TestStorage_BatchUpdateReplacesAllNonKeyFields() 
 	assert.Equal(t, got, unchanged)
 }
 
+// TestStorage_QueueBatchStateRecordLifecycle exercises the QueueBatchStateStore
+// contract: Put idempotency, List isolation between (queue, state) buckets, the
+// Put-then-Delete record move, and Delete idempotency.
+func (s *StorageContractSuite) TestStorage_QueueBatchStateRecordLifecycle() {
+	t := s.T()
+	ctx := s.ctx
+	storeA := s.forQueue("qbs-queue-a").GetQueueBatchStateStore()
+	storeB := s.forQueue("qbs-queue-b").GetQueueBatchStateStore()
+
+	created1 := entity.QueueBatchState{Queue: "qbs-queue-a", State: entity.BatchStateCreated, BatchID: "qbs-queue-a/batch/1"}
+	created2 := entity.QueueBatchState{Queue: "qbs-queue-a", State: entity.BatchStateCreated, BatchID: "qbs-queue-a/batch/2"}
+	speculating := entity.QueueBatchState{Queue: "qbs-queue-a", State: entity.BatchStateSpeculating, BatchID: "qbs-queue-a/batch/3"}
+	otherQueue := entity.QueueBatchState{Queue: "qbs-queue-b", State: entity.BatchStateCreated, BatchID: "qbs-queue-b/batch/1"}
+
+	require.NoError(t, storeA.Put(ctx, created1))
+	require.NoError(t, storeA.Put(ctx, created2))
+	require.NoError(t, storeA.Put(ctx, speculating))
+	require.NoError(t, storeB.Put(ctx, otherQueue))
+
+	// Re-putting an existing record is a no-op success.
+	require.NoError(t, storeA.Put(ctx, created1))
+
+	// List returns exactly one (queue, state) bucket: no other states, no other queues, no duplicates.
+	got, err := storeA.List(ctx, entity.BatchStateCreated)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []entity.QueueBatchState{created1, created2}, got)
+
+	got, err = storeA.List(ctx, entity.BatchStateSpeculating)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []entity.QueueBatchState{speculating}, got)
+
+	// An empty bucket lists empty, not an error.
+	got, err = storeA.List(ctx, entity.BatchStateMerging)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+
+	// A record move: file under the new state, then remove the old bucket's record.
+	moved := entity.QueueBatchState{Queue: created1.Queue, State: entity.BatchStateSpeculating, BatchID: created1.BatchID}
+	require.NoError(t, storeA.Put(ctx, moved))
+	require.NoError(t, storeA.Delete(ctx, created1.State, created1.BatchID))
+
+	got, err = storeA.List(ctx, entity.BatchStateCreated)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []entity.QueueBatchState{created2}, got)
+
+	got, err = storeA.List(ctx, entity.BatchStateSpeculating)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []entity.QueueBatchState{speculating, moved}, got)
+
+	// Deleting an absent record is a no-op success.
+	require.NoError(t, storeA.Delete(ctx, created1.State, created1.BatchID))
+
+	// The other queue is untouched by all of the above.
+	got, err = storeB.List(ctx, entity.BatchStateCreated)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []entity.QueueBatchState{otherQueue}, got)
+}
+
+// TestStorage_QueueIsolation verifies a store aggregate bound to one queue can
+// neither read nor write another queue's records: cross-queue reads miss, and
+// writes whose entity queue disagrees with the binding are rejected.
+func (s *StorageContractSuite) TestStorage_QueueIsolation() {
+	t := s.T()
+	ctx := s.ctx
+	storeA := s.forQueue("iso-queue-a")
+	storeB := s.forQueue("iso-queue-b")
+
+	request := entity.Request{ID: "iso-a/1", Queue: "iso-queue-a", State: entity.RequestStateStarted, LandStrategy: mergestrategy.MergeStrategyMerge, Version: 1}
+	require.NoError(t, storeA.GetRequestStore().Create(ctx, request))
+	_, err := storeB.GetRequestStore().Get(ctx, request.ID)
+	require.ErrorIs(t, err, storage.ErrNotFound, "a request must be invisible through another queue's binding")
+	require.Error(t, storeB.GetRequestStore().Create(ctx, request), "a mismatched-queue write must be rejected")
+
+	batch := entity.Batch{ID: "iso-a/batch/1", Queue: "iso-queue-a", State: entity.BatchStateCreated, Version: 1}
+	require.NoError(t, storeA.GetBatchStore().Create(ctx, batch))
+	_, err = storeB.GetBatchStore().Get(ctx, batch.ID)
+	require.ErrorIs(t, err, storage.ErrNotFound)
+
+	// Builds are keyed by a runner-minted ID; the queue-leading key removes the
+	// cross-queue uniqueness assumption, so the same runner ID coexists per queue.
+	build := entity.Build{ID: "runner/iso/1", BatchID: batch.ID, Status: entity.BuildStatusRunning}
+	require.NoError(t, storeA.GetBuildStore().Create(ctx, build))
+	_, err = storeB.GetBuildStore().Get(ctx, build.ID)
+	require.ErrorIs(t, err, storage.ErrNotFound)
+	require.NoError(t, storeB.GetBuildStore().Create(ctx, build), "the same runner-minted build ID must coexist across queues")
+
+	dependent := entity.BatchDependent{BatchID: batch.ID, Dependents: []string{}, Version: 1}
+	require.NoError(t, storeA.GetBatchDependentStore().Create(ctx, dependent))
+	_, err = storeB.GetBatchDependentStore().Get(ctx, batch.ID)
+	require.ErrorIs(t, err, storage.ErrNotFound)
+
+	association := entity.RequestBatch{RequestID: request.ID, BatchID: batch.ID, Version: 1}
+	require.NoError(t, storeA.GetRequestBatchStore().Create(ctx, association))
+	crossQueue, err := storeB.GetRequestBatchStore().GetByRequestID(ctx, request.ID)
+	require.NoError(t, err)
+	assert.Empty(t, crossQueue, "associations must be invisible through another queue's binding")
+
+	// The owning queue still sees everything it wrote.
+	fromA, err := storeA.GetRequestStore().Get(ctx, request.ID)
+	require.NoError(t, err)
+	assert.Equal(t, request, fromA)
+}
+
 // TestStorage_NotFound tests getting a non-existent request
 func (s *StorageContractSuite) TestStorage_NotFound() {
 	t := s.T()
 	ctx := s.ctx
 
 	// Try to get non-existent request
-	_, err := s.storage.GetRequestStore().Get(ctx, "test/nonexistent")
+	_, err := s.forQueue("test-queue").GetRequestStore().Get(ctx, "test/nonexistent")
 	assert.Error(t, err, "getting non-existent request should return error")
 	assert.ErrorIs(t, err, storage.ErrNotFound, "should return ErrNotFound")
 }
@@ -364,11 +481,11 @@ func (s *StorageContractSuite) TestStorage_CreateDuplicate() {
 	}
 
 	// Create request
-	err := s.storage.GetRequestStore().Create(ctx, request)
+	err := s.forQueue("test-queue").GetRequestStore().Create(ctx, request)
 	require.NoError(t, err)
 
 	// Try to create duplicate
-	err = s.storage.GetRequestStore().Create(ctx, request)
+	err = s.forQueue("test-queue").GetRequestStore().Create(ctx, request)
 	assert.Error(t, err, "creating duplicate request should return error")
 	assert.ErrorIs(t, err, storage.ErrAlreadyExists, "should return ErrAlreadyExists")
 }
@@ -385,11 +502,11 @@ func (s *StorageContractSuite) TestStorage_ChangeCreateAndGet_NoMatch() {
 	ctx := s.ctx
 	const queue = "cq-nomatch"
 
-	require.NoError(t, s.storage.GetChangeStore().Create(ctx, entity.ChangeRecord{
+	require.NoError(t, s.forQueue(queue).GetChangeStore().Create(ctx, entity.ChangeRecord{
 		URI: changeURI, RequestID: queue + "/1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
-	got, err := s.storage.GetChangeStore().GetByURI(ctx, queue, "github://github.example.com/uber/x/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	got, err := s.forQueue(queue).GetChangeStore().GetByURI(ctx, "github://github.example.com/uber/x/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
@@ -400,11 +517,11 @@ func (s *StorageContractSuite) TestStorage_ChangeCreateAndGet_Match() {
 	ctx := s.ctx
 	const queue = "cq-match"
 
-	require.NoError(t, s.storage.GetChangeStore().Create(ctx, entity.ChangeRecord{
+	require.NoError(t, s.forQueue(queue).GetChangeStore().Create(ctx, entity.ChangeRecord{
 		URI: changeURI, RequestID: queue + "/1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
-	got, err := s.storage.GetChangeStore().GetByURI(ctx, queue, changeURI)
+	got, err := s.forQueue(queue).GetChangeStore().GetByURI(ctx, changeURI)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, queue+"/1", got[0].RequestID)
@@ -419,11 +536,11 @@ func (s *StorageContractSuite) TestStorage_ChangeGetByURI_DoesNotExcludeSelf() {
 	ctx := s.ctx
 	const queue = "cq-self"
 
-	require.NoError(t, s.storage.GetChangeStore().Create(ctx, entity.ChangeRecord{
+	require.NoError(t, s.forQueue(queue).GetChangeStore().Create(ctx, entity.ChangeRecord{
 		URI: changeURI, RequestID: queue + "/1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
-	got, err := s.storage.GetChangeStore().GetByURI(ctx, queue, changeURI)
+	got, err := s.forQueue(queue).GetChangeStore().GetByURI(ctx, changeURI)
 	require.NoError(t, err)
 	require.Len(t, got, 1, "store returns the row even when caller might consider it self")
 	assert.Equal(t, queue+"/1", got[0].RequestID)
@@ -434,11 +551,11 @@ func (s *StorageContractSuite) TestStorage_ChangeGetByURI_QueueScoped() {
 	t := s.T()
 	ctx := s.ctx
 
-	require.NoError(t, s.storage.GetChangeStore().Create(ctx, entity.ChangeRecord{
+	require.NoError(t, s.forQueue("cq-scoped-A").GetChangeStore().Create(ctx, entity.ChangeRecord{
 		URI: changeURI, RequestID: "cq-scoped-A/1", Queue: "cq-scoped-A", CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
-	got, err := s.storage.GetChangeStore().GetByURI(ctx, "cq-scoped-B", changeURI)
+	got, err := s.forQueue("cq-scoped-B").GetChangeStore().GetByURI(ctx, changeURI)
 	require.NoError(t, err)
 	assert.Empty(t, got, "GetByURI must not return rows from a different queue")
 }
@@ -450,10 +567,10 @@ func (s *StorageContractSuite) TestStorage_ChangeCreate_Idempotent() {
 	const queue = "cq-idem"
 	rec := entity.ChangeRecord{URI: changeURI, RequestID: queue + "/1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1}
 
-	require.NoError(t, s.storage.GetChangeStore().Create(ctx, rec))
-	require.NoError(t, s.storage.GetChangeStore().Create(ctx, rec), "second insert with same PK must succeed (INSERT IGNORE)")
+	require.NoError(t, s.forQueue(queue).GetChangeStore().Create(ctx, rec))
+	require.NoError(t, s.forQueue(queue).GetChangeStore().Create(ctx, rec), "second insert with same PK must succeed (INSERT IGNORE)")
 
-	got, err := s.storage.GetChangeStore().GetByURI(ctx, queue, changeURI)
+	got, err := s.forQueue(queue).GetChangeStore().GetByURI(ctx, changeURI)
 	require.NoError(t, err)
 	assert.Len(t, got, 1, "idempotent create must not duplicate rows")
 }
@@ -464,14 +581,14 @@ func (s *StorageContractSuite) TestStorage_ChangeCreate_DifferentRequestSameURI(
 	ctx := s.ctx
 	const queue = "cq-multi"
 
-	require.NoError(t, s.storage.GetChangeStore().Create(ctx, entity.ChangeRecord{
+	require.NoError(t, s.forQueue(queue).GetChangeStore().Create(ctx, entity.ChangeRecord{
 		URI: changeURI, RequestID: queue + "/1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
-	require.NoError(t, s.storage.GetChangeStore().Create(ctx, entity.ChangeRecord{
+	require.NoError(t, s.forQueue(queue).GetChangeStore().Create(ctx, entity.ChangeRecord{
 		URI: changeURI, RequestID: queue + "/2", Queue: queue, CreatedAt: 2, UpdatedAt: 2, Version: 1,
 	}))
 
-	got, err := s.storage.GetChangeStore().GetByURI(ctx, queue, changeURI)
+	got, err := s.forQueue(queue).GetChangeStore().GetByURI(ctx, changeURI)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 
@@ -498,11 +615,11 @@ func (s *StorageContractSuite) TestStorage_ChangeCreate_PreservesDetails() {
 	const queue = "cq-details"
 	details := sampleDetails()
 
-	require.NoError(t, s.storage.GetChangeStore().Create(ctx, entity.ChangeRecord{
+	require.NoError(t, s.forQueue(queue).GetChangeStore().Create(ctx, entity.ChangeRecord{
 		URI: changeURI, RequestID: queue + "/1", Queue: queue, Details: details, CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
-	got, err := s.storage.GetChangeStore().GetByURI(ctx, queue, changeURI)
+	got, err := s.forQueue(queue).GetChangeStore().GetByURI(ctx, changeURI)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, details, got[0].Details)
@@ -514,11 +631,11 @@ func (s *StorageContractSuite) TestStorage_ChangeCreate_EmptyDetails() {
 	ctx := s.ctx
 	const queue = "cq-emptydetails"
 
-	require.NoError(t, s.storage.GetChangeStore().Create(ctx, entity.ChangeRecord{
+	require.NoError(t, s.forQueue(queue).GetChangeStore().Create(ctx, entity.ChangeRecord{
 		URI: changeURI, RequestID: queue + "/1", Queue: queue, CreatedAt: 1, UpdatedAt: 1, Version: 1,
 	}))
 
-	got, err := s.storage.GetChangeStore().GetByURI(ctx, queue, changeURI)
+	got, err := s.forQueue(queue).GetChangeStore().GetByURI(ctx, changeURI)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, entity.ChangeDetails{}, got[0].Details)
@@ -539,9 +656,9 @@ func (s *StorageContractSuite) TestStorage_BuildCreateAndGet() {
 		Status:  entity.BuildStatusRunning,
 	}
 
-	require.NoError(t, s.storage.GetBuildStore().Create(ctx, build))
+	require.NoError(t, s.forQueue("test-queue").GetBuildStore().Create(ctx, build))
 
-	got, err := s.storage.GetBuildStore().Get(ctx, buildID)
+	got, err := s.forQueue("test-queue").GetBuildStore().Get(ctx, buildID)
 	require.NoError(t, err, "Get by ID should find the build")
 	assert.Equal(t, build.ID, got.ID)
 	assert.Equal(t, build.BatchID, got.BatchID)
@@ -556,7 +673,7 @@ func (s *StorageContractSuite) TestStorage_RequestSummaryCreateGetAndCAS() {
 		Status: entity.RequestStatusAccepted, RequestVersion: 1, StatusTimestampMs: 100, Version: 1,
 		LastError: "", Metadata: nil,
 	}
-	store := s.storage.GetRequestSummaryStore()
+	store := s.summaries
 
 	require.NoError(t, store.Create(ctx, summary))
 	require.ErrorIs(t, store.Create(ctx, summary), storage.ErrAlreadyExists)
@@ -632,7 +749,7 @@ func (s *StorageContractSuite) TestStorage_RequestSummaryCreateGetAndCAS() {
 func (s *StorageContractSuite) TestStorage_RequestQueueSummaryListAndCursor() {
 	t := s.T()
 	ctx := s.ctx
-	store := s.storage.GetRequestQueueSummaryStore()
+	store := s.forQueue("queue-summary").GetRequestQueueSummaryStore()
 	rows := []entity.RequestQueueSummary{
 		{RequestID: "queue-summary/1", Queue: "queue-summary", ChangeURIs: nil, ReceivedAtMs: 100, Status: entity.RequestStatusAccepted, Version: 1, Metadata: nil},
 		{RequestID: "queue-summary/2", Queue: "queue-summary", ChangeURIs: []string{"uri/2"}, ReceivedAtMs: 200, Status: entity.RequestStatusLanded, Version: 1, Metadata: map[string]string{}},
@@ -643,11 +760,11 @@ func (s *StorageContractSuite) TestStorage_RequestQueueSummaryListAndCursor() {
 	}
 	require.ErrorIs(t, store.Create(ctx, rows[0]), storage.ErrAlreadyExists)
 
-	got, err := store.Get(ctx, rows[0].Queue, rows[0].ReceivedAtMs, rows[0].RequestID)
+	got, err := store.Get(ctx, rows[0].ReceivedAtMs, rows[0].RequestID)
 	require.NoError(t, err)
 	assert.NotNil(t, got.ChangeURIs)
 	assert.NotNil(t, got.Metadata)
-	_, err = store.Get(ctx, "queue-summary", 999, "queue-summary/missing")
+	_, err = store.Get(ctx, 999, "queue-summary/missing")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
 	got.Status = entity.RequestStatusLanded
@@ -655,7 +772,7 @@ func (s *StorageContractSuite) TestStorage_RequestQueueSummaryListAndCursor() {
 	got.LastError = "done"
 	got.Metadata = map[string]string{"result": "landed"}
 	require.NoError(t, store.Update(ctx, got, 1, 2))
-	updated, err := store.Get(ctx, got.Queue, got.ReceivedAtMs, got.RequestID)
+	updated, err := store.Get(ctx, got.ReceivedAtMs, got.RequestID)
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), updated.Version)
 	assert.Equal(t, []string{"uri/replacement/1", "uri/replacement/2"}, updated.ChangeURIs)
@@ -669,14 +786,14 @@ func (s *StorageContractSuite) TestStorage_RequestQueueSummaryListAndCursor() {
 	stale.LastError = "stale"
 	stale.Metadata = map[string]string{}
 	require.ErrorIs(t, store.Update(ctx, stale, 1, 3), storage.ErrVersionMismatch)
-	unchanged, err := store.Get(ctx, got.Queue, got.ReceivedAtMs, got.RequestID)
+	unchanged, err := store.Get(ctx, got.ReceivedAtMs, got.RequestID)
 	require.NoError(t, err)
 	assert.Equal(t, updated, unchanged)
 
 	updated.ChangeURIs = nil
 	updated.Metadata = nil
 	require.NoError(t, store.Update(ctx, updated, 2, 3))
-	normalized, err := store.Get(ctx, got.Queue, got.ReceivedAtMs, got.RequestID)
+	normalized, err := store.Get(ctx, got.ReceivedAtMs, got.RequestID)
 	require.NoError(t, err)
 	assert.Equal(t, int32(3), normalized.Version)
 	assert.NotNil(t, normalized.ChangeURIs)
@@ -687,7 +804,7 @@ func (s *StorageContractSuite) TestStorage_RequestQueueSummaryListAndCursor() {
 	normalized.ChangeURIs = []string{}
 	normalized.Metadata = map[string]string{}
 	require.NoError(t, store.Update(ctx, normalized, 3, 4))
-	emptyCollections, err := store.Get(ctx, got.Queue, got.ReceivedAtMs, got.RequestID)
+	emptyCollections, err := store.Get(ctx, got.ReceivedAtMs, got.RequestID)
 	require.NoError(t, err)
 	assert.Equal(t, int32(4), emptyCollections.Version)
 	assert.NotNil(t, emptyCollections.ChangeURIs)
@@ -696,14 +813,14 @@ func (s *StorageContractSuite) TestStorage_RequestQueueSummaryListAndCursor() {
 	assert.Empty(t, emptyCollections.Metadata)
 
 	firstPage, err := store.List(ctx, storage.RequestQueueSummaryQuery{
-		Queue: "queue-summary", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, Limit: 2,
+		ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, Limit: 2,
 	})
 	require.NoError(t, err)
 	require.Len(t, firstPage, 2)
 	assert.Equal(t, []string{"queue-summary/3", "queue-summary/2"}, []string{firstPage[0].RequestID, firstPage[1].RequestID})
 
 	secondPage, err := store.List(ctx, storage.RequestQueueSummaryQuery{
-		Queue: "queue-summary", ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, Limit: 2,
+		ReceivedAtOrAfterMs: 50, ReceivedBeforeMs: 250, Limit: 2,
 		HasCursor: true, Cursor: storage.RequestQueueSummaryCursor{ReceivedAtMs: 200, RequestID: "queue-summary/2"},
 	})
 	require.NoError(t, err)
@@ -713,14 +830,14 @@ func (s *StorageContractSuite) TestStorage_RequestQueueSummaryListAndCursor() {
 	assert.NotNil(t, secondPage[0].Metadata)
 
 	bounded, err := store.List(ctx, storage.RequestQueueSummaryQuery{
-		Queue: "queue-summary", ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, Limit: 10,
+		ReceivedAtOrAfterMs: 100, ReceivedBeforeMs: 200, Limit: 10,
 	})
 	require.NoError(t, err)
 	require.Len(t, bounded, 1)
 	assert.Equal(t, "queue-summary/1", bounded[0].RequestID)
 
 	empty, err := store.List(ctx, storage.RequestQueueSummaryQuery{
-		Queue: "queue-summary", ReceivedAtOrAfterMs: 300, ReceivedBeforeMs: 400, Limit: 10,
+		ReceivedAtOrAfterMs: 300, ReceivedBeforeMs: 400, Limit: 10,
 	})
 	require.NoError(t, err)
 	assert.Empty(t, empty)
@@ -729,7 +846,7 @@ func (s *StorageContractSuite) TestStorage_RequestQueueSummaryListAndCursor() {
 func (s *StorageContractSuite) TestStorage_RequestURIListIsBoundedAndOrdered() {
 	t := s.T()
 	ctx := s.ctx
-	store := s.storage.GetRequestURIStore()
+	store := s.uris
 	rows := []entity.RequestURI{
 		{ChangeURI: "uri/shared", ReceivedAtMs: 100, RequestID: "uri/1"},
 		{ChangeURI: "uri/shared", ReceivedAtMs: 200, RequestID: "uri/2"},

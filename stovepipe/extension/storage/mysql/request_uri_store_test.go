@@ -34,7 +34,7 @@ func setupRequestURIStoreTest(t *testing.T) (*sql.DB, sqlmock.Sqlmock, storage.R
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
-	store := NewRequestURIStore(db, testMetrics())
+	store := NewRequestURIStore(db, testMetrics(), "monorepo/main")
 
 	return db, mock, store
 }
@@ -84,7 +84,7 @@ func TestRequestURIStore_Create(t *testing.T) {
 
 			tt.setup(mock)
 
-			err := store.Create(context.Background(), queue, uri, id)
+			err := store.Create(context.Background(), uri, id)
 			if tt.wantErr {
 				require.Error(t, err)
 				if tt.wantErrIs != nil {
@@ -154,7 +154,7 @@ func TestRequestURIStore_GetIDByURI(t *testing.T) {
 
 			tt.setup(mock)
 
-			got, err := store.GetIDByURI(context.Background(), tt.queue, tt.uri)
+			got, err := store.GetIDByURI(context.Background(), tt.uri)
 			if tt.wantErr {
 				require.Error(t, err)
 				if tt.wantErrIs != nil {

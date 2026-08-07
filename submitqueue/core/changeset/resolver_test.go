@@ -25,8 +25,20 @@ import (
 
 	"github.com/uber/submitqueue/platform/base/change"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 )
+
+// newTestResolver builds a Resolver over mock stores exposed through a mock
+// storage factory that resolves every queue to the same aggregate.
+func newTestResolver(ctrl *gomock.Controller, reqs storage.RequestStore, changes storage.ChangeStore) Resolver {
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetRequestStore().Return(reqs).AnyTimes()
+	store.EXPECT().GetChangeStore().Return(changes).AnyTimes()
+	f := storagemock.NewMockFactory(ctrl)
+	f.EXPECT().For(gomock.Any()).Return(store, nil).AnyTimes()
+	return New(f)
+}
 
 func req(id string, uris ...string) entity.Request {
 	return entity.Request{ID: id, Change: change.Change{URIs: uris}}
@@ -36,7 +48,7 @@ func TestResolverChanges(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	reqs := storagemock.NewMockRequestStore(ctrl)
 	changes := storagemock.NewMockChangeStore(ctrl)
-	r := New(reqs, changes)
+	r := newTestResolver(ctrl, reqs, changes)
 
 	reqs.EXPECT().Get(gomock.Any(), "r2").Return(req("r2", "u2"), nil)
 	reqs.EXPECT().Get(gomock.Any(), "r3").Return(req("r3", "u3"), nil)
@@ -49,7 +61,7 @@ func TestResolverChanges(t *testing.T) {
 
 func TestResolverChangesEmpty(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	r := New(storagemock.NewMockRequestStore(ctrl), storagemock.NewMockChangeStore(ctrl))
+	r := newTestResolver(ctrl, storagemock.NewMockRequestStore(ctrl), storagemock.NewMockChangeStore(ctrl))
 
 	got, err := r.ChangesForBatch(context.Background(), entity.Batch{ID: "q/batch/1"})
 	require.NoError(t, err)
@@ -59,7 +71,7 @@ func TestResolverChangesEmpty(t *testing.T) {
 func TestResolverChangesRequestError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	reqs := storagemock.NewMockRequestStore(ctrl)
-	r := New(reqs, storagemock.NewMockChangeStore(ctrl))
+	r := newTestResolver(ctrl, reqs, storagemock.NewMockChangeStore(ctrl))
 
 	sentinel := errors.New("not found")
 	reqs.EXPECT().Get(gomock.Any(), "r1").Return(entity.Request{}, sentinel)
@@ -72,7 +84,7 @@ func TestResolverDetailed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	reqs := storagemock.NewMockRequestStore(ctrl)
 	changes := storagemock.NewMockChangeStore(ctrl)
-	r := New(reqs, changes)
+	r := newTestResolver(ctrl, reqs, changes)
 
 	batch := entity.Batch{ID: "q/batch/1", Queue: "q", Contains: []string{"r1", "r2"}}
 	reqs.EXPECT().Get(gomock.Any(), "r1").Return(req("r1", "u1"), nil)
@@ -82,11 +94,11 @@ func TestResolverDetailed(t *testing.T) {
 	d2 := entity.ChangeDetails{ChangedFiles: []entity.ChangedFile{{Path: "b.go", LinesAdded: 5}}}
 	// GetByURI returns rows for every request that ever claimed the URI; the
 	// resolver must pick the row owned by the requesting request.
-	changes.EXPECT().GetByURI(gomock.Any(), "q", "u1").Return([]entity.ChangeRecord{
+	changes.EXPECT().GetByURI(gomock.Any(), "u1").Return([]entity.ChangeRecord{
 		{URI: "u1", RequestID: "other", Details: entity.ChangeDetails{}},
 		{URI: "u1", RequestID: "r1", Details: d1},
 	}, nil)
-	changes.EXPECT().GetByURI(gomock.Any(), "q", "u2").Return([]entity.ChangeRecord{
+	changes.EXPECT().GetByURI(gomock.Any(), "u2").Return([]entity.ChangeRecord{
 		{URI: "u2", RequestID: "r2", Details: d2},
 	}, nil)
 
@@ -103,11 +115,11 @@ func TestResolverDetailedChangeStoreError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	reqs := storagemock.NewMockRequestStore(ctrl)
 	changes := storagemock.NewMockChangeStore(ctrl)
-	r := New(reqs, changes)
+	r := newTestResolver(ctrl, reqs, changes)
 
 	sentinel := errors.New("read failed")
 	reqs.EXPECT().Get(gomock.Any(), "r1").Return(req("r1", "u1"), nil)
-	changes.EXPECT().GetByURI(gomock.Any(), "q", "u1").Return(nil, sentinel)
+	changes.EXPECT().GetByURI(gomock.Any(), "u1").Return(nil, sentinel)
 
 	_, err := r.DetailedForBatch(context.Background(), entity.Batch{ID: "q/batch/1", Queue: "q", Contains: []string{"r1"}})
 	require.ErrorIs(t, err, sentinel)

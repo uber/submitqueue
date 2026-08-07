@@ -126,17 +126,17 @@ func (mr *MockDeliveryMockRecorder) Metadata() *gomock.Call {
 }
 
 // Nack mocks base method.
-func (m *MockDelivery) Nack(ctx context.Context, requeueAfterMillis int64) error {
+func (m *MockDelivery) Nack(ctx context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Nack", ctx, requeueAfterMillis)
+	ret := m.ctrl.Call(m, "Nack", ctx)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Nack indicates an expected call of Nack.
-func (mr *MockDeliveryMockRecorder) Nack(ctx, requeueAfterMillis any) *gomock.Call {
+func (mr *MockDeliveryMockRecorder) Nack(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Nack", reflect.TypeOf((*MockDelivery)(nil).Nack), ctx, requeueAfterMillis)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Nack", reflect.TypeOf((*MockDelivery)(nil).Nack), ctx)
 }
 
 // Postpone mocks base method.

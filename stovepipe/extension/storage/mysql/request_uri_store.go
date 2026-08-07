@@ -34,19 +34,23 @@ const requestURIInitialVersion = 1
 type requestURIStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewRequestURIStore creates a new MySQL-backed RequestURIStore.
-func NewRequestURIStore(db *sql.DB, scope tally.Scope) storage.RequestURIStore {
-	return &requestURIStore{db: db, scope: scope}
+func NewRequestURIStore(db *sql.DB, scope tally.Scope, queue string) storage.RequestURIStore {
+	return &requestURIStore{db: db, scope: scope, queue: queue}
 }
 
-// Create records the (queue, uri) -> id reverse index. Returns ErrAlreadyExists if (queue, uri)
-// is already mapped to a request.
-func (r *requestURIStore) Create(ctx context.Context, queue, uri, id string) (retErr error) {
+// Create records the bound queue's uri -> id reverse index. Returns
+// ErrAlreadyExists if the queue already maps the uri to a request.
+func (r *requestURIStore) Create(ctx context.Context, uri, id string) (retErr error) {
 	op := metrics.Begin(r.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	queue := r.queue
 	_, err := r.db.ExecContext(ctx,
 		"INSERT INTO request_uri (queue, uri, request_id, version) VALUES (?, ?, ?, ?)",
 		queue, uri, id, requestURIInitialVersion,
@@ -61,11 +65,13 @@ func (r *requestURIStore) Create(ctx context.Context, queue, uri, id string) (re
 	return nil
 }
 
-// GetIDByURI returns the id of the request validating (queue, uri). Returns ErrNotFound if absent.
-func (r *requestURIStore) GetIDByURI(ctx context.Context, queue, uri string) (ret string, retErr error) {
+// GetIDByURI returns the id of the request validating the bound queue's uri.
+// Returns ErrNotFound if absent.
+func (r *requestURIStore) GetIDByURI(ctx context.Context, uri string) (ret string, retErr error) {
 	op := metrics.Begin(r.scope, "get_id_by_uri", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	queue := r.queue
 	var id string
 	err := r.db.QueryRowContext(ctx,
 		"SELECT request_id FROM request_uri WHERE queue = ? AND uri = ?",

@@ -26,12 +26,14 @@ import (
 )
 
 // QueueStoreContractSuite defines contract tests for storage.QueueStore.
-// All QueueStore implementations must pass these tests.
+// All QueueStore implementations must pass these tests. Queue rows are keyed
+// by the queue name itself, so each test resolves the store bound to its own
+// test queue through the factory.
 type QueueStoreContractSuite struct {
 	suite.Suite
-	ctx        context.Context
-	queueStore storage.QueueStore
-	log        *testutil.TestLogger
+	ctx     context.Context
+	factory storage.Factory
+	log     *testutil.TestLogger
 }
 
 // SetContext sets the context for tests.
@@ -39,9 +41,16 @@ func (s *QueueStoreContractSuite) SetContext(ctx context.Context) {
 	s.ctx = ctx
 }
 
-// SetQueueStore provides the concrete QueueStore under test.
-func (s *QueueStoreContractSuite) SetQueueStore(store storage.QueueStore) {
-	s.queueStore = store
+// SetFactory provides the storage factory under test.
+func (s *QueueStoreContractSuite) SetFactory(factory storage.Factory) {
+	s.factory = factory
+}
+
+// storeFor resolves the QueueStore bound to the named queue.
+func (s *QueueStoreContractSuite) storeFor(name string) storage.QueueStore {
+	store, err := s.factory.For(storage.Config{QueueName: name})
+	s.Require().NoError(err)
+	return store.GetQueueStore()
 }
 
 // SetLogger sets the logger for tests.
@@ -58,12 +67,12 @@ func (s *QueueStoreContractSuite) TestQueueStore_Create() {
 	t := s.T()
 	const name = "contract/create"
 
-	require.NoError(t, s.queueStore.Create(s.ctx, entity.Queue{
+	require.NoError(t, s.storeFor(name).Create(s.ctx, entity.Queue{
 		Name:    name,
 		Version: 1,
 	}))
 
-	got, err := s.queueStore.Get(s.ctx, name)
+	got, err := s.storeFor(name).Get(s.ctx, name)
 	require.NoError(t, err)
 	assert.Equal(t, entity.Queue{
 		Name:            name,
@@ -83,9 +92,9 @@ func (s *QueueStoreContractSuite) TestQueueStore_CreateWithFields() {
 		LatestRequestID: "request/contract/defaults/99",
 		Version:         1,
 	}
-	require.NoError(t, s.queueStore.Create(s.ctx, toCreate))
+	require.NoError(t, s.storeFor(name).Create(s.ctx, toCreate))
 
-	got, err := s.queueStore.Get(s.ctx, name)
+	got, err := s.storeFor(name).Get(s.ctx, name)
 	require.NoError(t, err)
 	assert.Equal(t, toCreate, got)
 }
@@ -96,9 +105,9 @@ func (s *QueueStoreContractSuite) TestQueueStore_CreateAlreadyExists() {
 	const name = "contract/already-exists"
 
 	first := entity.Queue{Name: name, LatestRequestID: "request/contract/already-exists/3", Version: 1}
-	require.NoError(t, s.queueStore.Create(s.ctx, first))
+	require.NoError(t, s.storeFor(name).Create(s.ctx, first))
 
-	err := s.queueStore.Create(s.ctx, entity.Queue{
+	err := s.storeFor(name).Create(s.ctx, entity.Queue{
 		Name:            name,
 		LastGreenURI:    "git://remote/monorepo/main/ignored-on-race",
 		LatestRequestID: "request/contract/already-exists/500",
@@ -106,7 +115,7 @@ func (s *QueueStoreContractSuite) TestQueueStore_CreateAlreadyExists() {
 	})
 	assert.ErrorIs(t, err, storage.ErrAlreadyExists)
 
-	got, err := s.queueStore.Get(s.ctx, name)
+	got, err := s.storeFor(name).Get(s.ctx, name)
 	require.NoError(t, err)
 	assert.Equal(t, first, got)
 }
@@ -115,7 +124,7 @@ func (s *QueueStoreContractSuite) TestQueueStore_CreateAlreadyExists() {
 func (s *QueueStoreContractSuite) TestQueueStore_GetNotFound() {
 	t := s.T()
 
-	_, err := s.queueStore.Get(s.ctx, "contract/does-not-exist")
+	_, err := s.storeFor("contract/does-not-exist").Get(s.ctx, "contract/does-not-exist")
 	assert.True(t, storage.IsNotFound(err))
 }
 
@@ -125,22 +134,22 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateCAS() {
 	const name = "contract/update-cas"
 
 	created := entity.Queue{Name: name, Version: 1}
-	require.NoError(t, s.queueStore.Create(s.ctx, created))
+	require.NoError(t, s.storeFor(name).Create(s.ctx, created))
 
 	updated := created
 	updated.LastGreenURI = "git://remote/monorepo/main/green-cccc"
 	updated.LatestRequestID = "request/contract/update-cas/42"
 	updated.InFlightCount = 1
-	require.NoError(t, s.queueStore.Update(s.ctx, updated, 1, 2))
+	require.NoError(t, s.storeFor(name).Update(s.ctx, updated, 1, 2))
 
-	got, err := s.queueStore.Get(s.ctx, name)
+	got, err := s.storeFor(name).Get(s.ctx, name)
 	require.NoError(t, err)
 	assert.Equal(t, updated.LastGreenURI, got.LastGreenURI)
 	assert.Equal(t, "request/contract/update-cas/42", got.LatestRequestID)
 	assert.Equal(t, int32(1), got.InFlightCount)
 	assert.Equal(t, int32(2), got.Version)
 
-	err = s.queueStore.Update(s.ctx, updated, 1, 2)
+	err = s.storeFor(name).Update(s.ctx, updated, 1, 2)
 	assert.ErrorIs(t, err, storage.ErrVersionMismatch)
 }
 
@@ -148,7 +157,7 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateCAS() {
 func (s *QueueStoreContractSuite) TestQueueStore_UpdateNotFoundIsVersionMismatch() {
 	t := s.T()
 
-	err := s.queueStore.Update(s.ctx, entity.Queue{Name: "contract/missing"}, 1, 2)
+	err := s.storeFor("contract/missing").Update(s.ctx, entity.Queue{Name: "contract/missing"}, 1, 2)
 	assert.ErrorIs(t, err, storage.ErrVersionMismatch)
 }
 
@@ -157,15 +166,15 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateSequentialCAS() {
 	t := s.T()
 	const name = "contract/sequential-cas"
 
-	require.NoError(t, s.queueStore.Create(s.ctx, entity.Queue{Name: name, Version: 1}))
+	require.NoError(t, s.storeFor(name).Create(s.ctx, entity.Queue{Name: name, Version: 1}))
 
 	v2 := entity.Queue{Name: name, LatestRequestID: "request/contract/sequential-cas/10", Version: 1}
-	require.NoError(t, s.queueStore.Update(s.ctx, v2, 1, 2))
+	require.NoError(t, s.storeFor(name).Update(s.ctx, v2, 1, 2))
 
 	v3 := entity.Queue{Name: name, LatestRequestID: "request/contract/sequential-cas/10", InFlightCount: 1, Version: 2}
-	require.NoError(t, s.queueStore.Update(s.ctx, v3, 2, 3))
+	require.NoError(t, s.storeFor(name).Update(s.ctx, v3, 2, 3))
 
-	got, err := s.queueStore.Get(s.ctx, name)
+	got, err := s.storeFor(name).Get(s.ctx, name)
 	require.NoError(t, err)
 	assert.Equal(t, "request/contract/sequential-cas/10", got.LatestRequestID)
 	assert.Equal(t, int32(1), got.InFlightCount)
@@ -360,10 +369,12 @@ func (s *QueueStoreContractSuite) TestQueueStore_QueueIsolation() {
 		nameB = "contract/isolation-b"
 	)
 
-	require.NoError(t, s.queueStore.Create(s.ctx, entity.Queue{Name: nameA, Version: 1}))
-	require.NoError(t, s.queueStore.Create(s.ctx, entity.Queue{Name: nameB, Version: 1}))
+	storeA := s.storeFor(nameA)
+	storeB := s.storeFor(nameB)
+	require.NoError(t, storeA.Create(s.ctx, entity.Queue{Name: nameA, Version: 1}))
+	require.NoError(t, storeB.Create(s.ctx, entity.Queue{Name: nameB, Version: 1}))
 
-	baseline, err := s.queueStore.Get(s.ctx, nameB)
+	baseline, err := storeB.Get(s.ctx, nameB)
 	require.NoError(t, err)
 
 	updatedA := entity.Queue{
@@ -373,9 +384,14 @@ func (s *QueueStoreContractSuite) TestQueueStore_QueueIsolation() {
 		InFlightCount:   2,
 		Version:         1,
 	}
-	require.NoError(t, s.queueStore.Update(s.ctx, updatedA, 1, 2))
+	require.NoError(t, storeA.Update(s.ctx, updatedA, 1, 2))
 
-	gotB, err := s.queueStore.Get(s.ctx, nameB)
+	gotB, err := storeB.Get(s.ctx, nameB)
 	require.NoError(t, err)
 	assert.Equal(t, baseline, gotB)
+
+	// A store bound to one queue must reject another queue's row outright.
+	require.Error(t, storeA.Create(s.ctx, entity.Queue{Name: nameB, Version: 1}))
+	_, err = storeA.Get(s.ctx, nameB)
+	assert.True(t, storage.IsNotFound(err))
 }

@@ -72,7 +72,7 @@ type landController struct {
 	logger       *zap.SugaredLogger
 	metricsScope tally.Scope
 	counter      counter.Counter
-	store        storage.Storage
+	summaries    storage.RequestSummaryStore
 	materializer *requestcore.Materializer
 	queueConfigs queueconfig.Store
 	registry     consumer.TopicRegistry
@@ -81,13 +81,13 @@ type landController struct {
 // NewLandController creates a new instance of the gateway land controller.
 // The controller publishes land requests to the topic registered under
 // topickey.TopicKeyStart in the registry.
-func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter counter.Counter, store storage.Storage, queueConfigs queueconfig.Store, registry consumer.TopicRegistry) LandController {
+func NewLandController(logger *zap.SugaredLogger, scope tally.Scope, counter counter.Counter, summaries storage.RequestSummaryStore, materializer *requestcore.Materializer, queueConfigs queueconfig.Store, registry consumer.TopicRegistry) LandController {
 	return &landController{
 		logger:       logger,
 		metricsScope: scope.SubScope("land_controller"),
 		counter:      counter,
-		store:        store,
-		materializer: requestcore.NewMaterializer(store),
+		summaries:    summaries,
+		materializer: materializer,
 		queueConfigs: queueConfigs,
 		registry:     registry,
 	}
@@ -138,7 +138,7 @@ func (c *landController) Land(ctx context.Context, req entity.LandRequest) (resu
 		Version:           1,
 		Metadata:          map[string]string{},
 	}
-	if err := c.store.GetRequestSummaryStore().Create(ctx, summary); err != nil {
+	if err := c.summaries.Create(ctx, summary); err != nil {
 		return entity.LandResult{}, fmt.Errorf("failed to create request receipt sqid=%s: %w", req.ID, err)
 	}
 

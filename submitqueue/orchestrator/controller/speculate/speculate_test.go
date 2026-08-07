@@ -35,6 +35,21 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
+// newQueueBatchStateStore returns a QueueBatchStateStore mock that accepts any
+// membership-record write; these tests never list record buckets.
+// staticStorageFactory resolves every queue to one fixed store aggregate.
+type staticStorageFactory struct{ store storage.Storage }
+
+// For returns the fixed store aggregate for any queue.
+func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
+
+func newQueueBatchStateStore(ctrl *gomock.Controller) *storagemock.MockQueueBatchStateStore {
+	s := storagemock.NewMockQueueBatchStateStore(ctrl)
+	s.EXPECT().Put(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	s.EXPECT().Delete(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	return s
+}
+
 func batchWithState(batch entity.Batch, state entity.BatchState) entity.Batch {
 	batch.State = state
 	return batch
@@ -85,7 +100,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, store *storagemock
 	)
 	require.NoError(t, err)
 
-	return NewController(logger, scope, store, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
+	return NewController(logger, scope, staticStorageFactory{store: store}, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
 }
 
 // runProcess builds a delivery for batchID and invokes Process once.
@@ -100,6 +115,7 @@ func runProcess(t *testing.T, ctrl *gomock.Controller, controller *Controller, b
 func TestNewController(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	controller := newTestController(t, ctrl, store, nil)
 
 	require.NotNil(t, controller)
@@ -128,6 +144,7 @@ func TestController_Process_StartSpeculation(t *testing.T) {
 			batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateSpeculating), int32(1), int32(2)).Return(nil)
 
 			store := storagemock.NewMockStorage(ctrl)
+			store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
 			controller := newTestController(t, ctrl, store, nil)
@@ -146,6 +163,7 @@ func TestController_Process_FinalizeNoDeps(t *testing.T) {
 	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateMerging), int32(1), int32(2)).Return(nil)
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
 	controller := newTestController(t, ctrl, store, nil)
@@ -166,6 +184,7 @@ func TestController_Process_FinalizeAllDepsSucceeded(t *testing.T) {
 	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateMerging), int32(1), int32(2)).Return(nil)
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
 	controller := newTestController(t, ctrl, store, nil)
@@ -184,6 +203,7 @@ func TestController_Process_WaitingOnDep(t *testing.T) {
 	// No Update expected — gomock will fail if it is called.
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
 	controller := newTestController(t, ctrl, store, nil)
@@ -204,6 +224,7 @@ func TestController_Process_FailedDepFailsBatch(t *testing.T) {
 	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateFailed), int32(1), int32(2)).Return(nil)
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
 	controller := newTestController(t, ctrl, store, nil)
@@ -226,6 +247,7 @@ func TestController_Process_CancelledDepSkipped(t *testing.T) {
 	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateMerging), int32(1), int32(2)).Return(nil)
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
 	controller := newTestController(t, ctrl, store, nil)
@@ -242,6 +264,7 @@ func TestController_Process_MergingNoOp(t *testing.T) {
 	// No Update expected.
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
 	controller := newTestController(t, ctrl, store, nil)
@@ -266,6 +289,7 @@ func TestController_Process_TerminalSelfHeals(t *testing.T) {
 			// No Update expected.
 
 			store := storagemock.NewMockStorage(ctrl)
+			store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
 			// Require exactly one publish to the conclude topic for self-healing.
@@ -283,7 +307,7 @@ func TestController_Process_TerminalSelfHeals(t *testing.T) {
 			require.NoError(t, err)
 
 			logger := zaptest.NewLogger(t).Sugar()
-			controller := NewController(logger, tally.NoopScope, store, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
+			controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
 
 			require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
 		})
@@ -310,6 +334,7 @@ func TestController_Process_CancelledTerminalSelfHealsDependents(t *testing.T) {
 	}, nil)
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetBatchDependentStore().Return(depStore).AnyTimes()
 	// BuildStore must NOT be touched on the terminal self-heal path.
@@ -338,7 +363,7 @@ func TestController_Process_CancelledTerminalSelfHealsDependents(t *testing.T) {
 	require.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
-	controller := NewController(logger, tally.NoopScope, store, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
+	controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
 
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
 
@@ -381,6 +406,7 @@ func TestController_Process_CancellingTerminalFlow(t *testing.T) {
 	}, nil)
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
 	store.EXPECT().GetBatchDependentStore().Return(depStore).AnyTimes()
@@ -409,7 +435,7 @@ func TestController_Process_CancellingTerminalFlow(t *testing.T) {
 	require.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
-	controller := NewController(logger, tally.NoopScope, store, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
+	controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
 
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
 
@@ -444,6 +470,7 @@ func TestController_Process_CancellingBuildAlreadyTerminal(t *testing.T) {
 	}, nil)
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
 	store.EXPECT().GetBatchDependentStore().Return(depStore).AnyTimes()
@@ -473,6 +500,7 @@ func TestController_Process_CancellingNoBuildYet(t *testing.T) {
 	}, nil)
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
 	store.EXPECT().GetBatchDependentStore().Return(depStore).AnyTimes()
@@ -500,6 +528,7 @@ func TestController_Process_CancellingNoDependents(t *testing.T) {
 	depStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.BatchDependent{BatchID: batch.ID, Dependents: []string{}, Version: 1}, nil)
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
 	store.EXPECT().GetBatchDependentStore().Return(depStore).AnyTimes()
@@ -518,7 +547,7 @@ func TestController_Process_CancellingNoDependents(t *testing.T) {
 	require.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
-	controller := NewController(logger, tally.NoopScope, store, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
+	controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
 
 	require.NoError(t, runProcess(t, ctrl, controller, batch.ID))
 }
@@ -541,6 +570,7 @@ func TestController_Process_CancellingTerminalCASVersionMismatch(t *testing.T) {
 	buildStore.EXPECT().Get(gomock.Any(), batch.ID).Return(entity.Build{}, storage.ErrNotFound)
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
 	// BatchDependentStore must NOT be touched — terminal CAS failed before fan-out.
@@ -559,7 +589,7 @@ func TestController_Process_CancellingTerminalCASVersionMismatch(t *testing.T) {
 	require.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
-	controller := NewController(logger, tally.NoopScope, store, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
+	controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, registry, topickey.TopicKeySpeculate, "orchestrator-speculate")
 
 	err = runProcess(t, ctrl, controller, batch.ID)
 	require.Error(t, err)
@@ -576,6 +606,7 @@ func TestController_Process_UnrecognizedState(t *testing.T) {
 	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
 	controller := newTestController(t, ctrl, store, nil)
@@ -591,6 +622,7 @@ func TestController_Process_StorageFailure(t *testing.T) {
 	batchStore.EXPECT().Get(gomock.Any(), "test-queue/batch/1").Return(entity.Batch{}, fmt.Errorf("db connection lost"))
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
 	controller := newTestController(t, ctrl, store, nil)
@@ -609,6 +641,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 	// No Update expected — publish fails before we get there.
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
 	controller := newTestController(t, ctrl, store, fmt.Errorf("publish failed"))
@@ -619,6 +652,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 func TestController_Process_BadPayload(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	controller := newTestController(t, ctrl, store, nil)
 
 	msg := entityqueue.NewMessage("anything", []byte("not-json"), "test-queue", nil)

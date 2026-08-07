@@ -52,12 +52,12 @@ type cancelController struct {
 // NewCancelController creates a new instance of the gateway cancel controller.
 // The controller writes a RequestStatusCancelling log entry through the shared materializer and
 // publishes cancel requests to the topic registered under topickey.TopicKeyCancel.
-func NewCancelController(logger *zap.SugaredLogger, scope tally.Scope, store storage.Storage, registry consumer.TopicRegistry) CancelController {
+func NewCancelController(logger *zap.SugaredLogger, scope tally.Scope, summaries storage.RequestSummaryStore, materializer *requestcore.Materializer, registry consumer.TopicRegistry) CancelController {
 	return &cancelController{
 		logger:              logger,
 		metricsScope:        scope,
-		requestSummaryStore: store.GetRequestSummaryStore(),
-		materializer:        requestcore.NewMaterializer(store),
+		requestSummaryStore: summaries,
+		materializer:        materializer,
 		registry:            registry,
 	}
 }
@@ -86,13 +86,18 @@ func (c *cancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 	)
 
 	// Verify the sqid exists before recording intent or publishing.
-	if _, err := c.requestSummaryStore.Get(ctx, req.ID); err != nil {
+	summary, err := c.requestSummaryStore.Get(ctx, req.ID)
+	if err != nil {
 		if storage.IsNotFound(err) {
 			metrics.NamedCounter(c.metricsScope, opName, "not_found", 1)
 			return errs.NewUserError(&RequestNotFoundError{Sqid: req.ID})
 		}
 		return fmt.Errorf("failed to look up request summary for sqid=%s: %w", req.ID, err)
 	}
+
+	// Stamp the authoritative queue from the stored summary onto the payload,
+	// overriding whatever the caller supplied.
+	req.Queue = summary.Queue
 
 	// Record the user's intent in the request log before publishing. Writing direct to the
 	// store (rather than via the log topic) keeps the gateway-emitted entry consistent with

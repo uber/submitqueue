@@ -14,10 +14,6 @@
 
 package entity
 
-import (
-	"encoding/json"
-)
-
 // RequestState defines the internal state of a Stovepipe validation request as it moves
 // through the pipeline. States are internal and used to implement a state machine; a
 // customer-facing status type may be layered on top later, as in SubmitQueue.
@@ -123,34 +119,4 @@ type Request struct {
 	// Version is the version of the object. It is used for optimistic locking.
 	// Versioning starts at 1 and is incremented for each change to the object.
 	Version int32 `json:"version"`
-}
-
-// ToBytes serializes the Request to JSON bytes for queue message payload.
-func (r Request) ToBytes() ([]byte, error) {
-	return json.Marshal(r)
-}
-
-// RequestFromBytes deserializes a Request from JSON bytes.
-func RequestFromBytes(data []byte) (Request, error) {
-	var req Request
-	err := json.Unmarshal(data, &req)
-	return req, err
-}
-
-// RequestID is a lightweight entity for publishing and consuming just the request identifier via the queue.
-type RequestID struct {
-	// ID is the globally unique identifier for the request.
-	ID string `json:"id"`
-}
-
-// ToBytes serializes the RequestID to JSON bytes for queue message payload.
-func (r RequestID) ToBytes() ([]byte, error) {
-	return json.Marshal(r)
-}
-
-// RequestIDFromBytes deserializes a RequestID from JSON bytes.
-func RequestIDFromBytes(data []byte) (RequestID, error) {
-	var rid RequestID
-	err := json.Unmarshal(data, &rid)
-	return rid, err
 }

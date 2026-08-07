@@ -34,15 +34,10 @@ const (
 	// a controller fails to start during Start().
 	startupCleanupTimeoutMs = 30000
 
-	// gateExtensionMs is the visibility extension applied to a delivery blocked
-	// behind its consumer gate on each keep-in-flight tick, keeping it in-flight
-	// without burning retry budget (milliseconds). Must comfortably exceed
-	// defaultGateExtendInterval.
-	gateExtensionMs = int64(30000)
-
-	// defaultGateExtendInterval is how often a gate-blocked delivery's
-	// visibility is extended.
-	defaultGateExtendInterval = 10 * time.Second
+	// defaultGateRecheckDelayMs is how long a gate-blocked delivery is
+	// postponed before it redelivers and re-checks the gate (milliseconds).
+	// It bounds the release latency after a gate opens.
+	defaultGateRecheckDelayMs = int64(1000)
 )
 
 // Consumer orchestrates multiple queue consumers. It handles subscription lifecycle,
@@ -74,10 +69,11 @@ type consumer struct {
 	processor    errs.ErrorProcessor
 	gate         consumergate.Gate
 
-	// gateExtendInterval is how often a gate-blocked delivery's visibility is
-	// extended. Fixed to defaultGateExtendInterval by New; a field (not the
-	// const) so in-package tests can exercise the keep-in-flight path quickly.
-	gateExtendInterval time.Duration
+	// gateRecheckDelayMs is how long a gate-blocked delivery is postponed
+	// before it redelivers and re-checks the gate. Fixed to
+	// defaultGateRecheckDelayMs by New; a field (not the const) so in-package
+	// tests can exercise the re-check path quickly.
+	gateRecheckDelayMs int64
 
 	mu            sync.Mutex
 	stopped       bool
@@ -116,7 +112,7 @@ func New(logger *zap.SugaredLogger, scope tally.Scope, registry TopicRegistry, p
 		registry:           registry,
 		processor:          processor,
 		gate:               gate,
-		gateExtendInterval: defaultGateExtendInterval,
+		gateRecheckDelayMs: defaultGateRecheckDelayMs,
 		subscriptions:      make(map[TopicKey]*activeSubscription),
 	}
 }
@@ -367,11 +363,12 @@ func (m *consumer) processPartition(ctx context.Context, controller Controller, 
 func (m *consumer) processDelivery(ctx context.Context, controller Controller, delivery extqueue.Delivery, controllerScope tally.Scope) {
 	const opName = "process"
 
-	// Consumer gate: block the delivery while the controller's gate is closed.
-	// A false return means the consumer is shutting down while blocked — leave
-	// the delivery in-flight (no process, no ack/nack) so its visibility lapses
-	// into a normal redelivery. Gate errors fail open inside waitGate.
-	if !m.waitGate(ctx, controller, delivery, controllerScope) {
+	// Consumer gate: a delivery whose gate is closed is recorded as parked and
+	// postponed (barrier + re-check on redelivery); a false return also covers
+	// shutdown-while-checking, where the delivery is left in flight so its
+	// visibility lapses into a normal redelivery. Either way there is nothing
+	// further to do here. Gate read errors fail open inside checkGate.
+	if !m.checkGate(ctx, controller, delivery, controllerScope) {
 		return
 	}
 
@@ -471,9 +468,9 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 			"elapsed_ms", elapsed.Milliseconds(),
 		)
 
-		// Nack with no delay - let visibility timeout handle retry delay
+		// Nack requeues immediately - the visibility timeout spaces retries
 		nackOp := metrics.Begin(controllerScope, "nack", metrics.StorageLatencyBuckets)
-		nackErr := delivery.Nack(ctx, 0)
+		nackErr := delivery.Nack(ctx)
 		nackOp.Complete(nackErr)
 		if nackErr != nil {
 			m.logger.Errorw("failed to nack message",
@@ -540,22 +537,18 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 	)
 }
 
-// waitGate clears a delivery through the consumer gate before it reaches the
-// controller. It returns true when the delivery may proceed, false when it
-// must be left in-flight without processing or ack/nack.
+// checkGate clears a delivery through the consumer gate before it reaches the
+// controller. It returns true when the delivery may proceed, false when the
+// gate handled it: a blocked delivery is recorded as parked and postponed, so
+// the same message redelivers after the re-check delay and re-enters here —
+// the gate never waits in memory and never holds a lease.
 //
-// Gate.Enter checks the gate synchronously; an unblocked entry is the common
-// path and costs nothing further. For a blocked entry the gate hands back a
-// watch channel (its own monitoring goroutine behind it), and this routine
-// multiplexes the watch with visibility extension. The source delivery remains
-// owned by the queue throughout the wait: gating never acknowledges, rejects,
-// nacks, or moves it. On shutdown, extension stops and normal queue visibility
-// semantics make the delivery eligible for redelivery.
-//
-// Failures fail open: if gate state cannot be read or recorded, or the delivery
-// can no longer be held safely because visibility extension failed, processing
-// proceeds and the failure is surfaced via logs and metrics.
-func (m *consumer) waitGate(ctx context.Context, controller Controller, delivery extqueue.Delivery, scope tally.Scope) bool {
+// Failures fail open: if gate state cannot be read, processing proceeds and
+// the failure is surfaced via logs and metrics. Park is best-effort (the
+// record is observability, never the outcome), and a failed postpone is
+// abandoned like a failed ack — the visibility timeout lapses into a normal
+// redelivery, which re-checks the gate.
+func (m *consumer) checkGate(ctx context.Context, controller Controller, delivery extqueue.Delivery, scope tally.Scope) bool {
 	const opName = "gate"
 
 	msg := delivery.Message()
@@ -565,6 +558,8 @@ func (m *consumer) waitGate(ctx context.Context, controller Controller, delivery
 	entry, err := m.gate.Enter(ctx, consumergate.Key{ConsumerGroup: consumerGroup, PartitionKey: msg.PartitionKey})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
+			// Shutting down: leave the delivery in flight; visibility lapses
+			// into a normal redelivery.
 			return false
 		}
 		metrics.NamedCounter(scope, opName, "enter_errors", 1)
@@ -576,14 +571,6 @@ func (m *consumer) waitGate(ctx context.Context, controller Controller, delivery
 		)
 		return true
 	}
-	if !entry.Blocked() {
-		return true
-	}
-
-	start := time.Now()
-	defer func() {
-		metrics.NamedHistogram(scope, opName, "wait_latency", metrics.LongLatencyBuckets).RecordDuration(time.Since(start))
-	}()
 
 	descriptor := consumergate.DeliveryDescriptor{
 		Topic:     topic,
@@ -592,49 +579,48 @@ func (m *consumer) waitGate(ctx context.Context, controller Controller, delivery
 		Attempt:   delivery.Attempt(),
 	}
 
-	watchCtx, cancelWatch := context.WithCancel(ctx)
-	defer cancelWatch()
-	watchCh := entry.Watch(watchCtx, descriptor)
-
-	ticker := time.NewTicker(m.gateExtendInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case waitErr := <-watchCh:
-			if waitErr == nil {
-				return true
-			}
-			if errors.Is(waitErr, context.Canceled) {
-				return false
-			}
-			metrics.NamedCounter(scope, opName, "wait_errors", 1)
-			m.logger.Errorw("gate wait failed, failing open",
+	if !entry.Blocked() {
+		// Unconditional best-effort cleanup: if this delivery was parked on an
+		// earlier re-check, the gate has opened and the record must go so
+		// observers see an empty parked set. A no-op when never parked.
+		if unparkErr := entry.Unpark(ctx, descriptor); unparkErr != nil {
+			metrics.NamedCounter(scope, opName, "unpark_errors", 1)
+			m.logger.Warnw("failed to remove parked record on admit",
 				"consumer_group", consumerGroup,
 				"topic", topic,
 				"message_id", msg.ID,
-				"error", waitErr,
+				"error", unparkErr,
 			)
-			return true
-
-		case <-ticker.C:
-			if extendErr := delivery.ExtendVisibilityTimeout(ctx, gateExtensionMs); extendErr != nil {
-				cancelWatch()
-				<-watchCh
-				if errors.Is(extendErr, context.Canceled) {
-					return false
-				}
-				metrics.NamedCounter(scope, opName, "wait_errors", 1)
-				m.logger.Errorw("gate visibility extension failed, failing open",
-					"consumer_group", consumerGroup,
-					"topic", topic,
-					"message_id", msg.ID,
-					"error", extendErr,
-				)
-				return true
-			}
 		}
+		return true
 	}
+
+	// Blocked: record the observation, then postpone the delivery so the
+	// partition waits behind it (barrier) and the gate is re-checked on
+	// redelivery without burning retry budget.
+	if parkErr := entry.Park(ctx, descriptor); parkErr != nil {
+		metrics.NamedCounter(scope, opName, "park_errors", 1)
+		m.logger.Warnw("failed to write parked record, postponing anyway",
+			"consumer_group", consumerGroup,
+			"topic", topic,
+			"message_id", msg.ID,
+			"error", parkErr,
+		)
+	}
+
+	metrics.NamedCounter(scope, opName, "parked", 1)
+	postponeOp := metrics.Begin(scope, "postpone", metrics.StorageLatencyBuckets)
+	postponeErr := delivery.Postpone(ctx, m.gateRecheckDelayMs)
+	postponeOp.Complete(postponeErr)
+	if postponeErr != nil {
+		m.logger.Errorw("failed to postpone gated delivery, leaving in flight",
+			"consumer_group", consumerGroup,
+			"topic", topic,
+			"message_id", msg.ID,
+			"error", postponeErr,
+		)
+	}
+	return false
 }
 
 func controllerClassificationTags(err error) []metrics.Tag {

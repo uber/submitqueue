@@ -33,7 +33,7 @@ import (
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	store         storage.Storage
+	stores        storage.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -46,7 +46,7 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	stores storage.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -54,7 +54,7 @@ func NewController(
 	return &Controller{
 		logger:        logger.Named("conclude_controller"),
 		metricsScope:  scope.SubScope("conclude_controller"),
-		store:         store,
+		stores:        stores,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -74,11 +74,25 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to deserialize batch ID: %w", err)
 	}
 
+	store, err := c.stores.For(storage.Config{QueueName: bid.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, "process", "storage_resolve_errors", 1)
+		// Non-retryable: a missing or unresolvable queue is a malformed message.
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", bid.Queue, err)
+	}
+
 	// Fetch batch from storage
-	batch, err := c.store.GetBatchStore().Get(ctx, bid.ID)
+	batch, err := store.GetBatchStore().Get(ctx, bid.ID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, "process", "storage_errors", 1)
 		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
+	}
+
+	// The payload's queue must match the batch's authoritative queue; a
+	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
+	if bid.Queue != "" && bid.Queue != batch.Queue {
+		metrics.NamedCounter(c.metricsScope, "process", "queue_mismatch", 1)
+		return fmt.Errorf("payload queue %q does not match queue %q of batch %s", bid.Queue, batch.Queue, batch.ID)
 	}
 
 	c.logger.Infow("received conclude event",
@@ -110,7 +124,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// retried (and eventually dead-lettered) rather than silently skipped. We
 	// translate the result into per-outcome logs and metrics.
 	for _, requestID := range batch.Contains {
-		res, err := corerequest.TerminateRequest(ctx, c.store, c.registry, requestID, requestState, "", map[string]string{
+		res, err := corerequest.TerminateRequest(ctx, store, c.registry, requestID, requestState, "", map[string]string{
 			"batch_id": batch.ID,
 		})
 		if err != nil {

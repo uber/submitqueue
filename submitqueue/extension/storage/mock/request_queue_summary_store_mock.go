@@ -57,18 +57,18 @@ func (mr *MockRequestQueueSummaryStoreMockRecorder) Create(ctx, summary any) *go
 }
 
 // Get mocks base method.
-func (m *MockRequestQueueSummaryStore) Get(ctx context.Context, queue string, receivedAtMs int64, requestID string) (entity.RequestQueueSummary, error) {
+func (m *MockRequestQueueSummaryStore) Get(ctx context.Context, receivedAtMs int64, requestID string) (entity.RequestQueueSummary, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Get", ctx, queue, receivedAtMs, requestID)
+	ret := m.ctrl.Call(m, "Get", ctx, receivedAtMs, requestID)
 	ret0, _ := ret[0].(entity.RequestQueueSummary)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Get indicates an expected call of Get.
-func (mr *MockRequestQueueSummaryStoreMockRecorder) Get(ctx, queue, receivedAtMs, requestID any) *gomock.Call {
+func (mr *MockRequestQueueSummaryStoreMockRecorder) Get(ctx, receivedAtMs, requestID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockRequestQueueSummaryStore)(nil).Get), ctx, queue, receivedAtMs, requestID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockRequestQueueSummaryStore)(nil).Get), ctx, receivedAtMs, requestID)
 }
 
 // List mocks base method.

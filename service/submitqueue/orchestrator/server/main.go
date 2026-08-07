@@ -47,6 +47,7 @@ import (
 	githubprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/github"
 	phabprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/phabricator"
 	routingprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/routing"
+	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	validatorfake "github.com/uber/submitqueue/submitqueue/extension/validator/fake"
 	"github.com/uber/submitqueue/submitqueue/orchestrator"
@@ -180,7 +181,8 @@ func run() error {
 	// Build per-queue extension profiles (host-private). Each queue resolves
 	// to its own set of extension implementations (conflict analyzer, …),
 	// falling back to a baseline profile for queues without an explicit entry.
-	profiles, err := newProfiles(logger, scope, changeset.New(store.GetRequestStore(), store.GetChangeStore()))
+	storageFty := storageFactory{backend: store}
+	profiles, err := newProfiles(logger, scope, changeset.New(storageFty), storageFty)
 	if err != nil {
 		return fmt.Errorf("failed to build profiles: %w", err)
 	}
@@ -191,7 +193,7 @@ func run() error {
 	deps := orchestrator.Deps{
 		Logger:         logger.Sugar(),
 		Scope:          scope,
-		Storage:        store,
+		Storage:        profiles.StorageFactory(),
 		Counter:        cnt,
 		BuildRunner:    profiles.BuildRunnerFactory(),
 		ChangeProvider: profiles.ChangeProviderFactory(),
@@ -312,7 +314,7 @@ func newConsumerGate(logger *zap.Logger) consumergate.Gate {
 		return consumergatenoop.New()
 	}
 	logger.Info("consumer gate configured", zap.String("dir", dir))
-	return consumergatefile.New(dir, consumergate.DefaultConfig())
+	return consumergatefile.New(dir)
 }
 
 // newChangeProvider creates a routing ChangeProvider containing GitHub and Phab ChangeProviders.
@@ -430,4 +432,17 @@ func parseTimeout(envVal string, defaultVal time.Duration) time.Duration {
 		return d
 	}
 	return defaultVal
+}
+
+// storageFactory adapts the MySQL storage backend's queue binding to the
+// storage.Factory seam. Routing every queue to the single shared backend is
+// this host's policy; a deployment that splits queues across backends swaps
+// this adapter for a routing one.
+type storageFactory struct {
+	backend *mysqlstorage.Storage
+}
+
+// For returns the queue-scoped store aggregate bound to the queue named in config.
+func (f storageFactory) For(config storage.Config) (storage.Storage, error) {
+	return f.backend.For(config.QueueName)
 }

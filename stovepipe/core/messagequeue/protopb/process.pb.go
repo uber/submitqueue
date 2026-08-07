@@ -44,7 +44,11 @@ const (
 type ProcessRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// id is the minted request id to process. Format: "request/<queue>/<counter>".
-	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// queue_name is the name of the queue processing the request, carried so
+	// the consumer can route by queue without loading state first. Empty on
+	// payloads written before the field existed.
+	QueueName     string `protobuf:"bytes,2,opt,name=queue_name,json=queueName,proto3" json:"queue_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -86,13 +90,22 @@ func (x *ProcessRequest) GetId() string {
 	return ""
 }
 
+func (x *ProcessRequest) GetQueueName() string {
+	if x != nil {
+		return x.QueueName
+	}
+	return ""
+}
+
 var File_process_proto protoreflect.FileDescriptor
 
 const file_process_proto_rawDesc = "" +
 	"\n" +
-	"\rprocess.proto\x12\x1buber.stovepipe.messagequeue\x1a.api/base/messagequeue/proto/messagequeue.proto\"-\n" +
+	"\rprocess.proto\x12\x1buber.stovepipe.messagequeue\x1a.api/base/messagequeue/proto/messagequeue.proto\"L\n" +
 	"\x0eProcessRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id:\v\x8a\xb5\x18\aprocessB~\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
+	"\n" +
+	"queue_name\x18\x02 \x01(\tR\tqueueName:\v\x8a\xb5\x18\aprocessB~\n" +
 	"+com.uber.submitqueue.stovepipe.messagequeueB\fProcessProtoP\x01Z?github.com/uber/submitqueue/stovepipe/core/messagequeue/protopbb\x06proto3"
 
 var (

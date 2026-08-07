@@ -85,6 +85,21 @@ func IsBatchStateHalted(s BatchState) bool {
 	return s.IsTerminal() || s == BatchStateCancelling
 }
 
+// AllBatchStates returns every named batch state, in lifecycle order.
+// BatchStateUnknown is excluded: it is the zero-value sentinel, not a state a batch can occupy.
+func AllBatchStates() []BatchState {
+	return []BatchState{
+		BatchStateCreating,
+		BatchStateCreated,
+		BatchStateSpeculating,
+		BatchStateMerging,
+		BatchStateSucceeded,
+		BatchStateFailed,
+		BatchStateCancelling,
+		BatchStateCancelled,
+	}
+}
+
 // ActiveBatchStates returns batch states eligible for active pipeline and cancellation lookups.
 // Creating is excluded because its reverse-index structure may still be incomplete.
 func ActiveBatchStates() []BatchState {
@@ -172,6 +187,8 @@ func BatchFromBytes(data []byte) (Batch, error) {
 type BatchID struct {
 	// ID is the globally unique identifier for the batch.
 	ID string `json:"id"`
+	// Queue is the name of the queue processing the batch. Empty on payloads written before the field existed.
+	Queue string `json:"queue"`
 }
 
 // ToBytes serializes the BatchID to JSON bytes for queue message payload.

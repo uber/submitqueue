@@ -39,7 +39,7 @@ import (
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	store         storage.Storage
+	stores        storage.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -52,7 +52,7 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	stores storage.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -60,7 +60,7 @@ func NewController(
 	return &Controller{
 		logger:        logger.Named("start_controller"),
 		metricsScope:  scope.SubScope("start_controller"),
-		store:         store,
+		stores:        stores,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -80,6 +80,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, opName, "deserialize_errors", 1)
 		// Non-retryable: malformed messages will never succeed regardless of retry count
 		return fmt.Errorf("failed to deserialize land request: %w", err)
+	}
+
+	store, err := c.stores.For(storage.Config{QueueName: landRequest.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		// Non-retryable: a missing or unresolvable queue is a malformed message.
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", landRequest.Queue, err)
 	}
 
 	request := entity.Request{
@@ -105,7 +112,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	// Persist request to storage. ErrAlreadyExists means a queue redelivery of the same
 	// request_id (an at-least-once retry of THIS message), not a cross-request collision.
-	if err := c.store.GetRequestStore().Create(ctx, request); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
+	if err := store.GetRequestStore().Create(ctx, request); err != nil && !errors.Is(err, storage.ErrAlreadyExists) {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -130,15 +137,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	return nil
 }
 
-// publish publishes a request ID to the specified topic key.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, requestID string, partitionKey string) error {
-	rid := entity.RequestID{ID: requestID}
+// publish publishes a request ID to the specified topic key, stamped with and
+// partitioned by the request's queue.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, requestID string, queue string) error {
+	rid := entity.RequestID{ID: requestID, Queue: queue}
 	payload, err := rid.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize request ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(requestID, payload, partitionKey, nil)
+	msg := entityqueue.NewMessage(requestID, payload, queue, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

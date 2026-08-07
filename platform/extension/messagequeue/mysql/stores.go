@@ -103,6 +103,17 @@ type offsetStore interface {
 	GetMinAckedOffset(ctx context.Context, topic string, partitionKey string) (offset int64, found bool, err error)
 }
 
+// leaseInfo describes one partition's current lease row (internal use only)
+type leaseInfo struct {
+	// PartitionKey is the partition this lease covers
+	PartitionKey string
+	// LeasedBy is the subscriber name currently holding the lease
+	LeasedBy string
+	// LeaseRenewedAt is the epoch milliseconds of the last renewal; a lease
+	// is stale (stealable) once this is older than the lease duration
+	LeaseRenewedAt int64
+}
+
 // partitionLeaseStore handles partition lease operations (internal use only)
 type partitionLeaseStore interface {
 	// TryAcquireLease attempts to acquire or renew a lease for a partition
@@ -119,6 +130,12 @@ type partitionLeaseStore interface {
 
 	// GetLeasedPartitions returns all partitions currently leased by this worker
 	GetLeasedPartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string) ([]string, error)
+
+	// GetAllLeases returns the lease row for every partition currently leased
+	// under (topic, consumerGroup) by any subscriber. One PK-prefix read that
+	// lets acquisition skip partitions validly held by other subscribers
+	// instead of write-probing every lease row each discovery tick.
+	GetAllLeases(ctx context.Context, topic string, consumerGroup string) ([]leaseInfo, error)
 
 	// DiscoverAndAcquirePartitions discovers partitions from messages table and tries to acquire leases.
 	// Returns the number of new leases acquired and the full list of discovered partitions.
@@ -137,8 +154,18 @@ type subscriberHeartbeatStore interface {
 	// within this duration are considered dead.
 	ActiveSubscribers(ctx context.Context, topic string, consumerGroup string, staleDurationMs int64) ([]string, error)
 
-	// Deregister removes a subscriber's heartbeat entry
+	// Deregister removes a subscriber's heartbeat row. Hard delete: the row
+	// is not needed once the subscriber is gone, and subscriber names are
+	// unique per process (hostname-pid), so rows would otherwise accumulate
+	// forever across deploys. Re-subscribing re-inserts via Heartbeat.
 	Deregister(ctx context.Context, topic string, subscriberName string, consumerGroup string) error
+
+	// PurgeStale deletes heartbeat rows whose last heartbeat is older than
+	// olderThanMs. Backstop for subscribers that never deregistered
+	// (crashes, SIGKILL): without it the table grows monotonically since
+	// every process registers under a fresh name. Deleting a live-but-stalled
+	// subscriber's row is harmless — its next heartbeat re-inserts it.
+	PurgeStale(ctx context.Context, topic string, consumerGroup string, olderThanMs int64) error
 }
 
 // DeliveryState represents the full per-message delivery tracking state.
@@ -170,8 +197,9 @@ type deliveryStateStore interface {
 	// MarkAcked sets acked = TRUE to indicate this group has processed the message.
 	MarkAcked(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64) error
 
-	// MarkNacked sets invisible_until = now + delay to schedule redelivery.
-	MarkNacked(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64, delayMs int64) error
+	// MarkNacked makes the message immediately eligible for redelivery
+	// (invisible_until = now).
+	MarkNacked(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64) error
 
 	// MarkPostponed sets invisible_until = now + delay, resets retry_count, and
 	// sets the postponed flag. The message becomes a partition barrier until it

@@ -26,20 +26,12 @@
 // metadata so an operator finding a paused controller can tell why. All writes
 // go through temp-file-plus-rename so readers never see partial JSON.
 //
-// Enter reads the applicable gate files for every delivery. A blocked Entry's
-// Watch writes the parked record, then a monitor goroutine polls those files on
-// a ticker at the configured interval. The parked record is removed before the
-// watch yields on every terminal path, so the directory contains only
-// deliveries currently held behind a gate.
-//
-// Filesystem events such as inotify are intentionally not the correctness
-// mechanism here. They are platform-specific, can overflow or coalesce events,
-// and require watches to be re-established when watched paths are removed or
-// replaced. Event behavior also varies across bind mounts, overlay or network
-// filesystems, rootless Docker, and Docker Desktop's host/container filesystem
-// bridge. Polling works consistently across those environments. A future
-// enhancement may use filesystem events to accelerate wakeups while retaining
-// polling as the fallback and convergence mechanism.
+// Enter reads the applicable gate files for every delivery; the store itself
+// never waits or polls. A blocked delivery's re-check cadence is owned by the
+// caller (the consumer postpones the delivery and re-enters on redelivery), so
+// gate state is re-read on every attempt regardless of filesystem event
+// support — which varies across bind mounts, overlay or network filesystems,
+// rootless Docker, and Docker Desktop's host/container filesystem bridge.
 //
 // The medium is deliberately scoped to E2E tests and single-host development:
 // pausing a controller is writing a small file, resuming is rm, and a bind mount
@@ -64,8 +56,7 @@ import (
 
 // Store implements consumergate.Gate and consumergate.Admin over a directory.
 type Store struct {
-	dir          string
-	pollInterval time.Duration
+	dir string
 }
 
 // Verify interface compliance at compile time.
@@ -76,17 +67,9 @@ var (
 
 // New returns a file-backed consumergate store rooted at dir. The directory
 // does not need to exist yet — reads treat a missing tree as "no gates, no
-// parked records", and writes create what they need. cfg.PollIntervalMs
-// controls how often a blocked delivery re-checks gate state; values <= 0
-// fall back to the default (1s).
-func New(dir string, cfg consumergate.Config) *Store {
-	if cfg.PollIntervalMs <= 0 {
-		cfg.PollIntervalMs = consumergate.DefaultConfig().PollIntervalMs
-	}
-	return &Store{
-		dir:          dir,
-		pollInterval: time.Duration(cfg.PollIntervalMs) * time.Millisecond,
-	}
+// parked records", and writes create what they need.
+func New(dir string) *Store {
+	return &Store{dir: dir}
 }
 
 // gatePath returns the gate file path for a key: the "all" marker when the key
@@ -126,59 +109,34 @@ func (s *Store) isGated(consumerGroup, partitionKey string) (bool, error) {
 }
 
 // Enter implements consumergate.Gate. It returns an unblocked Entry when the
-// gate identified by key is open, and a blocked Entry — whose Wait records the
-// parked delivery and polls for the gate to open — when it is closed.
+// gate identified by key is open, and a blocked Entry when it is closed.
 func (s *Store) Enter(_ context.Context, key consumergate.Key) (consumergate.Entry, error) {
 	gated, err := s.isGated(key.ConsumerGroup, key.PartitionKey)
 	if err != nil {
 		return nil, err
 	}
-	if !gated {
-		return openEntry{}, nil
-	}
-	return &parkedEntry{store: s, key: key}, nil
+	return entry{store: s, key: key, blocked: gated}, nil
 }
 
-// openEntry is the Entry for a delivery that cleared an open gate.
-type openEntry struct{}
-
-// Blocked implements consumergate.Entry.
-func (openEntry) Blocked() bool { return false }
-
-// Watch implements consumergate.Entry. An open gate never blocks and records
-// nothing; the returned channel yields nil at once.
-func (openEntry) Watch(context.Context, consumergate.DeliveryDescriptor) <-chan error {
-	ch := make(chan error, 1)
-	ch <- nil
-	return ch
-}
-
-// parkedEntry is the Entry for a delivery held by a closed gate.
-type parkedEntry struct {
-	// store is the file store that gated the delivery.
+// entry is the Entry for one delivery's gate check.
+type entry struct {
+	// store is the file store that performed the check.
 	store *Store
 	// key is the gate identity the delivery entered with.
 	key consumergate.Key
+	// blocked records whether the gate was closed at Enter time.
+	blocked bool
 }
 
 // Blocked implements consumergate.Entry.
-func (*parkedEntry) Blocked() bool { return true }
+func (e entry) Blocked() bool { return e.blocked }
 
-// Watch implements consumergate.Entry. It records the parked delivery (stamping
-// the entry's identity and ParkedAtMs) synchronously, then spawns a goroutine
-// that polls on a ticker at the store's poll interval and yields exactly one
-// value on the returned channel: nil when the gate opens, the read/write error
-// if gate state cannot be read or the record written, or ctx.Err() if ctx is
-// cancelled first. The parked record is removed before any result is yielded.
-// The channel is buffered so the goroutine never blocks on its send.
-func (e *parkedEntry) Watch(ctx context.Context, descriptor consumergate.DeliveryDescriptor) <-chan error {
-	s := e.store
-	ch := make(chan error, 1)
-
-	// Construct the gate-owned observation from the caller's delivery
-	// description and the identity captured by Enter. Record synchronously so
-	// the parked record exists by the time Watch returns.
-	parked := consumergate.Parked{
+// Park implements consumergate.Entry. It writes the parked record, combining
+// the caller's delivery description with the gate identity captured by Enter
+// and a fresh ParkedAtMs stamp. Re-parking the same delivery overwrites the
+// previous record.
+func (e entry) Park(_ context.Context, descriptor consumergate.DeliveryDescriptor) error {
+	return e.store.recordParked(consumergate.Parked{
 		ConsumerGroup: e.key.ConsumerGroup,
 		Topic:         descriptor.Topic,
 		MessageID:     descriptor.MessageID,
@@ -186,41 +144,13 @@ func (e *parkedEntry) Watch(ctx context.Context, descriptor consumergate.Deliver
 		Payload:       descriptor.Payload,
 		Attempt:       descriptor.Attempt,
 		ParkedAtMs:    time.Now().UnixMilli(),
-	}
-	if err := s.recordParked(parked); err != nil {
-		ch <- err
-		return ch
-	}
+	})
+}
 
-	go func() {
-		finish := func(waitErr error) {
-			removeErr := s.removeParked(parked.ConsumerGroup, parked.Topic, parked.MessageID)
-			ch <- errors.Join(waitErr, removeErr)
-		}
-
-		ticker := time.NewTicker(s.pollInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				finish(ctx.Err())
-				return
-			case <-ticker.C:
-			}
-
-			gated, err := s.isGated(e.key.ConsumerGroup, e.key.PartitionKey)
-			if err != nil {
-				finish(err)
-				return
-			}
-			if !gated {
-				finish(nil)
-				return
-			}
-		}
-	}()
-
-	return ch
+// Unpark implements consumergate.Entry. Removing an absent record is a no-op,
+// so callers may invoke it unconditionally on the admit path.
+func (e entry) Unpark(_ context.Context, descriptor consumergate.DeliveryDescriptor) error {
+	return e.store.removeParked(e.key.ConsumerGroup, descriptor.Topic, descriptor.MessageID)
 }
 
 // recordParked writes a parked-delivery record. Re-recording the same delivery

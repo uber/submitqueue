@@ -172,20 +172,72 @@ func TestSubscriberHeartbeatStore_ActiveSubscribers_ExcludesDeregistered(t *test
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestSubscriberHeartbeatStore_Deregister_SoftDelete(t *testing.T) {
+func TestSubscriberHeartbeatStore_Deregister_HardDelete(t *testing.T) {
 	db, mock, store := setupSubscriberHeartbeatStoreTest(t)
 	defer db.Close()
 
 	ctx := context.Background()
 
-	// Verify deregister uses UPDATE (not DELETE) and targets only active rows (deregistered_at = 0)
-	mock.ExpectExec(`UPDATE queue_subscriber_heartbeats SET deregistered_at.*AND deregistered_at = 0`).
-		WithArgs(sqlmock.AnyArg(), testConsumerGroup, "test_topic", testSubscriberName).
+	// Verify deregister deletes the row outright — subscriber names are
+	// unique per process, so soft-deleted rows would accumulate forever.
+	mock.ExpectExec(`DELETE FROM queue_subscriber_heartbeats`).
+		WithArgs(testConsumerGroup, "test_topic", testSubscriberName).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err := store.Deregister(ctx, "test_topic", testSubscriberName, testConsumerGroup)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSubscriberHeartbeatStore_PurgeStale(t *testing.T) {
+	tests := []struct {
+		name    string
+		setup   func(mock sqlmock.Sqlmock)
+		wantErr bool
+	}{
+		{
+			name: "deletes rows older than threshold",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec(`DELETE FROM queue_subscriber_heartbeats`).
+					WithArgs(testConsumerGroup, "test_topic", sqlmock.AnyArg()).
+					WillReturnResult(sqlmock.NewResult(0, 3))
+			},
+		},
+		{
+			name: "no stale rows is a no-op",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec(`DELETE FROM queue_subscriber_heartbeats`).
+					WithArgs(testConsumerGroup, "test_topic", sqlmock.AnyArg()).
+					WillReturnResult(sqlmock.NewResult(0, 0))
+			},
+		},
+		{
+			name: "database error",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec(`DELETE FROM queue_subscriber_heartbeats`).
+					WithArgs(testConsumerGroup, "test_topic", sqlmock.AnyArg()).
+					WillReturnError(fmt.Errorf("db error"))
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, store := setupSubscriberHeartbeatStoreTest(t)
+			defer db.Close()
+
+			tt.setup(mock)
+
+			err := store.PurgeStale(context.Background(), "test_topic", testConsumerGroup, 300_000)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestSubscriberHeartbeatStore_ReRegistration(t *testing.T) {
@@ -199,15 +251,15 @@ func TestSubscriberHeartbeatStore_ReRegistration(t *testing.T) {
 		WithArgs(testConsumerGroup, "test_topic", testSubscriberName, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
-	// Step 2: Deregister soft-deletes the subscriber
-	mock.ExpectExec("UPDATE queue_subscriber_heartbeats").
-		WithArgs(sqlmock.AnyArg(), testConsumerGroup, "test_topic", testSubscriberName).
+	// Step 2: Deregister deletes the subscriber's row
+	mock.ExpectExec("DELETE FROM queue_subscriber_heartbeats").
+		WithArgs(testConsumerGroup, "test_topic", testSubscriberName).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	// Step 3: Heartbeat again re-registers (ON DUPLICATE KEY UPDATE resets deregistered_at = 0)
+	// Step 3: Heartbeat again re-registers with a fresh insert
 	mock.ExpectExec("INSERT INTO queue_subscriber_heartbeats").
 		WithArgs(testConsumerGroup, "test_topic", testSubscriberName, sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewResult(0, 2)) // 2 = ON DUPLICATE KEY UPDATE
+		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err := store.Heartbeat(ctx, "test_topic", testSubscriberName, testConsumerGroup)
 	require.NoError(t, err)
@@ -230,8 +282,8 @@ func TestSubscriberHeartbeatStore_Deregister(t *testing.T) {
 		{
 			name: "successfully deregister",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("UPDATE queue_subscriber_heartbeats").
-					WithArgs(sqlmock.AnyArg(), testConsumerGroup, "test_topic", testSubscriberName).
+				mock.ExpectExec("DELETE FROM queue_subscriber_heartbeats").
+					WithArgs(testConsumerGroup, "test_topic", testSubscriberName).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 			wantErr: false,
@@ -239,8 +291,8 @@ func TestSubscriberHeartbeatStore_Deregister(t *testing.T) {
 		{
 			name: "idempotent - already deregistered",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("UPDATE queue_subscriber_heartbeats").
-					WithArgs(sqlmock.AnyArg(), testConsumerGroup, "test_topic", testSubscriberName).
+				mock.ExpectExec("DELETE FROM queue_subscriber_heartbeats").
+					WithArgs(testConsumerGroup, "test_topic", testSubscriberName).
 					WillReturnResult(sqlmock.NewResult(0, 0))
 			},
 			wantErr: false,
@@ -248,8 +300,8 @@ func TestSubscriberHeartbeatStore_Deregister(t *testing.T) {
 		{
 			name: "database error",
 			setup: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("UPDATE queue_subscriber_heartbeats").
-					WithArgs(sqlmock.AnyArg(), testConsumerGroup, "test_topic", testSubscriberName).
+				mock.ExpectExec("DELETE FROM queue_subscriber_heartbeats").
+					WithArgs(testConsumerGroup, "test_topic", testSubscriberName).
 					WillReturnError(fmt.Errorf("db error"))
 			},
 			wantErr: true,

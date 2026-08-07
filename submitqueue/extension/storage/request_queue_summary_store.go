@@ -30,10 +30,9 @@ type RequestQueueSummaryCursor struct {
 	RequestID string
 }
 
-// RequestQueueSummaryQuery specifies one bounded queue-summary page query.
+// RequestQueueSummaryQuery specifies one bounded queue-summary page query
+// against the bound queue's partition.
 type RequestQueueSummaryQuery struct {
-	// Queue is the exact queue partition to scan.
-	Queue string
 	// ReceivedAtOrAfterMs is the inclusive lower receipt-time bound.
 	ReceivedAtOrAfterMs int64
 	// ReceivedBeforeMs is the exclusive upper receipt-time bound.
@@ -49,10 +48,11 @@ type RequestQueueSummaryQuery struct {
 // RequestQueueSummaryStore persists the queue-ordered request projection.
 type RequestQueueSummaryStore interface {
 	// Create inserts summary and returns ErrAlreadyExists when its full primary key already exists.
+	// The summary's Queue must match the instance's bound queue.
 	Create(ctx context.Context, summary entity.RequestQueueSummary) error
 
-	// Get returns the row identified by its full primary key, or ErrNotFound when absent.
-	Get(ctx context.Context, queue string, receivedAtMs int64, requestID string) (entity.RequestQueueSummary, error)
+	// Get returns the bound queue's row identified by (receivedAtMs, requestID), or ErrNotFound when absent.
+	Get(ctx context.Context, receivedAtMs int64, requestID string) (entity.RequestQueueSummary, error)
 
 	// Update conditionally replaces all non-key fields when the persisted projection version equals oldVersion.
 	// The store writes newVersion exactly as supplied and returns ErrVersionMismatch when the guard does not match.

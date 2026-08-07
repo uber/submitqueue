@@ -196,9 +196,51 @@ func (s *sqlpartitionLeaseStore) GetLeasedPartitions(ctx context.Context, topic 
 	return partitions, nil
 }
 
+// GetAllLeases returns the lease row for every partition currently leased
+// under (topic, consumerGroup) by any subscriber.
+func (s *sqlpartitionLeaseStore) GetAllLeases(ctx context.Context, topic string, consumerGroup string) (_ []leaseInfo, retErr error) {
+	op := metrics.Begin(s.scope, "get_all_leases", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
+	defer func() { op.Complete(retErr) }()
+
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT partition_key, leased_by, lease_renewed_at FROM %s
+		WHERE consumer_group = ? AND topic = ?
+	`, PartitionLeasesTableName), consumerGroup, topic)
+
+	if err != nil {
+		return nil, fmt.Errorf("get all leases topic=%s: %w", topic, err)
+	}
+	defer rows.Close()
+
+	var leases []leaseInfo
+	for rows.Next() {
+		var lease leaseInfo
+		if err := rows.Scan(&lease.PartitionKey, &lease.LeasedBy, &lease.LeaseRenewedAt); err != nil {
+			return nil, fmt.Errorf("scan lease topic=%s: %w", topic, err)
+		}
+		leases = append(leases, lease)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration topic=%s: %w", topic, err)
+	}
+
+	return leases, nil
+}
+
 // DiscoverAndAcquirePartitions discovers partitions from messages table and tries to acquire leases.
 // Returns the number of new leases acquired and the full list of discovered partitions.
 // maxPartitions limits how many total partitions this subscriber can own (0 = unlimited)
+//
+// Acquisition is lease-aware: one GetAllLeases read classifies every
+// discovered partition, and TryAcquireLease is attempted only for partitions
+// that are unleased or whose lease is stale (stealable). Partitions already
+// owned by this subscriber are counted against the cap but not re-probed
+// (renewal is the lease tick's job), and partitions validly held by another
+// subscriber are skipped entirely — probing them is a guaranteed-futile
+// write on a contended lease row. The classification is advisory (a lease
+// can expire or renew between the read and the attempt); TryAcquireLease
+// remains the atomic arbiter.
 func (s *sqlpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Context, topic string, subscriberName string, consumerGroup string, leaseDurationMs int64, maxPartitions int) (_ int, _ []string, retErr error) {
 	op := metrics.Begin(s.scope, "discover_and_acquire", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
 	defer func() { op.Complete(retErr) }()
@@ -234,28 +276,44 @@ func (s *sqlpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Contex
 		"count", len(partitions),
 	)
 
-	// Query owned partitions once before the loop to avoid N+1 queries.
-	// Build a set of already-owned partition keys so we can distinguish
-	// re-acquiring an already-owned partition from acquiring a new one.
+	// One read of every lease row classifies the discovered partitions:
+	// self-owned (count toward the cap, no re-probe), validly held by
+	// another subscriber (skip), or unleased/stale (acquisition candidates).
+	allLeases, err := s.GetAllLeases(ctx, topic, consumerGroup)
+	if err != nil {
+		return 0, nil, fmt.Errorf("get all leases for acquisition topic=%s: %w", topic, err)
+	}
+	staleThreshold := currentTimeMillis() - leaseDurationMs
 	ownedCount := 0
 	ownedSet := make(map[string]struct{})
-	if maxPartitions > 0 {
-		owned, err := s.GetLeasedPartitions(ctx, topic, subscriberName, consumerGroup)
-		if err != nil {
-			return 0, nil, fmt.Errorf("get owned partitions for cap check topic=%s: %w", topic, err)
-		}
-		ownedCount = len(owned)
-		for _, pk := range owned {
-			ownedSet[pk] = struct{}{}
+	heldByOther := make(map[string]struct{})
+	for _, lease := range allLeases {
+		switch {
+		case lease.LeasedBy == subscriberName:
+			// Self-owned, fresh or stale: a stale self-lease means our own
+			// renewals are lagging, not that ownership moved.
+			ownedSet[lease.PartitionKey] = struct{}{}
+			ownedCount++
+		case lease.LeaseRenewedAt >= staleThreshold:
+			heldByOther[lease.PartitionKey] = struct{}{}
 		}
 	}
 
 	// Sort partitions deterministically
 	sort.Strings(partitions)
 
-	// Try to acquire leases for discovered partitions
+	// Try to acquire leases for unleased or stale discovered partitions
 	acquiredCount := 0
+	skippedCount := 0
 	for _, partitionKey := range partitions {
+		if _, owned := ownedSet[partitionKey]; owned {
+			continue
+		}
+		if _, held := heldByOther[partitionKey]; held {
+			skippedCount++
+			continue
+		}
+
 		// Enforce maxPartitions cap using local count
 		if maxPartitions > 0 && ownedCount >= maxPartitions {
 			s.logger.Debugw("reached max partitions cap, stopping acquisition",
@@ -279,22 +337,19 @@ func (s *sqlpartitionLeaseStore) DiscoverAndAcquirePartitions(ctx context.Contex
 			continue
 		}
 		if acquired {
-			// Only count as newly acquired if not already owned.
-			// TryAcquireLease returns true for already-owned partitions (renew),
-			// so we must not double-count them against the maxPartitions cap.
-			if _, alreadyOwned := ownedSet[partitionKey]; !alreadyOwned {
-				acquiredCount++
-				ownedCount++
-			}
+			acquiredCount++
+			ownedCount++
 		}
 	}
 
 	metrics.NamedCounter(s.scope, "discover_and_acquire", "partitions_discovered", int64(len(partitions)), metrics.NewTag("topic", topic))
 	metrics.NamedCounter(s.scope, "discover_and_acquire", "partitions_acquired", int64(acquiredCount), metrics.NewTag("topic", topic))
+	metrics.NamedCounter(s.scope, "discover_and_acquire", "lease_aware_skipped", int64(skippedCount), metrics.NewTag("topic", topic))
 	s.logger.Debugw("completed partition discovery and acquisition",
 		logTopic, topic,
 		"discovered_count", len(partitions),
 		"acquired_count", acquiredCount,
+		"skipped_held_by_other", skippedCount,
 	)
 
 	return acquiredCount, partitions, nil

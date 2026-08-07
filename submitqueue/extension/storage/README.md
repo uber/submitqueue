@@ -2,6 +2,14 @@
 
 Pluggable persistence interfaces for SubmitQueue entities (requests, batches, dependents, logs, etc.). Implementations live under `extension/storage/<impl>/`.
 
+## Queue-scoped resolution
+
+Storage follows the extension contract: the queue-scoped store aggregate is resolved per queue through a factory keyed by queue name, mirroring how every decision/action extension resolves its implementation. A resolved aggregate is bound to its queue — entity arguments whose queue disagrees with the binding are rejected, queue-keyed reads are implicitly scoped, and the host wiring decides which backend serves which queue (single shared backend by default).
+
+Three read-model stores are deliberately global rather than queue-scoped, because their lookups start from identifiers that arrive without queue context (a bare request ID or change URI at the status API): the request log, the request summary, and the change-URI mapping. They are injected individually as standalone seams, following the gateway's per-store injection. The queue registry (`queueconfig`) was never part of this aggregate and stays the registry the factory sits beside.
+
+The classification rule: a store is queue-scoped when every read path authoritatively holds the queue before the first read, and global when any read path begins from an identifier that arrives without queue context. Entity IDs are opaque — no reader may derive the queue from an ID prefix; the queue travels explicitly on payloads and requests.
+
 ## Optimistic locking contract
 
 Entities that support concurrent mutation carry an `int32 Version` field. Updates are conditional on the version: the write only succeeds if the persisted version matches the caller's expected version. On mismatch, the implementation returns `storage.ErrVersionMismatch`, which is declared as a retryable infrastructure error so callers can return it without reclassifying it.
@@ -48,7 +56,7 @@ Store interfaces are designed for the storage technology *space*, not for SQL (s
 
 **Domain state is often already the index.** Before adding any lookup, check whether an entity the caller already loads enumerates the children — an aggregate that references its parts by ID (e.g. a tree whose paths record their build identities) is the batch→children index, persisted and versioned as domain state. Duplicating that relationship as a database index adds a second source of truth for something the domain already owns.
 
-**When neither applies, the reverse lookup is real — give it its own mapping store.** In the KV space there is no third mechanism: the only way to look up by an attribute is to make that attribute a primary key somewhere. So promote the relationship to a first-class mapping entity — keyed by the lookup attribute, written by the same flow that creates the source entity with idempotent puts, and rebuildable as a projection if it drifts. `ChangeRecord` is the in-repo example: it exists so "which requests claimed this change URI" is a by-key read on (queue, URI). Unlike a `KEY idx_*`, the relationship is visible in the contract and portable to any backend.
+**When neither applies, the reverse lookup is real — give it its own mapping store.** In the KV space there is no third mechanism: the only way to look up by an attribute is to make that attribute a primary key somewhere. So promote the relationship to a first-class mapping entity — keyed by the lookup attribute, written by the same flow that creates the source entity with idempotent puts, and rebuildable as a projection if it drifts. `ChangeRecord` is the in-repo example: it exists so "which requests claimed this change URI" is a by-key read on (queue, URI). `QueueBatchState` is the same pattern for a mutable attribute: "which batches of this queue are in this state" is a by-key read on (queue, state), maintained as advisory records that move buckets alongside the batch's own state CAS (the shared primitives in `submitqueue/core/batch` own that protocol) — it replaced `BatchStore.GetByQueueAndStates`, which was the contract's one query-by-attribute. Unlike a `KEY idx_*`, the relationship is visible in the contract and portable to any backend.
 
 ### Decision path
 

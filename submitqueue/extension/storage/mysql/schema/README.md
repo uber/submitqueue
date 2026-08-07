@@ -1,20 +1,24 @@
 # MySQL Schema
 
+## Queue-leading primary keys
+
+Every queue-scoped table leads its primary key with `queue`: `request` and `batch` on `(queue, id)`, `build` on `(queue, id)`, `batch_dependent` on `(queue, batch_id)`, `request_batch` on `(queue, request_id, batch_id)`, `change` on `(queue, uri, request_id)`, `queue_batch_state` on `(queue, state, batch_id)`, and `request_summary_by_queue` on `(queue, received_at_ms, request_id)`. A queue-bound store instance prefixes every read and stamps every write with its bound queue, so one queue's rows are unreachable through another queue's binding and the tables are shardable by queue. The `build` key also removes a cross-queue uniqueness assumption: build IDs are runner-minted, so two queues sharing one CI pipeline may legitimately mint the same identifier.
+
+The global read-model tables (`request_summary`, `request_log`, `change_uri_request_mapping`) keep queue-free keys — their lookups start from identifiers that arrive without queue context.
+
 ## batch table
 
-### Secondary index: `idx_queue_state (queue, state)`
+The `batch` table is keyed by `(queue, id)` and carries no secondary index. Listing a queue's batches by state goes through the `queue_batch_state` table instead, so batch reads and writes stay pure primary-key operations.
 
-The `batch` table has a composite secondary index on `(queue, state)`. This index supports the `GetByQueueAndStates` query, which retrieves batches filtered by queue and one or more states. Without this index, the query would require a full table scan.
+## queue_batch_state table
 
-#### Trade-offs
+### Composite primary key: `(queue, state, batch_id)`
 
-- **Write overhead**: Every `INSERT` and `UPDATE` to the `batch` table must also update the secondary index, adding latency to write operations.
-- **Storage cost**: The index consumes additional disk space proportional to the number of rows in the table.
-- **Lock contention**: Under high write concurrency, index maintenance can increase lock contention on the affected index pages.
+`queue_batch_state` holds the queue's advisory per-state membership records (see `entity.QueueBatchState`): one row per batch per state bucket, no payload and no version column. The key leads with `queue` so a state-bucket listing is a primary-key-prefix scan and the table is shardable by queue. Rows are moved between buckets by the shared transition protocol in `submitqueue/core/batch`; writes are idempotent (`INSERT IGNORE`, keyed `DELETE`). The `batch` row remains authoritative — readers hydrate each candidate and classify by the batch's own state.
 
 #### Future: Prune job
 
-As the `batch` table grows, the secondary index will grow with it, increasing storage costs and degrading write performance. To mitigate this, a prune job should be introduced to periodically delete batches in terminal states (`succeeded`, `failed`, `cancelled`) that are older than a configurable retention period. This keeps the table and its indexes bounded in size, ensuring consistent query and write performance over time.
+Terminal-state records (and their batches) accumulate as the queue processes work. A prune job should periodically delete records and batches in terminal states (`succeeded`, `failed`, `cancelled`) older than a configurable retention period, keeping both tables bounded so query and write performance stay consistent over time.
 
 ## change table
 

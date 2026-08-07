@@ -33,7 +33,7 @@ import (
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	store         storage.Storage
+	stores        storage.Factory
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -49,14 +49,14 @@ const _opName = "process_dlq"
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	stores storage.Factory,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
 		logger:        logger.Named("process_dlq_controller"),
 		metricsScope:  scope.SubScope("process_dlq_controller"),
-		store:         store,
+		stores:        stores,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
@@ -88,6 +88,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("dlq payload decoded to empty request id")
 	}
 
+	store, err := c.stores.For(storage.Config{QueueName: pr.GetQueueName()})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_resolve_errors", 1)
+		// Non-retryable: a missing or unresolvable queue is a malformed message.
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", pr.GetQueueName(), err)
+	}
+
 	dmeta := delivery.Metadata()
 	c.logger.Warnw("dlq message received",
 		"request_id", pr.Id,
@@ -97,7 +104,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
 
-	if err := failRequest(ctx, c.store, c.logger, pr.Id); err != nil {
+	if err := failRequest(ctx, store, c.logger, pr.Id); err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "reconcile_errors", 1)
 		return err
 	}

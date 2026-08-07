@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
@@ -33,11 +32,14 @@ import (
 type batchStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewBatchStore creates a new MySQL-backed BatchStore.
-func NewBatchStore(db *sql.DB, scope tally.Scope) storage.BatchStore {
-	return &batchStore{db: db, scope: scope}
+func NewBatchStore(db *sql.DB, scope tally.Scope, queue string) storage.BatchStore {
+	return &batchStore{db: db, scope: scope, queue: queue}
 }
 
 // Get retrieves a batch by ID. Returns ErrNotFound if the batch is not found.
@@ -50,8 +52,8 @@ func (s *batchStore) Get(ctx context.Context, id string) (ret entity.Batch, retE
 	var dependenciesJSON []byte
 
 	err := s.db.QueryRowContext(ctx,
-		"SELECT id, queue, contains, dependencies, state, version FROM batch WHERE id = ?",
-		id,
+		"SELECT id, queue, contains, dependencies, state, version FROM batch WHERE queue = ? AND id = ?",
+		s.queue, id,
 	).Scan(&batch.ID, &batch.Queue, &containsJSON, &dependenciesJSON, &batch.State, &batch.Version)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -76,6 +78,10 @@ func (s *batchStore) Get(ctx context.Context, id string) (ret entity.Batch, retE
 func (s *batchStore) Create(ctx context.Context, batch entity.Batch) (retErr error) {
 	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
+
+	if batch.Queue != s.queue {
+		return fmt.Errorf("batch %s queue %q does not match the store's bound queue %q", batch.ID, batch.Queue, s.queue)
+	}
 
 	containsJSON, err := json.Marshal(batch.Contains)
 	if err != nil {
@@ -109,6 +115,10 @@ func (s *batchStore) Update(ctx context.Context, batch entity.Batch, oldVersion,
 	op := metrics.Begin(s.scope, "update_state", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	if batch.Queue != s.queue {
+		return fmt.Errorf("batch %s queue %q does not match the store's bound queue %q", batch.ID, batch.Queue, s.queue)
+	}
+
 	containsJSON, err := json.Marshal(batch.Contains)
 	if err != nil {
 		return fmt.Errorf("failed to marshal contains=%v id=%s for Update batch entity: %w", batch.Contains, batch.ID, err)
@@ -120,8 +130,8 @@ func (s *batchStore) Update(ctx context.Context, batch entity.Batch, oldVersion,
 	}
 
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE batch SET queue = ?, contains = ?, dependencies = ?, state = ?, version = ? WHERE id = ? AND version = ?",
-		batch.Queue, containsJSON, dependenciesJSON, batch.State, newVersion, batch.ID, oldVersion,
+		"UPDATE batch SET contains = ?, dependencies = ?, state = ?, version = ? WHERE queue = ? AND id = ? AND version = ?",
+		containsJSON, dependenciesJSON, batch.State, newVersion, batch.Queue, batch.ID, oldVersion,
 	)
 	if err != nil {
 		return fmt.Errorf(
@@ -146,54 +156,4 @@ func (s *batchStore) Update(ctx context.Context, batch entity.Batch, oldVersion,
 	}
 
 	return nil
-}
-
-// GetByQueueAndStates retrieves all batches that belong to the given queue and are in the given states.
-func (s *batchStore) GetByQueueAndStates(ctx context.Context, queue string, states []entity.BatchState) (ret []entity.Batch, retErr error) {
-	op := metrics.Begin(s.scope, "get_by_queue_and_states", metrics.StorageLatencyBuckets)
-	defer func() { op.Complete(retErr) }()
-
-	if len(states) == 0 {
-		return nil, nil
-	}
-
-	query := "SELECT id, queue, contains, dependencies, state, version FROM batch WHERE queue = ? AND state IN (?" + strings.Repeat(", ?", len(states)-1) + ")"
-
-	args := make([]any, 1+len(states))
-	args[0] = queue
-	for i, state := range states {
-		args[i+1] = state
-	}
-
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query batches by queue=%q states=%v from the database: %w", queue, states, err)
-	}
-	defer rows.Close()
-
-	var results []entity.Batch
-	for rows.Next() {
-		var batch entity.Batch
-		var containsJSON []byte
-		var dependenciesJSON []byte
-
-		if err := rows.Scan(&batch.ID, &batch.Queue, &containsJSON, &dependenciesJSON, &batch.State, &batch.Version); err != nil {
-			return nil, fmt.Errorf("failed to scan batch entity by queue=%q states=%v from the database: %w", queue, states, err)
-		}
-
-		if err := json.Unmarshal(containsJSON, &batch.Contains); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal contains for batch entity id=%s from the database: %w", batch.ID, err)
-		}
-
-		if err := json.Unmarshal(dependenciesJSON, &batch.Dependencies); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal dependencies for batch entity id=%s from the database: %w", batch.ID, err)
-		}
-
-		results = append(results, batch)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate batches by queue=%q states=%v from the database: %w", queue, states, err)
-	}
-
-	return results, nil
 }

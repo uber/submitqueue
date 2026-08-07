@@ -132,9 +132,9 @@ Several mechanisms can delay work; they mean different things. Pick by what you'
 | "This delivery failed — retry it" | return a retryable error (framework nacks) | keeps flowing — a failure never halts its partition |
 | "I'm still working — keep my lease" | `delivery.ExtendVisibilityTimeout(...)` | blocked behind the in-flight delivery |
 | "Done for now — wake this partition in N ms" | `delivery.Hold(N)` then `return nil` | paused behind the postponed message (barrier), redelivers first in order |
-| "Stop this controller/partition from outside" (tests, operators) | consumer gate (`platform/extension/consumergate`) | parked in flight until the gate opens |
+| "Stop this controller/partition from outside" (tests, operators) | consumer gate (`platform/extension/consumergate`) | paused — blocked deliveries are parked + postponed until the gate opens |
 
-Gate vs hold, since both pause a partition: the **gate** is an external, event-ended stop — someone stops the controller at the door, before `Process` ever sees the message. **Hold** is a controller-chosen, timer-ended wait — the controller saw the work and decided to come back later. Business logic never closes or opens gates; a controller that needs to back off uses hold.
+Gate vs hold, since both pause a partition through the same postpone mechanism: the **gate** is an external stop — someone stops the controller at the door, before `Process` ever sees the message, and the wait ends when they open it. **Hold** is a controller-chosen wait — the controller saw the work and decided to come back later, and the wait ends on its own timer. Business logic never closes or opens gates; a controller that needs to back off uses hold.
 
 ## Lifecycle
 

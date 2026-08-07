@@ -41,10 +41,8 @@ import (
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	gatewaypb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	orchestratorpb "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb"
-	"github.com/uber/submitqueue/platform/extension/consumergate"
 	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemysql "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/test/testutil"
 	"google.golang.org/grpc"
@@ -61,7 +59,7 @@ type E2EIntegrationSuite struct {
 	orchestratorClient orchestratorpb.SubmitQueueOrchestratorClient
 	db                 *sql.DB                 // App database
 	queueDB            *sql.DB                 // Queue database
-	requestStore       storage.RequestStore    // White-box view of the internal RequestState (app DB)
+	appStorage         *storagemysql.Storage   // White-box view of the operating store (app DB), resolved per queue
 	gate               *consumergatefile.Store // Consumer-gate control plane (shared dir bind-mounted into services)
 }
 
@@ -95,7 +93,7 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 	// the suite manipulates the same directory through the file implementation.
 	gateDir := t.TempDir()
 	t.Setenv("SQ_CONSUMER_GATE_DIR", gateDir)
-	s.gate = consumergatefile.New(gateDir, consumergate.DefaultConfig())
+	s.gate = consumergatefile.New(gateDir)
 
 	// Use docker-compose from service/submitqueue (full stack), resolved from
 	// the test runfiles. All three service images are built from a staged
@@ -136,7 +134,8 @@ func (s *E2EIntegrationSuite) SetupSuite() {
 	s.log.Logf("Schemas applied successfully")
 
 	// White-box handle on the operating store for point-in-time RequestState.
-	s.requestStore = storagemysql.NewRequestStore(s.db, tally.NoopScope)
+	s.appStorage, err = storagemysql.NewStorage(s.db, tally.NoopScope)
+	require.NoError(t, err, "failed to create app storage backend")
 
 	// Connect to Gateway gRPC service
 	var gatewayConn *grpc.ClientConn
@@ -249,7 +248,7 @@ func (s *E2EIntegrationSuite) TestLand_HappyPath_ReachesLanded() {
 	// White-box (internal state): the operating store's authoritative
 	// RequestState settled on landed. RequestState is point-in-time, so this is a
 	// terminal check, not a sequence.
-	assert.Equal(s.T(), entity.RequestStateLanded, s.terminalState(sqid),
+	assert.Equal(s.T(), entity.RequestStateLanded, s.terminalState("e2e-test-queue", sqid),
 		"operating store should show request %s in terminal state landed", sqid)
 }
 
@@ -356,9 +355,9 @@ func (s *E2EIntegrationSuite) TestCancelRequest_InvalidSqid() {
 //     distinguishing "gated and parked" from "not arrived yet").
 //  4. Act while stopped: cancel the request. It is pre-batch by construction,
 //     so the cancel controller drives it terminal Cancelled directly.
-//  5. Start: open the gate. The parked check proceeds as the same attempt,
-//     runway answers the now-stale check, and the orchestrator drops the
-//     signal for the halted request.
+//  5. Start: open the gate. The postponed check redelivers within a re-check
+//     tick and clears the open gate, runway answers the now-stale check, and
+//     the orchestrator drops the signal for the halted request.
 //
 // The drop in step 5 is asserted without sleeping: a sentinel request landed
 // on the same queue after the gate opens shares the check and signal
@@ -397,7 +396,7 @@ func (s *E2EIntegrationSuite) TestCancel_CaughtPreBatch_NeverLands() {
 		entity.RequestStatusCancelling,
 		entity.RequestStatusCancelled,
 	)
-	assert.Equal(t, entity.RequestStateCancelled, s.terminalState(sqid),
+	assert.Equal(t, entity.RequestStateCancelled, s.terminalState(queue, sqid),
 		"operating store should show request %s terminal cancelled while its check is parked", sqid)
 
 	// Start the controller again and prove the parked delivery cleared the gate.
@@ -410,7 +409,7 @@ func (s *E2EIntegrationSuite) TestCancel_CaughtPreBatch_NeverLands() {
 	s.awaitStatus(sentinel, entity.RequestStatusLanded)
 
 	// The stale check answer was dropped: the cancelled request never advanced.
-	assert.Equal(t, entity.RequestStateCancelled, s.terminalState(sqid),
+	assert.Equal(t, entity.RequestStateCancelled, s.terminalState(queue, sqid),
 		"request %s must stay terminal cancelled after its stale check signal is processed", sqid)
 	s.assertStatusesNever(sqid, entity.RequestStatusBatched, entity.RequestStatusLanded)
 }

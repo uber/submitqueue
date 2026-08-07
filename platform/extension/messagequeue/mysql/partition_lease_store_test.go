@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
@@ -216,37 +217,124 @@ func TestPartitionLeaseStore_GetLeasedPartitions(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestPartitionLeaseStore_GetAllLeases(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(mock sqlmock.Sqlmock)
+		want  []leaseInfo
+	}{
+		{
+			name: "returns leases held by any subscriber",
+			setup: func(mock sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{"partition_key", "leased_by", "lease_renewed_at"}).
+					AddRow("part1", testSubscriberName, int64(1000)).
+					AddRow("part2", "other-worker", int64(2000))
+				mock.ExpectQuery("SELECT partition_key, leased_by, lease_renewed_at FROM queue_partition_leases").
+					WithArgs(testConsumerGroup, "test_topic").
+					WillReturnRows(rows)
+			},
+			want: []leaseInfo{
+				{PartitionKey: "part1", LeasedBy: testSubscriberName, LeaseRenewedAt: 1000},
+				{PartitionKey: "part2", LeasedBy: "other-worker", LeaseRenewedAt: 2000},
+			},
+		},
+		{
+			name: "no leases returns empty",
+			setup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery("SELECT partition_key, leased_by, lease_renewed_at FROM queue_partition_leases").
+					WithArgs(testConsumerGroup, "test_topic").
+					WillReturnRows(sqlmock.NewRows([]string{"partition_key", "leased_by", "lease_renewed_at"}))
+			},
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, store := setuppartitionLeaseStoreTest(t)
+			defer db.Close()
+
+			tt.setup(mock)
+
+			leases, err := store.GetAllLeases(context.Background(), "test_topic", testConsumerGroup)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, leases)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestPartitionLeaseStore_DiscoverAndAcquirePartitions(t *testing.T) {
+	leaseColumns := []string{"partition_key", "leased_by", "lease_renewed_at"}
+	freshMs := time.Now().UnixMilli()
+	staleMs := freshMs - testLeaseDurationMs - 60_000
+
+	// expectDiscover mocks the DISTINCT partition scan.
+	expectDiscover := func(mock sqlmock.Sqlmock, partitions ...string) {
+		rows := sqlmock.NewRows([]string{"partition_key"})
+		for _, pk := range partitions {
+			rows.AddRow(pk)
+		}
+		mock.ExpectQuery("SELECT DISTINCT partition_key FROM queue_messages").
+			WithArgs("test_topic").
+			WillReturnRows(rows)
+	}
+
+	// expectAcquire mocks one TryAcquireLease attempt whose ownership check
+	// reports the given owner.
+	expectAcquire := func(mock sqlmock.Sqlmock, owner string) {
+		mock.ExpectExec("INSERT INTO queue_partition_leases").
+			WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectQuery("SELECT leased_by FROM queue_partition_leases").
+			WillReturnRows(sqlmock.NewRows([]string{"leased_by"}).AddRow(owner))
+	}
+
 	tests := []struct {
 		name          string
 		maxPartitions int
 		setup         func(mock sqlmock.Sqlmock)
 		wantAcquired  int
-		wantErr       bool
 	}{
 		{
-			name:          "unlimited - acquires all available",
+			name:          "acquires unleased, skips fresh lease held by other",
 			maxPartitions: 0,
 			setup: func(mock sqlmock.Sqlmock) {
-				// Discover partitions
-				rows := sqlmock.NewRows([]string{"partition_key"}).
-					AddRow("part1").
-					AddRow("part2")
-				mock.ExpectQuery("SELECT DISTINCT partition_key FROM queue_messages").
-					WithArgs("test_topic").
-					WillReturnRows(rows)
-
-				// Acquire part1 - success
-				mock.ExpectExec("INSERT INTO queue_partition_leases").
-					WillReturnResult(sqlmock.NewResult(1, 1))
-				mock.ExpectQuery("SELECT leased_by FROM queue_partition_leases").
-					WillReturnRows(sqlmock.NewRows([]string{"leased_by"}).AddRow(testSubscriberName))
-
-				// Acquire part2 - taken by other worker
-				mock.ExpectExec("INSERT INTO queue_partition_leases").
-					WillReturnResult(sqlmock.NewResult(1, 1))
-				mock.ExpectQuery("SELECT leased_by FROM queue_partition_leases").
-					WillReturnRows(sqlmock.NewRows([]string{"leased_by"}).AddRow("other-worker"))
+				expectDiscover(mock, "part1", "part2")
+				mock.ExpectQuery("SELECT partition_key, leased_by, lease_renewed_at FROM queue_partition_leases").
+					WithArgs(testConsumerGroup, "test_topic").
+					WillReturnRows(sqlmock.NewRows(leaseColumns).
+						AddRow("part2", "other-worker", freshMs))
+				// Only unleased part1 is attempted; part2's fresh lease is
+				// never write-probed.
+				expectAcquire(mock, testSubscriberName)
+			},
+			wantAcquired: 1,
+		},
+		{
+			name:          "stale lease held by other is stealable",
+			maxPartitions: 0,
+			setup: func(mock sqlmock.Sqlmock) {
+				expectDiscover(mock, "part1")
+				mock.ExpectQuery("SELECT partition_key, leased_by, lease_renewed_at FROM queue_partition_leases").
+					WithArgs(testConsumerGroup, "test_topic").
+					WillReturnRows(sqlmock.NewRows(leaseColumns).
+						AddRow("part1", "other-worker", staleMs))
+				expectAcquire(mock, testSubscriberName)
+			},
+			wantAcquired: 1,
+		},
+		{
+			name:          "self-owned partitions are not re-probed",
+			maxPartitions: 0,
+			setup: func(mock sqlmock.Sqlmock) {
+				expectDiscover(mock, "part1", "part2")
+				mock.ExpectQuery("SELECT partition_key, leased_by, lease_renewed_at FROM queue_partition_leases").
+					WithArgs(testConsumerGroup, "test_topic").
+					WillReturnRows(sqlmock.NewRows(leaseColumns).
+						AddRow("part1", testSubscriberName, freshMs))
+				// Only part2 is attempted; renewal of part1 is the lease
+				// tick's job.
+				expectAcquire(mock, testSubscriberName)
 			},
 			wantAcquired: 1,
 		},
@@ -254,33 +342,13 @@ func TestPartitionLeaseStore_DiscoverAndAcquirePartitions(t *testing.T) {
 			name:          "stops acquiring when cap reached",
 			maxPartitions: 2,
 			setup: func(mock sqlmock.Sqlmock) {
-				// Discover 3 partitions
-				rows := sqlmock.NewRows([]string{"partition_key"}).
-					AddRow("part1").
-					AddRow("part2").
-					AddRow("part3")
-				mock.ExpectQuery("SELECT DISTINCT partition_key FROM queue_messages").
-					WithArgs("test_topic").
-					WillReturnRows(rows)
-
-				// Pre-loop GetLeasedPartitions: owns 0 partitions
-				mock.ExpectQuery("SELECT partition_key FROM queue_partition_leases").
-					WithArgs(testConsumerGroup, "test_topic", testSubscriberName).
-					WillReturnRows(sqlmock.NewRows([]string{"partition_key"}))
-
-				// Acquire part1 - success
-				mock.ExpectExec("INSERT INTO queue_partition_leases").
-					WillReturnResult(sqlmock.NewResult(1, 1))
-				mock.ExpectQuery("SELECT leased_by FROM queue_partition_leases").
-					WillReturnRows(sqlmock.NewRows([]string{"leased_by"}).AddRow(testSubscriberName))
-
-				// Acquire part2 - success (now at cap of 2, stops)
-				mock.ExpectExec("INSERT INTO queue_partition_leases").
-					WillReturnResult(sqlmock.NewResult(1, 1))
-				mock.ExpectQuery("SELECT leased_by FROM queue_partition_leases").
-					WillReturnRows(sqlmock.NewRows([]string{"leased_by"}).AddRow(testSubscriberName))
-
-				// part3 is never attempted because ownedCount (2) >= maxPartitions (2)
+				expectDiscover(mock, "part1", "part2", "part3")
+				mock.ExpectQuery("SELECT partition_key, leased_by, lease_renewed_at FROM queue_partition_leases").
+					WithArgs(testConsumerGroup, "test_topic").
+					WillReturnRows(sqlmock.NewRows(leaseColumns))
+				// part1 and part2 acquired; part3 never attempted at the cap.
+				expectAcquire(mock, testSubscriberName)
+				expectAcquire(mock, testSubscriberName)
 			},
 			wantAcquired: 2,
 		},
@@ -288,52 +356,42 @@ func TestPartitionLeaseStore_DiscoverAndAcquirePartitions(t *testing.T) {
 			name:          "pre-owned partitions count toward cap",
 			maxPartitions: 3,
 			setup: func(mock sqlmock.Sqlmock) {
-				// Discover 3 partitions
-				rows := sqlmock.NewRows([]string{"partition_key"}).
-					AddRow("part1").
-					AddRow("part2").
-					AddRow("part3")
-				mock.ExpectQuery("SELECT DISTINCT partition_key FROM queue_messages").
-					WithArgs("test_topic").
-					WillReturnRows(rows)
-
-				// Pre-loop GetLeasedPartitions: already owns 2 partitions
-				mock.ExpectQuery("SELECT partition_key FROM queue_partition_leases").
-					WithArgs(testConsumerGroup, "test_topic", testSubscriberName).
-					WillReturnRows(sqlmock.NewRows([]string{"partition_key"}).
-						AddRow("existing1").
-						AddRow("existing2"))
-
-				// Acquire part1 - success (now at 3, cap reached)
-				mock.ExpectExec("INSERT INTO queue_partition_leases").
-					WillReturnResult(sqlmock.NewResult(1, 1))
-				mock.ExpectQuery("SELECT leased_by FROM queue_partition_leases").
-					WillReturnRows(sqlmock.NewRows([]string{"leased_by"}).AddRow(testSubscriberName))
-
-				// part2, part3 never attempted because ownedCount (3) >= maxPartitions (3)
+				expectDiscover(mock, "part1", "part2", "part3")
+				mock.ExpectQuery("SELECT partition_key, leased_by, lease_renewed_at FROM queue_partition_leases").
+					WithArgs(testConsumerGroup, "test_topic").
+					WillReturnRows(sqlmock.NewRows(leaseColumns).
+						AddRow("existing1", testSubscriberName, freshMs).
+						AddRow("existing2", testSubscriberName, freshMs))
+				// One acquisition reaches the cap of 3; part2/part3 skipped.
+				expectAcquire(mock, testSubscriberName)
 			},
 			wantAcquired: 1,
 		},
 		{
-			name:          "already at cap - acquires nothing",
+			name:          "already at cap acquires nothing",
 			maxPartitions: 2,
 			setup: func(mock sqlmock.Sqlmock) {
-				// Discover 2 partitions
-				rows := sqlmock.NewRows([]string{"partition_key"}).
-					AddRow("part1").
-					AddRow("part2")
-				mock.ExpectQuery("SELECT DISTINCT partition_key FROM queue_messages").
-					WithArgs("test_topic").
-					WillReturnRows(rows)
-
-				// Pre-loop GetLeasedPartitions: already owns 2 partitions (at cap)
-				mock.ExpectQuery("SELECT partition_key FROM queue_partition_leases").
-					WithArgs(testConsumerGroup, "test_topic", testSubscriberName).
-					WillReturnRows(sqlmock.NewRows([]string{"partition_key"}).
-						AddRow("existing1").
-						AddRow("existing2"))
-
-				// No acquire attempts - immediately breaks
+				expectDiscover(mock, "part1", "part2")
+				mock.ExpectQuery("SELECT partition_key, leased_by, lease_renewed_at FROM queue_partition_leases").
+					WithArgs(testConsumerGroup, "test_topic").
+					WillReturnRows(sqlmock.NewRows(leaseColumns).
+						AddRow("existing1", testSubscriberName, freshMs).
+						AddRow("existing2", testSubscriberName, freshMs))
+				// No acquire attempts.
+			},
+			wantAcquired: 0,
+		},
+		{
+			name:          "lost race counts nothing",
+			maxPartitions: 0,
+			setup: func(mock sqlmock.Sqlmock) {
+				expectDiscover(mock, "part1")
+				mock.ExpectQuery("SELECT partition_key, leased_by, lease_renewed_at FROM queue_partition_leases").
+					WithArgs(testConsumerGroup, "test_topic").
+					WillReturnRows(sqlmock.NewRows(leaseColumns))
+				// Attempted while unleased, but another subscriber won the
+				// atomic acquire between the read and the write.
+				expectAcquire(mock, "other-worker")
 			},
 			wantAcquired: 0,
 		},
@@ -344,19 +402,12 @@ func TestPartitionLeaseStore_DiscoverAndAcquirePartitions(t *testing.T) {
 			db, mock, store := setuppartitionLeaseStoreTest(t)
 			defer db.Close()
 
-			ctx := context.Background()
-			topic := "test_topic"
-
 			tt.setup(mock)
 
-			acquired, discoveredPartitions, err := store.DiscoverAndAcquirePartitions(ctx, topic, testSubscriberName, testConsumerGroup, testLeaseDurationMs, tt.maxPartitions)
-			if tt.wantErr {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-				require.Equal(t, tt.wantAcquired, acquired)
-				require.NotNil(t, discoveredPartitions)
-			}
+			acquired, discoveredPartitions, err := store.DiscoverAndAcquirePartitions(context.Background(), "test_topic", testSubscriberName, testConsumerGroup, testLeaseDurationMs, tt.maxPartitions)
+			require.NoError(t, err)
+			require.Equal(t, tt.wantAcquired, acquired)
+			require.NotNil(t, discoveredPartitions)
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}

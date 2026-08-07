@@ -107,10 +107,14 @@ type MergeStep struct {
 	// StepResult so a multi-step result is attributable -- and never interprets
 	// its contents.
 	StepId string `protobuf:"bytes,1,opt,name=step_id,json=stepId,proto3" json:"step_id,omitempty"`
-	// change is the code change to apply for this step. A change may carry
-	// multiple URIs when the step represents stacked or grouped changes.
+	// change is the code change to apply for this step. It may carry multiple
+	// URIs, which are a stack: each URI is its own unit of change, applied in
+	// the order given, each on top of the last.
 	Change *protopb.Change `protobuf:"bytes,2,opt,name=change,proto3" json:"change,omitempty"`
 	// strategy is how this step's change is integrated into the merge target.
+	// It applies to every URI the change carries, the same way to each, so a
+	// step is never a mix of strategies. PROMOTE is the exception that admits
+	// only a single URI.
 	Strategy      protopb1.Strategy `protobuf:"varint,3,opt,name=strategy,proto3,enum=uber.base.mergestrategy.Strategy" json:"strategy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -374,7 +378,10 @@ type MergeResult struct {
 	// steps optionally reports per-step outcomes, in request order. A committing
 	// merge populates each step's outputs with the revisions it produced; a
 	// dry-run check leaves them empty.
-	Steps         []*StepResult `protobuf:"bytes,4,rep,name=steps,proto3" json:"steps,omitempty"`
+	Steps []*StepResult `protobuf:"bytes,4,rep,name=steps,proto3" json:"steps,omitempty"`
+	// queue_name echoes the caller-provided queue name from the request, so the
+	// consumer can route the result by queue without loading state first.
+	QueueName     string `protobuf:"bytes,5,opt,name=queue_name,json=queueName,proto3" json:"queue_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -437,6 +444,13 @@ func (x *MergeResult) GetSteps() []*StepResult {
 	return nil
 }
 
+func (x *MergeResult) GetQueueName() string {
+	if x != nil {
+		return x.QueueName
+	}
+	return ""
+}
+
 var File_merge_proto protoreflect.FileDescriptor
 
 const file_merge_proto_rawDesc = "" +
@@ -458,12 +472,14 @@ const file_merge_proto_rawDesc = "" +
 	"StepResult\x12\x17\n" +
 	"\astep_id\x18\x01 \x01(\tR\x06stepId\x12>\n" +
 	"\aoutputs\x18\x02 \x03(\v2$.uber.runway.messagequeue.StepOutputR\aoutputs\x12\x16\n" +
-	"\x06reason\x18\x03 \x01(\tR\x06reason\"\xdf\x01\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\"\xfe\x01\n" +
 	"\vMergeResult\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12;\n" +
 	"\aoutcome\x18\x02 \x01(\x0e2!.uber.runway.messagequeue.OutcomeR\aoutcome\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\x12:\n" +
-	"\x05steps\x18\x04 \x03(\v2$.uber.runway.messagequeue.StepResultR\x05steps:/\x8a\xb5\x18\x1bmerge-conflict-check-signal\x8a\xb5\x18\fmerge-signal*=\n" +
+	"\x05steps\x18\x04 \x03(\v2$.uber.runway.messagequeue.StepResultR\x05steps\x12\x1d\n" +
+	"\n" +
+	"queue_name\x18\x05 \x01(\tR\tqueueName:/\x8a\xb5\x18\x1bmerge-conflict-check-signal\x8a\xb5\x18\fmerge-signal*=\n" +
 	"\aOutcome\x12\x17\n" +
 	"\x13OUTCOME_UNSPECIFIED\x10\x00\x12\r\n" +
 	"\tSUCCEEDED\x10\x01\x12\n" +

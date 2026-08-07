@@ -42,20 +42,33 @@ const (
 // This is the shared wire contract for merge strategy, reused across SubmitQueue
 // and other repo-local domains — the proto-level analog of the
 // platform/base/mergestrategy Go entity. Domains import it rather than redefining their own.
+//
+// A strategy is chosen once for a change and applies to every URI that change
+// carries, the same way to each. Since one URI is one unit of change (see
+// uber.base.change.Change), the values below are defined per URI: a change
+// carrying three URIs is integrated as three separate applications of the same
+// strategy, in order, not as one combined application.
 type Strategy int32
 
 const (
 	// Default strategy (let the server decide based on configuration).
 	Strategy_DEFAULT Strategy = 0
-	// Rebase commits onto the target branch before landing.
+	// Rebase the commits the change introduces onto the target branch before landing.
 	Strategy_REBASE Strategy = 1
-	// Same as REBASE but squash commits into a single commit before rebase.
+	// Same as REBASE, then squash into a single commit. The squash unit is the
+	// individual change: a change of ten commits becomes one commit, and a
+	// stack of three URIs becomes three commits rather than one, so the
+	// boundary between the stacked changes survives.
 	Strategy_SQUASH_REBASE Strategy = 2
-	// Merge commits into the target branch by creating a separate merge commit, preserving commit history along with hashes.
+	// Merge into the target branch by creating a separate merge commit, preserving commit history along with hashes.
 	Strategy_MERGE Strategy = 3
 	// Integrate the exact revision as-is, with no content transform — advance the target branch to an already-existing
 	// commit rather than producing new revisions. The implementer maps it to its backend: git fast-forward, Mercurial
 	// bookmark advance, Subversion/Perforce copy. Used to promote an already-landed/verified commit onto another branch.
+	//
+	// The one strategy that constrains the list rather than repeating over it:
+	// advancing a ref to an exact revision admits a single URI, because a
+	// second one could not also be the revision the target ends at.
 	Strategy_PROMOTE Strategy = 4
 )
 

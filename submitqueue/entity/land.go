@@ -31,7 +31,8 @@ type LandRequest struct {
 	Queue string `json:"queue"`
 	// Change is the set of code changes to land.
 	Change change.Change `json:"change"`
-	// LandStrategy is the source control integration strategy to use for this land operation.
+	// LandStrategy is the source control integration strategy to use for this
+	// land operation. It applies to every URI of Change, the same way to each.
 	LandStrategy mergestrategy.MergeStrategy `json:"land_strategy"`
 }
 

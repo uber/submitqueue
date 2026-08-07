@@ -82,7 +82,8 @@ type Request struct {
 	Queue string `json:"queue"`
 	// Change is a number of code changes (such as pull requests) to land into the target branch. Target branch is defined by the queue configuration.
 	Change change.Change `json:"change"`
-	// LandStrategy is the source control integration strategy to use for this land operation.
+	// LandStrategy is the source control integration strategy to use for this
+	// land operation. It applies to every URI of Change, the same way to each.
 	LandStrategy mergestrategy.MergeStrategy `json:"land_strategy"`
 
 	// ****************
@@ -112,6 +113,8 @@ func RequestFromBytes(data []byte) (Request, error) {
 type RequestID struct {
 	// ID is the globally unique identifier for the land request.
 	ID string `json:"id"`
+	// Queue is the name of the queue processing the land request. Empty on payloads written before the field existed.
+	Queue string `json:"queue"`
 }
 
 // ToBytes serializes the RequestID to JSON bytes for queue message payload.

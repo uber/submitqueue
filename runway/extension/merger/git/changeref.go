@@ -27,6 +27,9 @@ import (
 // form that does not depend on which provider minted it. Adding a provider
 // means adding one case to resolveChange, not touching the apply paths.
 type changeRef struct {
+	// Provider is the URI scheme the change was addressed through ("github",
+	// "git"). Every change in one request must agree on it.
+	Provider string
 	// SHA is the full commit hash the URI pins the change to. This is the
 	// commit that gets fetched and applied.
 	SHA string
@@ -55,7 +58,8 @@ func resolveChange(uri string) (changeRef, error) {
 			return changeRef{}, fmt.Errorf("%w: invalid change URI %q: %v", merger.ErrInvalidRequest, uri, err)
 		}
 		return changeRef{
-			SHA: cid.HeadCommitSHA,
+			Provider: scheme,
+			SHA:      cid.HeadCommitSHA,
 			// GitHub publishes every PR's head under refs/pull/<n>/head in the
 			// base repository, including PRs opened from a fork.
 			Ref:   fmt.Sprintf("refs/pull/%d/head", cid.PRNumber),
@@ -70,9 +74,10 @@ func resolveChange(uri string) (changeRef, error) {
 		// A git:// URI already names its own fully-qualified ref, so the
 		// staleness check reads exactly the ref the caller pinned.
 		return changeRef{
-			SHA:   cid.CommitSHA,
-			Ref:   cid.Ref,
-			Label: fmt.Sprintf("%s@%s", cid.Repo, cid.Ref),
+			Provider: scheme,
+			SHA:      cid.CommitSHA,
+			Ref:      cid.Ref,
+			Label:    fmt.Sprintf("%s@%s", cid.Repo, cid.Ref),
 		}, nil
 
 	default:

@@ -630,6 +630,78 @@ func TestClassifyMergeFailure(t *testing.T) {
 	}
 }
 
+// --- change provider consistency ---
+
+// newUnrunnableMerger builds a Merger whose git executable does not exist, so
+// any git invocation fails loudly. A request rejected by this Merger with
+// ErrInvalidRequest was therefore rejected before it reached for git — a
+// stronger claim than observing that the remote did not move.
+func (f gitFixture) newUnrunnableMerger(t *testing.T) merger.Merger {
+	t.Helper()
+	return f.newMergerWith(t, func(p *Params) {
+		p.Runtime.Executable = filepath.Join(t.TempDir(), "no-such-git")
+	})
+}
+
+func TestMerge_RejectsInconsistentProvider(t *testing.T) {
+	const otherSHA = "89abcdef0123456789abcdef0123456789abcdef"
+
+	tests := []struct {
+		name string
+		req  *runwaymq.MergeRequest
+	}{
+		{
+			name: "two steps using different providers",
+			req: req("b",
+				stepOf(mergestrategypb.Strategy_REBASE, "s1", "github://github.example.com/uber/one/pull/1/"+fakeSHA),
+				stepOf(mergestrategypb.Strategy_REBASE, "s2", "git://git.example.com/uber/one/refs%2Fheads%2Fmain/"+otherSHA),
+			),
+		},
+		{
+			name: "one change spanning two providers",
+			req: req("b", stepOf(mergestrategypb.Strategy_REBASE, "s1",
+				"github://github.example.com/uber/one/pull/1/"+fakeSHA,
+				"git://git.example.com/uber/one/refs%2Fheads%2Fmain/"+otherSHA,
+			)),
+		},
+		{
+			name: "unsupported provider",
+			req:  req("b", stepOf(mergestrategypb.Strategy_REBASE, "s1", "phab://phab.example.com/D123/456")),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := setupGitFixture(t)
+			m := f.newUnrunnableMerger(t)
+
+			_, err := m.Merge(context.Background(), tt.req)
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, merger.ErrInvalidRequest),
+				"want ErrInvalidRequest before any git runs, got %v", err)
+			assert.False(t, errors.Is(err, merger.ErrConflict))
+		})
+	}
+}
+
+func TestMerge_AcceptsMultipleChangesFromOneProvider(t *testing.T) {
+	// Guard against over-rejecting: several steps and several URIs are normal,
+	// so long as they are all addressed through one provider.
+	f := setupGitFixture(t)
+	a := f.pushPRCommit(t, "feature/a", "a.txt", "a\n", "add a")
+	b := f.pushPRCommit(t, "feature/b", "b.txt", "b\n", "add b")
+	c := f.pushPRCommit(t, "feature/c", "c.txt", "c\n", "add c")
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.Merge(context.Background(), req("b",
+		stepOf(mergestrategypb.Strategy_REBASE, "s1", uri(a), uri(b)),
+		stepOf(mergestrategypb.Strategy_REBASE, "s2", uri(c)),
+	))
+	require.NoError(t, err)
+	assert.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
+	assert.Len(t, f.remoteCommitsSinceSeed(t), 3)
+}
+
 // --- repo migration (unrelated histories) ---
 //
 // A repository migration reaches Runway as an ordinary change in the target
@@ -923,6 +995,147 @@ func TestMerge_Rebase_StackedMultiCommitChanges(t *testing.T) {
 	}
 }
 
+// --- authorship ---
+
+func TestAuthorIdent(t *testing.T) {
+	tests := []struct {
+		name     string
+		ident    authorIdent
+		complete bool
+		wantEnv  []string
+	}{
+		{
+			name:     "both halves present",
+			ident:    authorIdent{Name: "Jane Dev", Email: "jane@example.com"},
+			complete: true,
+			wantEnv:  []string{"GIT_AUTHOR_NAME=Jane Dev", "GIT_AUTHOR_EMAIL=jane@example.com"},
+		},
+		{
+			// Passed through verbatim: the environment carries the two halves
+			// separately, so nothing has to survive being parsed back apart.
+			name:     "name containing angle brackets",
+			ident:    authorIdent{Name: "Jane <the dev> Doe", Email: "jane@example.com"},
+			complete: true,
+			wantEnv:  []string{"GIT_AUTHOR_NAME=Jane <the dev> Doe", "GIT_AUTHOR_EMAIL=jane@example.com"},
+		},
+		{
+			name:  "missing email falls back",
+			ident: authorIdent{Name: "Jane Dev"},
+		},
+		{
+			name:  "missing name falls back",
+			ident: authorIdent{Email: "jane@example.com"},
+		},
+		{
+			name:  "empty falls back",
+			ident: authorIdent{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.complete, tt.ident.complete())
+			assert.Equal(t, tt.wantEnv, tt.ident.env())
+		})
+	}
+}
+
+func TestMerge_SquashRebase_CreditsChangeAuthor(t *testing.T) {
+	// A squash mints a fresh commit, so without attribution it would be
+	// authored by the merger. The person who wrote the change should be its
+	// author; the merger stays the committer, since it is what applied it.
+	f := setupGitFixture(t)
+	sha := f.pushPRCommit(t, "feature/a", "hello.txt", "hello\nearth\n", "tweak hello")
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.Merge(context.Background(), req("b",
+		stepOf(mergestrategypb.Strategy_SQUASH_REBASE, "s1", uri(sha)),
+	))
+	require.NoError(t, err)
+	require.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
+
+	author, committer := f.remoteIdent(t, f.remoteHEAD(t))
+	assert.Equal(t, "author <author@example.com>", author)
+	assert.Equal(t, "Test <test@example.com>", committer)
+}
+
+func TestMerge_Merge_CreditsChangeAuthorOnMergeCommit(t *testing.T) {
+	// `git merge` has no --author flag, so the merge commit is the case that
+	// only the environment can attribute.
+	f := setupGitFixture(t)
+	sha := f.pushPRCommit(t, "feature/a", "hello.txt", "hello\nearth\n", "tweak hello")
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.Merge(context.Background(), req("b",
+		stepOf(mergestrategypb.Strategy_MERGE, "s1", uri(sha)),
+	))
+	require.NoError(t, err)
+	require.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
+
+	mergeSHA := f.remoteHEAD(t)
+	require.Len(t, f.parents(t, mergeSHA), 2, "expected a merge commit")
+	author, committer := f.remoteIdent(t, mergeSHA)
+	assert.Equal(t, "author <author@example.com>", author)
+	assert.Equal(t, "Test <test@example.com>", committer)
+}
+
+func TestMerge_SquashRebase_CreditsAuthorOfHeadCommit(t *testing.T) {
+	// The URI pins a head SHA, and that commit's author is the one the request
+	// names. A change whose commits have different authors is credited to the
+	// head's, not to whoever happened to start it.
+	f := setupGitFixture(t)
+	head := f.pushMultiCommitPRAs(t, "feature/multi",
+		authoredCommit{spec: commitSpec{path: "a.go", contents: "package a\n", message: "add a"},
+			name: "First Author", email: "first@example.com"},
+		authoredCommit{spec: commitSpec{path: "b.go", contents: "package b\n", message: "add b"},
+			name: "Head Author", email: "head@example.com"},
+	)
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.Merge(context.Background(), req("b",
+		stepOf(mergestrategypb.Strategy_SQUASH_REBASE, "s1", uri(head)),
+	))
+	require.NoError(t, err)
+	require.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
+
+	author, committer := f.remoteIdent(t, f.remoteHEAD(t))
+	assert.Equal(t, "Head Author <head@example.com>", author)
+	assert.Equal(t, "Test <test@example.com>", committer)
+	// Both commits' content still landed — attribution did not change what the
+	// squash contains.
+	assert.Equal(t, "package a\n", f.remoteFile(t, "a.go"))
+	assert.Equal(t, "package b\n", f.remoteFile(t, "b.go"))
+}
+
+func TestMerge_Rebase_PreservesEachCommitsOwnAuthor(t *testing.T) {
+	// REBASE cherry-picks, which carries the author across on its own. Nothing
+	// collapses, so each commit keeps the person who wrote it rather than
+	// everything being credited to the head's author.
+	f := setupGitFixture(t)
+	head := f.pushMultiCommitPRAs(t, "feature/multi",
+		authoredCommit{spec: commitSpec{path: "a.go", contents: "package a\n", message: "add a"},
+			name: "First Author", email: "first@example.com"},
+		authoredCommit{spec: commitSpec{path: "b.go", contents: "package b\n", message: "add b"},
+			name: "Head Author", email: "head@example.com"},
+	)
+
+	m := f.newMerger(t, mergestrategypb.Strategy_REBASE)
+	res, err := m.Merge(context.Background(), req("b",
+		stepOf(mergestrategypb.Strategy_REBASE, "s1", uri(head)),
+	))
+	require.NoError(t, err)
+	require.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
+
+	landed := f.remoteCommitsSinceSeed(t)
+	require.Len(t, landed, 2)
+	firstAuthor, firstCommitter := f.remoteIdent(t, landed[0])
+	headAuthor, headCommitter := f.remoteIdent(t, landed[1])
+	assert.Equal(t, "First Author <first@example.com>", firstAuthor)
+	assert.Equal(t, "Head Author <head@example.com>", headAuthor)
+	assert.Equal(t, "Test <test@example.com>", firstCommitter)
+	assert.Equal(t, "Test <test@example.com>", headCommitter)
+}
+
 // --- object availability and staleness ---
 
 func TestMerge_UnavailableCommitIsInvalidRequestNotConflict(t *testing.T) {
@@ -991,26 +1204,29 @@ func TestMerge_StalenessCheckOffByDefault(t *testing.T) {
 
 func TestResolveChange(t *testing.T) {
 	tests := []struct {
-		name      string
-		uri       string
-		wantSHA   string
-		wantRef   string
-		wantLabel string
-		wantErr   bool
+		name         string
+		uri          string
+		wantProvider string
+		wantSHA      string
+		wantRef      string
+		wantLabel    string
+		wantErr      bool
 	}{
 		{
-			name:      "github pull request",
-			uri:       "github://github.example.com/uber/submitqueue/pull/42/" + fakeSHA,
-			wantSHA:   fakeSHA,
-			wantRef:   "refs/pull/42/head",
-			wantLabel: "uber/submitqueue#42",
+			name:         "github pull request",
+			uri:          "github://github.example.com/uber/submitqueue/pull/42/" + fakeSHA,
+			wantProvider: "github",
+			wantSHA:      fakeSHA,
+			wantRef:      "refs/pull/42/head",
+			wantLabel:    "uber/submitqueue#42",
 		},
 		{
-			name:      "git ref",
-			uri:       "git://git.example.com/uber/monorepo/refs%2Fheads%2Fmain/" + fakeSHA,
-			wantSHA:   fakeSHA,
-			wantRef:   "refs/heads/main",
-			wantLabel: "uber/monorepo@refs/heads/main",
+			name:         "git ref",
+			uri:          "git://git.example.com/uber/monorepo/refs%2Fheads%2Fmain/" + fakeSHA,
+			wantProvider: "git",
+			wantSHA:      fakeSHA,
+			wantRef:      "refs/heads/main",
+			wantLabel:    "uber/monorepo@refs/heads/main",
 		},
 		{name: "unsupported scheme", uri: "phab://phab.example.com/D123/456", wantErr: true},
 		{name: "no scheme", uri: "not-a-uri", wantErr: true},
@@ -1026,6 +1242,7 @@ func TestResolveChange(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+			assert.Equal(t, tt.wantProvider, got.Provider)
 			assert.Equal(t, tt.wantSHA, got.SHA)
 			assert.Equal(t, tt.wantRef, got.Ref)
 			assert.Equal(t, tt.wantLabel, got.Label)
@@ -1473,6 +1690,40 @@ func (f gitFixture) parents(t *testing.T, sha string) []string {
 	fields := strings.Fields(strings.TrimSpace(string(out)))
 	require.NotEmpty(t, fields)
 	return fields[1:]
+}
+
+// remoteIdent returns the author and committer recorded on a commit, each
+// formatted "Name <email>". The two differ whenever the merger creates a commit
+// for someone else's change.
+func (f gitFixture) remoteIdent(t *testing.T, sha string) (author, committer string) {
+	t.Helper()
+	out := mustGitOutput(t, f.remoteDir, "show", "--no-patch", "--format=%an <%ae>%n%cn <%ce>", sha)
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	require.Len(t, lines, 2)
+	return lines[0], lines[1]
+}
+
+// authoredCommit is a commitSpec plus the identity to author it with, for the
+// tests that need a change whose commits are not all by the same person.
+type authoredCommit struct {
+	spec  commitSpec
+	name  string
+	email string
+}
+
+// pushMultiCommitPRAs is pushMultiCommitPR with an explicit author per commit.
+func (f gitFixture) pushMultiCommitPRAs(t *testing.T, branch string, commits ...authoredCommit) string {
+	t.Helper()
+	mustGit(t, f.authorDir, "fetch", "origin")
+	mustGit(t, f.authorDir, "checkout", "-B", branch, "origin/main")
+	for _, c := range commits {
+		require.NoError(t, writeFile(filepath.Join(f.authorDir, c.spec.path), c.spec.contents))
+		mustGit(t, f.authorDir, "add", ".")
+		mustGit(t, f.authorDir, "commit", "-m", c.spec.message,
+			"--author", fmt.Sprintf("%s <%s>", c.name, c.email))
+	}
+	mustGit(t, f.authorDir, "push", "-f", "origin", branch)
+	return strings.TrimSpace(string(mustGitOutput(t, f.authorDir, "rev-parse", "HEAD")))
 }
 
 func mustGit(t *testing.T, dir string, args ...string) {

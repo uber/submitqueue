@@ -30,10 +30,17 @@ import (
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	storagemock "github.com/uber/submitqueue/submitqueue/extension/storage/mock"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
+
+// staticStorageFactory resolves every queue to one fixed store aggregate.
+type staticStorageFactory struct{ store storage.Storage }
+
+// For returns the fixed store aggregate for any queue.
+func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
 
 func requestWithState(request entity.Request, state entity.RequestState) entity.Request {
 	request.State = state
@@ -89,7 +96,7 @@ func TestProcess_MergeablePublishesToBatch(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, registry,
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, registry,
 		runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-mergeconflictsignal")
 
 	res := runwaymq.MergeResult{Id: testRequestID, Outcome: runwaypb.Outcome_SUCCEEDED}
@@ -146,7 +153,7 @@ func TestProcess_NotMergeableMarksRequestError(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, registry,
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, registry,
 		runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-mergeconflictsignal")
 
 	res := runwaymq.MergeResult{Id: testRequestID, Outcome: runwaypb.Outcome_FAILED, Reason: "conflict in foo.go"}
@@ -173,10 +180,10 @@ func TestFailRequest_UpdateFailureLeavesRequestUnchanged(t *testing.T) {
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(reqStore)
 
-	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, consumer.TopicRegistry{},
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, consumer.TopicRegistry{},
 		runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-mergeconflictsignal")
 
-	err := controller.failRequest(context.Background(), request, "conflict")
+	err := controller.failRequest(context.Background(), store, request, "conflict")
 	require.Error(t, err)
 	assert.Equal(t, entity.RequestStateStarted, request.State)
 	assert.Equal(t, int32(1), request.Version)
@@ -201,7 +208,7 @@ func TestProcess_HaltedRequestSkips(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, store, registry,
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, registry,
 		runwaymq.TopicKeyMergeConflictCheckSignal, "orchestrator-mergeconflictsignal")
 
 	res := runwaymq.MergeResult{Id: testRequestID, Outcome: runwaypb.Outcome_SUCCEEDED}

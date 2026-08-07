@@ -36,7 +36,7 @@ Message with acknowledgment operations.
 type Delivery interface {
     Message() entityqueue.Message
     Ack(ctx context.Context) error
-    Nack(ctx context.Context, requeueAfterMillis int64) error
+    Nack(ctx context.Context) error
     Postpone(ctx context.Context, delayMs int64) error
     Reject(ctx context.Context, reason string) error
     ExtendVisibilityTimeout(ctx context.Context, durationMillis int64) error
@@ -48,12 +48,12 @@ type Delivery interface {
 ```
 
 - **Ack** — message processed successfully, remove from queue
-- **Nack** — processing failed, requeue for retry after delay
+- **Nack** — processing failed, requeue for immediate retry
 - **Postpone** — processed successfully but must wait: redeliver after delay, without consuming retry budget; the message is a barrier its partition waits behind
 - **Reject** — poison pill, move to DLQ (or ack if DLQ disabled)
 - **ExtendVisibilityTimeout** — extend processing window for long-running work
 
-**`Postpone` vs `Nack` vs `ExtendVisibilityTimeout`:** all three can produce "next delivery happens at T+delay", but they mean different things. `Nack` is a failure — it counts toward `Retry.MaxAttempts` and eventually trips the DLQ, and later offsets in the partition keep flowing past the nacked message (a failed message must not halt its partition). `Postpone` is a deliberate wait — it resets the failure streak (the redelivery restarts at attempt 1) and blocks the partition behind it until it redelivers, in order. `ExtendVisibilityTimeout` is neither: the delivery is still being processed and stays in flight.
+**`Postpone` vs `Nack` vs `ExtendVisibilityTimeout`:** `Nack` is a failure — the message is immediately eligible again, the redelivery counts toward `Retry.MaxAttempts` and eventually trips the DLQ, and later offsets in the partition keep flowing past the nacked message (a failed message must not halt its partition). `Postpone` is a deliberate wait — the redelivery happens after the chosen delay, resets the failure streak (it restarts at attempt 1), and blocks the partition behind it until it redelivers, in order. `ExtendVisibilityTimeout` is neither: the delivery is still being processed and stays in flight.
 
 ### SubscriptionConfig
 
@@ -89,7 +89,7 @@ cfg := extqueue.DefaultSubscriptionConfig("worker-1", "consumer-group")
 deliveries, _ := sub.Subscribe(ctx, "topic", cfg)
 for delivery := range deliveries {
     if err := process(delivery.Message().Payload); err != nil {
-        delivery.Nack(ctx, 0)  // Retry
+        delivery.Nack(ctx)  // Retry
         continue
     }
     delivery.Ack(ctx)

@@ -40,7 +40,7 @@ import (
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
-	store         storage.Storage
+	stores        storage.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -53,7 +53,7 @@ var _ consumer.Controller = (*Controller)(nil)
 func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
-	store storage.Storage,
+	stores storage.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
@@ -61,7 +61,7 @@ func NewController(
 	return &Controller{
 		logger:        logger.Named("mergeconflictsignal_controller"),
 		metricsScope:  scope.SubScope("mergeconflictsignal_controller"),
-		store:         store,
+		stores:        stores,
 		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -89,7 +89,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to deserialize merge conflict check result: %w", err)
 	}
 
-	request, err := c.store.GetRequestStore().Get(ctx, result.Id)
+	store, err := c.stores.For(storage.Config{QueueName: result.GetQueueName()})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
+		// Non-retryable: a missing or unresolvable queue is a malformed message.
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", result.GetQueueName(), err)
+	}
+
+	request, err := store.GetRequestStore().Get(ctx, result.Id)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
 		return fmt.Errorf("failed to get request %s: %w", result.Id, err)
@@ -118,7 +125,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			"request_id", request.ID,
 			"reason", result.Reason,
 		)
-		if err := c.failRequest(ctx, request, result.Reason); err != nil {
+		if err := c.failRequest(ctx, store, request, result.Reason); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "fail_errors", 1)
 			return fmt.Errorf("failed to fail request %s: %w", request.ID, err)
 		}
@@ -128,7 +135,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Advance the request to Validated now that the merge-conflict check passed.
 	newVersion := request.Version + 1
 	request.State = entity.RequestStateValidated
-	if err := c.store.GetRequestStore().Update(ctx, request, request.Version, newVersion); err != nil {
+	if err := store.GetRequestStore().Update(ctx, request, request.Version, newVersion); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "state_errors", 1)
 		return fmt.Errorf("failed to update request %s state to validated: %w", request.ID, err)
 	}
@@ -161,7 +168,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // in Error skips the state CAS but still publishes the log (so a prior attempt
 // that flipped the state but failed before logging is repaired); a request that
 // reached a different terminal state (e.g. a racing cancel) is left untouched.
-func (c *Controller) failRequest(ctx context.Context, request entity.Request, reason string) error {
+func (c *Controller) failRequest(ctx context.Context, store storage.Storage, request entity.Request, reason string) error {
 	switch {
 	case request.State == entity.RequestStateError:
 		// Idempotent retry: a prior delivery already wrote Error. Fall through to
@@ -175,7 +182,7 @@ func (c *Controller) failRequest(ctx context.Context, request entity.Request, re
 	default:
 		newVersion := request.Version + 1
 		request.State = entity.RequestStateError
-		if err := c.store.GetRequestStore().Update(ctx, request, request.Version, newVersion); err != nil {
+		if err := store.GetRequestStore().Update(ctx, request, request.Version, newVersion); err != nil {
 			return fmt.Errorf("failed to update request %s state to error: %w", request.ID, err)
 		}
 		request.Version = newVersion
@@ -188,14 +195,15 @@ func (c *Controller) failRequest(ctx context.Context, request entity.Request, re
 	return nil
 }
 
-// publishRequestID publishes a request ID to the given topic key, partitioned by queue.
-func (c *Controller) publishRequestID(ctx context.Context, key consumer.TopicKey, requestID string, partitionKey string) error {
-	payload, err := entity.RequestID{ID: requestID}.ToBytes()
+// publishRequestID publishes a request ID to the given topic key, stamped with
+// and partitioned by the request's queue.
+func (c *Controller) publishRequestID(ctx context.Context, key consumer.TopicKey, requestID string, queue string) error {
+	payload, err := entity.RequestID{ID: requestID, Queue: queue}.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize request ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(requestID, payload, partitionKey, nil)
+	msg := entityqueue.NewMessage(requestID, payload, queue, nil)
 
 	q, ok := c.registry.Queue(key)
 	if !ok {

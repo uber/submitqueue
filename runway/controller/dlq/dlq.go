@@ -137,9 +137,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	)
 
 	result := &runwaymq.MergeResult{
-		Id:      request.GetId(),
-		Outcome: runwaypb.Outcome_FAILED,
-		Reason:  fmt.Sprintf("dead-lettered: %s", reason),
+		Id:        request.GetId(),
+		Outcome:   runwaypb.Outcome_FAILED,
+		Reason:    fmt.Sprintf("dead-lettered: %s", reason),
+		QueueName: request.GetQueueName(),
 	}
 
 	if err := c.publish(ctx, result, msg.PartitionKey); err != nil {

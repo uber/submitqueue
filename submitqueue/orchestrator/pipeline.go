@@ -56,8 +56,8 @@ type Deps struct {
 	// Scope is the metrics scope for all controllers.
 	Scope tally.Scope
 
-	// Storage provides request, batch, and change stores.
-	Storage storage.Storage
+	// Storage resolves the queue-scoped store aggregate per queue.
+	Storage storage.Factory
 
 	// Counter provides distributed batch counters.
 	Counter counter.Counter

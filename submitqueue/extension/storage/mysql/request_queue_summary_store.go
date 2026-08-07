@@ -31,16 +31,23 @@ import (
 type requestQueueSummaryStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewRequestQueueSummaryStore creates a MySQL-backed RequestQueueSummaryStore.
-func NewRequestQueueSummaryStore(db *sql.DB, scope tally.Scope) storage.RequestQueueSummaryStore {
-	return &requestQueueSummaryStore{db: db, scope: scope}
+func NewRequestQueueSummaryStore(db *sql.DB, scope tally.Scope, queue string) storage.RequestQueueSummaryStore {
+	return &requestQueueSummaryStore{db: db, scope: scope, queue: queue}
 }
 
 func (s *requestQueueSummaryStore) Create(ctx context.Context, summary entity.RequestQueueSummary) (retErr error) {
 	op := metrics.Begin(s.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
+
+	if summary.Queue != s.queue {
+		return fmt.Errorf("queue summary request_id=%s queue %q does not match the store's bound queue %q", summary.RequestID, summary.Queue, s.queue)
+	}
 
 	changeURIsJSON, metadataJSON, err := marshalSummaryJSON(summary.ChangeURIs, summary.Metadata)
 	if err != nil {
@@ -64,9 +71,11 @@ func (s *requestQueueSummaryStore) Create(ctx context.Context, summary entity.Re
 	return nil
 }
 
-func (s *requestQueueSummaryStore) Get(ctx context.Context, queue string, receivedAtMs int64, requestID string) (ret entity.RequestQueueSummary, retErr error) {
+func (s *requestQueueSummaryStore) Get(ctx context.Context, receivedAtMs int64, requestID string) (ret entity.RequestQueueSummary, retErr error) {
 	op := metrics.Begin(s.scope, "get", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
+
+	queue := s.queue
 
 	var changeURIsJSON []byte
 	var metadataJSON []byte
@@ -91,6 +100,10 @@ func (s *requestQueueSummaryStore) Get(ctx context.Context, queue string, receiv
 func (s *requestQueueSummaryStore) Update(ctx context.Context, summary entity.RequestQueueSummary, oldVersion, newVersion int32) (retErr error) {
 	op := metrics.Begin(s.scope, "update", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
+
+	if summary.Queue != s.queue {
+		return fmt.Errorf("queue summary request_id=%s queue %q does not match the store's bound queue %q", summary.RequestID, summary.Queue, s.queue)
+	}
 
 	changeURIsJSON, metadataJSON, err := marshalSummaryJSON(summary.ChangeURIs, summary.Metadata)
 	if err != nil {
@@ -125,7 +138,7 @@ func (s *requestQueueSummaryStore) List(ctx context.Context, query storage.Reque
 			version, last_error, metadata
 		FROM request_summary_by_queue
 		WHERE queue = ? AND received_at_ms >= ? AND received_at_ms < ?`
-	args := []any{query.Queue, query.ReceivedAtOrAfterMs, query.ReceivedBeforeMs}
+	args := []any{s.queue, query.ReceivedAtOrAfterMs, query.ReceivedBeforeMs}
 	if query.HasCursor {
 		statement += " AND (received_at_ms < ? OR (received_at_ms = ? AND request_id < ?))"
 		args = append(args, query.Cursor.ReceivedAtMs, query.Cursor.ReceivedAtMs, query.Cursor.RequestID)
@@ -135,7 +148,7 @@ func (s *requestQueueSummaryStore) List(ctx context.Context, query storage.Reque
 
 	rows, err := s.db.QueryContext(ctx, statement, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list queue summaries queue=%s: %w", query.Queue, err)
+		return nil, fmt.Errorf("failed to list queue summaries queue=%s: %w", s.queue, err)
 	}
 	defer rows.Close()
 
@@ -145,7 +158,7 @@ func (s *requestQueueSummaryStore) List(ctx context.Context, query storage.Reque
 		var changeURIsJSON []byte
 		var metadataJSON []byte
 		if err := rows.Scan(&summary.Queue, &summary.ReceivedAtMs, &summary.RequestID, &changeURIsJSON, &summary.Status, &summary.Version, &summary.LastError, &metadataJSON); err != nil {
-			return nil, fmt.Errorf("failed to scan queue summary queue=%s: %w", query.Queue, err)
+			return nil, fmt.Errorf("failed to scan queue summary queue=%s: %w", s.queue, err)
 		}
 		if err := unmarshalSummaryJSON(changeURIsJSON, metadataJSON, &summary.ChangeURIs, &summary.Metadata); err != nil {
 			return nil, fmt.Errorf("failed to decode queue summary request_id=%s: %w", summary.RequestID, err)
@@ -153,7 +166,7 @@ func (s *requestQueueSummaryStore) List(ctx context.Context, query storage.Reque
 		results = append(results, summary)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate queue summaries queue=%s: %w", query.Queue, err)
+		return nil, fmt.Errorf("failed to iterate queue summaries queue=%s: %w", s.queue, err)
 	}
 	return results, nil
 }

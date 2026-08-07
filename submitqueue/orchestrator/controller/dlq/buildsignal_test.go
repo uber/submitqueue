@@ -32,8 +32,9 @@ import (
 func TestDLQBuildSignalController_InterfaceAndAccessors(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 
-	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
+	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
 
 	assert.Equal(t, "buildsignal_dlq", c.Name())
 	assert.Equal(t, consumer.TopicKey("buildsignal_dlq"), c.TopicKey())
@@ -68,11 +69,12 @@ func TestDLQBuildSignalController_Process_FansOutToBatch(t *testing.T) {
 	})
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, registry, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
+	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
 
 	payload, err := entity.BuildID{ID: "build-1"}.ToBytes()
 	require.NoError(t, err)
@@ -88,9 +90,10 @@ func TestDLQBuildSignalController_Process_BuildNotFoundIsNoOp(t *testing.T) {
 	buildStore.EXPECT().Get(gomock.Any(), "build-1").Return(entity.Build{}, storage.ErrNotFound)
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
 
-	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
+	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
 
 	payload, err := entity.BuildID{ID: "build-1"}.ToBytes()
 	require.NoError(t, err)
@@ -108,9 +111,10 @@ func TestDLQBuildSignalController_Process_BuildMissingBatchIsNoOp(t *testing.T) 
 	}, nil)
 
 	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(buildStore).AnyTimes()
 
-	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
+	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
 
 	payload, err := entity.BuildID{ID: "build-1"}.ToBytes()
 	require.NoError(t, err)
@@ -123,7 +127,8 @@ func TestDLQBuildSignalController_Process_MalformedPayloadFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	store := storagemock.NewMockStorage(ctrl)
-	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), store, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
+	c := NewDLQBuildSignalController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, TopicKey(topickey.TopicKeyBuildSignal), "orchestrator-buildsignal-dlq")
 
 	delivery := newMockDelivery(ctrl, []byte("garbage"))
 	err := c.Process(context.Background(), delivery)

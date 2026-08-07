@@ -32,11 +32,14 @@ import (
 type requestStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewRequestStore creates a new MySQL-backed RequestStore.
-func NewRequestStore(db *sql.DB, scope tally.Scope) storage.RequestStore {
-	return &requestStore{db: db, scope: scope}
+func NewRequestStore(db *sql.DB, scope tally.Scope, queue string) storage.RequestStore {
+	return &requestStore{db: db, scope: scope, queue: queue}
 }
 
 // Get retrieves a land request by ID. Returns ErrNotFound if the request is not found.
@@ -48,8 +51,8 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 	var changeURIsJSON []byte
 
 	err := r.db.QueryRowContext(ctx,
-		"SELECT id, queue, change_uri, land_strategy, state, version FROM request WHERE id = ?",
-		id,
+		"SELECT id, queue, change_uri, land_strategy, state, version FROM request WHERE queue = ? AND id = ?",
+		r.queue, id,
 	).Scan(&req.ID, &req.Queue, &changeURIsJSON, &req.LandStrategy, &req.State, &req.Version)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -71,6 +74,10 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 func (r *requestStore) Create(ctx context.Context, request entity.Request) (retErr error) {
 	op := metrics.Begin(r.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
+
+	if request.Queue != r.queue {
+		return fmt.Errorf("request %s queue %q does not match the store's bound queue %q", request.ID, request.Queue, r.queue)
+	}
 
 	// Marshal the change URIs to JSON
 	changeURIsJSON, err := json.Marshal(request.Change.URIs)
@@ -99,14 +106,18 @@ func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVe
 	op := metrics.Begin(r.scope, "update_state", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	if request.Queue != r.queue {
+		return fmt.Errorf("request %s queue %q does not match the store's bound queue %q", request.ID, request.Queue, r.queue)
+	}
+
 	changeURIsJSON, err := json.Marshal(request.Change.URIs)
 	if err != nil {
 		return fmt.Errorf("failed to marshal change URIs for request id=%s: %w", request.ID, err)
 	}
 
 	result, err := r.db.ExecContext(ctx,
-		"UPDATE request SET queue = ?, change_uri = ?, land_strategy = ?, state = ?, version = ? WHERE id = ? AND version = ?",
-		request.Queue, changeURIsJSON, request.LandStrategy, request.State, newVersion, request.ID, oldVersion,
+		"UPDATE request SET change_uri = ?, land_strategy = ?, state = ?, version = ? WHERE queue = ? AND id = ? AND version = ?",
+		changeURIsJSON, request.LandStrategy, request.State, newVersion, request.Queue, request.ID, oldVersion,
 	)
 	if err != nil {
 		return fmt.Errorf(

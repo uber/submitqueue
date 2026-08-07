@@ -23,25 +23,28 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
 
-// resolver is the store-backed Resolver. It owns the two resolution-target
-// stores and nothing else: a request store to walk batch.Contains, and a change
-// store to attach provider details for the Detailed view.
+// resolver is the store-backed Resolver. It holds the storage factory and
+// resolves the batch's queue-scoped request and change stores per call, since
+// every resolution is for exactly one batch and the batch names its queue.
 type resolver struct {
-	requests storage.RequestStore
-	changes  storage.ChangeStore
+	stores storage.Factory
 }
 
-// New returns a Resolver backed by the given request and change stores.
-func New(requests storage.RequestStore, changes storage.ChangeStore) Resolver {
-	return resolver{requests: requests, changes: changes}
+// New returns a Resolver backed by the given storage factory.
+func New(stores storage.Factory) Resolver {
+	return resolver{stores: stores}
 }
 
 // ChangesForBatch resolves a batch's requests to their raw changes, in
 // batch.Contains order.
 func (r resolver) ChangesForBatch(ctx context.Context, batch entity.Batch) ([]change.Change, error) {
+	store, err := r.stores.For(storage.Config{QueueName: batch.Queue})
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve storage for queue %q: %w", batch.Queue, err)
+	}
 	changes := make([]change.Change, 0, len(batch.Contains))
 	for _, requestID := range batch.Contains {
-		request, err := r.requests.Get(ctx, requestID)
+		request, err := store.GetRequestStore().Get(ctx, requestID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get request %s for batch %s: %w", requestID, batch.ID, err)
 		}
@@ -54,14 +57,18 @@ func (r resolver) ChangesForBatch(ctx context.Context, batch entity.Batch) ([]ch
 // ChangeInfo per claimed URI, owned by the requesting request, aggregated across
 // the whole batch.
 func (r resolver) DetailedForBatch(ctx context.Context, batch entity.Batch) (entity.BatchChanges, error) {
+	store, err := r.stores.For(storage.Config{QueueName: batch.Queue})
+	if err != nil {
+		return entity.BatchChanges{}, fmt.Errorf("failed to resolve storage for queue %q: %w", batch.Queue, err)
+	}
 	result := entity.BatchChanges{BatchID: batch.ID, Queue: batch.Queue}
 	for _, requestID := range batch.Contains {
-		request, err := r.requests.Get(ctx, requestID)
+		request, err := store.GetRequestStore().Get(ctx, requestID)
 		if err != nil {
 			return entity.BatchChanges{}, fmt.Errorf("failed to get request %s: %w", requestID, err)
 		}
 		for _, uri := range request.Change.URIs {
-			records, err := r.changes.GetByURI(ctx, batch.Queue, uri)
+			records, err := store.GetChangeStore().GetByURI(ctx, uri)
 			if err != nil {
 				return entity.BatchChanges{}, fmt.Errorf("failed to read change record for request %s uri=%s: %w", requestID, uri, err)
 			}

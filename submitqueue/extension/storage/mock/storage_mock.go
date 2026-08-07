@@ -16,6 +16,45 @@ import (
 	gomock "go.uber.org/mock/gomock"
 )
 
+// MockFactory is a mock of Factory interface.
+type MockFactory struct {
+	ctrl     *gomock.Controller
+	recorder *MockFactoryMockRecorder
+	isgomock struct{}
+}
+
+// MockFactoryMockRecorder is the mock recorder for MockFactory.
+type MockFactoryMockRecorder struct {
+	mock *MockFactory
+}
+
+// NewMockFactory creates a new mock instance.
+func NewMockFactory(ctrl *gomock.Controller) *MockFactory {
+	mock := &MockFactory{ctrl: ctrl}
+	mock.recorder = &MockFactoryMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockFactory) EXPECT() *MockFactoryMockRecorder {
+	return m.recorder
+}
+
+// For mocks base method.
+func (m *MockFactory) For(config storage.Config) (storage.Storage, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "For", config)
+	ret0, _ := ret[0].(storage.Storage)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// For indicates an expected call of For.
+func (mr *MockFactoryMockRecorder) For(config any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "For", reflect.TypeOf((*MockFactory)(nil).For), config)
+}
+
 // MockStorage is a mock of Storage interface.
 type MockStorage struct {
 	ctrl     *gomock.Controller
@@ -38,20 +77,6 @@ func NewMockStorage(ctrl *gomock.Controller) *MockStorage {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockStorage) EXPECT() *MockStorageMockRecorder {
 	return m.recorder
-}
-
-// Close mocks base method.
-func (m *MockStorage) Close() error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Close")
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Close indicates an expected call of Close.
-func (mr *MockStorageMockRecorder) Close() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockStorage)(nil).Close))
 }
 
 // GetBatchDependentStore mocks base method.
@@ -110,6 +135,20 @@ func (mr *MockStorageMockRecorder) GetChangeStore() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetChangeStore", reflect.TypeOf((*MockStorage)(nil).GetChangeStore))
 }
 
+// GetQueueBatchStateStore mocks base method.
+func (m *MockStorage) GetQueueBatchStateStore() storage.QueueBatchStateStore {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetQueueBatchStateStore")
+	ret0, _ := ret[0].(storage.QueueBatchStateStore)
+	return ret0
+}
+
+// GetQueueBatchStateStore indicates an expected call of GetQueueBatchStateStore.
+func (mr *MockStorageMockRecorder) GetQueueBatchStateStore() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetQueueBatchStateStore", reflect.TypeOf((*MockStorage)(nil).GetQueueBatchStateStore))
+}
+
 // GetRequestBatchStore mocks base method.
 func (m *MockStorage) GetRequestBatchStore() storage.RequestBatchStore {
 	m.ctrl.T.Helper()
@@ -122,20 +161,6 @@ func (m *MockStorage) GetRequestBatchStore() storage.RequestBatchStore {
 func (mr *MockStorageMockRecorder) GetRequestBatchStore() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRequestBatchStore", reflect.TypeOf((*MockStorage)(nil).GetRequestBatchStore))
-}
-
-// GetRequestLogStore mocks base method.
-func (m *MockStorage) GetRequestLogStore() storage.RequestLogStore {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetRequestLogStore")
-	ret0, _ := ret[0].(storage.RequestLogStore)
-	return ret0
-}
-
-// GetRequestLogStore indicates an expected call of GetRequestLogStore.
-func (mr *MockStorageMockRecorder) GetRequestLogStore() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRequestLogStore", reflect.TypeOf((*MockStorage)(nil).GetRequestLogStore))
 }
 
 // GetRequestQueueSummaryStore mocks base method.
@@ -164,32 +189,4 @@ func (m *MockStorage) GetRequestStore() storage.RequestStore {
 func (mr *MockStorageMockRecorder) GetRequestStore() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRequestStore", reflect.TypeOf((*MockStorage)(nil).GetRequestStore))
-}
-
-// GetRequestSummaryStore mocks base method.
-func (m *MockStorage) GetRequestSummaryStore() storage.RequestSummaryStore {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetRequestSummaryStore")
-	ret0, _ := ret[0].(storage.RequestSummaryStore)
-	return ret0
-}
-
-// GetRequestSummaryStore indicates an expected call of GetRequestSummaryStore.
-func (mr *MockStorageMockRecorder) GetRequestSummaryStore() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRequestSummaryStore", reflect.TypeOf((*MockStorage)(nil).GetRequestSummaryStore))
-}
-
-// GetRequestURIStore mocks base method.
-func (m *MockStorage) GetRequestURIStore() storage.RequestURIStore {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetRequestURIStore")
-	ret0, _ := ret[0].(storage.RequestURIStore)
-	return ret0
-}
-
-// GetRequestURIStore indicates an expected call of GetRequestURIStore.
-func (mr *MockStorageMockRecorder) GetRequestURIStore() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRequestURIStore", reflect.TypeOf((*MockStorage)(nil).GetRequestURIStore))
 }

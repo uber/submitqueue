@@ -22,12 +22,15 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
+	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	pb "github.com/uber/submitqueue/api/runway/protopb"
 	"github.com/uber/submitqueue/platform/consumer"
@@ -44,6 +47,7 @@ import (
 	"github.com/uber/submitqueue/runway/controller/merge"
 	"github.com/uber/submitqueue/runway/controller/mergeconflictcheck"
 	"github.com/uber/submitqueue/runway/extension/merger"
+	gitmerger "github.com/uber/submitqueue/runway/extension/merger/git"
 	"github.com/uber/submitqueue/runway/extension/merger/noop"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -164,7 +168,10 @@ func run() error {
 		gate,
 	)
 
-	mergerFactory := newMergerFactory()
+	mergerFactory, err := newMergerFactory(logger, scope.SubScope("merger"))
+	if err != nil {
+		return fmt.Errorf("failed to create merger factory: %w", err)
+	}
 
 	mergeConflictCheckController := mergeconflictcheck.NewController(mergeconflictcheck.Params{
 		Logger:        logger.Sugar(),
@@ -295,16 +302,123 @@ func run() error {
 	return err
 }
 
-// newMergerFactory returns a merger.Factory for the example server. The noop
-// implementation always succeeds; a real deployment wires a VCS-backed factory.
-func newMergerFactory() merger.Factory {
-	return &noopMergerFactory{}
+// newMergerFactory returns a merger.Factory for the server. When
+// MERGE_CHECKOUT_PATH is set it wires the git-backed merger built from the
+// MERGE_* / GIT_* environment; otherwise it falls back to the noop merger so
+// local development and compose runs need no git checkout.
+func newMergerFactory(logger *zap.Logger, scope tally.Scope) (merger.Factory, error) {
+	checkoutPath := os.Getenv("MERGE_CHECKOUT_PATH")
+	if checkoutPath == "" {
+		logger.Info("MERGE_CHECKOUT_PATH not set; using noop merger")
+		return &noopMergerFactory{}, nil
+	}
+
+	defaultStrategy, err := parseStrategy(os.Getenv("MERGE_DEFAULT_STRATEGY"))
+	if err != nil {
+		return nil, err
+	}
+
+	target := envOr("MERGE_TARGET", "main")
+	m, err := gitmerger.NewMerger(gitmerger.Params{
+		CheckoutPath:    checkoutPath,
+		Remote:          envOr("MERGE_REMOTE", "origin"),
+		Target:          target,
+		DefaultStrategy: defaultStrategy,
+		Runtime: gitmerger.GitRuntime{
+			Executable:  os.Getenv("GIT_EXECUTABLE"),
+			ExecPath:    os.Getenv("GIT_EXEC_PATH"),
+			TemplateDir: os.Getenv("GIT_TEMPLATE_DIR"),
+		},
+		CommitterName:  os.Getenv("MERGE_COMMITTER_NAME"),
+		CommitterEmail: os.Getenv("MERGE_COMMITTER_EMAIL"),
+		FetchRefspecs:  splitRefspecs(os.Getenv("MERGE_FETCH_REFSPECS")),
+		CheckStaleness: envBool("MERGE_CHECK_STALENESS", true),
+		// Off by default: it lifts git's refusal to join two unrelated history
+		// graphs, which is a safeguard everywhere except a queue whose purpose
+		// is importing one repository's history into another.
+		AllowUnrelatedHistories: envBool("MERGE_ALLOW_UNRELATED_HISTORIES", false),
+		Logger:                  logger.Sugar(),
+		MetricsScope:            scope,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to build git merger: %w", err)
+	}
+	logger.Info("git merger configured",
+		zap.String("checkout", checkoutPath),
+		zap.String("target", target),
+		zap.String("default_strategy", defaultStrategy.String()),
+	)
+	return &gitMergerFactory{merger: m}, nil
+}
+
+// gitMergerFactory returns a single git-backed merger for every queue. The
+// merger owns one checkout and serializes its own operations, so one instance
+// is shared across queues. A deployment that lands multiple targets wires a
+// factory with a per-queue map instead.
+type gitMergerFactory struct {
+	merger merger.Merger
+}
+
+func (f *gitMergerFactory) For(_ merger.Config) (merger.Merger, error) {
+	return f.merger, nil
 }
 
 type noopMergerFactory struct{}
 
 func (f *noopMergerFactory) For(_ merger.Config) (merger.Merger, error) {
 	return noop.New(), nil
+}
+
+// parseStrategy maps the MERGE_DEFAULT_STRATEGY env value to a concrete merge
+// strategy, defaulting to REBASE when unset. DEFAULT is rejected because it
+// cannot itself be the default a step resolves to.
+func parseStrategy(name string) (mergestrategypb.Strategy, error) {
+	switch strings.ToUpper(strings.TrimSpace(name)) {
+	case "", "REBASE":
+		return mergestrategypb.Strategy_REBASE, nil
+	case "SQUASH_REBASE":
+		return mergestrategypb.Strategy_SQUASH_REBASE, nil
+	case "MERGE":
+		return mergestrategypb.Strategy_MERGE, nil
+	case "PROMOTE":
+		return mergestrategypb.Strategy_PROMOTE, nil
+	default:
+		return mergestrategypb.Strategy_DEFAULT, fmt.Errorf("invalid MERGE_DEFAULT_STRATEGY %q", name)
+	}
+}
+
+// splitRefspecs parses the comma-separated MERGE_FETCH_REFSPECS value. Empty
+// entries are dropped so a trailing comma is harmless.
+func splitRefspecs(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+// envBool reads a boolean environment value, returning fallback when unset or
+// unparseable.
+func envBool(key string, fallback bool) bool {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(v)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+// envOr returns the environment value for key, or fallback when unset.
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 // newTopicRegistry builds the TopicRegistry for Runway's merge queues. Inbound
@@ -372,5 +486,5 @@ func newConsumerGate(logger *zap.Logger) consumergate.Gate {
 		return consumergatenoop.New()
 	}
 	logger.Info("consumer gate configured", zap.String("dir", dir))
-	return consumergatefile.New(dir, consumergate.DefaultConfig())
+	return consumergatefile.New(dir)
 }

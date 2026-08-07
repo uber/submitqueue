@@ -6,6 +6,8 @@ A `merger.Merger` backed by the `git` CLI operating on a local checkout. It appl
 
 A request is an ordered list of steps; each step names a change (a set of provider URIs, each ending in a full head commit SHA) and a strategy. Steps are applied in order on top of the target tip — earlier steps are the in-flight base, the last step is the candidate. Each step yields one `StepResult`; the revisions a step produces on the target are its outputs, in application order.
 
+The URI is the unit of application. A step's change may carry several URIs — a stack — and the step's strategy applies to each of them, the same way to each, in the order given. So a step is never a mix of strategies, and its outputs are the concatenation of what each URI produced: one revision per created commit under `REBASE`, one per URI under `SQUASH_REBASE` and `MERGE`. `PROMOTE` is the exception that admits only one URI, since advancing a ref to an exact revision cannot repeat.
+
 A URI pins a change to one head commit, but a change is routinely several commits. The full set is recovered locally rather than from the wire: the commits to replay are the range from the change's merge base with the target up to its head. Applying the head commit alone would apply only that commit's diff against its own parent — conflicting against context its predecessors would have established, or silently dropping them when they touch different files.
 
 ## Change providers
@@ -18,6 +20,14 @@ Every URI is reduced to three things: the commit to apply, the ref the provider 
 | `git://` | the URI's commit SHA | the URI's own ref | `repo@ref` |
 
 An unrecognized scheme is a terminal invalid request.
+
+## What a request must agree on
+
+The supported providers are a property of this merger, not of the queue or of the wire contract: the URI scheme selects the parser, and a scheme with no case is a terminal invalid request. Nothing upstream filters on it, so an unsupported provider is first refused here.
+
+Beyond the scheme, every change in one request must come from the same provider. There is no sense in one merge being addressed through two of them, and the check runs before any git command, so an incoherent request costs nothing and leaves the checkout untouched.
+
+Whether a change actually belongs to the repository this merger serves is not checked here — the merger is constrained to its checkout and remote by configuration, and a change it cannot fetch is refused on those grounds.
 
 ## Object availability
 
@@ -44,6 +54,16 @@ Fetching by SHA guarantees the merger applies exactly the commit a URI names —
 | `DEFAULT` | Resolved to the instance's configured default strategy before any step runs. | per the resolved strategy |
 
 `PROMOTE` is exclusive because a pre-existing commit cannot descend from commits an earlier transforming step produced, and it advances the ref to an exact SHA rather than to the locally-built HEAD. Mixing it with any other step is rejected as an invalid request.
+
+## Authorship
+
+Git records an author and a committer separately, and the merger keeps them apart: the committer is always the merger's configured identity, because it is what applied the change, while the author is the person who wrote it.
+
+`REBASE` gets this for free — cherry-pick carries each commit's author across, so every landed commit keeps whoever wrote it. The strategies that mint a fresh commit do not: the squash commit and the `--no-ff` merge commit are new objects, and without attribution both would be credited to the service. Each is therefore authored as the author recorded on the commit its change's URI pins. For a change spanning several commits by different people, that is the head commit's author — the one identity the request actually names.
+
+The author is read out of the local object store, so this costs no network and needs nothing on the wire: every referenced commit is already fetched and verified before a step is applied. A commit that records no usable author (either half missing) falls back to the committer identity rather than failing the merge.
+
+The author travels to git through `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` rather than `git commit --author`, because `git merge` has no `--author` flag and because the environment keeps the name and address as separate values — a single `Name <address>` string has to be parsed back apart, which a display name containing an angle bracket breaks.
 
 ## Importing an unrelated history
 

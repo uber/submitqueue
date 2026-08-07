@@ -35,17 +35,24 @@ const mysqlErrDuplicateEntry = 1062
 type requestStore struct {
 	db    *sql.DB
 	scope tally.Scope
+	// queue is the queue name this store instance is bound to; every read and
+	// write is scoped to it.
+	queue string
 }
 
 // NewRequestStore creates a new MySQL-backed RequestStore.
-func NewRequestStore(db *sql.DB, scope tally.Scope) storage.RequestStore {
-	return &requestStore{db: db, scope: scope}
+func NewRequestStore(db *sql.DB, scope tally.Scope, queue string) storage.RequestStore {
+	return &requestStore{db: db, scope: scope, queue: queue}
 }
 
 // Create persists a new request. Returns ErrAlreadyExists if the request ID already exists.
 func (r *requestStore) Create(ctx context.Context, request entity.Request) (retErr error) {
 	op := metrics.Begin(r.scope, "create", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
+
+	if request.Queue != r.queue {
+		return fmt.Errorf("request %s queue %q does not match the store's bound queue %q", request.ID, request.Queue, r.queue)
+	}
 
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO request (id, queue, uri, state, build_strategy, base_uri, version)
@@ -76,8 +83,8 @@ func (r *requestStore) Get(ctx context.Context, id string) (ret entity.Request, 
 	var req entity.Request
 	err := r.db.QueryRowContext(ctx,
 		`SELECT id, queue, uri, state, build_strategy, base_uri, version
-		 FROM request WHERE id = ?`,
-		id,
+		 FROM request WHERE queue = ? AND id = ?`,
+		r.queue, id,
 	).Scan(
 		&req.ID,
 		&req.Queue,
@@ -106,15 +113,20 @@ func (r *requestStore) Update(ctx context.Context, request entity.Request, oldVe
 	op := metrics.Begin(r.scope, "update", metrics.StorageLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
+	if request.Queue != r.queue {
+		return fmt.Errorf("request %s queue %q does not match the store's bound queue %q", request.ID, request.Queue, r.queue)
+	}
+
 	result, err := r.db.ExecContext(ctx,
 		`UPDATE request
 		 SET uri = ?, state = ?, build_strategy = ?, base_uri = ?, version = ?
-		 WHERE id = ? AND version = ?`,
+		 WHERE queue = ? AND id = ? AND version = ?`,
 		request.URI,
 		request.State,
 		request.BuildStrategy,
 		request.BaseURI,
 		newVersion,
+		request.Queue,
 		request.ID,
 		oldVersion,
 	)
