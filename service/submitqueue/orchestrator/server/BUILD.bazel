@@ -92,7 +92,7 @@ filegroup(
 go_test(
     name = "go_default_test",
     srcs = ["profiles_test.go"],
-    embed = [":go_default_library"],
+    embed = [":orchestrator_lib"],  # keep
     deps = [
         "//submitqueue/extension/buildrunner:go_default_library",
         "//submitqueue/extension/changeprovider:go_default_library",
