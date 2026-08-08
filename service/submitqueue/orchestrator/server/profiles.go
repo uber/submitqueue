@@ -184,13 +184,14 @@ func newProfiles(logger *zap.Logger, scope tally.Scope, resolver changeset.Resol
 	// below does.
 	base := Profile{
 		ChangeProvider: cp,
-		BuildRunner:    buildfake.New(resolver),
+		BuildRunner:    buildfake.New(buildrunner.Config{}, resolver),
 		// TODO: replace the delegate with a real analyzer (e.g. Tango target
 		// analysis). "all" serializes the queue conservatively.
-		Analyzer: conflictfake.New(all.New(), nil),
+		Analyzer: conflictfake.New(conflict.Config{}, all.New(conflict.Config{}), nil),
 		Storage:  stores,
 
-		Scorer: scorerfake.New(resolver, heuristic.New(
+		Scorer: scorerfake.New(scorer.Config{}, resolver, heuristic.New(
+			scorer.Config{},
 			resolver,
 			[]heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.5}},
 			batchLines, scope.SubScope("scorer.default"),
@@ -200,7 +201,8 @@ func newProfiles(logger *zap.Logger, scope tally.Scope, resolver changeset.Resol
 	// test-queue: bucketed heuristic scorer; conservative (serialized) conflicts
 	// inherited from the baseline.
 	testQueue := base
-	testQueue.Scorer = scorerfake.New(resolver, heuristic.New(
+	testQueue.Scorer = scorerfake.New(scorer.Config{}, resolver, heuristic.New(
+		scorer.Config{},
 		resolver,
 		[]heuristic.Bucket{
 			{Min: 0, Max: 1, Score: 0.95},
@@ -214,20 +216,21 @@ func newProfiles(logger *zap.Logger, scope tally.Scope, resolver changeset.Resol
 	// e2e-conflict-error-queue: every conflict analysis fails, exercising the
 	// analyzer error path. Scorer/edge integrations inherit the baseline.
 	conflictErrQueue := base
-	conflictErrQueue.Analyzer = conflictfake.New(all.New(), conflictfake.FailAlways)
+	conflictErrQueue.Analyzer = conflictfake.New(conflict.Config{}, all.New(conflict.Config{}), conflictfake.FailAlways)
 
 	// file-overlap-queue: a real analyzer that serializes only batches sharing
 	// a changed file, resolving each batch's files itself via the resolver.
 	fileOverlapQueue := base
-	fileOverlapQueue.Analyzer = fileoverlap.New(resolver)
+	fileOverlapQueue.Analyzer = fileoverlap.New(conflict.Config{}, resolver)
 
 	// e2e-test-queue: composite scorer; no conflicts (maximum parallelism).
 	e2eQueue := base
-	e2eQueue.Analyzer = conflictfake.New(none.New(), nil)
-	e2eQueue.Scorer = scorerfake.New(resolver, composite.New(
+	e2eQueue.Analyzer = conflictfake.New(conflict.Config{}, none.New(conflict.Config{}), nil)
+	e2eQueue.Scorer = scorerfake.New(scorer.Config{}, resolver, composite.New(
+		scorer.Config{},
 		map[string]scorer.Scorer{
-			"size": heuristic.New(resolver, []heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.8}}, batchLines, scope),
-			"flat": heuristic.New(resolver, []heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.6}}, batchLines, scope),
+			"size": heuristic.New(scorer.Config{}, resolver, []heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.8}}, batchLines, scope),
+			"flat": heuristic.New(scorer.Config{}, resolver, []heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.6}}, batchLines, scope),
 		},
 		composite.Avg, scope.SubScope("scorer.e2e-test-queue"),
 	))
@@ -259,6 +262,6 @@ const defaultBuildBudget = 4
 // policy without touching the speculate controller, which depends only on the
 // Speculator contract.
 func withSpeculator(p Profile) Profile {
-	p.Speculator = specstandard.New(bestfirst.New(p.Scorer), sticky.New(defaultBuildBudget))
+	p.Speculator = specstandard.New(speculator.Config{}, bestfirst.New(p.Scorer), sticky.New(defaultBuildBudget))
 	return p
 }

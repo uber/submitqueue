@@ -28,7 +28,11 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/allocator/sticky"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/generator/bestfirst"
 	generatormock "github.com/uber/submitqueue/submitqueue/extension/speculation/generator/mock"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
 )
+
+// testCfg is the per-queue identity used by every case in this file.
+var testCfg = speculator.Config{QueueName: "test-queue"}
 
 // assumptionFor returns what a path assumes about a given dependency batch.
 func assumptionFor(p entity.SpeculationPath, dep string) entity.DependencyAssumption {
@@ -52,7 +56,7 @@ func TestComposed_EndToEnd_NaivePair(t *testing.T) {
 	}
 
 	// bestfirst generator + sticky allocator with a 2-build budget.
-	spec := New(bestfirst.New(constScorer{0.9}), sticky.New(2))
+	spec := New(testCfg, bestfirst.New(constScorer{0.9}), sticky.New(2))
 	got, err := spec.Speculate(context.Background(), batches, nil)
 	require.NoError(t, err)
 
@@ -88,7 +92,7 @@ func TestComposed_WiresGeneratorIntoAllocator(t *testing.T) {
 	gen.EXPECT().Generate(gomock.Any(), batches).Return(iter, nil)
 	alloc.EXPECT().Allocate(gomock.Any(), pathSets, iter).Return(want, nil)
 
-	got, err := New(gen, alloc).Speculate(context.Background(), batches, pathSets)
+	got, err := New(testCfg, gen, alloc).Speculate(context.Background(), batches, pathSets)
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
 }
@@ -103,7 +107,7 @@ func TestComposed_PropagatesGeneratorError(t *testing.T) {
 	gen.EXPECT().Generate(gomock.Any(), gomock.Any()).Return(nil, errGenerate)
 	// Allocate must not be called when Generate fails (no alloc.EXPECT()).
 
-	_, err := New(gen, alloc).Speculate(context.Background(), nil, nil)
+	_, err := New(testCfg, gen, alloc).Speculate(context.Background(), nil, nil)
 	require.ErrorIs(t, err, errGenerate)
 }
 
@@ -118,7 +122,7 @@ func TestComposed_PropagatesContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	spec := New(bestfirst.New(constScorer{0.9}), sticky.New(2))
+	spec := New(testCfg, bestfirst.New(constScorer{0.9}), sticky.New(2))
 	got, err := spec.Speculate(ctx, batches, nil)
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Nil(t, got)

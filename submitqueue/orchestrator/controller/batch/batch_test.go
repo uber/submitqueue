@@ -43,6 +43,10 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
+// analyzerCfg is the per-queue identity handed to the conflict analyzer in
+// cases that do not exercise per-queue routing.
+var analyzerCfg = conflict.Config{QueueName: "test-queue"}
+
 func batchWithState(batch entity.Batch, state entity.BatchState) entity.Batch {
 	batch.State = state
 	return batch
@@ -155,7 +159,7 @@ func newTestController(t *testing.T, ctrl *gomock.Controller, cnt *countermock.M
 	}
 
 	if analyzer == nil {
-		analyzer = all.New()
+		analyzer = all.New(analyzerCfg)
 	}
 
 	mockPub := queuemock.NewMockPublisher(ctrl)
@@ -285,7 +289,7 @@ func TestController_Process_StampsQueueOnSpeculatePayload(t *testing.T) {
 	mockStorage.EXPECT().GetRequestStore().Return(mockReqStore).AnyTimes()
 
 	analyzerFactory := conflictmock.NewMockFactory(ctrl)
-	analyzerFactory.EXPECT().For(gomock.Any()).Return(all.New(), nil).AnyTimes()
+	analyzerFactory.EXPECT().For(gomock.Any()).Return(all.New(analyzerCfg), nil).AnyTimes()
 	controller := NewController(
 		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, staticCounterFactory{counter: newSequentialCounter(ctrl)},
 		storageFactoryFor(ctrl, mockStorage), analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch",
@@ -367,7 +371,7 @@ func TestController_Process_PublishesBatchedLog(t *testing.T) {
 	require.NoError(t, err)
 
 	analyzerFactory := conflictmock.NewMockFactory(ctrl)
-	analyzerFactory.EXPECT().For(gomock.Any()).Return(all.New(), nil).AnyTimes()
+	analyzerFactory.EXPECT().For(gomock.Any()).Return(all.New(analyzerCfg), nil).AnyTimes()
 	controller := NewController(
 		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, staticCounterFactory{counter: newSequentialCounter(ctrl)},
 		storageFactoryFor(ctrl, mockStorage), analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch",
@@ -822,7 +826,7 @@ func TestController_Process_CASLostToCancel(t *testing.T) {
 	require.NoError(t, err)
 
 	analyzerFactory := conflictmock.NewMockFactory(ctrl)
-	analyzerFactory.EXPECT().For(gomock.Any()).Return(all.New(), nil).AnyTimes()
+	analyzerFactory.EXPECT().For(gomock.Any()).Return(all.New(analyzerCfg), nil).AnyTimes()
 	controller := NewController(
 		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, staticCounterFactory{counter: newSequentialCounter(ctrl)},
 		storageFactoryFor(ctrl, mockStorage), analyzerFactory, topickey.TopicKeyBatch, "orchestrator-batch",
@@ -992,7 +996,7 @@ func TestController_Process_ReadiesBatchBeforePublishing(t *testing.T) {
 	require.NoError(t, err)
 
 	analyzerFactory := conflictmock.NewMockFactory(ctrl)
-	analyzerFactory.EXPECT().For(conflict.Config{QueueName: request.Queue}).Return(all.New(), nil)
+	analyzerFactory.EXPECT().For(conflict.Config{QueueName: request.Queue}).Return(all.New(analyzerCfg), nil)
 	controller := NewController(
 		zaptest.NewLogger(t).Sugar(), tally.NoopScope, registry, staticCounterFactory{counter: cnt}, storageFactoryFor(ctrl, store), analyzerFactory,
 		topickey.TopicKeyBatch, "orchestrator-batch",

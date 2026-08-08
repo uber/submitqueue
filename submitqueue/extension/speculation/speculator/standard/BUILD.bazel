@@ -23,6 +23,7 @@ go_test(
         "//submitqueue/extension/speculation/allocator/sticky:go_default_library",
         "//submitqueue/extension/speculation/generator/bestfirst:go_default_library",
         "//submitqueue/extension/speculation/generator/mock:go_default_library",
+        "//submitqueue/extension/speculation/speculator:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
         "@org_uber_go_mock//gomock:go_default_library",

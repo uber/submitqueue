@@ -40,16 +40,19 @@ func FailAlways(entity.Batch, []entity.Batch) bool { return true }
 // analyzerFake decorates a delegate Analyzer, injecting an error when failOn
 // reports true.
 type analyzerFake struct {
+	// cfg is the per-queue identity this analyzer was built for.
+	cfg      conflict.Config
 	delegate conflict.Analyzer
 	failOn   FailOn
 }
 
-// New returns a conflict.Analyzer that delegates to the given analyzer but
-// returns an error when failOn reports true for the call's inputs. The delegate
-// is the existing analyzer implementation to wrap (e.g. all or none). A nil
-// failOn never injects an error (pure passthrough).
-func New(delegate conflict.Analyzer, failOn FailOn) conflict.Analyzer {
-	return analyzerFake{delegate: delegate, failOn: failOn}
+// New returns a conflict.Analyzer bound to the queue named in cfg that
+// delegates to the given analyzer but returns an error when failOn reports true
+// for the call's inputs. The delegate is the existing analyzer implementation to
+// wrap (e.g. all or none). A nil failOn never injects an error (pure
+// passthrough).
+func New(cfg conflict.Config, delegate conflict.Analyzer, failOn FailOn) conflict.Analyzer {
+	return analyzerFake{cfg: cfg, delegate: delegate, failOn: failOn}
 }
 
 // Analyze returns an error when failOn reports true; otherwise it delegates to

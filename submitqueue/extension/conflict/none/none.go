@@ -25,11 +25,15 @@ import (
 )
 
 // analyzer is a conflict.Analyzer that always returns no conflicts.
-type analyzer struct{}
+type analyzer struct {
+	// cfg is the per-queue identity this analyzer was built for.
+	cfg conflict.Config
+}
 
-// New returns a conflict.Analyzer that never reports a conflict.
-func New() conflict.Analyzer {
-	return analyzer{}
+// New returns a conflict.Analyzer that never reports a conflict, bound to the
+// queue named in cfg.
+func New(cfg conflict.Config) conflict.Analyzer {
+	return analyzer{cfg: cfg}
 }
 
 // Analyze always returns a nil conflict slice, regardless of inputs.

@@ -26,12 +26,15 @@ import (
 
 // analyzer is a conflict.Analyzer that reports every in-flight batch as a
 // conflict, classified as ConflictTypeConservative.
-type analyzer struct{}
+type analyzer struct {
+	// cfg is the per-queue identity this analyzer was built for.
+	cfg conflict.Config
+}
 
 // New returns a conflict.Analyzer that reports a conflict against every
-// in-flight batch.
-func New() conflict.Analyzer {
-	return analyzer{}
+// in-flight batch, bound to the queue named in cfg.
+func New(cfg conflict.Config) conflict.Analyzer {
+	return analyzer{cfg: cfg}
 }
 
 // Analyze returns one ConflictTypeConservative Conflict per in-flight batch,

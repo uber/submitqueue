@@ -26,6 +26,9 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/scorer"
 )
 
+// testCfg is the per-queue identity used by every case in this file.
+var testCfg = scorer.Config{QueueName: "test-queue"}
+
 // fixedScorer always returns a fixed score.
 type fixedScorer struct {
 	score float64
@@ -98,7 +101,7 @@ func TestScorer_Score(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := New(tt.scorers, tt.reduce, tally.NoopScope)
+			s := New(testCfg, tt.scorers, tt.reduce, tally.NoopScope)
 			got, err := s.Score(context.Background(), entity.Batch{})
 			require.NoError(t, err)
 			assert.InDelta(t, tt.want, got, 1e-9)
@@ -107,7 +110,7 @@ func TestScorer_Score(t *testing.T) {
 }
 
 func TestScorer_Score_ChildError(t *testing.T) {
-	s := New(map[string]scorer.Scorer{
+	s := New(testCfg, map[string]scorer.Scorer{
 		"error": &errorScorer{},
 		"files": &fixedScorer{0.9},
 	}, Min, tally.NoopScope)
@@ -117,13 +120,13 @@ func TestScorer_Score_ChildError(t *testing.T) {
 
 func TestNew_EmptyScorers(t *testing.T) {
 	assert.Panics(t, func() {
-		New(map[string]scorer.Scorer{}, Min, tally.NoopScope)
+		New(testCfg, map[string]scorer.Scorer{}, Min, tally.NoopScope)
 	})
 }
 
 func TestNew_NilReduce(t *testing.T) {
 	assert.Panics(t, func() {
-		New(map[string]scorer.Scorer{"files": &fixedScorer{0.9}}, nil, tally.NoopScope)
+		New(testCfg, map[string]scorer.Scorer{"files": &fixedScorer{0.9}}, nil, tally.NoopScope)
 	})
 }
 
@@ -136,7 +139,7 @@ func TestReduceFunc_ReceivesNames(t *testing.T) {
 		return scores["files"]
 	}
 
-	s := New(map[string]scorer.Scorer{
+	s := New(testCfg, map[string]scorer.Scorer{
 		"files": &fixedScorer{0.9},
 		"deps":  &fixedScorer{0.95},
 	}, custom, tally.NoopScope)

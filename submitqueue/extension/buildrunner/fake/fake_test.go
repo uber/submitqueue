@@ -26,16 +26,19 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 )
 
+// testCfg is the per-queue identity used by every case in this file.
+var testCfg = buildrunner.Config{QueueName: "test-queue"}
+
 const headBatchID = "head-batch"
 
 // newFake returns a fake runner whose head batch resolves to a single change
 // carrying the given URIs.
 func newFake(uris ...string) buildrunner.BuildRunner {
-	return New(changesetfake.New().Set(headBatchID, change.Change{URIs: uris}))
+	return New(testCfg, changesetfake.New().Set(headBatchID, change.Change{URIs: uris}))
 }
 
 func TestNew_ImplementsInterface(t *testing.T) {
-	var _ buildrunner.BuildRunner = New(changesetfake.New())
+	var _ buildrunner.BuildRunner = New(testCfg, changesetfake.New())
 }
 
 func TestRunner_Trigger_UniqueIDs(t *testing.T) {
@@ -46,7 +49,7 @@ func TestRunner_Trigger_UniqueIDs(t *testing.T) {
 	assert.NotEmpty(t, id1.ID)
 
 	// Same runner instance, different trigger (empty head — no marker).
-	r := New(changesetfake.New())
+	r := New(testCfg, changesetfake.New())
 	id2, err := r.Trigger(ctx, nil, entity.Batch{ID: "x"}, nil)
 	require.NoError(t, err)
 	id3, err := r.Trigger(ctx, nil, entity.Batch{ID: "x"}, nil)
@@ -113,7 +116,7 @@ func TestRunner_Status(t *testing.T) {
 }
 
 func TestRunner_Status_UnknownBuildSucceeds(t *testing.T) {
-	r := New(changesetfake.New())
+	r := New(testCfg, changesetfake.New())
 	status, _, err := r.Status(context.Background(), entity.BuildID{ID: "never-triggered"})
 	require.NoError(t, err)
 	assert.Equal(t, entity.BuildStatusSucceeded, status)
@@ -127,12 +130,12 @@ func TestStatus_StatelessAcrossInstances(t *testing.T) {
 	id, err := newFake("github://github.example.com/o/r/pull/1/a?sq-fake=build-fail").Trigger(ctx, nil, entity.Batch{ID: headBatchID}, nil)
 	require.NoError(t, err)
 
-	status, _, err := New(changesetfake.New()).Status(ctx, id)
+	status, _, err := New(testCfg, changesetfake.New()).Status(ctx, id)
 	require.NoError(t, err)
 	assert.Equal(t, entity.BuildStatusFailed, status)
 }
 
 func TestRunner_Cancel(t *testing.T) {
-	r := New(changesetfake.New())
+	r := New(testCfg, changesetfake.New())
 	assert.NoError(t, r.Cancel(context.Background(), entity.BuildID{ID: "any"}))
 }

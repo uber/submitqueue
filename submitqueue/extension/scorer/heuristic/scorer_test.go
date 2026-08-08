@@ -23,7 +23,11 @@ import (
 	"github.com/uber-go/tally"
 	changesetfake "github.com/uber/submitqueue/submitqueue/core/changeset/fake"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	"github.com/uber/submitqueue/submitqueue/extension/scorer"
 )
+
+// testCfg is the per-queue identity used by every case in this file.
+var testCfg = scorer.Config{QueueName: "test-queue"}
 
 // staticValue returns a ValueFunc that always returns the given value.
 func staticValue(value int) ValueFunc {
@@ -107,7 +111,7 @@ func TestScorer_Score(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := New(changesetfake.New(), tt.buckets, tt.valueFunc, tally.NoopScope)
+			s := New(testCfg, changesetfake.New(), tt.buckets, tt.valueFunc, tally.NoopScope)
 			got, err := s.Score(context.Background(), entity.Batch{})
 			if tt.wantErr {
 				require.Error(t, err)
@@ -123,13 +127,13 @@ func TestScorer_Score_ValueFuncError(t *testing.T) {
 	failing := func(_ context.Context, _ entity.BatchChanges) (int, error) {
 		return 0, assert.AnError
 	}
-	s := New(changesetfake.New(), []Bucket{{Min: 0, Max: 10, Score: 0.9}}, failing, tally.NoopScope)
+	s := New(testCfg, changesetfake.New(), []Bucket{{Min: 0, Max: 10, Score: 0.9}}, failing, tally.NoopScope)
 	_, err := s.Score(context.Background(), entity.Batch{})
 	require.Error(t, err)
 }
 
 func TestNew_NilValueFunc(t *testing.T) {
 	assert.Panics(t, func() {
-		New(changesetfake.New(), []Bucket{{Min: 0, Max: 10, Score: 0.85}}, nil, tally.NoopScope)
+		New(testCfg, changesetfake.New(), []Bucket{{Min: 0, Max: 10, Score: 0.85}}, nil, tally.NoopScope)
 	})
 }
