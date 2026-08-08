@@ -23,22 +23,14 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/validator"
 )
 
+// testCfg is the per-queue identity used by every case in this file.
+var testCfg = validator.Config{QueueName: "test-queue"}
+
 func TestNew_ImplementsInterface(t *testing.T) {
-	var _ validator.Validator = New()
+	var _ validator.Validator = New(testCfg)
 }
 
 func TestNew_AlwaysPasses(t *testing.T) {
-	v := New()
-	assert.NoError(t, v.Validate(context.Background(), entity.Request{}))
-}
-
-func TestNewFactory_ImplementsInterface(t *testing.T) {
-	var _ validator.Factory = NewFactory()
-}
-
-func TestNewFactory_ReturnsPassingValidator(t *testing.T) {
-	f := NewFactory()
-	v, err := f.For(validator.Config{QueueName: "test-queue"})
-	assert.NoError(t, err)
+	v := New(testCfg)
 	assert.NoError(t, v.Validate(context.Background(), entity.Request{}))
 }

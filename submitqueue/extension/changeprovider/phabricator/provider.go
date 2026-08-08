@@ -20,6 +20,9 @@ const queryDiffsBatchSize = 10
 
 // Params holds the dependencies for the Phabricator ChangeProvider.
 type Params struct {
+	// Config is the per-queue identity handed to the Factory that built
+	// this provider.
+	Config changeprovider.Config
 	// HTTPClient is a pre-configured HTTP client. The caller is responsible for
 	// configuring the base URL (e.g. via httpclient.NewClient) and authentication
 	// (e.g. via a RoundTripper that injects credentials) via transport layers.
@@ -31,6 +34,8 @@ type Params struct {
 }
 
 type provider struct {
+	// cfg is the per-queue identity this provider was built for.
+	cfg          changeprovider.Config
 	httpClient   *http.Client
 	logger       *zap.SugaredLogger
 	metricsScope tally.Scope
@@ -39,6 +44,7 @@ type provider struct {
 // NewProvider creates a new Phabricator ChangeProvider.
 func NewProvider(params Params) changeprovider.ChangeProvider {
 	return &provider{
+		cfg:          params.Config,
 		httpClient:   params.HTTPClient,
 		logger:       params.Logger.Named("phabricator_changeprovider"),
 		metricsScope: params.MetricsScope.SubScope("phabricator_changeprovider"),

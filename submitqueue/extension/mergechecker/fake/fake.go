@@ -43,12 +43,15 @@ const (
 
 // checker is a mergechecker.MergeChecker that reports changes as mergeable
 // unless a marker token in a change URI requests otherwise.
-type checker struct{}
+type checker struct {
+	// cfg is the per-queue identity this checker was built for.
+	cfg mergechecker.Config
+}
 
-// New returns a mergechecker.MergeChecker that defaults to mergeable and honors
-// marker tokens embedded in change URIs.
-func New() mergechecker.MergeChecker {
-	return checker{}
+// New returns a mergechecker.MergeChecker bound to the queue named in cfg that
+// defaults to mergeable and honors marker tokens embedded in change URIs.
+func New(cfg mergechecker.Config) mergechecker.MergeChecker {
+	return checker{cfg: cfg}
 }
 
 // Check reports the change as mergeable unless a recognized marker token is

@@ -25,8 +25,11 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/mergechecker"
 )
 
+// testCfg is the per-queue identity used by every case in this file.
+var testCfg = mergechecker.Config{QueueName: "test-queue"}
+
 func TestNew_ImplementsInterface(t *testing.T) {
-	var _ mergechecker.MergeChecker = New()
+	var _ mergechecker.MergeChecker = New(testCfg)
 }
 
 func TestChecker_Check(t *testing.T) {
@@ -64,7 +67,7 @@ func TestChecker_Check(t *testing.T) {
 		},
 	}
 
-	c := New()
+	c := New(testCfg)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			res, err := c.Check(context.Background(), entity.Request{Change: change.Change{URIs: tt.uris}})

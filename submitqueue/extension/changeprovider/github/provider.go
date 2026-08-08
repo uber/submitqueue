@@ -17,6 +17,9 @@ import (
 
 // Params holds the dependencies for the GitHub ChangeProvider.
 type Params struct {
+	// Config is the per-queue identity handed to the Factory that built
+	// this provider.
+	Config changeprovider.Config
 	// HTTPClient is a pre-configured HTTP client. The caller is responsible for
 	// configuring the base URL (via BaseURLTransport) and auth (via a transport layer).
 	HTTPClient *http.Client
@@ -28,6 +31,8 @@ type Params struct {
 
 // provider implements the ChangeProvider interface for GitHub.
 type provider struct {
+	// cfg is the per-queue identity this provider was built for.
+	cfg          changeprovider.Config
 	httpClient   *http.Client
 	logger       *zap.SugaredLogger
 	metricsScope tally.Scope
@@ -36,6 +41,7 @@ type provider struct {
 // NewProvider creates a new GitHub ChangeProvider.
 func NewProvider(params Params) changeprovider.ChangeProvider {
 	return &provider{
+		cfg:          params.Config,
 		httpClient:   params.HTTPClient,
 		logger:       params.Logger.Named("github_changeprovider"),
 		metricsScope: params.MetricsScope.SubScope("github_changeprovider"),

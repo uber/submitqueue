@@ -50,6 +50,7 @@ import (
 	routingprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/routing"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
+	"github.com/uber/submitqueue/submitqueue/extension/validator"
 	validatorfake "github.com/uber/submitqueue/submitqueue/extension/validator/fake"
 	"github.com/uber/submitqueue/submitqueue/orchestrator"
 	"go.uber.org/zap"
@@ -200,7 +201,7 @@ func run() error {
 		ChangeProvider: profiles.ChangeProviderFactory(),
 		Analyzer:       profiles.AnalyzerFactory(),
 		Speculator:     profiles.SpeculatorFactory(),
-		Validator:      validatorfake.NewFactory(),
+		Validator:      validatorFactory{},
 	}
 
 	// Assemble the pipeline: one call builds the topic registry, creates
@@ -334,7 +335,7 @@ func newChangeProvider(logger *zap.Logger, scope tally.Scope) (changeprovider.Ch
 
 	if ghProvider == nil && phabProvider == nil {
 		logger.Warn("no change provider tokens set; using fake change provider (empty change info unless URI-marked)")
-		return cpfake.New(), nil
+		return cpfake.New(changeprovider.Config{}), nil
 	}
 
 	routingProvider, err := routingprovider.NewProvider(routingprovider.Params{
@@ -464,4 +465,15 @@ func (f counterFactory) For(config counter.Config) (counter.Counter, error) {
 		return nil, fmt.Errorf("queue name must not be empty")
 	}
 	return mysqlcounter.NewCounter(f.db, f.scope, config.QueueName), nil
+}
+
+// validatorFactory routes every queue to the always-passing fake validator.
+// Choosing an impl per queue is host policy, so the adapter lives here rather
+// than in the extension package. A deployment with real validation swaps this
+// for a routing adapter.
+type validatorFactory struct{}
+
+// For returns the Validator bound to the queue named in config.
+func (validatorFactory) For(config validator.Config) (validator.Validator, error) {
+	return validatorfake.New(config), nil
 }

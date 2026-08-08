@@ -25,8 +25,11 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 )
 
+// testCfg is the per-queue identity used by every case in this file.
+var testCfg = changeprovider.Config{QueueName: "test-queue"}
+
 func TestNew_ImplementsInterface(t *testing.T) {
-	var _ changeprovider.ChangeProvider = New()
+	var _ changeprovider.ChangeProvider = New(testCfg)
 }
 
 func TestProvider_Get_OnePerURI(t *testing.T) {
@@ -45,7 +48,7 @@ func TestProvider_Get_OnePerURI(t *testing.T) {
 		},
 	}
 
-	p := New()
+	p := New(testCfg)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{URIs: tt.uris}})
@@ -59,7 +62,7 @@ func TestProvider_Get_OnePerURI(t *testing.T) {
 }
 
 func TestProvider_Get_ErrorMarker(t *testing.T) {
-	p := New()
+	p := New(testCfg)
 	_, err := p.Get(context.Background(), entity.Request{Change: change.Change{
 		URIs: []string{"github://github.example.com/owner/repo/pull/1/abc?sq-fake=provider-error"},
 	}})

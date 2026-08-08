@@ -39,12 +39,16 @@ const tokenError = "provider-error"
 
 // provider is a changeprovider.ChangeProvider that returns empty change info
 // unless a marker token in a change URI requests a failure.
-type provider struct{}
+type provider struct {
+	// cfg is the per-queue identity this provider was built for.
+	cfg changeprovider.Config
+}
 
-// New returns a changeprovider.ChangeProvider that defaults to returning one
-// empty ChangeInfo per URI and honors marker tokens embedded in change URIs.
-func New() changeprovider.ChangeProvider {
-	return provider{}
+// New returns a changeprovider.ChangeProvider bound to the queue named in cfg
+// that defaults to returning one empty ChangeInfo per URI and honors marker
+// tokens embedded in change URIs.
+func New(cfg changeprovider.Config) changeprovider.ChangeProvider {
+	return provider{cfg: cfg}
 }
 
 // Get returns one ChangeInfo per URI in the request's change, unless a recognized

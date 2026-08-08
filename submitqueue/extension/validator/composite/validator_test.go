@@ -90,7 +90,7 @@ func TestNew(t *testing.T) {
 			v2 := validatormock.NewMockValidator(ctrl)
 			validators := tt.setup(v1, v2)
 
-			v := New(validators)
+			v := New(validator.Config{QueueName: "test-queue"}, validators)
 
 			err := v.Validate(context.Background(), entity.Request{})
 			if len(tt.wantErrs) == 0 {
