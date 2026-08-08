@@ -102,21 +102,25 @@ make demo-pr LAND=false           # create only, print the land command
 
 Each pull request is enqueued the moment it exists, so the queue is already working on the first while the last is still being opened. That overlap is the point: a queue holding one request at a time never batches, never analyzes a conflict against another batch, and never speculates. Nothing is awaited until every request is in.
 
-Then it watches all of them at once, redrawing a table as they move:
+The table is there from the start — one row per land request, drawn before the first pull request exists and filled in as the run proceeds. Whatever is happening right now is a single line underneath it, so creating and enqueuing does not scroll the table away:
 
 ```
-  REQUEST                  CHANGES    STATUS         ELAPSED
-  ------------------------ ---------- ------------ ----------
-  demo-queue/12            #31        landed             34s
-  demo-queue/13            #32        processing         31s
-  demo-queue/14            #33        batched            28s
+  REQUEST        CHANGES  ELAPSED  STAGE
+  ─────────────  ───────  ───────  ───────────────────────────────────────────────────
+  demo-queue/12  #31          34s  accepted → started → batched → speculating → landed
+  demo-queue/13  #32          31s  accepted → started → batched → speculating
+  demo-queue/14  #33          28s  accepted → started
+
+  ▸ 1 of 3 settled
 ```
 
-`STACKED=true` is the exception to the overlap: one request carries the whole chain, so it can only go in once every pull request in it exists. That is the atomic-stack path — the whole set reaches `main` in a single push.
+Each row shows the states its request passed through, not just the one it is in. That comes from the gateway's history API rather than from sampling the current status, so a request that batches and speculates between two ticks still shows both. `CHANGES` links to the pull request: on a terminal `#31` is clickable, and in a redirected run it is written out as a full URL instead. `ELAPSED` runs from the moment the gateway accepted the request and stops when it settles, so a finished row keeps the time it took rather than counting on.
+
+`STACKED=true` is the exception to the overlap: one request carries the whole chain, so it can only go in once every pull request in it exists. That is the atomic-stack path — the whole set reaches `main` in a single push, and the table shows it as the single row it is.
 
 It talks to GitHub over the REST API with the same `GITHUB_TOKEN`, so it needs no clone and no git binary. Each run tags its branches with a timestamp so repeated runs do not collide, and each change edits its own file so independent changes do not conflict by accident.
 
-The command exits non-zero if any request settles anywhere other than `landed`, so it works in a script. Piped to a file it prints a fresh table whenever something moves instead of redrawing in place.
+The command exits non-zero if any request settles anywhere other than `landed`, so it works in a script. Piped to a file it prints a fresh table whenever a request moves — and not when only the clock did — instead of redrawing in place.
 
 ## Watching it work
 
