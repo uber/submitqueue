@@ -31,11 +31,20 @@ var _ merger.Merger = (*Merger)(nil)
 
 // Merger is a no-op implementation that always succeeds.
 type Merger struct {
-	seq atomic.Uint64
+	// cfg is the per-queue identity this merger was built for.
+	cfg merger.Config
+	// seq mints the synthetic revision ids returned by Merge. It is supplied by
+	// the caller so a factory that builds one Merger per queue can still hand
+	// out ids that are unique across every queue in the process.
+	seq *atomic.Uint64
 }
 
-// New returns a new no-op Merger instance.
-func New() *Merger { return &Merger{} }
+// New returns a no-op Merger bound to the queue named in cfg. seq must be
+// non-nil and is shared, not owned: callers minting ids from more than one
+// Merger must pass the same counter to each.
+func New(cfg merger.Config, seq *atomic.Uint64) *Merger {
+	return &Merger{cfg: cfg, seq: seq}
+}
 
 func (v *Merger) CheckMergeability(_ context.Context, req *runwaymq.MergeRequest) (*runwaymq.MergeResult, error) {
 	steps := make([]*runwaymq.StepResult, len(req.GetSteps()))

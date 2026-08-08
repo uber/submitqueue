@@ -26,8 +26,11 @@ import (
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
 )
 
+// testCfg is the per-queue identity used by every case in this file.
+var testCfg = buildrunner.Config{QueueName: "test-queue"}
+
 func TestNew_ImplementsInterface(t *testing.T) {
-	var _ buildrunner.BuildRunner = New()
+	var _ buildrunner.BuildRunner = New(testCfg)
 }
 
 func TestTrigger(t *testing.T) {
@@ -44,7 +47,7 @@ func TestTrigger(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			id, err := New().Trigger(context.Background(), "", tt.headURI, nil)
+			id, err := New(testCfg).Trigger(context.Background(), "", tt.headURI, nil)
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.Empty(t, id.ID)
@@ -57,9 +60,9 @@ func TestTrigger(t *testing.T) {
 }
 
 func TestTrigger_UniqueIDs(t *testing.T) {
-	a, err := New().Trigger(context.Background(), "", "git://repo/ref/deadbeef", nil)
+	a, err := New(testCfg).Trigger(context.Background(), "", "git://repo/ref/deadbeef", nil)
 	require.NoError(t, err)
-	b, err := New().Trigger(context.Background(), "", "git://repo/ref/deadbeef", nil)
+	b, err := New(testCfg).Trigger(context.Background(), "", "git://repo/ref/deadbeef", nil)
 	require.NoError(t, err)
 	assert.NotEqual(t, a.ID, b.ID)
 }
@@ -77,10 +80,10 @@ func TestStatus(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			id, err := New().Trigger(context.Background(), "", tt.headURI, nil)
+			id, err := New(testCfg).Trigger(context.Background(), "", tt.headURI, nil)
 			require.NoError(t, err)
 
-			status, metadata, err := New().Status(context.Background(), id)
+			status, metadata, err := New(testCfg).Status(context.Background(), id)
 			if tt.wantErr {
 				require.Error(t, err)
 				return
@@ -93,23 +96,23 @@ func TestStatus(t *testing.T) {
 }
 
 func TestStatus_UnrecognizedIDSucceeds(t *testing.T) {
-	status, metadata, err := New().Status(context.Background(), entity.BuildID{ID: "not-minted-by-this-fake"})
+	status, metadata, err := New(testCfg).Status(context.Background(), entity.BuildID{ID: "not-minted-by-this-fake"})
 	require.NoError(t, err)
 	assert.Equal(t, entity.BuildStatusSucceeded, status)
 	assert.Nil(t, metadata)
 }
 
 func TestStatus_StatelessAcrossInstances(t *testing.T) {
-	id, err := New().Trigger(context.Background(), "", "git://repo/ref/deadbeef?buildrunner-fake=build-fail", nil)
+	id, err := New(testCfg).Trigger(context.Background(), "", "git://repo/ref/deadbeef?buildrunner-fake=build-fail", nil)
 	require.NoError(t, err)
 
-	status, _, err := New().Status(context.Background(), id)
+	status, _, err := New(testCfg).Status(context.Background(), id)
 	require.NoError(t, err)
 	assert.Equal(t, entity.BuildStatusFailed, status)
 }
 
 func TestCancel_NoOp(t *testing.T) {
-	err := New().Cancel(context.Background(), entity.BuildID{ID: "anything"})
+	err := New(testCfg).Cancel(context.Background(), entity.BuildID{ID: "anything"})
 	assert.NoError(t, err)
 }
 
@@ -123,14 +126,14 @@ func TestStatus_BuildSlowReportsRunningThenSucceeds(t *testing.T) {
 	id, err := slow.Trigger(context.Background(), "", "git://repo/ref/deadbeef?buildrunner-fake=build-slow", nil)
 	require.NoError(t, err)
 
-	status, _, err := New().Status(context.Background(), id)
+	status, _, err := New(testCfg).Status(context.Background(), id)
 	require.NoError(t, err)
 	assert.Equal(t, entity.BuildStatusRunning, status)
 
 	// An id whose deadline has already passed reports the terminal outcome. Encoding
 	// the deadline in the id is what keeps Status stateless across instances.
 	elapsed := entity.BuildID{ID: fmt.Sprintf("fake-build-slow-%d-abcd1234", time.Now().UnixMilli()-1)}
-	status, _, err = New().Status(context.Background(), elapsed)
+	status, _, err = New(testCfg).Status(context.Background(), elapsed)
 	require.NoError(t, err)
 	assert.Equal(t, entity.BuildStatusSucceeded, status)
 }
@@ -139,7 +142,7 @@ func TestStatus_BuildSlowReportsRunningThenSucceeds(t *testing.T) {
 // marker but no parsable deadline is treated as already terminal rather than polling
 // forever.
 func TestStatus_BuildSlowWithoutDeadlineSucceeds(t *testing.T) {
-	status, _, err := New().Status(context.Background(), entity.BuildID{ID: "fake-build-slow-nodeadline"})
+	status, _, err := New(testCfg).Status(context.Background(), entity.BuildID{ID: "fake-build-slow-nodeadline"})
 	require.NoError(t, err)
 	assert.Equal(t, entity.BuildStatusSucceeded, status)
 }
