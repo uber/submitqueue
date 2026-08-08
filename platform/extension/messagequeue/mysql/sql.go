@@ -22,6 +22,7 @@ import (
 
 	"github.com/uber-go/tally"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 )
@@ -40,6 +41,16 @@ type Params struct {
 	// Logger for debugging and observability (required)
 	Logger *zap.Logger
 
+	// LogLevel is the minimum level for the queue's own logs, as a zap level
+	// name ("debug", "info", ...). Empty selects info.
+	//
+	// The queue logs a line per message published, fetched, leased and acked,
+	// which at debug buries everything else a service says. Levelling it here
+	// rather than at the service logger keeps the rest of that service's debug
+	// output intact. The level can only be raised above the one the supplied
+	// logger was built with, never lowered.
+	LogLevel string
+
 	// MetricsScope for metrics collection (required)
 	MetricsScope tally.Scope
 
@@ -55,8 +66,17 @@ func NewQueue(params Params) (extqueue.Queue, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	logger := params.Logger.Sugar().Named("queue_mysql")
-	logger.Infow("created SQL queue")
+	level := zapcore.InfoLevel
+	if params.LogLevel != "" {
+		parsed, err := zapcore.ParseLevel(params.LogLevel)
+		if err != nil {
+			return nil, fmt.Errorf("invalid queue log level %q: %w", params.LogLevel, err)
+		}
+		level = parsed
+	}
+
+	logger := params.Logger.WithOptions(zap.IncreaseLevel(level)).Sugar().Named("queue_mysql")
+	logger.Infow("created SQL queue", "log_level", level.String())
 
 	// Create stores
 	messageStore := newMessageStore(params.DB, logger, params.MetricsScope)

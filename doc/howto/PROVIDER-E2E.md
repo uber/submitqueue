@@ -134,6 +134,14 @@ Runway logs each merge and each head-branch move:
 moved change head branch to its landed commit  {"change": "you/repo#1", "branch": "refs/heads/feature-a", ...}
 ```
 
+The message queue logs a line per message published, fetched, leased and acked, which at debug level buries everything else a service says. It is levelled separately from the rest of the service, at info by default. To follow the queue itself — chasing a message that never arrived, or a partition that never got leased — turn it back up for the services you care about:
+
+```bash
+QUEUE_LOG_LEVEL=debug make local-submitqueue-start
+```
+
+`QUEUE_LOG_LEVEL` takes any zap level name. It can only raise the queue's level above the one the service logger was built with, never lower it, so it cannot be used to make a quiet service verbose.
+
 ## When it does not work
 
 **The push is rejected on the first try.** Branch protection on `main` — required status checks, or a linear-history or no-force-push rule — applies to the merger like anyone else. Either relax it on the scratch repo or add the token's identity to the bypass list.

@@ -67,6 +67,9 @@ services:
       - PORT=:8080
       - STORAGE_MYSQL_DSN=root:root@tcp(mysql-app:3306)/submitqueue?parseTime=true
       - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
+      # Level for the queue's own logs; info by default so its per-message
+      # chatter does not bury the rest of the service at debug.
+      - QUEUE_LOG_LEVEL=${QUEUE_LOG_LEVEL:-}
       - HOSTNAME=stovepipe-dev
     depends_on:
       mysql-app:

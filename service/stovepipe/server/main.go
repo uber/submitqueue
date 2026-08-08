@@ -241,6 +241,7 @@ func run() error {
 	mysqlQueue, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           queueDB,
 		Logger:       logger,
+		LogLevel:     os.Getenv("QUEUE_LOG_LEVEL"),
 		MetricsScope: scope.SubScope("queue"),
 	})
 	if err != nil {

@@ -70,6 +70,44 @@ func TestNewQueue(t *testing.T) {
 
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
+	t.Run("accepts a log level", func(t *testing.T) {
+		db, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+		require.NoError(t, err)
+		defer db.Close()
+
+		mock.ExpectPing()
+
+		q, err := NewQueue(Params{
+			DB:           db,
+			Logger:       zaptest.NewLogger(t),
+			LogLevel:     "debug",
+			MetricsScope: tally.NewTestScope("test", nil),
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, q)
+		assert.NoError(t, q.Close())
+
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("error when the log level is not a level", func(t *testing.T) {
+		db, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+		require.NoError(t, err)
+		defer db.Close()
+
+		mock.ExpectPing()
+
+		q, err := NewQueue(Params{
+			DB:           db,
+			Logger:       zaptest.NewLogger(t),
+			LogLevel:     "loud",
+			MetricsScope: tally.NewTestScope("test", nil),
+		})
+
+		require.Error(t, err)
+		assert.Nil(t, q)
+	})
 }
 
 func TestQueue_Publisher(t *testing.T) {
