@@ -106,15 +106,17 @@ The table is there from the start — one row per land request, drawn before the
 
 ```
   REQUEST        CHANGES  ELAPSED  STAGE
-  ─────────────  ───────  ───────  ───────────────────────────────────────────────────
-  demo-queue/12  #31          34s  accepted → started → batched → speculating → landed
-  demo-queue/13  #32          31s  accepted → started → batched → speculating
+  ─────────────  ───────  ───────  ─────────────────────────────────────────────────
+  demo-queue/12  #31          34s  accepted → started → validated → batched → landed
+  demo-queue/13  #32          31s  accepted → started → validated → batched
   demo-queue/14  #33          28s  accepted → started
 
   ▸ 1 of 3 settled
 ```
 
-Each row shows the states its request passed through, not just the one it is in. That comes from the gateway's history API rather than from sampling the current status, so a request that batches and speculates between two ticks still shows both. `CHANGES` links to the pull request: on a terminal `#31` is clickable, and in a redirected run it is written out as a full URL instead. `ELAPSED` runs from the moment the gateway accepted the request and stops when it settles, so a finished row keeps the time it took rather than counting on.
+Each row shows the states its request passed through, not just the one it is in. That comes from the gateway's history API rather than from sampling the current status, so a transition between two polls is not missed. `CHANGES` links to the pull request: on a terminal `#31` is clickable, and in a redirected run it is written out as a full URL instead. `ELAPSED` runs from the moment the gateway accepted the request and stops when it settles, so a finished row keeps the time it took rather than counting on.
+
+The trail is only as detailed as what the pipeline reports, which today is `accepted`, `started`, `validated`, `batched` and then a terminal `landed`, `error` or `cancelled`. The finer-grained statuses the API defines — `speculating`, `building`, `landing` and the rest — are never published, so a request sits on `batched` for the whole of its active life even while its batch is speculating and building. Do not read that as the request being stuck.
 
 `STACKED=true` is the exception to the overlap: one request carries the whole chain, so it can only go in once every pull request in it exists. That is the atomic-stack path — the whole set reaches `main` in a single push, and the table shows it as the single row it is.
 
