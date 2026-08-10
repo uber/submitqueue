@@ -60,17 +60,22 @@ func decide(head entity.Batch, set entity.SpeculationPathSet, snap snapshot) out
 	return outcomeWait
 }
 
-// mergeablePath returns a passed path whose merge preconditions are met:
-// every dependency it assumed would succeed has actually merged.
+// mergeablePath returns a passed path whose merge preconditions are met: every
+// guess it made about a dependency has been borne out by that dependency's
+// actual state.
 //
-// This is what makes speculation pay. The head waits only on the dependencies
-// the passed build was stacked on — not on its full dependency list — so a
-// batch built without a slow neighbour merges as soon as the ones it actually
-// built on have landed.
+// This is what makes speculation pay — not by shortening the list the head
+// waits on, but by having already done the work. The build ran against the
+// guess while the dependencies were still resolving, so when they land the way
+// the path assumed there is nothing left to run and the head merges at once.
 //
-// A dependency assumed to fail imposes no wait: the path is broken the
-// moment that dependency succeeds, so a still-live path has already been
-// vindicated on it.
+// A guess that has not been settled yet is not a licence to merge, whichever
+// way it points. A path that assumed a dependency would fail was built without
+// that dependency's changes, so landing it while the dependency is still live
+// puts a combination on the trunk that no build ever validated — which is the
+// one thing the queue exists to prevent. The dependency merging is not enough
+// either: a merge can fail, so "on its way in" is still an open question, and
+// the head waits for the answer.
 func mergeablePath(set entity.SpeculationPathSet, snap snapshot) (entity.SpeculationPathEntry, bool) {
 	for _, entry := range set.Paths {
 		if entry.Status != entity.SpeculationPathStatusPassed {
@@ -79,22 +84,28 @@ func mergeablePath(set entity.SpeculationPathSet, snap snapshot) (entity.Specula
 		if assumptionBroken(entry.Path, snap) {
 			continue
 		}
-		if allAssumedSucceedingMerged(entry.Path, snap) {
+		if allAssumptionsSettled(entry.Path, snap) {
 			return entry, true
 		}
 	}
 	return entity.SpeculationPathEntry{}, false
 }
 
-// allAssumedSucceedingMerged reports whether every dependency the path
-// assumed would succeed has reached Succeeded.
-func allAssumedSucceedingMerged(path entity.SpeculationPath, snap snapshot) bool {
+// allAssumptionsSettled reports whether every dependency has finished the way
+// the path assumed: one it assumed would succeed has reached Succeeded, and one
+// it assumed would fail has finished some other way.
+func allAssumptionsSettled(path entity.SpeculationPath, snap snapshot) bool {
 	for _, dep := range path.Dependencies {
-		if dep.Assumption != entity.DependencyAssumptionSucceeds {
-			continue
-		}
-		if snap.batchState(dep.Batch) != entity.BatchStateSucceeded {
-			return false
+		state := snap.batchState(dep.Batch)
+		switch dep.Assumption {
+		case entity.DependencyAssumptionSucceeds:
+			if state != entity.BatchStateSucceeded {
+				return false
+			}
+		case entity.DependencyAssumptionFails:
+			if state != entity.BatchStateFailed && state != entity.BatchStateCancelled {
+				return false
+			}
 		}
 	}
 	return true
