@@ -31,14 +31,16 @@ import (
 // spec is a speculator.Speculator that opens the generator's candidate stream
 // and hands it to the allocator to spend the build budget.
 type spec struct {
+	// cfg is the per-queue identity this speculator was built for.
+	cfg   speculator.Config
 	gen   generator.Generator
 	alloc allocator.Allocator
 }
 
-// New returns the standard speculator.Speculator, composing a Generator and an
-// Allocator.
-func New(gen generator.Generator, alloc allocator.Allocator) speculator.Speculator {
-	return spec{gen: gen, alloc: alloc}
+// New returns the standard speculator.Speculator bound to the queue named in
+// cfg, composing a Generator and an Allocator.
+func New(cfg speculator.Config, gen generator.Generator, alloc allocator.Allocator) speculator.Speculator {
+	return spec{cfg: cfg, gen: gen, alloc: alloc}
 }
 
 // Speculate opens the generator over the queue's batches, then lets the

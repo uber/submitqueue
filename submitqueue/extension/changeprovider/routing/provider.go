@@ -30,6 +30,9 @@ import (
 // Params holds the optional downstream providers, keyed by change type.
 // At least one must be non-nil.
 type Params struct {
+	// Config is the per-queue identity handed to the Factory that built
+	// this provider.
+	Config changeprovider.Config
 	// GitHub handles URIs that parse as GitHub change IDs.
 	GitHub changeprovider.ChangeProvider
 	// Phabricator handles URIs that parse as Phabricator change IDs.
@@ -47,6 +50,8 @@ type matchedURI struct {
 }
 
 type provider struct {
+	// cfg is the per-queue identity this provider was built for.
+	cfg         changeprovider.Config
 	github      changeprovider.ChangeProvider
 	phabricator changeprovider.ChangeProvider
 	git         changeprovider.ChangeProvider
@@ -60,6 +65,7 @@ func NewProvider(params Params) (changeprovider.ChangeProvider, error) {
 		return nil, fmt.Errorf("at least one change provider must be configured")
 	}
 	return &provider{
+		cfg:         params.Config,
 		github:      params.GitHub,
 		phabricator: params.Phabricator,
 		git:         params.Git,

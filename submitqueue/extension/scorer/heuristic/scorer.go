@@ -41,6 +41,8 @@ type Bucket struct {
 // heuristicScorer computes a success probability by bucketing a metric extracted from a batch of changes.
 // It follows the Java HeuristicsBasedSuccessPredictor pattern.
 type heuristicScorer struct {
+	// cfg is the per-queue identity this scorer was built for.
+	cfg scorer.Config
 	// resolver resolves the batch identity into its detailed changes.
 	resolver changeset.Resolver
 	// buckets is the list of ranges to match against.
@@ -51,13 +53,15 @@ type heuristicScorer struct {
 	scope tally.Scope
 }
 
-// New creates a new heuristic Scorer with the given resolver, buckets and value function.
+// New creates a new heuristic Scorer bound to the queue named in cfg, with the
+// given resolver, buckets and value function.
 // Panics if valueFunc is nil.
-func New(resolver changeset.Resolver, buckets []Bucket, valueFunc ValueFunc, scope tally.Scope) scorer.Scorer {
+func New(cfg scorer.Config, resolver changeset.Resolver, buckets []Bucket, valueFunc ValueFunc, scope tally.Scope) scorer.Scorer {
 	if valueFunc == nil {
 		panic("heuristic.New: valueFunc must not be nil")
 	}
 	return &heuristicScorer{
+		cfg:       cfg,
 		resolver:  resolver,
 		buckets:   buckets,
 		valueFunc: valueFunc,

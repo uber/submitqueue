@@ -24,13 +24,16 @@ import (
 
 // compositeValidator runs all validators and joins their errors.
 type compositeValidator struct {
+	// cfg is the per-queue identity this validator was built for.
+	cfg validator.Config
 	// validators is the set of validators to run.
 	validators []validator.Validator
 }
 
-// New creates a Validator that evaluates all child validators and joins their errors.
-func New(validators []validator.Validator) validator.Validator {
-	return &compositeValidator{validators: validators}
+// New creates a Validator bound to the queue named in cfg that evaluates all
+// child validators and joins their errors.
+func New(cfg validator.Config, validators []validator.Validator) validator.Validator {
+	return &compositeValidator{cfg: cfg, validators: validators}
 }
 
 func (c *compositeValidator) Validate(ctx context.Context, request entity.Request) error {

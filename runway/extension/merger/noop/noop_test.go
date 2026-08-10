@@ -16,7 +16,10 @@ package noop
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
+
+	"github.com/uber/submitqueue/runway/extension/merger"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,6 +28,9 @@ import (
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
 )
+
+// testCfg is the per-queue identity used by every case in this file.
+var testCfg = merger.Config{QueueName: "test-queue"}
 
 func testRequest() *runwaymq.MergeRequest {
 	return &runwaymq.MergeRequest{
@@ -46,7 +52,7 @@ func testRequest() *runwaymq.MergeRequest {
 }
 
 func TestCheckMergeability(t *testing.T) {
-	v := New()
+	v := New(testCfg, new(atomic.Uint64))
 	req := testRequest()
 
 	res, err := v.CheckMergeability(context.Background(), req)
@@ -62,7 +68,7 @@ func TestCheckMergeability(t *testing.T) {
 }
 
 func TestMerge(t *testing.T) {
-	v := New()
+	v := New(testCfg, new(atomic.Uint64))
 	req := testRequest()
 
 	res, err := v.Merge(context.Background(), req)
@@ -80,7 +86,7 @@ func TestMerge(t *testing.T) {
 }
 
 func TestMerge_UniqueOutputIDs(t *testing.T) {
-	v := New()
+	v := New(testCfg, new(atomic.Uint64))
 	req := testRequest()
 
 	res1, err := v.Merge(context.Background(), req)

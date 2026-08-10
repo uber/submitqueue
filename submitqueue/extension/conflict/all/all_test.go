@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 )
 
 func TestAnalyze(t *testing.T) {
@@ -56,7 +57,7 @@ func TestAnalyze(t *testing.T) {
 		},
 	}
 
-	a := New()
+	a := New(conflict.Config{QueueName: "test-queue"})
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := a.Analyze(context.Background(), batch, tt.inFlight)

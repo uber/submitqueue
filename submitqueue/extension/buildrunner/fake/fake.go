@@ -59,14 +59,16 @@ const outcomeOK = "ok"
 // back out at Status. Uniqueness comes from a random suffix per ID, so it needs
 // no shared counter and never collides across instances or processes.
 type runner struct {
+	// cfg is the per-queue identity this runner was built for.
+	cfg      buildrunner.Config
 	resolver changeset.Resolver
 }
 
-// New returns a buildrunner.BuildRunner that defaults to succeeding and honors
-// marker tokens embedded in head change URIs. The resolver resolves the head
-// batch's changes so the marker can be inspected.
-func New(resolver changeset.Resolver) buildrunner.BuildRunner {
-	return &runner{resolver: resolver}
+// New returns a buildrunner.BuildRunner bound to the queue named in cfg that
+// defaults to succeeding and honors marker tokens embedded in head change URIs.
+// The resolver resolves the head batch's changes so the marker can be inspected.
+func New(cfg buildrunner.Config, resolver changeset.Resolver) buildrunner.BuildRunner {
+	return &runner{cfg: cfg, resolver: resolver}
 }
 
 // Trigger fails when a head change URI carries the trigger-error marker;

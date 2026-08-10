@@ -29,16 +29,19 @@ import (
 // sourceControlFake serves a single queue's linear history. history[0] is the
 // latest commit; higher indices are progressively older ancestors.
 type sourceControlFake struct {
+	// cfg is the per-queue identity this source control was built for.
+	cfg     sourcecontrol.Config
 	history []string
 }
 
-// New returns a sourcecontrol.SourceControl backed by the given ref history,
-// ordered newest-first (history[0] is the latest commit). The slice is copied so
-// later mutation by the caller does not affect the fake.
-func New(history []string) sourcecontrol.SourceControl {
+// New returns a sourcecontrol.SourceControl bound to the queue named in cfg,
+// backed by the given ref history, ordered newest-first (history[0] is the
+// latest commit). The slice is copied so later mutation by the caller does not
+// affect the fake.
+func New(cfg sourcecontrol.Config, history []string) sourcecontrol.SourceControl {
 	cp := make([]string, len(history))
 	copy(cp, history)
-	return sourceControlFake{history: cp}
+	return sourceControlFake{cfg: cfg, history: cp}
 }
 
 // Latest returns the newest commit URI, or ErrNotFound when the history is empty.

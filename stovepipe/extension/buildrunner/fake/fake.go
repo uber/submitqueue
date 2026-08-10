@@ -71,16 +71,19 @@ const outcomeOK = "ok"
 // Status. Uniqueness comes from a random suffix per id, so it needs no shared
 // counter and never collides across instances or processes.
 type runner struct {
+	// cfg is the per-queue identity this runner was built for.
+	cfg buildrunner.Config
 	// slowBuildDuration is how long a build-slow build reports running before
 	// it succeeds. Configuration, not per-build state: it is read at Trigger to
 	// compute the deadline baked into the id, never mutated.
 	slowBuildDuration time.Duration
 }
 
-// New returns a buildrunner.BuildRunner that defaults to succeeding and honors
-// marker tokens embedded in the triggered headURI.
-func New() buildrunner.BuildRunner {
-	return runner{slowBuildDuration: defaultSlowBuildDuration}
+// New returns a buildrunner.BuildRunner bound to the queue named in cfg that
+// defaults to succeeding and honors marker tokens embedded in the triggered
+// headURI.
+func New(cfg buildrunner.Config) buildrunner.BuildRunner {
+	return runner{cfg: cfg, slowBuildDuration: defaultSlowBuildDuration}
 }
 
 // Trigger fails when headURI carries the trigger-error marker; otherwise it

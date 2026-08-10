@@ -133,16 +133,16 @@ func (f *inMemoryCounterFactory) For(config counter.Config) (counter.Counter, er
 type fakeSourceControlFactory struct{}
 
 func (fakeSourceControlFactory) For(cfg sourcecontrol.Config) (sourcecontrol.SourceControl, error) {
-	return sourcecontrolfake.New([]string{fmt.Sprintf("git://%s/HEAD", cfg.QueueName)}), nil
+	return sourcecontrolfake.New(cfg, []string{fmt.Sprintf("git://%s/HEAD", cfg.QueueName)}), nil
 }
 
-// fakeBuildRunnerFactory is the example BuildRunner factory: every queue shares the same
-// stateless fake runner, which succeeds unless a caller embeds a failure marker in the head
-// URI. A real deployment supplies a backend-specific factory (e.g. Buildkite, per queue).
+// fakeBuildRunnerFactory is the example BuildRunner factory: every queue gets a stateless fake
+// runner bound to its own config, which succeeds unless a caller embeds a failure marker in the
+// head URI. A real deployment supplies a backend-specific factory (e.g. Buildkite, per queue).
 type fakeBuildRunnerFactory struct{}
 
-func (fakeBuildRunnerFactory) For(_ buildrunner.Config) (buildrunner.BuildRunner, error) {
-	return buildrunnerfake.New(), nil
+func (fakeBuildRunnerFactory) For(cfg buildrunner.Config) (buildrunner.BuildRunner, error) {
+	return buildrunnerfake.New(cfg), nil
 }
 
 func main() {

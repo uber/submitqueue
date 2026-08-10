@@ -39,16 +39,19 @@ const tokenError = "score-error"
 // scorerFake decorates a delegate Scorer, injecting an error when a change URI
 // carries the failure marker. It resolves the batch itself to inspect URIs.
 type scorerFake struct {
+	// cfg is the per-queue identity this scorer was built for.
+	cfg      scorer.Config
 	resolver changeset.Resolver
 	delegate scorer.Scorer
 }
 
-// New returns a scorer.Scorer that delegates to the given scorer but returns an
-// error when a change URI carries the "sq-fake=score-error" marker. The resolver
-// resolves the batch's changes so the marker can be inspected; the delegate is the
-// existing scorer implementation to wrap (e.g. heuristic or composite).
-func New(resolver changeset.Resolver, delegate scorer.Scorer) scorer.Scorer {
-	return scorerFake{resolver: resolver, delegate: delegate}
+// New returns a scorer.Scorer bound to the queue named in cfg that delegates to
+// the given scorer but returns an error when a change URI carries the
+// "sq-fake=score-error" marker. The resolver resolves the batch's changes so the
+// marker can be inspected; the delegate is the existing scorer implementation to
+// wrap (e.g. heuristic or composite).
+func New(cfg scorer.Config, resolver changeset.Resolver, delegate scorer.Scorer) scorer.Scorer {
+	return scorerFake{cfg: cfg, resolver: resolver, delegate: delegate}
 }
 
 // Score returns an error when a change URI carries the failure marker; otherwise

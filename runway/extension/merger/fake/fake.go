@@ -51,12 +51,21 @@ var _ merger.Merger = (*Merger)(nil)
 // Merger is a Merger that succeeds unless a marker token in a change URI
 // requests otherwise.
 type Merger struct {
-	seq atomic.Uint64
+	// cfg is the per-queue identity this merger was built for.
+	cfg merger.Config
+	// seq mints the synthetic revision ids returned by Merge. It is supplied by
+	// the caller so a factory that builds one Merger per queue can still hand
+	// out ids that are unique across every queue in the process.
+	seq *atomic.Uint64
 }
 
-// New returns a Merger that defaults to success and honors marker tokens
-// embedded in change URIs.
-func New() *Merger { return &Merger{} }
+// New returns a Merger bound to the queue named in cfg that defaults to success
+// and honors marker tokens embedded in change URIs. seq must be non-nil and is
+// shared, not owned: callers minting ids from more than one Merger must pass the
+// same counter to each.
+func New(cfg merger.Config, seq *atomic.Uint64) *Merger {
+	return &Merger{cfg: cfg, seq: seq}
+}
 
 // CheckMergeability reports the request as mergeable unless a recognized marker
 // token asks for a failure. Outputs are empty, as for any dry run.

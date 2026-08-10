@@ -16,6 +16,7 @@ package fake
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,6 +27,9 @@ import (
 	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
 	"github.com/uber/submitqueue/runway/extension/merger"
 )
+
+// testCfg is the per-queue identity used by every case in this file.
+var testCfg = merger.Config{QueueName: "test-queue"}
 
 const baseURI = "github://github.example.com/uber/repo/pull/1/abcdef0123456789abcdef0123456789abcdef01"
 
@@ -54,7 +58,7 @@ func TestUnmarkedRequestSucceeds(t *testing.T) {
 	req := requestWith(baseURI)
 
 	t.Run("check mergeability reports no outputs", func(t *testing.T) {
-		res, err := New().CheckMergeability(context.Background(), req)
+		res, err := New(testCfg, new(atomic.Uint64)).CheckMergeability(context.Background(), req)
 		require.NoError(t, err)
 
 		assert.Equal(t, req.GetId(), res.GetId())
@@ -67,7 +71,7 @@ func TestUnmarkedRequestSucceeds(t *testing.T) {
 	})
 
 	t.Run("merge reports one output per step", func(t *testing.T) {
-		res, err := New().Merge(context.Background(), req)
+		res, err := New(testCfg, new(atomic.Uint64)).Merge(context.Background(), req)
 		require.NoError(t, err)
 
 		assert.Equal(t, req.GetId(), res.GetId())
@@ -102,10 +106,10 @@ func TestMarkedRequestFails(t *testing.T) {
 				fn   func(*runwaymq.MergeRequest) (*runwaymq.MergeResult, error)
 			}{
 				{"CheckMergeability", func(r *runwaymq.MergeRequest) (*runwaymq.MergeResult, error) {
-					return New().CheckMergeability(context.Background(), r)
+					return New(testCfg, new(atomic.Uint64)).CheckMergeability(context.Background(), r)
 				}},
 				{"Merge", func(r *runwaymq.MergeRequest) (*runwaymq.MergeResult, error) {
-					return New().Merge(context.Background(), r)
+					return New(testCfg, new(atomic.Uint64)).Merge(context.Background(), r)
 				}},
 			} {
 				t.Run(call.name, func(t *testing.T) {
@@ -129,7 +133,7 @@ func TestMarkedRequestFails(t *testing.T) {
 func TestUnrecognizedTokenSucceeds(t *testing.T) {
 	req := requestWith(baseURI + "?sq-fake=some-other-fakes-token")
 
-	res, err := New().Merge(context.Background(), req)
+	res, err := New(testCfg, new(atomic.Uint64)).Merge(context.Background(), req)
 	require.NoError(t, err)
 	assert.Equal(t, runwaypb.Outcome_SUCCEEDED, res.GetOutcome())
 }
@@ -144,7 +148,7 @@ func TestFirstRecognizedTokenWins(t *testing.T) {
 		},
 	}
 
-	_, err := New().Merge(context.Background(), req)
+	_, err := New(testCfg, new(atomic.Uint64)).Merge(context.Background(), req)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, merger.ErrConflict)
 	assert.NotErrorIs(t, err, merger.ErrInvalidRequest)

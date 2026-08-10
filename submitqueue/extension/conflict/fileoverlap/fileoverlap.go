@@ -33,14 +33,16 @@ import (
 // analyzer reports a conflict between batches that change a common file. The
 // files a batch changes are resolved from each batch's change details.
 type analyzer struct {
+	// cfg is the per-queue identity this analyzer was built for.
+	cfg      conflict.Config
 	resolver changeset.Resolver
 }
 
 // New returns a conflict.Analyzer that flags an in-flight batch as conflicting
-// when it changes a file the candidate batch also changes. The resolver
-// resolves each batch's changed files.
-func New(resolver changeset.Resolver) conflict.Analyzer {
-	return analyzer{resolver: resolver}
+// when it changes a file the candidate batch also changes, bound to the queue
+// named in cfg. The resolver resolves each batch's changed files.
+func New(cfg conflict.Config, resolver changeset.Resolver) conflict.Analyzer {
+	return analyzer{cfg: cfg, resolver: resolver}
 }
 
 // Analyze returns one ConflictTypeTargetOverlap Conflict per in-flight batch

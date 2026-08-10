@@ -24,6 +24,7 @@ import (
 
 	changesetfake "github.com/uber/submitqueue/submitqueue/core/changeset/fake"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 )
 
 // detailed builds a BatchChanges whose single change touches the given files.
@@ -95,7 +96,7 @@ func TestAnalyze(t *testing.T) {
 				inFlight = append(inFlight, entity.Batch{ID: id})
 			}
 
-			got, err := New(resolver).Analyze(context.Background(), entity.Batch{ID: "cand"}, inFlight)
+			got, err := New(conflict.Config{QueueName: "test-queue"}, resolver).Analyze(context.Background(), entity.Batch{ID: "cand"}, inFlight)
 			require.NoError(t, err)
 
 			var ids []string
@@ -109,7 +110,7 @@ func TestAnalyze(t *testing.T) {
 }
 
 func TestAnalyze_EmptyInFlight(t *testing.T) {
-	got, err := New(changesetfake.New()).Analyze(context.Background(), entity.Batch{ID: "cand"}, nil)
+	got, err := New(conflict.Config{QueueName: "test-queue"}, changesetfake.New()).Analyze(context.Background(), entity.Batch{ID: "cand"}, nil)
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
@@ -118,6 +119,6 @@ func TestAnalyze_ResolverError(t *testing.T) {
 	sentinel := errors.New("resolve failed")
 	resolver := changesetfake.New().FailWith(sentinel)
 
-	_, err := New(resolver).Analyze(context.Background(), entity.Batch{ID: "cand"}, []entity.Batch{{ID: "x"}})
+	_, err := New(conflict.Config{QueueName: "test-queue"}, resolver).Analyze(context.Background(), entity.Batch{ID: "cand"}, []entity.Batch{{ID: "x"}})
 	require.ErrorIs(t, err, sentinel)
 }

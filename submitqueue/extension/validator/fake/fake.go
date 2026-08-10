@@ -12,9 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package fake provides a validator.Validator that always passes and a
-// validator.Factory that returns it. Intended for examples, tests, and default
-// wiring when no custom validation is needed.
+// Package fake provides a validator.Validator that always passes. Intended for
+// examples, tests, and default wiring when no custom validation is needed.
 package fake
 
 import (
@@ -24,24 +23,17 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/validator"
 )
 
-type fakeValidator struct{}
+type fakeValidator struct {
+	// cfg is the per-queue identity this validator was built for.
+	cfg validator.Config
+}
 
-// New returns a validator.Validator that always passes (returns nil).
-func New() validator.Validator {
-	return fakeValidator{}
+// New returns a validator.Validator bound to the queue named in cfg that always
+// passes (returns nil).
+func New(cfg validator.Config) validator.Validator {
+	return fakeValidator{cfg: cfg}
 }
 
 func (fakeValidator) Validate(context.Context, entity.Request) error {
 	return nil
-}
-
-type fakeFactory struct{}
-
-// NewFactory returns a validator.Factory that always returns a passing validator.
-func NewFactory() validator.Factory {
-	return fakeFactory{}
-}
-
-func (fakeFactory) For(validator.Config) (validator.Validator, error) {
-	return fakeValidator{}, nil
 }

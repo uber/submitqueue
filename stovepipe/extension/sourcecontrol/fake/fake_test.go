@@ -23,8 +23,11 @@ import (
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 )
 
+// testCfg is the per-queue identity used by every case in this file.
+var testCfg = sourcecontrol.Config{QueueName: "test-queue"}
+
 func TestNew_ImplementsInterface(t *testing.T) {
-	var _ sourcecontrol.SourceControl = New(nil)
+	var _ sourcecontrol.SourceControl = New(testCfg, nil)
 }
 
 // history is ordered newest-first: c is the latest, a is the oldest ancestor.
@@ -42,7 +45,7 @@ func TestLatest(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := New(tt.history).Latest(context.Background())
+			got, err := New(testCfg, tt.history).Latest(context.Background())
 			if tt.wantErr {
 				require.ErrorIs(t, err, sourcecontrol.ErrNotFound)
 				return
@@ -69,7 +72,7 @@ func TestIsAncestor(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := New(history).IsAncestor(context.Background(), tt.ancestor, tt.descendant)
+			got, err := New(testCfg, history).IsAncestor(context.Background(), tt.ancestor, tt.descendant)
 			if tt.wantErr {
 				require.ErrorIs(t, err, sourcecontrol.ErrNotFound)
 				return
@@ -126,7 +129,7 @@ func TestHistory(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := New(history).History(context.Background(), tt.cursor, tt.limit)
+			got, err := New(testCfg, history).History(context.Background(), tt.cursor, tt.limit)
 			if tt.wantErr {
 				require.ErrorIs(t, err, sourcecontrol.ErrNotFound)
 				return

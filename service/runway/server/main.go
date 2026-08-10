@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -314,10 +315,10 @@ func newMergerFactory(logger *zap.Logger, scope tally.Scope) (merger.Factory, er
 		// Marker-driven outcomes, for e2e tests that need Runway to fail on
 		// demand without a git checkout. Never production.
 		logger.Info("MERGER=fake; using marker-driven fake merger")
-		return &fakeMergerFactory{merger: fake.New()}, nil
+		return &fakeMergerFactory{seq: new(atomic.Uint64)}, nil
 	case "noop":
 		logger.Info("MERGER=noop; using noop merger")
-		return &noopMergerFactory{}, nil
+		return &noopMergerFactory{seq: new(atomic.Uint64)}, nil
 	case "", "git":
 		// Fall through to the merge-environment default below.
 	default:
@@ -327,7 +328,7 @@ func newMergerFactory(logger *zap.Logger, scope tally.Scope) (merger.Factory, er
 	checkoutPath := os.Getenv("MERGE_CHECKOUT_PATH")
 	if checkoutPath == "" {
 		logger.Info("MERGE_CHECKOUT_PATH not set; using noop merger")
-		return &noopMergerFactory{}, nil
+		return &noopMergerFactory{seq: new(atomic.Uint64)}, nil
 	}
 
 	defaultStrategy, err := parseStrategy(os.Getenv("MERGE_DEFAULT_STRATEGY"))
@@ -370,7 +371,8 @@ func newMergerFactory(logger *zap.Logger, scope tally.Scope) (merger.Factory, er
 
 // gitMergerFactory returns a single git-backed merger for every queue. The
 // merger owns one checkout and serializes its own operations, so one instance
-// is shared across queues. A deployment that lands multiple targets wires a
+// is shared across queues — which is why this is the one merger factory that
+// does not forward its Config. A deployment that lands multiple targets wires a
 // factory with a per-queue map instead.
 type gitMergerFactory struct {
 	merger merger.Merger
@@ -380,20 +382,26 @@ func (f *gitMergerFactory) For(_ merger.Config) (merger.Merger, error) {
 	return f.merger, nil
 }
 
-type noopMergerFactory struct{}
-
-func (f *noopMergerFactory) For(_ merger.Config) (merger.Merger, error) {
-	return noop.New(), nil
+// noopMergerFactory builds a noop merger per queue, bound to that queue's
+// config. The synthetic revision-id counter is held here rather than on the
+// merger so ids stay unique across every queue in the process.
+type noopMergerFactory struct {
+	seq *atomic.Uint64
 }
 
-// fakeMergerFactory shares one fake merger across queues so the synthetic
-// revision ids it mints stay unique for the lifetime of the process.
+func (f *noopMergerFactory) For(cfg merger.Config) (merger.Merger, error) {
+	return noop.New(cfg, f.seq), nil
+}
+
+// fakeMergerFactory builds a fake merger per queue, bound to that queue's
+// config. As with noop, the revision-id counter lives on the factory so ids
+// stay unique for the lifetime of the process.
 type fakeMergerFactory struct {
-	merger merger.Merger
+	seq *atomic.Uint64
 }
 
-func (f *fakeMergerFactory) For(_ merger.Config) (merger.Merger, error) {
-	return f.merger, nil
+func (f *fakeMergerFactory) For(cfg merger.Config) (merger.Merger, error) {
+	return fake.New(cfg, f.seq), nil
 }
 
 // parseStrategy maps the MERGE_DEFAULT_STRATEGY env value to a concrete merge

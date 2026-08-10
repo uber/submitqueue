@@ -63,6 +63,8 @@ func Avg(scores map[string]float64) float64 {
 
 // compositeScorer combines multiple named scorers into a single score using a reduce function.
 type compositeScorer struct {
+	// cfg is the per-queue identity this scorer was built for.
+	cfg scorer.Config
 	// scorers maps scorer names to their implementations.
 	scorers map[string]scorer.Scorer
 	// reduce combines named scores into a single value.
@@ -71,10 +73,11 @@ type compositeScorer struct {
 	scope tally.Scope
 }
 
-// New creates a composite Scorer that evaluates all named child scorers and combines
-// their results using the given reduce function.
+// New creates a composite Scorer bound to the queue named in cfg that evaluates
+// all named child scorers and combines their results using the given reduce
+// function.
 // Panics if scorers is empty or reduce is nil.
-func New(scorers map[string]scorer.Scorer, reduce ReduceFunc, scope tally.Scope) scorer.Scorer {
+func New(cfg scorer.Config, scorers map[string]scorer.Scorer, reduce ReduceFunc, scope tally.Scope) scorer.Scorer {
 	if len(scorers) == 0 {
 		panic("composite.New: scorers must not be empty")
 	}
@@ -82,6 +85,7 @@ func New(scorers map[string]scorer.Scorer, reduce ReduceFunc, scope tally.Scope)
 		panic("composite.New: reduce must not be nil")
 	}
 	return &compositeScorer{
+		cfg:     cfg,
 		scorers: scorers,
 		reduce:  reduce,
 		scope:   scope,

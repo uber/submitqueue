@@ -32,6 +32,9 @@ import (
 
 // Params holds the dependencies for the GitHub MergeChecker.
 type Params struct {
+	// Config is the per-queue identity handed to the Factory that built this
+	// merge checker.
+	Config mergechecker.Config
 	// HTTPClient is a pre-configured HTTP client. The caller is responsible for
 	// configuring the base URL (via BaseURLTransport) and auth (via a transport layer).
 	HTTPClient *http.Client
@@ -43,6 +46,8 @@ type Params struct {
 
 // mergeChecker implements the mergechecker.MergeChecker interface using the GitHub GraphQL API.
 type mergeChecker struct {
+	// cfg is the per-queue identity this checker was built for.
+	cfg          mergechecker.Config
 	httpClient   *http.Client
 	logger       *zap.SugaredLogger
 	metricsScope tally.Scope
@@ -51,9 +56,11 @@ type mergeChecker struct {
 // Verify mergeChecker implements mergechecker.MergeChecker at compile time.
 var _ mergechecker.MergeChecker = (*mergeChecker)(nil)
 
-// NewMergeChecker creates a new GitHub MergeChecker.
+// NewMergeChecker creates a new GitHub MergeChecker bound to the queue named in
+// params.Config.
 func NewMergeChecker(params Params) mergechecker.MergeChecker {
 	return &mergeChecker{
+		cfg:          params.Config,
 		httpClient:   params.HTTPClient,
 		logger:       params.Logger.Named("github_mergechecker"),
 		metricsScope: params.MetricsScope.SubScope("github_mergechecker"),

@@ -28,10 +28,13 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/scorer/heuristic"
 )
 
+// testCfg is the per-queue identity used by every case in this file.
+var testCfg = scorer.Config{QueueName: "test-queue"}
+
 const batchID = "q/batch/1"
 
 func TestNew_ImplementsInterface(t *testing.T) {
-	var _ scorer.Scorer = New(nil, nil)
+	var _ scorer.Scorer = New(testCfg, nil, nil)
 }
 
 // resolverFor returns a changeset resolver seeded so that batchID's detailed
@@ -47,6 +50,7 @@ func resolverFor(uris ...string) changeset.Resolver {
 // delegate returns a heuristic scorer (backed by resolver) that scores every batch at want.
 func delegate(resolver changeset.Resolver, want float64) scorer.Scorer {
 	return heuristic.New(
+		testCfg,
 		resolver,
 		[]heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: want}},
 		func(_ context.Context, c entity.BatchChanges) (int, error) { return len(c.Changes), nil },
@@ -56,7 +60,7 @@ func delegate(resolver changeset.Resolver, want float64) scorer.Scorer {
 
 func TestScore_DelegatesWhenUnmarked(t *testing.T) {
 	r := resolverFor("github://github.example.com/o/r/pull/1/a")
-	s := New(r, delegate(r, 0.7))
+	s := New(testCfg, r, delegate(r, 0.7))
 	got, err := s.Score(context.Background(), entity.Batch{ID: batchID})
 	require.NoError(t, err)
 	assert.Equal(t, 0.7, got)
@@ -64,7 +68,7 @@ func TestScore_DelegatesWhenUnmarked(t *testing.T) {
 
 func TestScore_ErrorMarker(t *testing.T) {
 	r := resolverFor("github://github.example.com/o/r/pull/1/a?sq-fake=score-error")
-	s := New(r, delegate(r, 0.7))
+	s := New(testCfg, r, delegate(r, 0.7))
 	_, err := s.Score(context.Background(), entity.Batch{ID: batchID})
 	require.Error(t, err)
 }
