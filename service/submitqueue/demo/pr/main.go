@@ -47,6 +47,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
@@ -106,6 +107,7 @@ type config struct {
 	repo     string
 	base     string
 	count    int
+	files    int
 	stacked  bool
 	prefix   string
 	land     bool
@@ -123,6 +125,7 @@ func parseFlags() config {
 	flag.StringVar(&c.repo, "repo", "behinddwalls/sq-demo", "scratch repository as owner/name")
 	flag.StringVar(&c.base, "base", "main", "branch the changes target")
 	flag.IntVar(&c.count, "count", 3, "how many pull requests to create")
+	flag.IntVar(&c.files, "files", 3, "fewest files each pull request touches; the actual count varies a little above it")
 	flag.BoolVar(&c.stacked, "stacked", false, "chain the pull requests and enqueue them as one stack")
 	flag.StringVar(&c.prefix, "prefix", "demo", "branch name prefix")
 	flag.BoolVar(&c.land, "land", true, "enqueue each pull request as it is created")
@@ -302,6 +305,51 @@ func (rw *row) stage() string {
 	return absent
 }
 
+// shardDirs is how many nested bucket directories a path carries under the demo
+// root. Two levels of 256 buckets spread a run's files widely enough that no
+// directory becomes a dumping ground, while staying shallow enough to read in a
+// diff.
+const shardDirs = 2
+
+// changeFilePath returns the repository path for one file of one change.
+//
+// The leaf name carries the run tag, the change index and the file index, which
+// is what makes it unique: no two files in a run, and no two runs against the
+// same repository, can ever name the same path. That uniqueness is load-bearing
+// — see createAndEnqueue.
+//
+// The directories are the leading bytes of the leaf's SHA-256, so files land in
+// buckets that are uniform without any coordination and stable across runs. Two
+// unrelated changes sharing a bucket is expected and harmless: the bucket is
+// only a directory, and it is the leaf that has to be distinct.
+func changeFilePath(tag string, change, file int) string {
+	leaf := fmt.Sprintf("%s-%d-%d.txt", tag, change, file)
+	sum := sha256.Sum256([]byte(leaf))
+
+	parts := make([]string, 0, shardDirs+2)
+	parts = append(parts, "demo")
+	for i := 0; i < shardDirs; i++ {
+		parts = append(parts, fmt.Sprintf("%02x", sum[i]))
+	}
+	parts = append(parts, leaf)
+	return strings.Join(parts, "/")
+}
+
+// changeFileCount returns how many files a change touches: at least min, varied
+// a little so a run does not produce a row of identically shaped pull requests.
+//
+// The variation is derived from the run tag and the change index rather than
+// from a clock or a global source of randomness, so replaying a tag reproduces
+// the same run. A demo that cannot be reproduced is hard to talk about when
+// something in it goes wrong.
+func changeFileCount(tag string, change, min int) int {
+	if min < 1 {
+		min = 1
+	}
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s#%d", tag, change)))
+	return min + int(sum[0]%4)
+}
+
 // createAndEnqueue opens the pull requests and puts them on the queue, filling
 // in the tracker's rows as it goes and reporting each step beneath the table.
 //
@@ -311,10 +359,13 @@ func (rw *row) stage() string {
 // carries the whole chain, so it can only be submitted once the chain is
 // complete.
 //
-// Each change edits its own file. Independent changes would otherwise collide
-// on content and the run would measure conflict handling rather than the
-// throughput it is trying to show; a caller wanting a conflict can make one
-// deliberately.
+// Every file a change writes is its own, at a path no other change uses.
+// Independent changes would otherwise collide on content and the run would
+// measure conflict handling rather than the throughput it is trying to show; a
+// caller wanting a conflict can make one deliberately. Each change spreads
+// several files across the sharded tree, so it arrives as a multi-file, multi-
+// commit pull request rather than a single-line edit — which is both closer to
+// a real change and enough to exercise replaying a range of commits.
 func createAndEnqueue(
 	ctx context.Context,
 	gh *githubClient,
@@ -340,12 +391,22 @@ func createAndEnqueue(
 			return nil, fmt.Errorf("create branch %s: %w", branch, err)
 		}
 
-		path := fmt.Sprintf("demo/%s-%d.txt", tag, i)
-		body := fmt.Sprintf("change %d of run %s\n", i, tag)
-		t.note("committing %s", path)
-		headSHA, err := gh.commitFile(ctx, branch, path, body, fmt.Sprintf("demo change %d (run %s)", i, tag))
-		if err != nil {
-			return nil, fmt.Errorf("commit to %s: %w", branch, err)
+		// Each file is its own commit, so the pull request arrives as a range of
+		// commits rather than a single edit. The last one is the head the change
+		// URI pins.
+		var headSHA string
+		fileCount := changeFileCount(tag, i, cfg.files)
+		for k := 1; k <= fileCount; k++ {
+			path := changeFilePath(tag, i, k)
+			body := fmt.Sprintf("change %d of run %s\nfile %d of %d\n", i, tag, k, fileCount)
+			t.note("committing %s (%d/%d)", path, k, fileCount)
+
+			message := fmt.Sprintf("demo change %d (run %s): file %d of %d", i, tag, k, fileCount)
+			sha, err := gh.commitFile(ctx, branch, path, body, message)
+			if err != nil {
+				return nil, fmt.Errorf("commit %s to %s: %w", path, branch, err)
+			}
+			headSHA = sha
 		}
 
 		t.note("opening pull request for %s", branch)

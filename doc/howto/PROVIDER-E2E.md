@@ -96,6 +96,7 @@ Opening pull requests by hand gets old fast. `demo-pr` creates them, enqueues th
 ```bash
 make demo-pr                      # 3 independent PRs, each enqueued as it is created
 make demo-pr COUNT=8              # more traffic
+make demo-pr FILES=8              # wider changes, more files per PR
 make demo-pr STACKED=true         # one stack, enqueued as a single request
 make demo-pr LAND=false           # create only, print the land command
 ```
@@ -120,7 +121,9 @@ The trail is only as detailed as what the pipeline reports, which today is `acce
 
 `STACKED=true` is the exception to the overlap: one request carries the whole chain, so it can only go in once every pull request in it exists. That is the atomic-stack path — the whole set reaches `main` in a single push, and the table shows it as the single row it is.
 
-It talks to GitHub over the REST API with the same `GITHUB_TOKEN`, so it needs no clone and no git binary. Each run tags its branches with a timestamp so repeated runs do not collide, and each change edits its own file so independent changes do not conflict by accident.
+It talks to GitHub over the REST API with the same `GITHUB_TOKEN`, so it needs no clone and no git binary. Each run tags its branches with a timestamp so repeated runs do not collide, and every file a change writes is at a path no other change uses, so independent changes do not conflict by accident.
+
+A change touches several files rather than one, each committed separately, so it arrives as a multi-file, multi-commit pull request — closer to a real change, and enough to exercise replaying a range of commits. `FILES` sets the floor (default 3); the actual count varies a little above it, derived from the run tag so replaying a tag reproduces the same run. Paths are sharded into two levels of hex buckets under `demo/` (`demo/c2/91/<tag>-<change>-<file>.txt`), which keeps the tree from degenerating into one enormous directory as runs accumulate.
 
 The command exits non-zero if any request settles anywhere other than `landed`, so it works in a script. Piped to a file it prints a fresh table whenever a request moves — and not when only the clock did — instead of redrawing in place.
 

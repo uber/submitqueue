@@ -55,6 +55,7 @@ export SQ_PROVIDER_CONFIG_DIR ?= $(REPO_ROOT)/service/submitqueue/demo/provider/
 # Defaults for `make land` / `make demo-pr` against the provider demo stack.
 DEMO_REPO ?= behinddwalls/sq-demo
 COUNT ?= 3
+FILES ?= 3
 STACKED ?= false
 LAND ?= true
 WATCH ?= true
@@ -152,10 +153,11 @@ clean-proto: ## Clean generated proto files
 	@rm -f $(foreach p,$(PROTO_PACKAGES),$(p)/protopb/*.pb.go $(p)/protopb/*.pb.yarpc.go)
 	@echo "Proto clean complete!"
 
-demo-pr: ## Create N PRs in the demo repo, enqueue each as it is created, and watch (COUNT=3; needs GITHUB_TOKEN)
+demo-pr: ## Create N PRs in the demo repo, enqueue each as it is created, and watch (COUNT=3 FILES=3; needs GITHUB_TOKEN)
 	@$(BAZEL) run //service/submitqueue/demo/pr -- \
 		-repo $(DEMO_REPO) \
 		-count $(COUNT) \
+		-files $(FILES) \
 		-stacked=$(STACKED) \
 		-gateway $(GATEWAY_ADDR) \
 		-queue $(QUEUE) \
