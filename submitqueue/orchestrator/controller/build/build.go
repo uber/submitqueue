@@ -192,8 +192,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 //
 // The base is the path's own — the dependencies it assumes will succeed, in its
 // order. This is the behavioral heart of speculation: dependencies the path
-// assumes will fail, and ones it ignores, are absent from the base, which is
-// what lets the head be verified before they resolve.
+// assumes will fail are absent from the base, which is what lets the head be
+// verified before they resolve.
 //
 // The write order is Trigger, then the Build record, then the link, then the
 // signal — each write makes the previous one reachable. The Build record gives

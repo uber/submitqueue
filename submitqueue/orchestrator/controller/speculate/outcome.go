@@ -65,12 +65,12 @@ func decide(head entity.Batch, set entity.SpeculationPathSet, snap snapshot) out
 //
 // This is what makes speculation pay. The head waits only on the dependencies
 // the passed build was stacked on — not on its full dependency list — so a
-// batch built without a slow neighbour, or with that neighbour relaxed to
-// ignored, merges as soon as the ones it actually built on have landed.
+// batch built without a slow neighbour merges as soon as the ones it actually
+// built on have landed.
 //
 // A dependency assumed to fail imposes no wait: the path is broken the
 // moment that dependency succeeds, so a still-live path has already been
-// vindicated on it. An ignored dependency imposes no wait by definition.
+// vindicated on it.
 func mergeablePath(set entity.SpeculationPathSet, snap snapshot) (entity.SpeculationPathEntry, bool) {
 	for _, entry := range set.Paths {
 		if entry.Status != entity.SpeculationPathStatusPassed {

@@ -144,7 +144,7 @@ func TestFilterProposals_Rejects(t *testing.T) {
 // A path a resolved dependency has already ruled out must not be funded, even
 // if the Speculator proposes it.
 func TestFilterProposals_RejectsBrokenPath(t *testing.T) {
-	path := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionIgnored)
+	path := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionFails)
 
 	snap := checkSnapshot(entity.BatchStateSpeculating)
 	snap.batches[dep1] = entity.Batch{ID: dep1, State: entity.BatchStateFailed}
@@ -211,7 +211,7 @@ func TestIsWellFormed(t *testing.T) {
 			name: "order does not matter",
 			path: entity.SpeculationPath{Head: head, Dependencies: []entity.PathDependency{
 				{Batch: dep2, Assumption: entity.DependencyAssumptionSucceeds},
-				{Batch: dep1, Assumption: entity.DependencyAssumptionIgnored},
+				{Batch: dep1, Assumption: entity.DependencyAssumptionFails},
 			}},
 			want: true,
 		},

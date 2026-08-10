@@ -91,8 +91,7 @@ func (s snapshot) batchState(id string) entity.BatchState {
 // assumptionBroken reports whether a finished dependency has already proven
 // one of the path's assumptions wrong: a dependency the path assumed would
 // succeed ended some other way, or one it assumed would fail succeeded. A
-// dependency still in flight proves nothing either way, and an ignored one
-// never does — the path made no claim about it.
+// dependency still in flight proves nothing either way.
 func assumptionBroken(path entity.SpeculationPath, snap snapshot) bool {
 	for _, dep := range path.Dependencies {
 		state := snap.batchState(dep.Batch)

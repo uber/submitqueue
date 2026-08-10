@@ -148,8 +148,7 @@ func isWellFormed(path entity.SpeculationPath, head entity.Batch) bool {
 
 		switch dep.Assumption {
 		case entity.DependencyAssumptionSucceeds,
-			entity.DependencyAssumptionFails,
-			entity.DependencyAssumptionIgnored:
+			entity.DependencyAssumptionFails:
 		default:
 			return false
 		}

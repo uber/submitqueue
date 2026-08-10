@@ -895,14 +895,13 @@ func TestBestFirst_ReturnedPathsAreIndependent(t *testing.T) {
 
 	for i := range first.Path.Dependencies {
 		first.Path.Dependencies[i].Batch = "clobbered"
-		first.Path.Dependencies[i].Assumption = entity.DependencyAssumptionIgnored
+		first.Path.Dependencies[i].Assumption = entity.DependencyAssumption("clobbered")
 	}
 
 	rest := drainAll(t, iter)
 	require.NotEmpty(t, rest)
 	for _, c := range rest {
 		assert.NotContains(t, assumptionKey(c.Path), "clobbered")
-		assert.NotContains(t, assumptionKey(c.Path), string(entity.DependencyAssumptionIgnored))
 	}
 	assert.NotEqual(t, before, assumptionKey(first.Path), "the test mutated what it was handed")
 }

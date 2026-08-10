@@ -290,7 +290,7 @@ func TestRun_PassesSnapshotToSpeculator(t *testing.T) {
 // without the Speculator being consulted.
 func TestRun_CancelsBrokenPath(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	broken := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionIgnored)
+	broken := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionFails)
 	spec := &scriptedSpeculator{}
 
 	h := newRunHarness(t, ctrl, spec, []entity.Batch{speculatingHead()})
@@ -385,7 +385,7 @@ func TestRun_RedispatchesPendingPath(t *testing.T) {
 // run, and the rest of the queue is unaffected.
 func TestRun_LostCASIsNotAnError(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	broken := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionIgnored)
+	broken := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionFails)
 	spec := &scriptedSpeculator{}
 
 	h := newRunHarness(t, ctrl, spec, []entity.Batch{speculatingHead()})
@@ -534,7 +534,7 @@ func TestRun_DoesNotReReadFinishedPaths(t *testing.T) {
 // throw away.
 func TestRun_BrokenPathsAreVisibleToTheSpeculator(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	broken := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionIgnored)
+	broken := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionFails)
 	spec := &scriptedSpeculator{}
 
 	h := newRunHarness(t, ctrl, spec, []entity.Batch{speculatingHead()})
@@ -562,8 +562,8 @@ func TestRun_BrokenPathsAreVisibleToTheSpeculator(t *testing.T) {
 // may still be occupying CI, and only the signal that sees them stop can call
 // it done.
 func TestCancelBrokenPathsInSet(t *testing.T) {
-	broken := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionIgnored)
-	intact := pathOver(entity.DependencyAssumptionFails, entity.DependencyAssumptionIgnored)
+	broken := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionFails)
+	intact := pathOver(entity.DependencyAssumptionFails, entity.DependencyAssumptionFails)
 
 	set := entity.SpeculationPathSet{
 		Head: head,
@@ -585,7 +585,7 @@ func TestCancelBrokenPathsInSet(t *testing.T) {
 // A path whose build already finished is left alone: a recorded outcome is not
 // something a later run gets to revise.
 func TestCancelBrokenPathsInSet_LeavesFinishedPaths(t *testing.T) {
-	broken := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionIgnored)
+	broken := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionFails)
 	snap := snapWith(entity.BatchStateFailed, entity.BatchStateSpeculating)
 
 	for _, status := range []entity.SpeculationPathStatus{
