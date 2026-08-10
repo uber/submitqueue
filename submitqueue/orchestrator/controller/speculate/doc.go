@@ -29,10 +29,10 @@
 // # Paths
 //
 // The batch being speculated on is the head. One complete guess about it is a
-// path: one assumption per dependency, each "succeeds", "fails", or "ignored"
-// (no claim either way). A path's ID hashes the head and its assumptions, so
-// a path *is* its guess; building the same guess again is a new attempt of
-// the same path, and (path ID, attempt) names the resulting build.
+// path: one assumption per dependency, each "succeeds" or "fails". A path's ID
+// hashes the head and its assumptions, so a path *is* its guess; building the
+// same guess again is a new attempt of the same path, and (path ID, attempt)
+// names the resulting build.
 //
 // # A worked example
 //

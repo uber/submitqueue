@@ -34,9 +34,6 @@ const (
 	// whether it fails or is cancelled. The head is built without it, and the
 	// path is refuted if it succeeds after all.
 	DependencyAssumptionFails DependencyAssumption = "fails"
-	// DependencyAssumptionIgnored means the path makes no assumption about this
-	// dependency. Its outcome neither gates the merge nor refutes the path.
-	DependencyAssumptionIgnored DependencyAssumption = "ignored"
 )
 
 // PathDependency is one dependency of a path's head, with what the path assumes
@@ -84,9 +81,9 @@ func (p SpeculationPath) ID() string {
 // dependency order.
 //
 // It is a projection of the path rather than a decision about it — a
-// dependency the path assumes will fail is by definition built without, and
-// an ignored one is not built on either — so every caller that needs the base
-// derives it here rather than re-reading the assumptions itself.
+// dependency the path assumes will fail is by definition built without — so
+// every caller that needs the base derives it here rather than re-reading the
+// assumptions itself.
 func (p SpeculationPath) Base() []string {
 	var deps []string
 	for _, dep := range p.Dependencies {

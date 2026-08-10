@@ -59,7 +59,6 @@ func TestAssumptionBroken(t *testing.T) {
 	const (
 		succeeds = entity.DependencyAssumptionSucceeds
 		fails    = entity.DependencyAssumptionFails
-		ignored  = entity.DependencyAssumptionIgnored
 	)
 
 	tests := []struct {
@@ -77,15 +76,11 @@ func TestAssumptionBroken(t *testing.T) {
 		{"fails holds when it fails", fails, failed, false},
 		{"fails holds when it is cancelled", fails, cancelled, false},
 		{"fails broken when it succeeds", fails, succeeded, true},
-
-		{"ignored survives success", ignored, succeeded, false},
-		{"ignored survives failure", ignored, failed, false},
-		{"ignored survives cancellation", ignored, cancelled, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			path := pathOver(tt.assumption, entity.DependencyAssumptionIgnored)
+			path := pathOver(tt.assumption, entity.DependencyAssumptionFails)
 			assert.Equal(t, tt.want, assumptionBroken(path, snapWith(tt.depState, entity.BatchStateSpeculating)))
 		})
 	}

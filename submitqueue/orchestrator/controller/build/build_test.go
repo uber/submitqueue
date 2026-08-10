@@ -74,15 +74,15 @@ func headBatch(state entity.BatchState) entity.Batch {
 	}
 }
 
-// pathEntry builds one path-set entry for the head, assuming depA succeeds,
-// depB fails, and depC is ignored — so only depA belongs in the build base.
+// pathEntry builds one path-set entry for the head, assuming depA succeeds
+// while depB and depC fail — so only depA belongs in the build base.
 func pathEntry(status entity.SpeculationPathStatus, attempt int) entity.SpeculationPathEntry {
 	path := entity.SpeculationPath{
 		Head: headID,
 		Dependencies: []entity.PathDependency{
 			{Batch: depA, Assumption: entity.DependencyAssumptionSucceeds},
 			{Batch: depB, Assumption: entity.DependencyAssumptionFails},
-			{Batch: depC, Assumption: entity.DependencyAssumptionIgnored},
+			{Batch: depC, Assumption: entity.DependencyAssumptionFails},
 		},
 	}
 	return entity.SpeculationPathEntry{
