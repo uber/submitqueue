@@ -3,6 +3,7 @@
 [![CI](https://github.com/uber/submitqueue/actions/workflows/ci.yml/badge.svg)](https://github.com/uber/submitqueue/actions/workflows/ci.yml)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/uber/submitqueue)](go.mod)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Slack](https://img.shields.io/badge/Slack-join%20the%20community-4A154B?logo=slack&logoColor=white)](https://join.slack.com/t/submitqueue/shared_invite/zt-46gkqj682-7zcQphxm2pYqkjDo9lbmYA)
 
 SubmitQueue is a high-performance speculative merge queue that keeps your trunk consistently green at scale. Rather than validating changes one at a time, SubmitQueue speculatively rebases and validates multiple changes in parallel against predicted future states of HEAD. When validations pass, changes land automatically. When they fail, SubmitQueue isolates the offending change and retries the rest — all without human intervention.
 
@@ -49,6 +50,10 @@ See [service/README.md](service/README.md) for more examples including running i
 ## Project Status
 
 SubmitQueue is under active development. We welcome contributions and feedback.
+
+## Community
+
+Join us on Slack: [submitqueue.slack.com](https://join.slack.com/t/submitqueue/shared_invite/zt-46gkqj682-7zcQphxm2pYqkjDo9lbmYA) — questions, design discussions, and help getting started.
 
 ## Contributing
 
