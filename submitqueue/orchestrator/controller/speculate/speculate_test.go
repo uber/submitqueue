@@ -35,14 +35,14 @@ import (
 )
 
 // quietSpeculator proposes nothing, which is what tests of the message-level
-// branches want: the run happens but changes no paths. It records the heads it
-// was offered, so a test can assert that a run reached them at all.
+// branches want: the run happens but changes no paths. It records the batches
+// it was offered, so a test can assert that a run reached them at all.
 type quietSpeculator struct {
-	heads []entity.Batch
+	saw []entity.Batch
 }
 
 func (s *quietSpeculator) Speculate(_ context.Context, batches []entity.Batch, _ []entity.SpeculationPathSet) ([]entity.Speculation, error) {
-	s.heads = append(s.heads, batches...)
+	s.saw = append(s.saw, batches...)
 	return nil, nil
 }
 
@@ -239,8 +239,8 @@ func TestProcess_TerminalReplansQueue(t *testing.T) {
 		Return(entity.SpeculationPathSet{}, storage.ErrNotFound)
 
 	require.NoError(t, h.process(t, ctrl, batch.ID))
-	assert.Equal(t, []entity.Batch{dependent}, h.spec.heads,
-		"the dependent must be re-planned against the terminal outcome")
+	assert.ElementsMatch(t, []entity.Batch{batch, dependent}, h.spec.saw,
+		"the dependent must be re-planned against the terminal outcome, which it can only be weighed against if the terminal batch comes too")
 }
 
 // A Merging batch is the merge stage's to finish; the run still happens for the

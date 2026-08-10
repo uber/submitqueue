@@ -94,7 +94,7 @@ func (h *runHarness) failPublishTo(topic string) {
 	h.failTopic = topic
 }
 
-// speculatedOver returns the IDs of the heads the Speculator was offered.
+// speculatedOver returns the IDs of the batches the Speculator was offered.
 func (h *runHarness) speculatedOver() []string {
 	ids := make([]string, 0, len(h.spec.gotBatches))
 	for _, b := range h.spec.gotBatches {
@@ -280,8 +280,8 @@ func TestRun_PassesSnapshotToSpeculator(t *testing.T) {
 	require.NoError(t, h.run(head))
 
 	require.Equal(t, 1, spec.calls)
-	require.Len(t, spec.gotBatches, 1)
-	assert.Equal(t, head, spec.gotBatches[0].ID, "only speculating heads are action targets")
+	assert.ElementsMatch(t, []string{dep1, dep2, head, merging.ID}, h.speculatedOver(),
+		"every batch the run read, in no particular order")
 	require.Len(t, spec.gotSets, 1)
 	assert.Equal(t, int32(3), spec.gotSets[0].Version)
 }
@@ -962,8 +962,8 @@ func TestRun_SpeculatorSeesPathSetsOfNonOpenHeads(t *testing.T) {
 
 	require.NoError(t, h.run(head))
 
-	assert.Equal(t, []entity.Batch{open}, spec.gotBatches,
-		"only an open head may be an action target")
+	assert.ElementsMatch(t, []entity.Batch{open, merging}, spec.gotBatches,
+		"a closed head is still a fact the open ones are planned against")
 	require.Len(t, spec.gotSets, 2, "every in-flight path set counts against the budget")
 	assert.Equal(t, merging.ID, spec.gotSets[1].Head)
 }

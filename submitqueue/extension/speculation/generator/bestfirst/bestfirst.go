@@ -25,7 +25,6 @@ import (
 	"cmp"
 	"container/heap"
 	"context"
-	"fmt"
 	"maps"
 	"math"
 	"slices"
@@ -104,26 +103,47 @@ func speculatingHeads(batches []entity.Batch, batchByID map[string]entity.Batch)
 
 // score asks the scorer for each unresolved dependency exactly once, however
 // many heads wait on it.
+//
+// A dependency that cannot be priced takes defaultProbability rather than
+// ending the run — one unusable number must not cost the queue every candidate
+// it had. Only cancellation is an error.
 func (g *bestFirst) score(ctx context.Context, ids []string, batchByID map[string]entity.Batch) (map[string]float64, error) {
 	probabilityByID := make(map[string]float64, len(ids))
 	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		probability, err := g.scorer.Score(ctx, batchByID[id])
+		batch, known := batchByID[id]
+		if !known {
+			// A batch the snapshot never carried is zero in every field, not
+			// just missing — scoring it would price some other batch entirely,
+			// or fail on its empty queue. It is unpriceable, not cheap.
+			probabilityByID[id] = defaultProbability
+			continue
+		}
+		probability, err := g.scorer.Score(ctx, batch)
 		if err != nil {
-			return nil, fmt.Errorf("score dependency %q: %w", id, err)
+			// A scorer that failed because the caller went away has not found
+			// an unpriceable dependency — it has found a dead ctx, which ends
+			// the run. The loop's own check would not catch it on the last
+			// dependency, and a cancelled Generate must never hand back an
+			// iterator.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			probability = defaultProbability
 		}
 		probabilityByID[id] = asProbability(probability)
 	}
 	return probabilityByID, nil
 }
 
-// defaultProbability stands in for a score that is not a probability. It is
-// optimistic on purpose: a dependency nobody could estimate is treated as very
-// likely to succeed, which keeps its head's preferred path near the front
-// rather than burying it or dropping the queue's whole snapshot on one bad
-// number.
+// defaultProbability stands in for a score that is not a probability, one the
+// scorer could not produce at all, and one for a dependency the snapshot never
+// carried. It is optimistic on purpose: a dependency nobody could estimate is
+// treated as very likely to succeed, which keeps its head's preferred path near
+// the front rather than burying it or dropping the queue's whole snapshot on
+// one bad number.
 const defaultProbability = 0.95
 
 // asProbability keeps a usable score and substitutes the default for anything
