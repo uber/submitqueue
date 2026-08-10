@@ -27,15 +27,21 @@ import (
 )
 
 // batchController is the DLQ reconciler for batch-scoped pipeline stages
-// (speculate, build, merge, conclude). All four topics carry a
-// BatchID payload, so this controller is registered four times — one per
-// topic, each with the matching DLQ topic key and consumer group.
+// (build, merge, conclude). All three topics carry a BatchID payload, so this
+// controller is registered three times — one per topic, each with the matching
+// DLQ topic key and consumer group.
 //
 // On each delivery the controller decodes the BatchID, transitions the batch
 // to BatchStateFailed (idempotent if already halted), and fans out by
 // transitioning each member request to RequestStateError. The fan-out exists
 // because conclude — which normally drives request state from batch state —
 // will not run for a DLQ'd batch.
+//
+// Blaming the batch on the message is right for these stages because their
+// work is that batch: whatever failed, it failed doing this batch's build,
+// merge, or conclusion. The speculate stage is not like that — it re-plans a
+// whole queue from a message that names one batch — so it has its own
+// reconciler; see speculate.go.
 type batchController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
@@ -92,6 +98,7 @@ func (c *batchController) Process(ctx context.Context, delivery consumer.Deliver
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", bid.Queue, err)
 	}
 
+	lastError, failureMeta := failureContext(delivery)
 	dmeta := delivery.Metadata()
 	c.logger.Warnw("dlq message received",
 		"batch_id", bid.ID,
@@ -101,7 +108,7 @@ func (c *batchController) Process(ctx context.Context, delivery consumer.Deliver
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
 
-	if err := failBatch(ctx, store, c.registry, c.logger, bid.ID, dmeta["dlq.last_error"]); err != nil {
+	if _, err := failBatch(ctx, store, c.registry, c.logger, bid.ID, lastError, failureMeta); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
 		return err
 	}

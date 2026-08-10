@@ -87,7 +87,9 @@ func (c *Controller) dispatch(ctx context.Context, queue string, snap snapshot, 
 					)
 					continue
 				}
-				return err
+				// The loop covers every in-flight batch, so the head whose
+				// write failed is usually not the one named on the message.
+				return c.attributed(err, entity.BatchSubject(batch.ID))
 			}
 		}
 
@@ -100,7 +102,8 @@ func (c *Controller) dispatch(ctx context.Context, queue string, snap snapshot, 
 		if hasActionablePaths(set) {
 			if err := c.publishBatchID(ctx, topickey.TopicKeyBuild, batch.ID, queue, batch.ID); err != nil {
 				metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
-				return fmt.Errorf("failed to publish batch %s to build: %w", batch.ID, err)
+				return c.attributed(fmt.Errorf("failed to publish batch %s to build: %w", batch.ID, err),
+					entity.BatchSubject(batch.ID))
 			}
 		}
 	}

@@ -153,7 +153,7 @@ var Stages = []pipeline.Stage[Deps]{
 			return speculate.NewController(d.Logger, d.Scope, d.Storage, d.Speculator, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 		DLQ: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
-			return dlq.NewDLQBatchController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
+			return dlq.NewDLQSpeculateController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 	},
 	{

@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber/submitqueue/platform/base/failure"
 	queue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
@@ -179,6 +180,12 @@ func TestDLQRequestController_Process_EmptyIDFails(t *testing.T) {
 // newMockDelivery returns a MockDelivery wired up enough to be passed through
 // the DLQ controller Process flow.
 func newMockDelivery(ctrl *gomock.Controller, payload []byte) *consumermock.MockDelivery {
+	return newMockDeliveryWithFailure(ctrl, payload, failure.Failure{}, false)
+}
+
+// newMockDeliveryWithFailure builds a delivery that also reports a recorded
+// failure, as a redelivery from a DLQ topic does.
+func newMockDeliveryWithFailure(ctrl *gomock.Controller, payload []byte, f failure.Failure, failed bool) *consumermock.MockDelivery {
 	msg := queue.NewMessage("dlq-msg-1", payload, "", nil)
 	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(msg).AnyTimes()
@@ -188,5 +195,6 @@ func newMockDelivery(ctrl *gomock.Controller, payload []byte) *consumermock.Mock
 		"dlq.failure_count":  "3",
 		"dlq.last_error":     "boom",
 	}).AnyTimes()
+	d.EXPECT().Failure().Return(f, failed).AnyTimes()
 	return d
 }

@@ -19,7 +19,9 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/platform/base/failure"
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
 	"github.com/uber/submitqueue/submitqueue/core/publish"
@@ -101,20 +103,23 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_resolve_errors", 1)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
-		return fmt.Errorf("failed to resolve storage for queue %q: %w", bid.Queue, err)
+		return c.attributed(fmt.Errorf("failed to resolve storage for queue %q: %w", bid.Queue, err),
+			entity.QueueSubject(bid.Queue))
 	}
 
 	batch, err := store.GetBatchStore().Get(ctx, bid.ID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return fmt.Errorf("failed to get batch %s: %w", bid.ID, err)
+		return c.attributed(fmt.Errorf("failed to get batch %s: %w", bid.ID, err),
+			entity.BatchSubject(bid.ID))
 	}
 
 	// The payload's queue must match the batch's authoritative queue; a
 	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
 	if bid.Queue != "" && bid.Queue != batch.Queue {
 		metrics.NamedCounter(c.metricsScope, opName, "queue_mismatch", 1)
-		return fmt.Errorf("payload queue %q does not match queue %q of batch %s", bid.Queue, batch.Queue, batch.ID)
+		return c.attributed(fmt.Errorf("payload queue %q does not match queue %q of batch %s", bid.Queue, batch.Queue, batch.ID),
+			entity.BatchSubject(batch.ID))
 	}
 
 	if batch.State.IsTerminal() {
@@ -145,7 +150,7 @@ func (c *Controller) admit(ctx context.Context, store storage.Storage, batch ent
 	updated, err := corebatch.Transition(ctx, store, batch, entity.BatchStateSpeculating)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return batch, err
+		return batch, c.attributed(err, entity.BatchSubject(batch.ID))
 	}
 
 	metrics.NamedCounter(c.metricsScope, opName, "admitted", 1)
@@ -163,7 +168,8 @@ func (c *Controller) admit(ctx context.Context, store storage.Storage, batch ent
 func (c *Controller) fanout(ctx context.Context, batchID, queue string) error {
 	if err := c.publishBatchID(ctx, topickey.TopicKeyConclude, batchID, queue, queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
-		return fmt.Errorf("failed to publish to conclude: %w", err)
+		return c.attributed(fmt.Errorf("failed to publish to conclude: %w", err),
+			entity.BatchSubject(batchID))
 	}
 	return nil
 }
@@ -188,6 +194,25 @@ func (c *Controller) publishBatchID(ctx context.Context, key consumer.TopicKey, 
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
 	return publish.Message(ctx, c.registry, key, publish.UniqueID(batchID), payload, partitionKey)
+}
+
+// attributed records what a failure was about and counts it by subject type.
+//
+// It exists because this stage's message names one batch but its work covers
+// the whole queue: a run reads every in-flight batch, hands them all to the
+// Speculator, and commits outcomes for any of them. So most failures here are
+// not about the batch on the message — they are about some other batch, or
+// about the queue itself — and a reconciler that assumed otherwise would
+// terminate a batch that was never at fault.
+//
+// Only the attribution is added. Whether the error is retryable stays with the
+// classifiers, which read the cause underneath this wrapper unchanged.
+func (c *Controller) attributed(err error, subjects ...failure.Subject) error {
+	for _, s := range subjects {
+		metrics.NamedCounter(c.metricsScope, opName, "attributed_failure", 1,
+			metrics.NewTag("subject_type", s.Type))
+	}
+	return errs.Attribute(err, subjects...)
 }
 
 // Name returns the controller name for logging and metrics.
