@@ -2,26 +2,16 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "go_default_library",
-    srcs = [
-        "errs.go",
-        "failure.go",
-        "processor.go",
-    ],
-    importpath = "github.com/uber/submitqueue/platform/errs",
+    srcs = ["failure.go"],
+    importpath = "github.com/uber/submitqueue/platform/base/failure",
     visibility = ["//visibility:public"],
-    deps = ["//platform/base/failure:go_default_library"],
 )
 
 go_test(
     name = "go_default_test",
-    srcs = [
-        "errs_test.go",
-        "failure_test.go",
-        "processor_test.go",
-    ],
+    srcs = ["failure_test.go"],
     embed = [":go_default_library"],
     deps = [
-        "//platform/base/failure:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
     ],

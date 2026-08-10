@@ -31,6 +31,16 @@ CREATE TABLE IF NOT EXISTS queue_messages (
     failure_count INT UNSIGNED NOT NULL,
     last_error TEXT NOT NULL,
     original_topic VARCHAR(255) NOT NULL,
+    -- failure_detail holds the structured half of the failure: which entities it
+    -- was about, plus free-form context. last_error keeps the human-readable
+    -- message, so this column never has to be decoded to read one, and a plain
+    -- SELECT last_error stays useful.
+    --
+    -- NULL rather than an empty-string sentinel like its neighbours: a JSON
+    -- column rejects '' as invalid, and NULL is the honest reading of a failure
+    -- that recorded no structure — including every row written before this
+    -- column existed, and the retry-limit backstop, which has none to record.
+    failure_detail JSON,
 
     -- Supports: SELECT ... WHERE topic=? AND partition_key=? AND offset > ? ORDER BY offset
     -- Used by subscribers to poll for messages within their assigned partition

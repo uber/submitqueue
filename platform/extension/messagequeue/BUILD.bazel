@@ -11,7 +11,10 @@ go_library(
     ],
     importpath = "github.com/uber/submitqueue/platform/extension/messagequeue",
     visibility = ["//visibility:public"],
-    deps = ["//platform/base/messagequeue:go_default_library"],
+    deps = [
+        "//platform/base/failure:go_default_library",
+        "//platform/base/messagequeue:go_default_library",
+    ],
 )
 
 go_test(

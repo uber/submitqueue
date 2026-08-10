@@ -19,6 +19,7 @@ package consumer
 import (
 	"context"
 
+	"github.com/uber/submitqueue/platform/base/failure"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 )
@@ -64,6 +65,16 @@ type Delivery interface {
 
 	// Metadata returns backend-specific delivery metadata.
 	Metadata() map[string]string
+
+	// Failure returns why this message was dead-lettered, and whether it was
+	// dead-lettered at all. Only a controller subscribed to a DLQ topic sees
+	// true; for anything else there is no failure to report.
+	//
+	// Where the message names one entity but the failure was about another —
+	// a stage whose work spans more of the queue than the message does — the
+	// subjects here are what says so. A reconciler that acts on the message's
+	// own entity regardless will terminate the wrong one.
+	Failure() (failure.Failure, bool)
 }
 
 // deliveryWrapper wraps extension/entityqueue.Delivery and exposes only the safe subset of methods.
@@ -107,6 +118,10 @@ func (d *deliveryWrapper) ReceivedAt() int64 {
 
 func (d *deliveryWrapper) Metadata() map[string]string {
 	return d.delivery.Metadata()
+}
+
+func (d *deliveryWrapper) Failure() (failure.Failure, bool) {
+	return d.delivery.Failure()
 }
 
 // Controller processes queue deliveries. Controllers contain business logic and are registered with the Consumer.
