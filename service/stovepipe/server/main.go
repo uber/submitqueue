@@ -49,6 +49,7 @@ import (
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
 	buildrunnerfake "github.com/uber/submitqueue/stovepipe/extension/buildrunner/fake"
+	buildrunnersampler "github.com/uber/submitqueue/stovepipe/extension/buildrunner/sampler"
 	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	sourcecontrolfake "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/fake"
@@ -138,11 +139,34 @@ func (fakeSourceControlFactory) For(cfg sourcecontrol.Config) (sourcecontrol.Sou
 	return sourcecontrolfake.New(cfg, []string{fmt.Sprintf("git://%s/HEAD", cfg.QueueName)}), nil
 }
 
-// Environment variables configuring the fake BuildRunner.
+// Environment variables selecting and configuring the BuildRunner. The bare
+// BUILD_RUNNER_* knobs configure the runner that takes unsampled builds; the
+// _CANDIDATE_ knobs configure the one BUILD_RUNNER=sampler splits traffic with.
 const (
-	_envFailurePercent        = "BUILD_RUNNER_FAILURE_PERCENT"
-	_envBuildDurationMs       = "BUILD_RUNNER_DURATION_MS"
-	_envDurationJitterPercent = "BUILD_RUNNER_DURATION_JITTER_PERCENT"
+	_envBuildRunner   = "BUILD_RUNNER"
+	_envSamplePercent = "BUILD_RUNNER_SAMPLE_PERCENT"
+)
+
+// fakeEnv names the environment variables configuring one fake build runner.
+// Two sets exist so the sampler's two runners can be given different profiles
+// from the same code path.
+type fakeEnv struct {
+	failurePercent        string
+	buildDurationMs       string
+	durationJitterPercent string
+}
+
+var (
+	_baselineFakeEnv = fakeEnv{
+		failurePercent:        "BUILD_RUNNER_FAILURE_PERCENT",
+		buildDurationMs:       "BUILD_RUNNER_DURATION_MS",
+		durationJitterPercent: "BUILD_RUNNER_DURATION_JITTER_PERCENT",
+	}
+	_candidateFakeEnv = fakeEnv{
+		failurePercent:        "BUILD_RUNNER_CANDIDATE_FAILURE_PERCENT",
+		buildDurationMs:       "BUILD_RUNNER_CANDIDATE_DURATION_MS",
+		durationJitterPercent: "BUILD_RUNNER_CANDIDATE_DURATION_JITTER_PERCENT",
+	}
 )
 
 // fakeBuildRunnerFactory is the example BuildRunner factory: every queue gets a stateless fake
@@ -158,37 +182,95 @@ func (f fakeBuildRunnerFactory) For(cfg buildrunner.Config) (buildrunner.BuildRu
 	return buildrunnerfake.New(params)
 }
 
-// newBuildRunnerFactory builds the BuildRunner factory from the environment, so
-// every queue's fake runner shares the profile set by the BUILD_RUNNER_* knobs.
-// The fake is demo-only; a real deployment keeps this shape and swaps the
-// constructed runner for a Buildkite or GitHub Actions one.
-func newBuildRunnerFactory(logger *zap.SugaredLogger) (buildrunner.Factory, error) {
-	params, err := fakeBuildRunnerParams()
-	if err != nil {
-		return nil, err
-	}
-	// Runners are built per resolution, so a profile the extension rejects
-	// would not surface until the first build. Build one here and discard it
-	// to keep that failure at startup.
-	if _, err := buildrunnerfake.New(params); err != nil {
-		return nil, err
-	}
-	logger.Infow("build runner configured", "impl", "fake")
-	return fakeBuildRunnerFactory{params: params}, nil
+// samplerBuildRunnerFactory gives each queue a sampler over two fake runners
+// bound to that queue, so the split applies per queue rather than through one
+// process-wide instance.
+type samplerBuildRunnerFactory struct {
+	baseline         buildrunnerfake.Params
+	candidate        buildrunnerfake.Params
+	candidatePercent int
+	logger           *zap.SugaredLogger
 }
 
-// fakeBuildRunnerParams reads the fake runner's profile from the environment,
-// leaving Config for the factory to fill in per queue.
-func fakeBuildRunnerParams() (buildrunnerfake.Params, error) {
-	failurePercent, err := envInt(_envFailurePercent)
+func (f samplerBuildRunnerFactory) For(cfg buildrunner.Config) (buildrunner.BuildRunner, error) {
+	baseline, err := fakeBuildRunnerFactory{params: f.baseline}.For(cfg)
+	if err != nil {
+		return nil, err
+	}
+	candidate, err := fakeBuildRunnerFactory{params: f.candidate}.For(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return buildrunnersampler.New(buildrunnersampler.Params{
+		Config:           cfg,
+		Baseline:         baseline,
+		Candidate:        candidate,
+		CandidatePercent: f.candidatePercent,
+		Logger:           f.logger,
+	})
+}
+
+// newBuildRunnerFactory builds the BuildRunner factory from the environment.
+// BUILD_RUNNER selects the implementation: "fake" (the default) gives every
+// queue one fake runner, and "sampler" gives it two and splits builds between
+// them by percentage, which is how a rollout or a backend comparison is
+// exercised locally. Both are demo-only; a real deployment keeps this shape and
+// swaps the constructed runners for Buildkite or GitHub Actions ones.
+func newBuildRunnerFactory(logger *zap.SugaredLogger) (buildrunner.Factory, error) {
+	baseline, err := fakeBuildRunnerParams(_baselineFakeEnv)
+	if err != nil {
+		return nil, err
+	}
+
+	var factory buildrunner.Factory
+	switch impl := strings.ToLower(strings.TrimSpace(os.Getenv(_envBuildRunner))); impl {
+	case "", "fake":
+		factory = fakeBuildRunnerFactory{params: baseline}
+		logger.Infow("build runner configured", "impl", "fake")
+
+	case "sampler":
+		candidate, err := fakeBuildRunnerParams(_candidateFakeEnv)
+		if err != nil {
+			return nil, err
+		}
+		candidatePercent, err := envInt(_envSamplePercent)
+		if err != nil {
+			return nil, err
+		}
+		factory = samplerBuildRunnerFactory{
+			baseline:         baseline,
+			candidate:        candidate,
+			candidatePercent: candidatePercent,
+			logger:           logger,
+		}
+		logger.Infow("build runner configured", "impl", "sampler", "candidate_percent", candidatePercent)
+
+	default:
+		return nil, fmt.Errorf("invalid %s %q", _envBuildRunner, impl)
+	}
+
+	// Runners are built per resolution, so a profile the extensions reject
+	// would not surface until the first build. Resolve one here and discard it
+	// to keep that failure at startup.
+	if _, err := factory.For(buildrunner.Config{}); err != nil {
+		return nil, err
+	}
+	return factory, nil
+}
+
+// fakeBuildRunnerParams reads one fake runner's profile from the named
+// environment variables, leaving Config for the factory to fill in per queue.
+// The caller varies the names to give several runners different profiles.
+func fakeBuildRunnerParams(env fakeEnv) (buildrunnerfake.Params, error) {
+	failurePercent, err := envInt(env.failurePercent)
 	if err != nil {
 		return buildrunnerfake.Params{}, err
 	}
-	buildDuration, err := envDurationMs(_envBuildDurationMs)
+	buildDuration, err := envDurationMs(env.buildDurationMs)
 	if err != nil {
 		return buildrunnerfake.Params{}, err
 	}
-	durationJitterPercent, err := envInt(_envDurationJitterPercent)
+	durationJitterPercent, err := envInt(env.durationJitterPercent)
 	if err != nil {
 		return buildrunnerfake.Params{}, err
 	}

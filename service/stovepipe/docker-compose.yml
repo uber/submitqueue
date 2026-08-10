@@ -68,12 +68,18 @@ services:
       - STORAGE_MYSQL_DSN=root:root@tcp(mysql-app:3306)/submitqueue?parseTime=true
       - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
       - HOSTNAME=stovepipe-dev
-      # Fake build runner behavior. Unset means the default: every build
-      # succeeds immediately unless a request's head URI carries a
-      # buildrunner-fake marker — see the README.
+      # Build runner selection and behavior. Unset means the default: a single
+      # fake runner that succeeds immediately unless a request's head URI
+      # carries a buildrunner-fake marker. Set SQ_BUILD_RUNNER=sampler to split
+      # builds between two fakes with different profiles — see the README.
+      - BUILD_RUNNER=${SQ_BUILD_RUNNER:-}
       - BUILD_RUNNER_FAILURE_PERCENT=${SQ_BUILD_RUNNER_FAILURE_PERCENT:-}
       - BUILD_RUNNER_DURATION_MS=${SQ_BUILD_RUNNER_DURATION_MS:-}
       - BUILD_RUNNER_DURATION_JITTER_PERCENT=${SQ_BUILD_RUNNER_DURATION_JITTER_PERCENT:-}
+      - BUILD_RUNNER_SAMPLE_PERCENT=${SQ_BUILD_RUNNER_SAMPLE_PERCENT:-}
+      - BUILD_RUNNER_CANDIDATE_FAILURE_PERCENT=${SQ_BUILD_RUNNER_CANDIDATE_FAILURE_PERCENT:-}
+      - BUILD_RUNNER_CANDIDATE_DURATION_MS=${SQ_BUILD_RUNNER_CANDIDATE_DURATION_MS:-}
+      - BUILD_RUNNER_CANDIDATE_DURATION_JITTER_PERCENT=${SQ_BUILD_RUNNER_CANDIDATE_DURATION_JITTER_PERCENT:-}
     depends_on:
       mysql-app:
         condition: service_healthy
