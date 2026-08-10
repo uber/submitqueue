@@ -46,26 +46,66 @@ func TestMergeablePath(t *testing.T) {
 		dep2State  entity.BatchState
 		want       bool
 	}{
+		// dep2 is settled the way its assumption expects throughout, so dep1
+		// is the only thing under test.
 		{
 			name:       "waits for an assumed-succeeding dependency to merge",
 			assumption: [2]entity.DependencyAssumption{succeeds, fails},
 			dep1State:  entity.BatchStateSpeculating,
+			dep2State:  entity.BatchStateFailed,
 			want:       false,
 		},
 		{
 			name:       "merges once it has",
 			assumption: [2]entity.DependencyAssumption{succeeds, fails},
 			dep1State:  entity.BatchStateSucceeded,
+			dep2State:  entity.BatchStateFailed,
 			want:       true,
 		},
 		{
-			name:       "an assumed-failing dependency imposes no wait",
+			name:       "an assumed-succeeding dependency waits out its merge",
+			assumption: [2]entity.DependencyAssumption{succeeds, fails},
+			dep1State:  entity.BatchStateMerging,
+			dep2State:  entity.BatchStateFailed,
+			want:       false,
+		},
+		{
+			name:       "waits for an assumed-failing dependency to actually fail",
 			assumption: [2]entity.DependencyAssumption{fails, fails},
 			dep1State:  entity.BatchStateSpeculating,
+			dep2State:  entity.BatchStateFailed,
+			want:       false,
+		},
+		{
+			name:       "still waits while that dependency is merging",
+			assumption: [2]entity.DependencyAssumption{fails, fails},
+			dep1State:  entity.BatchStateMerging,
+			dep2State:  entity.BatchStateFailed,
+			want:       false,
+		},
+		{
+			name:       "still waits while that dependency is cancelling",
+			assumption: [2]entity.DependencyAssumption{fails, fails},
+			dep1State:  entity.BatchStateCancelling,
+			dep2State:  entity.BatchStateFailed,
+			want:       false,
+		},
+		{
+			name:       "merges once it has failed",
+			assumption: [2]entity.DependencyAssumption{fails, fails},
+			dep1State:  entity.BatchStateFailed,
+			dep2State:  entity.BatchStateFailed,
 			want:       true,
 		},
 		{
-			name:       "one unmerged dependency is enough to wait",
+			name:       "merges once it has been cancelled",
+			assumption: [2]entity.DependencyAssumption{fails, fails},
+			dep1State:  entity.BatchStateCancelled,
+			dep2State:  entity.BatchStateFailed,
+			want:       true,
+		},
+		{
+			name:       "one unsettled dependency is enough to wait",
 			assumption: [2]entity.DependencyAssumption{succeeds, succeeds},
 			dep1State:  entity.BatchStateSucceeded,
 			dep2State:  entity.BatchStateSpeculating,
