@@ -22,6 +22,8 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -136,13 +138,91 @@ func (fakeSourceControlFactory) For(cfg sourcecontrol.Config) (sourcecontrol.Sou
 	return sourcecontrolfake.New(cfg, []string{fmt.Sprintf("git://%s/HEAD", cfg.QueueName)}), nil
 }
 
-// fakeBuildRunnerFactory is the example BuildRunner factory: every queue gets a stateless fake
-// runner bound to its own config, which succeeds unless a caller embeds a failure marker in the
-// head URI. A real deployment supplies a backend-specific factory (e.g. Buildkite, per queue).
-type fakeBuildRunnerFactory struct{}
+// Environment variables configuring the fake BuildRunner.
+const (
+	_envFailurePercent        = "BUILD_RUNNER_FAILURE_PERCENT"
+	_envBuildDurationMs       = "BUILD_RUNNER_DURATION_MS"
+	_envDurationJitterPercent = "BUILD_RUNNER_DURATION_JITTER_PERCENT"
+)
 
-func (fakeBuildRunnerFactory) For(cfg buildrunner.Config) (buildrunner.BuildRunner, error) {
-	return buildrunnerfake.New(cfg), nil
+// fakeBuildRunnerFactory is the example BuildRunner factory: every queue gets a stateless fake
+// runner bound to its own config, carrying the process-wide profile read from the environment.
+// A real deployment supplies a backend-specific factory (e.g. Buildkite, per queue).
+type fakeBuildRunnerFactory struct {
+	params buildrunnerfake.Params
+}
+
+func (f fakeBuildRunnerFactory) For(cfg buildrunner.Config) (buildrunner.BuildRunner, error) {
+	params := f.params
+	params.Config = cfg
+	return buildrunnerfake.New(params)
+}
+
+// newBuildRunnerFactory builds the BuildRunner factory from the environment, so
+// every queue's fake runner shares the profile set by the BUILD_RUNNER_* knobs.
+// The fake is demo-only; a real deployment keeps this shape and swaps the
+// constructed runner for a Buildkite or GitHub Actions one.
+func newBuildRunnerFactory(logger *zap.SugaredLogger) (buildrunner.Factory, error) {
+	params, err := fakeBuildRunnerParams()
+	if err != nil {
+		return nil, err
+	}
+	// Runners are built per resolution, so a profile the extension rejects
+	// would not surface until the first build. Build one here and discard it
+	// to keep that failure at startup.
+	if _, err := buildrunnerfake.New(params); err != nil {
+		return nil, err
+	}
+	logger.Infow("build runner configured", "impl", "fake")
+	return fakeBuildRunnerFactory{params: params}, nil
+}
+
+// fakeBuildRunnerParams reads the fake runner's profile from the environment,
+// leaving Config for the factory to fill in per queue.
+func fakeBuildRunnerParams() (buildrunnerfake.Params, error) {
+	failurePercent, err := envInt(_envFailurePercent)
+	if err != nil {
+		return buildrunnerfake.Params{}, err
+	}
+	buildDuration, err := envDurationMs(_envBuildDurationMs)
+	if err != nil {
+		return buildrunnerfake.Params{}, err
+	}
+	durationJitterPercent, err := envInt(_envDurationJitterPercent)
+	if err != nil {
+		return buildrunnerfake.Params{}, err
+	}
+	return buildrunnerfake.Params{
+		FailurePercent:        failurePercent,
+		BuildDuration:         buildDuration,
+		DurationJitterPercent: durationJitterPercent,
+	}, nil
+}
+
+// envInt reads an integer from the environment, treating unset and empty as 0. A
+// malformed value fails startup rather than silently falling back to the default,
+// which would leave the stack running a profile nobody asked for. Range checks
+// belong to the extension constructors that own the valid range.
+func envInt(name string) (int, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: %w", name, raw, err)
+	}
+	return value, nil
+}
+
+// envDurationMs reads a millisecond count from the environment as a duration,
+// treating unset and empty as zero.
+func envDurationMs(name string) (time.Duration, error) {
+	ms, err := envInt(name)
+	if err != nil {
+		return 0, err
+	}
+	return time.Duration(ms) * time.Millisecond, nil
 }
 
 func main() {
@@ -277,7 +357,10 @@ func run() error {
 	// it, so a real (stateful) backend introduced later is shared rather than
 	// silently duplicated across controllers.
 	scf := fakeSourceControlFactory{}
-	brf := fakeBuildRunnerFactory{}
+	brf, err := newBuildRunnerFactory(logger.Sugar())
+	if err != nil {
+		return err
+	}
 
 	storageFty := storageFactory{backend: store}
 	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, registry, scf, brf)
