@@ -22,6 +22,8 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -107,13 +109,82 @@ func (fakeSourceControlFactory) For(cfg sourcecontrol.Config) (sourcecontrol.Sou
 	return sourcecontrolfake.New([]string{fmt.Sprintf("git://%s/HEAD", cfg.QueueName)}), nil
 }
 
-// fakeBuildRunnerFactory is the example BuildRunner factory: every queue shares the same
-// stateless fake runner, which succeeds unless a caller embeds a failure marker in the head
-// URI. A real deployment supplies a backend-specific factory (e.g. Buildkite, per queue).
-type fakeBuildRunnerFactory struct{}
+// Environment variables configuring the fake BuildRunner.
+const (
+	_envFailurePercent        = "BUILD_RUNNER_FAILURE_PERCENT"
+	_envBuildDurationMs       = "BUILD_RUNNER_DURATION_MS"
+	_envDurationJitterPercent = "BUILD_RUNNER_DURATION_JITTER_PERCENT"
+)
 
-func (fakeBuildRunnerFactory) For(_ buildrunner.Config) (buildrunner.BuildRunner, error) {
-	return buildrunnerfake.New(), nil
+// sharedBuildRunnerFactory hands every queue the same BuildRunner. Routing all
+// queues to one runner is this host's policy; a deployment that gives queues
+// different backends swaps this adapter for one holding a per-queue map.
+type sharedBuildRunnerFactory struct {
+	runner buildrunner.BuildRunner
+}
+
+func (f sharedBuildRunnerFactory) For(_ buildrunner.Config) (buildrunner.BuildRunner, error) {
+	return f.runner, nil
+}
+
+// newBuildRunnerFactory builds the BuildRunner factory from the environment and
+// hands every queue the same fake runner, configured by the BUILD_RUNNER_* knobs.
+// The fake is demo-only; a real deployment keeps this shape and swaps the
+// constructed runner for a Buildkite or GitHub Actions one.
+func newBuildRunnerFactory(logger *zap.SugaredLogger) (buildrunner.Factory, error) {
+	runner, err := newFakeBuildRunner()
+	if err != nil {
+		return nil, err
+	}
+	logger.Infow("build runner configured", "impl", "fake")
+	return sharedBuildRunnerFactory{runner: runner}, nil
+}
+
+// newFakeBuildRunner constructs the fake BuildRunner from the environment.
+func newFakeBuildRunner() (buildrunner.BuildRunner, error) {
+	failurePercent, err := envInt(_envFailurePercent)
+	if err != nil {
+		return nil, err
+	}
+	buildDuration, err := envDurationMs(_envBuildDurationMs)
+	if err != nil {
+		return nil, err
+	}
+	durationJitterPercent, err := envInt(_envDurationJitterPercent)
+	if err != nil {
+		return nil, err
+	}
+	return buildrunnerfake.New(buildrunnerfake.Params{
+		FailurePercent:        failurePercent,
+		BuildDuration:         buildDuration,
+		DurationJitterPercent: durationJitterPercent,
+	})
+}
+
+// envInt reads an integer from the environment, treating unset and empty as 0. A
+// malformed value fails startup rather than silently falling back to the default,
+// which would leave the stack running a profile nobody asked for. Range checks
+// belong to the extension constructors that own the valid range.
+func envInt(name string) (int, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: %w", name, raw, err)
+	}
+	return value, nil
+}
+
+// envDurationMs reads a millisecond count from the environment as a duration,
+// treating unset and empty as zero.
+func envDurationMs(name string) (time.Duration, error) {
+	ms, err := envInt(name)
+	if err != nil {
+		return 0, err
+	}
+	return time.Duration(ms) * time.Millisecond, nil
 }
 
 func main() {
@@ -248,7 +319,10 @@ func run() error {
 	// it, so a real (stateful) backend introduced later is shared rather than
 	// silently duplicated across controllers.
 	scf := fakeSourceControlFactory{}
-	brf := fakeBuildRunnerFactory{}
+	brf, err := newBuildRunnerFactory(logger.Sugar())
+	if err != nil {
+		return err
+	}
 
 	storageFty := storageFactory{backend: store}
 	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, registry, scf, brf)
