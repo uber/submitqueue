@@ -26,6 +26,7 @@ import (
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	"github.com/uber/submitqueue/stovepipe/extension/observability"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -44,6 +45,7 @@ type recordMocks struct {
 	reqStore   *storagemock.MockRequestStore
 	queueStore *storagemock.MockQueueStore
 	factStore  *storagemock.MockValidationFactStore
+	reporter   *countingReporter
 }
 
 // expectFactCreated wires a successful fact write and captures it, so a case can
@@ -62,6 +64,21 @@ type staticStorageFactory struct{ store storage.Storage }
 // For returns the fixed store aggregate for any queue.
 func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
 
+// countingReporterFactory resolves every queue to a reporter that records how
+// many times it was asked to observe, so a case can assert the stage reports
+// without pinning what an implementation emits.
+type countingReporterFactory struct{ reporter *countingReporter }
+
+// For returns the fixed reporter for any queue.
+func (f countingReporterFactory) For(observability.Config) (observability.Reporter, error) {
+	return f.reporter, nil
+}
+
+type countingReporter struct{ reports int }
+
+// Report counts one observation.
+func (r *countingReporter) Report(context.Context) { r.reports++ }
+
 func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, recordMocks) {
 	t.Helper()
 
@@ -69,6 +86,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, recordMo
 		reqStore:   storagemock.NewMockRequestStore(ctrl),
 		queueStore: storagemock.NewMockQueueStore(ctrl),
 		factStore:  storagemock.NewMockValidationFactStore(ctrl),
+		reporter:   &countingReporter{},
 	}
 
 	store := storagemock.NewMockStorage(ctrl)
@@ -80,6 +98,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, recordMo
 		zap.NewNop().Sugar(),
 		tally.NewTestScope("test", nil),
 		staticStorageFactory{store: store},
+		countingReporterFactory{reporter: m.reporter},
 		stovepipemq.TopicKeyRecord,
 		"stovepipe-record",
 	)
@@ -171,6 +190,18 @@ func TestProcess_AdvancesBookmarkOnSuccess(t *testing.T) {
 			assert.Positive(t, fact.CreatedAt)
 		})
 	}
+}
+
+func TestProcess_ReportsQueueHealthAfterHandling(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).
+		Return(requestWithState(entity.RequestStateFailed), nil)
+	m.expectFactCreated(&entity.ValidationFact{})
+
+	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+	assert.Equal(t, 1, m.reporter.reports)
 }
 
 func TestProcess_RecordsBrokenFactWithoutAdvancing(t *testing.T) {

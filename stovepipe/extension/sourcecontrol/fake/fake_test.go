@@ -17,6 +17,7 @@ package fake
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -139,4 +140,21 @@ func TestHistory(t *testing.T) {
 			assert.Equal(t, tt.wantCursor, got.NextCursor)
 		})
 	}
+}
+
+func TestChangeInfo(t *testing.T) {
+	source := New(testCfg, history)
+
+	latest, err := source.ChangeInfo(context.Background(), "git://repo/ref/c")
+	require.NoError(t, err)
+	assert.WithinDuration(t, time.Now(), latest.CreatedAt, time.Minute)
+
+	// Timestamps must agree with the ancestry the fake reports: an ancestor is
+	// dated before its descendant.
+	oldest, err := source.ChangeInfo(context.Background(), "git://repo/ref/a")
+	require.NoError(t, err)
+	assert.Equal(t, 2*commitInterval, latest.CreatedAt.Sub(oldest.CreatedAt))
+
+	_, err = source.ChangeInfo(context.Background(), "git://repo/ref/x")
+	require.ErrorIs(t, err, sourcecontrol.ErrNotFound)
 }

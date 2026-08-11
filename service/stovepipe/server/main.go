@@ -47,6 +47,7 @@ import (
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
 	buildrunnerfake "github.com/uber/submitqueue/stovepipe/extension/buildrunner/fake"
+	"github.com/uber/submitqueue/stovepipe/extension/observability/lastgreen"
 	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	sourcecontrolfake "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/fake"
@@ -424,7 +425,8 @@ func registerPrimaryControllers(
 	}
 	count++
 
-	recordController := record.NewController(logger, scope, store, stovepipemq.TopicKeyRecord, "stovepipe-record")
+	reporters := lastgreen.NewFactory(scope, store, scf)
+	recordController := record.NewController(logger, scope, store, reporters, stovepipemq.TopicKeyRecord, "stovepipe-record")
 	if err := c.Register(recordController); err != nil {
 		return count, fmt.Errorf("failed to register record controller: %w", err)
 	}

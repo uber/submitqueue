@@ -21,10 +21,15 @@ package fake
 
 import (
 	"context"
+	"time"
 
 	"github.com/uber/submitqueue/platform/base/page"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 )
+
+// commitInterval is how much older each successive commit in the seeded history
+// is dated, giving the fake a plausible commit cadence.
+const commitInterval = time.Minute
 
 // sourceControlFake serves a single queue's linear history. history[0] is the
 // latest commit; higher indices are progressively older ancestors.
@@ -32,16 +37,20 @@ type sourceControlFake struct {
 	// cfg is the per-queue identity this source control was built for.
 	cfg     sourcecontrol.Config
 	history []string
+	// latestCreatedAt dates history[0]; older commits are dated back from it.
+	latestCreatedAt time.Time
 }
 
 // New returns a sourcecontrol.SourceControl bound to the queue named in cfg,
 // backed by the given ref history, ordered newest-first (history[0] is the
 // latest commit). The slice is copied so later mutation by the caller does not
-// affect the fake.
+// affect the fake. The history is dated ending at construction time, so a caller
+// measuring how old a commit is sees a plausible age rather than one anchored to
+// an arbitrary epoch.
 func New(cfg sourcecontrol.Config, history []string) sourcecontrol.SourceControl {
 	cp := make([]string, len(history))
 	copy(cp, history)
-	return sourceControlFake{cfg: cfg, history: cp}
+	return sourceControlFake{cfg: cfg, history: cp, latestCreatedAt: time.Now().UTC()}
 }
 
 // Latest returns the newest commit URI, or ErrNotFound when the history is empty.
@@ -92,6 +101,20 @@ func (s sourceControlFake) History(_ context.Context, cursor string, limit int) 
 		next = s.history[end]
 	}
 	return page.Page[string]{Items: uris, NextCursor: next}, nil
+}
+
+// ChangeInfo dates a URI by its position in the history: the latest commit is
+// dated at construction time and each older one commitInterval further back, so
+// the timestamps agree with the ancestry the fake reports. Returns ErrNotFound
+// when the URI is not on the ref.
+func (s sourceControlFake) ChangeInfo(_ context.Context, uri string) (sourcecontrol.ChangeInfo, error) {
+	index := s.indexOf(uri)
+	if index < 0 {
+		return sourcecontrol.ChangeInfo{}, sourcecontrol.ErrNotFound
+	}
+	return sourcecontrol.ChangeInfo{
+		CreatedAt: s.latestCreatedAt.Add(-time.Duration(index) * commitInterval),
+	}, nil
 }
 
 // indexOf returns the index of uri in the history, or -1 if absent.

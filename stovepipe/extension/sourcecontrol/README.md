@@ -9,6 +9,7 @@ A `SourceControl` is **bound to a single queue** (a repo+ref) when its `Factory`
 - **Latest** resolves the queue's ref to the URI of its latest commit — the commit a new validation `Request` is minted against during `ingest`.
 - **IsAncestor** answers whether one URI is an ancestor of another. The `process` stage uses it to choose a build strategy: if the queue's last-green URI is no longer an ancestor of the latest commit, history was rewritten and a full build is required rather than an incremental one.
 - **History** returns a bounded, newest-first page of commit URIs on the ref, using the shared generic `page.Page[string]` (`platform/base/page`). It is paginated with an opaque cursor: callers pass an empty cursor for the newest page and the page's `NextCursor` to walk further back, stopping when it is empty. Pagination keeps a remote backend cheap; callers join the URIs against the request store to render the greenness of each commit.
+- **ChangeInfo** returns immutable metadata about the commit a URI names — today, when the VCS recorded it. It dates the *commit*, not the ref that points at it or the moment Stovepipe noticed the ref move, which is what makes it usable as an observation baseline: the age of the queue's last-known-green commit is measured from it.
 
 ## Errors
 

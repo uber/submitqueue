@@ -369,7 +369,7 @@ local-stovepipe-stop: ## Stop the Stovepipe service
 
 mocks: ## Generate mock files using mockgen
 	@echo "Generating mocks..."
-	@$(BAZEL) run @rules_go//go -- generate ./submitqueue/extension/storage/... ./submitqueue/extension/buildrunner/... ./submitqueue/extension/changeprovider/... ./platform/extension/counter/... ./platform/extension/consumergate/... ./platform/extension/messagequeue/... ./submitqueue/extension/queueconfig/... ./submitqueue/extension/mergechecker/... ./submitqueue/extension/scorer/... ./submitqueue/extension/conflict/... ./submitqueue/extension/speculation/... ./submitqueue/extension/validator/... ./platform/consumer/... ./stovepipe/extension/storage/... ./stovepipe/extension/sourcecontrol/...
+	@$(BAZEL) run @rules_go//go -- generate ./submitqueue/extension/storage/... ./submitqueue/extension/buildrunner/... ./submitqueue/extension/changeprovider/... ./platform/extension/counter/... ./platform/extension/consumergate/... ./platform/extension/messagequeue/... ./submitqueue/extension/queueconfig/... ./submitqueue/extension/mergechecker/... ./submitqueue/extension/scorer/... ./submitqueue/extension/conflict/... ./submitqueue/extension/speculation/... ./submitqueue/extension/validator/... ./platform/consumer/... ./stovepipe/extension/storage/... ./stovepipe/extension/sourcecontrol/... ./stovepipe/extension/observability/...
 	@echo "Mocks generated successfully!"
 
 proto: ## Generate protobuf files from .proto definitions

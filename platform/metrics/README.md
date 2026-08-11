@@ -49,6 +49,7 @@ For ad-hoc metrics that do not fit the operation lifecycle:
 |----------|-------|---------|
 | `NamedCounter(scope, name, counter, value, ...tags)` | `{name}.{counter}` counter | `publish.attempts` |
 | `NamedHistogram(scope, name, histogram, buckets, ...tags)` | `{name}.{histogram}` histogram | `process.duration` |
+| `NamedGauge(scope, name, gauge, value, ...tags)` | `{name}.{gauge}` gauge | `last_green.age_seconds` |
 
 ```go
 metrics.NamedCounter(c.scope, "publish", "attempts", 1)
@@ -57,7 +58,7 @@ h := metrics.NamedHistogram(c.scope, "process", "duration", metrics.FastLatencyB
 h.RecordDuration(elapsed)
 ```
 
-Do not emit gauges or timers. Represent operation latency and completion count with lifecycle histograms, and represent instantaneous quantities as sampled histogram values when needed.
+Do not emit timers. Represent operation latency and completion count with lifecycle histograms. Use a gauge only for a periodically refreshed, current-state value whose latest observation is the query result; use a histogram for distributions of observations over time.
 
 ### Why histograms, not timers
 
