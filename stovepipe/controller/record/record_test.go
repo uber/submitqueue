@@ -43,6 +43,17 @@ const (
 type recordMocks struct {
 	reqStore   *storagemock.MockRequestStore
 	queueStore *storagemock.MockQueueStore
+	factStore  *storagemock.MockValidationFactStore
+}
+
+// expectFactCreated wires a successful fact write and captures it, so a case can
+// assert on the recorded degree without pinning the wall-clock CreatedAt.
+func (m recordMocks) expectFactCreated(captured *entity.ValidationFact) {
+	m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, fact entity.ValidationFact) error {
+			*captured = fact
+			return nil
+		})
 }
 
 // staticStorageFactory resolves every queue to one fixed store aggregate.
@@ -57,11 +68,13 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, recordMo
 	m := recordMocks{
 		reqStore:   storagemock.NewMockRequestStore(ctrl),
 		queueStore: storagemock.NewMockQueueStore(ctrl),
+		factStore:  storagemock.NewMockValidationFactStore(ctrl),
 	}
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
 	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
+	store.EXPECT().GetValidationFactStore().Return(m.factStore).AnyTimes()
 
 	c := NewController(
 		zap.NewNop().Sugar(),
@@ -134,6 +147,8 @@ func TestProcess_AdvancesBookmarkOnSuccess(t *testing.T) {
 
 			m.reqStore.EXPECT().Get(gomock.Any(), testID).
 				Return(requestWithState(entity.RequestStateSucceeded), nil)
+			var fact entity.ValidationFact
+			m.expectFactCreated(&fact)
 			m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(tt.stored, nil)
 
 			var written entity.Queue
@@ -147,8 +162,84 @@ func TestProcess_AdvancesBookmarkOnSuccess(t *testing.T) {
 			require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
 			assert.Equal(t, tt.wantURI, written.LastGreenURI)
 			assert.Equal(t, testID, written.LastGreenRequestID)
+
+			// The green fact is what authorises the advance.
+			assert.Equal(t, entity.DegreeGreen, fact.Degree)
+			assert.Equal(t, testURI, fact.URI)
+			assert.Equal(t, testID, fact.RequestID)
+			assert.Equal(t, wholeRepositoryProject, fact.Project)
+			assert.Positive(t, fact.CreatedAt)
 		})
 	}
+}
+
+func TestProcess_RecordsBrokenFactWithoutAdvancing(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).
+		Return(requestWithState(entity.RequestStateFailed), nil)
+
+	var fact entity.ValidationFact
+	m.expectFactCreated(&fact)
+	// No queue reads or writes: a broken fact never moves the bookmark.
+
+	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+	assert.Equal(t, entity.DegreeBroken, fact.Degree)
+	assert.False(t, fact.IsGreen())
+}
+
+func TestProcess_AdoptsExistingFactFromSameRequest(t *testing.T) {
+	tests := []struct {
+		name       string
+		stored     entity.ValidationFact
+		wantUpdate bool
+	}{
+		{
+			name:       "green fact still advances the bookmark",
+			stored:     entity.ValidationFact{URI: testURI, Degree: entity.DegreeGreen, RequestID: testID},
+			wantUpdate: true,
+		},
+		{
+			name:   "broken fact does not",
+			stored: entity.ValidationFact{URI: testURI, Degree: entity.DegreeBroken, RequestID: testID},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+
+			// A redelivery after the fact was written but before the bookmark
+			// advanced: the write loses, and the stored fact decides.
+			m.reqStore.EXPECT().Get(gomock.Any(), testID).
+				Return(requestWithState(entity.RequestStateSucceeded), nil)
+			m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
+			m.factStore.EXPECT().Get(gomock.Any(), testURI, wholeRepositoryProject).Return(tt.stored, nil)
+
+			if tt.wantUpdate {
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow("", "", 1), nil)
+				m.queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
+			}
+
+			require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+		})
+	}
+}
+
+func TestProcess_ExistingFactFromDifferentRequestFails(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).
+		Return(requestWithState(entity.RequestStateSucceeded), nil)
+	m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
+	m.factStore.EXPECT().Get(gomock.Any(), testURI, wholeRepositoryProject).
+		Return(entity.ValidationFact{URI: testURI, Degree: entity.DegreeGreen, RequestID: "request/monorepo/main/1"}, nil)
+	// The bookmark must not move on an identity this request does not own.
+
+	require.Error(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
 }
 
 func TestProcess_SkipsBookmarkWhenNotNewer(t *testing.T) {
@@ -173,6 +264,8 @@ func TestProcess_SkipsBookmarkWhenNotNewer(t *testing.T) {
 
 			m.reqStore.EXPECT().Get(gomock.Any(), testID).
 				Return(requestWithState(entity.RequestStateSucceeded), nil)
+			var fact entity.ValidationFact
+			m.expectFactCreated(&fact)
 			m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(tt.stored, nil)
 			// No Update: the bookmark only moves forward.
 
@@ -181,12 +274,11 @@ func TestProcess_SkipsBookmarkWhenNotNewer(t *testing.T) {
 	}
 }
 
-func TestProcess_TerminalWithoutGreenDoesNotTouchQueue(t *testing.T) {
+func TestProcess_TerminalWithoutFactDoesNotTouchStores(t *testing.T) {
 	tests := []struct {
 		name  string
 		state entity.RequestState
 	}{
-		{name: "failed", state: entity.RequestStateFailed},
 		{name: "cancelled", state: entity.RequestStateCancelled},
 		{name: "superseded", state: entity.RequestStateSuperseded},
 	}
@@ -197,7 +289,7 @@ func TestProcess_TerminalWithoutGreenDoesNotTouchQueue(t *testing.T) {
 			c, m := newController(t, ctrl)
 
 			m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(tt.state), nil)
-			// No queue reads or writes at all.
+			// Neither a fact nor a queue write: these outcomes decide nothing.
 
 			require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
 		})
@@ -235,6 +327,8 @@ func TestProcess_RetriesBookmarkOnVersionMismatch(t *testing.T) {
 
 	m.reqStore.EXPECT().Get(gomock.Any(), testID).
 		Return(requestWithState(entity.RequestStateSucceeded), nil)
+	var fact entity.ValidationFact
+	m.expectFactCreated(&fact)
 
 	gomock.InOrder(
 		m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(stale, nil),
@@ -254,6 +348,8 @@ func TestProcess_MalformedRequestIDFails(t *testing.T) {
 
 	request := requestWithState(entity.RequestStateSucceeded)
 	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+	var fact entity.ValidationFact
+	m.expectFactCreated(&fact)
 	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).
 		Return(queueRow("git://remote/monorepo/main/old", "not-a-request-id", 1), nil)
 
@@ -273,10 +369,30 @@ func TestProcess_StorageErrorsPropagate(t *testing.T) {
 			},
 		},
 		{
+			name: "fact create fails",
+			setup: func(m recordMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).
+					Return(requestWithState(entity.RequestStateSucceeded), nil)
+				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(errors.New("boom"))
+			},
+		},
+		{
+			name: "existing fact load fails",
+			setup: func(m recordMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).
+					Return(requestWithState(entity.RequestStateSucceeded), nil)
+				m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
+				m.factStore.EXPECT().Get(gomock.Any(), testURI, wholeRepositoryProject).
+					Return(entity.ValidationFact{}, errors.New("boom"))
+			},
+		},
+		{
 			name: "queue load fails",
 			setup: func(m recordMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).
 					Return(requestWithState(entity.RequestStateSucceeded), nil)
+				var fact entity.ValidationFact
+				m.expectFactCreated(&fact)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).
 					Return(entity.Queue{}, errors.New("boom"))
 			},
@@ -286,6 +402,8 @@ func TestProcess_StorageErrorsPropagate(t *testing.T) {
 			setup: func(m recordMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).
 					Return(requestWithState(entity.RequestStateSucceeded), nil)
+				var fact entity.ValidationFact
+				m.expectFactCreated(&fact)
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow("", "", 1), nil)
 				m.queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).
 					Return(errors.New("boom"))

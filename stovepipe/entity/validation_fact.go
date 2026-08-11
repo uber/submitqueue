@@ -15,8 +15,7 @@
 package entity
 
 // Degree bounds. A degree answers "how broken was this scope?" on a closed
-// interval, so the two endpoints are named and the values between them are
-// meaningful rather than arbitrary.
+// interval, so both endpoints are named rather than spelled as bare literals.
 const (
 	// DegreeGreen is a fully healthy scope: nothing broken.
 	DegreeGreen = 0.0
@@ -42,8 +41,10 @@ type ValidationFact struct {
 	// repository; named projects narrow the fact to part of it.
 	Project string `json:"project"`
 	// Degree is how broken the scope was, on the closed interval
-	// [DegreeGreen, DegreeBroken]. Intermediate values describe partial
-	// breakage.
+	// [DegreeGreen, DegreeBroken]. A whole-repository scope only ever takes an
+	// endpoint: the build either passed or it did not. Intermediate values
+	// belong to project-level scopes, whose analysis defines how a partial
+	// degree is derived.
 	Degree float64 `json:"degree"`
 	// RequestID is the request that established the fact.
 	RequestID string `json:"request_id"`

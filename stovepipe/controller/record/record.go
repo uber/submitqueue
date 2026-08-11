@@ -14,18 +14,18 @@
 
 // Package record holds the record-stage queue controller. It consumes Record
 // messages (a request id) published by buildsignal once a build reaches a
-// terminal status, and turns that outcome into durable validation state. See
-// doc/rfc/stovepipe/steps/record.md.
+// terminal status, and turns that outcome into durable validation state.
 //
-// Phase 1 records only the queue's last-green bookmark, which process reads to
-// choose an incremental build baseline. Validation facts and downstream hooks
-// are not implemented yet.
+// The durable state is a ValidationFact per validated commit, plus the queue's
+// last-green bookmark, which process reads to choose an incremental build
+// baseline. Downstream hooks are not implemented yet.
 package record
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/consumer"
@@ -37,8 +37,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// Controller consumes Record messages and advances the queue's last-green
-// bookmark when the request's build succeeded. Implements consumer.Controller.
+// Controller consumes Record messages, records the build's validation fact, and
+// advances the queue's last-green bookmark when that fact is green. Implements
+// consumer.Controller.
 type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
@@ -52,6 +53,11 @@ var _ consumer.Controller = (*Controller)(nil)
 
 // _opName is the metric operation name shared by every emit in this file.
 const _opName = "record"
+
+// wholeRepositoryProject is the project component of a fact covering the whole
+// repository rather than one project within it. Per-project facts need target-graph
+// attribution that this stage does not do, so every fact it writes is whole-repository.
+const wholeRepositoryProject = ""
 
 // NewController creates a new record controller.
 func NewController(
@@ -108,17 +114,25 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	switch request.State {
-	case entity.RequestStateSucceeded:
+	case entity.RequestStateSucceeded, entity.RequestStateFailed:
+		fact, err := c.recordFact(ctx, store, request)
+		if err != nil {
+			return err
+		}
+		if !fact.IsGreen() {
+			metrics.NamedCounter(c.metricsScope, _opName, "not_green", 1)
+			return nil
+		}
 		if err := c.advanceLastGreen(ctx, store, request); err != nil {
 			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
 			return err
 		}
 		return nil
 
-	case entity.RequestStateFailed, entity.RequestStateCancelled:
-		// A verdict, but not a green one: nothing to record in phase 1. A
-		// cancelled build decided nothing about the commit at all.
-		metrics.NamedCounter(c.metricsScope, _opName, "not_green", 1)
+	case entity.RequestStateCancelled:
+		// A cancelled build decided nothing about the commit, so it establishes
+		// no fact. The identity stays unclaimed; the next commit re-validates.
+		metrics.NamedCounter(c.metricsScope, _opName, "cancelled", 1)
 		return nil
 
 	case entity.RequestStateSuperseded:
@@ -136,15 +150,77 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 }
 
+// recordFact writes the request's outcome as an immutable whole-repository fact and
+// returns the fact that is actually stored, which is not always the one just built:
+// facts are first-writer-wins, so an identity already claimed by this same request —
+// a redelivery after the write but before the bookmark advanced — yields the stored
+// fact instead. Every decision downstream reads that stored fact rather than the
+// request, so a redelivery cannot reach a different verdict than the original.
+func (c *Controller) recordFact(ctx context.Context, store storage.Storage, request entity.Request) (entity.ValidationFact, error) {
+	factStore := store.GetValidationFactStore()
+
+	fact := entity.ValidationFact{
+		URI:       request.URI,
+		Project:   wholeRepositoryProject,
+		Degree:    degreeFor(request.State),
+		RequestID: request.ID,
+		CreatedAt: time.Now().UnixMilli(),
+	}
+
+	err := factStore.Create(ctx, fact)
+	switch {
+	case err == nil:
+		metrics.NamedCounter(c.metricsScope, _opName, "fact_created", 1)
+		c.logger.Infow("recorded validation fact",
+			"queue", request.Queue,
+			"request_id", request.ID,
+			"uri", request.URI,
+			"degree", fact.Degree,
+		)
+		return fact, nil
+
+	case errors.Is(err, storage.ErrAlreadyExists):
+		stored, getErr := factStore.Get(ctx, request.URI, wholeRepositoryProject)
+		if getErr != nil {
+			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+			return entity.ValidationFact{}, fmt.Errorf("failed to load the existing fact for uri %s: %w", request.URI, getErr)
+		}
+		if stored.RequestID != request.ID {
+			// Two requests validating one URI would break the dedup ingest
+			// enforces, so this is a broken invariant rather than a race to
+			// resolve. Non-retryable: the stored fact is immutable.
+			metrics.NamedCounter(c.metricsScope, _opName, "invariant_errors", 1)
+			return entity.ValidationFact{}, fmt.Errorf(
+				"fact for uri %s is owned by request %s, not %s", request.URI, stored.RequestID, request.ID)
+		}
+		metrics.NamedCounter(c.metricsScope, _opName, "fact_exists", 1)
+		return stored, nil
+
+	default:
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+		return entity.ValidationFact{}, fmt.Errorf("failed to create the fact for uri %s: %w", request.URI, err)
+	}
+}
+
+// degreeFor maps a request's build outcome onto a whole-repository degree. Only the
+// endpoints are produced: a whole-repository build is either clean or it is not, and
+// intermediate degrees need per-project attribution that this stage does not do.
+func degreeFor(state entity.RequestState) float64 {
+	if state == entity.RequestStateSucceeded {
+		return entity.DegreeGreen
+	}
+	return entity.DegreeBroken
+}
+
 // advanceLastGreen points the queue's bookmark at request, retrying on version
 // conflicts. The bookmark only moves forward: a candidate whose id is not newer
 // than the stored one is skipped without a write, which also makes a redelivery
 // of the same request a no-op.
 //
-// Greenness comes from request.State rather than a persisted validation fact,
-// which is what record.md specifies. The two agree — a fact's degree is derived
-// from the same immutable state — and this reads the fact once the fact store
-// lands.
+// The bookmark is a cache of "newest green URI" derived from the facts, so it is
+// advanced only after the green fact is durable. Losing the advance to a crash is
+// recoverable — the redelivery reloads the same fact and retries — whereas a
+// bookmark with no fact behind it would point at greenness nothing recorded.
 func (c *Controller) advanceLastGreen(ctx context.Context, store storage.Storage, request entity.Request) error {
 	queueStore := store.GetQueueStore()
 
