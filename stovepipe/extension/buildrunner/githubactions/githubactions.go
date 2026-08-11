@@ -33,11 +33,15 @@ package githubactions
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 
 	"go.uber.org/zap"
 
+	"github.com/uber/submitqueue/platform/errs"
 	platformgithubactions "github.com/uber/submitqueue/platform/extension/buildrunner/githubactions"
+	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
 )
@@ -148,7 +152,16 @@ func (r *runner) Trigger(ctx context.Context, baseURI, headURI string, metadata 
 		Inputs:           inputs,
 	})
 	if err != nil {
-		return entity.BuildID{}, fmt.Errorf("github actions: dispatch workflow: %w", err)
+		err = fmt.Errorf("github actions: dispatch workflow: %w", err)
+		// Don't retry on error codes that may have been answered after the run was queued.
+		var se *phttp.StatusError
+		if errors.As(err, &se) {
+			switch se.StatusCode {
+			case http.StatusInternalServerError, http.StatusBadGateway, http.StatusGatewayTimeout:
+				return entity.BuildID{}, errs.NewDependencyError(err)
+			}
+		}
+		return entity.BuildID{}, err
 	}
 	if resp.WorkflowRunID <= 0 {
 		return entity.BuildID{}, fmt.Errorf("github actions: dispatch workflow: response missing workflow_run_id (requires return_run_details support)")
