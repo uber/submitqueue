@@ -58,7 +58,7 @@ Two implementations ship in this package:
 
 ## Adding a Backend-Specific Classifier
 
-Backend classifiers live alongside the extension they classify, under `platform/errs/<backend>/`. The canonical examples are `platform/errs/mysql` (MySQL driver errors) and `platform/errs/generic` (transport-agnostic concerns such as `context.Canceled`).
+Backend classifiers live alongside the extension they classify, under `platform/errs/<backend>/`. The canonical examples are `platform/errs/mysql` (MySQL driver errors), `platform/errs/http` (rejected status codes and transport failures from clients built on `platform/http`), and `platform/errs/generic` (transport-agnostic concerns such as `context.Canceled`).
 
 A classifier:
 
@@ -91,16 +91,20 @@ Servers wire each classifier into the consumer's `ErrorProcessor`. Order matters
 import (
     "github.com/uber/submitqueue/platform/errs"
     genericerrs "github.com/uber/submitqueue/platform/errs/generic"
+    httperrs    "github.com/uber/submitqueue/platform/errs/http"
     mysqlerrs   "github.com/uber/submitqueue/platform/errs/mysql"
 )
 
 c := consumer.New(logger, scope, registry,
     errs.NewClassifierProcessor(
         genericerrs.Classifier,
+        httperrs.Classifier,
         mysqlerrs.Classifier,
     ),
 )
 ```
+
+`httperrs` precedes `mysqlerrs` for a reason worth knowing before reordering the list: the MySQL classifier treats any `net.Error` as retryable infra, and the `*url.Error` an HTTP client returns satisfies `net.Error`. Whichever runs first claims that node, so with the order reversed an HTTP transport failure is classified as a MySQL one — retryable either way, but no longer attributed to the dependency it came from. This is the cross-extension ambiguity `NewClassifierProcessor` documents as deferred; registration order is the workaround.
 
 Tests follow the same shape: assert per-node behaviour against `Classifier.Classify(node)` directly, and assert end-to-end behaviour by running `errs.NewClassifierProcessor(Classifier).Process(err)` and checking the helpers (`IsRetryable`, `IsUserError`, …) on the result. See `platform/errs/mysql/mysql_test.go` and `platform/errs/generic/generic_test.go`.
 

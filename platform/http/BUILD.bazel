@@ -4,6 +4,7 @@ go_library(
     name = "go_default_library",
     srcs = [
         "request.go",
+        "status.go",
         "transport.go",
     ],
     importpath = "github.com/uber/submitqueue/platform/http",
@@ -14,6 +15,7 @@ go_test(
     name = "go_default_test",
     srcs = [
         "request_test.go",
+        "status_test.go",
         "transport_test.go",
     ],
     embed = [":go_default_library"],

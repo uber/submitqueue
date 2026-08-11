@@ -32,6 +32,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
+	httperrs "github.com/uber/submitqueue/platform/errs/http"
 	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
 	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
 	"github.com/uber/submitqueue/platform/extension/counter"
@@ -264,6 +265,7 @@ func run() error {
 	primaryConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
 		errs.NewClassifierProcessor(
 			genericerrs.Classifier,
+			httperrs.Classifier,
 			mysqlerrs.Classifier,
 		),
 		consumergatenoop.New(),
