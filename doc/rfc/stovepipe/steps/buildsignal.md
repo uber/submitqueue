@@ -122,12 +122,23 @@ Per `platform/errs`'s non-retryable-by-default rule (see [platform/errs/README.m
 
 | Failure | Disposition | Why |
 |---|---|---|
-| `Status` call | raw error; classifier decides | Deliberately left open rather than fixed either way — runner timeout/connection is transient, "runner not deployed for this queue" is not, and only a backend classifier can tell them apart. |
+| `Status` call | raw error; classifier decides | Deliberately left open rather than fixed either way — runner timeout/connection is transient, "runner not deployed for this queue" is not, and only a backend classifier can tell them apart. **This means the `BuildRunner` backend has to classify**: an unclassified transport or HTTP error gets the non-retryable default, so one proxy blip ends the poll chain (see below). |
 | `Update` CAS conflict (`ErrVersionMismatch`) | declaration-level retryable | A concurrent (redelivered) writer moved the row; reload and re-check converges. |
 
 `Build`/`Request` not found (`storage.ErrNotFound`) are **not** in this table: storage is required to be read-after-write consistent (see [storage README](stovepipe/extension/storage/README.md)), so a miss here is already the correct default (non-retryable, straight to DLQ) rather than a departure worth overriding.
 
 Everything else — factory lookup, an `Update` store error other than a CAS conflict, and the `record` publish — is returned raw with no override, because the default is already correct: a queue with no registered runner is a config error, and storage/queue failures dead-letter and let DLQ reconciliation recover. The poll loop itself no longer has a publish to fail: holding is a local outcome, and a failed postpone write in the framework lapses into a normal visibility-timeout redelivery, so the loop's liveness never rides on an enqueue succeeding.
+
+### What it costs when a backend does not classify `Status` errors
+
+Leaving `Status` to the classifier only works if the backend classifies. A `BuildRunner` whose transport returns plain `fmt.Errorf` values gets the non-retryable default, and here that default is expensive: dead-lettering ends the *only* poll chain for a build that is still running, and the request keeps holding one of the queue's `in_flight_count` build slots until reconciliation gives it back. A single `502` from a proxy in front of the build API then looks exactly like "this build can never be polled".
+
+Two things keep a blip from stalling a queue, and a backend needs both:
+
+- **The backend classifies its own failures.** Transport errors and 5xx/429/408 responses are `errs.NewRetryableDependencyError`. A 4xx about the request itself — unknown build, forbidden — is `errs.NewDependencyError`. Only the layer that sees the status code can tell these apart, which is why the table above leaves the call to it.
+- **The retry budget is worth something.** Retryable means nack, and a nacked message comes back on the next poll, so `Retry.MaxAttempts` counts attempts rather than time — the default three are spent in a few hundred milliseconds. Raising `MaxAttempts` on this subscription buys a little more, but each attempt is another request at a dependency that is already failing, so it does not stretch to cover a proxy restart. Until nacks are spaced by the configured retry backoff, it is the reconciler below rather than the retry budget that keeps a longer outage from costing the queue a slot.
+
+When the budget does run out the message dead-letters, and the buildsignal DLQ reconciler (`stovepipe/controller/dlq/buildsignal.go`) is what makes that recoverable: it maps the build back to its request, releases the slot, and marks the request `failed`. A deployment that registers the primary consumers but not that reconciler has no fail-closed path for this stage, and loses a slot for good every time this happens.
 
 ## Idempotency
 
