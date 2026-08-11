@@ -204,15 +204,21 @@ func TestController_Process_PublishesCheckToRunway(t *testing.T) {
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, topic string, msg entityqueue.Message) error {
+			if topic != "merge-conflict-check" {
+				return nil
+			}
 			gotTopic = topic
 			gotPayload = msg.Payload
 			return nil
 		},
-	)
+	).AnyTimes()
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ}},
+		[]consumer.TopicConfig{
+			{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
+		},
 	)
 	require.NoError(t, err)
 	cpFactory := changeprovidermock.NewMockFactory(ctrl)
@@ -606,11 +612,14 @@ func TestController_Process_CustomValidatorPasses(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 
 	mockPub := queuemock.NewMockPublisher(ctrl)
-	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
-		[]consumer.TopicConfig{{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ}},
+		[]consumer.TopicConfig{
+			{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ},
+			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
+		},
 	)
 	require.NoError(t, err)
 
@@ -715,7 +724,18 @@ func TestController_Process_CustomValidatorFailure_TerminationPublishFails(t *te
 	mockReqStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
 
 	mockPub := queuemock.NewMockPublisher(ctrl)
-	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("publish boom")).AnyTimes()
+	// Fail only the terminal log. The "validating" entry this stage now emits on
+	// the way in goes to the same topic, so failing every publish would abort
+	// before validation ever ran and this test would stop covering termination.
+	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, msg entityqueue.Message) error {
+			entry, err := entity.RequestLogFromBytes(msg.Payload)
+			if err == nil && entry.Status == entity.RequestStatusError {
+				return fmt.Errorf("publish boom")
+			}
+			return nil
+		},
+	).AnyTimes()
 	mockQ := queuemock.NewMockQueue(ctrl)
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(

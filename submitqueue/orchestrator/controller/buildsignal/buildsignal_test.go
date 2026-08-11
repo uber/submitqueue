@@ -17,6 +17,7 @@ package buildsignal
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -56,6 +57,9 @@ type testHarness struct {
 	pathBuilds   *storagemock.MockPathBuildStore
 	signalPub    *queuemock.MockPublisher
 	speculatePub *queuemock.MockPublisher
+	// logs holds the request-log entries this poll reported to the members of
+	// the batch the build verifies.
+	logs []entity.RequestLog
 }
 
 // staticStorageFactory resolves every queue to one fixed store aggregate.
@@ -64,7 +68,13 @@ type staticStorageFactory struct{ store storage.Storage }
 // For returns the fixed store aggregate for any queue.
 func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
 
+// testRequestID is the one member of the batch under test, so the request-log
+// fan-out has somebody to report to.
+const testRequestID = "test-queue/1"
+
 func newTestHarness(t *testing.T, ctrl *gomock.Controller, batchState entity.BatchState) *testHarness {
+	h := &testHarness{}
+
 	br := buildrunnermock.NewMockBuildRunner(ctrl)
 	brFactory := buildrunnermock.NewMockFactory(ctrl)
 	brFactory.EXPECT().For(gomock.Any()).Return(br, nil).AnyTimes()
@@ -77,16 +87,30 @@ func newTestHarness(t *testing.T, ctrl *gomock.Controller, batchState entity.Bat
 	speculateQ := queuemock.NewMockQueue(ctrl)
 	speculateQ.EXPECT().Publisher().Return(speculatePub).AnyTimes()
 
+	logPub := queuemock.NewMockPublisher(ctrl)
+	logPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, msg entityqueue.Message) error {
+			entry, err := entity.RequestLogFromBytes(msg.Payload)
+			require.NoError(t, err)
+			h.logs = append(h.logs, entry)
+			return nil
+		},
+	).AnyTimes()
+	logQ := queuemock.NewMockQueue(ctrl)
+	logQ.EXPECT().Publisher().Return(logPub).AnyTimes()
+
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{Key: topickey.TopicKeyBuildSignal, Name: "buildsignal", Queue: signalQ},
 		{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: speculateQ},
+		{Key: topickey.TopicKeyLog, Name: "log", Queue: logQ},
 	})
 	require.NoError(t, err)
 
 	builds := storagemock.NewMockBuildStore(ctrl)
 	batchStore := storagemock.NewMockBatchStore(ctrl)
 	batchStore.EXPECT().Get(gomock.Any(), testBatchID).Return(entity.Batch{
-		ID: testBatchID, Queue: "test-queue", State: batchState, Version: 1,
+		ID: testBatchID, Queue: "test-queue", Contains: []string{testRequestID},
+		State: batchState, Version: 1,
 	}, nil).AnyTimes()
 
 	// The path set and link stores are wired read-only: their getters answer,
@@ -110,16 +134,16 @@ func newTestHarness(t *testing.T, ctrl *gomock.Controller, batchState entity.Bat
 		topickey.TopicKeyBuildSignal,
 		"orchestrator-buildsignal",
 	)
-	return &testHarness{
-		controller:   c,
-		br:           br,
-		builds:       builds,
-		batchStore:   batchStore,
-		pathSets:     pathSets,
-		pathBuilds:   pathBuilds,
-		signalPub:    signalPub,
-		speculatePub: speculatePub,
-	}
+	// Populated rather than replaced: the log publisher above closes over h.
+	h.controller = c
+	h.br = br
+	h.builds = builds
+	h.batchStore = batchStore
+	h.pathSets = pathSets
+	h.pathBuilds = pathBuilds
+	h.signalPub = signalPub
+	h.speculatePub = speculatePub
+	return h
 }
 
 // wanted wires the kill-list reads to say the build is still wanted: its entry
@@ -569,4 +593,131 @@ func TestProcess_Errors(t *testing.T) {
 			require.Error(t, h.controller.Process(context.Background(), delivery(t, ctrl)))
 		})
 	}
+}
+
+// Build progress is reported to the members of the batch the build verifies,
+// carrying the identity a customer can act on — which path, which attempt, and
+// the runner's URL.
+//
+// "built" is success only. A head funds several paths at once, so a failed or
+// cancelled build is not the request finishing anything: its path is refuted
+// and what happens next is the speculate run's decision.
+func TestProcess_ReportsBuildProgressToMembers(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     entity.BuildStatus
+		wantEvents []entity.RequestEvent
+	}{
+		{
+			name:       "running is building only",
+			status:     entity.BuildStatusRunning,
+			wantEvents: []entity.RequestEvent{entity.RequestEventBuilding},
+		},
+		{
+			name:       "success is building then built",
+			status:     entity.BuildStatusSucceeded,
+			wantEvents: []entity.RequestEvent{entity.RequestEventBuilding, entity.RequestEventBuilt},
+		},
+		{
+			name:       "failure reports no completion",
+			status:     entity.BuildStatusFailed,
+			wantEvents: []entity.RequestEvent{entity.RequestEventBuilding},
+		},
+		{
+			name:       "cancellation reports no completion",
+			status:     entity.BuildStatusCancelled,
+			wantEvents: []entity.RequestEvent{entity.RequestEventBuilding},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			h := newTestHarness(t, ctrl, entity.BatchStateSpeculating)
+
+			h.builds.EXPECT().Get(gomock.Any(), testBuildID).Return(testBuild(entity.BuildStatusAccepted), nil)
+			h.br.EXPECT().Status(gomock.Any(), gomock.Any()).Return(
+				tt.status, entity.BuildMetadata{"url": "https://ci.example.com/builds/7"}, nil)
+			h.builds.EXPECT().Update(gomock.Any(), testBuild(tt.status)).Return(nil)
+			h.speculatePub.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).Return(nil)
+			if !tt.status.IsTerminal() {
+				h.wanted()
+				delivery := delivery(t, ctrl)
+				delivery.EXPECT().Hold(gomock.Any())
+				require.NoError(t, h.controller.Process(context.Background(), delivery))
+			} else {
+				require.NoError(t, h.controller.Process(context.Background(), delivery(t, ctrl)))
+			}
+
+			require.Len(t, h.logs, len(tt.wantEvents))
+			for i, want := range tt.wantEvents {
+				assert.Equal(t, entity.RequestLogTypeEvent, h.logs[i].Type)
+				assert.Equal(t, want, h.logs[i].Event)
+				// Nothing this stage records is a status, so the summary has
+				// nothing here it could sit on.
+				assert.Equal(t, entity.RequestStatusUnknown, h.logs[i].Status)
+				assert.Equal(t, testRequestID, h.logs[i].RequestID)
+				assert.Equal(t, testBuildID, h.logs[i].Metadata["build_id"])
+				assert.Equal(t, testPathID, h.logs[i].Metadata["path_id"])
+				assert.Equal(t, "https://ci.example.com/builds/7", h.logs[i].Metadata["build_url"])
+				// Zero version: an event is not a transition of the request's
+				// own state machine, and carrying a version would let the
+				// materializer mistake it for one.
+				assert.Zero(t, h.logs[i].RequestVersion)
+			}
+		})
+	}
+}
+
+// A poll that sees no change reports nothing. The entries are keyed on the
+// build, so a repeat would dedupe anyway, but publishing one per poll would put
+// a queue write behind every two-second tick of every live build.
+func TestProcess_UnchangedStatusReportsNothing(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	h := newTestHarness(t, ctrl, entity.BatchStateSpeculating)
+
+	h.builds.EXPECT().Get(gomock.Any(), testBuildID).Return(testBuild(entity.BuildStatusRunning), nil)
+	h.br.EXPECT().Status(gomock.Any(), gomock.Any()).Return(entity.BuildStatusRunning, nil, nil)
+	h.wanted()
+	h.speculatePub.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).Return(nil)
+
+	d := delivery(t, ctrl)
+	d.EXPECT().Hold(gomock.Any())
+	require.NoError(t, h.controller.Process(context.Background(), d))
+
+	assert.Empty(t, h.logs)
+}
+
+// The report goes out before the build record moves. This branch is the only
+// place a change of status is seen, so a report written after the record would
+// be lost for good if it failed — the replay would read the updated record and
+// take neither branch.
+func TestProcess_ReportsBeforeRecordingStatus(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	h := newTestHarness(t, ctrl, entity.BatchStateSpeculating)
+
+	h.builds.EXPECT().Get(gomock.Any(), testBuildID).Return(testBuild(entity.BuildStatusAccepted), nil)
+	h.br.EXPECT().Status(gomock.Any(), gomock.Any()).Return(entity.BuildStatusSucceeded, nil, nil)
+
+	// No Update and no speculate publish expectation: gomock fails the test if
+	// the run gets past the failed report.
+	h.controller.registry = failingLogRegistry(t, ctrl)
+
+	require.Error(t, h.controller.Process(context.Background(), delivery(t, ctrl)))
+}
+
+// failingLogRegistry answers every topic with a publisher that refuses.
+func failingLogRegistry(t *testing.T, ctrl *gomock.Controller) consumer.TopicRegistry {
+	t.Helper()
+	pub := queuemock.NewMockPublisher(ctrl)
+	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(fmt.Errorf("enqueue failed")).AnyTimes()
+	q := queuemock.NewMockQueue(ctrl)
+	q.EXPECT().Publisher().Return(pub).AnyTimes()
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: topickey.TopicKeyLog, Name: "log", Queue: q},
+		{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: q},
+	})
+	require.NoError(t, err)
+	return registry
 }

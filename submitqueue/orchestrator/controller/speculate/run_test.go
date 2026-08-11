@@ -84,6 +84,9 @@ type runHarness struct {
 	// messages are the published messages themselves, so a test can assert
 	// what a publish carried and how it was partitioned.
 	messages []entityqueue.Message
+	// logs holds the request-log entries reported to batch members, kept apart
+	// from published and messages so pipeline assertions stay about the pipeline.
+	logs []entity.RequestLog
 	// failTopic, when set, makes every publish to that topic fail.
 	failTopic string
 }
@@ -166,6 +169,12 @@ func newRunHarness(t *testing.T, ctrl *gomock.Controller, spec *scriptedSpeculat
 			if topic == h.failTopic {
 				return assert.AnError
 			}
+			if topic == "log" {
+				entry, err := entity.RequestLogFromBytes(msg.Payload)
+				require.NoError(t, err)
+				h.logs = append(h.logs, entry)
+				return nil
+			}
 			h.published = append(h.published, topic)
 			h.messages = append(h.messages, msg)
 			return nil
@@ -179,6 +188,7 @@ func newRunHarness(t *testing.T, ctrl *gomock.Controller, spec *scriptedSpeculat
 		{Key: topickey.TopicKeyMerge, Name: "submitqueue-merge", Queue: q},
 		{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: q},
 		{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: q},
+		{Key: topickey.TopicKeyLog, Name: "log", Queue: q},
 	})
 	require.NoError(t, err)
 
@@ -1265,4 +1275,75 @@ func TestRun_CancellingPathWithALiveBuildStaysCancelling(t *testing.T) {
 	// published assertion fail the test if any happens.
 	require.NoError(t, h.run(head))
 	assert.Empty(t, h.published)
+}
+
+// memberHead is a speculating head that actually contains a request, so the
+// run's request-log fan-out has somebody to report to.
+func memberHead() entity.Batch {
+	h := speculatingHead()
+	h.Contains = []string{"q/1"}
+	return h
+}
+
+// A head whose build passed but whose dependencies have not all settled is in
+// the one part of speculation worth naming: its own work is done, and what
+// remains is other batches finishing. Without this its members read as still
+// building for the whole of that wait.
+func TestRun_ReportsPassedPathWhileWaiting(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	passed := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionSucceeds)
+	spec := &scriptedSpeculator{}
+
+	h := newRunHarness(t, ctrl, spec, []entity.Batch{memberHead()})
+	h.noBuildsDispatched()
+	// dep1 has landed the way the path assumed; dep2 has not answered yet, so
+	// the head cannot merge but has nothing of its own left to run.
+	h.batches.EXPECT().Get(gomock.Any(), dep1).Return(entity.Batch{ID: dep1, State: entity.BatchStateSucceeded}, nil)
+	h.batches.EXPECT().Get(gomock.Any(), dep2).Return(entity.Batch{ID: dep2, State: entity.BatchStateSpeculating}, nil)
+
+	entry := entryFor(passed, entity.SpeculationPathStatusPassed)
+	h.pathSets.EXPECT().Get(gomock.Any(), head).Return(entity.SpeculationPathSet{
+		Head:    head,
+		Paths:   []entity.SpeculationPathEntry{entry},
+		Version: 2,
+	}, nil).AnyTimes()
+
+	require.NoError(t, h.run(head))
+	assert.Empty(t, h.published, "an unsettled head merges nowhere")
+
+	require.Len(t, h.logs, 1)
+	assert.Equal(t, "q/1", h.logs[0].RequestID)
+	assert.Equal(t, entity.RequestStatusSpeculated, h.logs[0].Status)
+	assert.Equal(t, head, h.logs[0].Metadata["batch_id"])
+	assert.Equal(t, entry.ID, h.logs[0].Metadata["path_id"])
+}
+
+// The other half: a dependency that resolves against a passed path's guess
+// takes the head's waiting room away and puts it back to building. Reporting
+// that is what stops the members reading as speculated through the rebuild.
+func TestRun_ReportsBackToSpeculatingWhenPassedPathBreaks(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	passed := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionFails)
+	spec := &scriptedSpeculator{}
+
+	h := newRunHarness(t, ctrl, spec, []entity.Batch{memberHead()})
+	h.noBuildsDispatched()
+	// The path was built without dep2, but dep2 landed after all, so the build
+	// verified a world that did not happen.
+	h.batches.EXPECT().Get(gomock.Any(), dep1).Return(entity.Batch{ID: dep1, State: entity.BatchStateSucceeded}, nil)
+	h.batches.EXPECT().Get(gomock.Any(), dep2).Return(entity.Batch{ID: dep2, State: entity.BatchStateSucceeded}, nil)
+
+	entry := entryFor(passed, entity.SpeculationPathStatusPassed)
+	h.pathSets.EXPECT().Get(gomock.Any(), head).Return(entity.SpeculationPathSet{
+		Head:    head,
+		Paths:   []entity.SpeculationPathEntry{entry},
+		Version: 2,
+	}, nil).AnyTimes()
+	h.pathSets.EXPECT().Update(gomock.Any(), gomock.Any(), int32(2), int32(3)).Return(nil).AnyTimes()
+
+	require.NoError(t, h.run(head))
+
+	require.Len(t, h.logs, 1)
+	assert.Equal(t, entity.RequestStatusSpeculating, h.logs[0].Status)
+	assert.Equal(t, entry.ID, h.logs[0].Metadata["path_id"])
 }

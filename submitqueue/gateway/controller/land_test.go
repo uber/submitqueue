@@ -434,6 +434,7 @@ func TestLand_PublishesToQueue(t *testing.T) {
 		RequestID:   "test-queue/123",
 		Queue:       "test-queue",
 		TimestampMs: receiptSummary.ReceivedAtMs,
+		Type:        entity.RequestLogTypeStatus,
 		Status:      entity.RequestStatusAccepted,
 		Metadata:    map[string]string{},
 	}, persistedLog)

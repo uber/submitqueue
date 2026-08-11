@@ -19,12 +19,16 @@ import (
 	"time"
 )
 
-// RequestLogStatus defines the possible status of a request. Status is customer-friendly and can be displayed to the user.
+// RequestStatus is where a request is in the pipeline. It is customer-friendly and can be displayed to the user.
 // It is different from the request state, which is internal and used to implement a state machine. Request statuses can be
 // generally added freely by the system without breaking the state machine.
 // Some statuses correspond to the request state, in which case they should be supplemented with the request state version to be used for reconciliation.
 // Other statuses are purely informational and can be added freely.
 // Every status may be accompanied by a last error message and free-formmetadata in the Request Log. It will only be used for display or debugging purposes.
+//
+// Exactly one status is a request's current position at any moment. Things that merely
+// happen to a request while it sits at one — a build starting, a build finishing — are
+// not statuses and are not in this vocabulary; they are RequestEvent.
 type RequestStatus string
 
 const (
@@ -47,32 +51,18 @@ const (
 	// RequestStatusValidated indicates that the request has been validated (duplicate check, merge check etc.) successfully. It corresponds to the RequestStateValidated state.
 	RequestStatusValidated RequestStatus = "validated"
 
-	// RequestStatusBatching indicates that the request is waiting to be included in a batch.
-	RequestStatusBatching RequestStatus = "batching"
-
 	// RequestStatusBatched indicates that the request has been included in a new batch and will be sent to speculation.
 	RequestStatusBatched RequestStatus = "batched"
 
-	// RequestStatusSpeculating indicates that the request is currently being speculated (e.g., speculative merge/rebase, etc.).
+	// RequestStatusSpeculating indicates that the batch containing the request has been admitted to speculation: candidate paths are being planned and built.
 	RequestStatusSpeculating RequestStatus = "speculating"
 
-	// RequestStatusSpeculated indicates that the request has been successfully speculated and is ready to be validated via a build system.
+	// RequestStatusSpeculated indicates that the batch containing the request has a build that passed on a path still
+	// consistent with how its dependencies are resolving, and is waiting for those dependencies to settle before it can land.
 	RequestStatusSpeculated RequestStatus = "speculated"
-
-	// RequestStatusBuilding indicates that the request is currently being built (e.g., CI/CD system is building the change on top of the speculation path).
-	RequestStatusBuilding RequestStatus = "building"
-
-	// RequestStatusBuilt indicates that the request has finished the build step successfully and can move to the next phase, either wait for other requests to finish or move to the land phase.
-	RequestStatusBuilt RequestStatus = "built"
-
-	// RequestStatusWaitingPath indicates that the request is waiting for other preceiding request in the same speculation path to finish.
-	RequestStatusWaitingPath RequestStatus = "waitingpath"
 
 	// RequestStatusLanding indicates that the request is actively being landed (e.g., source control operation is in progress to push the change to the target branch).
 	RequestStatusLanding RequestStatus = "landing"
-
-	// RequestStatusProcessing is the status of a request that is being processed. It corresponds to the RequestStateProcessing state.
-	RequestStatusProcessing RequestStatus = "processing"
 
 	// RequestStatusLanded indicates that the request has been successfully processed and landed. It corresponds to the RequestStateLanded state.
 	RequestStatusLanded RequestStatus = "landed"
@@ -91,9 +81,55 @@ const (
 	RequestStatusCancelled RequestStatus = "cancelled"
 )
 
+// RequestEvent is something that happened to a request while it sat at a status,
+// rather than a status of its own.
+//
+// Build progress is what the distinction exists for. A batch funds several
+// speculation paths at once and each is built separately, so a build starting or
+// finishing says nothing about where the request as a whole is — it is still
+// speculating. Were these statuses, one build succeeding while its siblings ran
+// would report the request as finished, and go on reporting it that way until the
+// batch resolved, because nothing else publishes in between.
+//
+// Events are not unique per request: each names one build, and a batch may be
+// built many times as speculation re-plans. They belong in a request's history
+// and are never its current status — which is enforced by the type, since a
+// RequestEvent cannot be assigned to RequestSummary.Status.
+type RequestEvent string
+
+const (
+	// RequestEventUnknown is the unknown sentinel event. It is set by default when the structure is initialized. It should never be seen in the system.
+	RequestEventUnknown RequestEvent = ""
+
+	// RequestEventBuilding indicates that one build verifying one speculation path of the batch containing the request has started.
+	RequestEventBuilding RequestEvent = "building"
+
+	// RequestEventBuilt indicates that one build verifying one speculation path of the batch containing the request finished successfully.
+	// A build that fails or is cancelled records nothing.
+	RequestEventBuilt RequestEvent = "built"
+)
+
+// RequestLogType is what a log entry records: the request reaching a status, or
+// an event that happened while it was at one.
+type RequestLogType string
+
+const (
+	// RequestLogTypeStatus is an entry that records a status. Its Status field is
+	// set, and it is a candidate for the request's current status.
+	RequestLogTypeStatus RequestLogType = "status"
+
+	// RequestLogTypeEvent is an entry that records an event. Its Event field is
+	// set, it carries no request version, and it never becomes a current status.
+	RequestLogTypeEvent RequestLogType = "event"
+)
+
 // RequestLog is an append-only record that captures a point-in-time snapshot of a request's status
 // for reconciliation purposes. It is stored in a separate database from the request store to support
 // eventual consistency reconciliation.
+//
+// An entry records either a status or an event, never both, and Type says which.
+// Build the two through NewRequestStatusLog and NewRequestEventLog rather than as
+// a literal, so the unset half stays unset.
 type RequestLog struct {
 	// RequestID is the ID of the request this log entry belongs to. References entity.Request.ID.
 	RequestID string `json:"request_id"`
@@ -102,10 +138,15 @@ type RequestLog struct {
 	Queue string `json:"queue"`
 	// TimestampMs is the time this log entry was created, in milliseconds since Unix epoch.
 	TimestampMs int64 `json:"timestamp_ms"`
-	// Status is the request status at the time this log entry was created. It may contain requests states from the state machine and also display-friendly intermediate statuses.
+	// Type is what this entry records. An entry read back without one predates the
+	// field and records a status.
+	Type RequestLogType `json:"type"`
+	// Status is the request status this entry records. Set only when Type is RequestLogTypeStatus.
 	Status RequestStatus `json:"status"`
+	// Event is the event this entry records. Set only when Type is RequestLogTypeEvent.
+	Event RequestEvent `json:"event"`
 	// RequestVersion is the version of the request at the time this log entry was created.
-	// Zero if the version is not available.
+	// Zero if the version is not available, and always zero on an event.
 	RequestVersion int32 `json:"request_version"`
 	// LastError is the last error message associated with the status at the time of this log entry.
 	// Empty string if no error.
@@ -115,13 +156,13 @@ type RequestLog struct {
 	Metadata map[string]string `json:"metadata"`
 }
 
-// NewRequestLog creates a new RequestLog with the given fields.
+// NewRequestStatusLog creates a RequestLog recording that a request reached a status.
 // TimestampMs is set to the current time. If metadata is nil, it will be initialized as an empty map.
 // queue is the queue processing the request; it scopes requestID, which is only unique within it.
 // requestVersion is the version of the request entity, should only be set if reporting a request state as a status, otherwise it should be 0.
 // lastError is the last error message associated with the status at the time of this log entry, empty string if no error.
 // metadata is a set of key-value pairs providing additional context for this log entry. Not constrained to any specific format or schema, used for display or debugging purposes.
-func NewRequestLog(queue string, requestID string, status RequestStatus, requestVersion int32, lastError string, metadata map[string]string) RequestLog {
+func NewRequestStatusLog(queue string, requestID string, status RequestStatus, requestVersion int32, lastError string, metadata map[string]string) RequestLog {
 	if metadata == nil {
 		metadata = make(map[string]string)
 	}
@@ -129,11 +170,41 @@ func NewRequestLog(queue string, requestID string, status RequestStatus, request
 		RequestID:      requestID,
 		Queue:          queue,
 		TimestampMs:    time.Now().UnixMilli(),
+		Type:           RequestLogTypeStatus,
 		Status:         status,
 		RequestVersion: requestVersion,
 		LastError:      lastError,
 		Metadata:       metadata,
 	}
+}
+
+// NewRequestEventLog creates a RequestLog recording that something happened to a
+// request while it sat at its current status.
+//
+// It takes no request version because an event is not a state transition: carrying
+// one would let a reader mistake it for a reconcilable status. Arguments otherwise
+// match NewRequestStatusLog.
+func NewRequestEventLog(queue string, requestID string, event RequestEvent, metadata map[string]string) RequestLog {
+	if metadata == nil {
+		metadata = make(map[string]string)
+	}
+	return RequestLog{
+		RequestID:   requestID,
+		Queue:       queue,
+		TimestampMs: time.Now().UnixMilli(),
+		Type:        RequestLogTypeEvent,
+		Event:       event,
+		Metadata:    metadata,
+	}
+}
+
+// Value returns what this entry recorded — its status or its event — as the
+// single string that identifies it for a message ID, a log line, or display.
+func (r RequestLog) Value() string {
+	if r.Type == RequestLogTypeEvent {
+		return string(r.Event)
+	}
+	return string(r.Status)
 }
 
 // ToBytes serializes the RequestLog to JSON bytes for queue message payload.
@@ -143,6 +214,7 @@ func (r RequestLog) ToBytes() ([]byte, error) {
 
 // RequestLogFromBytes deserializes a RequestLog from JSON bytes.
 // If metadata is absent from the JSON, it will be initialized as an empty map.
+// An entry without a type predates the field, when every entry recorded a status.
 func RequestLogFromBytes(data []byte) (RequestLog, error) {
 	var log RequestLog
 	err := json.Unmarshal(data, &log)
@@ -151,6 +223,9 @@ func RequestLogFromBytes(data []byte) (RequestLog, error) {
 	}
 	if log.Metadata == nil {
 		log.Metadata = make(map[string]string)
+	}
+	if log.Type == "" {
+		log.Type = RequestLogTypeStatus
 	}
 	return log, nil
 }

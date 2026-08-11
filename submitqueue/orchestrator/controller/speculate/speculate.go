@@ -25,6 +25,7 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
 	"github.com/uber/submitqueue/submitqueue/core/publish"
+	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
@@ -144,7 +145,23 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // the new state and version so the caller keeps writing against a current
 // copy. Which paths to build for the new head is not decided here — that is
 // the run's call, taken over the whole queue rather than one batch at a time.
+//
+// The members are told before the write, not after. This branch runs only from
+// Created, so a redelivery of a message whose transition already committed
+// skips admit entirely and would never re-publish a log lost on the way out;
+// publishing first means a failure nacks with nothing yet changed, and a crash
+// in between re-publishes under the same occurrence and dedupes. The cost is
+// that a transition which then loses its compare-and-swap leaves one entry for
+// a batch that never speculated, superseded by whatever the winner wrote.
 func (c *Controller) admit(ctx context.Context, store storage.Storage, batch entity.Batch) (entity.Batch, error) {
+	if err := corerequest.PublishBatchLogs(ctx, c.registry, batch.Queue, batch.Contains,
+		entity.RequestStatusSpeculating, batch.ID, map[string]string{"batch_id": batch.ID},
+	); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
+		return batch, c.attributed(fmt.Errorf("failed to publish request logs for batch %s: %w", batch.ID, err),
+			entity.BatchSubject(batch.ID))
+	}
+
 	// Through Transition for the same reason as applyOutcome: the membership
 	// record has to leave the created bucket with the batch.
 	updated, err := corebatch.Transition(ctx, store, batch, entity.BatchStateSpeculating)

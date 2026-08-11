@@ -231,7 +231,7 @@ func (s *E2EIntegrationSuite) TestLand_HappyPath_ReachesLanded() {
 	s.log.Logf("Land (happy path) succeeded: sqid=%s; waiting for landed", req.sqid)
 
 	// Black-box: the customer-facing status reaches landed.
-	s.awaitStatus(req, entity.RequestStatusLanded)
+	seen := s.awaitStatus(req, entity.RequestStatusLanded)
 
 	// Black-box history: all status entries for a request share its request_id
 	// partition on the log topic, and the terminal "landed" is published last.
@@ -241,9 +241,33 @@ func (s *E2EIntegrationSuite) TestLand_HappyPath_ReachesLanded() {
 	s.assertStatusesInOrder(req,
 		entity.RequestStatusAccepted,
 		entity.RequestStatusStarted,
+		entity.RequestStatusValidating,
 		entity.RequestStatusBatched,
+		entity.RequestStatusSpeculating,
+		entity.RequestStatusSpeculated,
+		entity.RequestStatusLanding,
 		entity.RequestStatusLanded,
 	)
+
+	// The two tiers, observed from outside. Build progress shares the stream but
+	// is not in the status trail above, and the summary never sat on it: a
+	// request with several paths building at once is speculating, not built.
+	assert.Subset(s.T(), s.eventTimeline(req),
+		[]entity.RequestEvent{entity.RequestEventBuilding, entity.RequestEventBuilt},
+		"GetRequestHistoryByID for %s should record the build that verified it", req.sqid)
+
+	// The types make this unrepresentable in code, so the check is against the
+	// raw strings and covers the rest of the path — serialize, persist, project,
+	// read back — where a type cannot follow. Sampling a poll cannot prove a
+	// value never appeared, so it corroborates the materializer's unit test
+	// rather than replacing it.
+	for _, status := range seen {
+		assert.NotContainsf(s.T(),
+			[]entity.RequestStatus{entity.RequestStatus(entity.RequestEventBuilding), entity.RequestStatus(entity.RequestEventBuilt)},
+			status,
+			"GetRequestSummaryByID for %s reported build progress %q as its current status; observed %v",
+			req.sqid, status, seen)
+	}
 
 	// White-box (internal state): the operating store's authoritative
 	// RequestState settled on landed. RequestState is point-in-time, so this is a

@@ -22,7 +22,7 @@ import (
 )
 
 func TestNewRequestLog_NilMetadata(t *testing.T) {
-	log := NewRequestLog("queue1", "queue1/100", RequestStatusStarted, 0, "", nil)
+	log := NewRequestStatusLog("queue1", "queue1/100", RequestStatusStarted, 0, "", nil)
 
 	assert.NotNil(t, log.Metadata)
 	assert.Empty(t, log.Metadata)
@@ -52,7 +52,7 @@ func TestRequestLogFromBytes(t *testing.T) {
 	original := RequestLog{
 		RequestID:      "my-queue/999",
 		TimestampMs:    1709568000000,
-		Status:         RequestStatusProcessing,
+		Status:         RequestStatusSpeculating,
 		RequestVersion: 3,
 		LastError:      "timeout",
 		Metadata:       map[string]string{"step": "validation", "attempt": "2"},
@@ -104,6 +104,7 @@ func TestRequestLog_SerializationRoundTrip(t *testing.T) {
 			log: RequestLog{
 				RequestID:      "queue1/100",
 				TimestampMs:    1709568000000,
+				Type:           RequestLogTypeStatus,
 				Status:         RequestStatusLanded,
 				RequestVersion: 5,
 				LastError:      "",
@@ -115,6 +116,7 @@ func TestRequestLog_SerializationRoundTrip(t *testing.T) {
 			log: RequestLog{
 				RequestID:      "queue2/200",
 				TimestampMs:    1709568001000,
+				Type:           RequestLogTypeStatus,
 				Status:         RequestStatusError,
 				RequestVersion: 2,
 				LastError:      "merge conflict detected",
@@ -126,6 +128,7 @@ func TestRequestLog_SerializationRoundTrip(t *testing.T) {
 			log: RequestLog{
 				RequestID:      "queue3/300",
 				TimestampMs:    1709568002000,
+				Type:           RequestLogTypeStatus,
 				Status:         RequestStatusStarted,
 				RequestVersion: 0,
 				LastError:      "",
@@ -145,4 +148,62 @@ func TestRequestLog_SerializationRoundTrip(t *testing.T) {
 			assert.Equal(t, tt.log, deserialized)
 		})
 	}
+}
+
+// An entry records a status or an event, never both. The constructors are what
+// hold that up — the struct can express the invalid combinations, nothing is
+// meant to build them — so this pins what each one sets and leaves unset.
+//
+// The old classifier this replaces asked "is this status really an event?", a
+// question the split makes unaskable: an event is a RequestEvent and cannot be
+// assigned to Status or to RequestSummary.Status at all.
+func TestRequestLogConstructors(t *testing.T) {
+	t.Run("status entry carries a status and no event", func(t *testing.T) {
+		log := NewRequestStatusLog("q", "q/1", RequestStatusSpeculating, 4, "boom", map[string]string{"k": "v"})
+
+		assert.Equal(t, RequestLogTypeStatus, log.Type)
+		assert.Equal(t, RequestStatusSpeculating, log.Status)
+		assert.Equal(t, RequestEventUnknown, log.Event)
+		assert.Equal(t, int32(4), log.RequestVersion)
+		assert.Equal(t, "boom", log.LastError)
+		assert.Equal(t, "speculating", log.Value())
+	})
+
+	t.Run("event entry carries an event and no status", func(t *testing.T) {
+		log := NewRequestEventLog("q", "q/1", RequestEventBuilding, map[string]string{"build_id": "b/7"})
+
+		assert.Equal(t, RequestLogTypeEvent, log.Type)
+		assert.Equal(t, RequestEventBuilding, log.Event)
+		assert.Equal(t, RequestStatusUnknown, log.Status)
+		assert.Equal(t, "building", log.Value())
+		// An event is not a state transition, so it can carry no version for a
+		// reader to mistake for a reconcilable one.
+		assert.Zero(t, log.RequestVersion)
+	})
+}
+
+// An entry written before the type column existed recorded a status, so it must
+// read back as one rather than as the zero type — otherwise every historical
+// entry would stop counting towards the current status the moment this shipped.
+func TestRequestLogFromBytes_UntypedEntryIsAStatus(t *testing.T) {
+	legacy := []byte(`{"request_id":"q/1","queue":"q","timestamp_ms":10,"status":"landed","request_version":3}`)
+
+	log, err := RequestLogFromBytes(legacy)
+	require.NoError(t, err)
+
+	assert.Equal(t, RequestLogTypeStatus, log.Type)
+	assert.Equal(t, RequestStatusLanded, log.Status)
+	assert.Equal(t, "landed", log.Value())
+}
+
+func TestRequestLog_EventSerializationRoundTrip(t *testing.T) {
+	original := NewRequestEventLog("q", "q/1", RequestEventBuilt, map[string]string{"build_id": "b/7"})
+
+	data, err := original.ToBytes()
+	require.NoError(t, err)
+
+	deserialized, err := RequestLogFromBytes(data)
+	require.NoError(t, err)
+
+	assert.Equal(t, original, deserialized)
 }

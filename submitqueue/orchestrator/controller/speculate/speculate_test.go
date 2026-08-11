@@ -16,6 +16,7 @@ package speculate
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -92,6 +93,7 @@ func testBatch(state entity.BatchState, deps ...string) entity.Batch {
 	return entity.Batch{
 		ID:           "test-queue/batch/1",
 		Queue:        "test-queue",
+		Contains:     []string{"test-queue/1"},
 		Dependencies: deps,
 		State:        state,
 		Version:      1,
@@ -108,6 +110,9 @@ type procHarness struct {
 	builds      *storagemock.MockBuildStore
 	spec        *quietSpeculator
 	published   []string
+	// logs holds the request-log entries this run reported to batch members,
+	// kept apart from published so pipeline assertions stay about the pipeline.
+	logs []entity.RequestLog
 }
 
 func newProcHarness(t *testing.T, ctrl *gomock.Controller, publishErr error) *procHarness {
@@ -131,9 +136,15 @@ func newProcHarness(t *testing.T, ctrl *gomock.Controller, publishErr error) *pr
 
 	pub := queuemock.NewMockPublisher(ctrl)
 	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, topic string, _ entityqueue.Message) error {
+		func(_ context.Context, topic string, msg entityqueue.Message) error {
 			if publishErr != nil {
 				return publishErr
+			}
+			if topic == "log" {
+				entry, err := entity.RequestLogFromBytes(msg.Payload)
+				require.NoError(t, err)
+				h.logs = append(h.logs, entry)
+				return nil
 			}
 			h.published = append(h.published, topic)
 			return nil
@@ -147,6 +158,7 @@ func newProcHarness(t *testing.T, ctrl *gomock.Controller, publishErr error) *pr
 		{Key: topickey.TopicKeyMerge, Name: "submitqueue-merge", Queue: q},
 		{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: q},
 		{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: q},
+		{Key: topickey.TopicKeyLog, Name: "log", Queue: q},
 	})
 	require.NoError(t, err)
 
@@ -193,6 +205,27 @@ func TestProcess_AdmitsCreatedBatch(t *testing.T) {
 
 	require.NoError(t, h.process(t, ctrl, batch.ID))
 	assert.Empty(t, h.published, "a batch cannot merge on the message that admitted it")
+
+	// Admission is the first thing a member hears after being batched: without
+	// it the request reads "batched" for the whole of speculation.
+	require.Len(t, h.logs, 1)
+	assert.Equal(t, "test-queue/1", h.logs[0].RequestID)
+	assert.Equal(t, entity.RequestStatusSpeculating, h.logs[0].Status)
+	assert.Equal(t, batch.ID, h.logs[0].Metadata["batch_id"])
+}
+
+// A log that cannot be published must stop admission. This branch runs only
+// from Created, so a transition written before a failed publish would never be
+// re-reported: the redelivery reads Speculating and skips admit entirely.
+func TestProcess_AdmitReportsBeforeTransition(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	h := newProcHarness(t, ctrl, fmt.Errorf("enqueue failed"))
+	batch := testBatch(entity.BatchStateCreated)
+
+	// No Update expectation: the transition must not be reached.
+	h.batches.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+
+	require.Error(t, h.process(t, ctrl, batch.ID))
 }
 
 // A terminal batch re-publishes to conclude so a lost publish is repaired, and

@@ -110,7 +110,7 @@ func (c *cancelController) Cancel(ctx context.Context, req entity.CancelRequest)
 	if req.Reason != "" {
 		metadata["reason"] = req.Reason
 	}
-	logEntry := entity.NewRequestLog(req.Queue, req.ID, entity.RequestStatusCancelling, 0, "", metadata)
+	logEntry := entity.NewRequestStatusLog(req.Queue, req.ID, entity.RequestStatusCancelling, 0, "", metadata)
 	if err := c.materializer.PersistLog(ctx, logEntry); err != nil {
 		return fmt.Errorf("failed to insert cancelling log for sqid=%s: %w", req.ID, err)
 	}

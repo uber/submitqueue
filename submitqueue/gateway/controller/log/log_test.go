@@ -154,6 +154,6 @@ func newLogControllerStore(ctrl *gomock.Controller, insertErr, getErr, updateErr
 }
 
 func newRequestLog(requestID string, status entity.RequestStatus, requestVersion int32, lastError string, metadata map[string]string) *entity.RequestLog {
-	log := entity.NewRequestLog("test-queue", requestID, status, requestVersion, lastError, metadata)
+	log := entity.NewRequestStatusLog("test-queue", requestID, status, requestVersion, lastError, metadata)
 	return &log
 }

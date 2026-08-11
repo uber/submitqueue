@@ -292,8 +292,8 @@ func (s *GatewayIntegrationSuite) TestRequestLogConsumer() {
 		Status: entity.RequestStatusAccepting, StatusTimestampMs: 1, Version: 1, Metadata: map[string]string{},
 	}
 	require.NoError(t, logQueueStore.GetRequestSummaryStore().Create(s.ctx, summary))
-	logEntry := entity.NewRequestLog(logQueue, sqid, entity.RequestStatusStarted, 1, "", nil)
-	require.NoError(t, corerequest.PublishLog(s.ctx, registry, logEntry, sqid),
+	logEntry := entity.NewRequestStatusLog(logQueue, sqid, entity.RequestStatusStarted, 1, "", nil)
+	require.NoError(t, corerequest.PublishLog(s.ctx, registry, logEntry, sqid, ""),
 		"failed to publish request log to log topic")
 
 	s.log.Logf("Published 'started' log for sqid=%s; waiting for gateway consumer to persist it", sqid)
