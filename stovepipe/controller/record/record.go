@@ -119,12 +119,18 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	switch request.State {
 	case entity.RequestStateSucceeded, entity.RequestStateFailed:
-		fact, err := c.recordFact(ctx, store, request)
+		fact, created, err := c.recordFact(ctx, store, request)
 		if err != nil {
 			return err
 		}
 		if !fact.IsGreen() {
 			metrics.NamedCounter(c.metricsScope, _opName, "not_green", 1)
+			// Only the writer of the fact reports the latency: a redelivery adopts
+			// the stored fact instead, and a second sample would count one break
+			// twice in the distribution.
+			if created {
+				c.reportFailureDetectionLatency(ctx, request)
+			}
 			return nil
 		}
 		if err := c.advanceLastGreen(ctx, store, request); err != nil {
@@ -159,8 +165,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // facts are first-writer-wins, so an identity already claimed by this same request —
 // a redelivery after the write but before the bookmark advanced — yields the stored
 // fact instead. Every decision downstream reads that stored fact rather than the
-// request, so a redelivery cannot reach a different verdict than the original.
-func (c *Controller) recordFact(ctx context.Context, store storage.Storage, request entity.Request) (entity.ValidationFact, error) {
+// request, so a redelivery cannot reach a different verdict than the original. The
+// second return reports whether this call is the one that wrote the fact, which is
+// how a caller tells the original delivery from a redelivery.
+func (c *Controller) recordFact(ctx context.Context, store storage.Storage, request entity.Request) (entity.ValidationFact, bool, error) {
 	factStore := store.GetValidationFactStore()
 
 	fact := entity.ValidationFact{
@@ -181,29 +189,100 @@ func (c *Controller) recordFact(ctx context.Context, store storage.Storage, requ
 			"uri", request.URI,
 			"degree", fact.Degree,
 		)
-		return fact, nil
+		return fact, true, nil
 
 	case errors.Is(err, storage.ErrAlreadyExists):
 		stored, getErr := factStore.Get(ctx, request.URI, wholeRepositoryProject)
 		if getErr != nil {
 			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
-			return entity.ValidationFact{}, fmt.Errorf("failed to load the existing fact for uri %s: %w", request.URI, getErr)
+			return entity.ValidationFact{}, false, fmt.Errorf("failed to load the existing fact for uri %s: %w", request.URI, getErr)
 		}
 		if stored.RequestID != request.ID {
 			// Two requests validating one URI would break the dedup ingest
 			// enforces, so this is a broken invariant rather than a race to
 			// resolve. Non-retryable: the stored fact is immutable.
 			metrics.NamedCounter(c.metricsScope, _opName, "invariant_errors", 1)
-			return entity.ValidationFact{}, fmt.Errorf(
+			return entity.ValidationFact{}, false, fmt.Errorf(
 				"fact for uri %s is owned by request %s, not %s", request.URI, stored.RequestID, request.ID)
 		}
 		metrics.NamedCounter(c.metricsScope, _opName, "fact_exists", 1)
-		return stored, nil
+		return stored, false, nil
 
 	default:
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
-		return entity.ValidationFact{}, fmt.Errorf("failed to create the fact for uri %s: %w", request.URI, err)
+		return entity.ValidationFact{}, false, fmt.Errorf("failed to create the fact for uri %s: %w", request.URI, err)
 	}
+}
+
+// reportFailureDetectionLatency records how long the break this build failed on went
+// undetected, measured from the commit timestamp of the base it validated against. A
+// histogram rather than a gauge because the distribution over failures is the point:
+// how long a break typically survives, not how long the last one did.
+//
+// Unlike the last-green age, there is no later moment to sample this from — an elapsed
+// time is only meaningful against the failure that just became known — so the
+// source-control lookup cannot be moved off the delivery path onto a clock. It is
+// confined to failures and made once the fact is durable, and every way it can fail is
+// counted and swallowed so a reporting fault cannot retry an outcome already recorded.
+func (c *Controller) reportFailureDetectionLatency(ctx context.Context, request entity.Request) {
+	queueTag := metrics.NewTag("queue", request.Queue)
+	strategyTag := metrics.NewTag("strategy", string(request.BuildStrategy))
+
+	// Only a strategy that validates a delta pins a base commit, so a full build has
+	// no baseline to measure from. Its failures are counted rather than timed: absent
+	// here is the ordinary case, not a fault.
+	if request.BaseURI == "" {
+		metrics.NamedCounter(c.metricsScope, _opName, "failure_detection_missing", 1, queueTag, strategyTag)
+		return
+	}
+
+	sourceControl, err := c.sourceControls.For(sourcecontrol.Config{QueueName: request.Queue})
+	if err != nil {
+		c.failureDetectionUnobserved(request, "resolve_source_control", err)
+		return
+	}
+
+	info, err := sourceControl.ChangeInfo(ctx, request.BaseURI)
+	if err != nil {
+		c.failureDetectionUnobserved(request, "get_change_info", err)
+		return
+	}
+
+	// SourceControl must report a positive creation timestamp, so a missing one is a
+	// broken extension contract rather than a lookup failure. Measuring from 1970
+	// would drop a decades-long sample into the distribution.
+	if info.CreatedAt <= 0 {
+		c.failureDetectionUnobserved(request, "undated_change", nil)
+		return
+	}
+
+	// A base dated in the future means the provider's clock disagrees with ours; a
+	// negative latency would corrupt the distribution rather than describe it.
+	latency := time.Since(time.UnixMilli(info.CreatedAt))
+	if latency < 0 {
+		c.failureDetectionUnobserved(request, "future_change", nil)
+		return
+	}
+
+	metrics.NamedHistogram(c.metricsScope, _opName, "failure_detection_latency", metrics.ChangeAgeBuckets,
+		queueTag, strategyTag,
+	).RecordDuration(latency)
+}
+
+// failureDetectionUnobserved counts a latency that could not be observed, tagged with
+// the step that failed so an unmeasurable failure can be told apart from a broken
+// dependency.
+func (c *Controller) failureDetectionUnobserved(request entity.Request, step string, err error) {
+	metrics.NamedCounter(c.metricsScope, _opName, "failure_detection_errors", 1,
+		metrics.NewTag("queue", request.Queue),
+		metrics.NewTag("step", step),
+	)
+	c.logger.Warnw("failed to observe how long the build failure went undetected",
+		"queue", request.Queue,
+		"base_uri", request.BaseURI,
+		"step", step,
+		"error", err,
+	)
 }
 
 // degreeFor maps a request's build outcome onto a whole-repository degree. Only the

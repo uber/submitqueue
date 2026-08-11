@@ -106,6 +106,28 @@ var (
 		2 * time.Hour,
 		4 * time.Hour,
 	}
+
+	// ChangeAgeBuckets suits durations measured from a source-control change's
+	// commit timestamp. They span minutes to a month because that is the honest
+	// range of such a signal: a break caught in minutes and one that survived a
+	// fortnight are both ordinary observations, and collapsing the tail would hide
+	// exactly the cases worth seeing.
+	ChangeAgeBuckets = tally.DurationBuckets{
+		1 * time.Minute,
+		5 * time.Minute,
+		15 * time.Minute,
+		30 * time.Minute,
+		1 * time.Hour,
+		2 * time.Hour,
+		4 * time.Hour,
+		8 * time.Hour,
+		12 * time.Hour,
+		24 * time.Hour,
+		48 * time.Hour,
+		7 * 24 * time.Hour,
+		14 * 24 * time.Hour,
+		30 * 24 * time.Hour,
+	}
 )
 
 // Op tracks the lifecycle of a named operation. It captures the start time on

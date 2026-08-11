@@ -77,14 +77,15 @@ defer func() { op.Complete(retErr) }()
 metrics.NamedCounter(c.scope, "publish", "attempts", 1, metrics.NewTag("topic", c.topic))
 ```
 
-## Latency Buckets
+## Duration Buckets
 
-There is no default bucket set. The package exports three common sets:
+There is no default bucket set. The package exports four common sets:
 
 | Set | Range | Use for |
 |-----|-------|---------|
 | `FastLatencyBuckets` | ~100µs – 5s | Fast in-process work such as scoring, cache lookups, and CPU-bound operations |
 | `StorageLatencyBuckets` | ~1ms – 1m | Storage and message-queue round trips such as database reads, writes, publishing, and consuming |
 | `LongLatencyBuckets` | ~5ms – 4h | Long-running pipeline work and external calls such as builds, merges, pushes, and provider calls |
+| `ChangeAgeBuckets` | ~1m – 30d | Elapsed time measured from a source-control change's commit timestamp rather than from work this system started |
 
 Pass one of these sets or a custom `tally.DurationBuckets` to `Begin` or `NamedHistogram`.
