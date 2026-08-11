@@ -23,6 +23,11 @@
 // batch, and never speculates; those behaviors only appear when requests
 // overlap. The table watches all of them at once.
 //
+// Independent pull requests are opened several at a time (-concurrency), since
+// each is several round trips to the provider and nothing about them depends on
+// the others. A stack cannot be: every change in it is based on the branch
+// before it, so the next cannot be cut until the previous head exists.
+//
 // Two shapes of change, because the pipeline treats them differently:
 //
 //   - independent (default): each pull request targets the base branch and is
@@ -56,6 +61,7 @@ import (
 	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	githubchange "github.com/uber/submitqueue/platform/base/change/github"
 	"github.com/uber/submitqueue/submitqueue/client"
+	"golang.org/x/sync/errgroup"
 )
 
 func main() {
@@ -68,22 +74,23 @@ func main() {
 
 // config is everything the run needs, resolved from flags and the environment.
 type config struct {
-	repo     string
-	base     string
-	count    int
-	files    int
-	stacked  bool
-	prefix   string
-	land     bool
-	watch    bool
-	addr     string
-	tls      bool
-	tokenEnv string
-	queue    string
-	strategy string
-	token    string
-	apiRoot  string
-	host     string
+	repo        string
+	base        string
+	count       int
+	files       int
+	concurrency int
+	stacked     bool
+	prefix      string
+	land        bool
+	watch       bool
+	addr        string
+	tls         bool
+	tokenEnv    string
+	queue       string
+	strategy    string
+	token       string
+	apiRoot     string
+	host        string
 }
 
 func parseFlags() config {
@@ -92,6 +99,8 @@ func parseFlags() config {
 	flag.StringVar(&c.base, "base", "main", "branch the changes target")
 	flag.IntVar(&c.count, "count", 3, "how many pull requests to create")
 	flag.IntVar(&c.files, "files", 3, "fewest files each pull request touches; the actual count varies a little above it")
+	flag.IntVar(&c.concurrency, "concurrency", 5,
+		"how many pull requests to create at once; a stack ignores it, being sequential by nature")
 	flag.BoolVar(&c.stacked, "stacked", false, "chain the pull requests and enqueue them as one stack")
 	flag.StringVar(&c.prefix, "prefix", "demo", "branch name prefix")
 	flag.BoolVar(&c.land, "land", true, "enqueue each pull request as it is created")
@@ -110,14 +119,11 @@ func parseFlags() config {
 }
 
 func run(ctx context.Context, cfg config) error {
-	if cfg.token == "" {
-		return fmt.Errorf("GITHUB_TOKEN is not set; it is the same credential the stack uses")
+	if err := cfg.validate(); err != nil {
+		return err
 	}
-	if cfg.count < 1 {
-		return fmt.Errorf("-count must be at least 1")
-	}
-	owner, repo, ok := strings.Cut(cfg.repo, "/")
-	if !ok || owner == "" || repo == "" {
+	owner, repo, _ := strings.Cut(cfg.repo, "/")
+	if owner == "" || repo == "" {
 		return fmt.Errorf("-repo %q must be owner/name", cfg.repo)
 	}
 	strategy, err := client.ParseStrategy(cfg.strategy)
@@ -199,7 +205,30 @@ func shape(cfg config) string {
 	if cfg.stacked {
 		return "stacked, enqueued as one request once the chain exists"
 	}
+	if cfg.concurrency > 1 {
+		return fmt.Sprintf("independent, %d at a time, each enqueued as soon as it is created", cfg.concurrency)
+	}
 	return "independent, each enqueued as soon as it is created"
+}
+
+// validate rejects a configuration the run cannot proceed with.
+func (c config) validate() error {
+	if c.token == "" {
+		return fmt.Errorf("GITHUB_TOKEN is not set; it is the same credential the stack uses")
+	}
+	if c.count < 1 {
+		return fmt.Errorf("-count must be at least 1")
+	}
+	if c.concurrency < 1 {
+		return fmt.Errorf("-concurrency must be at least 1")
+	}
+	if c.files < 1 {
+		return fmt.Errorf("-files must be at least 1")
+	}
+	if _, _, ok := strings.Cut(c.repo, "/"); !ok {
+		return fmt.Errorf("-repo %q must be owner/name", c.repo)
+	}
+	return nil
 }
 
 // change is one pull request this run created.
@@ -207,6 +236,9 @@ type change struct {
 	number int
 	url    string
 	branch string
+	// headSHA is the commit the pull request now points at, which the next
+	// change in a stack branches from.
+	headSHA string
 	// uri is the SubmitQueue change URI pinning the pull request to its head.
 	uri string
 }
@@ -289,80 +321,102 @@ func createAndEnqueue(
 	tag, baseSHA string,
 	t *client.Tracker,
 ) ([]change, error) {
-	created := make([]change, 0, cfg.count)
+	if cfg.stacked {
+		return createStack(ctx, gh, sq, cfg, strategy, tag, baseSHA, t)
+	}
+	return createIndependent(ctx, gh, sq, cfg, strategy, tag, baseSHA, t)
+}
+
+// createIndependent opens the pull requests concurrently, up to the configured
+// limit, enqueuing each the moment it exists.
+//
+// Independent changes have nothing to say to each other: each branches from the
+// same base and writes files no other change touches, so the only reason to
+// create them one at a time was that the loop did. Creating a pull request is
+// several round trips to the provider — a branch, a commit per file, the pull
+// request itself — and doing that serially is most of what a large run spends
+// its time on. It also delays the overlap the demo exists to show, since the
+// queue cannot work on requests that have not been submitted yet.
+//
+// The limit is there because the provider is a shared service with its own
+// opinion about burst rates, and because the point is to feed the queue, not to
+// find out how fast a repository can be hammered.
+func createIndependent(
+	ctx context.Context,
+	gh *githubClient,
+	sq *client.Client,
+	cfg config,
+	strategy mergestrategypb.Strategy,
+	tag, baseSHA string,
+	t *client.Tracker,
+) ([]change, error) {
 	rows := t.Rows()
+	// Indexed rather than appended: the workers finish in whatever order the
+	// provider answers them, and the caller still wants the run's own order.
+	created := make([]change, cfg.count)
+
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(cfg.concurrency)
+
+	for i := 1; i <= cfg.count; i++ {
+		group.Go(func() error {
+			c, err := createOne(groupCtx, gh, cfg, tag, baseSHA, cfg.base, i, t, rows[i-1])
+			if err != nil {
+				return err
+			}
+			created[i-1] = c
+
+			if !cfg.land {
+				return nil
+			}
+			t.Note("enqueuing #%d", c.number)
+			sqid, err := sq.Land(groupCtx, cfg.queue, urisOf([]change{c}), strategy)
+			if err != nil {
+				return err
+			}
+			t.Update(func() { rows[i-1].SQID, rows[i-1].Submitted = sqid, time.Now() })
+			return nil
+		})
+	}
+
+	if err := group.Wait(); err != nil {
+		return nil, err
+	}
+	return created, nil
+}
+
+// createStack opens the pull requests one after another, each based on the one
+// before it, and submits the whole chain as a single request.
+//
+// This one cannot be parallelized, and not for want of trying: a change is
+// based on the branch of the change before it and must see its content, so the
+// next branch cannot be cut until the previous head exists.
+func createStack(
+	ctx context.Context,
+	gh *githubClient,
+	sq *client.Client,
+	cfg config,
+	strategy mergestrategypb.Strategy,
+	tag, baseSHA string,
+	t *client.Tracker,
+) ([]change, error) {
+	rows := t.Rows()
+	created := make([]change, 0, cfg.count)
 
 	parentBranch, parentSHA := cfg.base, baseSHA
 	for i := 1; i <= cfg.count; i++ {
 		// A stack is one request, so every change lands on the single row.
-		target := rows[0]
-		if !cfg.stacked {
-			target = rows[i-1]
-		}
-
-		branch := fmt.Sprintf("%s/%s/%d", cfg.prefix, tag, i)
-		t.Note("creating branch %s", branch)
-		if err := gh.createBranch(ctx, branch, parentSHA); err != nil {
-			return nil, fmt.Errorf("create branch %s: %w", branch, err)
-		}
-
-		// Each file is its own commit, so the pull request arrives as a range of
-		// commits rather than a single edit. The last one is the head the change
-		// URI pins.
-		var headSHA string
-		fileCount := changeFileCount(tag, i, cfg.files)
-		for k := 1; k <= fileCount; k++ {
-			path := changeFilePath(tag, i, k)
-			body := fmt.Sprintf("change %d of run %s\nfile %d of %d\n", i, tag, k, fileCount)
-			t.Note("committing %s (%d/%d)", path, k, fileCount)
-
-			message := fmt.Sprintf("demo change %d (run %s): file %d of %d", i, tag, k, fileCount)
-			sha, err := gh.commitFile(ctx, branch, path, body, message)
-			if err != nil {
-				return nil, fmt.Errorf("commit %s to %s: %w", path, branch, err)
-			}
-			headSHA = sha
-		}
-
-		t.Note("opening pull request for %s", branch)
-		number, url, err := gh.openPR(ctx, fmt.Sprintf("demo change %d (run %s)", i, tag), branch, parentBranch)
-		if err != nil {
-			return nil, fmt.Errorf("open pull request for %s: %w", branch, err)
-		}
-
-		c := change{
-			number: number, url: url, branch: branch,
-			uri: githubchange.ChangeID{
-				Scheme: "github", Host: cfg.host, Org: gh.owner, Repo: gh.repo,
-				PRNumber: number, HeadCommitSHA: headSHA,
-			}.String(),
-		}
-		created = append(created, c)
-		// The cell is what the table shows for this change: the pull request
-		// number, clickable where the terminal allows it.
-		cell := client.Cell{Text: fmt.Sprintf("#%d", number), URL: url}
-		t.Update(func() { target.Cells = append(target.Cells, cell) })
-
-		if cfg.stacked {
-			// The next change builds on this one, so it sees this change's
-			// content and its pull request is based on this branch.
-			parentBranch, parentSHA = branch, headSHA
-			continue
-		}
-		if !cfg.land {
-			continue
-		}
-		t.Note("enqueuing #%d", number)
-		sqid, err := sq.Land(ctx, cfg.queue, urisOf([]change{c}), strategy)
+		c, err := createOne(ctx, gh, cfg, tag, parentSHA, parentBranch, i, t, rows[0])
 		if err != nil {
 			return nil, err
 		}
-		t.Update(func() { target.SQID, target.Submitted = sqid, time.Now() })
+		created = append(created, c)
+		parentBranch, parentSHA = c.branch, c.headSHA
 	}
 
 	// The stack goes in as one request, which is only possible now that every
 	// change in it exists.
-	if cfg.stacked && cfg.land {
+	if cfg.land {
 		t.Note("enqueuing the stack")
 		sqid, err := sq.Land(ctx, cfg.queue, urisOf(created), strategy)
 		if err != nil {
@@ -371,6 +425,61 @@ func createAndEnqueue(
 		t.Update(func() { rows[0].SQID, rows[0].Submitted = sqid, time.Now() })
 	}
 	return created, nil
+}
+
+// createOne cuts a branch from parentSHA, writes the change's files to it, and
+// opens a pull request against parentBranch, recording it on the given row.
+func createOne(
+	ctx context.Context,
+	gh *githubClient,
+	cfg config,
+	tag, parentSHA, parentBranch string,
+	i int,
+	t *client.Tracker,
+	target *client.Row,
+) (change, error) {
+	branch := fmt.Sprintf("%s/%s/%d", cfg.prefix, tag, i)
+	t.Note("creating branch %s", branch)
+	if err := gh.createBranch(ctx, branch, parentSHA); err != nil {
+		return change{}, fmt.Errorf("create branch %s: %w", branch, err)
+	}
+
+	// Each file is its own commit, so the pull request arrives as a range of
+	// commits rather than a single edit. The last one is the head the change
+	// URI pins.
+	var headSHA string
+	fileCount := changeFileCount(tag, i, cfg.files)
+	for k := 1; k <= fileCount; k++ {
+		path := changeFilePath(tag, i, k)
+		body := fmt.Sprintf("change %d of run %s\nfile %d of %d\n", i, tag, k, fileCount)
+		t.Note("committing %s (%d/%d)", path, k, fileCount)
+
+		message := fmt.Sprintf("demo change %d (run %s): file %d of %d", i, tag, k, fileCount)
+		sha, err := gh.commitFile(ctx, branch, path, body, message)
+		if err != nil {
+			return change{}, fmt.Errorf("commit %s to %s: %w", path, branch, err)
+		}
+		headSHA = sha
+	}
+
+	t.Note("opening pull request for %s", branch)
+	number, url, err := gh.openPR(ctx, fmt.Sprintf("demo change %d (run %s)", i, tag), branch, parentBranch)
+	if err != nil {
+		return change{}, fmt.Errorf("open pull request for %s: %w", branch, err)
+	}
+
+	c := change{
+		number: number, url: url, branch: branch, headSHA: headSHA,
+		uri: githubchange.ChangeID{
+			Scheme: "github", Host: cfg.host, Org: gh.owner, Repo: gh.repo,
+			PRNumber: number, HeadCommitSHA: headSHA,
+		}.String(),
+	}
+	// The cell is what the table shows for this change: the pull request
+	// number, clickable where the terminal allows it.
+	cell := client.Cell{Text: fmt.Sprintf("#%d", number), URL: url}
+	t.Update(func() { target.Cells = append(target.Cells, cell) })
+	return c, nil
 }
 
 // urisOf is the change URIs the run pinned, in caller order.

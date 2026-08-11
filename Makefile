@@ -56,6 +56,7 @@ export SQ_PROVIDER_CONFIG_DIR ?= $(REPO_ROOT)/service/submitqueue/demo/provider/
 DEMO_REPO ?= behinddwalls/sq-demo
 COUNT ?= 3
 FILES ?= 3
+CONCURRENCY ?= 5
 STACKED ?= false
 SINCE ?= 1h
 LIMIT ?= 50
@@ -155,11 +156,12 @@ clean-proto: ## Clean generated proto files
 	@rm -f $(foreach p,$(PROTO_PACKAGES),$(p)/protopb/*.pb.go $(p)/protopb/*.pb.yarpc.go)
 	@echo "Proto clean complete!"
 
-demo-pr: ## Create N PRs in the demo repo, enqueue each as it is created, and watch (COUNT=3 FILES=3; needs GITHUB_TOKEN)
+demo-pr: ## Create N PRs in the demo repo, enqueue each as it is created, and watch (COUNT=3 FILES=3 CONCURRENCY=5; needs GITHUB_TOKEN)
 	@$(BAZEL) run //service/submitqueue/demo/pr -- \
 		-repo $(DEMO_REPO) \
 		-count $(COUNT) \
 		-files $(FILES) \
+		-concurrency $(CONCURRENCY) \
 		-stacked=$(STACKED) \
 		-addr $(GATEWAY_ADDR) \
 		-queue $(QUEUE) \

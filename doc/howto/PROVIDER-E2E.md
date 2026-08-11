@@ -97,11 +97,14 @@ Opening pull requests by hand gets old fast. `demo-pr` creates them, enqueues th
 make demo-pr                      # 3 independent PRs, each enqueued as it is created
 make demo-pr COUNT=8              # more traffic
 make demo-pr FILES=8              # wider changes, more files per PR
+make demo-pr CONCURRENCY=1        # create them one at a time
 make demo-pr STACKED=true         # one stack, enqueued as a single request
 make demo-pr LAND=false           # create only, print the land command
 ```
 
 Each pull request is enqueued the moment it exists, so the queue is already working on the first while the last is still being opened. That overlap is the point: a queue holding one request at a time never batches, never analyzes a conflict against another batch, and never speculates. Nothing is awaited until every request is in.
+
+Independent pull requests are created **five at a time** by default (`CONCURRENCY`). Opening one is several round trips — a branch, a commit per file, the pull request itself — so creating them serially was most of what a large run spent its time on, and it delayed the overlap the demo exists to show. A stack ignores the setting: each of its changes is based on the branch before it, so the next cannot be cut until the previous head exists. Lower it if the provider starts refusing bursts.
 
 The table is there from the start — one row per land request, drawn before the first pull request exists and filled in as the run proceeds. Whatever is happening right now is a single line underneath it, so creating and enqueuing does not scroll the table away:
 

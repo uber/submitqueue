@@ -110,3 +110,43 @@ func TestRowCount(t *testing.T) {
 	assert.Equal(t, 3, rowCount(config{count: 3}), "independent changes are one request each")
 	assert.Equal(t, 1, rowCount(config{count: 3, stacked: true}), "a stack is a single request")
 }
+
+func TestConfigValidate(t *testing.T) {
+	valid := config{token: "t", repo: "owner/name", count: 3, files: 3, concurrency: 5}
+
+	tests := []struct {
+		name    string
+		mutate  func(*config)
+		wantErr bool
+	}{
+		{name: "a usable configuration", mutate: func(*config) {}},
+		{name: "concurrency of one is sequential, not invalid", mutate: func(c *config) { c.concurrency = 1 }},
+		{name: "no token", mutate: func(c *config) { c.token = "" }, wantErr: true},
+		{name: "no changes to make", mutate: func(c *config) { c.count = 0 }, wantErr: true},
+		{name: "no files to write", mutate: func(c *config) { c.files = 0 }, wantErr: true},
+		{name: "zero concurrency would never start", mutate: func(c *config) { c.concurrency = 0 }, wantErr: true},
+		{name: "negative concurrency", mutate: func(c *config) { c.concurrency = -1 }, wantErr: true},
+		{name: "repo without an owner", mutate: func(c *config) { c.repo = "name" }, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := valid
+			tt.mutate(&cfg)
+			err := cfg.validate()
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestShapeReportsConcurrency(t *testing.T) {
+	assert.Contains(t, shape(config{count: 10, concurrency: 5}), "5 at a time")
+	assert.NotContains(t, shape(config{count: 10, concurrency: 1}), "at a time",
+		"one at a time is just sequential; saying so adds nothing")
+	assert.Contains(t, shape(config{count: 10, concurrency: 5, stacked: true}), "stacked",
+		"a stack is sequential whatever the limit says")
+}
