@@ -24,16 +24,16 @@ import (
 
 	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	"golang.org/x/term"
 )
 
 const (
 	// pollInterval bounds how often the watcher re-reads every request's history.
 	pollInterval = 2 * time.Second
 
-	// maxLineWidth caps a redrawn line. A line that wraps occupies two physical
-	// rows, which permanently desyncs the cursor arithmetic the in-place redraw
-	// depends on; capping is cheaper than asking the terminal how wide it is.
-	maxLineWidth = 120
+	// defaultLineWidth is the width assumed when the terminal will not say how
+	// wide it is — piped output, or a terminal that answers no size at all.
+	defaultLineWidth = 120
 
 	// absent is what a cell shows before there is anything to put in it.
 	absent = "—"
@@ -41,6 +41,11 @@ const (
 	// minNoteWidth keeps a wrapped error readable even when the columns before
 	// it have eaten most of the line.
 	minNoteWidth = 40
+
+	// minStageWidth is the narrowest the stage column is allowed to wrap to. A
+	// window narrow enough to force this is already unreadable; the floor keeps
+	// the wrap from degenerating into one word per line.
+	minStageWidth = 24
 )
 
 // terminalStatuses are the states a land request settles on. They are keyed off
@@ -192,8 +197,23 @@ func summarize(rows []*Row) error {
 //
 // Column widths only ever grow, so a value that turns out to be wider than the
 // header does not make the table jitter as rows fill in.
+//
+// No line the renderer emits may exceed the terminal's width. A line that wraps
+// occupies two physical rows, and the in-place redraw moves the cursor back by
+// the number of lines it *emitted* — so one wrapped line desyncs every redraw
+// after it. Everything wide is therefore wrapped deliberately, into lines the
+// renderer counts itself.
 type renderer struct {
 	inPlace bool
+
+	// width is the terminal's width, re-read before every draw. A watch runs for
+	// minutes and a window can be resized inside them, so this is not a property
+	// the process can sample once — see resize.
+	width int
+
+	// size reports the terminal's width and whether it could be read. Held as a
+	// field so a test can drive a resize without a terminal.
+	size func() (int, bool)
 
 	wRequest int
 	wChanges int
@@ -211,10 +231,16 @@ type renderer struct {
 }
 
 func newRenderer() *renderer {
-	info, err := os.Stdout.Stat()
-	tty := err == nil && info.Mode()&os.ModeCharDevice != 0
+	width, sized := terminalSize()
 	return &renderer{
-		inPlace:  tty,
+		// Redrawing in place requires knowing the width to wrap to. A terminal
+		// that will not report its size is therefore treated as a log: emitting
+		// a guessed width into a narrower window is what produces a physically
+		// wrapped line, and the redraw counts the lines it emitted rather than
+		// the lines that appeared, so one of those desyncs every frame after it.
+		inPlace:  sized,
+		width:    width,
+		size:     terminalSize,
 		wRequest: len("REQUEST"),
 		wChanges: len("CHANGES"),
 		wElapsed: len("ELAPSED"),
@@ -222,7 +248,54 @@ func newRenderer() *renderer {
 	}
 }
 
+// terminalSize is how wide the output is, in columns, and whether that came
+// from the terminal rather than from the fallback.
+//
+// Asking the terminal is what lets a wide window show a long trail in full,
+// rather than everyone being held to the narrowest window anyone might have.
+// Anything that is not a sized terminal — a pipe, a file, a CI log — falls back
+// to a fixed width, since there is no width to discover and a log wants a
+// stable one anyway.
+func terminalSize() (int, bool) {
+	w, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || w <= 0 {
+		return defaultLineWidth, false
+	}
+	return w, true
+}
+
+// lineWidth is the width to render to. It tolerates a renderer built without
+// one — a zero-value renderer in a test — rather than collapsing to nothing.
+func (r *renderer) lineWidth() int {
+	if r.width <= 0 {
+		return defaultLineWidth
+	}
+	return r.width
+}
+
+// resize re-reads the terminal's width before a draw.
+//
+// The width is not a property of the process: a watch runs for minutes and the
+// window can be dragged narrower at any point in them. Sampling once at startup
+// means every frame after a resize is wrapped to a width the window no longer
+// has, and the terminal wraps those lines itself — mid-word, ignoring the
+// column alignment, and without telling the redraw, which then moves the cursor
+// back by fewer lines than actually appeared.
+//
+// Only the width is re-read. Whether output is a terminal at all cannot change
+// under a running process, and re-deciding it per frame would let a transient
+// probe failure switch rendering modes mid-run.
+func (r *renderer) resize() {
+	if !r.inPlace || r.size == nil {
+		return
+	}
+	if w, sized := r.size(); sized {
+		r.width = w
+	}
+}
+
 func (r *renderer) draw(rows []*Row, status string) {
+	r.resize()
 	body := r.body(rows)
 
 	if !r.inPlace {
@@ -245,7 +318,7 @@ func (r *renderer) draw(rows []*Row, status string) {
 		fmt.Printf("\033[K%s\n", line)
 	}
 	fmt.Printf("\033[K\n")
-	fmt.Printf("\033[K  ▸ %s\n", truncate(status, maxLineWidth-4))
+	fmt.Printf("\033[K  ▸ %s\n", truncate(status, r.lineWidth()-4))
 	// Every draw emits the body, one blank line, and the status line; moving
 	// back by exactly this many lines is what keeps the redraw from drifting.
 	r.lastLines = len(body) + 2
@@ -264,7 +337,7 @@ func (r *renderer) body(rows []*Row) []string {
 			rule(r.wRequest), rule(r.wChanges), rule(r.wElapsed), rule(r.wStage)))
 
 	for _, rw := range rows {
-		lines = append(lines, r.rowLine(rw))
+		lines = append(lines, r.rowLines(rw)...)
 		lines = append(lines, r.noteLines(rw)...)
 	}
 	return lines
@@ -282,7 +355,7 @@ func (r *renderer) fit(rows []*Row) {
 		r.wStage = max(r.wStage, utf8.RuneCountInString(rw.stage()))
 	}
 	if r.inPlace {
-		r.wStage = min(r.wStage, max(len("STAGE"), maxLineWidth-r.prefixWidth()))
+		r.wStage = min(r.wStage, r.stageWidth())
 	}
 }
 
@@ -291,7 +364,14 @@ func (r *renderer) prefixWidth() int {
 	return 2 + r.wRequest + 2 + r.wChanges + 2 + r.wElapsed + 2
 }
 
-func (r *renderer) rowLine(rw *Row) string {
+// rowLines renders one row: its columns, and the stage wrapped onto indented
+// continuation lines when the trail does not fit the width.
+//
+// Wrapping rather than cutting is what keeps a long trail readable — the end of
+// it is where the request actually is, so a cut there hides the interesting
+// part. Continuations align under the stage column so the wrapped text reads as
+// one field rather than as new rows.
+func (r *renderer) rowLines(rw *Row) []string {
 	sqid := rw.SQID
 	if sqid == "" {
 		sqid = absent
@@ -302,14 +382,31 @@ func (r *renderer) rowLine(rw *Row) string {
 		r.wRequest, sqid, pad(changes, visible, r.wChanges), r.wElapsed, rw.elapsed())
 
 	tail := rw.stage()
-	if r.inPlace {
-		// Only the tail can overflow, and unlike the changes cell it never holds
-		// escape sequences, so it is the one part safe to cut. The budget comes
-		// from the column widths rather than the rendered prefix, which counts a
-		// hyperlink's escape bytes that take up no space on screen.
-		tail = truncate(tail, maxLineWidth-r.prefixWidth())
+	if !r.inPlace {
+		// A log has no width to respect and is easier to read and grep on one
+		// line, so it takes the trail whole.
+		return []string{prefix + tail}
 	}
-	return prefix + tail
+
+	indent := r.prefixWidth()
+	segments := wrap(tail, r.stageWidth())
+	if len(segments) == 0 {
+		return []string{prefix + tail}
+	}
+
+	lines := make([]string, 0, len(segments))
+	lines = append(lines, prefix+segments[0])
+	for _, segment := range segments[1:] {
+		lines = append(lines, strings.Repeat(" ", indent)+"  "+segment)
+	}
+	return lines
+}
+
+// stageWidth is the room a wrapped stage has. The two columns subtracted are
+// the indent a continuation line carries, so every line of a wrapped stage
+// fits the same budget as the first.
+func (r *renderer) stageWidth() int {
+	return max(minStageWidth, r.lineWidth()-r.prefixWidth()-2)
 }
 
 // noteLines renders a request's error under its row, wrapped and indented to
@@ -324,7 +421,7 @@ func (r *renderer) noteLines(rw *Row) []string {
 	indent := r.prefixWidth()
 	// A piped run spends most of the line on URLs, so the wrap width is floored
 	// rather than allowed to collapse to nothing.
-	width := max(minNoteWidth, maxLineWidth-indent-2)
+	width := max(minNoteWidth, r.lineWidth()-indent-2)
 
 	wrapped := wrap(rw.Note, width)
 	lines := make([]string, 0, len(wrapped))

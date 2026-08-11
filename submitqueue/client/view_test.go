@@ -294,12 +294,68 @@ func TestDrawStaysWithinLineWidth(t *testing.T) {
 	out := captureStdout(t, func() { r.draw(rows, strings.Repeat("status ", 40)) })
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.ReplaceAll(line, "\033[K", "")
-		assert.LessOrEqual(t, len([]rune(line)), maxLineWidth, "line too wide: %q", line)
+		assert.LessOrEqual(t, len([]rune(line)), r.lineWidth(), "line too wide: %q", line)
 	}
 }
 
-// TestDrawPipedSkipsClockOnlyRedraws keeps a redirected run's log readable: the
-// table is reprinted when it moves, not once a second because the clock did.
+// TestDrawFollowsAResize is the regression for a table that wraps correctly at
+// startup and then stops. The width is not fixed for the life of the process: a
+// watch runs for minutes, and a window dragged narrower inside them leaves every
+// later frame wrapped to a width the window no longer has. The terminal then
+// wraps those lines itself — mid-word, ignoring the column alignment — and the
+// redraw, which counts the lines it emitted rather than the lines that appeared,
+// drifts a little further with every frame.
+func TestDrawFollowsAResize(t *testing.T) {
+	width := 200
+	r := newRenderer()
+	r.inPlace = true
+	r.width = width
+	r.size = func() (int, bool) { return width, true }
+
+	rows := []*Row{{SQID: "demo-queue/72", Submitted: time.Now(), Trail: longTrail}}
+
+	wide := captureStdout(t, func() { r.draw(rows, "watching") })
+	for _, line := range strings.Split(wide, "\n") {
+		assert.LessOrEqual(t, len([]rune(visible(strings.ReplaceAll(line, "\033[K", "")))), width)
+	}
+
+	// The window is dragged in. Nothing tells the process; it has to look.
+	width = 94
+	narrow := captureStdout(t, func() { r.draw(rows, "watching") })
+	require.NotEmpty(t, narrow)
+	for _, line := range strings.Split(narrow, "\n") {
+		clean := visible(strings.ReplaceAll(line, "\033[K", ""))
+		assert.LessOrEqual(t, len([]rune(clean)), width,
+			"a line wider than the window is wrapped by the terminal, which desyncs the redraw: %q", clean)
+	}
+}
+
+// TestDrawKeepsTheLastWidthWhenTheTerminalStopsAnswering guards the other
+// direction: a probe that fails once must not snap the table to the fallback
+// width, which on a narrow window is wider than the window itself.
+func TestDrawKeepsTheLastWidthWhenTheTerminalStopsAnswering(t *testing.T) {
+	r := newRenderer()
+	r.inPlace = true
+	r.width = 94
+	r.size = func() (int, bool) { return defaultLineWidth, false }
+
+	r.resize()
+	assert.Equal(t, 94, r.width, "an unanswered probe leaves the last known width alone")
+}
+
+// TestNewRendererNeedsASizeToRedrawInPlace pins the two probes together. Drawing
+// in place means wrapping, and wrapping to a guessed width is what puts a line
+// past the edge of a narrower window. A terminal that will not report its size
+// is therefore rendered as a log, which needs no width at all.
+func TestNewRendererNeedsASizeToRedrawInPlace(t *testing.T) {
+	// Test stdout is not a sized terminal, which is exactly the case at issue.
+	r := newRenderer()
+	width, sized := terminalSize()
+	require.False(t, sized, "test stdout is not expected to be a sized terminal")
+	assert.Equal(t, defaultLineWidth, width)
+	assert.False(t, r.inPlace, "without a known width the renderer must not wrap and redraw")
+}
+
 func TestDrawPipedSkipsClockOnlyRedraws(t *testing.T) {
 	r := newRenderer()
 	r.inPlace = false
@@ -554,7 +610,7 @@ func TestNoteLinesRenderErrorInFull(t *testing.T) {
 
 	var text strings.Builder
 	for i, line := range lines {
-		assert.LessOrEqual(t, len([]rune(line)), maxLineWidth, "a wrapped note still has to fit the line")
+		assert.LessOrEqual(t, len([]rune(line)), r.lineWidth(), "a wrapped note still has to fit the line")
 		trimmed := strings.TrimLeft(line, " ")
 		if i == 0 {
 			assert.True(t, strings.HasPrefix(trimmed, "↳ "), "the first line is marked")
@@ -567,8 +623,8 @@ func TestNoteLinesRenderErrorInFull(t *testing.T) {
 		"the tail of the error is what says what went wrong; it must survive")
 
 	// The row itself keeps only the trail, so the columns stay aligned.
-	assert.NotContains(t, r.rowLine(failed), "speculator failed")
-	assert.NotContains(t, r.rowLine(failed), "…")
+	assert.NotContains(t, strings.Join(r.rowLines(failed), "\n"), "speculator failed")
+	assert.NotContains(t, strings.Join(r.rowLines(failed), "\n"), "…")
 }
 
 // TestNoteLinesIndentToStageColumn keeps a wrapped error visually attached to
@@ -600,7 +656,7 @@ func TestRowLineAlignment(t *testing.T) {
 	r.fit(rows)
 
 	for _, rw := range rows {
-		shown := []rune(visible(r.rowLine(rw)))
+		shown := []rune(visible(r.rowLines(rw)[0]))
 		require.GreaterOrEqual(t, len(shown), r.prefixWidth())
 		assert.Equal(t, rw.stage(), string(shown[r.prefixWidth():]),
 			"the stage should start at column %d and be rendered whole", r.prefixWidth())
@@ -655,4 +711,107 @@ func head(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+// longTrail is the shape that prompted wrapping: every status the pipeline now
+// publishes, which no longer fits a default-width line.
+var longTrail = []string{
+	"accepted", "started", "validating", "validated", "batched",
+	"speculating", "speculated", "building", "built", "landing", "landed",
+}
+
+func TestRowLinesWrapsRatherThanTruncates(t *testing.T) {
+	r := newRenderer()
+	r.inPlace = true
+	rw := &Row{SQID: "demo-queue/1", Submitted: time.Now(), Trail: longTrail}
+	r.fit([]*Row{rw})
+
+	lines := r.rowLines(rw)
+	require.Greater(t, len(lines), 1, "a trail this long has to wrap")
+
+	joined := strings.Join(lines, " ")
+	assert.NotContains(t, joined, "…", "nothing is cut, so there is no ellipsis")
+	for _, status := range longTrail {
+		assert.Contains(t, joined, status, "every status survives the wrap")
+	}
+	assert.Contains(t, lines[len(lines)-1], "landed",
+		"the end of the trail is where the request is; it must be the part that shows")
+}
+
+func TestRowLinesContinuationsAlignUnderTheStage(t *testing.T) {
+	r := newRenderer()
+	r.inPlace = true
+	rw := &Row{SQID: "demo-queue/1", Submitted: time.Now(), Trail: longTrail}
+	r.fit([]*Row{rw})
+
+	lines := r.rowLines(rw)
+	require.Greater(t, len(lines), 1)
+
+	for _, line := range lines[1:] {
+		leading := len(line) - len(strings.TrimLeft(line, " "))
+		assert.GreaterOrEqual(t, leading, r.prefixWidth(),
+			"a continuation sits under the stage column, not under the request id")
+	}
+}
+
+func TestRowLinesFitTheWidth(t *testing.T) {
+	// The redraw moves the cursor back by the number of lines it emitted, so a
+	// line wide enough to wrap physically would desync every redraw after it.
+	widths := []int{80, 100, 120, 200}
+	for _, width := range widths {
+		t.Run(fmt.Sprintf("width %d", width), func(t *testing.T) {
+			r := newRenderer()
+			r.inPlace = true
+			r.width = width
+			rw := &Row{SQID: "demo-queue/1", Submitted: time.Now(), Trail: longTrail}
+			r.fit([]*Row{rw})
+
+			for _, line := range r.rowLines(rw) {
+				assert.LessOrEqual(t, len([]rune(visible(line))), width, "line too wide: %q", line)
+			}
+		})
+	}
+}
+
+func TestRowLinesUseTheWholeWidthBeforeWrapping(t *testing.T) {
+	// The point of asking the terminal how wide it is: a window with room for
+	// the whole trail should show it on one line.
+	r := newRenderer()
+	r.inPlace = true
+	r.width = 240
+	rw := &Row{SQID: "demo-queue/1", Submitted: time.Now(), Trail: longTrail}
+	r.fit([]*Row{rw})
+
+	lines := r.rowLines(rw)
+	assert.Len(t, lines, 1, "a wide terminal needs no wrapping")
+	assert.Contains(t, lines[0], "landed")
+}
+
+func TestRowLinesPipedStayOnOneLine(t *testing.T) {
+	// A log has no width to respect and is easier to read and grep unwrapped.
+	r := newRenderer()
+	r.inPlace = false
+	rw := &Row{SQID: "demo-queue/1", Submitted: time.Now(), Trail: longTrail}
+	r.fit([]*Row{rw})
+
+	lines := r.rowLines(rw)
+	require.Len(t, lines, 1)
+	assert.Contains(t, lines[0], "landed")
+	assert.NotContains(t, lines[0], "…")
+}
+
+func TestStageWidthHasAFloor(t *testing.T) {
+	r := newRenderer()
+	r.inPlace = true
+	r.width = 20
+	r.wRequest, r.wChanges, r.wElapsed = 40, 40, 40
+
+	assert.Equal(t, minStageWidth, r.stageWidth(),
+		"a window too narrow to hold the columns still wraps to something readable")
+}
+
+func TestLineWidthFallsBackWhenUnset(t *testing.T) {
+	// Tests build renderers directly; a zero width must not collapse the table.
+	r := &renderer{inPlace: true}
+	assert.Equal(t, defaultLineWidth, r.lineWidth())
 }
