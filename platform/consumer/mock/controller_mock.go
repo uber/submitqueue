@@ -13,6 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
+	failure "github.com/uber/submitqueue/platform/base/failure"
 	messagequeue "github.com/uber/submitqueue/platform/base/messagequeue"
 	consumer "github.com/uber/submitqueue/platform/consumer"
 	gomock "go.uber.org/mock/gomock"
@@ -82,6 +83,21 @@ func (m *MockDelivery) ExtendVisibilityTimeout(ctx context.Context, durationMill
 func (mr *MockDeliveryMockRecorder) ExtendVisibilityTimeout(ctx, durationMillis any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtendVisibilityTimeout", reflect.TypeOf((*MockDelivery)(nil).ExtendVisibilityTimeout), ctx, durationMillis)
+}
+
+// Failure mocks base method.
+func (m *MockDelivery) Failure() (failure.Failure, bool) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Failure")
+	ret0, _ := ret[0].(failure.Failure)
+	ret1, _ := ret[1].(bool)
+	return ret0, ret1
+}
+
+// Failure indicates an expected call of Failure.
+func (mr *MockDeliveryMockRecorder) Failure() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Failure", reflect.TypeOf((*MockDelivery)(nil).Failure))
 }
 
 // Hold mocks base method.

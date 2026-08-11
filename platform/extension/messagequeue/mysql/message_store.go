@@ -24,6 +24,7 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap"
 
+	"github.com/uber/submitqueue/platform/base/failure"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/metrics"
 )
@@ -74,9 +75,13 @@ func (s *sqlmessageStore) Insert(ctx context.Context, topic string, messages []e
 
 	// ON DUPLICATE KEY UPDATE topic=topic is a no-op write that makes MySQL
 	// swallow the unique-key violation without mutating the existing row.
+	//
+	// The DLQ columns take their "normal message" values here. failure_detail
+	// is NULL rather than an empty sentinel: it is a JSON column, which rejects
+	// ''.
 	stmt, err := tx.PrepareContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (topic, id, payload, metadata, partition_key, created_at, published_at, failed_at, failure_count, last_error, original_topic)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, '', '')
+		INSERT INTO %s (topic, id, payload, metadata, partition_key, created_at, published_at, failed_at, failure_count, last_error, original_topic, failure_detail)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, '', '', NULL)
 		ON DUPLICATE KEY UPDATE topic = topic
 	`, MessagesTableName))
 	if err != nil {
@@ -143,7 +148,7 @@ func (s *sqlmessageStore) FetchByOffset(ctx context.Context, topic string, parti
 	defer func() { op.Complete(retErr) }()
 
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
-		SELECT offset, id, payload, metadata, partition_key, published_at, failed_at, failure_count, last_error, original_topic
+		SELECT offset, id, payload, metadata, partition_key, published_at, failed_at, failure_count, last_error, original_topic, failure_detail
 		FROM %s
 		WHERE topic = ? AND partition_key = ? AND offset > ?
 		ORDER BY offset
@@ -168,9 +173,10 @@ func (s *sqlmessageStore) FetchByOffset(ctx context.Context, topic string, parti
 			failureCount     int
 			lastError        string
 			originalTopic    string
+			failureDetail    []byte
 		)
 
-		if err := rows.Scan(&offset, &id, &payload, &metadataJSON, &partKey, &publishedAtMilli, &failedAt, &failureCount, &lastError, &originalTopic); err != nil {
+		if err := rows.Scan(&offset, &id, &payload, &metadataJSON, &partKey, &publishedAtMilli, &failedAt, &failureCount, &lastError, &originalTopic, &failureDetail); err != nil {
 			return nil, fmt.Errorf("scan row topic=%s partition=%s: %w", topic, partitionKey, err)
 		}
 
@@ -195,6 +201,7 @@ func (s *sqlmessageStore) FetchByOffset(ctx context.Context, topic string, parti
 			FailureCount:  failureCount,
 			LastError:     lastError,
 			OriginalTopic: originalTopic,
+			FailureDetail: failureDetail,
 		})
 	}
 
@@ -214,12 +221,29 @@ func (s *sqlmessageStore) FetchByOffset(ctx context.Context, topic string, parti
 // MoveToDLQ atomically moves a message to the DLQ by reinserting it with the DLQ topic name
 // The message is inserted back into queue_messages table with the DLQ topic (original + suffix)
 // This allows DLQ messages to be consumed using the normal subscriber
-func (s *sqlmessageStore) MoveToDLQ(ctx context.Context, topic string, partitionKey string, messageID string, failureCount int, lastError string, dlqTopicSuffix string) (retErr error) {
+//
+// The failure is split across two columns: its message into last_error, so the
+// row stays readable without decoding anything, and its subjects and detail
+// into failure_detail. A failure with no structure leaves failure_detail NULL,
+// which is what an unattributed dead letter looks like.
+func (s *sqlmessageStore) MoveToDLQ(ctx context.Context, topic string, partitionKey string, messageID string, failureCount int, f failure.Failure, dlqTopicSuffix string) (retErr error) {
 	op := metrics.Begin(s.scope, "move_to_dlq", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
 	defer func() { op.Complete(retErr) }()
 
 	// Construct DLQ topic name
 	dlqTopic := topic + dlqTopicSuffix
+
+	failureDetail, err := failure.Encode(f)
+	if err != nil {
+		return fmt.Errorf("encode failure detail topic=%s message=%s: %w", topic, messageID, err)
+	}
+	// Bind NULL explicitly when there is no structure. A nil []byte would leave
+	// the column's value up to the driver, and an empty string is not valid
+	// JSON, so the insert could be rejected outright.
+	var failureDetailArg any
+	if len(failureDetail) > 0 {
+		failureDetailArg = failureDetail
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -257,9 +281,9 @@ func (s *sqlmessageStore) MoveToDLQ(ctx context.Context, topic string, partition
 	// Insert into queue_messages table with DLQ topic name and DLQ-specific fields.
 	now := time.Now().UnixMilli()
 	_, err = tx.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (topic, id, payload, metadata, partition_key, created_at, published_at, failed_at, failure_count, last_error, original_topic)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, MessagesTableName), dlqTopic, messageID, payload, metadataJSON, fetchPartKey, createdAtMilli, publishedAtMilli, now, failureCount, lastError, topic)
+		INSERT INTO %s (topic, id, payload, metadata, partition_key, created_at, published_at, failed_at, failure_count, last_error, original_topic, failure_detail)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, MessagesTableName), dlqTopic, messageID, payload, metadataJSON, fetchPartKey, createdAtMilli, publishedAtMilli, now, failureCount, f.Message, topic, failureDetailArg)
 
 	if err != nil {
 		return fmt.Errorf("insert into DLQ topic=%s dlq=%s partition=%s message=%s: %w", topic, dlqTopic, partitionKey, messageID, err)

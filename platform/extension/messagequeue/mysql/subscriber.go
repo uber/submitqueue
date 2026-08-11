@@ -25,6 +25,7 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap"
 
+	"github.com/uber/submitqueue/platform/base/failure"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	"github.com/uber/submitqueue/platform/metrics"
@@ -190,6 +191,18 @@ type sqlDelivery struct {
 	// DLQ configuration for Reject
 	dlqConfig extqueue.DLQConfig
 
+	// retry is the subscription's retry budget. Nack needs it to recognise the
+	// attempt that spends the last of it, which is the one delivery still
+	// holding the reason the message is about to be dead-lettered for.
+	retry extqueue.RetryConfig
+
+	// failure is why this message was dead-lettered, reassembled from the row.
+	// Only meaningful when failed is set, i.e. when this is a redelivery from
+	// a DLQ topic.
+	failure failure.Failure
+	// failed records whether this message arrived from a DLQ topic.
+	failed bool
+
 	// Track acknowledgment state
 	mu           sync.Mutex
 	acknowledged bool
@@ -207,6 +220,9 @@ func newSQLDelivery(
 	messageID string,
 	consumerGroup string,
 	dlqConfig extqueue.DLQConfig,
+	retry extqueue.RetryConfig,
+	f failure.Failure,
+	failed bool,
 ) *sqlDelivery {
 	return &sqlDelivery{
 		msg:           msg,
@@ -221,6 +237,9 @@ func newSQLDelivery(
 		messageID:     messageID,
 		consumerGroup: consumerGroup,
 		dlqConfig:     dlqConfig,
+		retry:         retry,
+		failure:       f,
+		failed:        failed,
 		acknowledged:  false,
 	}
 }
@@ -271,12 +290,36 @@ func (d *sqlDelivery) Ack(ctx context.Context) error {
 }
 
 // Nack implements extqueue.Delivery.Nack
-func (d *sqlDelivery) Nack(ctx context.Context) error {
+//
+// When this attempt has spent the retry budget, the message is dead-lettered
+// here rather than nacked, so it carries f — the reason it actually failed.
+// The poll loop would otherwise pick it up on the next round and dead-letter
+// it with a generic reason, f having been discarded when this delivery ended.
+// That path still exists as a backstop for a delivery that never reaches Nack
+// at all (a crash, or a missed ack redelivered by the visibility timeout); it
+// is just no longer the common one.
+//
+// Message count is unchanged: at attempt N the next poll would see retry_count
+// = N and dead-letter iff N >= MaxAttempts, which is exactly the condition
+// below.
+func (d *sqlDelivery) Nack(ctx context.Context, f failure.Failure) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	if d.acknowledged {
 		return &ErrAlreadyAcknowledged{DeliveryID: d.deliveryID}
+	}
+
+	if d.retry.MaxAttempts > 0 && d.attempt >= d.retry.MaxAttempts {
+		d.subscriber.logger.Warnw("message exhausted retry budget, dead-lettering",
+			"topic", d.topic,
+			"partition_key", d.partitionKey,
+			"message_id", d.messageID,
+			"attempt", d.attempt,
+			"max_attempts", d.retry.MaxAttempts,
+			"reason", f.Message,
+		)
+		return d.deadLetter(ctx, f)
 	}
 
 	// Mark as nacked in delivery state (per consumer group): immediately
@@ -322,7 +365,7 @@ func (d *sqlDelivery) Postpone(ctx context.Context, delayMs int64) error {
 }
 
 // Reject implements extqueue.Delivery.Reject
-func (d *sqlDelivery) Reject(ctx context.Context, reason string) error {
+func (d *sqlDelivery) Reject(ctx context.Context, f failure.Failure) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -330,31 +373,37 @@ func (d *sqlDelivery) Reject(ctx context.Context, reason string) error {
 		return &ErrAlreadyAcknowledged{DeliveryID: d.deliveryID}
 	}
 
+	return d.deadLetter(ctx, f)
+}
+
+// deadLetter ends this delivery by moving the message to the DLQ with f
+// recorded against it, or by simply acking when no DLQ is configured — there
+// is nowhere else to put it, and leaving it would redeliver forever.
+//
+// Callers hold d.mu.
+func (d *sqlDelivery) deadLetter(ctx context.Context, f failure.Failure) error {
 	if d.dlqConfig.Enabled {
 		// Move to DLQ
 		if err := d.subscriber.messageStore.MoveToDLQ(
-			ctx, d.topic, d.partitionKey, d.messageID, d.attempt, reason, d.dlqConfig.TopicSuffix,
+			ctx, d.topic, d.partitionKey, d.messageID, d.attempt, f, d.dlqConfig.TopicSuffix,
 		); err != nil {
 			return fmt.Errorf("failed to move message to DLQ: %w", err)
 		}
+	}
 
-		// Mark as acked in delivery state. Watermark advancement is deferred
-		// to the poll loop, same as Ack.
-		if err := d.subscriber.deliveryStateStore.MarkAcked(ctx, d.consumerGroup, d.topic, d.partitionKey, d.offset); err != nil {
-			return fmt.Errorf("mark acked after DLQ move: %w", err)
-		}
-
-	} else {
-		// DLQ disabled — mark as acked (remove from processing).
-		// Watermark advancement is deferred to the poll loop, same as Ack.
-		if err := d.subscriber.deliveryStateStore.MarkAcked(ctx, d.consumerGroup, d.topic, d.partitionKey, d.offset); err != nil {
-			return err
-		}
-
+	// Mark as acked in delivery state. Watermark advancement is deferred
+	// to the poll loop, same as Ack.
+	if err := d.subscriber.deliveryStateStore.MarkAcked(ctx, d.consumerGroup, d.topic, d.partitionKey, d.offset); err != nil {
+		return fmt.Errorf("mark acked after DLQ move: %w", err)
 	}
 
 	d.acknowledged = true
 	return nil
+}
+
+// Failure implements extqueue.Delivery.Failure
+func (d *sqlDelivery) Failure() (failure.Failure, bool) {
+	return d.failure, d.failed
 }
 
 // ExtendVisibilityTimeout implements extqueue.Delivery.ExtendVisibilityTimeout
@@ -1037,8 +1086,15 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) (retErr error) {
 
 			// Move to DLQ if enabled — must succeed before marking acked,
 			// otherwise the message is lost from both main queue and DLQ.
+			//
+			// The reason is generic here because this path has no failing
+			// delivery to ask: Nack dead-letters the attempt that spends the
+			// budget, carrying the real reason, so reaching this point means
+			// the message never got that far — a crash, or a delivery whose
+			// visibility timeout expired unacked.
 			if cfg.DLQ.Enabled {
-				if err := s.messageStore.MoveToDLQ(ctx, sub.topic, partitionKey, row.ID, retryCount, "exceeded retry limit", cfg.DLQ.TopicSuffix); err != nil {
+				retryLimitFailure := failure.New("exceeded retry limit")
+				if err := s.messageStore.MoveToDLQ(ctx, sub.topic, partitionKey, row.ID, retryCount, retryLimitFailure, cfg.DLQ.TopicSuffix); err != nil {
 					return fmt.Errorf("move to DLQ message=%s: %w", row.ID, err)
 				}
 			}
@@ -1086,6 +1142,27 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) (retErr error) {
 			deliveryMetadata["dlq.original_topic"] = row.OriginalTopic
 		}
 
+		// Reassemble the failure recorded when this message was dead-lettered.
+		// A malformed detail column degrades to the message alone rather than
+		// failing the poll: a corrupt diagnostic must not stop delivery.
+		var (
+			rowFailure failure.Failure
+			failed     = row.FailedAt > 0
+		)
+		if failed {
+			decoded, err := failure.Decode(row.FailureDetail)
+			if err != nil {
+				s.logger.Warnw("ignoring unreadable failure detail on dlq message",
+					"topic", sub.topic,
+					"partition_key", partitionKey,
+					"message_id", row.ID,
+					"error", err,
+				)
+			}
+			decoded.Message = row.LastError
+			rowFailure = decoded
+		}
+
 		// Create SQL delivery implementation
 		delivery := newSQLDelivery(
 			msg,
@@ -1099,6 +1176,9 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) (retErr error) {
 			row.ID,
 			cfg.ConsumerGroup,
 			cfg.DLQ,
+			cfg.Retry,
+			rowFailure,
+			failed,
 		)
 
 		// Deliver message

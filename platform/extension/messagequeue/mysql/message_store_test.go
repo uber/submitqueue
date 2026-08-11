@@ -27,6 +27,7 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/uber/submitqueue/platform/base/failure"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 )
 
@@ -144,8 +145,8 @@ func TestMessageStore_FetchByOffset(t *testing.T) {
 	limit := 10
 
 	// Mock query results (no transaction, simple SELECT)
-	rows := sqlmock.NewRows([]string{"offset", "id", "payload", "metadata", "partition_key", "published_at", "failed_at", "failure_count", "last_error", "original_topic"}).
-		AddRow(int64(1), "msg1", []byte("payload1"), []byte("{}"), "part1", time.Now().UnixMilli(), int64(0), 0, "", "")
+	rows := sqlmock.NewRows([]string{"offset", "id", "payload", "metadata", "partition_key", "published_at", "failed_at", "failure_count", "last_error", "original_topic", "failure_detail"}).
+		AddRow(int64(1), "msg1", []byte("payload1"), []byte("{}"), "part1", time.Now().UnixMilli(), int64(0), 0, "", "", nil)
 
 	mock.ExpectQuery("SELECT (.+) FROM queue_messages").
 		WithArgs(topic, partitionKey, currentOffset, limit).
@@ -182,9 +183,11 @@ func TestMessageStore_MoveToDLQ(t *testing.T) {
 		WithArgs(topic, partitionKey, messageID).
 		WillReturnRows(rows)
 
-	// Expect insert into queue_messages with DLQ topic
+	// Expect insert into queue_messages with DLQ topic. The failure's message
+	// goes to last_error; failure_detail is NULL because this failure names no
+	// subjects — see TestMessageStore_MoveToDLQ_WritesFailureDetail.
 	mock.ExpectExec("INSERT INTO queue_messages").
-		WithArgs(dlqTopic, messageID, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), failureCount, lastError, topic).
+		WithArgs(dlqTopic, messageID, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), failureCount, lastError, topic, nil).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// Expect delete from main table (now includes partition_key in WHERE)
@@ -195,8 +198,38 @@ func TestMessageStore_MoveToDLQ(t *testing.T) {
 	// Expect commit
 	mock.ExpectCommit()
 
-	err := store.MoveToDLQ(ctx, topic, partitionKey, messageID, failureCount, lastError, dlqTopicSuffix)
+	err := store.MoveToDLQ(ctx, topic, partitionKey, messageID, failureCount, failure.New(lastError), dlqTopicSuffix)
 	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// The structured half of a failure is what lets a DLQ consumer act on the right
+// entity, so it has to reach the row rather than being flattened into prose.
+func TestMessageStore_MoveToDLQ_WritesFailureDetail(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	store := newMessageStore(db, zaptest.NewLogger(t).Sugar(), tally.NoopScope)
+
+	f := failure.New("speculator failed", failure.Subject{Type: "queue", ID: "test-queue"})
+	encoded, err := failure.Encode(f)
+	require.NoError(t, err)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT (.+) FROM queue_messages").
+		WithArgs("test_topic", "part1", "msg1").
+		WillReturnRows(sqlmock.NewRows([]string{"payload", "metadata", "partition_key", "created_at", "published_at"}).
+			AddRow([]byte("payload1"), nil, "part1", int64(1), int64(2)))
+	mock.ExpectExec("INSERT INTO queue_messages").
+		WithArgs("test_topic_dlq", "msg1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 3, "speculator failed", "test_topic", encoded).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("DELETE FROM queue_messages").
+		WithArgs("test_topic", "part1", "msg1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	require.NoError(t, store.MoveToDLQ(context.Background(), "test_topic", "part1", "msg1", 3, f, "_dlq"))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

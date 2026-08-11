@@ -12,6 +12,7 @@ go_test(
         "requires-network",
     ],
     deps = [
+        "//platform/base/failure:go_default_library",
         "//platform/base/messagequeue:go_default_library",
         "//platform/extension/messagequeue:go_default_library",
         "//platform/extension/messagequeue/mysql:go_default_library",
