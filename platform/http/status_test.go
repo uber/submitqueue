@@ -15,8 +15,10 @@
 package http
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -48,6 +50,17 @@ func TestNewStatusError(t *testing.T) {
 			assert.Equal(t, tt.want, err.Error())
 		})
 	}
+}
+
+func TestStatusError_RenderedBodyIsBounded(t *testing.T) {
+	body := bytes.Repeat([]byte("a"), _maxRenderedBodyBytes*4)
+	err := NewStatusError(502, body)
+
+	assert.Len(t, err.Body, _maxRenderedBodyBytes*4, "Body keeps what the caller passed")
+	rendered := err.Error()
+	assert.Less(t, len(rendered), _maxRenderedBodyBytes*2, "rendering must not grow with the body")
+	assert.Contains(t, rendered, "(truncated)")
+	assert.True(t, strings.HasPrefix(rendered, "unexpected status 502: aaa"))
 }
 
 func TestStatusError_SurvivesWrapping(t *testing.T) {

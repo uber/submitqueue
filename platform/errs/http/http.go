@@ -79,38 +79,26 @@ func (classifier) Classify(err error) errs.Verdict {
 	}
 
 	if ue, ok := err.(*url.Error); ok {
-		// A cancelled or expired context means we gave up, not that the remote
-		// end misbehaved: the deadline belongs to this process. Report Unknown
-		// so the walk continues into the cause, where the generic classifier
-		// picks up context.Canceled as plain retryable infra. That keeps
-		// shutdown noise out of the dependency-error metrics for this backend.
-		// Reading the Err field is not a chain walk, and declining here leaves
-		// the framework's walk free to reach that node.
-		//
-		// This covers the shape http.Client.Do produces for context failures. A
-		// context error buried under further transport wrapping falls through to
-		// the retryable dependency verdict below, which retries the same way and
-		// differs only in the dependency tag.
-		if ue.Err == context.Canceled || ue.Err == context.DeadlineExceeded {
+		// A cancelled context is ours, not theirs — process shutdown, or a parent
+		// operation that went away — so decline it and let the generic classifier
+		// claim context.Canceled as plain retryable infra, keeping shutdowns out
+		// of this backend's dependency metrics. An expired deadline is theirs:
+		// the remote end did not answer in time, so it takes the verdict below.
+		// Declining that one would strand it, since generic matches only Canceled.
+		if ue.Err == context.Canceled {
 			return errs.Unknown
 		}
-		// Anything else at this layer is a failure to complete an exchange with
-		// the remote end — reset connection, refused dial, DNS, TLS, client
-		// timeout. None of those say the request was invalid, so another attempt
-		// is worth making.
+		// Everything else at this layer is a failed exchange with the remote end,
+		// and none of those shapes says the request was invalid.
 		return errs.InfraDependencyRetryable
 	}
 
 	return errs.Unknown
 }
 
-// classifyStatusCode maps an HTTP status code to a Verdict.
-//
-// The split is whether the code describes the state of the server or a verdict
-// on the request. Server-state codes change on their own, so the same request
-// can succeed later. Request-verdict codes will not: replaying the request
-// reproduces the answer, and the message should dead-letter for a human or a
-// reconciler instead of retrying until it runs out of attempts.
+// classifyStatusCode maps an HTTP status code to a Verdict. The split is whether
+// the code describes the state of the server, which can change on its own, or a
+// verdict on the request, which replaying only reproduces.
 func classifyStatusCode(code int) errs.Verdict {
 	switch code {
 	case nethttp.StatusRequestTimeout, // 408 — the server stopped waiting; sending it again is reasonable.
@@ -130,7 +118,8 @@ func classifyStatusCode(code int) errs.Verdict {
 	}
 
 	// 4xx other than the two above, 3xx the client was not configured to follow,
-	// and anything else a caller chose to reject: a verdict on this request. Not
-	// retryable.
+	// and anything else a caller chose to reject — including a code that was
+	// never a response, such as 0: a verdict on the request, or on a malformed
+	// call. Neither changes on a second attempt.
 	return errs.InfraDependency
 }

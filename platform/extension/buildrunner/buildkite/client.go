@@ -66,6 +66,11 @@ type BuildResponse struct {
 }
 
 // CreateBuild creates a new Buildkite build.
+//
+// POST /builds is not idempotent and a rejection carries its status code like any
+// other, so a caller that retries a 502 can create a second build when the first
+// was already accepted. Callers that cannot tolerate that need their own
+// idempotency check.
 func (c *Client) CreateBuild(ctx context.Context, req CreateBuildRequest) (BuildResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {

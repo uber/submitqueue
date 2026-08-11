@@ -16,6 +16,12 @@ package http
 
 import "fmt"
 
+// _maxRenderedBodyBytes bounds how much of Body reaches Error(). The rendered
+// string lands in a consumer's dead-letter record, whose column is finite, so an
+// error page from a chatty gateway must not be able to fail that write. Body
+// itself is kept whole.
+const _maxRenderedBodyBytes = 1024
+
 // StatusError reports a response whose status code the caller rejected.
 //
 // SendRequest does not build this error itself: which codes count as success
@@ -35,7 +41,8 @@ type StatusError struct {
 	// StatusCode is the HTTP status code from the response.
 	StatusCode int
 	// Body is the response body as read from the wire, or empty when the
-	// caller had no body to attach.
+	// caller had no body to attach. Error() renders at most
+	// _maxRenderedBodyBytes of it.
 	Body string
 }
 
@@ -45,13 +52,17 @@ func NewStatusError(statusCode int, body []byte) *StatusError {
 	return &StatusError{StatusCode: statusCode, Body: string(body)}
 }
 
-// Error renders the status and, when present, the response body. Callers are
-// expected to wrap it with the operation that failed, giving messages like
-// "get build org/pipeline/builds/123: unexpected status 502: proxy forward
-// failed".
+// Error renders the status and, when present, the response body truncated to
+// _maxRenderedBodyBytes. Callers are expected to wrap it with the operation that
+// failed, giving messages like "get build org/pipeline/builds/123: unexpected
+// status 502: proxy forward failed".
 func (e *StatusError) Error() string {
 	if e.Body == "" {
 		return fmt.Sprintf("unexpected status %d", e.StatusCode)
 	}
-	return fmt.Sprintf("unexpected status %d: %s", e.StatusCode, e.Body)
+	body := e.Body
+	if len(body) > _maxRenderedBodyBytes {
+		body = body[:_maxRenderedBodyBytes] + "… (truncated)"
+	}
+	return fmt.Sprintf("unexpected status %d: %s", e.StatusCode, body)
 }

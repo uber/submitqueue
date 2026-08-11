@@ -54,6 +54,9 @@ func TestClassifier_StatusCodes(t *testing.T) {
 		{"not found", nethttp.StatusNotFound, errs.InfraDependency},
 		{"unprocessable entity", nethttp.StatusUnprocessableEntity, errs.InfraDependency},
 		{"unfollowed redirect", nethttp.StatusFound, errs.InfraDependency},
+
+		// Never a response: a caller built this from something else.
+		{"zero code", 0, errs.InfraDependency},
 	}
 
 	for _, tt := range tests {
@@ -87,9 +90,10 @@ func TestClassifier_TransportFailures(t *testing.T) {
 			want: errs.Unknown,
 		},
 		{
+			// Theirs, not ours: the remote end did not answer in time.
 			name: "context deadline exceeded",
 			err:  &url.Error{Op: "Get", URL: "http://api.example", Err: context.DeadlineExceeded},
-			want: errs.Unknown,
+			want: errs.InfraDependencyRetryable,
 		},
 	}
 
@@ -155,6 +159,13 @@ func TestClassifier_AppliedViaProcessor(t *testing.T) {
 		assert.False(t, errs.IsDependencyError(out))
 	})
 
+	t.Run("expired deadline is retryable without mysqlerrs claiming it", func(t *testing.T) {
+		err := fmt.Errorf("send: %w", &url.Error{Op: "Get", URL: "http://api.example", Err: context.DeadlineExceeded})
+		out := processor.Process(err)
+		assert.True(t, errs.IsRetryable(out))
+		assert.True(t, errs.IsDependencyError(out), "should be attributed to the HTTP dependency")
+	})
+
 	t.Run("a controller verdict wins over the classifier", func(t *testing.T) {
 		// Pass 1 of the processor short-circuits on the existing framework wrap,
 		// so a 502 a controller decided was fatal stays fatal.
@@ -163,4 +174,29 @@ func TestClassifier_AppliedViaProcessor(t *testing.T) {
 		assert.Same(t, err, out)
 		assert.False(t, errs.IsRetryable(out))
 	})
+}
+
+// TestClassifier_WithoutMySQLClassifier covers a service with no MySQL
+// dependency: no verdict here may rely on mysqlerrs' net.Error rule.
+func TestClassifier_WithoutMySQLClassifier(t *testing.T) {
+	processor := errs.NewClassifierProcessor(genericerrs.Classifier, Classifier)
+
+	tests := []struct {
+		name           string
+		cause          error
+		wantDependency bool
+	}{
+		{name: "connection reset", cause: errors.New("connection reset by peer"), wantDependency: true},
+		{name: "expired deadline", cause: context.DeadlineExceeded, wantDependency: true},
+		{name: "our cancellation", cause: context.Canceled, wantDependency: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := fmt.Errorf("send: %w", &url.Error{Op: "Get", URL: "http://api.example", Err: tt.cause})
+			out := processor.Process(err)
+			assert.True(t, errs.IsRetryable(out), "must not depend on mysqlerrs being wired")
+			assert.Equal(t, tt.wantDependency, errs.IsDependencyError(out))
+		})
+	}
 }
