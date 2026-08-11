@@ -101,7 +101,9 @@ func TestProcess(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "accepted request is marked failed",
+			// No queue expectations: an accepted request never claimed a slot,
+			// so releasing one here would over-admit against MaxConcurrent.
+			name: "accepted request is marked failed without releasing a slot",
 			setup: func(m dlqMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateAccepted), nil)
 				updated := requestWithState(entity.RequestStateAccepted)
