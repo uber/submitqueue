@@ -27,6 +27,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/uber/submitqueue/platform/errs"
+	httperrs "github.com/uber/submitqueue/platform/errs/http"
 	platformbuildkite "github.com/uber/submitqueue/platform/extension/buildrunner/buildkite"
 	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/stovepipe/entity"
@@ -118,6 +120,37 @@ func TestTrigger_BuildkiteError_ReturnsError(t *testing.T) {
 
 	_, err := r.Trigger(context.Background(), "", "github://repo/head/aaa", nil)
 	require.Error(t, err)
+}
+
+// TestTrigger_RetryabilityByStatus pins which create failures may be replayed. A
+// code that Buildkite could have answered after creating the build must not be,
+// because Trigger has no dedup key and the retry would start a second build.
+func TestTrigger_RetryabilityByStatus(t *testing.T) {
+	processor := errs.NewClassifierProcessor(httperrs.Classifier)
+
+	tests := []struct {
+		status        int
+		wantRetryable bool
+	}{
+		{status: http.StatusInternalServerError},
+		{status: http.StatusBadGateway},
+		{status: http.StatusGatewayTimeout},
+		{status: http.StatusServiceUnavailable, wantRetryable: true},
+		{status: http.StatusTooManyRequests, wantRetryable: true},
+		{status: http.StatusBadRequest},
+	}
+
+	for _, tt := range tests {
+		t.Run(http.StatusText(tt.status), func(t *testing.T) {
+			r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.status)
+			}))
+
+			_, err := r.Trigger(context.Background(), "", "github://repo/head/aaa", nil)
+			require.Error(t, err)
+			assert.Equal(t, tt.wantRetryable, errs.IsRetryable(processor.Process(err)))
+		})
+	}
 }
 
 func TestTrigger_WithMetadata_SetsEnvVar(t *testing.T) {

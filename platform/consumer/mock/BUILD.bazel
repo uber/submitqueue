@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/platform/consumer/mock",
     visibility = ["//visibility:public"],
     deps = [
+        "//platform/base/failure:go_default_library",
         "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
         "@org_uber_go_mock//gomock:go_default_library",

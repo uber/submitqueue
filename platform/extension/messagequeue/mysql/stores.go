@@ -19,6 +19,7 @@ package mysql
 import (
 	"context"
 
+	"github.com/uber/submitqueue/platform/base/failure"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 )
 
@@ -53,6 +54,10 @@ type messageRow struct {
 	LastError string
 	// OriginalTopic is the topic where the message originally failed ("" for normal messages)
 	OriginalTopic string
+	// FailureDetail is the encoded structured half of the failure — its
+	// subjects and free-form context. Empty for normal messages, and for a DLQ
+	// message whose failure recorded no structure.
+	FailureDetail []byte
 }
 
 // messageStore handles message table operations (internal use only)
@@ -69,7 +74,9 @@ type messageStore interface {
 
 	// MoveToDLQ moves a message to the dead letter queue
 	// dlqTopicSuffix is appended to the original topic to form the DLQ topic name
-	MoveToDLQ(ctx context.Context, topic string, partitionKey string, messageID string, failureCount int, lastError string, dlqTopicSuffix string) error
+	// f is split across the row: its message into last_error, its structured
+	// half into failure_detail.
+	MoveToDLQ(ctx context.Context, topic string, partitionKey string, messageID string, failureCount int, f failure.Failure, dlqTopicSuffix string) error
 
 	// GarbageCollect deletes messages with offset <= minAckedOffset.
 	// The caller (subscriber) is responsible for computing minAckedOffset from the

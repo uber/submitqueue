@@ -13,6 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
+	failure "github.com/uber/submitqueue/platform/base/failure"
 	messagequeue "github.com/uber/submitqueue/platform/base/messagequeue"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -115,17 +116,17 @@ func (mr *MockmessageStoreMockRecorder) Insert(ctx, topic, messages any) *gomock
 }
 
 // MoveToDLQ mocks base method.
-func (m *MockmessageStore) MoveToDLQ(ctx context.Context, topic, partitionKey, messageID string, failureCount int, lastError, dlqTopicSuffix string) error {
+func (m *MockmessageStore) MoveToDLQ(ctx context.Context, topic, partitionKey, messageID string, failureCount int, f failure.Failure, dlqTopicSuffix string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MoveToDLQ", ctx, topic, partitionKey, messageID, failureCount, lastError, dlqTopicSuffix)
+	ret := m.ctrl.Call(m, "MoveToDLQ", ctx, topic, partitionKey, messageID, failureCount, f, dlqTopicSuffix)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // MoveToDLQ indicates an expected call of MoveToDLQ.
-func (mr *MockmessageStoreMockRecorder) MoveToDLQ(ctx, topic, partitionKey, messageID, failureCount, lastError, dlqTopicSuffix any) *gomock.Call {
+func (mr *MockmessageStoreMockRecorder) MoveToDLQ(ctx, topic, partitionKey, messageID, failureCount, f, dlqTopicSuffix any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveToDLQ", reflect.TypeOf((*MockmessageStore)(nil).MoveToDLQ), ctx, topic, partitionKey, messageID, failureCount, lastError, dlqTopicSuffix)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MoveToDLQ", reflect.TypeOf((*MockmessageStore)(nil).MoveToDLQ), ctx, topic, partitionKey, messageID, failureCount, f, dlqTopicSuffix)
 }
 
 // MockoffsetStore is a mock of offsetStore interface.

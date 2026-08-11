@@ -66,6 +66,11 @@ type BuildResponse struct {
 }
 
 // CreateBuild creates a new Buildkite build.
+//
+// POST /builds is not idempotent and a rejection carries its status code like any
+// other, so a caller that retries a 502 can create a second build when the first
+// was already accepted. Callers that cannot tolerate that need their own
+// idempotency check.
 func (c *Client) CreateBuild(ctx context.Context, req CreateBuildRequest) (BuildResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -105,7 +110,7 @@ func (c *Client) CancelBuild(ctx context.Context, number int) error {
 		// Already terminal — no-op per BuildRunner.Cancel contract.
 		return nil
 	default:
-		return fmt.Errorf("unexpected status %d from cancel: %s", status, respBody)
+		return fmt.Errorf("cancel build: %w", phttp.NewStatusError(status, respBody))
 	}
 }
 
@@ -122,7 +127,9 @@ func (c *Client) do(ctx context.Context, method, rawURL string, body []byte, out
 		return ErrNotFound
 	}
 	if status < 200 || status >= 300 {
-		return fmt.Errorf("API returned status %d: %s", status, respBody)
+		// Typed rather than formatted so platform/errs/http can read the code
+		// and tell a transient 502 from a permanent 400.
+		return phttp.NewStatusError(status, respBody)
 	}
 
 	if out != nil {

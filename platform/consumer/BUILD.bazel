@@ -10,6 +10,7 @@ go_library(
     importpath = "github.com/uber/submitqueue/platform/consumer",
     visibility = ["//visibility:public"],
     deps = [
+        "//platform/base/failure:go_default_library",
         "//platform/base/messagequeue:go_default_library",
         "//platform/errs:go_default_library",
         "//platform/extension/consumergate:go_default_library",
@@ -28,6 +29,7 @@ go_test(
     ],
     embed = [":go_default_library"],
     deps = [
+        "//platform/base/failure:go_default_library",
         "//platform/base/messagequeue:go_default_library",
         "//platform/errs:go_default_library",
         "//platform/extension/consumergate:go_default_library",

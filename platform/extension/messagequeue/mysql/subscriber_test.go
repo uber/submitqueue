@@ -27,9 +27,21 @@ import (
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/uber/submitqueue/platform/base/failure"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 )
+
+// newDeliveryForTest builds a delivery against the standard fixture message,
+// so a test only names the parts it cares about.
+func newDeliveryForTest(sub *subscriber, attempt int, dlq extqueue.DLQConfig, retry extqueue.RetryConfig) *sqlDelivery {
+	msg := entityqueue.NewMessage("msg-1", []byte("payload"), "part-1", nil)
+	return newSQLDelivery(
+		msg, "1", attempt, nil,
+		sub, "test_topic", "part-1", 100, "msg-1", "test-group",
+		dlq, retry, failure.Failure{}, false,
+	)
+}
 
 func testSubscriptionConfig() extqueue.SubscriptionConfig {
 	return extqueue.DefaultSubscriptionConfig("test-subscriber", "test-consumer")
@@ -163,12 +175,7 @@ func TestSQLDelivery_Ack(t *testing.T) {
 				mockDeliveryState,
 			)
 
-			msg := entityqueue.NewMessage("msg-1", []byte("payload"), "part-1", nil)
-			d := newSQLDelivery(
-				msg, "1", 1, nil,
-				sub, "test_topic", "part-1", 100, "msg-1", "test-group",
-				extqueue.DLQConfig{},
-			)
+			d := newDeliveryForTest(sub, 1, extqueue.DLQConfig{}, extqueue.RetryConfig{})
 
 			if tt.alreadyAcked {
 				d.acknowledged = true
@@ -235,12 +242,7 @@ func TestSQLDelivery_Postpone(t *testing.T) {
 				mockDeliveryState,
 			)
 
-			msg := entityqueue.NewMessage("msg-1", []byte("payload"), "part-1", nil)
-			d := newSQLDelivery(
-				msg, "1", 1, nil,
-				sub, "test_topic", "part-1", 100, "msg-1", "test-group",
-				extqueue.DLQConfig{},
-			)
+			d := newDeliveryForTest(sub, 1, extqueue.DLQConfig{}, extqueue.RetryConfig{})
 
 			if tt.alreadyAcked {
 				d.acknowledged = true
@@ -318,17 +320,12 @@ func TestSQLDelivery_Reject(t *testing.T) {
 				mockDeliveryState,
 			)
 
-			msg := entityqueue.NewMessage("msg-1", []byte("payload"), "part-1", nil)
 			dlqConfig := extqueue.DLQConfig{
 				Enabled:     tt.dlqEnabled,
 				TopicSuffix: "_dlq",
 			}
 
-			d := newSQLDelivery(
-				msg, "1", 1, nil,
-				sub, "test_topic", "part-1", 100, "msg-1", "test-group",
-				dlqConfig,
-			)
+			d := newDeliveryForTest(sub, 1, dlqConfig, extqueue.RetryConfig{})
 
 			if tt.alreadyAcked {
 				d.acknowledged = true
@@ -336,7 +333,7 @@ func TestSQLDelivery_Reject(t *testing.T) {
 
 			if tt.expectMoveDLQ {
 				mockMsgStore.EXPECT().MoveToDLQ(
-					gomock.Any(), "test_topic", "part-1", "msg-1", 1, "bad payload", "_dlq",
+					gomock.Any(), "test_topic", "part-1", "msg-1", 1, failure.New("bad payload"), "_dlq",
 				).Return(tt.moveToDLQErr)
 
 				if tt.moveToDLQErr == nil {
@@ -352,7 +349,7 @@ func TestSQLDelivery_Reject(t *testing.T) {
 				).Return(nil)
 			}
 
-			err := d.Reject(context.Background(), "bad payload")
+			err := d.Reject(context.Background(), failure.New("bad payload"))
 
 			if tt.expectErr {
 				require.Error(t, err)
@@ -363,6 +360,94 @@ func TestSQLDelivery_Reject(t *testing.T) {
 			assert.True(t, d.acknowledged)
 		})
 	}
+}
+
+// A nack that spends the last of the retry budget dead-letters here, with the
+// reason it was given. Left to the poll loop, the message would be
+// dead-lettered on the next round with a generic reason and this one lost.
+//
+// The boundary matters as much as the behaviour: dead-lettering one attempt too
+// early would silently cost every message a retry.
+func TestSQLDelivery_NackDeadLettersWhenBudgetSpent(t *testing.T) {
+	tests := []struct {
+		name        string
+		attempt     int
+		maxAttempts int
+		wantDLQ     bool
+	}{
+		{name: "budget remaining", attempt: 1, maxAttempts: 3},
+		{name: "one attempt left", attempt: 2, maxAttempts: 3},
+		{name: "final attempt dead-letters", attempt: 3, maxAttempts: 3, wantDLQ: true},
+		{name: "single-attempt budget dead-letters at once", attempt: 1, maxAttempts: 1, wantDLQ: true},
+		// A zero budget is not "dead-letter immediately" — it is unconfigured,
+		// and the poll loop still governs.
+		{name: "unset budget never dead-letters here", attempt: 9, maxAttempts: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockMsgStore := NewMockmessageStore(ctrl)
+			mockDeliveryState := NewMockdeliveryStateStore(ctrl)
+
+			sub := NewSubscriber(
+				zaptest.NewLogger(t).Sugar(),
+				tally.NoopScope,
+				mockMsgStore,
+				NewMockoffsetStore(ctrl),
+				NewMockpartitionLeaseStore(ctrl),
+				newTestHeartbeatStore(ctrl),
+				mockDeliveryState,
+			)
+
+			dlqConfig := extqueue.DLQConfig{Enabled: true, TopicSuffix: "_dlq"}
+			d := newDeliveryForTest(sub, tt.attempt, dlqConfig, extqueue.RetryConfig{MaxAttempts: tt.maxAttempts})
+
+			f := failure.New("boom", failure.Subject{Type: "batch", ID: "q/batch/1"})
+
+			if tt.wantDLQ {
+				mockMsgStore.EXPECT().MoveToDLQ(
+					gomock.Any(), "test_topic", "part-1", "msg-1", tt.attempt, f, "_dlq",
+				).Return(nil)
+				mockDeliveryState.EXPECT().MarkAcked(
+					gomock.Any(), "test-group", "test_topic", "part-1", int64(100),
+				).Return(nil)
+			} else {
+				mockDeliveryState.EXPECT().MarkNacked(
+					gomock.Any(), "test-group", "test_topic", "part-1", int64(100),
+				).Return(nil)
+			}
+
+			require.NoError(t, d.Nack(context.Background(), f))
+			assert.True(t, d.acknowledged)
+		})
+	}
+}
+
+// A message arriving from its original topic has no failure to report, which is
+// how a DLQ consumer tells "nothing recorded" apart from a recorded failure
+// that named nothing.
+func TestSQLDelivery_FailureAbsentOnNormalDelivery(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	sub := NewSubscriber(
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+		NewMockmessageStore(ctrl),
+		NewMockoffsetStore(ctrl),
+		NewMockpartitionLeaseStore(ctrl),
+		newTestHeartbeatStore(ctrl),
+		NewMockdeliveryStateStore(ctrl),
+	)
+
+	d := newDeliveryForTest(sub, 1, extqueue.DLQConfig{}, extqueue.RetryConfig{})
+
+	got, failed := d.Failure()
+	assert.False(t, failed)
+	assert.Equal(t, failure.Failure{}, got)
 }
 
 // TestSubscriber_Close tests subscriber close behavior

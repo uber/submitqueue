@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/platform/base/failure"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/extension/consumergate"
@@ -115,11 +116,11 @@ func setupDelivery(del *queuemock.MockDelivery, msg entityqueue.Message, ackErr,
 		close(done)
 		return ackErr
 	}).MaxTimes(1)
-	del.EXPECT().Nack(gomock.Any()).DoAndReturn(func(ctx context.Context) error {
+	del.EXPECT().Nack(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, _ failure.Failure) error {
 		close(done)
 		return nackErr
 	}).MaxTimes(1)
-	del.EXPECT().Reject(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, reason string) error {
+	del.EXPECT().Reject(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, _ failure.Failure) error {
 		close(done)
 		return nil
 	}).MaxTimes(1)
@@ -458,7 +459,7 @@ func TestConsumer_ProcessDelivery_Hold(t *testing.T) {
 					return tt.postponeErr
 				})
 			case "nack":
-				mockDel.EXPECT().Nack(gomock.Any()).DoAndReturn(func(ctx context.Context) error {
+				mockDel.EXPECT().Nack(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, _ failure.Failure) error {
 					close(done)
 					return nil
 				})
@@ -515,7 +516,7 @@ func TestConsumer_ProcessDelivery_NonRetryableError(t *testing.T) {
 	mockDel.EXPECT().ReceivedAt().Return(time.Now().UnixMilli()).AnyTimes()
 	mockDel.EXPECT().Metadata().Return(nil).AnyTimes()
 	mockDel.EXPECT().DeliveryID().Return(msg.ID).AnyTimes()
-	mockDel.EXPECT().Reject(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, reason string) error {
+	mockDel.EXPECT().Reject(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, _ failure.Failure) error {
 		close(done)
 		return nil
 	}).Times(1)
@@ -525,6 +526,87 @@ func TestConsumer_ProcessDelivery_NonRetryableError(t *testing.T) {
 
 	err = c.Stop(30000)
 	require.NoError(t, err)
+}
+
+// The failure handed to the queue is built from whatever the controller
+// attributed, and a controller that attributes nothing must still produce
+// exactly what callers sent before failures carried structure: the error text
+// and nothing else.
+func TestConsumer_ProcessDelivery_FailureFromControllerError(t *testing.T) {
+	tests := []struct {
+		name         string
+		controllerFn func(ctx context.Context, delivery Delivery) error
+		wantMessage  string
+		wantSubjects []failure.Subject
+	}{
+		{
+			name: "unattributed error carries only its message",
+			controllerFn: func(ctx context.Context, delivery Delivery) error {
+				return fmt.Errorf("bad payload")
+			},
+			wantMessage: "bad payload",
+		},
+		{
+			name: "attributed error carries its subjects",
+			controllerFn: func(ctx context.Context, delivery Delivery) error {
+				return errs.Attribute(
+					fmt.Errorf("speculator failed"),
+					failure.Subject{Type: "queue", ID: "test-queue"},
+				)
+			},
+			wantMessage:  "speculator failed",
+			wantSubjects: []failure.Subject{{Type: "queue", ID: "test-queue"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			logger := zaptest.NewLogger(t).Sugar()
+
+			deliveryChan := make(chan extqueue.Delivery, 1)
+			mockSub := queuemock.NewMockSubscriber(ctrl)
+			mockSub.EXPECT().Subscribe(gomock.Any(), gomock.Any(), gomock.Any()).Return(deliveryChan, nil)
+
+			mockQ := queuemock.NewMockQueue(ctrl)
+			mockQ.EXPECT().Subscriber().Return(mockSub)
+
+			reg := newRegistry(t, mockQ, testTopicKeyStart, "test-group")
+			c := New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor(), consumergatenoop.New())
+
+			handler := &testController{}
+			setupController(handler, "test-handler", testTopicKeyStart, "test-group", tt.controllerFn)
+			require.NoError(t, c.Register(handler))
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			require.NoError(t, c.Start(ctx))
+
+			msg := entityqueue.NewMessage("msg-1", []byte("bad"), "partition1", nil)
+			done := make(chan struct{})
+			var got failure.Failure
+
+			mockDel := queuemock.NewMockDelivery(ctrl)
+			mockDel.EXPECT().Message().Return(msg).AnyTimes()
+			mockDel.EXPECT().Attempt().Return(1).AnyTimes()
+			mockDel.EXPECT().ReceivedAt().Return(time.Now().UnixMilli()).AnyTimes()
+			mockDel.EXPECT().Metadata().Return(nil).AnyTimes()
+			mockDel.EXPECT().DeliveryID().Return(msg.ID).AnyTimes()
+			mockDel.EXPECT().Reject(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, f failure.Failure) error {
+				got = f
+				close(done)
+				return nil
+			}).Times(1)
+
+			deliveryChan <- mockDel
+			<-done
+
+			assert.Equal(t, tt.wantMessage, got.Message)
+			assert.Equal(t, tt.wantSubjects, got.Subjects)
+
+			require.NoError(t, c.Stop(30000))
+		})
+	}
 }
 
 func TestConsumer_Stop(t *testing.T) {
@@ -922,7 +1004,7 @@ func TestConsumer_PerPartitionProcessing(t *testing.T) {
 	mockDelA.EXPECT().Metadata().Return(nil).AnyTimes()
 	mockDelA.EXPECT().DeliveryID().Return(msgA.ID).AnyTimes()
 	mockDelA.EXPECT().Ack(gomock.Any()).Return(nil).MaxTimes(1)
-	mockDelA.EXPECT().Nack(gomock.Any()).Return(nil).MaxTimes(1)
+	mockDelA.EXPECT().Nack(gomock.Any(), gomock.Any()).Return(nil).MaxTimes(1)
 
 	deliveryChan <- mockDelA
 

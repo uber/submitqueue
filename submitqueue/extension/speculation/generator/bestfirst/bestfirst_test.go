@@ -381,15 +381,61 @@ func TestBestFirst_HeadWithNoDependencies(t *testing.T) {
 	assert.InDelta(t, math.Log(1.0), cands[0].RankingScore, 1e-9)
 }
 
-func TestBestFirst_PropagatesScorerError(t *testing.T) {
+// A scorer that cannot price a dependency costs that dependency its estimate,
+// nothing more. The queue keeps every candidate it had, ranked as if the
+// dependency were very likely to succeed.
+func TestBestFirst_AbsorbsScorerError(t *testing.T) {
 	batches := []entity.Batch{
 		{ID: "q/A", State: entity.BatchStateSpeculating},
 		{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/A"}},
 	}
 
 	iter, err := New(errScorer{}).Generate(context.Background(), batches)
-	assert.Error(t, err)
-	assert.Nil(t, iter)
+	require.NoError(t, err)
+
+	cands := forHead(drainAll(t, iter), "q/H")
+	require.Len(t, cands, 2)
+	assert.Equal(t, entity.DependencyAssumptionSucceeds, assumptionFor(cands[0].Path, "q/A"))
+	assert.InDelta(t, math.Log(defaultProbability), cands[0].RankingScore, 1e-9)
+}
+
+// A dependency the snapshot never carried is unpriceable, not cheap: the zero
+// batch it would resolve to belongs to no queue, so it must never reach the
+// scorer.
+func TestBestFirst_NeverScoresAnAbsentDependency(t *testing.T) {
+	batches := []entity.Batch{
+		{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/missing"}},
+	}
+	sc := newCountingScorer(map[string]float64{})
+
+	iter, err := New(sc).Generate(context.Background(), batches)
+	require.NoError(t, err)
+
+	cands := drainAll(t, iter)
+	require.Len(t, cands, 2, "the absent dependency is still an open question with two sides")
+	assert.Zero(t, sc.total, "the scorer is never handed a batch the snapshot did not carry")
+	assert.InDelta(t, math.Log(defaultProbability), cands[0].RankingScore, 1e-9)
+}
+
+// A merging dependency is still in progress — the merge can fail — so it stays
+// an open question here like any other. Whether a path betting against it is
+// worth funding is a matter of price, which is the scorer's to say, not a
+// state the search hard-codes.
+func TestBestFirst_MergingDependencyStaysOpen(t *testing.T) {
+	batches := []entity.Batch{
+		{ID: "q/landing", State: entity.BatchStateMerging},
+		{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/landing"}},
+	}
+	sc := newCountingScorer(map[string]float64{"q/landing": 0.9})
+
+	iter, err := New(sc).Generate(context.Background(), batches)
+	require.NoError(t, err)
+	cands := drainAll(t, iter)
+
+	assert.Equal(t, 1, sc.calls["q/landing"], "a merging dependency is priced like any other")
+	require.Len(t, cands, 2, "both sides of a merge that has not landed yet")
+	assert.Equal(t, entity.DependencyAssumptionSucceeds, assumptionFor(cands[0].Path, "q/landing"))
+	assert.Equal(t, entity.DependencyAssumptionFails, assumptionFor(cands[1].Path, "q/landing"))
 }
 
 func TestBestFirst_GeneratesOnlyWhatIsPulled(t *testing.T) {
@@ -774,6 +820,28 @@ func TestBestFirst_HonorsCancelledContext(t *testing.T) {
 		assert.False(t, ok)
 		assert.Equal(t, entity.CandidatePath{}, c)
 	})
+
+	t.Run("a scorer that fails on a dead context ends the run", func(t *testing.T) {
+		// The loop checks ctx before each call, so a context that dies during
+		// the LAST call is the one it cannot catch — and absorbing that as an
+		// unpriceable dependency would hand an iterator back to a caller that
+		// has already gone.
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		iter, err := New(cancellingScorer{cancel: cancel}).Generate(ctx, batches)
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Nil(t, iter)
+	})
+}
+
+// cancellingScorer kills the context and then fails, the way a scorer whose
+// own call was cancelled would.
+type cancellingScorer struct{ cancel context.CancelFunc }
+
+func (s cancellingScorer) Score(context.Context, entity.Batch) (float64, error) {
+	s.cancel()
+	return 0, context.Canceled
 }
 
 func TestBestFirst_DefaultsScoreOutsideUnitInterval(t *testing.T) {

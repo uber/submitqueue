@@ -19,6 +19,7 @@ package messagequeue
 import (
 	"context"
 
+	"github.com/uber/submitqueue/platform/base/failure"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 )
 
@@ -39,7 +40,12 @@ type Delivery interface {
 	// The message is requeued for redelivery immediately; the visibility
 	// timeout is what spaces retries (a crash or missed ack redelivers on the
 	// same schedule). The redelivery counts toward the failure budget.
-	Nack(ctx context.Context) error
+	//
+	// f describes the failure. It is carried so that the redelivery which
+	// finally exhausts the budget can dead-letter with the reason that caused
+	// it, rather than with a generic one — a nack whose reason is dropped
+	// leaves the eventual dead letter unable to say what went wrong.
+	Nack(ctx context.Context, f failure.Failure) error
 
 	// Postpone finishes this delivery as "processed successfully, redeliver
 	// later": the message becomes invisible for delayMs and acts as a barrier —
@@ -51,9 +57,10 @@ type Delivery interface {
 
 	// Reject moves the message to the dead letter entityqueue.
 	// Use for poison pill messages that should never be retried.
-	// reason is stored as last_error in the DLQ for debugging.
+	// f is recorded with the dead-lettered message for diagnosis and is what
+	// Failure returns when it is redelivered from the DLQ.
 	// If DLQ is not configured, the message is acked (removed from queue).
-	Reject(ctx context.Context, reason string) error
+	Reject(ctx context.Context, f failure.Failure) error
 
 	// ExtendVisibilityTimeout extends the time before this message becomes
 	// visible to other consumers. Use when processing takes longer than expected.
@@ -71,4 +78,10 @@ type Delivery interface {
 
 	// Metadata returns backend-specific delivery metadata.
 	Metadata() map[string]string
+
+	// Failure returns why this message was dead-lettered, and whether it was
+	// dead-lettered at all. It reports false for a message delivered from its
+	// original topic, so a DLQ consumer can distinguish "no failure recorded"
+	// from a failure that recorded nothing.
+	Failure() (failure.Failure, bool)
 }

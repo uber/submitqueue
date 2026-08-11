@@ -13,6 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
+	failure "github.com/uber/submitqueue/platform/base/failure"
 	messagequeue "github.com/uber/submitqueue/platform/base/messagequeue"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -97,6 +98,21 @@ func (mr *MockDeliveryMockRecorder) ExtendVisibilityTimeout(ctx, durationMillis 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtendVisibilityTimeout", reflect.TypeOf((*MockDelivery)(nil).ExtendVisibilityTimeout), ctx, durationMillis)
 }
 
+// Failure mocks base method.
+func (m *MockDelivery) Failure() (failure.Failure, bool) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Failure")
+	ret0, _ := ret[0].(failure.Failure)
+	ret1, _ := ret[1].(bool)
+	return ret0, ret1
+}
+
+// Failure indicates an expected call of Failure.
+func (mr *MockDeliveryMockRecorder) Failure() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Failure", reflect.TypeOf((*MockDelivery)(nil).Failure))
+}
+
 // Message mocks base method.
 func (m *MockDelivery) Message() messagequeue.Message {
 	m.ctrl.T.Helper()
@@ -126,17 +142,17 @@ func (mr *MockDeliveryMockRecorder) Metadata() *gomock.Call {
 }
 
 // Nack mocks base method.
-func (m *MockDelivery) Nack(ctx context.Context) error {
+func (m *MockDelivery) Nack(ctx context.Context, f failure.Failure) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Nack", ctx)
+	ret := m.ctrl.Call(m, "Nack", ctx, f)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Nack indicates an expected call of Nack.
-func (mr *MockDeliveryMockRecorder) Nack(ctx any) *gomock.Call {
+func (mr *MockDeliveryMockRecorder) Nack(ctx, f any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Nack", reflect.TypeOf((*MockDelivery)(nil).Nack), ctx)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Nack", reflect.TypeOf((*MockDelivery)(nil).Nack), ctx, f)
 }
 
 // Postpone mocks base method.
@@ -168,15 +184,15 @@ func (mr *MockDeliveryMockRecorder) ReceivedAt() *gomock.Call {
 }
 
 // Reject mocks base method.
-func (m *MockDelivery) Reject(ctx context.Context, reason string) error {
+func (m *MockDelivery) Reject(ctx context.Context, f failure.Failure) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Reject", ctx, reason)
+	ret := m.ctrl.Call(m, "Reject", ctx, f)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Reject indicates an expected call of Reject.
-func (mr *MockDeliveryMockRecorder) Reject(ctx, reason any) *gomock.Call {
+func (mr *MockDeliveryMockRecorder) Reject(ctx, f any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Reject", reflect.TypeOf((*MockDelivery)(nil).Reject), ctx, reason)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Reject", reflect.TypeOf((*MockDelivery)(nil).Reject), ctx, f)
 }

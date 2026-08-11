@@ -33,11 +33,15 @@ package buildkite
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 
 	"go.uber.org/zap"
 
+	"github.com/uber/submitqueue/platform/errs"
 	platformbuildkite "github.com/uber/submitqueue/platform/extension/buildrunner/buildkite"
+	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
 )
@@ -123,7 +127,16 @@ func (r *runner) Trigger(ctx context.Context, baseURI, headURI string, metadata 
 
 	resp, err := r.client.CreateBuild(ctx, req)
 	if err != nil {
-		return entity.BuildID{}, fmt.Errorf("buildkite: create build: %w", err)
+		err = fmt.Errorf("buildkite: create build: %w", err)
+		// Don't retry on error codes that may have been answered after the build was created.
+		var se *phttp.StatusError
+		if errors.As(err, &se) {
+			switch se.StatusCode {
+			case http.StatusInternalServerError, http.StatusBadGateway, http.StatusGatewayTimeout:
+				return entity.BuildID{}, errs.NewDependencyError(err)
+			}
+		}
+		return entity.BuildID{}, err
 	}
 
 	r.logger.Debugw("triggered Buildkite build",
