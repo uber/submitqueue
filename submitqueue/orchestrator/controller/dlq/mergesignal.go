@@ -81,6 +81,7 @@ func (c *mergeSignalController) Process(ctx context.Context, delivery consumer.D
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", result.GetQueueName(), err)
 	}
 
+	lastError, failureMeta := failureContext(delivery)
 	dmeta := delivery.Metadata()
 	c.logger.Warnw("dlq message received",
 		"batch_id", result.Id,
@@ -90,7 +91,7 @@ func (c *mergeSignalController) Process(ctx context.Context, delivery consumer.D
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
 
-	if err := failBatch(ctx, store, c.registry, c.logger, result.Id, dmeta["dlq.last_error"]); err != nil {
+	if _, err := failBatch(ctx, store, c.registry, c.logger, result.Id, lastError, failureMeta); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
 		return err
 	}

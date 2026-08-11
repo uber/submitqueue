@@ -24,11 +24,13 @@ go_library(
         "request_log.go",
         "request_summary.go",
         "speculation.go",
+        "subject.go",
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/entity",
     visibility = ["//visibility:public"],
     deps = [
         "//platform/base/change:go_default_library",
+        "//platform/base/failure:go_default_library",
         "//platform/base/mergestrategy:go_default_library",
     ],
 )

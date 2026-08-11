@@ -129,6 +129,7 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", rid.Queue, err)
 	}
 
+	lastError, failureMeta := failureContext(delivery)
 	dmeta := delivery.Metadata()
 	c.logger.Warnw("dlq message received",
 		"request_id", rid.ID,
@@ -138,7 +139,7 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
 
-	if err := failRequest(ctx, store, c.registry, c.logger, rid.ID, dmeta["dlq.last_error"]); err != nil {
+	if err := failRequest(ctx, store, c.registry, c.logger, rid.ID, lastError, failureMeta); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
 		return err
 	}

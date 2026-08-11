@@ -90,6 +90,7 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", buildID.Queue, err)
 	}
 
+	lastError, failureMeta := failureContext(delivery)
 	dmeta := delivery.Metadata()
 	c.logger.Warnw("dlq message received",
 		"build_id", buildID.ID,
@@ -121,7 +122,7 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 		return nil
 	}
 
-	if err := failBatch(ctx, store, c.registry, c.logger, build.BatchID, dmeta["dlq.last_error"]); err != nil {
+	if _, err := failBatch(ctx, store, c.registry, c.logger, build.BatchID, lastError, failureMeta); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "reconcile_errors", 1)
 		return err
 	}

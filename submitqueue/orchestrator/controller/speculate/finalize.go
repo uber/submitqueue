@@ -197,13 +197,20 @@ func (c *Controller) commitOutcome(ctx context.Context, snap *snapshot, batch en
 				snap.markClean(batch.ID)
 				return false, nil
 			}
-			return false, err
+			return false, c.attributed(err, entity.BatchSubject(batch.ID))
 		}
 		snap.pathSets[batch.ID] = stored
 		snap.markClean(batch.ID)
 	}
 
-	return c.applyOutcome(ctx, snap.store, batch, decision, snap.isTrigger(batch.ID))
+	// Attributed here rather than at each leaf: this is the one place that
+	// knows which batch the whole commit is for, and the finalize loop runs it
+	// over every decided batch in the queue — rarely the one on the message.
+	landed, err := c.applyOutcome(ctx, snap.store, batch, decision, snap.isTrigger(batch.ID))
+	if err != nil {
+		return landed, c.attributed(err, entity.BatchSubject(batch.ID))
+	}
+	return landed, nil
 }
 
 // recordOutcome writes an outcome's terminal state back into the snapshot so

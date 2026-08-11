@@ -77,7 +77,8 @@ func (c *Controller) read(ctx context.Context, store storage.Storage, queue stri
 	inFlight, err := corebatch.ListByStates(ctx, store, entity.ActiveBatchStates())
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-		return snapshot{}, fmt.Errorf("failed to list in-flight batches of queue %s: %w", queue, err)
+		return snapshot{}, c.attributed(fmt.Errorf("failed to list in-flight batches of queue %s: %w", queue, err),
+			entity.QueueSubject(queue))
 	}
 
 	snap := snapshot{
@@ -106,7 +107,8 @@ func (c *Controller) read(ctx context.Context, store storage.Storage, queue stri
 			dep, err := store.GetBatchStore().Get(ctx, depID)
 			if err != nil {
 				metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-				return snapshot{}, fmt.Errorf("failed to get dependency batch %s of %s: %w", depID, batch.ID, err)
+				return snapshot{}, c.attributed(fmt.Errorf("failed to get dependency batch %s of %s: %w", depID, batch.ID, err),
+					entity.BatchSubject(depID))
 			}
 			snap.batches[depID] = dep
 		}
@@ -120,7 +122,8 @@ func (c *Controller) read(ctx context.Context, store storage.Storage, queue stri
 				continue
 			}
 			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-			return snapshot{}, fmt.Errorf("failed to get path set for batch %s: %w", batch.ID, err)
+			return snapshot{}, c.attributed(fmt.Errorf("failed to get path set for batch %s: %w", batch.ID, err),
+				entity.BatchSubject(batch.ID))
 		}
 		changed, err := c.updatePathsFromBuilds(ctx, store, &set)
 		if err != nil {
@@ -180,7 +183,8 @@ func (c *Controller) updatePathsFromBuilds(ctx context.Context, store storage.St
 		}
 		if err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-			return false, fmt.Errorf("failed to look up build for path %s attempt %d: %w", entry.ID, entry.Attempt, err)
+			return false, c.attributed(fmt.Errorf("failed to look up build for path %s attempt %d: %w", entry.ID, entry.Attempt, err),
+				entity.BatchSubject(set.Head))
 		}
 
 		build, err := store.GetBuildStore().Get(ctx, link.BuildID)
@@ -193,7 +197,8 @@ func (c *Controller) updatePathsFromBuilds(ctx context.Context, store storage.St
 				continue
 			}
 			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
-			return false, fmt.Errorf("failed to get build %s for path %s: %w", link.BuildID, entry.ID, err)
+			return false, c.attributed(fmt.Errorf("failed to get build %s for path %s: %w", link.BuildID, entry.ID, err),
+				entity.BatchSubject(set.Head))
 		}
 
 		if !build.Status.IsTerminal() {
@@ -260,7 +265,8 @@ func (c *Controller) ask(ctx context.Context, queue string, snap snapshot) ([]en
 	spec, err := c.speculators.For(speculator.Config{QueueName: queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "speculator_errors", 1)
-		return nil, fmt.Errorf("failed to build speculator for queue %s: %w", queue, err)
+		return nil, c.attributed(fmt.Errorf("failed to build speculator for queue %s: %w", queue, err),
+			entity.QueueSubject(queue))
 	}
 
 	sets := make([]entity.SpeculationPathSet, 0, len(snap.pathSets))
@@ -273,7 +279,8 @@ func (c *Controller) ask(ctx context.Context, queue string, snap snapshot) ([]en
 	proposals, err := spec.Speculate(ctx, slices.Collect(maps.Values(snap.batches)), sets)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "speculator_errors", 1)
-		return nil, fmt.Errorf("speculator failed for queue %s: %w", queue, err)
+		return nil, c.attributed(fmt.Errorf("speculator failed for queue %s: %w", queue, err),
+			entity.QueueSubject(queue))
 	}
 	return proposals, nil
 }

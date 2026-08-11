@@ -15,7 +15,9 @@ go_library(
     importpath = "github.com/uber/submitqueue/submitqueue/orchestrator/controller/speculate",
     visibility = ["//visibility:public"],
     deps = [
+        "//platform/base/failure:go_default_library",
         "//platform/consumer:go_default_library",
+        "//platform/errs:go_default_library",
         "//platform/metrics:go_default_library",
         "//submitqueue/core/batch:go_default_library",
         "//submitqueue/core/publish:go_default_library",

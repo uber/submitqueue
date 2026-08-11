@@ -37,6 +37,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/uber/submitqueue/platform/consumer"
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
@@ -62,19 +63,81 @@ func TopicKey(main consumer.TopicKey) consumer.TopicKey {
 	return consumer.TopicKey(string(main) + topicSuffix)
 }
 
+// failureContext reads everything the queue recorded about a dead-lettered
+// message: the human-readable reason, and a metadata map to carry alongside it
+// on the terminal request log.
+//
+// The map is what makes a dead letter diagnosable after the fact. The queue
+// already hands the reconciler the failure count, the topic it failed on, and
+// when — and, when the producer attributed it, which entities it was about.
+// All of that used to be logged and then dropped; the request log is where a
+// user can actually see it, through the gateway's status and history.
+//
+// Values are flattened to strings because RequestLog.Metadata and the gateway's
+// wire contract are both string maps. Nested detail becomes dotted keys, which
+// read well in a display surface where a JSON blob would not.
+func failureContext(delivery consumer.Delivery) (string, map[string]string) {
+	dmeta := delivery.Metadata()
+	metadata := make(map[string]string, len(dmeta))
+	for _, key := range []string{"dlq.original_topic", "dlq.failure_count", "dlq.failed_at"} {
+		if v, ok := dmeta[key]; ok && v != "" {
+			metadata[key] = v
+		}
+	}
+
+	lastError := dmeta["dlq.last_error"]
+
+	f, failed := delivery.Failure()
+	if !failed {
+		return lastError, metadata
+	}
+	if f.Message != "" {
+		lastError = f.Message
+	}
+
+	// One key per subject type, so several batches at fault read as a list
+	// rather than overwriting each other.
+	byType := make(map[string][]string, len(f.Subjects))
+	for _, s := range f.Subjects {
+		byType[s.Type] = append(byType[s.Type], s.ID)
+	}
+	for subjectType, ids := range byType {
+		metadata["dlq.subject."+subjectType] = strings.Join(ids, ",")
+	}
+
+	flattenDetail("dlq.detail", f.Detail, metadata)
+
+	return lastError, metadata
+}
+
+// flattenDetail writes a JSON-shaped document into a string map, joining nested
+// keys with dots. Values are rendered with %v: this is a display surface, not a
+// contract, so a readable rendering beats a faithful one.
+func flattenDetail(prefix string, detail map[string]any, out map[string]string) {
+	for k, v := range detail {
+		key := prefix + "." + k
+		if nested, ok := v.(map[string]any); ok {
+			flattenDetail(key, nested, out)
+			continue
+		}
+		out[key] = fmt.Sprintf("%v", v)
+	}
+}
+
 // failRequest transitions a non-terminal request to RequestStateError and
 // appends the matching RequestStatusError log. Redelivery for an existing Error
 // state repeats materialization to repair a previous partial attempt. A
 // different terminal outcome is left unchanged.
 // lastError is the failure reason preserved by the queue in DLQ delivery
-// metadata and is exposed through Status and History for diagnosis.
+// metadata and is exposed through Status and History for diagnosis, alongside
+// metadata carrying the rest of the failure context.
 //
 // A request in RequestStateCancelling is reconciled to RequestStateError, not
 // left in place: DLQ means the pipeline failed to converge, so we cannot
 // confirm the cancel completed cleanly. Writing Error is the honest signal and
 // keeps the request from being stuck in a non-terminal state forever.
-func failRequest(ctx context.Context, store storage.Storage, registry consumer.TopicRegistry, logger *zap.SugaredLogger, requestID, lastError string) error {
-	res, err := requestcore.TerminateRequest(ctx, store, registry, requestID, entity.RequestStateError, lastError, nil)
+func failRequest(ctx context.Context, store storage.Storage, registry consumer.TopicRegistry, logger *zap.SugaredLogger, requestID, lastError string, metadata map[string]string) error {
+	res, err := requestcore.TerminateRequest(ctx, store, registry, requestID, entity.RequestStateError, lastError, metadata)
 	if err != nil {
 		return fmt.Errorf("dlq reconcile request %s failed: %w", requestID, err)
 	}
@@ -112,18 +175,26 @@ func failRequest(ctx context.Context, store storage.Storage, registry consumer.T
 // Idempotency: an existing Failed batch repeats fan-out because a previous
 // attempt may have crashed after updating the batch. Succeeded and Cancelled
 // are different terminal outcomes and do not fan out errors.
-// lastError is propagated to each member request's terminal Error log.
-func failBatch(ctx context.Context, store storage.Storage, registry consumer.TopicRegistry, logger *zap.SugaredLogger, batchID, lastError string) error {
+// lastError and metadata are propagated to each member request's terminal
+// Error log.
+//
+// It reports whether it transitioned the batch. A caller that only wants to act
+// on real progress — republishing to wake the queue, say — can then tell a
+// first reconcile from a redelivery of one already done, and avoid doing it
+// again forever.
+func failBatch(ctx context.Context, store storage.Storage, registry consumer.TopicRegistry, logger *zap.SugaredLogger, batchID, lastError string, metadata map[string]string) (bool, error) {
 	batch, err := store.GetBatchStore().Get(ctx, batchID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			logger.Warnw("dlq reconcile: batch not found, skipping",
 				"batch_id", batchID,
 			)
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("failed to get batch %s: %w", batchID, err)
+		return false, fmt.Errorf("failed to get batch %s: %w", batchID, err)
 	}
+
+	transitioned := false
 
 	switch batch.State {
 	case entity.BatchStateFailed:
@@ -133,21 +204,22 @@ func failBatch(ctx context.Context, store storage.Storage, registry consumer.Top
 		// A prior attempt may have CAS'd to Failed without completing the
 		// membership record move; repair it alongside the fan-out.
 		if err := corebatch.EnsureRecord(ctx, store, batch); err != nil {
-			return err
+			return false, err
 		}
 	case entity.BatchStateSucceeded, entity.BatchStateCancelled:
 		logger.Infow("dlq reconcile: batch has a different terminal outcome, skipping",
 			"batch_id", batchID,
 			"state", string(batch.State),
 		)
-		return nil
+		return false, nil
 	default:
 		previousState := batch.State
 		updated, err := corebatch.Transition(ctx, store, batch, entity.BatchStateFailed)
 		if err != nil {
-			return err
+			return false, err
 		}
 		batch = updated
+		transitioned = true
 		logger.Infow("dlq reconcile: batch marked failed",
 			"batch_id", batchID,
 			"previous_state", string(previousState),
@@ -155,9 +227,9 @@ func failBatch(ctx context.Context, store storage.Storage, registry consumer.Top
 	}
 
 	for _, requestID := range batch.Contains {
-		if err := failRequest(ctx, store, registry, logger, requestID, lastError); err != nil {
-			return fmt.Errorf("fan-out for batch %s: %w", batchID, err)
+		if err := failRequest(ctx, store, registry, logger, requestID, lastError, metadata); err != nil {
+			return transitioned, fmt.Errorf("fan-out for batch %s: %w", batchID, err)
 		}
 	}
-	return nil
+	return transitioned, nil
 }
