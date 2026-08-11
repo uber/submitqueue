@@ -38,6 +38,15 @@ func newTestClient(t *testing.T, handler http.Handler) *Client {
 	return NewClient(c)
 }
 
+// requireStatusError asserts err carries code as a *phttp.StatusError, the shape
+// platform/errs/http needs to classify it.
+func requireStatusError(t *testing.T, err error, code int) {
+	t.Helper()
+	var se *phttp.StatusError
+	require.ErrorAs(t, err, &se)
+	assert.Equal(t, code, se.StatusCode)
+}
+
 func buildJSON(t *testing.T, number int, state, webURL string) []byte {
 	t.Helper()
 	return buildJSONWithEnv(t, number, state, webURL, nil)
@@ -86,6 +95,7 @@ func TestCreateBuild_ErrorStatus_ReturnsError(t *testing.T) {
 
 	_, err := c.CreateBuild(context.Background(), CreateBuildRequest{})
 	require.Error(t, err)
+	requireStatusError(t, err, http.StatusInternalServerError)
 }
 
 // --- GetBuild ---
@@ -150,7 +160,9 @@ func TestCancelBuild_ErrorStatus_ReturnsError(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 
-	require.Error(t, c.CancelBuild(context.Background(), 5))
+	err := c.CancelBuild(context.Background(), 5)
+	require.Error(t, err)
+	requireStatusError(t, err, http.StatusInternalServerError)
 }
 
 // --- EncodeBuildNumber / ParseBuildNumber ---

@@ -40,6 +40,15 @@ func newTestClient(t *testing.T, handler http.Handler) *Client {
 	return NewClient(c, "uber", "submitqueue", "submitqueue-ci.yml")
 }
 
+// requireStatusError asserts err carries code as a *phttp.StatusError, the shape
+// platform/errs/http needs to classify it.
+func requireStatusError(t *testing.T, err error, code int) {
+	t.Helper()
+	var se *phttp.StatusError
+	require.ErrorAs(t, err, &se)
+	assert.Equal(t, code, se.StatusCode)
+}
+
 // --- NewClient / accessors ---
 
 func TestNewClient_ExposesIdentity(t *testing.T) {
@@ -89,6 +98,7 @@ func TestDispatchWorkflow_ErrorStatus_ReturnsError(t *testing.T) {
 
 	_, err := c.DispatchWorkflow(context.Background(), DispatchWorkflowRequest{})
 	require.Error(t, err)
+	requireStatusError(t, err, http.StatusInternalServerError)
 }
 
 // --- GetRun ---
@@ -145,6 +155,16 @@ func TestCancelRun_NotFound_ReturnsError(t *testing.T) {
 	}))
 
 	require.Error(t, c.CancelRun(context.Background(), 5))
+}
+
+func TestCancelRun_ErrorStatus_ReturnsError(t *testing.T) {
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+
+	err := c.CancelRun(context.Background(), 5)
+	require.Error(t, err)
+	requireStatusError(t, err, http.StatusBadGateway)
 }
 
 // --- EncodeRunID / ParseRunID ---

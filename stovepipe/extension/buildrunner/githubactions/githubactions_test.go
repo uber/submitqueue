@@ -28,6 +28,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
+	"github.com/uber/submitqueue/platform/errs"
+	httperrs "github.com/uber/submitqueue/platform/errs/http"
 	platformgithubactions "github.com/uber/submitqueue/platform/extension/buildrunner/githubactions"
 	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/stovepipe/entity"
@@ -110,6 +112,37 @@ func TestTrigger_DispatchError_ReturnsError(t *testing.T) {
 
 	_, err := r.Trigger(context.Background(), "", "github://repo/head/aaa", nil)
 	require.Error(t, err)
+}
+
+// TestTrigger_RetryabilityByStatus pins which dispatch failures may be replayed.
+// A code that GitHub could have answered after queueing the run must not be,
+// because Trigger has no dedup key and the retry would queue a second run.
+func TestTrigger_RetryabilityByStatus(t *testing.T) {
+	processor := errs.NewClassifierProcessor(httperrs.Classifier)
+
+	tests := []struct {
+		status        int
+		wantRetryable bool
+	}{
+		{status: http.StatusInternalServerError},
+		{status: http.StatusBadGateway},
+		{status: http.StatusGatewayTimeout},
+		{status: http.StatusServiceUnavailable, wantRetryable: true},
+		{status: http.StatusTooManyRequests, wantRetryable: true},
+		{status: http.StatusBadRequest},
+	}
+
+	for _, tt := range tests {
+		t.Run(http.StatusText(tt.status), func(t *testing.T) {
+			r := newTestRunner(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.status)
+			}))
+
+			_, err := r.Trigger(context.Background(), "", "github://repo/head/aaa", nil)
+			require.Error(t, err)
+			assert.Equal(t, tt.wantRetryable, errs.IsRetryable(processor.Process(err)))
+		})
+	}
 }
 
 func TestTrigger_ErrorsWhenDispatchResponseHasNoRunID(t *testing.T) {
