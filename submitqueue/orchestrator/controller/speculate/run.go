@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/uber/submitqueue/platform/metrics"
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
@@ -240,17 +242,20 @@ func terminalPathStatus(status entity.BuildStatus) entity.SpeculationPathStatus 
 // ask hands the snapshot to the queue's Speculator. Its answer is a proposal,
 // not an instruction: check decides what is actually enacted.
 //
-// The two arguments are deliberately different slices of the queue. Only
-// speculating heads are offered as action targets, because only they are open
-// to new work. Every in-flight path set is handed over, though, whatever
-// state its head is in: a path holds its CI slot until its build actually
-// stops, so a merging head's superseded siblings and a cancelling head's live
-// builds spend the budget just like a speculating head's do. Hiding them
-// would let the allocator count occupied slots as free and oversubscribe CI.
+// Both arguments carry the whole queue, whatever state each batch is in. A
+// head's dependencies are the facts its paths are built from, so a dependency
+// withheld is one the Speculator has to plan around blind. Every in-flight
+// path set goes over for the same reason: a path holds its CI slot until its
+// build actually stops, so a merging head's superseded siblings and a
+// cancelling head's live builds spend the budget just like a speculating
+// head's do. Hiding either would let the allocator count occupied slots as
+// free and oversubscribe CI.
 //
-// Passing foreign sets cannot widen what gets proposed: a path ID hashes its
+// Passing the full queue cannot widen what gets proposed: a path ID hashes its
 // head, and check rejects any proposal aimed at a head that is not
-// speculating.
+// speculating. A head this run has just decided still reads as Speculating
+// here, but it can only rebuild the path that already passed — see
+// mergeablePath — which the allocator skips as finished.
 func (c *Controller) ask(ctx context.Context, queue string, snap snapshot) ([]entity.Speculation, error) {
 	spec, err := c.speculators.For(speculator.Config{QueueName: queue})
 	if err != nil {
@@ -265,7 +270,7 @@ func (c *Controller) ask(ctx context.Context, queue string, snap snapshot) ([]en
 		}
 	}
 
-	proposals, err := spec.Speculate(ctx, snap.speculating, sets)
+	proposals, err := spec.Speculate(ctx, slices.Collect(maps.Values(snap.batches)), sets)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "speculator_errors", 1)
 		return nil, fmt.Errorf("speculator failed for queue %s: %w", queue, err)

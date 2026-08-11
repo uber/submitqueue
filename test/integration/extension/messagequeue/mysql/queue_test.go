@@ -30,6 +30,7 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/uber/submitqueue/platform/base/failure"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
@@ -1082,6 +1083,8 @@ func (s *SQLQueueIntegrationSuite) TestDeadLetterQueue() {
 	// Receive and nack the message MaxAttempts times.
 	// Each iteration: receive the message, nack with 0 delay, then wait for
 	// the visibility timeout to expire so the message becomes deliverable again.
+	// Each nack carries why it failed; the last one is the reason recorded
+	// against the dead letter.
 	for attempt := 1; attempt <= subConfig.Retry.MaxAttempts; attempt++ {
 		delivery := receive(t, deliveryChan)
 		t.Logf("Attempt %d: received message, nacking", delivery.Attempt())
@@ -1089,7 +1092,11 @@ func (s *SQLQueueIntegrationSuite) TestDeadLetterQueue() {
 		assert.Equal(t, "poison-msg", delivery.Message().ID)
 
 		// Nack without delay to retry immediately
-		require.NoError(t, delivery.Nack(s.ctx))
+		nackFailure := failure.New(
+			fmt.Sprintf("processing failed on attempt %d", attempt),
+			failure.Subject{Type: "widget", ID: "widget-7"},
+		)
+		require.NoError(t, delivery.Nack(s.ctx, nackFailure))
 	}
 
 	// After MaxAttempts, message should be moved to DLQ topic
@@ -1124,7 +1131,17 @@ func (s *SQLQueueIntegrationSuite) TestDeadLetterQueue() {
 	// Verify values
 	assert.Equal(t, topic, metadata["dlq.original_topic"])
 	assert.Equal(t, fmt.Sprintf("%d", subConfig.Retry.MaxAttempts), metadata["dlq.failure_count"])
-	assert.Equal(t, "exceeded retry limit", metadata["dlq.last_error"])
+
+	// The reason recorded is the one the final nack gave, not a generic
+	// "retry limit" placeholder — that is the point of carrying it on Nack.
+	assert.Equal(t, fmt.Sprintf("processing failed on attempt %d", subConfig.Retry.MaxAttempts), metadata["dlq.last_error"])
+
+	// And the structured half survives the round trip, so a DLQ consumer can
+	// act on the entity the failure was about.
+	dlqFailure, failed := dlqDelivery.Failure()
+	require.True(t, failed, "a message delivered from a DLQ topic reports a failure")
+	assert.Equal(t, metadata["dlq.last_error"], dlqFailure.Message)
+	assert.Equal(t, []string{"widget-7"}, dlqFailure.IDsOfType("widget"))
 
 	failedAt := metadata["dlq.failed_at"]
 	failedAtInt, err := strconv.ParseInt(failedAt, 10, 64)
@@ -2363,7 +2380,7 @@ func (s *SQLQueueIntegrationSuite) TestPostponeResetsRetryBudget() {
 		delivery := receive(t, deliveryChan)
 		assert.Equal(t, attempt, delivery.Attempt())
 		assert.Equal(t, "wait-then-poison", delivery.Message().ID)
-		require.NoError(t, delivery.Nack(s.ctx))
+		require.NoError(t, delivery.Nack(s.ctx, failure.New("still poison")))
 		t.Logf("Attempt %d: nacked", delivery.Attempt())
 	}
 
@@ -2472,7 +2489,7 @@ func (s *SQLQueueIntegrationSuite) TestMultipleConsumerGroupsIndependentState() 
 	// CG-alpha: nack msg-1, ack msg-2
 	d1a := receive(t, ch1)
 	assert.Equal(t, "shared-1", d1a.Message().ID)
-	require.NoError(t, d1a.Nack(s.ctx))
+	require.NoError(t, d1a.Nack(s.ctx, failure.New("cg-alpha retry")))
 	t.Logf("cg-alpha nacked shared-1")
 
 	d2a := receive(t, ch1)
@@ -2547,7 +2564,7 @@ func (s *SQLQueueIntegrationSuite) TestCrashAfterRejectDoesNotLoseMessages() {
 	require.NoError(t, deliveries["msg-A"].Ack(s.ctx))
 	t.Logf("Acked msg-A")
 
-	require.NoError(t, deliveries["msg-B"].Reject(s.ctx, "bad payload"))
+	require.NoError(t, deliveries["msg-B"].Reject(s.ctx, failure.New("bad payload")))
 	t.Logf("Rejected msg-B → DLQ")
 
 	// Do NOT ack msg-C — simulating in-flight at crash time
@@ -2658,7 +2675,7 @@ func (s *SQLQueueIntegrationSuite) TestCrashAfterRetryLimitDoesNotLoseMessages()
 	t.Logf("Acked msg-A")
 
 	// Nack B — immediately visible again for redelivery
-	require.NoError(t, deliveries["msg-B"].Nack(s.ctx))
+	require.NoError(t, deliveries["msg-B"].Nack(s.ctx, failure.New("msg-B failed")))
 	t.Logf("Nacked msg-B, waiting for retry-limit to trigger auto-DLQ")
 
 	// Do NOT ack msg-C — simulating in-flight at crash time.

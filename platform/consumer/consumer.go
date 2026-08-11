@@ -424,6 +424,12 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 		// cancelled by the processing context during shutdown.
 		isCanceled := errors.Is(err, context.Canceled)
 
+		// Whatever the controller attributed the failure to, plus the error's
+		// own text as the message. A controller that attributed nothing yields
+		// the message alone, which is what every caller sent before failures
+		// carried structure.
+		controllerFailure := errs.Attribution(err)
+
 		// Check if the error is non-retryable (poison pill message)
 		if !errs.IsRetryable(err) {
 			m.logger.Errorw("non-retryable controller error, rejecting message",
@@ -438,7 +444,7 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 
 			// Reject moves to DLQ (or acks if DLQ disabled)
 			rejectOp := metrics.Begin(controllerScope, "reject", metrics.StorageLatencyBuckets)
-			rejectErr := delivery.Reject(ctx, err.Error())
+			rejectErr := delivery.Reject(ctx, controllerFailure)
 			rejectOp.Complete(rejectErr)
 			if rejectErr != nil {
 				m.logger.Errorw("failed to reject non-retryable message",
@@ -468,9 +474,11 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 			"elapsed_ms", elapsed.Milliseconds(),
 		)
 
-		// Nack requeues immediately - the visibility timeout spaces retries
+		// Nack requeues immediately - the visibility timeout spaces retries.
+		// The failure travels with it so that the attempt which finally spends
+		// the retry budget can dead-letter saying why.
 		nackOp := metrics.Begin(controllerScope, "nack", metrics.StorageLatencyBuckets)
-		nackErr := delivery.Nack(ctx)
+		nackErr := delivery.Nack(ctx, controllerFailure)
 		nackOp.Complete(nackErr)
 		if nackErr != nil {
 			m.logger.Errorw("failed to nack message",
