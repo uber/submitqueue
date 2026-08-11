@@ -90,7 +90,7 @@ func TestFailRequest_TerminalStates(t *testing.T) {
 				})
 			}
 
-			err := failRequest(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "q/1", "")
+			err := failRequest(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "q/1", "", nil)
 			require.NoError(t, err)
 		})
 	}
@@ -122,7 +122,7 @@ func TestFailRequest_CancellingTransitionsToError(t *testing.T) {
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	err := failRequest(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "q/1", "")
+	err := failRequest(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "q/1", "", nil)
 	require.NoError(t, err)
 }
 
@@ -147,7 +147,7 @@ func TestFailRequest_TransitionsToError(t *testing.T) {
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	err := failRequest(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "q/1", "")
+	err := failRequest(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "q/1", "", nil)
 	require.NoError(t, err)
 }
 
@@ -172,7 +172,7 @@ func TestFailRequest_LogPublishErrorPropagates(t *testing.T) {
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	err := failRequest(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "q/1", "")
+	err := failRequest(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "q/1", "", nil)
 	require.Error(t, err)
 }
 
@@ -186,7 +186,7 @@ func TestFailRequest_NotFoundIsNoOp(t *testing.T) {
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	err := failRequest(context.Background(), store, consumer.TopicRegistry{}, zaptest.NewLogger(t).Sugar(), "q/1", "")
+	err := failRequest(context.Background(), store, consumer.TopicRegistry{}, zaptest.NewLogger(t).Sugar(), "q/1", "", nil)
 	require.NoError(t, err)
 }
 
@@ -200,7 +200,7 @@ func TestFailRequest_GenericGetErrorIsNonRetryable(t *testing.T) {
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	err := failRequest(context.Background(), store, consumer.TopicRegistry{}, zaptest.NewLogger(t).Sugar(), "q/1", "")
+	err := failRequest(context.Background(), store, consumer.TopicRegistry{}, zaptest.NewLogger(t).Sugar(), "q/1", "", nil)
 	require.Error(t, err)
 	assert.False(t, errs.IsRetryable(err))
 }
@@ -239,7 +239,7 @@ func TestFailBatch_TransitionsAndFansOut(t *testing.T) {
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	err := failBatch(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "q/batch/1", "")
+	_, err := failBatch(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "q/batch/1", "", nil)
 	require.NoError(t, err)
 }
 
@@ -269,7 +269,7 @@ func TestFailBatch_FailedFansOutForRepair(t *testing.T) {
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	err := failBatch(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "q/batch/1", "")
+	_, err := failBatch(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "q/batch/1", "", nil)
 	require.NoError(t, err)
 }
 
@@ -286,7 +286,7 @@ func TestFailBatch_DifferentTerminalOutcomeSkipsFanOut(t *testing.T) {
 			store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
-			err := failBatch(context.Background(), store, consumer.TopicRegistry{}, zaptest.NewLogger(t).Sugar(), "q/batch/1", "")
+			_, err := failBatch(context.Background(), store, consumer.TopicRegistry{}, zaptest.NewLogger(t).Sugar(), "q/batch/1", "", nil)
 			require.NoError(t, err)
 		})
 	}
@@ -325,7 +325,7 @@ func TestFailBatch_CancellingTransitionsToFailed(t *testing.T) {
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
-	err := failBatch(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "q/batch/1", "")
+	_, err := failBatch(context.Background(), store, registry, zaptest.NewLogger(t).Sugar(), "q/batch/1", "", nil)
 	require.NoError(t, err)
 }
 
@@ -339,7 +339,7 @@ func TestFailBatch_NotFoundIsNoOp(t *testing.T) {
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
-	err := failBatch(context.Background(), store, consumer.TopicRegistry{}, zaptest.NewLogger(t).Sugar(), "q/batch/1", "")
+	_, err := failBatch(context.Background(), store, consumer.TopicRegistry{}, zaptest.NewLogger(t).Sugar(), "q/batch/1", "", nil)
 	require.NoError(t, err)
 }
 
