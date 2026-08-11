@@ -129,6 +129,40 @@ The command exits non-zero if any request settles anywhere other than `landed`, 
 
 ## Watching it work
 
+The queue itself is readable without creating any traffic:
+
+```bash
+make land-list                       # a table of recent requests
+make land-list SINCE=24h LIMIT=200   # a wider window
+make land-watch                      # follow them until they settle
+```
+
+Both draw the same table `make demo-pr` does — the demo tool and the CLI share it — but against whatever the queue already holds, so watching a queue no longer means adding to it. `land-watch` fixes its set when it starts and exits non-zero if any request in that set finishes anywhere other than `landed`, which makes it usable from a script. A request accepted after the watch begins is not picked up: a watch that grew as the queue did would never finish.
+
+Under the hood these are `client list` and `client watch`, which take a queue and reach any gateway:
+
+```bash
+bazel run //service/submitqueue/gateway/client:gateway -- \
+  -addr sq.example.com:443 -tls list -queue my-queue -since 1h
+```
+
+`-addr` is passed to the dialler untouched, so `dns:///host:port` and `unix:///path.sock` work as well as a plain `host:port`. Transport security is a separate flag rather than part of the address, because gRPC keeps target resolution and credentials apart — there is no `grpcs://` to write.
+
+Bear in mind that a request reads `batched` for the whole of its active life (see above), so a listing of a busy queue is mostly `batched` rows until the pipeline reports its finer stages.
+
+### Authentication
+
+The gateway admits every caller. It is a sandbox stack, and nothing in it checks a credential.
+
+The client can still present one, for a gateway reached through something that does — a proxy, a mesh sidecar, an ingress that terminates auth ahead of the service. It reads `SQ_TOKEN` by default and sends it as `Authorization: Bearer …`; `-token-env` names a different variable, and an unset one sends nothing rather than failing, which is how it stays usable against a stack that wants no credential.
+
+```bash
+SQ_TOKEN=$(cat ~/.sq-token) bazel run //service/submitqueue/gateway/client:gateway -- \
+  -addr sq.example.com:443 -tls list -queue my-queue
+```
+
+### Service logs
+
 ```bash
 docker compose -p submitqueue-provider logs -f runway-service
 ```
