@@ -21,6 +21,7 @@ package fake
 
 import (
 	"context"
+	"time"
 
 	"github.com/uber/submitqueue/platform/base/page"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
@@ -92,6 +93,14 @@ func (s sourceControlFake) History(_ context.Context, cursor string, limit int) 
 		next = s.history[end]
 	}
 	return page.Page[string]{Items: uris, NextCursor: next}, nil
+}
+
+// ChangeInfo returns deterministic metadata for a URI in the fake history.
+func (s sourceControlFake) ChangeInfo(_ context.Context, uri string) (sourcecontrol.ChangeInfo, error) {
+	if s.indexOf(uri) < 0 {
+		return sourcecontrol.ChangeInfo{}, sourcecontrol.ErrNotFound
+	}
+	return sourcecontrol.ChangeInfo{CreatedAt: time.Unix(1, 0).UTC()}, nil
 }
 
 // indexOf returns the index of uri in the history, or -1 if absent.

@@ -24,6 +24,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
@@ -33,6 +34,7 @@ import (
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
+	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
@@ -61,6 +63,7 @@ type Controller struct {
 	metricsScope  tally.Scope
 	stores        storage.Factory
 	buildRunners  buildrunner.Factory
+	sourceControl sourcecontrol.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
@@ -72,6 +75,16 @@ var _ consumer.Controller = (*Controller)(nil)
 // _opName is the metric operation name shared by every emit in this file.
 const _opName = "buildsignal"
 
+// Option configures a Controller.
+type Option func(*Controller)
+
+// WithSourceControl enables base-change-age metrics for failed builds.
+func WithSourceControl(factory sourcecontrol.Factory) Option {
+	return func(c *Controller) {
+		c.sourceControl = factory
+	}
+}
+
 // NewController creates a new buildsignal controller.
 func NewController(
 	logger *zap.SugaredLogger,
@@ -81,8 +94,9 @@ func NewController(
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
+	options ...Option,
 ) *Controller {
-	return &Controller{
+	controller := &Controller{
 		logger:        logger.Named("buildsignal_controller"),
 		metricsScope:  scope.SubScope("buildsignal_controller"),
 		stores:        stores,
@@ -91,6 +105,10 @@ func NewController(
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
+	for _, option := range options {
+		option(controller)
+	}
+	return controller
 }
 
 // Process reloads the build referenced by the delivery, polls its runner for
@@ -270,8 +288,50 @@ func (c *Controller) markOutcome(ctx context.Context, store storage.Storage, req
 		metrics.NamedCounter(c.metricsScope, _opName, "outcomes", 1,
 			metrics.NewTag("state", string(state)),
 		)
+		if state == entity.RequestStateFailed {
+			c.emitBaseChangeAge(ctx, request)
+		}
 		return nil
 	}
+}
+
+func (c *Controller) emitBaseChangeAge(ctx context.Context, request *entity.Request) {
+	if c.sourceControl == nil || request.BaseURI == "" {
+		metrics.NamedCounter(c.metricsScope, "build_failure", "base_change_unavailable", 1,
+			metrics.NewTag("queue", request.Queue),
+			metrics.NewTag("strategy", string(request.BuildStrategy)),
+		)
+		return
+	}
+
+	control, err := c.sourceControl.For(sourcecontrol.Config{QueueName: request.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, "build_failure", "change_info_errors", 1,
+			metrics.NewTag("queue", request.Queue),
+			metrics.NewTag("stage", "resolve_source_control"),
+		)
+		return
+	}
+	info, err := control.ChangeInfo(ctx, request.BaseURI)
+	if err != nil || info.CreatedAt.IsZero() {
+		metrics.NamedCounter(c.metricsScope, "build_failure", "change_info_errors", 1,
+			metrics.NewTag("queue", request.Queue),
+			metrics.NewTag("stage", "get_change_info"),
+		)
+		return
+	}
+	age := time.Since(info.CreatedAt)
+	if age < 0 {
+		metrics.NamedCounter(c.metricsScope, "build_failure", "change_info_errors", 1,
+			metrics.NewTag("queue", request.Queue),
+			metrics.NewTag("stage", "future_change"),
+		)
+		return
+	}
+	metrics.NamedHistogram(c.metricsScope, "build_failure", "time_to_detection", metrics.ChangeAgeBuckets,
+		metrics.NewTag("queue", request.Queue),
+		metrics.NewTag("strategy", string(request.BuildStrategy)),
+	).RecordDuration(age)
 }
 
 // releaseBuildSlot CAS-decrements the queue's in_flight_count, reopening the process

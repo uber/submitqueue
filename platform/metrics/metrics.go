@@ -106,6 +106,25 @@ var (
 		2 * time.Hour,
 		4 * time.Hour,
 	}
+
+	// ChangeAgeBuckets suits age-based signals for source-control changes,
+	// including time to failure detection and last-known-green freshness.
+	ChangeAgeBuckets = tally.DurationBuckets{
+		1 * time.Minute,
+		5 * time.Minute,
+		15 * time.Minute,
+		30 * time.Minute,
+		1 * time.Hour,
+		2 * time.Hour,
+		4 * time.Hour,
+		8 * time.Hour,
+		12 * time.Hour,
+		24 * time.Hour,
+		48 * time.Hour,
+		7 * 24 * time.Hour,
+		14 * 24 * time.Hour,
+		30 * 24 * time.Hour,
+	}
 )
 
 // Op tracks the lifecycle of a named operation. It captures the start time on

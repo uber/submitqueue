@@ -33,6 +33,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	"github.com/uber/submitqueue/stovepipe/extension/observability"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
@@ -44,6 +45,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	stores        storage.Factory
+	reporter      observability.Reporter
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -59,6 +61,16 @@ const _opName = "record"
 // attribution that this stage does not do, so every fact it writes is whole-repository.
 const wholeRepositoryProject = ""
 
+// Option configures a Controller.
+type Option func(*Controller)
+
+// WithReporter configures best-effort queue observability reporting.
+func WithReporter(reporter observability.Reporter) Option {
+	return func(c *Controller) {
+		c.reporter = reporter
+	}
+}
+
 // NewController creates a new record controller.
 func NewController(
 	logger *zap.SugaredLogger,
@@ -66,14 +78,19 @@ func NewController(
 	stores storage.Factory,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
+	options ...Option,
 ) *Controller {
-	return &Controller{
+	controller := &Controller{
 		logger:        logger.Named("record_controller"),
 		metricsScope:  scope.SubScope("record_controller"),
 		stores:        stores,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
+	for _, option := range options {
+		option(controller)
+	}
+	return controller
 }
 
 // Process loads the request referenced by the delivery and, when its build
@@ -111,6 +128,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	if rec.GetQueueName() != "" && rec.GetQueueName() != request.Queue {
 		metrics.NamedCounter(c.metricsScope, _opName, "queue_mismatch", 1)
 		return fmt.Errorf("payload queue %q does not match queue %q of request %s", rec.GetQueueName(), request.Queue, request.ID)
+	}
+	if c.reporter != nil {
+		defer c.reporter.Report(ctx, request.Queue)
 	}
 
 	switch request.State {

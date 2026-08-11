@@ -57,7 +57,7 @@ h := metrics.NamedHistogram(c.scope, "process", "duration", metrics.FastLatencyB
 h.RecordDuration(elapsed)
 ```
 
-Do not emit gauges or timers. Represent operation latency and completion count with lifecycle histograms, and represent instantaneous quantities as sampled histogram values when needed.
+Do not emit timers. Represent operation latency and completion count with lifecycle histograms. Use a gauge only for a periodically refreshed, current-state value whose latest observation is the query result; use a histogram for distributions of observations over time.
 
 ### Why histograms, not timers
 

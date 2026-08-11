@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,6 +32,8 @@ import (
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
 	buildrunnermock "github.com/uber/submitqueue/stovepipe/extension/buildrunner/mock"
+	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
+	sourcecontrolmock "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -141,6 +144,38 @@ func expectFinish(m buildsignalMocks, state entity.RequestState) {
 	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(1, 4), nil)
 	m.queueStore.EXPECT().Update(gomock.Any(), queueRow(0, 4), int32(4), int32(5)).Return(nil)
 	m.reqStore.EXPECT().Update(gomock.Any(), requestWithState(state), int32(1), int32(2)).Return(nil)
+}
+
+func TestEmitBaseChangeAge(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	scope := tally.NewTestScope("test", nil)
+	sourceControls := sourcecontrolmock.NewMockFactory(ctrl)
+	source := sourcecontrolmock.NewMockSourceControl(ctrl)
+	baseURI := "git://github.com/uber-code/repo/refs%2Fheads%2Fmain/abc"
+
+	sourceControls.EXPECT().For(sourcecontrol.Config{QueueName: testQueue}).Return(source, nil)
+	source.EXPECT().ChangeInfo(gomock.Any(), baseURI).Return(sourcecontrol.ChangeInfo{
+		CreatedAt: time.Now().Add(-time.Hour),
+	}, nil)
+
+	controller := NewController(
+		zap.NewNop().Sugar(),
+		scope,
+		nil,
+		nil,
+		consumer.TopicRegistry{},
+		stovepipemq.TopicKeyBuildSignal,
+		"stovepipe-buildsignal",
+		WithSourceControl(sourceControls),
+	)
+	controller.emitBaseChangeAge(context.Background(), &entity.Request{
+		Queue:         testQueue,
+		BaseURI:       baseURI,
+		BuildStrategy: entity.BuildStrategyIncrementalSinceGreen,
+	})
+
+	_, ok := scope.Snapshot().Histograms()["test.buildsignal_controller.build_failure.time_to_detection+queue=monorepo/main,strategy=incremental_since_green"]
+	assert.True(t, ok)
 }
 
 func TestProcess(t *testing.T) {
