@@ -700,6 +700,60 @@ func TestRun_MergeableHeadGainsNoNewPath(t *testing.T) {
 	assert.Zero(t, spec.calls)
 }
 
+// The dispatch is what takes a batch out of this stage's hands, so sending it
+// before the write would let Runway act on an outcome a lost compare-and-swap
+// refused to record.
+func TestRun_MergeableHeadDispatchesAfterTheStateWrite(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	passed := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionSucceeds)
+
+	h := newRunHarness(t, ctrl, &scriptedSpeculator{}, []entity.Batch{speculatingHead()})
+	h.noBuildsDispatched()
+	h.batches.EXPECT().Get(gomock.Any(), dep1).Return(entity.Batch{ID: dep1, State: entity.BatchStateSucceeded}, nil)
+	h.batches.EXPECT().Get(gomock.Any(), dep2).Return(entity.Batch{ID: dep2, State: entity.BatchStateSucceeded}, nil)
+	h.pathSets.EXPECT().Get(gomock.Any(), head).Return(entity.SpeculationPathSet{
+		Head:    head,
+		Paths:   []entity.SpeculationPathEntry{entryFor(passed, entity.SpeculationPathStatusPassed)},
+		Version: 1,
+	}, nil).AnyTimes()
+
+	var publishedBeforeWrite []string
+	h.batches.EXPECT().
+		Update(gomock.Any(), updateTo{id: head, state: entity.BatchStateMerging}, int32(1), int32(2)).
+		DoAndReturn(func(context.Context, entity.Batch, int32, int32) error {
+			publishedBeforeWrite = append([]string(nil), h.published...)
+			return nil
+		})
+
+	require.NoError(t, h.run(head))
+	assert.Equal(t, []string{"submitqueue-merge"}, h.published)
+	assert.Empty(t, publishedBeforeWrite,
+		"nothing may reach the merge stage before the state it acts on is written")
+}
+
+// The other half: a lost write means another writer owns the batch, so the
+// dispatch it would have justified is never sent.
+func TestRun_MergeableHeadDispatchesNothingWhenTheStateCASLoses(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	passed := pathOver(entity.DependencyAssumptionSucceeds, entity.DependencyAssumptionSucceeds)
+
+	h := newRunHarness(t, ctrl, &scriptedSpeculator{}, []entity.Batch{speculatingHead()})
+	h.noBuildsDispatched()
+	h.batches.EXPECT().Get(gomock.Any(), dep1).Return(entity.Batch{ID: dep1, State: entity.BatchStateSucceeded}, nil)
+	h.batches.EXPECT().Get(gomock.Any(), dep2).Return(entity.Batch{ID: dep2, State: entity.BatchStateSucceeded}, nil)
+	h.pathSets.EXPECT().Get(gomock.Any(), head).Return(entity.SpeculationPathSet{
+		Head:    head,
+		Paths:   []entity.SpeculationPathEntry{entryFor(passed, entity.SpeculationPathStatusPassed)},
+		Version: 1,
+	}, nil).AnyTimes()
+	h.batches.EXPECT().
+		Update(gomock.Any(), updateTo{id: head, state: entity.BatchStateMerging}, int32(1), int32(2)).
+		Return(storage.ErrVersionMismatch)
+
+	require.NoError(t, h.run(head))
+	assert.Empty(t, h.published)
+}
+
 // A head with no future left fails, and the write order is what keeps conclude
 // usable: conclude reconciles requests from the batch's state and rejects a
 // non-terminal one, so it is published only once the terminal write has landed.
@@ -1049,6 +1103,40 @@ func TestFanout_MintsADistinctMessageIDPerPublish(t *testing.T) {
 	assert.NotEqual(t, ids[0], ids[1])
 }
 
+// The merge dispatch is the mirror image: a batch merges once, so the ID has
+// to be stable across the redelivery and the self-heal that both re-derive it.
+func TestDispatchMerge_ReusesOneMessageIDPerBatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	var ids []string
+	pub := queuemock.NewMockPublisher(ctrl)
+	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, msg entityqueue.Message) error {
+			ids = append(ids, msg.ID)
+			return nil
+		},
+	).Times(2)
+	q := queuemock.NewMockQueue(ctrl)
+	q.EXPECT().Publisher().Return(pub).AnyTimes()
+
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: topickey.TopicKeyMerge, Name: "submitqueue-merge", Queue: q},
+	})
+	require.NoError(t, err)
+
+	c := NewController(
+		zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: storagemock.NewMockStorage(ctrl)},
+		staticSpeculatorFactory{}, registry, topickey.TopicKeySpeculate, "orchestrator-speculate",
+	)
+	batch := entity.Batch{ID: head, Queue: "q"}
+
+	require.NoError(t, c.dispatchMerge(context.Background(), batch))
+	require.NoError(t, c.dispatchMerge(context.Background(), batch))
+
+	require.Len(t, ids, 2)
+	assert.Equal(t, ids[0], ids[1])
+}
+
 // cascadePair wires a queue where `prerequisite` reaches a terminal outcome
 // and `derived` fails only because of it: derived bet that prerequisite would
 // not succeed, built on that, and its build failed. Until prerequisite is terminal the
@@ -1246,6 +1334,38 @@ func TestRun_TriggerBatchNeedsNoRecoverySignal(t *testing.T) {
 
 	require.NoError(t, h.run(head))
 	assert.Equal(t, []string{"conclude"}, h.published)
+}
+
+// Merging needs the same signal for the same reason: the write drops the batch
+// out of the speculating set, so nothing else would ever dispatch it.
+func TestRun_CascadeDerivedBatchIsGivenARecoverySignalBeforeItMerges(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	merging := entity.Batch{ID: "q/batch/derived", Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
+	h := newRunHarness(t, ctrl, &scriptedSpeculator{}, []entity.Batch{merging})
+	h.noBuildsDispatched()
+
+	// No dependencies, so the passed path has nothing left to settle.
+	passedPath := entity.SpeculationPath{Head: merging.ID}
+	h.pathSets.EXPECT().Get(gomock.Any(), merging.ID).Return(entity.SpeculationPathSet{
+		Head:    merging.ID,
+		Paths:   []entity.SpeculationPathEntry{entryFor(passedPath, entity.SpeculationPathStatusPassed)},
+		Version: 1,
+	}, nil).AnyTimes()
+
+	var publishedBeforeWrite []string
+	h.batches.EXPECT().
+		Update(gomock.Any(), updateTo{id: merging.ID, state: entity.BatchStateMerging}, int32(1), int32(2)).
+		DoAndReturn(func(context.Context, entity.Batch, int32, int32) error {
+			publishedBeforeWrite = append([]string(nil), h.published...)
+			return nil
+		})
+
+	// The message names some other batch, so a retry would never come back here.
+	require.NoError(t, h.run(head))
+
+	assert.Equal(t, []string{"speculate"}, publishedBeforeWrite)
+	assert.Equal(t, []string{"speculate", "submitqueue-merge"}, h.published)
 }
 
 // A cancelling path whose build is still running finishes only when CI actually
