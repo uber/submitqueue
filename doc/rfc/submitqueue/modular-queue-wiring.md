@@ -466,7 +466,7 @@ func run(ctx context.Context) error {
                 ChangeProvider(github.New(cfg.GitHub)).
                 BuildRunner(local.New()).
                 Scorer(heuristic.New()).
-                ConflictAnalyzer(fileoverlap.New()),
+                ConflictAnalyzer(pathoverlap.New()),
         ).
         Option(pipeline.TopicNames(cfg.TopicNames)).
         Option(pipeline.Classifiers(backendClassifiers())).
@@ -497,7 +497,7 @@ app, err := submitqueue.New().
     ).
     Queue(base.Named("monorepo/exp").
         BuildRunner(local.New()).
-        ConflictAnalyzer(fileoverlap.New()),
+        ConflictAnalyzer(pathoverlap.New()),
     ).
     Queue(base.Named("monorepo/test").
         BuildRunner(noop.New()).

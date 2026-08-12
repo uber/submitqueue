@@ -27,8 +27,8 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/all"
 	conflictfake "github.com/uber/submitqueue/submitqueue/extension/conflict/fake"
-	"github.com/uber/submitqueue/submitqueue/extension/conflict/fileoverlap"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/none"
+	"github.com/uber/submitqueue/submitqueue/extension/conflict/pathoverlap"
 	"github.com/uber/submitqueue/submitqueue/extension/scorer"
 	"github.com/uber/submitqueue/submitqueue/extension/scorer/composite"
 	scorerfake "github.com/uber/submitqueue/submitqueue/extension/scorer/fake"
@@ -256,9 +256,10 @@ func newProfiles(logger *zap.Logger, scope tally.Scope, resolver changeset.Resol
 
 	// file-overlap-queue: a real analyzer that serializes only batches sharing
 	// a changed file, resolving each batch's files itself via the resolver.
+	// pathoverlap.ByDirectory would coarsen this to whole directories.
 	fileOverlapQueue := base
 	fileOverlapQueue.Analyzer = analyzerFunc(func(c conflict.Config) (conflict.Analyzer, error) {
-		return fileoverlap.New(c, resolver), nil
+		return pathoverlap.New(c, resolver, pathoverlap.ByFile), nil
 	})
 
 	// e2e-test-queue: composite scorer; no conflicts (maximum parallelism).
