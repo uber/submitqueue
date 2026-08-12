@@ -16,6 +16,7 @@ Stovepipe therefore needs two MySQL databases: a **storage** database (the `requ
 
 - **`inMemoryCounter`** — a process-local `counter.Counter` for sequence numbers; not durable. A real deployment uses a persistent implementation (e.g. `platform/extension/counter/mysql`).
 - **`fakeSourceControlFactory`** — seeds each queue with a deterministic single-commit history so ingest resolves a stable head URI (and re-ingesting the same queue exercises the dedup path). A real deployment supplies a VCS-backed `sourcecontrol.Factory`.
+- **`newBuildRunnerFactory`** — builds the `buildrunner.Factory` from the environment. Every runner it hands out is bound to the resolving queue's `Config` and shares the profile the `BUILD_RUNNER_*` knobs describe (failure rate, build duration, and its spread). `BUILD_RUNNER=fake` (the default) gives each queue one fake runner; `BUILD_RUNNER=sampler` gives it two and splits builds between them by percentage, which is how a backend rollout or comparison is exercised without a real CI system. A real deployment keeps this shape and swaps the constructed runners for Buildkite or GitHub Actions ones (see [`stovepipe/extension/buildrunner`](../../stovepipe/extension/buildrunner)); a deployment that gives queues *different* backends routes on `Config.QueueName` in `For`, as the SubmitQueue orchestrator does in its `profiles.go`.
 
 ## Layout
 
@@ -39,6 +40,36 @@ The Stovepipe controllers live under [`stovepipe/controller/`](../../stovepipe/c
 | `QUEUE_MYSQL_DSN`   | yes      | Queue database DSN                       | —                    |
 | `PORT`              | no       | gRPC listen address                      | `:8083`              |
 | `HOSTNAME`          | no       | Subscriber name for the process consumer | `stovepipe-<unix_ts>` |
+
+### Build runner
+
+`BUILD_RUNNER` selects the implementation; the bare `BUILD_RUNNER_*` knobs configure the runner that takes unsampled builds, and the `_CANDIDATE_` ones configure the runner that `sampler` splits traffic with. A malformed value fails startup rather than silently falling back to the default.
+
+| Variable                                          | Required | Description                                                              | Default |
+|---------------------------------------------------|----------|--------------------------------------------------------------------------|---------|
+| `BUILD_RUNNER`                                    | no       | `fake` or `sampler`                                                      | `fake`  |
+| `BUILD_RUNNER_FAILURE_PERCENT`                    | no       | Share of builds (0-100) the runner reports as failed                     | `0`     |
+| `BUILD_RUNNER_DURATION_MS`                        | no       | How long each build reports running before turning terminal              | `0`     |
+| `BUILD_RUNNER_DURATION_JITTER_PERCENT`            | no       | Spread (0-100) applied to that duration per build                        | `0`     |
+| `BUILD_RUNNER_SAMPLE_PERCENT`                     | no       | Share of builds (0-100) routed to the candidate runner                   | `0`     |
+| `BUILD_RUNNER_CANDIDATE_FAILURE_PERCENT`          | no       | Failure share for the candidate runner                                   | `0`     |
+| `BUILD_RUNNER_CANDIDATE_DURATION_MS`              | no       | Build duration for the candidate runner                                  | `0`     |
+| `BUILD_RUNNER_CANDIDATE_DURATION_JITTER_PERCENT`  | no       | Duration spread for the candidate runner                                 | `0`     |
+
+The defaults reproduce the original behavior: one fake runner that succeeds immediately unless a request's head URI carries a `buildrunner-fake=<token>` marker. Markers keep working under a configured rate — they pin the outcome for the build that carries them.
+
+Durations are configured as a typical value plus a spread, so the bounds stay easy to state: `BUILD_RUNNER_DURATION_MS=60000` with `BUILD_RUNNER_DURATION_JITTER_PERCENT=25` means every build takes between 45s and 75s, drawn uniformly. A jitter of `0` pins every build to exactly the configured duration; `100` is the widest setting, spanning "terminal immediately" to twice the duration.
+
+Under Compose these are set through `SQ_`-prefixed variables, so a sampled stack that sends a tenth of its builds to a slow, flaky runner starts with:
+
+```bash
+SQ_BUILD_RUNNER=sampler \
+SQ_BUILD_RUNNER_SAMPLE_PERCENT=10 \
+SQ_BUILD_RUNNER_CANDIDATE_FAILURE_PERCENT=50 \
+SQ_BUILD_RUNNER_CANDIDATE_DURATION_MS=5000 \
+SQ_BUILD_RUNNER_CANDIDATE_DURATION_JITTER_PERCENT=40 \
+make local-stovepipe-start
+```
 
 ## Running
 
