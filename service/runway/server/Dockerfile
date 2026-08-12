@@ -1,6 +1,9 @@
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/* \
+# git is a runtime dependency, not a build one: the git merger shells out to it
+# to fetch, apply, and push. Without it the service still starts, but only the
+# noop merger works — a git merge target fails at startup instead.
+RUN apt-get update && apt-get install -y ca-certificates git && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /app && chmod 0755 /app
 WORKDIR /app
 

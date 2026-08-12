@@ -170,7 +170,7 @@ func run() error {
 		gate,
 	)
 
-	mergerFactory, err := newMergerFactory(logger, scope.SubScope("merger"))
+	mergerFactory, err := newMergerFactory(ctx, logger, scope.SubScope("merger"))
 	if err != nil {
 		return fmt.Errorf("failed to create merger factory: %w", err)
 	}
@@ -304,76 +304,210 @@ func run() error {
 	return err
 }
 
-// newMergerFactory returns a merger.Factory for the server. MERGER selects the
-// implementation explicitly; when it is unset the choice falls back to the merge
-// environment — MERGE_CHECKOUT_PATH wires the git-backed merger built from the
-// MERGE_* / GIT_* environment, and its absence wires the noop merger so local
-// development and compose runs need no git checkout.
-func newMergerFactory(logger *zap.Logger, scope tally.Scope) (merger.Factory, error) {
+// newMergerFactory builds the mergers for the server.
+//
+// MERGER pins every queue to one implementation explicitly, which is how a test
+// holds the service to a fake without a git checkout. Left unset, each queue
+// resolves its own merge target through the merge configuration, so a
+// deployment can serve several repositories from one Runway.
+//
+// The fake is reachable only through MERGER, never through the configuration
+// file: an implementation whose outcomes are steered by markers in a change URI
+// has no business being selectable by a production config.
+func newMergerFactory(ctx context.Context, logger *zap.Logger, scope tally.Scope) (merger.Factory, error) {
 	switch impl := strings.ToLower(strings.TrimSpace(os.Getenv("MERGER"))); impl {
 	case "fake":
 		// Marker-driven outcomes, for e2e tests that need Runway to fail on
 		// demand without a git checkout. Never production.
-		logger.Info("MERGER=fake; using marker-driven fake merger")
+		logger.Info("MERGER=fake; using marker-driven fake merger for every queue")
 		return &fakeMergerFactory{seq: new(atomic.Uint64)}, nil
 	case "noop":
-		logger.Info("MERGER=noop; using noop merger")
+		logger.Info("MERGER=noop; using noop merger for every queue")
 		return &noopMergerFactory{seq: new(atomic.Uint64)}, nil
 	case "", "git":
-		// Fall through to the merge-environment default below.
+		// Fall through to the configured per-queue merge targets.
 	default:
 		return nil, fmt.Errorf("invalid MERGER %q", impl)
 	}
 
-	checkoutPath := os.Getenv("MERGE_CHECKOUT_PATH")
-	if checkoutPath == "" {
-		logger.Info("MERGE_CHECKOUT_PATH not set; using noop merger")
-		return &noopMergerFactory{seq: new(atomic.Uint64)}, nil
-	}
-
-	defaultStrategy, err := parseStrategy(os.Getenv("MERGE_DEFAULT_STRATEGY"))
+	cfg, err := loadMergeConfigFromEnv(logger)
 	if err != nil {
 		return nil, err
 	}
 
-	target := envOr("MERGE_TARGET", "main")
-	m, err := gitmerger.NewMerger(gitmerger.Params{
+	// The git runtime is resolved only when something actually needs it, so a
+	// deployment running nothing but the noop merger does not require git to be
+	// installed at all.
+	var runtime gitmerger.GitRuntime
+	if cfg.usesGit() {
+		runtime, err = resolveGitRuntime(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve git runtime: %w", err)
+		}
+		logger.Info("git runtime resolved",
+			zap.String("executable", runtime.Executable),
+			zap.String("exec_path", runtime.ExecPath),
+			zap.String("template_dir", runtime.TemplateDir),
+		)
+	}
+
+	builder := &mergerBuilder{
+		ctx:      ctx,
+		logger:   logger,
+		scope:    scope,
+		runtime:  runtime,
+		byTarget: make(map[string]merger.Factory),
+		seq:      new(atomic.Uint64),
+	}
+
+	fallback, err := builder.build(cfg.Defaults.Merger, "defaults")
+	if err != nil {
+		return nil, err
+	}
+
+	byQueue := make(map[string]merger.Factory, len(cfg.Queues))
+	for _, q := range cfg.Queues {
+		if q.Merger == nil {
+			continue
+		}
+		m, err := builder.build(*q.Merger, fmt.Sprintf("queue %q", q.Name))
+		if err != nil {
+			return nil, err
+		}
+		byQueue[q.Name] = m
+	}
+
+	logger.Info("mergers configured",
+		zap.String("default_type", cfg.Defaults.Merger.Type),
+		zap.Int("queue_overrides", len(byQueue)),
+	)
+	return mergerRegistry{byQueue: byQueue, fallback: fallback}, nil
+}
+
+// loadMergeConfigFromEnv reads the merge configuration file when one is
+// configured, and otherwise reconstructs the equivalent single-queue
+// configuration from the MERGE_* environment.
+//
+// The environment path predates the file and remains the shortest way to run
+// one merge target, so it stays supported rather than being migrated away;
+// expressing it as the same config type means there is still only one code path
+// building mergers.
+func loadMergeConfigFromEnv(logger *zap.Logger) (mergeConfig, error) {
+	if path := os.Getenv("MERGE_CONFIG_PATH"); path != "" {
+		cfg, err := loadMergeConfig(path)
+		if err != nil {
+			return mergeConfig{}, err
+		}
+		logger.Info("merge config loaded", zap.String("path", path), zap.Int("queues", len(cfg.Queues)))
+		return cfg, nil
+	}
+
+	checkoutPath := os.Getenv("MERGE_CHECKOUT_PATH")
+	if checkoutPath == "" {
+		logger.Info("neither MERGE_CONFIG_PATH nor MERGE_CHECKOUT_PATH set; using noop merger")
+		return mergeConfig{Defaults: queueMergeConfig{Merger: mergerConfig{Type: mergerTypeNoop}}}, nil
+	}
+
+	checkStaleness := envBool("MERGE_CHECK_STALENESS", true)
+	cfg := mergeConfig{Defaults: queueMergeConfig{Merger: mergerConfig{
+		Type:            mergerTypeGit,
 		CheckoutPath:    checkoutPath,
 		Remote:          envOr("MERGE_REMOTE", "origin"),
-		Target:          target,
-		DefaultStrategy: defaultStrategy,
-		Runtime: gitmerger.GitRuntime{
-			Executable:  os.Getenv("GIT_EXECUTABLE"),
-			ExecPath:    os.Getenv("GIT_EXEC_PATH"),
-			TemplateDir: os.Getenv("GIT_TEMPLATE_DIR"),
-		},
-		CommitterName:  os.Getenv("MERGE_COMMITTER_NAME"),
-		CommitterEmail: os.Getenv("MERGE_COMMITTER_EMAIL"),
-		FetchRefspecs:  splitRefspecs(os.Getenv("MERGE_FETCH_REFSPECS")),
-		CheckStaleness: envBool("MERGE_CHECK_STALENESS", true),
+		Target:          envOr("MERGE_TARGET", "main"),
+		DefaultStrategy: os.Getenv("MERGE_DEFAULT_STRATEGY"),
+		CheckStaleness:  &checkStaleness,
 		// Off by default: it lifts git's refusal to join two unrelated history
 		// graphs, which is a safeguard everywhere except a queue whose purpose
 		// is importing one repository's history into another.
 		AllowUnrelatedHistories: envBool("MERGE_ALLOW_UNRELATED_HISTORIES", false),
-		Logger:                  logger.Sugar(),
-		MetricsScope:            scope,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to build git merger: %w", err)
+		UpdateHeadBranch:        envBool("MERGE_UPDATE_HEAD_BRANCH", false),
+		FetchRefspecs:           splitRefspecs(os.Getenv("MERGE_FETCH_REFSPECS")),
+		CommitterName:           os.Getenv("MERGE_COMMITTER_NAME"),
+		CommitterEmail:          os.Getenv("MERGE_COMMITTER_EMAIL"),
+	}}}
+	if err := cfg.normalizeAndValidate(); err != nil {
+		return mergeConfig{}, fmt.Errorf("invalid MERGE_* environment: %w", err)
 	}
-	logger.Info("git merger configured",
-		zap.String("checkout", checkoutPath),
-		zap.String("target", target),
-		zap.String("default_strategy", defaultStrategy.String()),
-	)
-	return &gitMergerFactory{merger: m}, nil
+	return cfg, nil
 }
 
-// gitMergerFactory returns a single git-backed merger for every queue. The
-// merger owns one checkout and serializes its own operations, so one instance
-// is shared across queues — which is why this is the one merger factory that
-// does not forward its Config. A deployment that lands multiple targets wires a
-// factory with a per-queue map instead.
+// mergerBuilder constructs merger factories, reusing one git instance per merge
+// target.
+//
+// Sharing matters: a git merger serializes its own operations against the
+// working tree it owns, so two queues landing on the same target must be the
+// same instance to be serialized against each other. Two instances would hold
+// separate locks over one working tree and reset it out from under each other
+// mid-merge. A noop target has no such constraint and is built per queue, so it
+// carries the queue's own config.
+type mergerBuilder struct {
+	ctx     context.Context
+	logger  *zap.Logger
+	scope   tally.Scope
+	runtime gitmerger.GitRuntime
+	// byTarget caches one merger per checkout path. Keying on the path alone is
+	// safe only because validation has already rejected two queues that share a
+	// checkout and disagree anywhere in their merger config: the cached instance
+	// is built from whichever queue arrived first, so a divergent second queue
+	// would silently run with the first one's settings. Widening what may share
+	// a checkout means widening that check with it.
+	byTarget map[string]merger.Factory
+	// seq is the process-wide counter the noop mergers mint revision ids from,
+	// held here so ids stay unique across every queue.
+	seq *atomic.Uint64
+}
+
+func (b *mergerBuilder) build(cfg mergerConfig, where string) (merger.Factory, error) {
+	if cfg.Type != mergerTypeGit {
+		return &noopMergerFactory{seq: b.seq}, nil
+	}
+
+	if existing, ok := b.byTarget[cfg.CheckoutPath]; ok {
+		return existing, nil
+	}
+
+	if cfg.provisions() {
+		if err := provisionCheckout(b.ctx, b.logger.Sugar(), b.runtime, cfg); err != nil {
+			return nil, fmt.Errorf("%s: failed to provision checkout: %w", where, err)
+		}
+	}
+
+	m, err := gitmerger.NewMerger(gitmerger.Params{
+		CheckoutPath:            cfg.CheckoutPath,
+		Remote:                  cfg.Remote,
+		Target:                  cfg.Target,
+		DefaultStrategy:         cfg.strategy(),
+		Runtime:                 b.runtime,
+		MaxPushAttempts:         cfg.MaxPushAttempts,
+		FetchRefspecs:           cfg.FetchRefspecs,
+		CheckStaleness:          *cfg.CheckStaleness,
+		UpdateHeadBranch:        cfg.UpdateHeadBranch,
+		AllowUnrelatedHistories: cfg.AllowUnrelatedHistories,
+		CommitterName:           cfg.CommitterName,
+		CommitterEmail:          cfg.CommitterEmail,
+		Logger:                  b.logger.Sugar(),
+		MetricsScope:            b.scope,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%s: failed to build git merger: %w", where, err)
+	}
+
+	b.logger.Info("git merger configured",
+		zap.String("checkout", cfg.CheckoutPath),
+		zap.String("target", cfg.Target),
+		zap.String("default_strategy", cfg.strategy().String()),
+		zap.Bool("update_head_branch", cfg.UpdateHeadBranch),
+	)
+	f := &gitMergerFactory{merger: m}
+	b.byTarget[cfg.CheckoutPath] = f
+	return f, nil
+}
+
+// gitMergerFactory returns one git-backed merger for every queue routed to it.
+// The merger owns one checkout and serializes its own operations, so a single
+// instance is shared — which is why this is the one merger factory that does
+// not forward its Config. Queues landing on different targets get different
+// instances of it, resolved through mergerRegistry.
 type gitMergerFactory struct {
 	merger merger.Merger
 }
@@ -402,6 +536,24 @@ type fakeMergerFactory struct {
 
 func (f *fakeMergerFactory) For(cfg merger.Config) (merger.Merger, error) {
 	return fake.New(cfg, f.seq), nil
+}
+
+// mergerRegistry resolves each queue's merger factory, falling back to the
+// default for a queue with no entry of its own.
+//
+// It holds factories rather than mergers so the queue's Config reaches the
+// implementation: whether an entry yields one shared instance or a fresh
+// per-queue one is the factory's business, not the registry's.
+type mergerRegistry struct {
+	byQueue  map[string]merger.Factory
+	fallback merger.Factory
+}
+
+func (r mergerRegistry) For(cfg merger.Config) (merger.Merger, error) {
+	if f, ok := r.byQueue[cfg.QueueName]; ok {
+		return f.For(cfg)
+	}
+	return r.fallback.For(cfg)
 }
 
 // parseStrategy maps the MERGE_DEFAULT_STRATEGY env value to a concrete merge
