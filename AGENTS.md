@@ -334,6 +334,32 @@ CI runs on every PR and enforces all checks via a `required-checks` gate. **Befo
 3. **Value types over pointers** — prefer value types for structs, configs, and return values. Use `(T, bool)` to signal absence instead of `*T`. Pointers only when mutation or shared ownership is needed.
 4. **Errors for failures, not control flow** — reserve `error` returns for unexpected or infrastructure failures. Use result types (structs, bools) for expected outcomes like `(Result, error)` or `(T, bool)`. Avoid sentinel errors that represent non-failure states.
 
+### Comment Style
+
+Comments carry real weight here — the CAS race-window note in `submitqueue/orchestrator/controller/batch/batch.go` and the constant rationales in `platform/extension/messagequeue/mysql/subscriber.go` are load-bearing documentation. That is exactly why noise is expensive: when most comments restate the code, readers skim past all of them, including the ones that matter.
+
+```go
+// Bad — restates the call on the next line.
+// Deserialize request ID from payload
+rid, err := entity.RequestIDFromBytes(msg.Payload)
+
+// Good — records a decision that is invisible in the code.
+// Non-retryable: a missing or unresolvable queue is a malformed message.
+return fmt.Errorf("failed to resolve storage for queue %q: %w", rid.Queue, err)
+```
+
+1. **Comment the *why*, never the *what*** — the code already says what it does. A comment earns its place by adding what the reader cannot see: an invariant, a race window, a rejected alternative, the reason a constant has the value it has, or a classification decision.
+2. **The deletion test** — if the line below were rewritten with different calls but identical behavior, would the comment still be true and still be worth keeping? If it dies with the line, it was narration. Delete it.
+3. **Keep doc comments on exported identifiers short and concise** — say what the reader needs and stop. Where the name already carries the meaning (`Name`, `TopicKey`, `ConsumerGroup`, `NewController`), a brief line is plenty. Spend words only on the non-obvious: units, ownership, nil behavior, concurrency safety, error semantics. Don't pad to fill a template — `make lint` is formatting-only and requires nothing here.
+4. **Never narrate the change** — no `// Now also handles X`, `// Previously we ...`, `// Changed to ...`, `// New:`. A comment addresses the next person reading the file, who has no idea a diff ever happened. Why a change was made belongs in the commit message; why the *code* is the way it is belongs in the comment, written in the present tense as a standing fact.
+5. **No scaffolding comments in tests** — no `// Arrange` / `// Act` / `// Assert`, no `// Setup`, no `// Close queue`, no `// Verify`. The `t.Run` name states the scenario and testify states the assertion. Comment a test only for a non-obvious fixture or to explain why an outcome is the expected one.
+6. **Size the comment to the surprise, and hoist the big ones** — length is justified only by a correspondingly deep hazard. Once an explanation is really about a design rather than about a line, move it to the package doc, a `README.md`, or `doc/rfc/` and leave a one-line pointer. Design essays wedged into function bodies go stale silently.
+7. **`TODO` needs a subject and a successor** — use the existing forms, `// TODO: <what>` or `// TODO(topic): <what>`, and only for genuinely deferred work. Never leave a `TODO` describing work you just finished, and never use one to flag uncertainty about your own change — resolve it or raise it in the PR.
+
+Entity fields are governed separately: see [Entities](#entities) rules 4 and 7 — every field gets a comment, and that comment describes the data, not the choreography.
+
+Rule of thumb: if a reviewer would learn nothing from the comment that they would not learn from the line beneath it, it is noise. Prefer a clearer name, a smaller function, or a named constant over a comment explaining an unclear one.
+
 ### Error Classification (`platform/errs`)
 
 Errors are classified by origin (user vs infra) and retryability. The framework lives in `platform/errs/`. See [platform/errs/README.md](platform/errs/README.md) for full details.
