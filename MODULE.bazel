@@ -28,7 +28,7 @@ use_repo(protoc, "toolchains_protoc_hub")
 
 register_toolchains("@toolchains_protoc_hub//:all")
 
-GO_VERSION = "1.24.5"
+GO_VERSION = "1.25.0"
 
 go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
 
