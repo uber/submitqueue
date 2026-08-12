@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Go 1.24+** — needed for `gopls`, `go mod`, and installing protoc plugins. Download from [go.dev/dl](https://go.dev/dl/). Note: Bazel manages its own Go toolchain for builds, but a local Go installation is required for editor tooling and dependency management.
+- **Go 1.25+** — needed for `gopls`, `go mod`, and installing protoc plugins. Download from [go.dev/dl](https://go.dev/dl/). Note: Bazel manages its own Go toolchain for builds, but a local Go installation is required for editor tooling and dependency management.
 - **Docker** and **Docker Compose** — for integration and e2e tests, and for running services locally.
 - **direnv** (recommended) — automatically loads `.envrc` so you can use `bazel` directly instead of `./tool/bazel`.
 
@@ -149,7 +149,7 @@ See [TESTING.md](TESTING.md) for the full testing guide, including integration a
 
 **`gopls` or `go mod tidy` errors:**
 - Run `go mod download` to fetch all dependencies
-- Check that your Go version matches what's in `go.mod` (currently Go 1.24)
+- Check that your Go version matches what's in `go.mod` (currently Go 1.25)
 - If using VS Code, restart the Go language server: `Ctrl+Shift+P` > "Go: Restart Language Server"
 
 ## Shell Auto-Completion
