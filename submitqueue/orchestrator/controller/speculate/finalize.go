@@ -83,11 +83,12 @@ func (c *Controller) finalize(ctx context.Context, snap *snapshot) error {
 				snap.markDirty(batch.ID)
 			}
 
-			if err := c.reportSpeculation(ctx, batch, set, *snap, before, hadPassed); err != nil {
+			decision := decide(batch, set, *snap)
+
+			if err := c.reportSpeculation(ctx, batch, set, *snap, before, hadPassed, decision); err != nil {
 				return err
 			}
 
-			decision := decide(batch, set, *snap)
 			if decision == outcomeWait {
 				stillOpen = append(stillOpen, batch)
 				continue
@@ -129,31 +130,17 @@ func (c *Controller) finalize(ctx context.Context, snap *snapshot) error {
 	return nil
 }
 
-// reportSpeculation tells a head's members how far speculation has got.
+// reportSpeculation records what the fold above did to a head's passed path.
+// Both facts are per-path and the head stays BatchStateSpeculating throughout,
+// so neither is a status and the request log is the only place they show up.
 //
-// Two moments are worth reporting and neither is a batch state — a head is
-// BatchStateSpeculating from admission until its outcome, so the request log is
-// the only place either becomes visible:
+// before comes from passedEntry, not livePassedPath: that predicate and the
+// fold both exclude a contradicted path, so two livePassedPath calls could
+// never see the loss. Only the run that does the breaking sees it at all.
 //
-//   - the head has a live passed path. Its own work is done and what remains is
-//     other batches finishing, a wait that can run for minutes and reads very
-//     differently to still building.
-//   - it just lost the one it had, because a dependency resolved against that
-//     path's guess. The head is back to building, and without this its members
-//     would go on reading as speculated through the whole rebuild.
-//
-// The second is why before is taken from passedEntry rather than livePassedPath:
-// both that predicate and the fold above exclude a contradicted path, so a pair
-// of livePassedPath calls could never see the loss happen. What is compared is
-// "held a passed build" before the fold against "still has one worth waiting on"
-// after it, and only the run that does the breaking sees the difference — every
-// later run finds the entry already cancelled.
-//
-// Both facts are derived from the snapshot rather than stored, so this runs on
-// every pass over an open head and relies on the occurrence to collapse the
-// repeats: a path ID hashes its head along with its assumptions, so it names the
-// batch too, and one passed path re-observed by a hundred runs is a single entry
-// while a different path winning after a re-plan is correctly a new one.
+// Nothing is stored, so this runs on every pass and leans on the occurrence to
+// collapse repeats — a path ID hashes its head with its assumptions, so one
+// passed path re-observed stays one entry while a re-plan's winner is a new one.
 func (c *Controller) reportSpeculation(
 	ctx context.Context,
 	batch entity.Batch,
@@ -161,20 +148,23 @@ func (c *Controller) reportSpeculation(
 	snap snapshot,
 	before entity.SpeculationPathEntry,
 	hadPassed bool,
+	decision outcome,
 ) error {
 	after, hasPassed := livePassedPath(set, snap)
 
-	status, path := entity.RequestStatusSpeculated, after
+	// A merge is decided on the same live passed path, so an ungated report
+	// would claim a wait on every head that merges straight through.
+	event, path := entity.RequestEventWaiting, after
 	switch {
-	case hasPassed:
-	case hadPassed:
-		status, path = entity.RequestStatusSpeculating, before
+	case hasPassed && decision == outcomeWait:
+	case hadPassed && !hasPassed:
+		event, path = entity.RequestEventInvalidated, before
 	default:
 		return nil
 	}
 
-	if err := corerequest.PublishBatchLogs(ctx, c.registry, batch.Queue, batch.Contains,
-		status, path.ID, map[string]string{
+	if err := corerequest.PublishBatchEvents(ctx, c.registry, batch.Queue, batch.Contains,
+		event, path.ID, map[string]string{
 			"batch_id": batch.ID,
 			"path_id":  path.ID,
 		},
@@ -183,7 +173,7 @@ func (c *Controller) reportSpeculation(
 		// Attributed to this head, not the trigger: the loop walks the whole
 		// queue, so the batch whose members could not be told is usually not the
 		// one the message named.
-		return c.attributed(fmt.Errorf("failed to publish request logs for batch %s: %w", batch.ID, err),
+		return c.attributed(fmt.Errorf("failed to publish request events for batch %s: %w", batch.ID, err),
 			entity.BatchSubject(batch.ID))
 	}
 	return nil
@@ -369,10 +359,18 @@ func (c *Controller) applyOutcome(ctx context.Context, store storage.Storage, ba
 	return true, nil
 }
 
-// dispatchMerge hands a batch to the merge stage under a stable ID, so both a
-// redelivery and the Merging self-heal dedupe against the request already sent
-// rather than asking Runway to merge the batch twice.
+// dispatchMerge reports speculation finished and hands the batch to the merge
+// stage. The stable ID means a redelivery or the Merging self-heal dedupes
+// against the request already sent instead of merging twice; the status goes
+// first so it cannot be timestamped after the landing the dispatch triggers.
 func (c *Controller) dispatchMerge(ctx context.Context, batch entity.Batch) error {
+	if err := corerequest.PublishBatchLogs(ctx, c.registry, batch.Queue, batch.Contains,
+		entity.RequestStatusSpeculated, batch.ID, map[string]string{"batch_id": batch.ID},
+	); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
+		return fmt.Errorf("failed to publish request logs for batch %s: %w", batch.ID, err)
+	}
+
 	if err := c.publishBatchID(ctx, topickey.TopicKeyMerge, publish.IntentID(batch.ID, "merge-dispatch"), batch.ID, batch.Queue, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish batch %s to merge: %w", batch.ID, err)

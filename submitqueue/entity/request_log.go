@@ -54,11 +54,12 @@ const (
 	// RequestStatusBatched indicates that the request has been included in a new batch and will be sent to speculation.
 	RequestStatusBatched RequestStatus = "batched"
 
-	// RequestStatusSpeculating indicates that the batch containing the request has been admitted to speculation: candidate paths are being planned and built.
+	// RequestStatusSpeculating indicates that the batch containing the request is in speculation:
+	// planning, building, or waiting for its dependencies to settle. None of those leaves it able to land.
 	RequestStatusSpeculating RequestStatus = "speculating"
 
-	// RequestStatusSpeculated indicates that the batch containing the request has a build that passed on a path still
-	// consistent with how its dependencies are resolving, and is waiting for those dependencies to settle before it can land.
+	// RequestStatusSpeculated indicates that the batch containing the request has finished speculating:
+	// a build passed on a path whose assumptions all held, and the batch has been cleared to merge.
 	RequestStatusSpeculated RequestStatus = "speculated"
 
 	// RequestStatusLanding indicates that the request is actively being landed (e.g., source control operation is in progress to push the change to the target branch).
@@ -84,17 +85,17 @@ const (
 // RequestEvent is something that happened to a request while it sat at a status,
 // rather than a status of its own.
 //
-// Build progress is what the distinction exists for. A batch funds several
-// speculation paths at once and each is built separately, so a build starting or
-// finishing says nothing about where the request as a whole is — it is still
-// speculating. Were these statuses, one build succeeding while its siblings ran
-// would report the request as finished, and go on reporting it that way until the
-// batch resolved, because nothing else publishes in between.
+// Speculation is what the distinction exists for. A batch funds several paths at
+// once and each is built separately, so a build starting or finishing, or one
+// path passing and later being contradicted, says nothing about where the request
+// as a whole is — it is still speculating. Were these statuses, one build
+// succeeding while its siblings ran would report the request as finished, and go
+// on reporting it that way until the batch resolved.
 //
-// Events are not unique per request: each names one build, and a batch may be
-// built many times as speculation re-plans. They belong in a request's history
-// and are never its current status — which is enforced by the type, since a
-// RequestEvent cannot be assigned to RequestSummary.Status.
+// Events are not unique per request: each names one path or build, and a batch
+// may be re-planned many times. They belong in a request's history and are never
+// its current status — which is enforced by the type, since a RequestEvent cannot
+// be assigned to RequestSummary.Status.
 type RequestEvent string
 
 const (
@@ -107,6 +108,14 @@ const (
 	// RequestEventBuilt indicates that one build verifying one speculation path of the batch containing the request finished successfully.
 	// A build that fails or is cancelled records nothing.
 	RequestEventBuilt RequestEvent = "built"
+
+	// RequestEventWaiting indicates that one speculation path of the batch containing the request passed,
+	// leaving the batch nothing of its own to run and waiting on its dependencies to settle.
+	RequestEventWaiting RequestEvent = "waiting"
+
+	// RequestEventInvalidated indicates that a dependency resolved against the guess made by the passed path
+	// the batch containing the request was waiting on, so that path can no longer carry it.
+	RequestEventInvalidated RequestEvent = "invalidated"
 )
 
 // RequestLogType is what a log entry records: the request reaching a status, or
