@@ -183,6 +183,30 @@ func (s *E2EIntegrationSuite) assertStatusesNever(req request, banned ...entity.
 	}
 }
 
+// awaitBatchID polls the operating store until the request has been claimed by
+// a batch and returns that batch's ID.
+//
+// Messages about a batch are keyed by the batch ID, not the sqid the test
+// holds, so a test that wants to name one has to resolve it. Polling because
+// the claim happens asynchronously, several stages after Land returns.
+func (s *E2EIntegrationSuite) awaitBatchID(req request) string {
+	t := s.T()
+	store, err := s.appStorage.For(req.queue)
+	require.NoError(t, err, "failed to resolve operating store for queue %s", req.queue)
+
+	var batchID string
+	pollUntil(persistPollInterval, func() bool {
+		associations, err := store.GetRequestBatchStore().GetByRequestID(s.ctx, req.sqid)
+		if err != nil || len(associations) == 0 {
+			return false
+		}
+		batchID = associations[0].BatchID
+		return true
+	})
+	s.log.Logf("Request %s is carried by batch %s", req.sqid, batchID)
+	return batchID
+}
+
 // closeGate closes the consumer gate for the consumer group, scoped to one
 // partition (the queue name for pipeline topics). The gate must be closed
 // before the message that must be caught is published — that makes the stop
