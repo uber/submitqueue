@@ -40,7 +40,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/uber/submitqueue/platform/errs"
-	platformgithubactions "github.com/uber/submitqueue/platform/extension/buildrunner/githubactions"
+	platformgithubactions "github.com/uber/submitqueue/platform/githubactions"
 	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"

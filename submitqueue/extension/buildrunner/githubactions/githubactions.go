@@ -28,7 +28,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/uber/submitqueue/platform/base/change"
-	platformgithubactions "github.com/uber/submitqueue/platform/extension/buildrunner/githubactions"
+	platformgithubactions "github.com/uber/submitqueue/platform/githubactions"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"

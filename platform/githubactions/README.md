@@ -1,6 +1,6 @@
 # GitHub Actions client
 
-Shared HTTP client and GitHub Actions-specific facts for every domain's GitHub Actions-backed `BuildRunner`. There is no `BuildRunner` interface here by design — each domain (`submitqueue`, `stovepipe`, ...) defines its own `BuildRunner` and its own `BuildStatus`, and adapts this package's `RunStatus` to it. Mirrors [`platform/extension/buildrunner/buildkite`](../buildkite/README.md)'s split; see that package's README and [`doc/rfc/stovepipe/steps/build.md`](../../../../doc/rfc/stovepipe/steps/build.md#alternatives-considered-for-sharing-the-contract) for the shared rationale.
+Shared HTTP client and GitHub Actions-specific facts for every domain's GitHub Actions-backed `BuildRunner`. There is no `BuildRunner` interface here by design — each domain (`submitqueue`, `stovepipe`, ...) defines its own `BuildRunner` and its own `BuildStatus`, and adapts this package's `RunStatus` to it. Mirrors [`platform/buildkite`](../buildkite/README.md)'s split; see that package's README and [`doc/rfc/stovepipe/steps/build.md`](../../doc/rfc/stovepipe/steps/build.md#alternatives-considered-for-sharing-the-contract) for the shared rationale.
 
 ## What lives here
 

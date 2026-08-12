@@ -30,7 +30,7 @@ import (
 
 	"github.com/uber/submitqueue/platform/errs"
 	httperrs "github.com/uber/submitqueue/platform/errs/http"
-	platformgithubactions "github.com/uber/submitqueue/platform/extension/buildrunner/githubactions"
+	platformgithubactions "github.com/uber/submitqueue/platform/githubactions"
 	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"

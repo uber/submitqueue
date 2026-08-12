@@ -39,8 +39,8 @@ import (
 
 	"go.uber.org/zap"
 
+	platformbuildkite "github.com/uber/submitqueue/platform/buildkite"
 	"github.com/uber/submitqueue/platform/errs"
-	platformbuildkite "github.com/uber/submitqueue/platform/extension/buildrunner/buildkite"
 	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
