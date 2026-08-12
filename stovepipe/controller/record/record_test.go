@@ -41,7 +41,7 @@ const (
 	testURI   = "git://remote/monorepo/main/head-sha"
 )
 
-var testCommitTime = time.Unix(1_700_000_000, 0).UTC()
+var testChangeTime = time.Unix(1_700_000_000, 0).UTC()
 
 // recordMocks bundles the mocks a record controller test case wires
 // expectations on.
@@ -185,7 +185,7 @@ func TestProcess_AdvancesBookmarkOnSuccess(t *testing.T) {
 					return nil
 				})
 			m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).
-				Return(sourcecontrol.ChangeInfo{CreatedAt: testCommitTime.UnixMilli()}, nil)
+				Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
 
 			require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
 			assert.Equal(t, tt.wantURI, written.LastGreenURI)
@@ -193,7 +193,7 @@ func TestProcess_AdvancesBookmarkOnSuccess(t *testing.T) {
 
 			gauge, ok := m.metricsScope.Snapshot().Gauges()["record_controller.record.last_green_timestamp_seconds+queue=monorepo/main"]
 			require.True(t, ok)
-			assert.Equal(t, float64(testCommitTime.Unix()), gauge.Value())
+			assert.Equal(t, float64(testChangeTime.Unix()), gauge.Value())
 
 			// The green fact is what authorises the advance.
 			assert.Equal(t, entity.DegreeGreen, fact.Degree)
@@ -316,7 +316,7 @@ func TestProcess_AdoptsExistingFactFromSameRequest(t *testing.T) {
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow("", "", 1), nil)
 				m.queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
 				m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).
-					Return(sourcecontrol.ChangeInfo{CreatedAt: testCommitTime.UnixMilli()}, nil)
+					Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
 			}
 
 			require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
@@ -440,7 +440,7 @@ func TestProcess_RetriesBookmarkOnVersionMismatch(t *testing.T) {
 			Return(nil),
 	)
 	m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).
-		Return(sourcecontrol.ChangeInfo{CreatedAt: testCommitTime.UnixMilli()}, nil)
+		Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
 
 	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
 }

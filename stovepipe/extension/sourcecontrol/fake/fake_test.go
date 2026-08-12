@@ -151,7 +151,7 @@ func TestChangeInfo(t *testing.T) {
 
 	oldest, err := source.ChangeInfo(context.Background(), "git://repo/ref/a")
 	require.NoError(t, err)
-	assert.Equal(t, 2*commitInterval.Milliseconds(), latest.CreatedAt-oldest.CreatedAt)
+	assert.Equal(t, 2*changeInterval.Milliseconds(), latest.CreatedAt-oldest.CreatedAt)
 
 	_, err = source.ChangeInfo(context.Background(), "git://repo/ref/x")
 	require.ErrorIs(t, err, sourcecontrol.ErrNotFound)

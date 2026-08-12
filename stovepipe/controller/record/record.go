@@ -265,10 +265,10 @@ func (c *Controller) advanceLastGreen(ctx context.Context, store storage.Storage
 	}
 }
 
-// emitLastGreenTimestamp emits the immutable commit timestamp after its
-// bookmark is durable. Reporting is best-effort so an observability failure
-// cannot turn a successful record operation into a retry, which is why each
-// cause is counted and logged separately instead of returned.
+// emitLastGreenTimestamp emits the creation time of the change the bookmark now
+// points at, once that bookmark is durable. Reporting is best-effort so an
+// observability failure cannot turn a successful record operation into a retry,
+// which is why each cause is counted and logged separately instead of returned.
 func (c *Controller) emitLastGreenTimestamp(ctx context.Context, request entity.Request) {
 	queueTag := metrics.NewTag("queue", request.Queue)
 
@@ -285,7 +285,7 @@ func (c *Controller) emitLastGreenTimestamp(ctx context.Context, request entity.
 	info, err := sourceControl.ChangeInfo(ctx, request.URI)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "last_green_timestamp_errors", 1, queueTag)
-		c.logger.Warnw("failed to look up the last green commit timestamp",
+		c.logger.Warnw("failed to look up the last green change timestamp",
 			"queue", request.Queue,
 			"uri", request.URI,
 			"error", err,
@@ -298,7 +298,7 @@ func (c *Controller) emitLastGreenTimestamp(ctx context.Context, request entity.
 	// anyway would publish a 1970 timestamp and read as an infinitely stale queue.
 	if info.CreatedAt <= 0 {
 		metrics.NamedCounter(c.metricsScope, _opName, "last_green_timestamp_invalid", 1, queueTag)
-		c.logger.Warnw("source control reported no creation timestamp for the last green commit",
+		c.logger.Warnw("source control reported no creation timestamp for the last green change",
 			"queue", request.Queue,
 			"uri", request.URI,
 			"created_at", info.CreatedAt,
@@ -306,8 +306,8 @@ func (c *Controller) emitLastGreenTimestamp(ctx context.Context, request entity.
 		return
 	}
 
-	// Unix seconds match M3QL timestamp() output, so subtracting this gauge
-	// directly produces the age of the last-green commit in seconds.
+	// The gauge carries the creation time as Unix seconds, so subtracting it
+	// from the current time yields the age of the last-green change in seconds.
 	metrics.NamedGauge(
 		c.metricsScope,
 		_opName,

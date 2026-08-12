@@ -27,7 +27,8 @@ import (
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 )
 
-const commitInterval = time.Minute
+// changeInterval is the synthetic spacing between adjacent history entries.
+const changeInterval = time.Minute
 
 // sourceControlFake serves a single queue's linear history. history[0] is the
 // latest commit; higher indices are progressively older ancestors.
@@ -36,7 +37,7 @@ type sourceControlFake struct {
 	cfg     sourcecontrol.Config
 	history []string
 	// latestCreatedAt is the millisecond timestamp assigned to history[0]; older
-	// ancestors are spaced commitInterval apart behind it.
+	// ancestors are spaced changeInterval apart behind it.
 	latestCreatedAt int64
 }
 
@@ -104,14 +105,14 @@ func (s sourceControlFake) History(_ context.Context, cursor string, limit int) 
 	return page.Page[string]{Items: uris, NextCursor: next}, nil
 }
 
-// ChangeInfo returns immutable metadata for a commit on the fake's ref.
+// ChangeInfo returns immutable metadata for a change on the fake's ref.
 func (s sourceControlFake) ChangeInfo(_ context.Context, uri string) (sourcecontrol.ChangeInfo, error) {
 	index := s.indexOf(uri)
 	if index < 0 {
 		return sourcecontrol.ChangeInfo{}, sourcecontrol.ErrNotFound
 	}
 	return sourcecontrol.ChangeInfo{
-		CreatedAt: s.latestCreatedAt - int64(index)*commitInterval.Milliseconds(),
+		CreatedAt: s.latestCreatedAt - int64(index)*changeInterval.Milliseconds(),
 	}, nil
 }
 
