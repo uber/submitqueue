@@ -66,6 +66,17 @@ func TestRecordRoundTrip(t *testing.T) {
 	assert.True(t, proto.Equal(rec, got), "round-tripped Record should equal the original")
 }
 
+func TestPeriodicMetricsRoundTrip(t *testing.T) {
+	msg := &PeriodicMetrics{QueueName: "monorepo/main"}
+
+	data, err := Marshal(msg)
+	require.NoError(t, err)
+
+	got := &PeriodicMetrics{}
+	require.NoError(t, Unmarshal(data, got))
+	assert.True(t, proto.Equal(msg, got), "round-tripped PeriodicMetrics should equal the original")
+}
+
 // TestWireFormat locks the protojson encoding decision the contract relies on:
 // snake_case field names (UseProtoNames).
 func TestWireFormat(t *testing.T) {
@@ -80,7 +91,7 @@ func TestWireFormat(t *testing.T) {
 // no topic_keys option names an unknown key.
 func TestTopicKeysBindEveryTopicKey(t *testing.T) {
 	bound := map[string]int{}
-	for _, m := range []proto.Message{&ProcessRequest{}, &BuildRequest{}, &BuildSignal{}, &Record{}} {
+	for _, m := range []proto.Message{&ProcessRequest{}, &BuildRequest{}, &BuildSignal{}, &Record{}, &PeriodicMetrics{}} {
 		keys := TopicKeys(m)
 		require.NotEmpty(t, keys, "message must declare a non-empty topic_keys option")
 		for _, key := range keys {
@@ -93,6 +104,7 @@ func TestTopicKeysBindEveryTopicKey(t *testing.T) {
 		TopicKeyBuild,
 		TopicKeyBuildSignal,
 		TopicKeyRecord,
+		TopicKeyPeriodicMetrics,
 	}
 
 	valid := map[string]bool{}

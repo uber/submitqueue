@@ -53,6 +53,10 @@ type (
 	// Record is the payload buildsignal publishes to the record stage once a
 	// build reaches a terminal status: the build id to record.
 	Record = protopb.Record
+
+	// PeriodicMetrics is the payload the deployment publishes on a schedule to
+	// the periodicmetrics stage: the name of the queue to observe.
+	PeriodicMetrics = protopb.PeriodicMetrics
 )
 
 // marshalOpts keeps the JSON field names identical to the proto field names

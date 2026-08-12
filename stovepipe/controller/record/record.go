@@ -33,7 +33,6 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
-	"github.com/uber/submitqueue/stovepipe/extension/observability"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
@@ -45,7 +44,6 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	stores        storage.Factory
-	reporters     observability.Factory
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -66,7 +64,6 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
-	reporters observability.Factory,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
@@ -74,7 +71,6 @@ func NewController(
 		logger:        logger.Named("record_controller"),
 		metricsScope:  scope.SubScope("record_controller"),
 		stores:        stores,
-		reporters:     reporters,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
@@ -116,9 +112,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, _opName, "queue_mismatch", 1)
 		return fmt.Errorf("payload queue %q does not match queue %q of request %s", rec.GetQueueName(), request.Queue, request.ID)
 	}
-	// Report after the switch has run, so the observation reflects the bookmark
-	// this delivery may be about to advance.
-	defer c.reportQueueHealth(ctx, request.Queue)
 
 	switch request.State {
 	case entity.RequestStateSucceeded, entity.RequestStateFailed:
@@ -155,19 +148,6 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, _opName, "invariant_errors", 1)
 		return fmt.Errorf("request %s reached record in non-terminal state %q", request.ID, request.State)
 	}
-}
-
-// reportQueueHealth emits the queue's current observability sample. A reporter
-// that cannot be resolved is counted rather than returned: this stage owns the
-// durable validation state, and that write must not fail because a metric could
-// not be emitted.
-func (c *Controller) reportQueueHealth(ctx context.Context, queue string) {
-	reporter, err := c.reporters.For(observability.Config{QueueName: queue})
-	if err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "reporter_resolve_errors", 1)
-		return
-	}
-	reporter.Report(ctx)
 }
 
 // recordFact writes the request's outcome as an immutable whole-repository fact and

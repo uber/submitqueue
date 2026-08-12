@@ -48,4 +48,13 @@ const (
 	// terminal status; non-terminal polls never publish here. Partitioned by
 	// request id.
 	TopicKeyRecord TopicKey = "record"
+
+	// TopicKeyPeriodicMetrics carries requests to observe a queue's current
+	// health to the periodicmetrics stage. No stage publishes here: the
+	// deployment publishes a PeriodicMetrics (the queue name) on whatever
+	// schedule it wants observations, which is what makes the observation
+	// independent of whether the pipeline is doing anything. Partitioned by
+	// queue name, so one queue's observations stay serialized and a slow
+	// observation cannot delay another queue's.
+	TopicKeyPeriodicMetrics TopicKey = "periodicmetrics"
 )

@@ -2,6 +2,7 @@ exports_files(
     [
         "build.proto",
         "buildsignal.proto",
+        "periodicmetrics.proto",
         "process.proto",
         "record.proto",
     ],

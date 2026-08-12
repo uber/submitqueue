@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "build.pb.go",
         "buildsignal.pb.go",
+        "periodicmetrics.pb.go",
         "process.pb.go",
         "record.pb.go",
     ],

@@ -43,12 +43,12 @@ import (
 	"github.com/uber/submitqueue/stovepipe/controller/build"
 	"github.com/uber/submitqueue/stovepipe/controller/buildsignal"
 	"github.com/uber/submitqueue/stovepipe/controller/dlq"
+	"github.com/uber/submitqueue/stovepipe/controller/periodicmetrics"
 	"github.com/uber/submitqueue/stovepipe/controller/process"
 	"github.com/uber/submitqueue/stovepipe/controller/record"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
 	buildrunnerfake "github.com/uber/submitqueue/stovepipe/extension/buildrunner/fake"
-	"github.com/uber/submitqueue/stovepipe/extension/observability/lastgreen"
 	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	sourcecontrolfake "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/fake"
@@ -427,10 +427,22 @@ func registerPrimaryControllers(
 	}
 	count++
 
-	reporters := lastgreen.NewFactory(scope, store, scf)
-	recordController := record.NewController(logger, scope, store, reporters, stovepipemq.TopicKeyRecord, "stovepipe-record")
+	recordController := record.NewController(logger, scope, store, stovepipemq.TopicKeyRecord, "stovepipe-record")
 	if err := c.Register(recordController); err != nil {
 		return count, fmt.Errorf("failed to register record controller: %w", err)
+	}
+	count++
+
+	periodicMetricsController := periodicmetrics.NewController(
+		logger,
+		scope,
+		store,
+		scf,
+		stovepipemq.TopicKeyPeriodicMetrics,
+		"stovepipe-periodicmetrics",
+	)
+	if err := c.Register(periodicMetricsController); err != nil {
+		return count, fmt.Errorf("failed to register periodic metrics controller: %w", err)
 	}
 	count++
 
@@ -469,6 +481,9 @@ func registerDLQControllers(
 // topic and the buildsignal consumer subscribes to it, and also republishes to itself while
 // polling. buildsignal publishes to the record topic once a build reaches a terminal status,
 // and the record consumer subscribes to it.
+//
+// The periodicmetrics topic is the exception: no stage publishes to it. The deployment does,
+// on whatever schedule it wants queue-health observations.
 func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRegistry, error) {
 	return consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{
@@ -501,6 +516,14 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Queue: q,
 			Subscription: extqueue.DefaultSubscriptionConfig(
 				subscriberName, "stovepipe-record",
+			),
+		},
+		{
+			Key:   stovepipemq.TopicKeyPeriodicMetrics,
+			Name:  "periodicmetrics",
+			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "stovepipe-periodicmetrics",
 			),
 		},
 		{
