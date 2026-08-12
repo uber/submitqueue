@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	nethttp "net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -28,7 +27,6 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	"golang.org/x/oauth2"
 
 	"github.com/uber-go/tally"
 	pb "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb"
@@ -40,14 +38,8 @@ import (
 	"github.com/uber/submitqueue/platform/extension/counter"
 	mysqlcounter "github.com/uber/submitqueue/platform/extension/counter/mysql"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
-	"github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/platform/pipeline"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
-	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
-	cpfake "github.com/uber/submitqueue/submitqueue/extension/changeprovider/fake"
-	githubprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/github"
-	phabprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/phabricator"
-	routingprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/routing"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	mysqlstorage "github.com/uber/submitqueue/submitqueue/extension/storage/mysql"
 	"github.com/uber/submitqueue/submitqueue/extension/validator"
@@ -184,7 +176,11 @@ func run() error {
 	// to its own set of extension implementations (conflict analyzer, …),
 	// falling back to a baseline profile for queues without an explicit entry.
 	storageFty := storageFactory{backend: store}
-	profiles, err := newProfiles(logger, scope, changeset.New(storageFty), storageFty)
+	profilesCfg, err := loadProfilesConfigFromEnv(logger)
+	if err != nil {
+		return fmt.Errorf("failed to load extension profiles: %w", err)
+	}
+	profiles, err := newProfiles(logger, scope, changeset.New(storageFty), storageFty, profilesCfg)
 	if err != nil {
 		return fmt.Errorf("failed to build profiles: %w", err)
 	}
@@ -320,137 +316,94 @@ func newConsumerGate(logger *zap.Logger) consumergate.Gate {
 	return consumergatefile.New(dir)
 }
 
-// newChangeProviderFactory builds the host's changeprovider.Factory. The HTTP
-// clients are expensive and queue-independent, so they are built once here; the
-// factory then constructs a cheap provider per resolution, bound to the queue
-// named in the Config it is handed. When neither GITHUB_TOKEN nor PHAB_API_TOKEN
-// is set it falls back to the fake change provider.
-func newChangeProviderFactory(logger *zap.Logger, scope tally.Scope) (changeprovider.Factory, error) {
-	ghClient, err := newGitHubClient()
+// loadProfilesConfigFromEnv reads the extension profiles file when one is
+// configured, and otherwise returns the built-in example topology.
+//
+// Keeping the built-in as the fallback means a deployment that sets no config
+// path — including the compose stack and the e2e suite — gets exactly the
+// behavior it had before profiles became configurable.
+func loadProfilesConfigFromEnv(logger *zap.Logger) (profilesConfig, error) {
+	path := os.Getenv("PROFILES_CONFIG_PATH")
+	if path == "" {
+		logger.Info("PROFILES_CONFIG_PATH not set; using built-in example profiles")
+		return defaultProfilesConfig(), nil
+	}
+	cfg, err := loadProfilesConfig(path)
 	if err != nil {
-		return nil, err
+		return profilesConfig{}, err
 	}
-
-	phabClient, err := newPhabClient()
-	if err != nil {
-		return nil, err
-	}
-
-	if ghClient == nil && phabClient == nil {
-		logger.Warn("no change provider tokens set; using fake change provider (empty change info unless URI-marked)")
-		return changeProviderFunc(func(c changeprovider.Config) (changeprovider.ChangeProvider, error) {
-			return cpfake.New(c), nil
-		}), nil
-	}
-
-	sugar := logger.Sugar()
-	return changeProviderFunc(func(c changeprovider.Config) (changeprovider.ChangeProvider, error) {
-		var gh, phab changeprovider.ChangeProvider
-		if ghClient != nil {
-			gh = githubprovider.NewProvider(githubprovider.Params{
-				Config:       c,
-				HTTPClient:   ghClient,
-				Logger:       sugar,
-				MetricsScope: scope.SubScope("changeprovider.github"),
-			})
-		}
-		if phabClient != nil {
-			phab = phabprovider.NewProvider(phabprovider.Params{
-				Config:       c,
-				HTTPClient:   phabClient,
-				Logger:       sugar,
-				MetricsScope: scope.SubScope("changeprovider.phabricator"),
-			})
-		}
-
-		routingProvider, err := routingprovider.NewProvider(routingprovider.Params{
-			Config:      c,
-			GitHub:      gh,
-			Phabricator: phab,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to create routing change provider: %w", err)
-		}
-		return routingProvider, nil
-	}), nil
+	logger.Info("extension profiles loaded", zap.String("path", path), zap.Int("queues", len(cfg.Queues)))
+	return cfg, nil
 }
 
-// newGitHubClient builds the GitHub HTTP client configured via GITHUB_BASE_URL,
-// GITHUB_TOKEN, and GITHUB_TIMEOUT. Returns nil when GITHUB_TOKEN is unset.
-func newGitHubClient() (*nethttp.Client, error) {
-	if os.Getenv("GITHUB_TOKEN") == "" {
-		return nil, nil
+// defaultProfilesConfig is the example topology used when no configuration file
+// is supplied: fake edge integrations everywhere, with the conflict analyzer
+// varied per queue to exercise its different behaviors.
+//
+// The change provider is routing rather than fake so that setting a provider token
+// in the environment is enough to reach a real provider, as it has always been —
+// routing falls back to the fake provider on its own when no token is set.
+func defaultProfilesConfig() profilesConfig {
+	provider := changeProviderConfig{
+		Type:   changeProviderTypeRouting,
+		GitHub: &githubProviderConfig{TokenEnv: defaultGitHubTokenEnv, BaseURL: getEnv("GITHUB_BASE_URL", defaultGitHubBaseURL), Timeout: os.Getenv("GITHUB_TIMEOUT")},
+	}
+	// Phabricator needs an endpoint as well as a token, and has no default one
+	// to fall back on, so it joins the routing set only once told where to go.
+	if endpoint := os.Getenv("PHAB_API_ENDPOINT"); endpoint != "" {
+		provider.Phabricator = &phabProviderConfig{TokenEnv: defaultPhabTokenEnv, Endpoint: endpoint}
 	}
 
-	client, err := http.NewClient(getEnv("GITHUB_BASE_URL", "https://api.github.com"))
-	if err != nil {
-		return nil, fmt.Errorf("failed to build GitHub HTTP client: %w", err)
+	cfg := profilesConfig{
+		Defaults: queueProfileConfig{
+			ChangeProvider: provider,
+			BuildRunner:    buildRunnerConfig{Type: buildRunnerTypeFake},
+			Analyzer:       analyzerConfig{Type: analyzerTypeAll},
+		},
+		Queues: []namedQueueProfileConfig{
+			// Bucketed scoring: smaller batches are likelier to land, so they
+			// rank ahead of larger ones. Conflicts stay conservative.
+			{Name: "test-queue", Scorer: &scorerConfig{
+				Type: scorerTypeHeuristic,
+				Buckets: []bucketConfig{
+					{Min: 0, Max: 1, Score: 0.95},
+					{Min: 2, Max: 5, Score: 0.80},
+					{Min: 6, Max: 20, Score: 0.60},
+					{Min: 21, Max: maxBucket, Score: 0.40},
+				},
+			}},
+			// Maximum parallelism: nothing ever conflicts. Scored by a
+			// composite, which exercises the combining path.
+			{Name: "e2e-test-queue",
+				Analyzer: &analyzerConfig{Type: analyzerTypeNone},
+				Scorer: &scorerConfig{
+					Type:    scorerTypeComposite,
+					Combine: combineAvg,
+					Components: map[string]scorerConfig{
+						"size": {Type: scorerTypeHeuristic, Buckets: []bucketConfig{{Min: 0, Max: maxBucket, Score: 0.8}}},
+						"flat": {Type: scorerTypeHeuristic, Buckets: []bucketConfig{{Min: 0, Max: maxBucket, Score: 0.6}}},
+					},
+				},
+			},
+			// Every analysis fails, exercising the analyzer error path.
+			{Name: "e2e-conflict-error-queue", Analyzer: &analyzerConfig{Type: analyzerTypeAll, FailAlways: true}},
+			// Serializes only batches changing the same file.
+			{Name: "file-overlap-queue", Analyzer: &analyzerConfig{Type: analyzerTypePathOverlap, By: pathOverlapByFile}},
+		},
 	}
-
-	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: os.Getenv("GITHUB_TOKEN")})
-	client.Transport = &oauth2.Transport{Source: ts, Base: client.Transport}
-	client.Timeout = parseTimeout(os.Getenv("GITHUB_TIMEOUT"), 30*time.Second)
-
-	return client, nil
-}
-
-// apiTokenTransport injects a Phabricator API token as a query parameter in each request.
-type apiTokenTransport struct {
-	token string
-	next  nethttp.RoundTripper
-}
-
-func (t *apiTokenTransport) RoundTrip(req *nethttp.Request) (*nethttp.Response, error) {
-	r := req.Clone(req.Context())
-	q := r.URL.Query()
-	q.Set("api.token", t.token)
-	r.URL.RawQuery = q.Encode()
-	return t.next.RoundTrip(r)
-}
-
-// newPhabClient builds the Phabricator HTTP client configured via
-// PHAB_API_ENDPOINT and PHAB_API_TOKEN. Returns nil when either is unset.
-func newPhabClient() (*nethttp.Client, error) {
-	token := os.Getenv("PHAB_API_TOKEN")
-	if token == "" {
-		return nil, nil
+	// Built from constants, so a validation failure here is a programming error
+	// rather than a deployment one; normalizing keeps it on the same path as a
+	// file-supplied config.
+	if err := cfg.normalizeAndValidate(); err != nil {
+		panic(fmt.Sprintf("built-in profiles are invalid: %v", err))
 	}
-
-	endpoint := os.Getenv("PHAB_API_ENDPOINT")
-	if endpoint == "" {
-		return nil, nil
-	}
-
-	client, err := http.NewClient(endpoint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build Phabricator HTTP client: %w", err)
-	}
-
-	baseTransport := client.Transport.(*http.BaseURLTransport)
-	baseTransport.Next = &apiTokenTransport{
-		token: token,
-		next:  baseTransport.Next,
-	}
-
-	return client, nil
+	return cfg
 }
 
 // getEnv returns environment variable value or default if not set.
 func getEnv(key, defaultVal string) string {
 	if val := os.Getenv(key); val != "" {
 		return val
-	}
-	return defaultVal
-}
-
-// parseTimeout parses a duration from environment variable with fallback to default.
-// Returns defaultVal if envVal is empty or cannot be parsed.
-func parseTimeout(envVal string, defaultVal time.Duration) time.Duration {
-	if envVal == "" {
-		return defaultVal
-	}
-	if d, err := time.ParseDuration(envVal); err == nil {
-		return d
 	}
 	return defaultVal
 }

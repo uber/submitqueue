@@ -8,6 +8,7 @@ exports_files(
 go_library(
     name = "orchestrator_lib",
     srcs = [
+        "config.go",
         "main.go",
         "profiles.go",
     ],
@@ -15,6 +16,7 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//api/submitqueue/orchestrator/protopb:go_default_library",
+        "//platform/buildkite:go_default_library",
         "//platform/errs/generic:go_default_library",
         "//platform/errs/mysql:go_default_library",
         "//platform/extension/consumergate:go_default_library",
@@ -23,12 +25,15 @@ go_library(
         "//platform/extension/counter:go_default_library",
         "//platform/extension/counter/mysql:go_default_library",
         "//platform/extension/messagequeue/mysql:go_default_library",
+        "//platform/githubactions:go_default_library",
         "//platform/http:go_default_library",
         "//platform/pipeline:go_default_library",
         "//submitqueue/core/changeset:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/buildrunner:go_default_library",
+        "//submitqueue/extension/buildrunner/buildkite:go_default_library",
         "//submitqueue/extension/buildrunner/fake:go_default_library",
+        "//submitqueue/extension/buildrunner/githubactions:go_default_library",
         "//submitqueue/extension/changeprovider:go_default_library",
         "//submitqueue/extension/changeprovider/fake:go_default_library",
         "//submitqueue/extension/changeprovider/github:go_default_library",
@@ -54,6 +59,7 @@ go_library(
         "//submitqueue/orchestrator:go_default_library",
         "@com_github_go_sql_driver_mysql//:go_default_library",
         "@com_github_uber_go_tally//:go_default_library",
+        "@in_gopkg_yaml_v3//:go_default_library",
         "@org_golang_google_grpc//:go_default_library",
         "@org_golang_google_grpc//reflection:go_default_library",
         "@org_golang_x_oauth2//:go_default_library",
@@ -91,9 +97,13 @@ filegroup(
 
 go_test(
     name = "go_default_test",
-    srcs = ["profiles_test.go"],
+    srcs = [
+        "config_test.go",
+        "profiles_test.go",
+    ],
     embed = [":orchestrator_lib"],  # keep
     deps = [
+        "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/buildrunner:go_default_library",
         "//submitqueue/extension/changeprovider:go_default_library",
         "//submitqueue/extension/conflict:go_default_library",
@@ -102,5 +112,7 @@ go_test(
         "//submitqueue/extension/storage:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_uber_go_zap//zaptest:go_default_library",
     ],
 )
