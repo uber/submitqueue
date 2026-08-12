@@ -170,12 +170,18 @@ message GetRequestHistoryByIDRequest {
 message HistoryEvent {
     // Time the request-log entry was created, in Unix milliseconds.
     int64 timestamp_ms = 1;
-    // Customer-friendly request status recorded by the event.
+    // Customer-friendly request status recorded by the event. Set only when type is "status".
     string status = 2;
     // Error message associated with the event. Empty when absent.
     string last_error = 3;
     // Display and debugging metadata associated with this event. Each lifecycle event carries its own values.
     map<string, string> metadata = 4;
+    // What this entry records: "status" when the request reached a position in the pipeline,
+    // "event" when something happened while it sat at one. Exactly one of status and event is set.
+    string type = 5;
+    // Occurrence recorded by the entry, e.g. a build starting or finishing. Set only when type is "event".
+    // A request records many of these — one per build — and they never change its current status.
+    string event = 6;
 }
 
 // GetRequestHistoryByIDResponse contains all retained events for one request.

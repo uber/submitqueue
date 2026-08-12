@@ -91,6 +91,44 @@ func mergeablePath(set entity.SpeculationPathSet, snap snapshot) (entity.Specula
 	return entity.SpeculationPathEntry{}, false
 }
 
+// passedEntry returns a path whose build passed, regardless of whether reality
+// has since contradicted its guesses.
+//
+// Unlike livePassedPath this asks nothing of the snapshot, which is what makes
+// it useful as a before-and-after pair with it: a head that holds a passed entry
+// but no live passed path is one whose waiting room a resolving dependency has
+// just taken away, and it is back to building.
+func passedEntry(set entity.SpeculationPathSet) (entity.SpeculationPathEntry, bool) {
+	for _, entry := range set.Paths {
+		if entry.Status == entity.SpeculationPathStatusPassed {
+			return entry, true
+		}
+	}
+	return entity.SpeculationPathEntry{}, false
+}
+
+// livePassedPath returns a path whose build passed and whose guesses are still
+// consistent with how its dependencies are resolving, whether or not they have
+// finished resolving.
+//
+// It is mergeablePath without the settled requirement, and the difference
+// between the two is exactly the head's waiting room: work this head had to do
+// is done, and all that is left is other batches finishing. Reported rather
+// than acted on — nothing may merge on a path this loose, and decide is
+// deliberately not built on it.
+func livePassedPath(set entity.SpeculationPathSet, snap snapshot) (entity.SpeculationPathEntry, bool) {
+	for _, entry := range set.Paths {
+		if entry.Status != entity.SpeculationPathStatusPassed {
+			continue
+		}
+		if assumptionBroken(entry.Path, snap) {
+			continue
+		}
+		return entry, true
+	}
+	return entity.SpeculationPathEntry{}, false
+}
+
 // allAssumptionsSettled reports whether every dependency has finished the way
 // the path assumed: one it assumed would succeed has reached Succeeded, and one
 // it assumed would fail has finished some other way.

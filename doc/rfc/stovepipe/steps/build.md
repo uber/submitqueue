@@ -230,10 +230,10 @@ Several shapes for sharing the `BuildRunner` contract across domains were raised
 - **Shared `Status`/`Cancel` via a `platform/extension/buildrunner.StatusCanceller` sub-interface, with `BuildID`/`BuildStatus`/`BuildMetadata` promoted to `platform/base`.** An earlier draft of this doc adopted exactly this: since both domains poll and cancel by the same opaque, runner-minted id with the same async semantics, `Status`/`Cancel` moved to a shared interface embedded in each domain's `BuildRunner`, with the supporting types promoted to `platform/base` so both sides used the same Go types (a dual-implementing backend would then satisfy both interfaces through one embedded method set).
 
   Trade-offs: set aside on review — splitting one conceptual contract (`Trigger` + `Status` + `Cancel`) across two packages (`platform/extension/buildrunner` for two of the three methods, `{domain}/extension/buildrunner` for the third) fragments a single interface across an ownership boundary for a resemblance that isn't yet load-bearing: SubmitQueue is the only existing consumer of the "shared" half today, and the promotion cost — migrating SubmitQueue's already-shipped controllers, storage, and protobuf mappings onto the shared type — bought less than keeping each domain's `BuildRunner` whole and pushing reuse down to the implementation layer instead, per the option below.
-- **Shared backend under `platform`, thin per-domain contracts (adopted).** House the Buildkite / CI-gateway implementation once under `platform/extension` and let each domain define its own contract over it:
+- **Shared backend under `platform`, thin per-domain contracts (adopted).** House the Buildkite / CI-gateway implementation once under `platform/` and let each domain define its own contract over it. It sits at `platform/{backend}`, beside `platform/http`, rather than under `platform/extension/` — precisely because this option declines to define a shared interface, the package is a vendor client with no interface, `Config`, or `Factory`, so it is platform plumbing rather than an extension. Only the rejected alternatives above would have earned a `platform/extension/buildrunner` package.
 
   ```go
-  // platform/extension/buildrunner/buildkite — shared HTTP client, auth, poll loop
+  // platform/buildkite — shared HTTP client, auth, poll loop
   package buildkite
 
   type Client struct{ /* ... */ }

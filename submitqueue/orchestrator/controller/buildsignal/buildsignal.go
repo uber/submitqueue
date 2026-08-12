@@ -43,11 +43,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/core/publish"
+	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
@@ -186,7 +188,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return fmt.Errorf("failed to build runner for batch %s: %w", batch.ID, err)
 	}
 
-	status, _, err := buildRunner.Status(ctx, buildID)
+	status, buildMeta, err := buildRunner.Status(ctx, buildID)
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "status_errors", 1)
 		return fmt.Errorf("failed to get status for build %s: %w", buildID.ID, err)
@@ -222,6 +224,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	if status != build.Status {
+		// Tell the members what their build is doing, before the record moves.
+		// This branch is the only place a change of status is observed, so a log
+		// published after the write would be lost for good when it failed: the
+		// replay would read the already-updated record and take neither branch.
+		// Publishing first means the replay re-publishes and the queue dedupes.
+		if err := c.publishBuildLogs(ctx, batch, build, status, buildMeta); err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
+			return fmt.Errorf("failed to publish request logs for build %s: %w", build.ID, err)
+		}
+
 		build.Status = status
 		if err := store.GetBuildStore().Update(ctx, build); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "storage_errors", 1)
@@ -270,6 +282,58 @@ func pollDelay(status entity.BuildStatus) int64 {
 		// Accepted and any unknown non-terminal state.
 		return PollDelayAcceptedMs
 	}
+}
+
+// publishBuildLogs records this build's progress against every request in the
+// batch it verifies.
+//
+// Both entries are events rather than positions. A head funds several paths and
+// each is built separately, so one build starting or finishing says nothing
+// about where the request as a whole is — it is still speculating — and letting
+// either become the current status would report a request as finished while its
+// sibling builds were still running (see entity.IsRequestStatusEvent). What they
+// carry instead is identity: which path, which attempt, and the runner's URL, so
+// a request stuck in a rebuild loop shows a pair per attempt rather than one
+// indistinguishable entry.
+//
+// The build ID is the occurrence, so however many transitions a build passes
+// through and however often its delivery is replayed, each entry lands once per
+// build.
+func (c *Controller) publishBuildLogs(
+	ctx context.Context,
+	batch entity.Batch,
+	build entity.Build,
+	status entity.BuildStatus,
+	buildMeta entity.BuildMetadata,
+) error {
+	logMeta := map[string]string{
+		"batch_id": batch.ID,
+		"build_id": build.ID,
+		"path_id":  build.PathID,
+		"attempt":  strconv.Itoa(build.Attempt),
+	}
+	// Runners report the run's web address under "url"; it is the only part of
+	// this that a customer can click, so it is worth carrying when present.
+	if url := buildMeta["url"]; url != "" {
+		logMeta["build_url"] = url
+	}
+
+	// Emitted on any observed transition, not just the first, so a build that
+	// jumps straight from Accepted to a terminal status is still reported as
+	// having run. Repeats collapse on the occurrence.
+	if err := corerequest.PublishBatchEvents(ctx, c.registry, batch.Queue, batch.Contains,
+		entity.RequestEventBuilding, build.ID, logMeta); err != nil {
+		return err
+	}
+
+	// Only success is built. A build that failed or was cancelled has no
+	// completion to report — its path is refuted, and what happens next is the
+	// speculate run's decision, not this one's.
+	if status != entity.BuildStatusSucceeded {
+		return nil
+	}
+	return corerequest.PublishBatchEvents(ctx, c.registry, batch.Queue, batch.Contains,
+		entity.RequestEventBuilt, build.ID, logMeta)
 }
 
 // unwanted reports whether nothing wants this build running any more: its

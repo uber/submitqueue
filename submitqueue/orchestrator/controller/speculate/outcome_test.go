@@ -154,6 +154,65 @@ func TestMergeablePath_ExcludesBrokenPassedPath(t *testing.T) {
 	assert.False(t, ok)
 }
 
+// livePassedPath is mergeablePath without the settled requirement, and the gap
+// between the two is the head's waiting room: its own work is done and all that
+// remains is other batches finishing. That window is reported to the members,
+// so it has to be recognised while mergeablePath still says no.
+func TestLivePassedPath(t *testing.T) {
+	const (
+		succeeds = entity.DependencyAssumptionSucceeds
+		fails    = entity.DependencyAssumptionFails
+	)
+
+	tests := []struct {
+		name      string
+		set       entity.SpeculationPathSet
+		dep1State entity.BatchState
+		dep2State entity.BatchState
+		want      bool
+	}{
+		{
+			name:      "passed with an unsettled dependency is the waiting window",
+			set:       setOf(passedPath(succeeds, succeeds)),
+			dep1State: entity.BatchStateSpeculating,
+			dep2State: entity.BatchStateSucceeded,
+			want:      true,
+		},
+		{
+			name:      "passed and fully settled is still passed",
+			set:       setOf(passedPath(succeeds, succeeds)),
+			dep1State: entity.BatchStateSucceeded,
+			dep2State: entity.BatchStateSucceeded,
+			want:      true,
+		},
+		{
+			name: "a build still running is not passed",
+			set: setOf(entryFor(
+				pathOver(succeeds, succeeds), entity.SpeculationPathStatusBuilding)),
+			dep1State: entity.BatchStateSpeculating,
+			dep2State: entity.BatchStateSucceeded,
+			want:      false,
+		},
+		{
+			// The head is back to building, which is why losing this is worth
+			// reporting: the members would otherwise read "speculated" through
+			// the whole rebuild.
+			name:      "a contradicted assumption takes the path back out",
+			set:       setOf(passedPath(fails, fails)),
+			dep1State: entity.BatchStateSucceeded,
+			dep2State: entity.BatchStateSpeculating,
+			want:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, ok := livePassedPath(tt.set, snapWith(tt.dep1State, tt.dep2State))
+			assert.Equal(t, tt.want, ok)
+		})
+	}
+}
+
 func TestHasNoViableFuture(t *testing.T) {
 	headBatch := entity.Batch{ID: head, Dependencies: []string{dep1, dep2}}
 	// With every dependency resolved exactly one assumption pair is unbroken,

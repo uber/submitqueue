@@ -6,7 +6,7 @@ architecture against a common CI system without adding local state.
 
 Its HTTP client and GitHub Actions-specific facts (run status/conclusion
 vocabulary, run id encoding) live in
-[`platform/extension/buildrunner/githubactions`](../../../../platform/extension/buildrunner/githubactions/README.md),
+[`platform/githubactions`](../../../../platform/githubactions/README.md),
 shared with `stovepipe`'s own GitHub Actions backend.
 
 ## How it works

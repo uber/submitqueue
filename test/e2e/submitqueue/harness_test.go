@@ -86,16 +86,23 @@ func (s *E2EIntegrationSuite) currentStatus(req request) (entity.RequestStatus, 
 }
 
 // awaitStatus polls GetRequestSummaryByID until the request reaches exactly want.
-func (s *E2EIntegrationSuite) awaitStatus(req request, want entity.RequestStatus) {
+// It returns every distinct status it observed on the way, so a caller can check
+// what the summary did and did not report while the request was in flight.
+func (s *E2EIntegrationSuite) awaitStatus(req request, want entity.RequestStatus) []entity.RequestStatus {
+	var seen []entity.RequestStatus
 	pollUntil(persistPollInterval, func() bool {
 		got, err := s.currentStatus(req)
 		if err != nil {
 			s.log.Logf("GetRequestSummaryByID(%s) not ready yet: %v", req.sqid, err)
 			return false
 		}
+		if len(seen) == 0 || seen[len(seen)-1] != got {
+			seen = append(seen, got)
+		}
 		s.log.Logf("GetRequestSummaryByID(%s) = %q (want %q)", req.sqid, got, want)
 		return got == want
 	})
+	return seen
 }
 
 // awaitTerminal polls GetRequestSummaryByID until the request reaches a terminal status
@@ -116,16 +123,35 @@ func (s *E2EIntegrationSuite) awaitTerminal(req request) entity.RequestStatus {
 }
 
 // timeline returns the ordered customer-facing status history through
-// GetRequestHistoryByID.
+// GetRequestHistoryByID. Only status entries are included: build events share
+// the stream but are not positions, and eventTimeline reads those.
 func (s *E2EIntegrationSuite) timeline(req request) []entity.RequestStatus {
 	t := s.T()
 	resp, err := s.gatewayClient.GetRequestHistoryByID(s.ctx, &gatewaypb.GetRequestHistoryByIDRequest{Sqid: req.sqid, Queue: req.queue})
 	require.NoError(t, err, "GetRequestHistoryByID failed for %s", req.sqid)
-	statuses := make([]entity.RequestStatus, len(resp.Events))
-	for i, event := range resp.Events {
-		statuses[i] = entity.RequestStatus(event.Status)
+	var statuses []entity.RequestStatus
+	for _, event := range resp.Events {
+		if entity.RequestLogType(event.Type) != entity.RequestLogTypeStatus {
+			continue
+		}
+		statuses = append(statuses, entity.RequestStatus(event.Status))
 	}
 	return statuses
+}
+
+// eventTimeline returns the ordered build events recorded against the request.
+func (s *E2EIntegrationSuite) eventTimeline(req request) []entity.RequestEvent {
+	t := s.T()
+	resp, err := s.gatewayClient.GetRequestHistoryByID(s.ctx, &gatewaypb.GetRequestHistoryByIDRequest{Sqid: req.sqid, Queue: req.queue})
+	require.NoError(t, err, "GetRequestHistoryByID failed for %s", req.sqid)
+	var events []entity.RequestEvent
+	for _, event := range resp.Events {
+		if entity.RequestLogType(event.Type) != entity.RequestLogTypeEvent {
+			continue
+		}
+		events = append(events, entity.RequestEvent(event.Event))
+	}
+	return events
 }
 
 // assertStatusesInOrder asserts that want appears as an ordered subsequence of

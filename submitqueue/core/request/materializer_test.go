@@ -29,7 +29,7 @@ import (
 
 func TestMaterializer_PersistLog(t *testing.T) {
 	base := testRequestSummary()
-	log := entity.RequestLog{RequestID: "q/1", TimestampMs: 20, Status: entity.RequestStatusLanded, RequestVersion: 2, Metadata: map[string]string{}}
+	log := entity.RequestLog{RequestID: "q/1", TimestampMs: 20, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusLanded, RequestVersion: 2, Metadata: map[string]string{}}
 	t.Run("winning log updates both projections", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		m, summaryStore, queueStore, _, logStore := materializerStores(ctrl)
@@ -51,16 +51,43 @@ func TestMaterializer_PersistLog(t *testing.T) {
 		current := base
 		current.Status = entity.RequestStatusLanded
 		current.RequestVersion = 0
-		incoming := entity.RequestLog{RequestID: "q/1", TimestampMs: 20, Status: entity.RequestStatusProcessing, RequestVersion: 0, Metadata: map[string]string{}}
+		incoming := entity.RequestLog{RequestID: "q/1", TimestampMs: 20, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusSpeculating, RequestVersion: 0, Metadata: map[string]string{}}
 		logStore.EXPECT().Insert(gomock.Any(), incoming).Return(nil)
 		summaryStore.EXPECT().Get(gomock.Any(), "q/1").Return(current, nil)
 		summaryStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).DoAndReturn(func(_ context.Context, updated entity.RequestSummary, _, _ int32) error {
-			assert.Equal(t, entity.RequestStatusProcessing, updated.Status)
+			assert.Equal(t, entity.RequestStatusSpeculating, updated.Status)
 			return nil
 		})
 		queueStore.EXPECT().Get(gomock.Any(), int64(10), "q/1").Return(queueSummaryFromSummary(current), nil)
 		queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
 		require.NoError(t, m.PersistLog(context.Background(), incoming))
+	})
+
+	t.Run("build event reaches history without moving the summary", func(t *testing.T) {
+		for _, buildEvent := range []entity.RequestEvent{entity.RequestEventBuilding, entity.RequestEventBuilt} {
+			t.Run(string(buildEvent), func(t *testing.T) {
+				ctrl := gomock.NewController(t)
+				m, summaryStore, queueStore, _, logStore := materializerStores(ctrl)
+				current := base
+				current.Status = entity.RequestStatusSpeculating
+				current.StatusTimestampMs = 10
+				// Newer than the summary, so only the entry's type keeps it out.
+				event := entity.RequestLog{
+					RequestID: "q/1", TimestampMs: 20,
+					Type: entity.RequestLogTypeEvent, Event: buildEvent,
+					Metadata: map[string]string{"build_id": "b/7"},
+				}
+
+				// Inserted: the entry is the request's history.
+				logStore.EXPECT().Insert(gomock.Any(), event).Return(nil)
+				summaryStore.EXPECT().Get(gomock.Any(), "q/1").Return(current, nil)
+				// No summaryStore.Update expectation — gomock fails the test if
+				// the event moves the request's current status.
+				queueStore.EXPECT().Get(gomock.Any(), int64(10), "q/1").Return(queueSummaryFromSummary(current), nil)
+
+				require.NoError(t, m.PersistLog(context.Background(), event))
+			})
+		}
 	})
 
 	t.Run("CAS conflict reloads and repairs winner", func(t *testing.T) {
@@ -189,9 +216,37 @@ func TestLogWins(t *testing.T) {
 		},
 		{
 			name:    "versioned terminal beats newer unversioned status",
-			current: entity.RequestSummary{Status: entity.RequestStatusProcessing, StatusTimestampMs: 200},
+			current: entity.RequestSummary{Status: entity.RequestStatusSpeculating, StatusTimestampMs: 200},
 			incoming: entity.RequestLog{
 				Status: entity.RequestStatusLanded, RequestVersion: 1, TimestampMs: 100,
+			},
+			want: true,
+		},
+		{
+			// A head funds several paths and builds them at once, so one build
+			// starting says nothing about where the request is: it is still
+			// speculating. Letting this win would also freeze the summary,
+			// since nothing publishes again until the next position.
+			name:    "a build event never becomes the current status",
+			current: entity.RequestSummary{Status: entity.RequestStatusSpeculating, StatusTimestampMs: 100},
+			incoming: entity.RequestLog{
+				Type: entity.RequestLogTypeEvent, Event: entity.RequestEventBuilding, TimestampMs: 200,
+			},
+		},
+		{
+			name:    "a completed build event does not report the request finished",
+			current: entity.RequestSummary{Status: entity.RequestStatusSpeculating, StatusTimestampMs: 100},
+			incoming: entity.RequestLog{
+				Type: entity.RequestLogTypeEvent, Event: entity.RequestEventBuilt, TimestampMs: 200,
+			},
+		},
+		{
+			// The position after the events still moves normally, so the
+			// exclusion is of the events themselves, not of that whole window.
+			name:    "the position after the build still wins",
+			current: entity.RequestSummary{Status: entity.RequestStatusSpeculating, StatusTimestampMs: 100},
+			incoming: entity.RequestLog{
+				Status: entity.RequestStatusSpeculated, TimestampMs: 200,
 			},
 			want: true,
 		},
@@ -199,7 +254,7 @@ func TestLogWins(t *testing.T) {
 			name:    "nonterminal cannot replace versioned terminal",
 			current: entity.RequestSummary{Status: entity.RequestStatusLanded, RequestVersion: 1, StatusTimestampMs: 100},
 			incoming: entity.RequestLog{
-				Status: entity.RequestStatusProcessing, TimestampMs: 200,
+				Status: entity.RequestStatusSpeculating, TimestampMs: 200,
 			},
 		},
 		{
@@ -244,7 +299,15 @@ func TestLogWins(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, logWins(tt.incoming, tt.current))
+			// Cases above leave Type unset when the entry is a status, so the
+			// table reads as being about the ordering rules under test. This
+			// mirrors production exactly: logWins only ever sees entries that
+			// came through RequestLogFromBytes, which applies the same default.
+			incoming := tt.incoming
+			if incoming.Type == "" {
+				incoming.Type = entity.RequestLogTypeStatus
+			}
+			assert.Equal(t, tt.want, logWins(incoming, tt.current))
 		})
 	}
 }

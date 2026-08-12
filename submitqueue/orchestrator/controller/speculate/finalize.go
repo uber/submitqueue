@@ -22,6 +22,7 @@ import (
 
 	"github.com/uber/submitqueue/platform/metrics"
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
+	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -75,9 +76,14 @@ func (c *Controller) finalize(ctx context.Context, snap *snapshot) error {
 			// Fold in what the facts already imply about this head's paths:
 			// a finished dependency breaks every path that bet against it.
 			set, exists := snap.pathSets[batch.ID]
+			before, hadPassed := passedEntry(set)
 			if exists && cancelBrokenPathsInSet(&set, *snap, nowMs) {
 				snap.pathSets[batch.ID] = set
 				snap.markDirty(batch.ID)
+			}
+
+			if err := c.reportSpeculation(ctx, batch, set, *snap, before, hadPassed); err != nil {
+				return err
 			}
 
 			decision := decide(batch, set, *snap)
@@ -119,6 +125,66 @@ func (c *Controller) finalize(ctx context.Context, snap *snapshot) error {
 	}
 	snap.speculating = open
 
+	return nil
+}
+
+// reportSpeculation tells a head's members how far speculation has got.
+//
+// Two moments are worth reporting and neither is a batch state — a head is
+// BatchStateSpeculating from admission until its outcome, so the request log is
+// the only place either becomes visible:
+//
+//   - the head has a live passed path. Its own work is done and what remains is
+//     other batches finishing, a wait that can run for minutes and reads very
+//     differently to still building.
+//   - it just lost the one it had, because a dependency resolved against that
+//     path's guess. The head is back to building, and without this its members
+//     would go on reading as speculated through the whole rebuild.
+//
+// The second is why before is taken from passedEntry rather than livePassedPath:
+// both that predicate and the fold above exclude a contradicted path, so a pair
+// of livePassedPath calls could never see the loss happen. What is compared is
+// "held a passed build" before the fold against "still has one worth waiting on"
+// after it, and only the run that does the breaking sees the difference — every
+// later run finds the entry already cancelled.
+//
+// Both facts are derived from the snapshot rather than stored, so this runs on
+// every pass over an open head and relies on the occurrence to collapse the
+// repeats: a path ID hashes its head along with its assumptions, so it names the
+// batch too, and one passed path re-observed by a hundred runs is a single entry
+// while a different path winning after a re-plan is correctly a new one.
+func (c *Controller) reportSpeculation(
+	ctx context.Context,
+	batch entity.Batch,
+	set entity.SpeculationPathSet,
+	snap snapshot,
+	before entity.SpeculationPathEntry,
+	hadPassed bool,
+) error {
+	after, hasPassed := livePassedPath(set, snap)
+
+	status, path := entity.RequestStatusSpeculated, after
+	switch {
+	case hasPassed:
+	case hadPassed:
+		status, path = entity.RequestStatusSpeculating, before
+	default:
+		return nil
+	}
+
+	if err := corerequest.PublishBatchLogs(ctx, c.registry, batch.Queue, batch.Contains,
+		status, path.ID, map[string]string{
+			"batch_id": batch.ID,
+			"path_id":  path.ID,
+		},
+	); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
+		// Attributed to this head, not the trigger: the loop walks the whole
+		// queue, so the batch whose members could not be told is usually not the
+		// one the message named.
+		return c.attributed(fmt.Errorf("failed to publish request logs for batch %s: %w", batch.ID, err),
+			entity.BatchSubject(batch.ID))
+	}
 	return nil
 }
 

@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//platform/errs:go_default_library",
-        "//platform/extension/buildrunner/githubactions:go_default_library",
+        "//platform/githubactions:go_default_library",
         "//platform/http:go_default_library",
         "//stovepipe/entity:go_default_library",
         "//stovepipe/extension/buildrunner:go_default_library",
@@ -22,7 +22,7 @@ go_test(
     deps = [
         "//platform/errs:go_default_library",
         "//platform/errs/http:go_default_library",
-        "//platform/extension/buildrunner/githubactions:go_default_library",
+        "//platform/githubactions:go_default_library",
         "//platform/http:go_default_library",
         "//stovepipe/entity:go_default_library",
         "//stovepipe/extension/buildrunner:go_default_library",

@@ -62,6 +62,12 @@ func GetCurrentStateFromRequestLog(ctx context.Context, store storage.RequestLog
 		// iterate over all log records, storage contract guarantees that the records are ordered by timestamp ascending.
 		log := &logs[i]
 
+		// Events describe work happening underneath the request's position and
+		// carry no status, so they are not candidates for the current one.
+		if log.Type != entity.RequestLogTypeStatus {
+			continue
+		}
+
 		// Track the record with the largest timestamp as fallback.
 		if bestLatest == nil || log.TimestampMs > bestLatest.TimestampMs {
 			bestLatest = log
@@ -80,6 +86,13 @@ func GetCurrentStateFromRequestLog(ctx context.Context, store storage.RequestLog
 	winner := bestLatest
 	if bestTerminal != nil {
 		winner = bestTerminal
+	}
+
+	// No status entry to report: either the request has no log at all, or
+	// everything recorded so far is an event, which carries no status. Both are
+	// the documented not-found case, and without this the winner is nil.
+	if winner == nil {
+		return CurrentState{}, fmt.Errorf("no request status recorded for request_id=%s: %w", requestID, storage.ErrNotFound)
 	}
 
 	return CurrentState{
