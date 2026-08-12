@@ -163,6 +163,7 @@ func TestLatencyBuckets_Sorted(t *testing.T) {
 		"FastLatencyBuckets":    FastLatencyBuckets,
 		"StorageLatencyBuckets": StorageLatencyBuckets,
 		"LongLatencyBuckets":    LongLatencyBuckets,
+		"ChangeAgeBuckets":      ChangeAgeBuckets,
 	}
 	for name, buckets := range sets {
 		t.Run(name, func(t *testing.T) {

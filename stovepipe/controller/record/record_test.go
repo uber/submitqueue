@@ -36,9 +36,18 @@ import (
 )
 
 const (
-	testQueue = "monorepo/main"
-	testID    = "request/monorepo/main/7"
-	testURI   = "git://remote/monorepo/main/head-sha"
+	testQueue   = "monorepo/main"
+	testID      = "request/monorepo/main/7"
+	testURI     = "git://remote/monorepo/main/head-sha"
+	testBaseURI = "git://remote/monorepo/main/base-sha"
+)
+
+// Metric names as they appear in a snapshot, so a case asserts on the series an
+// operator queries rather than on how the emit is composed.
+const (
+	failureDetectionLatency = "record_controller.record.failure_detection_latency+queue=monorepo/main,strategy=incremental_since_green"
+	failureDetectionMissing = "record_controller.record.failure_detection_missing+queue=monorepo/main,strategy=full"
+	failureDetectionErrors  = "record_controller.record.failure_detection_errors+queue=monorepo/main,step="
 )
 
 var testChangeTime = time.Unix(1_700_000_000, 0).UTC()
@@ -136,6 +145,24 @@ func requestWithState(state entity.RequestState) entity.Request {
 		State:   state,
 		Version: 2,
 	}
+}
+
+// failedRequest returns a failed request validated incrementally against
+// testBaseURI — the shape that has a detection latency to report.
+func failedRequest() entity.Request {
+	request := requestWithState(entity.RequestStateFailed)
+	request.BaseURI = testBaseURI
+	request.BuildStrategy = entity.BuildStrategyIncrementalSinceGreen
+	return request
+}
+
+// totalSamples sums the samples across a duration histogram's buckets.
+func totalSamples(buckets map[time.Duration]int64) int64 {
+	var sum int64
+	for _, count := range buckets {
+		sum += count
+	}
+	return sum
 }
 
 // queueRow returns the testQueue's row holding the given bookmark.
@@ -281,6 +308,126 @@ func TestProcess_RecordsBrokenFactWithoutAdvancing(t *testing.T) {
 	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
 	assert.Equal(t, entity.DegreeBroken, fact.Degree)
 	assert.False(t, fact.IsGreen())
+}
+
+func TestProcess_ReportsFailureDetectionLatency(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(failedRequest(), nil)
+	var fact entity.ValidationFact
+	m.expectFactCreated(&fact)
+	m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testBaseURI).
+		Return(sourcecontrol.ChangeInfo{CreatedAt: time.Now().Add(-time.Hour).UnixMilli()}, nil)
+
+	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+
+	histogram, ok := m.metricsScope.Snapshot().Histograms()[failureDetectionLatency]
+	require.True(t, ok)
+	assert.EqualValues(t, 1, totalSamples(histogram.Durations()))
+}
+
+// TestProcess_FullBuildFailureHasNoBaseline covers a full build: it pins no base
+// commit, so there is nothing to measure the latency from. That is the ordinary case
+// for the strategy, not a fault, so it must not land among the errors.
+func TestProcess_FullBuildFailureHasNoBaseline(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+
+	request := failedRequest()
+	request.BaseURI = ""
+	request.BuildStrategy = entity.BuildStrategyFull
+
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+	var fact entity.ValidationFact
+	m.expectFactCreated(&fact)
+
+	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+
+	snapshot := m.metricsScope.Snapshot()
+	assert.Empty(t, snapshot.Histograms(), "a build with no baseline has no latency to report")
+	counter, ok := snapshot.Counters()[failureDetectionMissing]
+	require.True(t, ok)
+	assert.EqualValues(t, 1, counter.Value())
+}
+
+// TestProcess_RedeliveredFailureIsNotResampled covers a redelivery that adopts a
+// broken fact it already wrote: one break must contribute one sample, or the
+// distribution counts the flakiest deliveries twice.
+func TestProcess_RedeliveredFailureIsNotResampled(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(failedRequest(), nil)
+	m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
+	m.factStore.EXPECT().Get(gomock.Any(), testURI, wholeRepositoryProject).
+		Return(entity.ValidationFact{URI: testURI, Degree: entity.DegreeBroken, RequestID: testID}, nil)
+
+	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+	assert.Empty(t, m.metricsScope.Snapshot().Histograms())
+}
+
+// TestProcess_UnobservableDetectionLatencyDoesNotFailRecord covers the observation's
+// error posture: every way it can fail is counted with the step that failed and
+// swallowed, because a reporting fault must not disturb the fact already recorded.
+func TestProcess_UnobservableDetectionLatencyDoesNotFailRecord(t *testing.T) {
+	tests := []struct {
+		name  string
+		step  string
+		setup func(c *Controller, m recordMocks)
+	}{
+		{
+			name: "source control cannot be resolved",
+			step: "resolve_source_control",
+			setup: func(c *Controller, _ recordMocks) {
+				c.sourceControls = failingSourceControlFactory{}
+			},
+		},
+		{
+			name: "the base change cannot be looked up",
+			step: "get_change_info",
+			setup: func(_ *Controller, m recordMocks) {
+				m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testBaseURI).
+					Return(sourcecontrol.ChangeInfo{}, errors.New("boom"))
+			},
+		},
+		{
+			name: "the base change is undated",
+			step: "undated_change",
+			setup: func(_ *Controller, m recordMocks) {
+				m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testBaseURI).
+					Return(sourcecontrol.ChangeInfo{CreatedAt: 0}, nil)
+			},
+		},
+		{
+			name: "the base change is dated in the future",
+			step: "future_change",
+			setup: func(_ *Controller, m recordMocks) {
+				m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testBaseURI).
+					Return(sourcecontrol.ChangeInfo{CreatedAt: time.Now().Add(time.Hour).UnixMilli()}, nil)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+			tt.setup(c, m)
+
+			m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(failedRequest(), nil)
+			var fact entity.ValidationFact
+			m.expectFactCreated(&fact)
+
+			require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+
+			snapshot := m.metricsScope.Snapshot()
+			assert.Empty(t, snapshot.Histograms(), "no latency may be reported when it cannot be observed")
+			counter, ok := snapshot.Counters()[failureDetectionErrors+tt.step]
+			require.True(t, ok)
+			assert.EqualValues(t, 1, counter.Value())
+		})
+	}
 }
 
 func TestProcess_AdoptsExistingFactFromSameRequest(t *testing.T) {
