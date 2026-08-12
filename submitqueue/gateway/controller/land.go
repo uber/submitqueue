@@ -21,11 +21,11 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
-	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -207,23 +207,13 @@ func (c *landController) publishToQueue(ctx context.Context, landRequest entity.
 		return fmt.Errorf("failed to serialize land request: %w", err)
 	}
 
-	// Create queue message
-	// - Message ID: landRequest.ID for idempotency
+	// Publish the request into the pipeline:
+	// - Message ID: landRequest.ID with no cause — a request enters once, so a
+	//   retry of this same publish dedups instead of enqueuing it twice
 	// - Payload: serialized LandRequest entity
 	// - Partition key: landRequest.Queue (ensures ordering per queue)
-	msg := entityqueue.NewMessage(landRequest.ID, payload, landRequest.Queue, nil)
-
-	q, ok := c.registry.Queue(topickey.TopicKeyStart)
-	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", topickey.TopicKeyStart)
-	}
-
-	topicName, ok := c.registry.TopicName(topickey.TopicKeyStart)
-	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", topickey.TopicKeyStart)
-	}
-
-	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
+	if err := publish.Message(ctx, c.registry, topickey.TopicKeyStart,
+		publish.IntentID(landRequest.ID), payload, landRequest.Queue); err != nil {
 		return fmt.Errorf("failed to publish land request message: %w", err)
 	}
 

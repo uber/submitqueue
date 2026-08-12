@@ -70,6 +70,47 @@ func TestMessage_UnregisteredKey(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestIntentID(t *testing.T) {
+	tests := []struct {
+		name     string
+		entityID string
+		cause    []string
+		want     string
+	}{
+		{
+			name:     "no cause is the bare entity ID",
+			entityID: "batch-1",
+			want:     "batch-1",
+		},
+		{
+			name:     "single cause",
+			entityID: "batch-1",
+			cause:    []string{"merged"},
+			want:     "batch-1/merged",
+		},
+		{
+			name:     "multiple causes join in order",
+			entityID: "batch-1",
+			cause:    []string{"build-signal", "build-9", "running"},
+			want:     "batch-1/build-signal/build-9/running",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, IntentID(tt.entityID, tt.cause...))
+		})
+	}
+}
+
+// The convention only works if the same cause is repeatable and a different
+// cause is distinguishable — the two properties every call site relies on.
+func TestIntentID_StableAcrossCallsAndDistinctPerCause(t *testing.T) {
+	assert.Equal(t, IntentID("batch-1", "merged"), IntentID("batch-1", "merged"))
+	assert.NotEqual(t, IntentID("batch-1", "merged"), IntentID("batch-1"))
+	assert.NotEqual(t, IntentID("batch-1", "merged"), IntentID("batch-1", "cancelling"))
+}
+
 func TestUniqueID(t *testing.T) {
 	a := UniqueID("batch-1")
 	b := UniqueID("batch-1")

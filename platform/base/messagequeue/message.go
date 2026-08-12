@@ -23,6 +23,17 @@ import (
 // Immutable - use Copy() for modifications.
 type Message struct {
 	// ID uniquely identifies the message for deduplication and tracing.
+	//
+	// Deduplication is against every message the backend still holds for the
+	// same topic and partition key — including ones already consumed, which are
+	// reclaimed lazily and may outlive their delivery by an unbounded interval.
+	// A publish whose ID collides is reported as a success and stores nothing.
+	//
+	// So the ID names the occasion to publish, not the entity published about.
+	// Reusing an entity's own ID gives that entity one message for as long as
+	// the backend remembers the first, and silently discards every later one.
+	// Producers build IDs with platform/publish.IntentID rather than choosing
+	// them by hand.
 	ID string
 
 	// Payload is the message body as raw bytes.

@@ -43,9 +43,9 @@ import (
 	"github.com/uber-go/tally"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
-	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	"go.uber.org/zap"
 )
 
@@ -153,25 +153,19 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 }
 
 // publish serializes a MergeResult and publishes it to the signal topic.
+//
+// Named for the dead letter, because the live handler answers the same request
+// on the same topic under the bare correlation ID. Reusing that ID would let
+// this terminal failure be deduplicated against an answer that was already
+// sent, and the caller would go on waiting for a result nothing will produce.
 func (c *Controller) publish(ctx context.Context, result *runwaymq.MergeResult, partitionKey string) error {
 	payload, err := runwaymq.Marshal(result)
 	if err != nil {
 		return fmt.Errorf("failed to serialize merge result: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(result.GetId(), payload, partitionKey, nil)
-
-	q, ok := c.registry.Queue(c.signalTopicKey)
-	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", c.signalTopicKey)
-	}
-
-	topicName, ok := c.registry.TopicName(c.signalTopicKey)
-	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", c.signalTopicKey)
-	}
-
-	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
+	if err := publish.Message(ctx, c.registry, c.signalTopicKey,
+		publish.IntentID(result.GetId(), "dlq"), payload, partitionKey); err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 

@@ -18,8 +18,8 @@ import (
 	"context"
 	"fmt"
 
-	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/platform/publish"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 )
@@ -47,23 +47,13 @@ func PublishLog(ctx context.Context, registry consumer.TopicRegistry, logEntry e
 		return fmt.Errorf("failed to serialize request log: %w", err)
 	}
 
-	msgID := fmt.Sprintf("%s/%s", logEntry.RequestID, logEntry.Value())
+	cause := []string{logEntry.Value()}
 	if occurrence != "" {
-		msgID = fmt.Sprintf("%s/%s", msgID, occurrence)
-	}
-	msg := entityqueue.NewMessage(msgID, payload, partitionKey, nil)
-
-	q, ok := registry.Queue(topickey.TopicKeyLog)
-	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", topickey.TopicKeyLog)
+		cause = append(cause, occurrence)
 	}
 
-	topicName, ok := registry.TopicName(topickey.TopicKeyLog)
-	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", topickey.TopicKeyLog)
-	}
-
-	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
+	if err := publish.Message(ctx, registry, topickey.TopicKeyLog,
+		publish.IntentID(logEntry.RequestID, cause...), payload, partitionKey); err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 

@@ -48,7 +48,7 @@ import (
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
-	"github.com/uber/submitqueue/submitqueue/core/publish"
+	"github.com/uber/submitqueue/platform/publish"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -244,7 +244,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Wake the speculate run so it re-plans the queue with this result. It
 	// reads the status from the record above rather than being told it, so a
 	// duplicated or reordered signal costs nothing.
-	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, batch.ID, batch.Queue); err != nil {
+	//
+	// The cause is this build at this status, so every transition wakes
+	// speculate exactly once and the polls in between — which observed nothing
+	// new — collapse into the wake-up already sent. Naming only the build would
+	// dedup the terminal wake-up against the very first poll's.
+	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate,
+		publish.IntentID(batch.ID, "build-signal", build.ID, string(status)),
+		batch.ID, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}
@@ -426,16 +433,14 @@ func findEntry(set entity.SpeculationPathSet, pathID string) (entity.Speculation
 	return entity.SpeculationPathEntry{}, false
 }
 
-// publishBatchID publishes a batch ID to the topic identified by key, stamped
-// with and partitioned by the batch's queue, with a distinct message ID per
-// publish (publish.UniqueID) so a later wake-up for the same batch is never
-// deduplicated away.
-func (c *Controller) publishBatchID(ctx context.Context, key consumer.TopicKey, batchID string, queue string) error {
+// publishBatchID publishes a batch ID to the topic identified by key under
+// msgID, stamped with and partitioned by the batch's queue.
+func (c *Controller) publishBatchID(ctx context.Context, key consumer.TopicKey, msgID, batchID, queue string) error {
 	payload, err := entity.BatchID{ID: batchID, Queue: queue}.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
-	return publish.Message(ctx, c.registry, key, publish.UniqueID(batchID), payload, queue)
+	return publish.Message(ctx, c.registry, key, msgID, payload, queue)
 }
 
 // Name returns the controller name for logging and metrics.

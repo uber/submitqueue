@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
@@ -321,7 +322,11 @@ func (c *Controller) applyOutcome(ctx context.Context, store storage.Storage, ba
 	switch decision {
 	case outcomeMerge:
 		state = entity.BatchStateMerging
-		if err := c.publishBatchID(ctx, topickey.TopicKeyMerge, batch.ID, batch.Queue, batch.Queue); err != nil {
+		// A batch merges once, so the dispatch names only that as its cause: a
+		// redelivery that re-derives outcomeMerge because the state write was
+		// lost dedups against the request already sent, instead of asking
+		// Runway to merge the same batch twice.
+		if err := c.publishBatchID(ctx, topickey.TopicKeyMerge, publish.IntentID(batch.ID, "merge-dispatch"), batch.ID, batch.Queue, batch.Queue); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 			return false, fmt.Errorf("failed to publish batch %s to merge: %w", batch.ID, err)
 		}
@@ -365,7 +370,12 @@ func (c *Controller) applyOutcome(ctx context.Context, store storage.Storage, ba
 	)
 
 	if terminal {
-		if err := c.publishBatchID(ctx, topickey.TopicKeyConclude, batch.ID, batch.Queue, batch.Queue); err != nil {
+		// Named for the run that decided it, so a redelivery re-deriving the
+		// same outcome does not conclude the batch twice, and so it stays
+		// distinct from the conclude mergesignal sends for a merged batch.
+		// A conclude that goes missing is recovered by fanout, which is
+		// deliberately un-deduplicated.
+		if err := c.publishBatchID(ctx, topickey.TopicKeyConclude, publish.IntentID(batch.ID, "conclude", "speculate"), batch.ID, batch.Queue, batch.Queue); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 			return true, fmt.Errorf("failed to publish batch %s to conclude: %w", batch.ID, err)
 		}
@@ -383,6 +393,10 @@ func (c *Controller) applyOutcome(ctx context.Context, store storage.Storage, ba
 // message, and once terminal it is gone from the queue listing — so without
 // this its requests would simply stay unreconciled.
 //
+// Distinct per publish: the guarantee being bought is that a message exists at
+// all, and a stable ID would let the queue answer "one already did" with a
+// success that writes nothing.
+//
 // Published before the state write, not after: sent afterwards it is one more
 // thing that can fail exactly when everything else is failing, leaving the
 // obligation created and the means to discharge it gone. Sent first, a
@@ -391,7 +405,7 @@ func (c *Controller) applyOutcome(ctx context.Context, store storage.Storage, ba
 // tolerates any batch state, and if the write never lands the message is just
 // a nudge that re-plans a queue nothing has changed.
 func (c *Controller) recoverable(ctx context.Context, store storage.Storage, batch entity.Batch) error {
-	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, batch.ID, batch.Queue, batch.Queue); err != nil {
+	if err := c.publishBatchID(ctx, topickey.TopicKeySpeculate, publish.UniqueID(batch.ID), batch.ID, batch.Queue, batch.Queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish recovery signal for batch %s: %w", batch.ID, err)
 	}

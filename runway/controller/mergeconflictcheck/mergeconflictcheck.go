@@ -30,9 +30,9 @@ import (
 	"github.com/uber-go/tally"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
-	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	"github.com/uber/submitqueue/runway/extension/merger"
 	"go.uber.org/zap"
 )
@@ -141,25 +141,17 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 }
 
 // publish serializes a MergeResult and publishes it to the given signal topic.
+//
+// The message ID is the correlation ID with no cause: a check is answered
+// once, so a redelivery that re-answers it is meant to dedup rather than tell
+// the caller twice.
 func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, result *runwaymq.MergeResult, partitionKey string) error {
 	payload, err := runwaymq.Marshal(result)
 	if err != nil {
 		return fmt.Errorf("failed to serialize merge result: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(result.GetId(), payload, partitionKey, nil)
-
-	q, ok := c.registry.Queue(key)
-	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", key)
-	}
-
-	topicName, ok := c.registry.TopicName(key)
-	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", key)
-	}
-
-	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
+	if err := publish.Message(ctx, c.registry, key, publish.IntentID(result.GetId()), payload, partitionKey); err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 

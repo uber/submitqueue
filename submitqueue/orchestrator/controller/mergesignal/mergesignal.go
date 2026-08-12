@@ -28,9 +28,9 @@ import (
 	"github.com/uber-go/tally"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
-	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -162,39 +162,35 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 // fanout publishes the batch ID to conclude (so requests are updated) and to
 // speculate (so dependents can re-evaluate now that this batch is done).
+//
+// Both messages name the merge as their cause. Without it the speculate
+// publish would reuse the bare batch ID, which the batch controller already
+// published at creation, and the queue would drop this one as a duplicate for
+// as long as that row survives — leaving dependents unwoken. Conclude is
+// scoped the same way because speculate publishes there too when a batch goes
+// terminal on its own; the two mean the same thing but are decided at
+// different moments, so neither may swallow the other.
 func (c *Controller) fanout(ctx context.Context, batchID, queue string) error {
-	if err := c.publish(ctx, topickey.TopicKeyConclude, batchID, queue); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeyConclude, publish.IntentID(batchID, "conclude", "merged"), batchID, queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, "process", "publish_conclude_errors", 1)
 		return fmt.Errorf("failed to publish to conclude: %w", err)
 	}
-	if err := c.publish(ctx, topickey.TopicKeySpeculate, batchID, queue); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeySpeculate, publish.IntentID(batchID, "merged"), batchID, queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, "process", "publish_speculate_errors", 1)
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}
 	return nil
 }
 
-// publish publishes a batch ID to the given topic key, stamped with and
-// partitioned by the batch's queue.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID string, queue string) error {
+// publish publishes a batch ID to the given topic key under msgID, stamped
+// with and partitioned by the batch's queue.
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, msgID, batchID, queue string) error {
 	payload, err := entity.BatchID{ID: batchID, Queue: queue}.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(batchID, payload, queue, nil)
-
-	q, ok := c.registry.Queue(key)
-	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", key)
-	}
-
-	topicName, ok := c.registry.TopicName(key)
-	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", key)
-	}
-
-	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
+	if err := publish.Message(ctx, c.registry, key, msgID, payload, queue); err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 

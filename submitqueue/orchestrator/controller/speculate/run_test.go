@@ -1013,11 +1013,12 @@ func TestRun_PersistsObservationsWithNoOpenHead(t *testing.T) {
 	h.noBuildsDispatched()
 }
 
-// Repeat publishes for one batch must reach the queue. It deduplicates on
-// (topic, partition key, message ID) against rows it has not collected yet,
-// consumed ones included, so a bare batch ID would silently drop the re-sends
-// this controller relies on.
-func TestPublish_MintsADistinctMessageIDPerPublish(t *testing.T) {
+// The self-heal fan-out exists because an earlier conclude may have gone
+// missing, so each of its publishes must reach the queue. The queue
+// deduplicates on (topic, partition key, message ID) against rows it has not
+// collected yet, consumed ones included, so a stable ID would drop the repeat
+// against the very conclude that went missing.
+func TestFanout_MintsADistinctMessageIDPerPublish(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	var ids []string
@@ -1041,8 +1042,8 @@ func TestPublish_MintsADistinctMessageIDPerPublish(t *testing.T) {
 		staticSpeculatorFactory{}, registry, topickey.TopicKeySpeculate, "orchestrator-speculate",
 	)
 
-	require.NoError(t, c.publishBatchID(context.Background(), topickey.TopicKeyConclude, head, "q", "q"))
-	require.NoError(t, c.publishBatchID(context.Background(), topickey.TopicKeyConclude, head, "q", "q"))
+	require.NoError(t, c.fanout(context.Background(), head, "q"))
+	require.NoError(t, c.fanout(context.Background(), head, "q"))
 
 	require.Len(t, ids, 2)
 	assert.NotEqual(t, ids[0], ids[1])

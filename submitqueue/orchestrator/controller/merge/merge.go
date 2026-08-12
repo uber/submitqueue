@@ -32,9 +32,9 @@ import (
 	strategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	"github.com/uber/submitqueue/platform/base/mergestrategy"
-	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -219,25 +219,17 @@ func toProtoStrategy(s mergestrategy.MergeStrategy) strategypb.Strategy {
 
 // publish serializes the runway merge request and publishes it to the given
 // topic key, partitioned by queue.
+//
+// The correlation ID is the message ID with no cause: a batch is asked to merge
+// once, so a redelivery that re-asks is meant to dedup rather than have Runway
+// merge the same batch twice.
 func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, req *runwaymq.MergeRequest, partitionKey string) error {
 	payload, err := runwaymq.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("failed to serialize merge request: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(req.Id, payload, partitionKey, nil)
-
-	q, ok := c.registry.Queue(key)
-	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", key)
-	}
-
-	topicName, ok := c.registry.TopicName(key)
-	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", key)
-	}
-
-	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
+	if err := publish.Message(ctx, c.registry, key, publish.IntentID(req.GetId()), payload, partitionKey); err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 

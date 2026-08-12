@@ -24,10 +24,10 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
@@ -166,23 +166,16 @@ func (c *Controller) loadRequest(ctx context.Context, store storage.Storage, id 
 
 // publishBuildSignal publishes buildID to the buildsignal stage, partitioned by
 // build id so each build's poll loop runs in its own partition.
+//
+// The build ID is the message ID with no cause: a build is handed to the poll
+// loop once, so a redelivery that re-hands it off is meant to dedup away.
 func (c *Controller) publishBuildSignal(ctx context.Context, buildID, queue string) error {
 	payload, err := stovepipemq.Marshal(&stovepipemq.BuildSignal{Id: buildID, QueueName: queue})
 	if err != nil {
 		return fmt.Errorf("failed to serialize build signal: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(buildID, payload, buildID, nil)
-
-	q, ok := c.registry.Queue(stovepipemq.TopicKeyBuildSignal)
-	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", stovepipemq.TopicKeyBuildSignal)
-	}
-	topicName, ok := c.registry.TopicName(stovepipemq.TopicKeyBuildSignal)
-	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", stovepipemq.TopicKeyBuildSignal)
-	}
-	return q.Publisher().Publish(ctx, topicName, msg)
+	return publish.Message(ctx, c.registry, stovepipemq.TopicKeyBuildSignal, publish.IntentID(buildID), payload, buildID)
 }
 
 // Name returns the controller name for logging and metrics.

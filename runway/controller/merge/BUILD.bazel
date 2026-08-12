@@ -8,9 +8,9 @@ go_library(
     deps = [
         "//api/runway/messagequeue:go_default_library",
         "//api/runway/messagequeue/protopb:go_default_library",
-        "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
         "//platform/metrics:go_default_library",
+        "//platform/publish:go_default_library",
         "//runway/extension/merger:go_default_library",
         "@com_github_uber_go_tally//:go_default_library",
         "@org_uber_go_zap//:go_default_library",

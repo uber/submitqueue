@@ -229,6 +229,48 @@ func TestProcess_RecordsStatusAndNeverWritesThePathSet(t *testing.T) {
 	}
 }
 
+// The wake-up this poll sends speculate is named for the status it observed.
+//
+// Every poll publishes, but only a status change carries news, and the queue
+// deduplicates on (topic, partition key, message ID) against rows it has not
+// collected yet — so polls that saw nothing new collapse into the wake-up
+// already sent, while each transition gets one of its own. Naming only the
+// build would collapse the terminal wake-up into the first poll's and strand
+// the batch; naming nothing stable would wake speculate on every tick of a
+// build that has not moved.
+func TestProcess_SpeculateWakeUpIsNamedForTheObservedStatus(t *testing.T) {
+	poll := func(t *testing.T, from, to entity.BuildStatus) string {
+		t.Helper()
+		ctrl := gomock.NewController(t)
+		h := newTestHarness(t, ctrl, entity.BatchStateSpeculating)
+		h.wanted()
+
+		h.builds.EXPECT().Get(gomock.Any(), testBuildID).Return(testBuild(from), nil)
+		h.br.EXPECT().Status(gomock.Any(), gomock.Any()).Return(to, nil, nil)
+		h.builds.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+
+		var id string
+		h.speculatePub.EXPECT().Publish(gomock.Any(), "speculate", gomock.Any()).DoAndReturn(
+			func(_ context.Context, _ string, msg entityqueue.Message) error {
+				id = msg.ID
+				return nil
+			},
+		)
+		d := delivery(t, ctrl)
+		d.EXPECT().Hold(gomock.Any()).AnyTimes()
+
+		require.NoError(t, h.controller.Process(context.Background(), d))
+		return id
+	}
+
+	running := poll(t, entity.BuildStatusRunning, entity.BuildStatusRunning)
+	assert.Equal(t, running, poll(t, entity.BuildStatusRunning, entity.BuildStatusRunning),
+		"two polls that observed the same status carry the same news")
+	assert.NotEqual(t, running, poll(t, entity.BuildStatusRunning, entity.BuildStatusSucceeded),
+		"the terminal wake-up must not be swallowed by an earlier poll's")
+	assert.NotEqual(t, testBatchID, running, "the batch announcement already holds the bare ID")
+}
+
 // While a build is in flight the loop holds the delivery for the poll delay,
 // so the same message — and the same build partition — carries every poll.
 func TestProcess_NonTerminalHoldsForNextPoll(t *testing.T) {

@@ -699,6 +699,58 @@ func (s *SQLQueueIntegrationSuite) TestIdempotentPublish() {
 	t.Logf("Confirmed: only received message once (idempotency works)")
 }
 
+// A consumed and acked message goes on deduplicating later publishes.
+//
+// This is the property the message-ID convention exists for, and the one that
+// surprises: acked rows are reclaimed lazily, so a publish can be swallowed by
+// a message that was already delivered — reported to the publisher as a success
+// that writes nothing, with no error to retry and no row to deliver. A producer
+// reusing an entity's ID therefore gets one message per entity for as long as
+// the backend remembers the first. See platform/publish.IntentID.
+func (s *SQLQueueIntegrationSuite) TestDedupOutlivesConsumption() {
+	t := s.T()
+
+	signalCh := make(chan queueMySQL.HookSignal, 100)
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB:           s.db,
+		Logger:       zaptest.NewLogger(t),
+		MetricsScope: tally.NoopScope,
+		OnSignal:     signalCh,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	publisher, subscriber := q.Publisher(), q.Subscriber()
+	topic := "dedup_after_ack_topic"
+
+	subConfig := extqueue.DefaultSubscriptionConfig("worker-1", "dedup-after-ack-consumer")
+	subConfig.PartitionDiscoveryIntervalMs = 100
+	deliveryChan, err := subscriber.Subscribe(s.ctx, topic, subConfig)
+	require.NoError(t, err)
+
+	// The first publish for an entity: delivered, acked, and now awaiting
+	// collection rather than gone.
+	require.NoError(t, publisher.Publish(s.ctx, topic,
+		entityqueue.NewMessage("batch-1", []byte("announced"), "queue-1", nil)))
+	first := receive(t, deliveryChan)
+	require.Equal(t, "batch-1", first.Message().ID)
+	require.NoError(t, first.Ack(s.ctx))
+
+	// A later, unrelated event about the same entity, published under the same
+	// ID. It reports success and is never delivered.
+	require.NoError(t, publisher.Publish(s.ctx, topic,
+		entityqueue.NewMessage("batch-1", []byte("woken"), "queue-1", nil)))
+	assertNoDelivery(t, deliveryChan, signalCh, queueMySQL.SignalDeliveryCheck, 3)
+
+	// Naming the cause is what gets it through.
+	require.NoError(t, publisher.Publish(s.ctx, topic,
+		entityqueue.NewMessage("batch-1/merged", []byte("woken"), "queue-1", nil)))
+	second := receive(t, deliveryChan)
+	assert.Equal(t, "batch-1/merged", second.Message().ID)
+	assert.Equal(t, []byte("woken"), second.Message().Payload)
+	require.NoError(t, second.Ack(s.ctx))
+}
+
 func (s *SQLQueueIntegrationSuite) TestConcurrentPublishers() {
 	t := s.T()
 
