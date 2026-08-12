@@ -1,6 +1,6 @@
 # Buildkite client
 
-Shared HTTP client and Buildkite-specific facts for every domain's Buildkite-backed `BuildRunner`. There is no `BuildRunner` interface here by design — each domain (`submitqueue`, `stovepipe`, ...) defines its own `BuildRunner` and its own `BuildStatus`, and adapts this package's `State` to it. See [`doc/rfc/stovepipe/steps/build.md`](../../../../doc/rfc/stovepipe/steps/build.md#alternatives-considered-for-sharing-the-contract) for why the contract stays per-domain while the backend is shared.
+Shared HTTP client and Buildkite-specific facts for every domain's Buildkite-backed `BuildRunner`. There is no `BuildRunner` interface here by design — each domain (`submitqueue`, `stovepipe`, ...) defines its own `BuildRunner` and its own `BuildStatus`, and adapts this package's `State` to it. See [`doc/rfc/stovepipe/steps/build.md`](../../doc/rfc/stovepipe/steps/build.md#alternatives-considered-for-sharing-the-contract) for why the contract stays per-domain while the backend is shared.
 
 ## What lives here
 
@@ -17,7 +17,7 @@ Both wrap a `*Client` built at the wiring layer; this package never constructs o
 
 ## How the same `Client` stays safe to share across two different checkout strategies
 
-SubmitQueue's build materializes state that doesn't exist yet — the runner resolves a batch DAG into composite base/head commits by applying patches. Stovepipe's build checks out a commit that already exists on trunk and, for an incremental build, diffs it against a baseline. These are different problems at the CI-pipeline level (see [build.md's "Why separate contracts"](../../../../doc/rfc/stovepipe/steps/build.md#why-separate-contracts)), yet both go through the same `Client.CreateBuild` call — the `Client` never inspects `CreateBuildRequest.Env` or picks a strategy, so there is nothing here that needs to "know" which pattern applies.
+SubmitQueue's build materializes state that doesn't exist yet — the runner resolves a batch DAG into composite base/head commits by applying patches. Stovepipe's build checks out a commit that already exists on trunk and, for an incremental build, diffs it against a baseline. These are different problems at the CI-pipeline level (see [build.md's "Why separate contracts"](../../doc/rfc/stovepipe/steps/build.md#why-separate-contracts)), yet both go through the same `Client.CreateBuild` call — the `Client` never inspects `CreateBuildRequest.Env` or picks a strategy, so there is nothing here that needs to "know" which pattern applies.
 
 The split happens entirely outside this package, at two layers below it:
 

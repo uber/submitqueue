@@ -27,7 +27,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/platform/base/change"
-	platformbuildkite "github.com/uber/submitqueue/platform/extension/buildrunner/buildkite"
+	platformbuildkite "github.com/uber/submitqueue/platform/buildkite"
 	phttp "github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	changesetfake "github.com/uber/submitqueue/submitqueue/core/changeset/fake"

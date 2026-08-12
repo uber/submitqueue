@@ -18,7 +18,7 @@
 // BuildRunner interface or domain entity types — each domain (submitqueue,
 // stovepipe, ...) defines its own BuildRunner and its own BuildStatus, and
 // adapts this package's RunStatus to it. See
-// platform/extension/buildrunner/buildkite's README for the analogous
+// platform/buildkite's README for the analogous
 // rationale applied to the Buildkite backend.
 package githubactions
 

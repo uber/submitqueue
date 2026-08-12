@@ -3,7 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "go_default_library",
     srcs = ["client.go"],
-    importpath = "github.com/uber/submitqueue/platform/extension/buildrunner/githubactions",
+    importpath = "github.com/uber/submitqueue/platform/githubactions",
     visibility = ["//visibility:public"],
     deps = ["//platform/http:go_default_library"],
 )
