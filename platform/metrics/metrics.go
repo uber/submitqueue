@@ -171,6 +171,11 @@ func NamedHistogram(scope tally.Scope, name string, histogram string, buckets ta
 	return tagged(scope, tags).SubScope(name).Histogram(histogram, buckets)
 }
 
+// NamedGauge sets the {name}.{gauge} gauge to value.
+func NamedGauge(scope tally.Scope, name string, gauge string, value float64, tags ...Tag) {
+	tagged(scope, tags).SubScope(name).Gauge(gauge).Update(value)
+}
+
 // tagsToMap converts a slice of Tag to a map for tally.
 func tagsToMap(tags []Tag) map[string]string {
 	m := make(map[string]string, len(tags))
