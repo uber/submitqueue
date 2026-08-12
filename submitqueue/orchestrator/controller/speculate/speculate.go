@@ -23,8 +23,8 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
-	"github.com/uber/submitqueue/submitqueue/core/publish"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -182,8 +182,12 @@ func (c *Controller) admit(ctx context.Context, store storage.Storage, batch ent
 // fanout re-publishes downstream events for a batch that has already reached
 // a terminal state. Used for self-healing when a previous publish was lost:
 // re-sending to conclude guarantees request-state reconciliation.
+//
+// Distinct per publish: this exists precisely because an earlier conclude may
+// have gone missing, and the conclude the batch sent when it turned terminal
+// is exactly what a stable ID would dedup against.
 func (c *Controller) fanout(ctx context.Context, batchID, queue string) error {
-	if err := c.publishBatchID(ctx, topickey.TopicKeyConclude, batchID, queue, queue); err != nil {
+	if err := c.publishBatchID(ctx, topickey.TopicKeyConclude, publish.UniqueID(batchID), batchID, queue, queue); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return c.attributed(fmt.Errorf("failed to publish to conclude: %w", err),
 			entity.BatchSubject(batchID))
@@ -191,13 +195,18 @@ func (c *Controller) fanout(ctx context.Context, batchID, queue string) error {
 	return nil
 }
 
-// publishBatchID publishes a batch ID to the topic behind key, stamped with
-// the batch's queue and partitioned by partitionKey.
+// publishBatchID publishes a batch ID to the topic behind key under msgID,
+// stamped with the batch's queue and partitioned by partitionKey.
 //
-// Every publish gets a distinct message ID (publish.UniqueID): this controller
-// re-publishes by design — a dispatch is re-sent until the build stage records
-// it, and a terminal batch repeats its fan-out in case an earlier one was lost
-// — and a stable message ID would make the queue swallow those repeats.
+// Callers choose msgID, because this controller publishes for two different
+// kinds of reason. A hand-off that happens once in a batch's life — dispatching
+// it to merge, concluding it — names its cause with publish.IntentID, so a
+// redelivery that re-derives the same decision is deduplicated instead of
+// enacting it twice. A repeat-until-effective nudge — a dispatch re-sent until
+// the build stage records it, a fan-out repeated in case an earlier one was
+// lost — has no stable cause to name, since the condition that provokes it is
+// unchanged across runs, and takes publish.UniqueID so the queue can never
+// swallow the repeat that finally lands.
 //
 // queue and partitionKey are separate because they answer different questions.
 // queue is what the payload asserts the batch belongs to, and the consumer
@@ -205,12 +214,12 @@ func (c *Controller) fanout(ctx context.Context, batchID, queue string) error {
 // partition key only decides what stays serialized behind what: most publishes
 // want the queue, so a queue's batches are processed in order, but the build
 // dispatch partitions by batch so heads dispatch in parallel.
-func (c *Controller) publishBatchID(ctx context.Context, key consumer.TopicKey, batchID, queue, partitionKey string) error {
+func (c *Controller) publishBatchID(ctx context.Context, key consumer.TopicKey, msgID, batchID, queue, partitionKey string) error {
 	payload, err := entity.BatchID{ID: batchID, Queue: queue}.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
-	return publish.Message(ctx, c.registry, key, publish.UniqueID(batchID), payload, partitionKey)
+	return publish.Message(ctx, c.registry, key, msgID, payload, partitionKey)
 }
 
 // attributed records what a failure was about and counts it by subject type.

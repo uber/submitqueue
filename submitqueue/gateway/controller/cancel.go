@@ -19,10 +19,10 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	requestcore "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -135,20 +135,12 @@ func (c *cancelController) publishToQueue(ctx context.Context, cancelRequest ent
 	}
 
 	// Partition by the sqid so retries and reorderings on the same request are serialised.
-	// TODO: figure best way to ID and partition the message according to new guidelines on queue usage
-	msg := entityqueue.NewMessage(cancelRequest.ID, payload, cancelRequest.ID, nil)
-
-	q, ok := c.registry.Queue(topickey.TopicKeyCancel)
-	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", topickey.TopicKeyCancel)
-	}
-
-	topicName, ok := c.registry.TopicName(topickey.TopicKeyCancel)
-	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", topickey.TopicKeyCancel)
-	}
-
-	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
+	//
+	// The request ID is the message ID with no cause: a request is cancelled at
+	// most once, so a second Cancel for one already being cancelled is meant to
+	// dedup rather than enqueue redundant work.
+	if err := publish.Message(ctx, c.registry, topickey.TopicKeyCancel,
+		publish.IntentID(cancelRequest.ID), payload, cancelRequest.ID); err != nil {
 		return fmt.Errorf("failed to publish cancel request message: %w", err)
 	}
 

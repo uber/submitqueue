@@ -25,9 +25,9 @@ import (
 	strategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	"github.com/uber/submitqueue/platform/base/mergestrategy"
-	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	coremetrics "github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
@@ -311,25 +311,17 @@ func (c *Controller) checkDuplicate(ctx context.Context, store storage.Storage, 
 
 // publishMergeCheck serializes the runway check request and publishes it to the
 // runway merge-conflict-check topic, partitioned by queue.
+//
+// The correlation ID is the message ID with no cause: a request is checked once,
+// so a redelivery that re-asks is meant to dedup rather than have Runway run the
+// same check twice.
 func (c *Controller) publishMergeCheck(ctx context.Context, req *runwaymq.MergeRequest) error {
 	payload, err := runwaymq.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("failed to serialize merge conflict check request: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(req.Id, payload, req.QueueName, nil)
-
-	q, ok := c.registry.Queue(c.runwayTopicKey)
-	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", c.runwayTopicKey)
-	}
-
-	topicName, ok := c.registry.TopicName(c.runwayTopicKey)
-	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", c.runwayTopicKey)
-	}
-
-	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
+	if err := publish.Message(ctx, c.registry, c.runwayTopicKey, publish.IntentID(req.GetId()), payload, req.GetQueueName()); err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 

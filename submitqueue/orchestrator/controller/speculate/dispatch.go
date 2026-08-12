@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -99,8 +100,13 @@ func (c *Controller) dispatch(ctx context.Context, queue string, snap snapshot, 
 		// Cancelling paths need no dispatch at all — the poll loop reads the
 		// stop off the set and enacts it. Partitioned by batch, so heads
 		// dispatch in parallel while one head's dispatches stay ordered.
+		//
+		// Distinct per publish: the condition that provokes a re-send is that
+		// nothing recorded the last one, which leaves nothing new to name it
+		// by, so any stable ID would dedup the re-send against the dispatch
+		// that went missing.
 		if hasActionablePaths(set) {
-			if err := c.publishBatchID(ctx, topickey.TopicKeyBuild, batch.ID, queue, batch.ID); err != nil {
+			if err := c.publishBatchID(ctx, topickey.TopicKeyBuild, publish.UniqueID(batch.ID), batch.ID, queue, batch.ID); err != nil {
 				metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 				return c.attributed(fmt.Errorf("failed to publish batch %s to build: %w", batch.ID, err),
 					entity.BatchSubject(batch.ID))

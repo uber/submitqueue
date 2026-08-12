@@ -20,9 +20,9 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
@@ -139,6 +139,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 // publish publishes a request ID to the specified topic key, stamped with and
 // partitioned by the request's queue.
+//
+// The request ID is the message ID with no cause: a request is handed to the
+// next stage once, so a redelivery that re-hands it is meant to dedup away.
 func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, requestID string, queue string) error {
 	rid := entity.RequestID{ID: requestID, Queue: queue}
 	payload, err := rid.ToBytes()
@@ -146,19 +149,7 @@ func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, request
 		return fmt.Errorf("failed to serialize request ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(requestID, payload, queue, nil)
-
-	q, ok := c.registry.Queue(key)
-	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", key)
-	}
-
-	topicName, ok := c.registry.TopicName(key)
-	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", key)
-	}
-
-	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
+	if err := publish.Message(ctx, c.registry, key, publish.IntentID(requestID), payload, queue); err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 

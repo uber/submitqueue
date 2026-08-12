@@ -26,9 +26,9 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
@@ -351,29 +351,15 @@ func pollDelay(status entity.BuildStatus) int64 {
 }
 
 // publishRecord publishes requestID to the record stage, partitioned by request
-// id. The message id is the request id too, so a redelivery republishing the
-// same terminal signal dedups into the original message rather than enqueuing a
-// second one.
+// id. The message id is the request id with no cause, so a redelivery
+// republishing the same terminal signal dedups into the original message rather
+// than enqueuing a second one.
 func (c *Controller) publishRecord(ctx context.Context, requestID, queue string) error {
 	payload, err := stovepipemq.Marshal(&stovepipemq.Record{Id: requestID, QueueName: queue})
 	if err != nil {
 		return fmt.Errorf("failed to serialize record: %w", err)
 	}
-	msg := entityqueue.NewMessage(requestID, payload, requestID, nil)
-	return c.publish(ctx, stovepipemq.TopicKeyRecord, msg)
-}
-
-// publish sends msg to the queue registered for key.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, msg entityqueue.Message) error {
-	q, ok := c.registry.Queue(key)
-	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", key)
-	}
-	topicName, ok := c.registry.TopicName(key)
-	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", key)
-	}
-	return q.Publisher().Publish(ctx, topicName, msg)
+	return publish.Message(ctx, c.registry, stovepipemq.TopicKeyRecord, publish.IntentID(requestID), payload, requestID)
 }
 
 // Name returns the controller name for logging and metrics.

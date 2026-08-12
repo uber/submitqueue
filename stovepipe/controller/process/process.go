@@ -24,10 +24,10 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
@@ -460,21 +460,16 @@ func (c *Controller) loadQueue(ctx context.Context, store storage.Storage, name 
 // publishBuild publishes the admitted request ID to the build stage. The build
 // controller reloads the Request from storage to read its immutable strategy
 // and baseline.
+//
+// The request ID is the message ID with no cause: a request is admitted to
+// build once, so a redelivery that re-admits it is meant to dedup away.
 func (c *Controller) publishBuild(ctx context.Context, id, queue string) error {
 	payload, err := stovepipemq.Marshal(&stovepipemq.BuildRequest{Id: id, QueueName: queue})
 	if err != nil {
 		return fmt.Errorf("failed to serialize build request: %w", err)
 	}
 
-	q, ok := c.registry.Queue(stovepipemq.TopicKeyBuild)
-	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", stovepipemq.TopicKeyBuild)
-	}
-	topicName, ok := c.registry.TopicName(stovepipemq.TopicKeyBuild)
-	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", stovepipemq.TopicKeyBuild)
-	}
-	if err := q.Publisher().Publish(ctx, topicName, entityqueue.NewMessage(id, payload, id, nil)); err != nil {
+	if err := publish.Message(ctx, c.registry, stovepipemq.TopicKeyBuild, publish.IntentID(id), payload, id); err != nil {
 		return fmt.Errorf("failed to publish build request: %w", err)
 	}
 	return nil

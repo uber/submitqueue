@@ -20,10 +20,10 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
@@ -381,8 +381,14 @@ func (c *Controller) populateBatch(ctx context.Context, store storage.Storage, b
 	return batch, nil
 }
 
-// publish publishes a batch ID to the specified topic key, stamped with and
+// publish announces a batch to the specified topic key, stamped with and
 // partitioned by the batch's queue.
+//
+// The message ID is the bare batch ID, with no cause: this is the batch's
+// announcement of its own creation, which happens once in its life, so a
+// redelivery that re-announces it is meant to be dropped. Every later publish
+// about the same batch names its cause and so cannot collide with this row —
+// see publish.IntentID.
 func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID string, queue string) error {
 	bid := entity.BatchID{ID: batchID, Queue: queue}
 	payload, err := bid.ToBytes()
@@ -390,19 +396,7 @@ func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, batchID
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(batchID, payload, queue, nil)
-
-	q, ok := c.registry.Queue(key)
-	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", key)
-	}
-
-	topicName, ok := c.registry.TopicName(key)
-	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", key)
-	}
-
-	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
+	if err := publish.Message(ctx, c.registry, key, publish.IntentID(batchID), payload, queue); err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 

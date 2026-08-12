@@ -36,7 +36,7 @@ import (
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
-	"github.com/uber/submitqueue/submitqueue/core/publish"
+	"github.com/uber/submitqueue/platform/publish"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
@@ -371,16 +371,17 @@ func (c *Controller) loadBase(ctx context.Context, store storage.Storage, path e
 // because they share the key. Partitioning by batch instead would put every
 // path of a head behind whichever of its builds polls slowest.
 //
-// The build ID is the message ID too — a stable ID on purpose, so a repeat
-// hand-off for the same build dedups away while the original signal is still
-// in the queue's un-GC'd window (see publish.Message).
+// The build ID is the message ID too, with no cause: a build is handed off
+// once in its life, so a repeat hand-off for the same build is meant to dedup
+// away while the original signal is still in the queue's un-GC'd window (see
+// publish.IntentID).
 func (c *Controller) publishBuildSignal(ctx context.Context, buildID, queue string) error {
 	payload, err := entity.BuildID{ID: buildID, Queue: queue}.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize build ID: %w", err)
 	}
 
-	if err := publish.Message(ctx, c.registry, topickey.TopicKeyBuildSignal, buildID, payload, buildID); err != nil {
+	if err := publish.Message(ctx, c.registry, topickey.TopicKeyBuildSignal, publish.IntentID(buildID), payload, buildID); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 		return fmt.Errorf("failed to publish to buildsignal: %w", err)
 	}

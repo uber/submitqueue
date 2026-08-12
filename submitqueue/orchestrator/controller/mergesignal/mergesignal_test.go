@@ -152,6 +152,59 @@ func TestProcess_MergedAdvancesBatch(t *testing.T) {
 	assert.ElementsMatch(t, []string{"conclude", "speculate"}, got)
 }
 
+// The fan-out after a merge must not reuse the bare batch ID.
+//
+// The batch controller announces a new batch to speculate under exactly that
+// ID, and the queue deduplicates on (topic, partition key, message ID) against
+// every row it has not collected yet, consumed ones included — a window with no
+// upper bound on a busy partition. Reusing the ID here made the wake-up that
+// lets dependents re-plan a silent no-op, acked as a success, with nothing to
+// retry it.
+func TestProcess_FanoutDoesNotCollideWithTheBatchAnnouncement(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	batchStore := storagemock.NewMockBatchStore(ctrl)
+	batch := entity.Batch{
+		ID:           testBatchID,
+		Queue:        testQueue,
+		Contains:     []string{"test-queue/1"},
+		Dependencies: []string{"test-queue/batch/0"},
+		State:        entity.BatchStateMerging,
+		Version:      1,
+	}
+	batchStore.EXPECT().Get(gomock.Any(), testBatchID).Return(batch, nil)
+	batchStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
+	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+
+	byTopic := map[string]string{}
+	pub := queuemock.NewMockPublisher(ctrl)
+	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, topic string, msg entityqueue.Message) error {
+			byTopic[topic] = msg.ID
+			return nil
+		},
+	).AnyTimes()
+	q := queuemock.NewMockQueue(ctrl)
+	q.EXPECT().Publisher().Return(pub).AnyTimes()
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: q},
+		{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: q},
+	})
+	require.NoError(t, err)
+
+	res := runwaymq.MergeResult{Id: testBatchID, Outcome: runwaypb.Outcome_SUCCEEDED}
+	msg := entityqueue.NewMessage(testBatchID, resultPayload(t, res), testQueue, nil)
+	require.NoError(t, newController(t, store, registry).Process(context.Background(), newDelivery(ctrl, msg)))
+
+	assert.NotEqual(t, testBatchID, byTopic["speculate"],
+		"the announcement the batch controller published already holds this ID")
+	assert.NotEqual(t, testBatchID, byTopic["conclude"])
+	assert.NotEqual(t, byTopic["speculate"], byTopic["conclude"])
+}
+
 func TestProcess_NotMergedMarksBatchFailed(t *testing.T) {
 	ctrl := gomock.NewController(t)
 

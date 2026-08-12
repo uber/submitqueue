@@ -15,11 +15,11 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//api/submitqueue/gateway/protopb:go_default_library",
-        "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
         "//platform/errs:go_default_library",
         "//platform/extension/counter:go_default_library",
         "//platform/metrics:go_default_library",
+        "//platform/publish:go_default_library",
         "//submitqueue/core/request:go_default_library",
         "//submitqueue/core/topickey:go_default_library",
         "//submitqueue/entity:go_default_library",

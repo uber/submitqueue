@@ -20,11 +20,11 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
-	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
@@ -291,24 +291,16 @@ func (c *IngestController) advanceQueueLatestRequestID(ctx context.Context, stor
 
 // publishProcess publishes the request ID to the process stage, partitioned by queue so a
 // queue's requests stay ordered.
+//
+// The request ID is the message ID with no cause: a request is handed to
+// process once, so a redelivery that re-announces it is meant to dedup away.
 func (c *IngestController) publishProcess(ctx context.Context, id, queue string) error {
 	payload, err := stovepipemq.Marshal(&stovepipemq.ProcessRequest{Id: id, QueueName: queue})
 	if err != nil {
 		return fmt.Errorf("failed to serialize process request: %w", err)
 	}
 
-	msg := entityqueue.NewMessage(id, payload, queue, nil)
-
-	q, ok := c.registry.Queue(stovepipemq.TopicKeyProcess)
-	if !ok {
-		return fmt.Errorf("no queue registered for topic key %s", stovepipemq.TopicKeyProcess)
-	}
-	topicName, ok := c.registry.TopicName(stovepipemq.TopicKeyProcess)
-	if !ok {
-		return fmt.Errorf("no topic name registered for topic key %s", stovepipemq.TopicKeyProcess)
-	}
-
-	if err := q.Publisher().Publish(ctx, topicName, msg); err != nil {
+	if err := publish.Message(ctx, c.registry, stovepipemq.TopicKeyProcess, publish.IntentID(id), payload, queue); err != nil {
 		return fmt.Errorf("failed to publish process request: %w", err)
 	}
 	return nil
