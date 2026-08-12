@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,6 +27,8 @@ import (
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
+	sourcecontrolmock "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/mock"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -38,12 +41,16 @@ const (
 	testURI   = "git://remote/monorepo/main/head-sha"
 )
 
+var testCommitTime = time.Unix(1_700_000_000, 0).UTC()
+
 // recordMocks bundles the mocks a record controller test case wires
 // expectations on.
 type recordMocks struct {
-	reqStore   *storagemock.MockRequestStore
-	queueStore *storagemock.MockQueueStore
-	factStore  *storagemock.MockValidationFactStore
+	reqStore      *storagemock.MockRequestStore
+	queueStore    *storagemock.MockQueueStore
+	factStore     *storagemock.MockValidationFactStore
+	sourceControl *sourcecontrolmock.MockSourceControl
+	metricsScope  tally.TestScope
 }
 
 // expectFactCreated wires a successful fact write and captures it, so a case can
@@ -62,13 +69,31 @@ type staticStorageFactory struct{ store storage.Storage }
 // For returns the fixed store aggregate for any queue.
 func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
 
+type staticSourceControlFactory struct {
+	sourceControl sourcecontrol.SourceControl
+}
+
+func (f staticSourceControlFactory) For(sourcecontrol.Config) (sourcecontrol.SourceControl, error) {
+	return f.sourceControl, nil
+}
+
+// failingSourceControlFactory resolves no queue.
+type failingSourceControlFactory struct{}
+
+func (failingSourceControlFactory) For(sourcecontrol.Config) (sourcecontrol.SourceControl, error) {
+	return nil, errors.New("no source control for queue")
+}
+
 func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, recordMocks) {
 	t.Helper()
 
+	scope := tally.NewTestScope("", nil)
 	m := recordMocks{
-		reqStore:   storagemock.NewMockRequestStore(ctrl),
-		queueStore: storagemock.NewMockQueueStore(ctrl),
-		factStore:  storagemock.NewMockValidationFactStore(ctrl),
+		reqStore:      storagemock.NewMockRequestStore(ctrl),
+		queueStore:    storagemock.NewMockQueueStore(ctrl),
+		factStore:     storagemock.NewMockValidationFactStore(ctrl),
+		sourceControl: sourcecontrolmock.NewMockSourceControl(ctrl),
+		metricsScope:  scope,
 	}
 
 	store := storagemock.NewMockStorage(ctrl)
@@ -78,8 +103,9 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, recordMo
 
 	c := NewController(
 		zap.NewNop().Sugar(),
-		tally.NewTestScope("test", nil),
+		scope,
 		staticStorageFactory{store: store},
+		staticSourceControlFactory{sourceControl: m.sourceControl},
 		stovepipemq.TopicKeyRecord,
 		"stovepipe-record",
 	)
@@ -158,10 +184,16 @@ func TestProcess_AdvancesBookmarkOnSuccess(t *testing.T) {
 					written = q
 					return nil
 				})
+			m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).
+				Return(sourcecontrol.ChangeInfo{CreatedAt: testCommitTime.UnixMilli()}, nil)
 
 			require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
 			assert.Equal(t, tt.wantURI, written.LastGreenURI)
 			assert.Equal(t, testID, written.LastGreenRequestID)
+
+			gauge, ok := m.metricsScope.Snapshot().Gauges()["record_controller.record.last_green_timestamp_seconds+queue=monorepo/main"]
+			require.True(t, ok)
+			assert.Equal(t, float64(testCommitTime.Unix()), gauge.Value())
 
 			// The green fact is what authorises the advance.
 			assert.Equal(t, entity.DegreeGreen, fact.Degree)
@@ -171,6 +203,68 @@ func TestProcess_AdvancesBookmarkOnSuccess(t *testing.T) {
 			assert.Positive(t, fact.CreatedAt)
 		})
 	}
+}
+
+func TestProcess_TimestampReportingFailureDoesNotFailRecord(t *testing.T) {
+	tests := []struct {
+		name        string
+		info        sourcecontrol.ChangeInfo
+		err         error
+		wantCounter string
+	}{
+		{
+			name:        "lookup fails",
+			err:         errors.New("boom"),
+			wantCounter: "record_controller.record.last_green_timestamp_errors+queue=monorepo/main",
+		},
+		{
+			// A zero timestamp breaks the extension contract, so it is counted
+			// apart from a lookup failure rather than emitted as a 1970 gauge.
+			name:        "timestamp missing",
+			info:        sourcecontrol.ChangeInfo{CreatedAt: 0},
+			wantCounter: "record_controller.record.last_green_timestamp_invalid+queue=monorepo/main",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+
+			m.reqStore.EXPECT().Get(gomock.Any(), testID).
+				Return(requestWithState(entity.RequestStateSucceeded), nil)
+			var fact entity.ValidationFact
+			m.expectFactCreated(&fact)
+			m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow("", "", 1), nil)
+			m.queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
+			m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).Return(tt.info, tt.err)
+
+			require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+			assert.Empty(t, m.metricsScope.Snapshot().Gauges())
+			counter, ok := m.metricsScope.Snapshot().Counters()[tt.wantCounter]
+			require.True(t, ok)
+			assert.Equal(t, int64(1), counter.Value())
+		})
+	}
+}
+
+func TestProcess_UnresolvableSourceControlDoesNotFailRecord(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	c.sourceControls = failingSourceControlFactory{}
+
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).
+		Return(requestWithState(entity.RequestStateSucceeded), nil)
+	var fact entity.ValidationFact
+	m.expectFactCreated(&fact)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow("", "", 1), nil)
+	m.queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
+
+	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+	assert.Empty(t, m.metricsScope.Snapshot().Gauges())
+	counter, ok := m.metricsScope.Snapshot().Counters()["record_controller.record.last_green_timestamp_resolve_errors+queue=monorepo/main"]
+	require.True(t, ok)
+	assert.Equal(t, int64(1), counter.Value())
 }
 
 func TestProcess_RecordsBrokenFactWithoutAdvancing(t *testing.T) {
@@ -221,6 +315,8 @@ func TestProcess_AdoptsExistingFactFromSameRequest(t *testing.T) {
 			if tt.wantUpdate {
 				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow("", "", 1), nil)
 				m.queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
+				m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).
+					Return(sourcecontrol.ChangeInfo{CreatedAt: testCommitTime.UnixMilli()}, nil)
 			}
 
 			require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
@@ -270,6 +366,11 @@ func TestProcess_SkipsBookmarkWhenNotNewer(t *testing.T) {
 			// No Update: the bookmark only moves forward.
 
 			require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+			assert.NotContains(
+				t,
+				m.metricsScope.Snapshot().Gauges(),
+				"record_controller.record.last_green_timestamp_seconds+queue=monorepo/main",
+			)
 		})
 	}
 }
@@ -338,6 +439,8 @@ func TestProcess_RetriesBookmarkOnVersionMismatch(t *testing.T) {
 		m.queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), fresh.Version, fresh.Version+1).
 			Return(nil),
 	)
+	m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).
+		Return(sourcecontrol.ChangeInfo{CreatedAt: testCommitTime.UnixMilli()}, nil)
 
 	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
 }

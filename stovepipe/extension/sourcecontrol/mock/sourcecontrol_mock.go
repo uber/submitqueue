@@ -42,6 +42,21 @@ func (m *MockSourceControl) EXPECT() *MockSourceControlMockRecorder {
 	return m.recorder
 }
 
+// ChangeInfo mocks base method.
+func (m *MockSourceControl) ChangeInfo(ctx context.Context, uri string) (sourcecontrol.ChangeInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ChangeInfo", ctx, uri)
+	ret0, _ := ret[0].(sourcecontrol.ChangeInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ChangeInfo indicates an expected call of ChangeInfo.
+func (mr *MockSourceControlMockRecorder) ChangeInfo(ctx, uri any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ChangeInfo", reflect.TypeOf((*MockSourceControl)(nil).ChangeInfo), ctx, uri)
+}
+
 // History mocks base method.
 func (m *MockSourceControl) History(ctx context.Context, cursor string, limit int) (page.Page[string], error) {
 	m.ctrl.T.Helper()

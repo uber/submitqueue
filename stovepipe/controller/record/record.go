@@ -33,6 +33,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
@@ -41,11 +42,12 @@ import (
 // advances the queue's last-green bookmark when that fact is green. Implements
 // consumer.Controller.
 type Controller struct {
-	logger        *zap.SugaredLogger
-	metricsScope  tally.Scope
-	stores        storage.Factory
-	topicKey      consumer.TopicKey
-	consumerGroup string
+	logger         *zap.SugaredLogger
+	metricsScope   tally.Scope
+	stores         storage.Factory
+	sourceControls sourcecontrol.Factory
+	topicKey       consumer.TopicKey
+	consumerGroup  string
 }
 
 // Verify Controller implements consumer.Controller interface at compile time.
@@ -64,15 +66,17 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
+	sourceControls sourcecontrol.Factory,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
-		logger:        logger.Named("record_controller"),
-		metricsScope:  scope.SubScope("record_controller"),
-		stores:        stores,
-		topicKey:      topicKey,
-		consumerGroup: consumerGroup,
+		logger:         logger.Named("record_controller"),
+		metricsScope:   scope.SubScope("record_controller"),
+		stores:         stores,
+		sourceControls: sourceControls,
+		topicKey:       topicKey,
+		consumerGroup:  consumerGroup,
 	}
 }
 
@@ -256,8 +260,61 @@ func (c *Controller) advanceLastGreen(ctx context.Context, store storage.Storage
 			"request_id", request.ID,
 			"last_green_uri", request.URI,
 		)
+		c.emitLastGreenTimestamp(ctx, request)
 		return nil
 	}
+}
+
+// emitLastGreenTimestamp emits the immutable commit timestamp after its
+// bookmark is durable. Reporting is best-effort so an observability failure
+// cannot turn a successful record operation into a retry, which is why each
+// cause is counted and logged separately instead of returned.
+func (c *Controller) emitLastGreenTimestamp(ctx context.Context, request entity.Request) {
+	queueTag := metrics.NewTag("queue", request.Queue)
+
+	sourceControl, err := c.sourceControls.For(sourcecontrol.Config{QueueName: request.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "last_green_timestamp_resolve_errors", 1, queueTag)
+		c.logger.Warnw("failed to resolve source control to report the last green timestamp",
+			"queue", request.Queue,
+			"error", err,
+		)
+		return
+	}
+
+	info, err := sourceControl.ChangeInfo(ctx, request.URI)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "last_green_timestamp_errors", 1, queueTag)
+		c.logger.Warnw("failed to look up the last green commit timestamp",
+			"queue", request.Queue,
+			"uri", request.URI,
+			"error", err,
+		)
+		return
+	}
+
+	// SourceControl must report a positive creation timestamp, so a missing one
+	// is a broken extension contract rather than a lookup failure. Emitting it
+	// anyway would publish a 1970 timestamp and read as an infinitely stale queue.
+	if info.CreatedAt <= 0 {
+		metrics.NamedCounter(c.metricsScope, _opName, "last_green_timestamp_invalid", 1, queueTag)
+		c.logger.Warnw("source control reported no creation timestamp for the last green commit",
+			"queue", request.Queue,
+			"uri", request.URI,
+			"created_at", info.CreatedAt,
+		)
+		return
+	}
+
+	// Unix seconds match M3QL timestamp() output, so subtracting this gauge
+	// directly produces the age of the last-green commit in seconds.
+	metrics.NamedGauge(
+		c.metricsScope,
+		_opName,
+		"last_green_timestamp_seconds",
+		float64(time.UnixMilli(info.CreatedAt).Unix()),
+		queueTag,
+	)
 }
 
 // isNewerRequest reports whether candidate was ingested after current. An empty

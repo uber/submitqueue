@@ -149,6 +149,15 @@ func TestNamedHistogram(t *testing.T) {
 	assert.True(t, ok, "expected process.duration histogram")
 }
 
+func TestNamedGauge(t *testing.T) {
+	scope := tally.NewTestScope("", nil)
+	NamedGauge(scope, "process", "in_flight", 42, NewTag("queue", "monorepo/main"))
+
+	g, ok := scope.Snapshot().Gauges()["process.in_flight+queue=monorepo/main"]
+	assert.True(t, ok, "expected tagged process.in_flight gauge")
+	assert.Equal(t, float64(42), g.Value())
+}
+
 func TestLatencyBuckets_Sorted(t *testing.T) {
 	sets := map[string]tally.DurationBuckets{
 		"FastLatencyBuckets":    FastLatencyBuckets,
