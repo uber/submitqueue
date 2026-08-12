@@ -32,6 +32,15 @@ import (
 	"github.com/uber/submitqueue/platform/base/page"
 )
 
+// ChangeInfo describes immutable metadata about the source-control change
+// represented by a URI.
+type ChangeInfo struct {
+	// CreatedAt is the millisecond timestamp at which the source-control
+	// provider recorded the immutable change. It does not represent ref-update
+	// or fetch time. Always positive for a resolvable URI.
+	CreatedAt int64
+}
+
 // ErrNotFound is returned when a queue, ref, or URI cannot be resolved by the
 // implementation (for example an unknown queue, or an ancestry query referencing
 // a URI that is not on the ref).
@@ -71,6 +80,10 @@ type SourceControl interface {
 	// the greenness/status of each commit. Returns ErrNotFound if the cursor does
 	// not refer to a position on the ref.
 	History(ctx context.Context, cursor string, limit int) (page.Page[string], error)
+
+	// ChangeInfo returns immutable metadata for uri. The returned CreatedAt must
+	// be positive. Returns ErrNotFound when uri cannot be resolved.
+	ChangeInfo(ctx context.Context, uri string) (ChangeInfo, error)
 }
 
 // Config carries the per-queue identity handed to a Factory. The system knows
