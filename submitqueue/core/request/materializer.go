@@ -143,7 +143,15 @@ func (m *Materializer) createURIMappings(ctx context.Context, stores storage.Sto
 
 // logWins keeps accepting internal, treats accepted as the lowest public state,
 // then applies versioned-terminal precedence and timestamp ordering.
+//
+// Only status entries are candidates. An event describes work happening
+// underneath the request's position — a build starting or finishing on one of
+// several concurrent speculation paths — so it has no status to project, and its
+// Status field is unset.
 func logWins(log entity.RequestLog, summary entity.RequestSummary) bool {
+	if log.Type != entity.RequestLogTypeStatus {
+		return false
+	}
 	if summary.Status == entity.RequestStatusAccepting {
 		return log.Status != entity.RequestStatusAccepting
 	}

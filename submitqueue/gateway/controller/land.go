@@ -165,6 +165,7 @@ func (c *landController) Land(ctx context.Context, req entity.LandRequest) (resu
 		RequestID:   req.ID,
 		Queue:       req.Queue,
 		TimestampMs: receivedAtMs,
+		Type:        entity.RequestLogTypeStatus,
 		Status:      entity.RequestStatusAccepted,
 		Metadata:    map[string]string{},
 	}

@@ -118,8 +118,8 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	// Record the "new" status in the request log.
-	logEntry := entity.NewRequestLog(request.Queue, request.ID, entity.RequestStatusStarted, request.Version, "", nil)
-	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID); err != nil {
+	logEntry := entity.NewRequestStatusLog(request.Queue, request.ID, entity.RequestStatusStarted, request.Version, "", nil)
+	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID, ""); err != nil {
 		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
 		return fmt.Errorf("failed to publish request log: %w", err)
 	}

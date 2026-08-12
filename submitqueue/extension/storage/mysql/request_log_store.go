@@ -64,8 +64,8 @@ func (r *requestLogStore) Insert(ctx context.Context, log entity.RequestLog) (re
 	salt := rand.Int64()
 
 	_, err = r.db.ExecContext(ctx,
-		"INSERT INTO request_log (queue, request_id, timestamp_ms, salt, status, request_version, last_error, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		log.Queue, log.RequestID, log.TimestampMs, salt, log.Status, log.RequestVersion, log.LastError, metadataJSON,
+		"INSERT INTO request_log (queue, request_id, timestamp_ms, salt, type, status, event, request_version, last_error, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		log.Queue, log.RequestID, log.TimestampMs, salt, log.Type, log.Status, log.Event, log.RequestVersion, log.LastError, metadataJSON,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert request log for request_id=%s timestamp_ms=%d: %w", log.RequestID, log.TimestampMs, err)
@@ -83,7 +83,7 @@ func (r *requestLogStore) List(ctx context.Context, requestID string) (ret []ent
 	defer func() { op.Complete(retErr) }()
 
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT queue, request_id, timestamp_ms, status, request_version, last_error, metadata FROM request_log WHERE queue = ? AND request_id = ? ORDER BY timestamp_ms ASC, salt ASC",
+		"SELECT queue, request_id, timestamp_ms, type, status, event, request_version, last_error, metadata FROM request_log WHERE queue = ? AND request_id = ? ORDER BY timestamp_ms ASC, salt ASC",
 		r.queue, requestID,
 	)
 	if err != nil {
@@ -96,9 +96,16 @@ func (r *requestLogStore) List(ctx context.Context, requestID string) (ret []ent
 		var log entity.RequestLog
 		var metadataJSON []byte
 
-		err := rows.Scan(&log.Queue, &log.RequestID, &log.TimestampMs, &log.Status, &log.RequestVersion, &log.LastError, &metadataJSON)
+		err := rows.Scan(&log.Queue, &log.RequestID, &log.TimestampMs, &log.Type, &log.Status, &log.Event, &log.RequestVersion, &log.LastError, &metadataJSON)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan request log row for request_id=%s: %w", requestID, err)
+		}
+
+		// A row written before the type column existed carries the column
+		// default, but a row written by a store that predates it entirely can
+		// still read back empty; either way it recorded a status.
+		if log.Type == "" {
+			log.Type = entity.RequestLogTypeStatus
 		}
 
 		if err := json.Unmarshal(metadataJSON, &log.Metadata); err != nil {

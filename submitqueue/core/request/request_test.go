@@ -37,58 +37,58 @@ func TestGetCurrentStateFromRequestLog(t *testing.T) {
 		{
 			name: "single record",
 			logs: []entity.RequestLog{
-				{RequestID: "q/1", TimestampMs: 1000, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
+				{RequestID: "q/1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
 			},
 			expected: CurrentState{Status: entity.RequestStatusStarted, LastError: "", Metadata: map[string]string{}},
 		},
 		{
 			name: "terminal status wins over later non-terminal",
 			logs: []entity.RequestLog{
-				{RequestID: "q/1", TimestampMs: 1000, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
-				{RequestID: "q/1", TimestampMs: 2000, Status: entity.RequestStatusLanded, RequestVersion: 3, LastError: "", Metadata: map[string]string{"batch": "b1"}},
-				{RequestID: "q/1", TimestampMs: 3000, Status: entity.RequestStatusProcessing, RequestVersion: 0, LastError: "", Metadata: map[string]string{}},
+				{RequestID: "q/1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
+				{RequestID: "q/1", TimestampMs: 2000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusLanded, RequestVersion: 3, LastError: "", Metadata: map[string]string{"batch": "b1"}},
+				{RequestID: "q/1", TimestampMs: 3000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusSpeculating, RequestVersion: 0, LastError: "", Metadata: map[string]string{}},
 			},
 			expected: CurrentState{Status: entity.RequestStatusLanded, LastError: "", Metadata: map[string]string{"batch": "b1"}},
 		},
 		{
 			name: "terminal error status with last error",
 			logs: []entity.RequestLog{
-				{RequestID: "q/1", TimestampMs: 1000, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
-				{RequestID: "q/1", TimestampMs: 2000, Status: entity.RequestStatusError, RequestVersion: 4, LastError: "merge conflict", Metadata: map[string]string{"step": "merge"}},
+				{RequestID: "q/1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
+				{RequestID: "q/1", TimestampMs: 2000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusError, RequestVersion: 4, LastError: "merge conflict", Metadata: map[string]string{"step": "merge"}},
 			},
 			expected: CurrentState{Status: entity.RequestStatusError, LastError: "merge conflict", Metadata: map[string]string{"step": "merge"}},
 		},
 		{
 			name: "multiple terminal records picks highest version",
 			logs: []entity.RequestLog{
-				{RequestID: "q/1", TimestampMs: 1000, Status: entity.RequestStatusError, RequestVersion: 2, LastError: "timeout", Metadata: map[string]string{}},
-				{RequestID: "q/1", TimestampMs: 2000, Status: entity.RequestStatusLanded, RequestVersion: 5, LastError: "", Metadata: map[string]string{"final": "true"}},
-				{RequestID: "q/1", TimestampMs: 3000, Status: entity.RequestStatusError, RequestVersion: 3, LastError: "conflict", Metadata: map[string]string{}},
+				{RequestID: "q/1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusError, RequestVersion: 2, LastError: "timeout", Metadata: map[string]string{}},
+				{RequestID: "q/1", TimestampMs: 2000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusLanded, RequestVersion: 5, LastError: "", Metadata: map[string]string{"final": "true"}},
+				{RequestID: "q/1", TimestampMs: 3000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusError, RequestVersion: 3, LastError: "conflict", Metadata: map[string]string{}},
 			},
 			expected: CurrentState{Status: entity.RequestStatusLanded, LastError: "", Metadata: map[string]string{"final": "true"}},
 		},
 		{
 			name: "same version terminal records uses timestamp tiebreaker",
 			logs: []entity.RequestLog{
-				{RequestID: "q/1", TimestampMs: 1000, Status: entity.RequestStatusError, RequestVersion: 3, LastError: "first", Metadata: map[string]string{}},
-				{RequestID: "q/1", TimestampMs: 2000, Status: entity.RequestStatusError, RequestVersion: 3, LastError: "second", Metadata: map[string]string{}},
+				{RequestID: "q/1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusError, RequestVersion: 3, LastError: "first", Metadata: map[string]string{}},
+				{RequestID: "q/1", TimestampMs: 2000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusError, RequestVersion: 3, LastError: "second", Metadata: map[string]string{}},
 			},
 			expected: CurrentState{Status: entity.RequestStatusError, LastError: "second", Metadata: map[string]string{}},
 		},
 		{
 			name: "terminal status without version is not terminal",
 			logs: []entity.RequestLog{
-				{RequestID: "q/1", TimestampMs: 1000, Status: entity.RequestStatusLanded, RequestVersion: 0, LastError: "", Metadata: map[string]string{}},
-				{RequestID: "q/1", TimestampMs: 2000, Status: entity.RequestStatusProcessing, RequestVersion: 0, LastError: "", Metadata: map[string]string{"source": "gw"}},
+				{RequestID: "q/1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusLanded, RequestVersion: 0, LastError: "", Metadata: map[string]string{}},
+				{RequestID: "q/1", TimestampMs: 2000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusSpeculating, RequestVersion: 0, LastError: "", Metadata: map[string]string{"source": "gw"}},
 			},
-			expected: CurrentState{Status: entity.RequestStatusProcessing, LastError: "", Metadata: map[string]string{"source": "gw"}},
+			expected: CurrentState{Status: entity.RequestStatusSpeculating, LastError: "", Metadata: map[string]string{"source": "gw"}},
 		},
 		{
 			name: "no terminal records falls back to latest timestamp",
 			logs: []entity.RequestLog{
-				{RequestID: "q/1", TimestampMs: 1000, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
-				{RequestID: "q/1", TimestampMs: 3000, Status: entity.RequestStatusValidated, RequestVersion: 2, LastError: "", Metadata: map[string]string{}},
-				{RequestID: "q/1", TimestampMs: 2000, Status: entity.RequestStatusProcessing, RequestVersion: 0, LastError: "", Metadata: map[string]string{}},
+				{RequestID: "q/1", TimestampMs: 1000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusStarted, RequestVersion: 1, LastError: "", Metadata: map[string]string{}},
+				{RequestID: "q/1", TimestampMs: 3000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusValidated, RequestVersion: 2, LastError: "", Metadata: map[string]string{}},
+				{RequestID: "q/1", TimestampMs: 2000, Type: entity.RequestLogTypeStatus, Status: entity.RequestStatusSpeculating, RequestVersion: 0, LastError: "", Metadata: map[string]string{}},
 			},
 			expected: CurrentState{Status: entity.RequestStatusValidated, LastError: "", Metadata: map[string]string{}},
 		},

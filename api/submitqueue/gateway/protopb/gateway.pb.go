@@ -881,12 +881,18 @@ type HistoryEvent struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Time the request-log entry was created, in Unix milliseconds.
 	TimestampMs int64 `protobuf:"varint,1,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`
-	// Customer-friendly request status recorded by the event.
+	// Customer-friendly request status recorded by the event. Set only when type is "status".
 	Status string `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
 	// Error message associated with the event. Empty when absent.
 	LastError string `protobuf:"bytes,3,opt,name=last_error,json=lastError,proto3" json:"last_error,omitempty"`
 	// Display and debugging metadata associated with this event. Each lifecycle event carries its own values.
-	Metadata      map[string]string `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Metadata map[string]string `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// What this entry records: "status" when the request reached a position in the pipeline,
+	// "event" when something happened while it sat at one. Exactly one of status and event is set.
+	Type string `protobuf:"bytes,5,opt,name=type,proto3" json:"type,omitempty"`
+	// Occurrence recorded by the entry, e.g. a build starting or finishing. Set only when type is "event".
+	// A request records many of these — one per build — and they never change its current status.
+	Event         string `protobuf:"bytes,6,opt,name=event,proto3" json:"event,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -947,6 +953,20 @@ func (x *HistoryEvent) GetMetadata() map[string]string {
 		return x.Metadata
 	}
 	return nil
+}
+
+func (x *HistoryEvent) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *HistoryEvent) GetEvent() string {
+	if x != nil {
+		return x.Event
+	}
+	return ""
 }
 
 // GetRequestHistoryByIDResponse contains all retained events for one request.
@@ -1376,13 +1396,15 @@ const file_gateway_proto_rawDesc = "" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"H\n" +
 	"\x1cGetRequestHistoryByIDRequest\x12\x12\n" +
 	"\x04sqid\x18\x01 \x01(\tR\x04sqid\x12\x14\n" +
-	"\x05queue\x18\x02 \x01(\tR\x05queue\"\xf7\x01\n" +
+	"\x05queue\x18\x02 \x01(\tR\x05queue\"\xa1\x02\n" +
 	"\fHistoryEvent\x12!\n" +
 	"\ftimestamp_ms\x18\x01 \x01(\x03R\vtimestampMs\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x1d\n" +
 	"\n" +
 	"last_error\x18\x03 \x01(\tR\tlastError\x12P\n" +
-	"\bmetadata\x18\x04 \x03(\v24.uber.submitqueue.gateway.HistoryEvent.MetadataEntryR\bmetadata\x1a;\n" +
+	"\bmetadata\x18\x04 \x03(\v24.uber.submitqueue.gateway.HistoryEvent.MetadataEntryR\bmetadata\x12\x12\n" +
+	"\x04type\x18\x05 \x01(\tR\x04type\x12\x14\n" +
+	"\x05event\x18\x06 \x01(\tR\x05event\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"_\n" +

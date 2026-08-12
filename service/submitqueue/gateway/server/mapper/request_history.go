@@ -30,12 +30,18 @@ func ProtoToGetRequestHistoryByChangeURIRequest(req *pb.GetRequestHistoryByChang
 }
 
 // HistoryEventsToProto maps retained request-log events to wire history events.
+//
+// Status and Event are mutually exclusive, mirroring the entry itself: a client
+// reading the timeline can render a position and an occurrence differently
+// without having to know which values belong to which vocabulary.
 func HistoryEventsToProto(logs []entity.RequestLog) []*pb.HistoryEvent {
 	events := make([]*pb.HistoryEvent, len(logs))
 	for i, log := range logs {
 		events[i] = &pb.HistoryEvent{
 			TimestampMs: log.TimestampMs,
+			Type:        string(log.Type),
 			Status:      string(log.Status),
+			Event:       string(log.Event),
 			LastError:   log.LastError,
 			Metadata:    cloneStringMap(log.Metadata),
 		}

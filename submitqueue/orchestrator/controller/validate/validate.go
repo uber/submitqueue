@@ -141,6 +141,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return nil
 	}
 
+	// Report that validation has begun. This stage is not instantaneous — the
+	// merge-conflict check below is an async round trip to runway — so without
+	// this the request reads "started" for the whole of it. No occurrence: a
+	// request is validated once, and a redelivery is a retry of that one event.
+	logEntry := entity.NewRequestStatusLog(request.Queue, request.ID, entity.RequestStatusValidating, 0, "", nil)
+	if err := corerequest.PublishLog(ctx, c.registry, logEntry, request.ID, ""); err != nil {
+		coremetrics.NamedCounter(c.metricsScope, "process", "request_log_errors", 1)
+		return fmt.Errorf("failed to publish request log for %s: %w", request.ID, err)
+	}
+
 	// Duplicate detection: look for any other in-flight request that has already
 	// claimed an overlapping URI in this queue. Per-queue partition leasing
 	// (see platform/consumer + platform/extension/messagequeue) guarantees serial processing within
