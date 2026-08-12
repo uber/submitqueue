@@ -84,6 +84,33 @@ func TestIsAncestor(t *testing.T) {
 	}
 }
 
+func TestPromote(t *testing.T) {
+	tests := []struct {
+		name    string
+		uri     string
+		wantErr bool
+	}{
+		{name: "latest commit", uri: "git://repo/ref/c"},
+		{name: "older commit on the ref", uri: "git://repo/ref/a"},
+		{name: "commit not on the ref", uri: "git://repo/ref/x", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sc := New(testCfg, history)
+			err := sc.Promote(context.Background(), tt.uri)
+			if tt.wantErr {
+				require.ErrorIs(t, err, sourcecontrol.ErrNotFound)
+				return
+			}
+			require.NoError(t, err)
+
+			// Promotion is idempotent, so a caller retrying after a lost
+			// response gets the same answer.
+			require.NoError(t, sc.Promote(context.Background(), tt.uri))
+		})
+	}
+}
+
 func TestHistory(t *testing.T) {
 	tests := []struct {
 		name       string

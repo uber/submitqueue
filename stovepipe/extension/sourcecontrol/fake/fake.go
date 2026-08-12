@@ -63,6 +63,18 @@ func (s sourceControlFake) Latest(_ context.Context) (string, error) {
 	return s.history[0], nil
 }
 
+// Promote accepts a commit that is on the history and returns ErrNotFound for one
+// that is not — the answer a real backend gives once a rewrite drops the commit
+// from the ref. Nothing is recorded: the fake holds no ref to move, and a promotion
+// is observable only through the caller's own logs and metrics, so keeping it
+// stateless lets any instance answer for any other.
+func (s sourceControlFake) Promote(_ context.Context, uri string) error {
+	if s.indexOf(uri) < 0 {
+		return sourcecontrol.ErrNotFound
+	}
+	return nil
+}
+
 // IsAncestor reports whether ancestor is an ancestor of descendant. Both URIs
 // must be on the ref; an unknown URI yields ErrNotFound. Since the history is
 // newest-first, ancestor is an ancestor of descendant when its index is greater

@@ -18,7 +18,9 @@
 //
 // The durable state is a ValidationFact per validated commit, plus the queue's
 // last-green bookmark, which process reads to choose an incremental build
-// baseline. Downstream hooks are not implemented yet.
+// baseline. A green commit is also promoted, moving the queue's promotion ref so
+// downstream systems can pull the latest green commit by name. Downstream hooks
+// are not implemented yet.
 package record
 
 import (
@@ -39,8 +41,8 @@ import (
 )
 
 // Controller consumes Record messages, records the build's validation fact, and
-// advances the queue's last-green bookmark when that fact is green. Implements
-// consumer.Controller.
+// when that fact is green advances the queue's last-green bookmark and promotes
+// the commit. Implements consumer.Controller.
 type Controller struct {
 	logger         *zap.SugaredLogger
 	metricsScope   tally.Scope
@@ -80,9 +82,10 @@ func NewController(
 	}
 }
 
-// Process loads the request referenced by the delivery and, when its build
-// succeeded, advances the queue's last-green bookmark. Returns nil to ack
-// (success) or an error to nack (retry) / reject (DLQ).
+// Process loads the request referenced by the delivery, records its validation
+// fact and, when that fact is green, advances the queue's last-green bookmark and
+// promotes the commit. Returns nil to ack (success) or an error to nack (retry) /
+// reject (DLQ).
 //
 // buildsignal stamps the outcome on the request before publishing here, so a
 // request without a build outcome is a producer invariant violation rather
@@ -133,11 +136,18 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			}
 			return nil
 		}
-		if err := c.advanceLastGreen(ctx, store, request); err != nil {
+		holdsBookmark, err := c.advanceLastGreen(ctx, store, request)
+		if err != nil {
 			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
 			return err
 		}
-		return nil
+		if !holdsBookmark {
+			// A later green commit already holds the bookmark, so it also owns
+			// the promotion ref: promoting this older commit would move the ref
+			// backwards.
+			return nil
+		}
+		return c.promote(ctx, request)
 
 	case entity.RequestStateCancelled:
 		// A cancelled build decided nothing about the commit, so it establishes
@@ -296,30 +306,34 @@ func degreeFor(state entity.RequestState) float64 {
 }
 
 // advanceLastGreen points the queue's bookmark at request, retrying on version
-// conflicts. The bookmark only moves forward: a candidate whose id is not newer
-// than the stored one is skipped without a write, which also makes a redelivery
-// of the same request a no-op.
+// conflicts, and reports whether request holds the bookmark afterwards. The
+// bookmark only moves forward: an older candidate is skipped without a write and
+// does not hold it, while a redelivery of the request that already set it holds it
+// without a write, so the promotion that follows is retried.
 //
 // The bookmark is a cache of "newest green URI" derived from the facts, so it is
 // advanced only after the green fact is durable. Losing the advance to a crash is
 // recoverable — the redelivery reloads the same fact and retries — whereas a
 // bookmark with no fact behind it would point at greenness nothing recorded.
-func (c *Controller) advanceLastGreen(ctx context.Context, store storage.Storage, request entity.Request) error {
+func (c *Controller) advanceLastGreen(ctx context.Context, store storage.Storage, request entity.Request) (bool, error) {
 	queueStore := store.GetQueueStore()
 
 	for {
 		queueRow, err := queueStore.Get(ctx, request.Queue)
 		if err != nil {
-			return fmt.Errorf("failed to load queue %s to advance last green: %w", request.Queue, err)
+			return false, fmt.Errorf("failed to load queue %s to advance last green: %w", request.Queue, err)
 		}
 
-		newer, err := isNewerRequest(request.Queue, request.ID, queueRow.LastGreenRequestID)
+		cmp, err := compareToBookmark(request.Queue, request.ID, queueRow.LastGreenRequestID)
 		if err != nil {
 			// Non-retryable: re-parsing the same ids cannot start succeeding.
-			return err
+			return false, err
 		}
-		if !newer {
-			return nil
+		if cmp < 0 {
+			return false, nil
+		}
+		if cmp == 0 {
+			return true, nil
 		}
 
 		updated := queueRow
@@ -330,7 +344,7 @@ func (c *Controller) advanceLastGreen(ctx context.Context, store storage.Storage
 			if errors.Is(err, storage.ErrVersionMismatch) {
 				continue
 			}
-			return fmt.Errorf("failed to advance last green for queue %s: %w", request.Queue, err)
+			return false, fmt.Errorf("failed to advance last green for queue %s: %w", request.Queue, err)
 		}
 
 		metrics.NamedCounter(c.metricsScope, _opName, "last_green_advanced", 1)
@@ -340,7 +354,7 @@ func (c *Controller) advanceLastGreen(ctx context.Context, store storage.Storage
 			"last_green_uri", request.URI,
 		)
 		c.emitLastGreenTimestamp(ctx, request)
-		return nil
+		return true, nil
 	}
 }
 
@@ -396,17 +410,64 @@ func (c *Controller) emitLastGreenTimestamp(ctx context.Context, request entity.
 	)
 }
 
-// isNewerRequest reports whether candidate was ingested after current. An empty
-// current means the bookmark has never been set, so any candidate is newer.
-func isNewerRequest(queue, candidate, current string) (bool, error) {
+// promote points the queue's promotion ref at the request's commit so downstream
+// systems can pull the latest green commit by name. Which ref that is — and whether
+// the queue has one at all — is source-control configuration, so this stage names
+// only the commit.
+//
+// Like the bookmark, the ref is a cache of the facts, so it moves only after the
+// green fact is durable. Promotion is idempotent, so a redelivery repeats it
+// harmlessly. A commit that a rewritten history dropped from the ref cannot be
+// promoted by any retry, so that case is counted and skipped rather than failed.
+func (c *Controller) promote(ctx context.Context, request entity.Request) error {
+	sc, err := c.sourceControls.For(sourcecontrol.Config{QueueName: request.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
+			metrics.NewTag("stage", "resolve"),
+		)
+		return fmt.Errorf("failed to resolve source control for queue %s: %w", request.Queue, err)
+	}
+
+	if err := sc.Promote(ctx, request.URI); err != nil {
+		if sourcecontrol.IsNotFound(err) {
+			metrics.NamedCounter(c.metricsScope, _opName, "promotions_skipped", 1,
+				metrics.NewTag("reason", "unknown_uri"),
+			)
+			c.logger.Warnw("green commit is no longer on the queue's ref; skipping promotion",
+				"queue", request.Queue,
+				"request_id", request.ID,
+				"uri", request.URI,
+			)
+			return nil
+		}
+
+		metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
+			metrics.NewTag("stage", "promote"),
+		)
+		return fmt.Errorf("failed to promote uri %s of queue %s: %w", request.URI, request.Queue, err)
+	}
+
+	metrics.NamedCounter(c.metricsScope, _opName, "promotions", 1)
+	c.logger.Infow("promoted green commit",
+		"queue", request.Queue,
+		"request_id", request.ID,
+		"uri", request.URI,
+	)
+	return nil
+}
+
+// compareToBookmark orders candidate against the request id currently holding the
+// bookmark, by ingest order, using the sign convention of entity.CompareRequestID.
+// An empty current means the bookmark has never been set, so any candidate is newer.
+func compareToBookmark(queue, candidate, current string) (int, error) {
 	if current == "" {
-		return true, nil
+		return 1, nil
 	}
 	cmp, err := entity.CompareRequestID(queue, candidate, current)
 	if err != nil {
-		return false, fmt.Errorf("failed to compare request ids for queue %s: %w", queue, err)
+		return 0, fmt.Errorf("failed to compare request ids for queue %s: %w", queue, err)
 	}
-	return cmp > 0, nil
+	return cmp, nil
 }
 
 // loadRequest loads the request by id.
