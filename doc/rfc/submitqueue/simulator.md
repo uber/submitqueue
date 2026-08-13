@@ -1,10 +1,14 @@
 # Simulator
 
+Design notes for a simulator that verifies and benchmarks changes to orchestrator logic before they ship: per-stage record and replay, controller replay, and whole-pipeline simulation. This document captures **design decisions and rationale only**; the code lands after this RFC is reviewed.
+
+## Problem
+
 Verifying a change to orchestrator logic — a new `conflict.Analyzer`, a different `Scorer` bucketing, a `Speculator` policy tweak, a `Merger` strategy — today means either trusting a unit test against synthetic fixtures or shipping the change and watching production. Neither answers "does this behave differently than what's running now, and is the difference an improvement." A simulator closes that gap: replay real (or synthetic) traffic through a candidate implementation, compare it against the incumbent, and report where and by how much they diverge.
 
-The ask driving this design was explicitly narrower than "simulate the whole queue": every stage — validation, conflict detection, scoring, speculation, building, merging — should be independently swappable and comparable, not just the system as a whole. That shapes the design more than the end-to-end case does.
+The requirement is narrower than "simulate the whole queue": every stage — validation, conflict detection, scoring, speculation, building, merging — must be independently swappable and comparable, not just the system as a whole. That shapes the design more than the end-to-end case does.
 
-Three distinct uses pull on that design, and they are worth separating because they need different machinery and carry different risk. **Comparison** asks whether a candidate implementation produces different output than the incumbent on the same input; it needs a corpus and a diff, and it is nearly free of modelling assumptions. **Benchmarking** asks whether the difference improves the system; it needs a running pipeline, a model of build outcomes, and a defensible objective function, and every one of those introduces error. **Correctness exercise** asks whether the system upholds its invariants under adversarial scheduling; it needs no corpus and no historical data at all, and it catches a class of bug that neither of the others touches.
+Three distinct uses pull on it, and they are worth separating because they need different machinery and carry different risk. **Comparison** asks whether a candidate implementation produces different output than the incumbent on the same input; it needs a corpus and a diff, and it is nearly free of modelling assumptions. **Benchmarking** asks whether the difference improves the system; it needs a running pipeline, a model of build outcomes, and a defensible objective function, and every one of those introduces error. **Correctness exercise** asks whether the system upholds its invariants under adversarial scheduling; it needs no corpus and no historical data at all, and it catches a class of bug that neither of the others touches.
 
 ## Three layers
 
@@ -141,10 +145,18 @@ Ordered by value delivered per unit of assumption taken on, which is not the ord
 4. **Trace replay, the build oracle, the metric set, and the backtest.** The benchmarking capability proper, which depends on every modelling assumption in this document and should not be trusted before the backtest exists.
 5. **Layer 2 controller replay**, which can slot in any time after (1).
 
+## Rejected
+
+- **A standalone simulation model of the pipeline.** Far faster to write than wiring the real services, and divergent from the code it claims to model within a release or two. The harness runs the real controllers and extensions against substituted backends instead, so pipeline logic under test is the shipping logic.
+- **Instrumenting every extension call in production.** The obvious way to build a corpus, and largely redundant: the entities normal operation already persists carry most of what replay needs. A new hot-path write path for data that is already durable costs latency and buys little.
+- **Re-executing builds during replay.** Faithful for the paths history actually built, impossible for the rest, and prohibitively expensive at trace scale. A modelled outcome with a declared bias is the honest trade — see [The build oracle](#the-build-oracle).
+- **Full deterministic scheduling.** The strongest fidelity story available, but it means replacing the scheduler rather than injecting a clock, which is a project in its own right. Repetitions and reported intervals absorb the residual noise at a small fraction of the cost.
+- **Synthetic workloads only.** Hermetic, cheap, and the right basis for the correctness work, but the benchmarking questions turn on conflict structure and arrival bursts that only real traffic exhibits. Synthetic generation stays; it does not stand alone.
+- *Acknowledged:* every Layer 3 number depends on the build oracle, and no amount of harness engineering removes that dependency. The backtest bounds the error rather than eliminating it, which is why the simulator is positioned as a comparison instrument and not a forecast.
+
 ## Non-goals
 
 - Wiring this into Uber's internal wrapper around this repository. That wrapper's `conflict.Analyzer` is still the conservative "everything conflicts" fake, so simulating against it is uninformative until a real analyzer is wired in. The design here is meant to carry over unchanged when that happens, because the wrapper's extensions are the same interfaces this document reasons about.
-- Full deterministic scheduling (see [Timing model](#timing-model)).
 - Replaying traffic sourced from outside this repository's own persistence and resolvers.
 - Predicting absolute production numbers. The simulator is a comparison instrument; its output is a delta between variants under identical assumptions, not a forecast.
 
