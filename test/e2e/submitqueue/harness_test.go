@@ -207,6 +207,46 @@ func (s *E2EIntegrationSuite) awaitBatchID(req request) string {
 	return batchID
 }
 
+// mustStatus reads the current status and fails the test if it is unreadable.
+func (s *E2EIntegrationSuite) mustStatus(req request) entity.RequestStatus {
+	t := s.T()
+	got, err := s.currentStatus(req)
+	require.NoError(t, err, "GetRequestSummaryByID failed for %s", req.sqid)
+	return got
+}
+
+// awaitEvent polls GetRequestHistoryByID until want appears in the request's
+// event timeline. Unlike a status, an event is never the current position, so
+// there is nothing to poll on the summary — the history is the only witness.
+func (s *E2EIntegrationSuite) awaitEvent(req request, want entity.RequestEvent) {
+	pollUntil(persistPollInterval, func() bool {
+		got := s.eventTimeline(req)
+		s.log.Logf("events(%s) = %v (want %q)", req.sqid, got, want)
+		for _, e := range got {
+			if e == want {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// assertStatusCount asserts how many times a status appears in the timeline.
+// A status that recurs is not merely noisy: the client renders each entry as a
+// fresh step, so a stage revisited reads as the pipeline going backwards.
+func (s *E2EIntegrationSuite) assertStatusCount(req request, status entity.RequestStatus, want int) {
+	t := s.T()
+	got := s.timeline(req)
+	seen := 0
+	for _, st := range got {
+		if st == status {
+			seen++
+		}
+	}
+	assert.Equalf(t, want, seen,
+		"GetRequestHistoryByID for %s should record %q %d time(s); got %v", req.sqid, status, want, got)
+}
+
 // closeGate closes the consumer gate for the consumer group, scoped to one
 // partition (the queue name for pipeline topics). The gate must be closed
 // before the message that must be caught is published — that makes the stop
