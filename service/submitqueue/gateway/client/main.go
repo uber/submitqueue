@@ -13,12 +13,16 @@
 // limitations under the License.
 
 // Command client is a small operator CLI for the SubmitQueue gateway: submit a
-// land request, read a request's status, and ping the service.
+// land request, read a request's status, and see what a queue is doing.
 //
 // It exists so that driving a real queue does not require hand-assembling
 // protobuf with grpcurl — in particular, `land -pr` turns a pull request URL
 // into the change URI the pipeline wants, so nobody has to paste a 40-character
 // commit SHA by hand.
+//
+// Everything it does beyond parsing flags lives in submitqueue/client, so this
+// file stays a thin front end and the same behaviour is available to any other
+// tool that wants it.
 package main
 
 import (
@@ -34,12 +38,7 @@ import (
 	"time"
 
 	githubchange "github.com/uber/submitqueue/platform/base/change/github"
-
-	changepb "github.com/uber/submitqueue/api/base/change/protopb"
-	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
-	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"github.com/uber/submitqueue/submitqueue/client"
 )
 
 const usage = `Usage: client [global flags] <command> [command flags]
@@ -48,10 +47,14 @@ Commands:
   ping     Check that the gateway is reachable
   land     Submit a change, or an ordered stack of changes, to a queue
   status   Read a request's current status
+  list     Show a queue's recent requests as a table
+  watch    Follow a queue's requests until they settle
 
 Global flags:
-  -addr     gateway address (default "localhost:8081")
-  -timeout  request timeout (default 10s)
+  -addr       gateway address (default "localhost:8081")
+  -tls        dial with transport security (default false)
+  -token-env  environment variable holding the bearer token (default "SQ_TOKEN")
+  -timeout    request timeout, 0 for none (default 10s; watch ignores it)
 
 Examples:
   client ping
@@ -59,11 +62,18 @@ Examples:
   client land -queue my-queue -uri github://github.com/uber/r/pull/7/<sha> -strategy SQUASH_REBASE
   client land -queue my-queue -pr <url-of-first> -pr <url-of-second>
   client status -queue my-queue -sqid my-queue/12
+  client list -queue my-queue -since 1h
+  client watch -queue my-queue
+  client -addr sq.example.com:443 -tls list -queue my-queue
 `
 
 func main() {
-	addr := flag.String("addr", "localhost:8081", "gateway server address")
-	timeout := flag.Duration("timeout", 10*time.Second, "request timeout")
+	var opts client.Options
+	flag.StringVar(&opts.Addr, "addr", "localhost:8081", "gateway server address")
+	flag.BoolVar(&opts.TLS, "tls", false, "dial the gateway with transport security")
+	flag.StringVar(&opts.TokenEnv, "token-env", client.DefaultTokenEnv,
+		"environment variable holding the bearer token; empty disables authentication")
+	timeout := flag.Duration("timeout", 10*time.Second, "request timeout; 0 for none")
 	flag.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	flag.Parse()
 
@@ -73,46 +83,54 @@ func main() {
 		os.Exit(2)
 	}
 
-	if err := run(*addr, *timeout, args[0], args[1:]); err != nil {
+	if err := run(opts, *timeout, args[0], args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(addr string, timeout time.Duration, command string, args []string) error {
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+func run(opts client.Options, timeout time.Duration, command string, args []string) error {
+	sq, err := client.New(opts)
 	if err != nil {
-		return fmt.Errorf("failed to connect to %s: %w", addr, err)
+		return err
 	}
-	defer conn.Close()
+	defer sq.Close()
 
-	client := pb.NewSubmitQueueGatewayClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	// A watch runs until its queue settles or the operator stops it, so it is
+	// the one command that must not inherit a per-call deadline.
+	if command == "watch" {
+		timeout = 0
+	}
+	ctx, cancel := client.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	switch command {
 	case "ping":
-		return runPing(ctx, client, args)
+		return runPing(ctx, sq, args)
 	case "land":
-		return runLand(ctx, client, args)
+		return runLand(ctx, sq, args)
 	case "status":
-		return runStatus(ctx, client, args)
+		return runStatus(ctx, sq, args)
+	case "list":
+		return runList(ctx, sq, args)
+	case "watch":
+		return runWatch(ctx, sq, args)
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		return fmt.Errorf("unknown command %q", command)
 	}
 }
 
-func runPing(ctx context.Context, client pb.SubmitQueueGatewayClient, args []string) error {
+func runPing(ctx context.Context, sq *client.Client, args []string) error {
 	fs := flag.NewFlagSet("ping", flag.ExitOnError)
 	message := fs.String("message", "", "message to echo back")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	resp, err := client.Ping(ctx, &pb.PingRequest{Message: *message})
+	resp, err := sq.Ping(ctx, *message)
 	if err != nil {
-		return fmt.Errorf("ping failed: %w", err)
+		return err
 	}
 
 	fmt.Printf("Message:      %s\n", resp.Message)
@@ -122,7 +140,7 @@ func runPing(ctx context.Context, client pb.SubmitQueueGatewayClient, args []str
 	return nil
 }
 
-func runLand(ctx context.Context, client pb.SubmitQueueGatewayClient, args []string) error {
+func runLand(ctx context.Context, sq *client.Client, args []string) error {
 	fs := flag.NewFlagSet("land", flag.ExitOnError)
 	queue := fs.String("queue", "", "queue to land on (required)")
 	strategy := fs.String("strategy", "REBASE", "REBASE, SQUASH_REBASE, MERGE, PROMOTE, or DEFAULT")
@@ -151,7 +169,7 @@ func runLand(ctx context.Context, client pb.SubmitQueueGatewayClient, args []str
 	// Explicit URIs first, then resolved ones, each in the order given.
 	all := append(append([]string{}, uris...), resolved...)
 
-	parsedStrategy, err := parseStrategy(*strategy)
+	parsedStrategy, err := client.ParseStrategy(*strategy)
 	if err != nil {
 		return err
 	}
@@ -160,22 +178,18 @@ func runLand(ctx context.Context, client pb.SubmitQueueGatewayClient, args []str
 		fmt.Printf("Change %d: %s\n", i+1, uri)
 	}
 
-	resp, err := client.Land(ctx, &pb.LandRequest{
-		Queue:    *queue,
-		Change:   &changepb.Change{Uris: all},
-		Strategy: parsedStrategy,
-	})
+	sqid, err := sq.Land(ctx, *queue, all, parsedStrategy)
 	if err != nil {
-		return fmt.Errorf("land failed: %w", err)
+		return err
 	}
 
 	fmt.Printf("\nLanded request submitted.\n")
-	fmt.Printf("  sqid: %s\n", resp.Sqid)
-	fmt.Printf("\nFollow it with: client status -queue %s -sqid %s\n", *queue, resp.Sqid)
+	fmt.Printf("  sqid: %s\n", sqid)
+	fmt.Printf("\nFollow it with: client status -queue %s -sqid %s\n", *queue, sqid)
 	return nil
 }
 
-func runStatus(ctx context.Context, client pb.SubmitQueueGatewayClient, args []string) error {
+func runStatus(ctx context.Context, sq *client.Client, args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	sqid := fs.String("sqid", "", "request id returned by land (required)")
 	// A sqid is only resolvable within its own queue, so the server needs both.
@@ -190,24 +204,126 @@ func runStatus(ctx context.Context, client pb.SubmitQueueGatewayClient, args []s
 		return fmt.Errorf("-queue is required")
 	}
 
-	resp, err := client.GetRequestSummaryByID(ctx, &pb.GetRequestSummaryByIDRequest{Sqid: *sqid, Queue: *queue})
+	request, err := sq.Summary(ctx, *queue, *sqid)
 	if err != nil {
-		return fmt.Errorf("status failed: %w", err)
-	}
-	if resp.Request == nil {
-		return fmt.Errorf("no request found for %q", *sqid)
+		return err
 	}
 
-	fmt.Printf("sqid:   %s\n", resp.Request.Sqid)
-	fmt.Printf("queue:  %s\n", resp.Request.Queue)
-	fmt.Printf("status: %s\n", resp.Request.Status)
-	if resp.Request.LastError != "" {
-		fmt.Printf("error:  %s\n", resp.Request.LastError)
+	fmt.Printf("sqid:   %s\n", request.Sqid)
+	fmt.Printf("queue:  %s\n", request.Queue)
+	fmt.Printf("status: %s\n", request.Status)
+	if request.LastError != "" {
+		fmt.Printf("error:  %s\n", request.LastError)
 	}
-	for i, uri := range resp.Request.ChangeUris {
+	for i, uri := range request.ChangeUris {
 		fmt.Printf("change %d: %s\n", i+1, uri)
 	}
 	return nil
+}
+
+// runList draws a queue's recent requests once and returns.
+func runList(ctx context.Context, sq *client.Client, args []string) error {
+	fs := flag.NewFlagSet("list", flag.ExitOnError)
+	queue := fs.String("queue", "", "queue to list (required)")
+	since := fs.Duration("since", 0, "only requests received within this window; 0 for all retained history")
+	limit := fs.Int("limit", 50, "most requests to show; 0 for every one in the window")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *queue == "" {
+		return fmt.Errorf("-queue is required")
+	}
+
+	summaries, err := sq.List(ctx, client.ListQuery{Queue: *queue, Since: *since, Limit: *limit})
+	if err != nil {
+		return err
+	}
+	if len(summaries) == 0 {
+		fmt.Printf("no requests in %s%s\n", *queue, within(*since))
+		return nil
+	}
+
+	rows := client.RowsFromSummaries(summaries)
+	client.Draw(rows, fmt.Sprintf("%d request(s) in %s%s", len(rows), *queue, within(*since)))
+	return nil
+}
+
+// runWatch follows a queue's requests until every one of them settles.
+//
+// The set is fixed when the watch starts: a request accepted afterwards is not
+// picked up, because a watch that grew as the queue did would never finish, and
+// finishing is what makes the command usable from a script.
+func runWatch(ctx context.Context, sq *client.Client, args []string) error {
+	fs := flag.NewFlagSet("watch", flag.ExitOnError)
+	queue := fs.String("queue", "", "queue to watch (required)")
+	since := fs.Duration("since", 15*time.Minute, "how far back to pick requests up from")
+	limit := fs.Int("limit", 50, "most requests to watch; 0 for every one in the window")
+	var sqids repeatable
+	fs.Var(&sqids, "sqid", "watch only this request; repeat for several, and -since is then ignored")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *queue == "" {
+		return fmt.Errorf("-queue is required")
+	}
+
+	rows, err := watchRows(ctx, sq, *queue, *since, *limit, sqids)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		fmt.Printf("no requests in %s%s\n", *queue, within(*since))
+		return nil
+	}
+
+	t := client.NewTracker(rows)
+	// Nothing further will join the set, so the tracker can conclude as soon as
+	// what it holds has settled.
+	t.Seal()
+	t.Note("watching %d request(s) in %s", len(rows), *queue)
+
+	go t.Poll(ctx, sq.Gateway(), *queue)
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.Settled():
+	}
+	return t.Conclude()
+}
+
+// watchRows is the set a watch will follow: the named requests, or whatever the
+// queue holds in the window.
+func watchRows(
+	ctx context.Context,
+	sq *client.Client,
+	queue string,
+	since time.Duration,
+	limit int,
+	sqids []string,
+) ([]*client.Row, error) {
+	if len(sqids) > 0 {
+		rows := make([]*client.Row, 0, len(sqids))
+		for _, sqid := range sqids {
+			rows = append(rows, &client.Row{SQID: sqid, Submitted: time.Now()})
+		}
+		return rows, nil
+	}
+
+	summaries, err := sq.List(ctx, client.ListQuery{Queue: queue, Since: since, Limit: limit})
+	if err != nil {
+		return nil, err
+	}
+	return client.RowsFromSummaries(summaries), nil
+}
+
+// within describes a time window for a message, or nothing at all when the
+// window is the whole of retained history.
+func within(since time.Duration) string {
+	if since <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(" in the last %s", since)
 }
 
 // repeatable collects a flag given more than once, preserving the order it was
@@ -216,24 +332,6 @@ type repeatable []string
 
 func (r *repeatable) String() string     { return strings.Join(*r, ",") }
 func (r *repeatable) Set(v string) error { *r = append(*r, v); return nil }
-
-// parseStrategy maps the -strategy value onto the wire enum.
-func parseStrategy(name string) (mergestrategypb.Strategy, error) {
-	switch strings.ToUpper(strings.TrimSpace(name)) {
-	case "", "DEFAULT":
-		return mergestrategypb.Strategy_DEFAULT, nil
-	case "REBASE":
-		return mergestrategypb.Strategy_REBASE, nil
-	case "SQUASH_REBASE":
-		return mergestrategypb.Strategy_SQUASH_REBASE, nil
-	case "MERGE":
-		return mergestrategypb.Strategy_MERGE, nil
-	case "PROMOTE":
-		return mergestrategypb.Strategy_PROMOTE, nil
-	default:
-		return mergestrategypb.Strategy_DEFAULT, fmt.Errorf("unknown strategy %q", name)
-	}
-}
 
 // resolvePullRequests turns each pull request URL into the change URI the
 // pipeline expects, in the order given.
