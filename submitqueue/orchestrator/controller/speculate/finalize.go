@@ -302,50 +302,30 @@ func (c *Controller) recordOutcome(snap *snapshot, batchID string, decision outc
 // applyOutcome enacts a decided outcome on a batch, reporting whether the
 // state write landed.
 //
-// The publish order differs per arm, but it is one rule read twice: a publish
-// may precede a state write only when the consumer does not read the state
-// that write produces. The merge stage correlates on the batch ID alone, so
-// telling it before the write is safe — a batch recorded Merging that Runway
-// never heard about would merely stall. Conclude does read the state (it
-// reconciles requests from it and rejects a non-terminal batch outright), so
-// it is published only after the write, or it would race the consumer into
-// the dead-letter queue.
-//
-// Losing the state compare-and-swap is not an error: another writer got
-// there, and the next run reads whatever they wrote. It is reported as not
-// landed, because the outcome this run reached is not the one that took
-// effect.
+// Nothing is dispatched until the state it describes is durable, so no
+// consumer can act on an outcome a lost compare-and-swap refused to write. The
+// cost is a dispatch that fails on a batch finalize no longer walks, which the
+// recovery message and Process's self-heal exist to repair.
 func (c *Controller) applyOutcome(ctx context.Context, store storage.Storage, batch entity.Batch, decision outcome, isTriggerBatch bool) (bool, error) {
 	var state entity.BatchState
-	terminal := false
 
 	switch decision {
 	case outcomeMerge:
 		state = entity.BatchStateMerging
-		// A batch merges once, so the dispatch names only that as its cause: a
-		// redelivery that re-derives outcomeMerge because the state write was
-		// lost dedups against the request already sent, instead of asking
-		// Runway to merge the same batch twice.
-		if err := c.publishBatchID(ctx, topickey.TopicKeyMerge, publish.IntentID(batch.ID, "merge-dispatch"), batch.ID, batch.Queue, batch.Queue); err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
-			return false, fmt.Errorf("failed to publish batch %s to merge: %w", batch.ID, err)
-		}
 
 	case outcomeFail, outcomeCancel:
-		state, terminal = decision.terminalState()
-		// A batch decided by a cascade is not the one on the message, so no
-		// retry or dead letter would ever come back to it — give it a recovery
-		// message of its own before it turns terminal.
-		if !isTriggerBatch {
-			if err := c.recoverable(ctx, store, batch); err != nil {
-				return false, err
-			}
-		}
+		state, _ = decision.terminalState()
 
 	default:
 		// outcomeWait: nothing to enact. Listed explicitly so an unknown or
 		// zero outcome can never fall into an enacting arm.
 		return false, nil
+	}
+
+	if !isTriggerBatch {
+		if err := c.recoverable(ctx, store, batch); err != nil {
+			return false, err
+		}
 	}
 
 	// Through Transition, so the queue's membership record moves with the
@@ -369,7 +349,13 @@ func (c *Controller) applyOutcome(ctx context.Context, store storage.Storage, ba
 		"state", string(state),
 	)
 
-	if terminal {
+	switch decision {
+	case outcomeMerge:
+		if err := c.dispatchMerge(ctx, batch); err != nil {
+			return true, err
+		}
+
+	case outcomeFail, outcomeCancel:
 		// Named for the run that decided it, so a redelivery re-deriving the
 		// same outcome does not conclude the batch twice, and so it stays
 		// distinct from the conclude mergesignal sends for a merged batch.
@@ -383,15 +369,26 @@ func (c *Controller) applyOutcome(ctx context.Context, store storage.Storage, ba
 	return true, nil
 }
 
-// recoverable gives a batch a message of its own before this run makes it
-// terminal, so its fan-out cannot be stranded by a failure afterwards.
+// dispatchMerge hands a batch to the merge stage under a stable ID, so both a
+// redelivery and the Merging self-heal dedupe against the request already sent
+// rather than asking Runway to merge the batch twice.
+func (c *Controller) dispatchMerge(ctx context.Context, batch entity.Batch) error {
+	if err := c.publishBatchID(ctx, topickey.TopicKeyMerge, publish.IntentID(batch.ID, "merge-dispatch"), batch.ID, batch.Queue, batch.Queue); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+		return fmt.Errorf("failed to publish batch %s to merge: %w", batch.ID, err)
+	}
+	return nil
+}
+
+// recoverable gives a batch a message of its own before this run moves it out
+// of the speculating set, so what has to follow the write cannot be stranded
+// by a failure afterwards.
 //
-// Every other terminal batch is repaired through the message that names it: a
-// redelivery finds it terminal and re-publishes from Process's self-heal
-// branch, and a persistent failure lands it in the dead-letter queue by name.
-// A batch decided by a cascade has neither — it is not the batch on the
-// message, and once terminal it is gone from the queue listing — so without
-// this its requests would simply stay unreconciled.
+// A batch named by a message is repaired through it: a redelivery re-publishes
+// from one of Process's self-heal branches, and a persistent failure
+// dead-letters by name. A cascade-decided batch has neither, and finalize only
+// walks heads still speculating — so a merged one would never reach Runway,
+// and a terminal one would leave its requests unreconciled.
 //
 // Distinct per publish: the guarantee being bought is that a message exists at
 // all, and a stable ID would let the queue answer "one already did" with a

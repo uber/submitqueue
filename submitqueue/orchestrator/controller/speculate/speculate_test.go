@@ -276,9 +276,10 @@ func TestProcess_TerminalReplansQueue(t *testing.T) {
 		"the dependent must be re-planned against the terminal outcome, which it can only be weighed against if the terminal batch comes too")
 }
 
-// A Merging batch is the merge stage's to finish; the run still happens for the
-// rest of the queue, but this batch is not an action target.
-func TestProcess_MergingRunsButDoesNotAct(t *testing.T) {
+// A Merging batch has left the speculating set, so a message naming it is the
+// only thing that will look at it again: it re-sends the dispatch to repair
+// one lost after the state write.
+func TestProcess_MergingSelfHeals(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	h := newProcHarness(t, ctrl, nil)
 	batch := testBatch(entity.BatchStateMerging)
@@ -287,7 +288,7 @@ func TestProcess_MergingRunsButDoesNotAct(t *testing.T) {
 	h.listsInFlight()
 
 	require.NoError(t, h.process(t, ctrl, batch.ID))
-	assert.Empty(t, h.published)
+	assert.Equal(t, []string{"submitqueue-merge"}, h.published)
 }
 
 func TestProcess_Errors(t *testing.T) {
