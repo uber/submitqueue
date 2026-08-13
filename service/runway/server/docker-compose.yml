@@ -49,6 +49,9 @@ services:
       - MERGER=${SQ_RUNWAY_MERGER:-}
       # Queue infrastructure connection
       - QUEUE_MYSQL_DSN=root:root@tcp(mysql-queue:3306)/submitqueue?parseTime=true
+      # Level for the queue's own logs; info by default so its per-message
+      # chatter does not bury the rest of the service at debug.
+      - QUEUE_LOG_LEVEL=${QUEUE_LOG_LEVEL:-}
       - HOSTNAME=runway-dev
     depends_on:
       mysql-queue:
