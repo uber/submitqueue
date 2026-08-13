@@ -108,6 +108,42 @@ func TestListWithoutSinceLeavesTheWindowOpen(t *testing.T) {
 		"no window means all retained history, not a bound of zero-time")
 }
 
+func TestListClosesTheWindowAtTheCallTime(t *testing.T) {
+	// The gateway rejects a list whose lower bound is not strictly below its
+	// upper one, so leaving the upper bound unset fails every call.
+	gw := &pagingGateway{pages: [][]string{{"q/1"}}}
+	sq, stop := dial(t, gw)
+	defer stop()
+
+	before := time.Now().UnixMilli()
+	_, err := sq.List(context.Background(), ListQuery{Queue: "q"})
+	require.NoError(t, err)
+	after := time.Now().UnixMilli()
+
+	got := gw.lastRequest.GetReceivedBeforeMs()
+	assert.GreaterOrEqual(t, got, before)
+	assert.LessOrEqual(t, got, after)
+	assert.Less(t, gw.lastRequest.GetReceivedAtOrAfterMs(), got,
+		"the gateway requires received_at_or_after_ms < received_before_ms")
+}
+
+func TestListKeepsTheWindowFixedAcrossPages(t *testing.T) {
+	// The continuation token pins both bounds, so a bound recomputed per page
+	// would be rejected from the second page on.
+	gw := &pagingGateway{pages: [][]string{{"q/1"}, {"q/2"}, {"q/3"}}}
+	sq, stop := dial(t, gw)
+	defer stop()
+
+	_, err := sq.List(context.Background(), ListQuery{Queue: "q", Since: time.Hour})
+	require.NoError(t, err)
+
+	require.Len(t, gw.requests, 3)
+	for _, req := range gw.requests[1:] {
+		assert.Equal(t, gw.requests[0].GetReceivedAtOrAfterMs(), req.GetReceivedAtOrAfterMs())
+		assert.Equal(t, gw.requests[0].GetReceivedBeforeMs(), req.GetReceivedBeforeMs())
+	}
+}
+
 func TestRowsFromSummaries(t *testing.T) {
 	received := time.Now().Add(-5 * time.Minute)
 	rows := RowsFromSummaries([]*pb.RequestSummary{
@@ -143,10 +179,12 @@ type pagingGateway struct {
 	alwaysToken bool
 
 	calls       int
+	requests    []*pb.ListRequest
 	lastRequest *pb.ListRequest
 }
 
 func (g *pagingGateway) List(_ context.Context, req *pb.ListRequest) (*pb.ListResponse, error) {
+	g.requests = append(g.requests, req)
 	g.lastRequest = req
 	page := g.calls
 	g.calls++

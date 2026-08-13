@@ -29,8 +29,8 @@ type ListQuery struct {
 	// own queue.
 	Queue string
 
-	// Since bounds the window to requests received within it. Zero reads from
-	// the beginning of retained history.
+	// Since bounds the window to requests received within it, ending at the
+	// time of the call. Zero reads from the beginning of retained history.
 	Since time.Duration
 
 	// Limit caps how many requests are returned across all pages. Zero means
@@ -52,9 +52,18 @@ func (c *Client) List(ctx context.Context, q ListQuery) ([]*pb.RequestSummary, e
 		return nil, fmt.Errorf("queue must not be empty")
 	}
 
-	req := &pb.ListRequest{Queue: q.Queue, PageSize: int32(q.PageSize)}
+	// Both bounds are fixed before the first page. The gateway requires
+	// received_at_or_after_ms < received_before_ms, so an unset upper bound
+	// rejects every call, and its continuation token pins both bounds, so one
+	// recomputed per page would be rejected from the second page on.
+	now := time.Now()
+	req := &pb.ListRequest{
+		Queue:            q.Queue,
+		PageSize:         int32(q.PageSize),
+		ReceivedBeforeMs: now.UnixMilli(),
+	}
 	if q.Since > 0 {
-		req.ReceivedAtOrAfterMs = time.Now().Add(-q.Since).UnixMilli()
+		req.ReceivedAtOrAfterMs = now.Add(-q.Since).UnixMilli()
 	}
 
 	var out []*pb.RequestSummary
