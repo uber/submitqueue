@@ -295,13 +295,13 @@ func (s *E2EIntegrationSuite) TestLand_HappyPath_ReachesLanded() {
 //  2. Land the lead. It runs to the merge hand-off and parks there.
 //  3. Land the dependent. The queue's analyzer serializes conservatively, so
 //     its batch depends on the lead's, which is in-flight (Merging counts).
-//  4. Observe: wait for the dependent to reach "speculated" — its speculative
+//  4. Observe: wait for the dependent to record "waiting" — its speculative
 //     build has already passed, so its own build signals are finished. From
 //     here the only thing that can advance it is the lead merging.
 //  5. Start: open the gate. The lead merges and fans out.
 //
 // The dependent reaching "landed" is therefore attributable to the fan-out
-// alone. Against the old code it stays at "speculated" and the suite runs to
+// alone. Against the old code it rests at "speculating" and the suite runs to
 // Bazel's timeout, which is how the harness reports a pipeline that stalled.
 func (s *E2EIntegrationSuite) TestDependentBatch_IsWokenByTheMergeAhead() {
 	t := s.T()
@@ -339,8 +339,10 @@ func (s *E2EIntegrationSuite) TestDependentBatch_IsWokenByTheMergeAhead() {
 
 	// Its speculative build passes while the lead is still parked, so by the
 	// time the gate opens the dependent has no build signals left to wake it.
-	s.awaitStatus(dependent, entity.RequestStatusSpeculated)
-	s.log.Logf("Dependent %s is speculated and waiting only on %s", dependent.sqid, leadBatch)
+	// That rest is an event, not a status: a batch blocked on a dependency has
+	// not finished speculating, so it stays "speculating" until it can merge.
+	s.awaitEvent(dependent, entity.RequestEventWaiting)
+	s.log.Logf("Dependent %s has passed its build and waits only on %s", dependent.sqid, leadBatch)
 
 	// Start: the lead merges, and its fan-out is now the only thing that can
 	// move the dependent.
