@@ -94,6 +94,11 @@
 //	user cancel (cancel stage):
 //	   ... ──► Cancelling ── every path stopped ──► Cancelled
 //
+// A batch is admitted either by the message that names it or by the next run
+// that finds it still in Created, whichever comes first. Created is
+// dependency-eligible, so a batch left there would be a dependency nothing can
+// resolve; admission cannot be left to rest on one message arriving.
+//
 // Failed and Cancelled fan out to the conclude stage, which reconciles the
 // batch's requests.
 //
@@ -105,12 +110,12 @@
 // reordered signals are harmless, and a later run repairs whatever an
 // earlier one left half-done.
 //
-//	signal ──► read ──► finalize ──► ask ──► check ──► dispatch
-//	           one      enact the    the     filter     save changes,
-//	           read of  outcomes     Specu-  its        hand builds to
-//	           queue +  the facts    lator   proposals  the build stage
-//	           paths    already
-//	                    decide
+//	signal ──► read ──► admit ──► finalize ──► ask ──► check ──► dispatch
+//	           one      every     enact the    the     filter     save changes,
+//	           read of  batch     outcomes     Specu-  its        hand builds to
+//	           queue +  still in  the facts    lator   proposals  the build stage
+//	           paths    Created   already
+//	                              decide
 //
 // The Speculator is the extension that proposes which paths to fund or
 // preempt. It only ever proposes: check.go filters its answer, and outcomes

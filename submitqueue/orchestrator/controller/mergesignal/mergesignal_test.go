@@ -154,12 +154,12 @@ func TestProcess_MergedAdvancesBatch(t *testing.T) {
 
 // The fan-out after a merge must not reuse the bare batch ID.
 //
-// The batch controller announces a new batch to speculate under exactly that
-// ID, and the queue deduplicates on (topic, partition key, message ID) against
-// every row it has not collected yet, consumed ones included — a window with no
-// upper bound on a busy partition. Reusing the ID here made the wake-up that
-// lets dependents re-plan a silent no-op, acked as a success, with nothing to
-// retry it.
+// The batch's own announcement to speculate uses exactly that ID, and the
+// queue deduplicates on (topic, partition key, message ID) against every row it
+// has not collected yet, consumed ones included — a window with no upper bound
+// on a busy partition. Reusing the ID here made the wake-up that lets
+// dependents re-plan a silent no-op, acked as a success, with nothing to retry
+// it.
 func TestProcess_FanoutDoesNotCollideWithTheBatchAnnouncement(t *testing.T) {
 	ctrl := gomock.NewController(t)
 

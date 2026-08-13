@@ -31,12 +31,11 @@ const (
 	RequestStateStarted RequestState = "started"
 	// RequestStateValidated indicates that the request has been validated (duplicate check, merge check etc.) successfully.
 	RequestStateValidated RequestState = "validated"
-	// RequestStateBatched indicates that the request has been claimed by the batch controller and enrolled in a
-	// batch. The CAS-write of this state by the batch controller is the serialization point between batch and
-	// cancel: the batch controller transitions Validated → Batched immediately before persisting the new batch,
-	// so any concurrent cancel that has already transitioned the request to Cancelling will lose the CAS and
-	// abandon the batch. From this state forward, the request's terminal outcome is owned by the batch it is
-	// enrolled in (via conclude), not by the cancel controller's request-only fast path.
+	// RequestStateBatched indicates that the request is enrolled in a batch whose dependencies have been
+	// resolved. The CAS-write of this state is the serialization point against cancellation: it lands with
+	// the batch's promotion out of Creating, so a cancellation that has already moved the request to
+	// Cancelling wins the race and the batch is abandoned instead. From this state forward the request's
+	// terminal outcome is owned by the batch it is enrolled in, not by cancellation's request-only fast path.
 	RequestStateBatched RequestState = "batched"
 	// RequestStateProcessing is the state of a land request that is being processed.
 	RequestStateProcessing RequestState = "processing"

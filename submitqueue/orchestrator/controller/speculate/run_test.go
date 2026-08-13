@@ -1569,3 +1569,75 @@ func TestRun_SpeculatedIsReportedBeforeTheMergeDispatch(t *testing.T) {
 	require.Len(t, h.logs, 1)
 	assert.Equal(t, entity.RequestStatusSpeculated, h.logs[0].Status)
 }
+
+// A batch left in Created is dependency-eligible but has nothing driving it
+// forward, so the run admits it rather than waiting for a message that names it.
+func TestRun_AdmitsBatchLeftInCreated(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	spec := &scriptedSpeculator{}
+
+	trigger := entity.Batch{ID: head, Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
+	straggler := entity.Batch{
+		ID: "q/batch/9", Queue: "q", Contains: []string{"q/9"},
+		State: entity.BatchStateCreated, Version: 1,
+	}
+
+	h := newRunHarness(t, ctrl, spec, []entity.Batch{trigger, straggler})
+	h.noBuildsDispatched()
+	h.pathSets.EXPECT().Get(gomock.Any(), gomock.Any()).Return(entity.SpeculationPathSet{}, storage.ErrNotFound).AnyTimes()
+
+	admitted := straggler
+	admitted.State = entity.BatchStateSpeculating
+	h.batches.EXPECT().Update(gomock.Any(), admitted, int32(1), int32(2)).Return(nil)
+
+	require.NoError(t, h.run(head))
+
+	assert.Contains(t, h.filed, entity.QueueBatchState{Queue: "q", State: entity.BatchStateSpeculating, BatchID: straggler.ID})
+	require.Len(t, h.logs, 1)
+	assert.Equal(t, entity.RequestStatusSpeculating, h.logs[0].Status)
+	assert.Empty(t, h.published, "admission needs no message of its own")
+}
+
+// Another writer got there first. Nothing is left to redo, and the rest of the
+// queue's planning must not be abandoned over it.
+func TestRun_AdmitLostRaceDoesNotFailRun(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	spec := &scriptedSpeculator{}
+
+	trigger := entity.Batch{ID: head, Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
+	straggler := entity.Batch{
+		ID: "q/batch/9", Queue: "q", Contains: []string{"q/9"},
+		State: entity.BatchStateCreated, Version: 1,
+	}
+
+	h := newRunHarness(t, ctrl, spec, []entity.Batch{trigger, straggler})
+	h.noBuildsDispatched()
+	h.pathSets.EXPECT().Get(gomock.Any(), gomock.Any()).Return(entity.SpeculationPathSet{}, storage.ErrNotFound).AnyTimes()
+	h.batches.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(storage.ErrVersionMismatch)
+
+	require.NoError(t, h.run(head))
+	assert.NotContains(t, h.filed, entity.QueueBatchState{Queue: "q", State: entity.BatchStateSpeculating, BatchID: straggler.ID})
+	assert.Equal(t, 1, spec.calls, "the rest of the queue is still planned")
+}
+
+// One unrepairable batch must not stall every other batch in the queue; the
+// next run tries again.
+func TestRun_AdmitStorageErrorDoesNotFailRun(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	spec := &scriptedSpeculator{}
+
+	trigger := entity.Batch{ID: head, Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
+	straggler := entity.Batch{
+		ID: "q/batch/9", Queue: "q", Contains: []string{"q/9"},
+		State: entity.BatchStateCreated, Version: 1,
+	}
+
+	h := newRunHarness(t, ctrl, spec, []entity.Batch{trigger, straggler})
+	h.noBuildsDispatched()
+	h.pathSets.EXPECT().Get(gomock.Any(), gomock.Any()).Return(entity.SpeculationPathSet{}, storage.ErrNotFound).AnyTimes()
+	h.batches.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(assert.AnError)
+
+	require.NoError(t, h.run(head))
+	assert.NotContains(t, h.filed, entity.QueueBatchState{Queue: "q", State: entity.BatchStateSpeculating, BatchID: straggler.ID})
+	assert.Equal(t, 1, spec.calls, "the rest of the queue is still planned")
+}

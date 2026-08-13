@@ -28,8 +28,8 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )
 
-// run re-plans a whole queue from a single read of its state, in the five
-// steps the package doc lays out: read, finalize, ask, check, dispatch.
+// run re-plans a whole queue from a single read of its state, in the six
+// steps the package doc lays out: read, admit, finalize, ask, check, dispatch.
 //
 // The batch on the triggering message only says which queue woke up; nothing
 // about the plan depends on which batch it was, or on any earlier run. Its
@@ -40,6 +40,8 @@ func (c *Controller) run(ctx context.Context, store storage.Storage, trigger ent
 		return err
 	}
 	snap.trigger = trigger.ID
+
+	c.admitCreated(ctx, &snap)
 
 	if err := c.finalize(ctx, &snap); err != nil {
 		return err
@@ -68,6 +70,45 @@ func (c *Controller) run(ctx context.Context, store storage.Storage, trigger ent
 	}
 
 	return c.dispatch(ctx, trigger.Queue, snap, kept)
+}
+
+// admitCreated admits every batch the run found still in Created, folding each
+// one into the snapshot as a head open to new work.
+//
+// Created is dependency-eligible, so a batch that stalls there is a dependency
+// nothing can resolve and the whole queue wedges behind it. Tying admission to
+// a message that names one specific batch makes that guarantee only as strong
+// as one message; the read above already lists every batch in the queue, so the
+// run can close the gap itself for the price of a compare-and-swap.
+//
+// A head admitted here has no paths yet, so finalize cannot reach an outcome on
+// it this run — see decide.
+//
+// Best-effort: a failed admit is left to the next run rather than failing this
+// one, because one batch must not stall the rest of the queue's planning. A
+// lost compare-and-swap just means another writer admitted it first.
+func (c *Controller) admitCreated(ctx context.Context, snap *snapshot) {
+	for i, batch := range snap.inFlight {
+		if batch.State != entity.BatchStateCreated {
+			continue
+		}
+
+		updated, err := c.admit(ctx, snap.store, batch)
+		if err != nil {
+			metrics.NamedCounter(c.metricsScope, opName, "unadmitted_repair_errors", 1)
+			c.logger.Warnw("failed to admit a batch found in created",
+				"batch_id", batch.ID,
+				"queue", batch.Queue,
+				"error", err,
+			)
+			continue
+		}
+
+		metrics.NamedCounter(c.metricsScope, opName, "unadmitted_repaired", 1)
+		snap.batches[updated.ID] = updated
+		snap.inFlight[i] = updated
+		snap.speculating = append(snap.speculating, updated)
+	}
 }
 
 // read builds the run's snapshot. Batches come first because their dependency

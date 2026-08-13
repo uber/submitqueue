@@ -35,6 +35,7 @@ func TestDLQRequestController_InterfaceAndAccessors(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
+	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, DecodeRequestID, TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
 
@@ -59,6 +60,7 @@ func TestDLQRequestController_Process_LandRequestPayload(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
+	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, DecodeLandRequestID, TopicKey(topickey.TopicKeyStart), "orchestrator-start-dlq")
@@ -86,6 +88,7 @@ func TestDLQRequestController_Process_CancelRequestPayload(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
+	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, DecodeCancelRequestID, TopicKey(topickey.TopicKeyCancel), "orchestrator-cancel-dlq")
@@ -114,6 +117,7 @@ func TestDLQRequestController_Process_RequestIDPayload(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
+	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, registry, DecodeRequestID, TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")
@@ -135,6 +139,7 @@ func TestDLQRequestController_Process_DifferentTerminalOutcomeSkips(t *testing.T
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
+	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, DecodeRequestID, TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
@@ -151,6 +156,7 @@ func TestDLQRequestController_Process_MalformedPayloadFails(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
+	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 	// no store calls expected
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, DecodeRequestID, TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
@@ -165,6 +171,7 @@ func TestDLQRequestController_Process_EmptyIDFails(t *testing.T) {
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
+	store.EXPECT().GetRequestBatchStore().Return(noBatchAssociations(ctrl)).AnyTimes()
 	// no store calls expected
 
 	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store}, consumer.TopicRegistry{}, DecodeRequestID, TopicKey(topickey.TopicKeyValidate), "orchestrator-validate-dlq")
@@ -197,4 +204,164 @@ func newMockDeliveryWithFailure(ctrl *gomock.Controller, payload []byte, f failu
 	}).AnyTimes()
 	d.EXPECT().Failure().Return(f, failed).AnyTimes()
 	return d
+}
+
+// The dead letter can be a redundant batch attempt whose predecessor already
+// enrolled the request. Failing it here would overwrite a live batch's claim
+// and leave that batch building for a request reported as failed.
+func TestDLQRequestController_Process_SkipsRequestOwnedByLiveBatch(t *testing.T) {
+	for _, state := range []entity.BatchState{
+		entity.BatchStateCreated,
+		entity.BatchStateSpeculating,
+		entity.BatchStateMerging,
+		entity.BatchStateCancelling,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+
+			// Request store with no EXPECTs — the request must not be touched.
+			associations := storagemock.NewMockRequestBatchStore(ctrl)
+			associations.EXPECT().GetByRequestID(gomock.Any(), "q/1").Return([]entity.RequestBatch{
+				{RequestID: "q/1", BatchID: "q/batch/1", Version: 1},
+			}, nil)
+
+			batchStore := storagemock.NewMockBatchStore(ctrl)
+			batchStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(entity.Batch{
+				ID: "q/batch/1", Queue: "q", Contains: []string{"q/1"}, State: state, Version: 1,
+			}, nil)
+
+			store := storagemock.NewMockStorage(ctrl)
+			store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
+			store.EXPECT().GetRequestBatchStore().Return(associations).AnyTimes()
+			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+			store.EXPECT().GetRequestStore().Return(storagemock.NewMockRequestStore(ctrl)).AnyTimes()
+
+			c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store},
+				consumer.TopicRegistry{}, DecodeRequestID, TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")
+
+			payload, err := entity.RequestID{ID: "q/1", Queue: "q"}.ToBytes()
+			require.NoError(t, err)
+
+			require.NoError(t, c.Process(context.Background(), newMockDelivery(ctrl, payload)))
+		})
+	}
+}
+
+// A batch that already concluded does not own anything conclude has not written
+// yet, so the request is still the dead letter's to fail.
+func TestDLQRequestController_Process_FailsWhenEveryBatchIsTerminal(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	request := entity.Request{ID: "q/1", Version: 1, State: entity.RequestStateBatched}
+	requestStore := storagemock.NewMockRequestStore(ctrl)
+	requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil)
+	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
+
+	associations := storagemock.NewMockRequestBatchStore(ctrl)
+	associations.EXPECT().GetByRequestID(gomock.Any(), "q/1").Return([]entity.RequestBatch{
+		{RequestID: "q/1", BatchID: "q/batch/1", Version: 1},
+	}, nil)
+
+	batchStore := storagemock.NewMockBatchStore(ctrl)
+	batchStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(entity.Batch{
+		ID: "q/batch/1", Queue: "q", Contains: []string{"q/1"}, State: entity.BatchStateFailed, Version: 1,
+	}, nil)
+
+	registry := newTestLogRegistry(t, ctrl, 1, func(entity.RequestLog) error { return nil })
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
+	store.EXPECT().GetRequestBatchStore().Return(associations).AnyTimes()
+	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
+
+	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store},
+		registry, DecodeRequestID, TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")
+
+	payload, err := entity.RequestID{ID: "q/1", Queue: "q"}.ToBytes()
+	require.NoError(t, err)
+
+	require.NoError(t, c.Process(context.Background(), newMockDelivery(ctrl, payload)))
+}
+
+// The association is written before the claim, so it outlives an attempt whose
+// claim was abandoned. That batch stays in Creating forever with nothing to
+// promote it, so it must not answer "owned" — doing so would suppress the
+// reconcile and strand the request short of a terminal state.
+func TestDLQRequestController_Process_FailsWhenCreatingBatchNeverClaimed(t *testing.T) {
+	for _, state := range []entity.RequestState{
+		entity.RequestStateCancelling,
+		entity.RequestStateValidated,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+
+			request := entity.Request{ID: "q/1", Version: 1, State: state}
+			requestStore := storagemock.NewMockRequestStore(ctrl)
+			requestStore.EXPECT().Get(gomock.Any(), "q/1").Return(request, nil).Times(2)
+			requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
+
+			associations := storagemock.NewMockRequestBatchStore(ctrl)
+			associations.EXPECT().GetByRequestID(gomock.Any(), "q/1").Return([]entity.RequestBatch{
+				{RequestID: "q/1", BatchID: "q/batch/1", Version: 1},
+			}, nil)
+
+			batchStore := storagemock.NewMockBatchStore(ctrl)
+			batchStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(entity.Batch{
+				ID: "q/batch/1", Queue: "q", Contains: []string{"q/1"}, State: entity.BatchStateCreating, Version: 1,
+			}, nil)
+
+			registry := newTestLogRegistry(t, ctrl, 1, func(entity.RequestLog) error { return nil })
+
+			store := storagemock.NewMockStorage(ctrl)
+			store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
+			store.EXPECT().GetRequestBatchStore().Return(associations).AnyTimes()
+			store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+			store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
+
+			c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store},
+				registry, DecodeRequestID, TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")
+
+			payload, err := entity.RequestID{ID: "q/1", Queue: "q"}.ToBytes()
+			require.NoError(t, err)
+
+			require.NoError(t, c.Process(context.Background(), newMockDelivery(ctrl, payload)))
+		})
+	}
+}
+
+// The same Creating batch mid-promotion: the claim landed, so the batch is on
+// its way to Created and owns the request. Batched is written only by that
+// claim, which is what separates this from the abandoned case above.
+func TestDLQRequestController_Process_SkipsWhenCreatingBatchAlreadyClaimed(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	requestStore := storagemock.NewMockRequestStore(ctrl)
+	requestStore.EXPECT().Get(gomock.Any(), "q/1").
+		Return(entity.Request{ID: "q/1", Version: 2, State: entity.RequestStateBatched}, nil)
+	// Update must NOT be called — the batch owns the outcome.
+
+	associations := storagemock.NewMockRequestBatchStore(ctrl)
+	associations.EXPECT().GetByRequestID(gomock.Any(), "q/1").Return([]entity.RequestBatch{
+		{RequestID: "q/1", BatchID: "q/batch/1", Version: 1},
+	}, nil)
+
+	batchStore := storagemock.NewMockBatchStore(ctrl)
+	batchStore.EXPECT().Get(gomock.Any(), "q/batch/1").Return(entity.Batch{
+		ID: "q/batch/1", Queue: "q", Contains: []string{"q/1"}, State: entity.BatchStateCreating, Version: 1,
+	}, nil)
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
+	store.EXPECT().GetRequestBatchStore().Return(associations).AnyTimes()
+	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
+
+	c := NewDLQRequestController(zaptest.NewLogger(t).Sugar(), testScope(), staticStorageFactory{store: store},
+		consumer.TopicRegistry{}, DecodeRequestID, TopicKey(topickey.TopicKeyBatch), "orchestrator-batch-dlq")
+
+	payload, err := entity.RequestID{ID: "q/1", Queue: "q"}.ToBytes()
+	require.NoError(t, err)
+
+	require.NoError(t, c.Process(context.Background(), newMockDelivery(ctrl, payload)))
 }

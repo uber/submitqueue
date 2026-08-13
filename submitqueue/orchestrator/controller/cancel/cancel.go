@@ -25,9 +25,9 @@
 //
 //   - The request is associated with one or more batch attempts — the controller
 //     records cancellation intent on every cancellable attempt and hands each one
-//     to speculate. Creating attempts are ignored because their reverse indexes
-//     may be incomplete, while Merging and terminal attempts retain their existing
-//     outcome for conclude to reconcile.
+//     to speculate. Creating attempts are ignored because their dependency set is
+//     not yet resolved and nothing downstream can see them, while Merging and
+//     terminal attempts retain their existing outcome for conclude to reconcile.
 //
 // The split exists so that the terminal write and the work that must precede
 // it (cancelling builds, respeculating dependents) live in the same controller
@@ -52,9 +52,7 @@ package cancel
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"sort"
 
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/consumer"
@@ -228,32 +226,14 @@ func (c *Controller) markCancelling(ctx context.Context, store storage.Storage, 
 // findBatches resolves every batch attempt associated with the request.
 // Associations whose batch was never persisted are stale retry artifacts and are ignored.
 func (c *Controller) findBatches(ctx context.Context, store storage.Storage, request entity.Request) ([]entity.Batch, error) {
-	associations, err := store.GetRequestBatchStore().GetByRequestID(ctx, request.ID)
+	batches, stale, err := corebatch.FindByRequestID(ctx, store, request.ID)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, opName, "request_batch_store_errors", 1)
-		return nil, fmt.Errorf("failed to get batch associations for request %s: %w", request.ID, err)
+		metrics.NamedCounter(c.metricsScope, opName, "batch_lookup_errors", 1)
+		return nil, err
 	}
-
-	var batches []entity.Batch
-	for _, association := range associations {
-		batch, err := store.GetBatchStore().Get(ctx, association.BatchID)
-		if err != nil {
-			if errors.Is(err, storage.ErrNotFound) {
-				// The association may precede batch persistence or may outlive a failed attempt.
-				// If the batch is later persisted and published, speculate re-checks the contained request state before starting work.
-				metrics.NamedCounter(c.metricsScope, opName, "stale_batch_associations", 1)
-				continue
-			}
-			metrics.NamedCounter(c.metricsScope, opName, "batch_store_errors", 1)
-			return nil, fmt.Errorf("failed to get associated batch %s for request %s: %w", association.BatchID, request.ID, err)
-		}
-		batches = append(batches, batch)
+	if stale > 0 {
+		metrics.NamedCounter(c.metricsScope, opName, "stale_batch_associations", int64(stale))
 	}
-
-	// The batches are independent, but deterministic order stabilizes logs, tests, and first-error selection.
-	sort.Slice(batches, func(i, j int) bool {
-		return batches[i].ID < batches[j].ID
-	})
 	return batches, nil
 }
 

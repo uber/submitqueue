@@ -6,7 +6,7 @@ Design notes for what SubmitQueue's pluggable extensions accept: orchestrator **
 
 Extension input granularity is inconsistent across the pipeline stages (see [workflow.md](workflow.md)). `conflict.Analyzer` takes identity (`entity.Batch`); `scorer`, `changeprovider`, `buildrunner`, `pusher` take controller-resolved `entity.Change`. The split caps what an extension can do:
 
-- `ConflictType` already names `target_overlap`, but a real target-overlap analyzer **cannot be written** — the batch controller hands it identity-level batches (no changed targets) and the contract has nowhere to put them.
+- `ConflictType` already names `target_overlap`, but a real target-overlap analyzer **cannot be written** — the dependency-analysis stage hands it identity-level batches (no changed targets) and the contract has nowhere to put them.
 - `scorer` gets a URIs-only `Change`, so a heuristic scorer **cannot see** lines-changed / file-count.
 
 Both unblock with the shape `conflict` already uses: accept identity, resolve internally.
@@ -22,7 +22,7 @@ Both unblock with the shape `conflict` already uses: accept identity, resolve in
 | Stage | Loads | Resolves for the extension | Hands to the extension |
 |---|---|---|---|
 | `validate` | `entity.Request` | nothing — `request.Change` is already in hand (the change-store reads here serve duplicate detection) | `request.Change` → `changeprovider` |
-| `batch` | `entity.Request` + active `[]entity.Batch` | **nothing** — builds a batch whose `Contains` is `[requestID]` | `entity.Batch`, `[]entity.Batch` → `conflict` |
+| `dependency` | `entity.Batch` + active `[]entity.Batch` | **nothing** — the batch it analyzes is already persisted, with `Contains` set to `[requestID]` | `entity.Batch`, `[]entity.Batch` → `conflict` |
 | `score` | `entity.Batch`, then each `entity.Request` | batch → requests | `request.Change` per request, then multiplies the scores → `scorer` |
 | `build` | `entity.Batch`, then `collectChanges` | batch → requests → changes, **flattening batch boundaries** | base `[]Change`, head `[]Change` → `buildrunner` |
 | `merge` | `entity.Batch`, then `collectChanges` | batch → requests → changes | `[]Change` → `pusher` |
