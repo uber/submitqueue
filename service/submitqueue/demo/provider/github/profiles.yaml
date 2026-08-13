@@ -17,10 +17,13 @@ queues:
     # Enterprise, add `github: {baseUrl: https://ghe.example.com/api/v3}`.
     changeProvider: {type: github}
 
-    # Serializes only batches that touch a shared file, so independent changes
-    # land in parallel. Swap for {type: all} to serialize the queue entirely, or
-    # {type: none} for maximum parallelism with no conflict detection.
-    analyzer: {type: fileoverlap}
+    # Serializes batches that touch a shared directory, so changes land in
+    # parallel unless they land in the same folder. Keys on the immediate parent
+    # directory, and files at the repository root all share one key. Use
+    # `by: file` to conflict only on the same file, {type: all} to serialize the
+    # queue entirely, or {type: none} for maximum parallelism with no conflict
+    # detection.
+    analyzer: {type: pathoverlap, by: directory}
 
     # Every build succeeds instantly, so a land completes in seconds and the
     # demo exercises the merge rather than waiting on CI.
