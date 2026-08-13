@@ -27,7 +27,12 @@ queues:
 
     # Every build succeeds instantly, so a land completes in seconds and the
     # demo exercises the merge rather than waiting on CI.
-    buildRunner: {type: fake}
+    buildRunner: 
+      type: githubactions
+      owner: behinddwalls
+      repo: sq-demo
+      workflow: ci.yml        # file name or numeric workflow id
+      ref: main               # the branch the workflow definition is read from
     #
     # To run real CI instead, replace the line above with the block below. It
     # needs a workflow in the target repository that is triggerable by

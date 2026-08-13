@@ -25,7 +25,7 @@ For a **fine-grained** token, grant these repository permissions. Each is here b
 | Metadata | Read | mandatory on every fine-grained token; GitHub adds it for you |
 | Contents | Read and write | the git merger — clone, fetch, push to the target branch, and force-move each landed change's head branch |
 | Pull requests | Read | the change provider reads pull request metadata, and `land -pr` reads the head commit |
-| Pull requests | Read **and write** | only for `make demo-prs`, which opens pull requests |
+| Pull requests | Read **and write** | only for `make demo-pr`, which opens pull requests |
 | Actions | Read and write | only if you switch the build runner to GitHub Actions — dispatch a run, poll it, cancel it |
 
 A **classic** PAT needs `repo`, plus `workflow` if you use the GitHub Actions build runner.
@@ -89,6 +89,44 @@ make land PRS="https://github.com/<you>/<repo>/pull/1 \
 
 The order of `PRS` is the stack order. All three land as **one push** to `main` — there is no window where a reader sees the stack half-applied — and all three show as merged. Tier 2 asserts the single-push property mechanically, by counting ref updates in the target's reflog.
 
+## Simulating traffic
+
+Opening pull requests by hand gets old fast. `demo-pr` creates them, enqueues them, and shows you where each one is:
+
+```bash
+make demo-pr                      # 3 independent PRs, each enqueued as it is created
+make demo-pr COUNT=8              # more traffic
+make demo-pr FILES=8              # wider changes, more files per PR
+make demo-pr STACKED=true         # one stack, enqueued as a single request
+make demo-pr LAND=false           # create only, print the land command
+```
+
+Each pull request is enqueued the moment it exists, so the queue is already working on the first while the last is still being opened. That overlap is the point: a queue holding one request at a time never batches, never analyzes a conflict against another batch, and never speculates. Nothing is awaited until every request is in.
+
+The table is there from the start — one row per land request, drawn before the first pull request exists and filled in as the run proceeds. Whatever is happening right now is a single line underneath it, so creating and enqueuing does not scroll the table away:
+
+```
+  REQUEST        CHANGES  ELAPSED  STAGE
+  ─────────────  ───────  ───────  ─────────────────────────────────────────────────
+  demo-queue/12  #31          34s  accepted → started → validated → batched → landed
+  demo-queue/13  #32          31s  accepted → started → validated → batched
+  demo-queue/14  #33          28s  accepted → started
+
+  ▸ 1 of 3 settled
+```
+
+Each row shows the states its request passed through, not just the one it is in. That comes from the gateway's history API rather than from sampling the current status, so a transition between two polls is not missed. `CHANGES` links to the pull request: on a terminal `#31` is clickable, and in a redirected run it is written out as a full URL instead. `ELAPSED` runs from the moment the gateway accepted the request and stops when it settles, so a finished row keeps the time it took rather than counting on.
+
+The trail is only as detailed as what the pipeline reports, which today is `accepted`, `started`, `validated`, `batched` and then a terminal `landed`, `error` or `cancelled`. The finer-grained statuses the API defines — `speculating`, `building`, `landing` and the rest — are never published, so a request sits on `batched` for the whole of its active life even while its batch is speculating and building. Do not read that as the request being stuck.
+
+`STACKED=true` is the exception to the overlap: one request carries the whole chain, so it can only go in once every pull request in it exists. That is the atomic-stack path — the whole set reaches `main` in a single push, and the table shows it as the single row it is.
+
+It talks to GitHub over the REST API with the same `GITHUB_TOKEN`, so it needs no clone and no git binary. Each run tags its branches with a timestamp so repeated runs do not collide, and every file a change writes is at a path no other change uses, so independent changes do not conflict by accident.
+
+A change touches several files rather than one, each committed separately, so it arrives as a multi-file, multi-commit pull request — closer to a real change, and enough to exercise replaying a range of commits. `FILES` sets the floor (default 3); the actual count varies a little above it, derived from the run tag so replaying a tag reproduces the same run. Paths are sharded into two levels of hex buckets under `demo/` (`demo/c2/91/<tag>-<change>-<file>.txt`), which keeps the tree from degenerating into one enormous directory as runs accumulate.
+
+The command exits non-zero if any request settles anywhere other than `landed`, so it works in a script. Piped to a file it prints a fresh table whenever a request moves — and not when only the clock did — instead of redrawing in place.
+
 ## Watching it work
 
 ```bash
@@ -100,6 +138,14 @@ Runway logs each merge and each head-branch move:
 ```
 moved change head branch to its landed commit  {"change": "you/repo#1", "branch": "refs/heads/feature-a", ...}
 ```
+
+The message queue logs a line per message published, fetched, leased and acked, which at debug level buries everything else a service says. It is levelled separately from the rest of the service, at info by default. To follow the queue itself — chasing a message that never arrived, or a partition that never got leased — turn it back up for the services you care about:
+
+```bash
+QUEUE_LOG_LEVEL=debug make local-submitqueue-start
+```
+
+`QUEUE_LOG_LEVEL` takes any zap level name. It can only raise the queue's level above the one the service logger was built with, never lower it, so it cannot be used to make a quiet service verbose.
 
 ## When it does not work
 
