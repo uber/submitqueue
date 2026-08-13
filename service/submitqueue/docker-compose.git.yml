@@ -1,0 +1,45 @@
+# Compose overlay: point Runway at a real git merge target.
+#
+# Layered over docker-compose.yml, which it does not modify:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.git.yml up
+#
+# Used by the hermetic git E2E (`make e2e-git-test`), which merges it through
+# testutil.WithOverlay. Everything else about the stack — the services, their
+# databases, the consumer gate — comes from the base file, so a service added
+# there reaches this variant too.
+#
+# The merge target is a bare repository on a shared volume, addressed by path.
+# That exercises the whole merge path (git in the image, checkout provisioning,
+# real cherry-pick and push, head-branch updates) with no credential, no
+# network, and no account anywhere — which is what lets it gate a pull request.
+#
+# Required in the environment, all owned by the test:
+#   SQ_PROVIDER_CONFIG_DIR   profiles.yaml / merge.yaml selecting each queue's
+#                            extensions (service/submitqueue/demo/provider/local)
+#   SQ_GIT_SANDBOX_DIR       the bare repository the merger fetches and pushes
+#   SQ_RUNWAY_CHECKOUT_DIR   storage for the working trees the merger owns
+
+services:
+  orchestrator-service:
+    environment:
+      # Which change provider, build runner, and conflict analyzer each queue
+      # resolves to. Everything at the edges stays fake here; only the merge is
+      # real.
+      - PROFILES_CONFIG_PATH=/etc/submitqueue/profiles.yaml
+    volumes:
+      - ${SQ_PROVIDER_CONFIG_DIR}:/etc/submitqueue:ro
+
+  runway-service:
+    environment:
+      # Per-queue merge targets. Without this Runway falls back to the noop
+      # merger and nothing would actually be pushed.
+      - MERGE_CONFIG_PATH=/etc/submitqueue/merge.yaml
+    volumes:
+      - ${SQ_PROVIDER_CONFIG_DIR}:/etc/submitqueue:ro
+      - ${SQ_GIT_SANDBOX_DIR}:/srv/git
+      # A checkout is state, not image content, so it is mounted rather than
+      # baked in — and mounting it is also what makes the path writable by a
+      # service running as a non-root user, which the E2E does so its bind
+      # mounts stay readable from the host.
+      - ${SQ_RUNWAY_CHECKOUT_DIR}:/var/runway/checkouts

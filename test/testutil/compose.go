@@ -38,14 +38,33 @@ import (
 
 // ComposeStack manages a docker-compose stack for testing.
 type ComposeStack struct {
-	composeFile string
-	projectName string
-	t           *testing.T
-	log         *TestLogger
-	ctx         context.Context
-	composeCmd  []string  // docker-compose command (either ["docker-compose"] or ["docker", "compose"])
-	composeEnv  []string  // environment shared by compose commands
-	logCmd      *exec.Cmd // background "docker compose logs -f" process
+	composeFiles []string
+	projectName  string
+	t            *testing.T
+	log          *TestLogger
+	ctx          context.Context
+	composeCmd   []string  // docker-compose command (either ["docker-compose"] or ["docker", "compose"])
+	composeEnv   []string  // environment shared by compose commands
+	logCmd       *exec.Cmd // background "docker compose logs -f" process
+}
+
+// fileArgs returns the "-f <path>" pairs naming this stack's compose files, in
+// the order compose must merge them.
+func (s *ComposeStack) fileArgs() []string {
+	args := make([]string, 0, len(s.composeFiles)*2)
+	for _, f := range s.composeFiles {
+		args = append(args, "-f", f)
+	}
+	return args
+}
+
+// command builds a compose invocation for this stack, with the compose files
+// and project name already applied.
+func (s *ComposeStack) command(args ...string) []string {
+	full := append([]string{}, s.composeCmd[1:]...)
+	full = append(full, s.fileArgs()...)
+	full = append(full, "-p", s.projectName)
+	return append(full, args...)
 }
 
 // getDockerComposeCommand returns the docker compose command to use.
@@ -68,6 +87,8 @@ type composeOptions struct {
 	// buildContextFiles maps a path inside the synthesized docker build
 	// context to the workspace-relative runfile it is staged from.
 	buildContextFiles map[string]string
+	// overlays are additional compose files merged over the base one, in order.
+	overlays []string
 }
 
 // WithBuildContext stages the given files into a synthesized docker build
@@ -81,6 +102,22 @@ type composeOptions struct {
 func WithBuildContext(files map[string]string) ComposeOption {
 	return func(o *composeOptions) {
 		o.buildContextFiles = files
+	}
+}
+
+// WithOverlay merges additional compose files over the base one, in the order
+// given, exactly as `docker compose -f base.yml -f overlay.yml` does.
+//
+// It exists so a variant stack can state only what differs from the base —
+// a couple of environment variables and volumes — instead of copying the whole
+// service definition. A copy is the thing that rots: services added to the base
+// file never reach the duplicate, and nothing fails until the variant is run.
+//
+// Each overlay must be declared as a `data` dependency of the test target, and
+// each participates in the input hash alongside the base file.
+func WithOverlay(paths ...string) ComposeOption {
+	return func(o *composeOptions) {
+		o.overlays = append(o.overlays, paths...)
 	}
 }
 
@@ -98,15 +135,17 @@ func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, compose
 	// Setup Docker environment
 	setupDockerEnv(t)
 
-	// Get absolute path to compose file
-	absPath, err := filepath.Abs(composeFile)
-	require.NoError(t, err, "failed to get absolute path to compose file")
-
 	// The image prefix is derived from the content of the declared inputs, so
-	// the compose file participates in the hash alongside the staged build
+	// every compose file participates in the hash alongside the staged build
 	// context files.
 	inputHash := sha256.New()
-	hashFile(t, inputHash, composeFile, absPath)
+	composeFiles := make([]string, 0, 1+len(options.overlays))
+	for _, file := range append([]string{composeFile}, options.overlays...) {
+		absPath, err := filepath.Abs(file)
+		require.NoError(t, err, "failed to get absolute path to compose file %s", file)
+		hashFile(t, inputHash, file, absPath)
+		composeFiles = append(composeFiles, absPath)
+	}
 
 	buildContextDir := ""
 	if len(options.buildContextFiles) > 0 {
@@ -119,13 +158,13 @@ func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, compose
 	projectName := fmt.Sprintf("sq-test-%s-%s", testContext, timestamp)
 
 	stack := &ComposeStack{
-		composeFile: absPath,
-		projectName: projectName,
-		t:           t,
-		log:         log,
-		ctx:         ctx,
-		composeCmd:  getDockerComposeCommand(),
-		composeEnv:  composeEnvironment(inputHash.Sum(nil), buildContextDir),
+		composeFiles: composeFiles,
+		projectName:  projectName,
+		t:            t,
+		log:          log,
+		ctx:          ctx,
+		composeCmd:   getDockerComposeCommand(),
+		composeEnv:   composeEnvironment(inputHash.Sum(nil), buildContextDir),
 	}
 
 	// Register cleanup
@@ -136,7 +175,8 @@ func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, compose
 			log.Logf("SKIP_CLEANUP=true - keeping containers for inspection")
 			log.Logf("Container prefix: %s", projectName)
 			composeCmd := strings.Join(stack.composeCmd, " ")
-			log.Logf("Clean up manually: %s -f %s -p %s down -v", composeCmd, absPath, projectName)
+			log.Logf("Clean up manually: %s %s -p %s down -v",
+				composeCmd, strings.Join(stack.fileArgs(), " "), projectName)
 			return
 		}
 
@@ -151,9 +191,9 @@ func NewComposeStack(t *testing.T, log *TestLogger, ctx context.Context, compose
 // Uses --wait to block until all services with healthcheck directives are healthy.
 func (s *ComposeStack) Up() error {
 	s.t.Helper()
-	s.log.Logf("Starting compose stack from %s", s.composeFile)
+	s.log.Logf("Starting compose stack from %s", strings.Join(s.composeFiles, " + "))
 
-	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName, "up", "-d", "--build", "--wait")
+	args := s.command("up", "-d", "--build", "--wait")
 	cmd := exec.CommandContext(s.ctx, s.composeCmd[0], args...)
 	cmd.Env = s.composeEnv
 	cmd.Stdout = os.Stdout
@@ -174,7 +214,7 @@ func (s *ComposeStack) Up() error {
 func (s *ComposeStack) down() {
 	s.log.Logf("Stopping compose stack")
 
-	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName, "down", "-v")
+	args := s.command("down", "-v")
 	cmd := exec.CommandContext(s.ctx, s.composeCmd[0], args...)
 	cmd.Env = s.composeEnv
 	cmd.Stdout = os.Stdout
@@ -189,7 +229,7 @@ func (s *ComposeStack) down() {
 // container logs to stderr in real time. Using os.Stderr instead of t.Log()
 // because t.Log() buffers output until the test finishes.
 func (s *ComposeStack) tailLogs() {
-	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName, "logs", "-f")
+	args := s.command("logs", "-f")
 	cmd := exec.Command(s.composeCmd[0], args...)
 	cmd.Env = s.composeEnv
 	cmd.Stdout = os.Stderr
@@ -214,7 +254,7 @@ func (s *ComposeStack) stopLogs() {
 func (s *ComposeStack) ServicePort(serviceName string, containerPort int) (int, error) {
 	s.t.Helper()
 
-	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName, "port", serviceName, fmt.Sprintf("%d", containerPort))
+	args := s.command("port", serviceName, fmt.Sprintf("%d", containerPort))
 	cmd := exec.CommandContext(s.ctx, s.composeCmd[0], args...)
 	cmd.Env = s.composeEnv
 
@@ -342,7 +382,7 @@ func (s *ComposeStack) StopService(serviceName string, timeoutSec int) error {
 
 	s.log.Logf("Stopping service %s (timeout %ds)", serviceName, timeoutSec)
 
-	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName,
+	args := s.command(
 		"stop", "-t", fmt.Sprintf("%d", timeoutSec), serviceName)
 	cmd := exec.CommandContext(s.ctx, s.composeCmd[0], args...)
 	cmd.Env = s.composeEnv
@@ -363,7 +403,7 @@ func (s *ComposeStack) ServiceExitCode(serviceName string) (int, error) {
 	s.t.Helper()
 
 	// Get container ID for the service
-	args := append(s.composeCmd[1:], "-f", s.composeFile, "-p", s.projectName,
+	args := s.command(
 		"ps", "-a", "-q", serviceName)
 	cmd := exec.CommandContext(s.ctx, s.composeCmd[0], args...)
 	cmd.Env = s.composeEnv
