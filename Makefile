@@ -52,7 +52,7 @@ define assert_clean
 	fi
 endef
 
-.PHONY: build build-all-linux build-runway-linux build-submitqueue-gateway-linux build-submitqueue-orchestrator-linux build-stovepipe-linux build-stovepipe-linux-debug check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator license-fix lint lint-fmt lint-license local-init-runway-queue-schema local-init-stovepipe-schemas local-runway-start local-runway-stop local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-debug-start local-stovepipe-logs local-stovepipe-start local-stovepipe-stop mocks proto query-deps query-targets run-client-runway run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
+.PHONY: build build-all-linux build-runway-linux build-submitqueue-gateway-client build-submitqueue-gateway-linux build-submitqueue-gateway-server build-submitqueue-orchestrator-linux build-stovepipe-linux build-stovepipe-linux-debug check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator license-fix lint lint-binary lint-fmt lint-license local-init-runway-queue-schema local-init-stovepipe-schemas local-runway-start local-runway-stop local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-debug-start local-stovepipe-logs local-stovepipe-start local-stovepipe-stop mocks proto query-deps query-targets run-client-runway run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
 
 
 build: ## Build all services and examples
@@ -74,6 +74,14 @@ build-runway-linux: ## Build Runway Linux binary for Docker
 	 cp -f bazel-bin/service/runway/server/runway .docker-bin/runway
 	@echo "Runway Linux binary ready at .docker-bin/runway"
 
+build-submitqueue-gateway-client: ## Build the gateway client CLI for the host platform into bin/client
+	@echo "Building gateway client..."
+	@$(BAZEL) build //service/submitqueue/gateway/client:gateway
+	@mkdir -p bin
+	@cp -f bazel-bin/service/submitqueue/gateway/client/gateway_/gateway bin/client 2>/dev/null || \
+	 cp -f bazel-bin/service/submitqueue/gateway/client/gateway bin/client
+	@echo "Gateway client ready at bin/client"
+
 build-submitqueue-gateway-linux: ## Build Gateway Linux binary for Docker
 	@echo "Building Gateway Linux binary for Docker..."
 	@$(BAZEL) build --platforms=@rules_go//go/toolchain:linux_amd64 //service/submitqueue/gateway/server:gateway
@@ -81,6 +89,14 @@ build-submitqueue-gateway-linux: ## Build Gateway Linux binary for Docker
 	@cp -f bazel-bin/service/submitqueue/gateway/server/gateway_/gateway .docker-bin/gateway 2>/dev/null || \
 	 cp -f bazel-bin/service/submitqueue/gateway/server/gateway .docker-bin/gateway
 	@echo "Gateway Linux binary ready at .docker-bin/gateway"
+
+build-submitqueue-gateway-server: ## Build the gateway server for the host platform into bin/server
+	@echo "Building gateway server..."
+	@$(BAZEL) build //service/submitqueue/gateway/server:gateway
+	@mkdir -p bin
+	@cp -f bazel-bin/service/submitqueue/gateway/server/gateway_/gateway bin/server 2>/dev/null || \
+	 cp -f bazel-bin/service/submitqueue/gateway/server/gateway bin/server
+	@echo "Gateway server ready at bin/server"
 
 build-submitqueue-orchestrator-linux: ## Build Orchestrator Linux binary for Docker
 	@echo "Building Orchestrator Linux binary for Docker..."
@@ -177,8 +193,11 @@ integration-test-submitqueue-orchestrator: ## Run Orchestrator integration tests
 license-fix: ## Add missing license headers to source files
 	@$(BAZEL) run //tool/linter/licenseheader -- --fix
 
-lint: lint-fmt lint-license lint-message-id lint-queue-shard ## Run all linters
+lint: lint-binary lint-fmt lint-license lint-message-id lint-queue-shard ## Run all linters
 	@echo "All lint checks passed."
+
+lint-binary: ## Check no binary file is tracked in the repository
+	@$(BAZEL) run //tool/linter/binaryfile
 
 lint-fmt: fmt ## Check code formatting (fails if unformatted)
 	$(call assert_clean,make fmt)
