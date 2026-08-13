@@ -401,8 +401,10 @@ query-deps:
 query-targets:
 	@$(BAZEL) query //...
 
-run-client-submitqueue-gateway: ## Run the gateway client against a running gateway (SERVER_ADDR, MESSAGE)
-	@$(BAZEL) run //service/submitqueue/gateway/client:gateway -- -addr $(or $(SERVER_ADDR),localhost:8081) -message "$(or $(MESSAGE),ping)"
+run-client-submitqueue-gateway: ## Run the gateway client (ARGS="land -queue q -pr <url>"; defaults to a ping)
+	@$(BAZEL) run //service/submitqueue/gateway/client:gateway -- \
+		-addr $(or $(SERVER_ADDR),localhost:8081) \
+		$(if $(ARGS),$(ARGS),ping -message "$(or $(MESSAGE),ping)")
 
 run-client-submitqueue-orchestrator: ## Run the orchestrator client against a running orchestrator (SERVER_ADDR, MESSAGE)
 	@$(BAZEL) run //service/submitqueue/orchestrator/client:orchestrator -- -addr $(or $(SERVER_ADDR),localhost:8082) -message "$(or $(MESSAGE),ping)"

@@ -15,6 +15,8 @@ WORKSPACE
 # Built binaries
 bin/
 .docker-bin/
+# Root-anchored so it cannot shadow the client/ source packages.
+/client
 
 # Make completion cache
 .make_targets_cache
