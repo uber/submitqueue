@@ -432,6 +432,62 @@ func (s *E2EIntegrationSuite) TestReadAPIs() {
 	assert.Equal(t, secondSummary.Request.LastError, secondEvents[len(secondEvents)-1].LastError)
 }
 
+// TestLand_DependentBatch_StaysSpeculatingAcrossAnUnresolvedDependency covers
+// the oscillation the request log used to report as a regression: a head
+// speculates while a dependency is unresolved, the dependency then fails, and
+// the head re-plans and lands anyway. Throughout, it is speculating exactly
+// once — the trail must never revisit a stage.
+//
+// The wait is forced rather than raced. Batch IDs come from a per-queue counter
+// as "<queue>/batch/<n>", so the leader on a fresh queue is batch/1, and the
+// build topic partitions by batch — closing the gate on that partition before
+// anything is published holds the leader's build and nothing else, so the
+// follower reaches a passed path while its dependency is still outstanding.
+//
+// No invalidated event is asserted. A passed path stops occupying build budget,
+// so by the time the leader fails the follower has usually funded the other side
+// of the guess too; it never loses its last live passed path, which is what
+// invalidated reports. The unit tests cover that state directly.
+func (s *E2EIntegrationSuite) TestLand_DependentBatch_StaysSpeculatingAcrossAnUnresolvedDependency() {
+	const queue = "e2e-respeculate-queue"
+	const gateGroup = "orchestrator"
+	leaderBatch := queue + "/batch/1"
+
+	s.closeGate(gateGroup, leaderBatch, "e2e: hold the leader's build so its dependent speculates first")
+	defer s.openGate(gateGroup, leaderBatch)
+
+	leader := s.land(queue, "github://github.example.com/uber/e2e-respeculate/pull/1/1111111111111111111111111111111111111111?sq-fake=build-fail")
+	follower := s.land(queue, "github://github.example.com/uber/e2e-respeculate/pull/2/2222222222222222222222222222222222222222")
+	s.log.Logf("Landed leader=%s (build held) follower=%s", leader.sqid, follower.sqid)
+
+	// The baseline analyzer serializes the queue, so the follower depends on the
+	// leader and speculates on it succeeding. That build passes while the leader
+	// is still held: the follower's own work is done and only the leader is
+	// outstanding, which is the wait.
+	s.awaitEvent(follower, entity.RequestEventWaiting)
+	assert.Equal(s.T(), entity.RequestStatusSpeculating, s.mustStatus(follower),
+		"a head waiting on its dependency has not finished speculating")
+
+	// Release the leader. Its build fails, contradicting the guess the follower
+	// speculated on, and the follower has to reach the trunk another way.
+	s.openGate(gateGroup, leaderBatch)
+	assert.Equal(s.T(), entity.RequestStatusError, s.awaitTerminal(leader),
+		"the leader's build carries a failure marker, so it must not land")
+
+	s.awaitStatus(follower, entity.RequestStatusLanded)
+	s.assertStatusesInOrder(follower,
+		entity.RequestStatusSpeculating,
+		entity.RequestStatusSpeculated,
+		entity.RequestStatusLanding,
+		entity.RequestStatusLanded,
+	)
+
+	// The point of the exercise: one trip through speculation, however many
+	// guesses it took. A second entry renders as the pipeline going backwards.
+	s.assertStatusCount(follower, entity.RequestStatusSpeculating, 1)
+	s.assertStatusCount(follower, entity.RequestStatusSpeculated, 1)
+}
+
 // TestCancelRequest_InvalidSqid verifies the gateway rejects an empty sqid
 // synchronously before publishing anything to the cancel queue.
 func (s *E2EIntegrationSuite) TestCancelRequest_InvalidSqid() {

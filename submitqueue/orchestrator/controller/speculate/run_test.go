@@ -1469,6 +1469,54 @@ func TestRun_ReportsInvalidatedWhenPassedPathBreaks(t *testing.T) {
 	assert.Equal(t, entry.ID, h.logs[0].Metadata["path_id"])
 }
 
+// The e2e shape: the dependency turns terminal in the same run that walks the
+// head resting on it, so the break is seen by a later generation of the loop
+// rather than by the read.
+func TestRun_ReportsInvalidatedWhenTheDependencyFailsInTheSameRun(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	leader := entity.Batch{ID: dep1, Queue: "q", State: entity.BatchStateSpeculating, Version: 1}
+	followerBatch := entity.Batch{
+		ID: head, Queue: "q", Contains: []string{"q/1"},
+		State: entity.BatchStateSpeculating, Dependencies: []string{dep1}, Version: 1,
+	}
+
+	h := newRunHarness(t, ctrl, &scriptedSpeculator{}, []entity.Batch{leader, followerBatch})
+	h.noBuildsDispatched()
+
+	// The leader has nothing left that can pass, so this run fails it.
+	h.pathSets.EXPECT().Get(gomock.Any(), dep1).Return(entity.SpeculationPathSet{
+		Head:    dep1,
+		Paths:   []entity.SpeculationPathEntry{entryFor(entity.SpeculationPath{Head: dep1}, entity.SpeculationPathStatusFailed)},
+		Version: 1,
+	}, nil).AnyTimes()
+	h.batches.EXPECT().
+		Update(gomock.Any(), updateTo{id: dep1, state: entity.BatchStateFailed}, int32(1), int32(2)).Return(nil)
+
+	// The follower passed on the guess that the leader would succeed.
+	passed := entity.SpeculationPath{
+		Head:         head,
+		Dependencies: []entity.PathDependency{{Batch: dep1, Assumption: entity.DependencyAssumptionSucceeds}},
+	}
+	entry := entryFor(passed, entity.SpeculationPathStatusPassed)
+	h.pathSets.EXPECT().Get(gomock.Any(), head).Return(entity.SpeculationPathSet{
+		Head:    head,
+		Paths:   []entity.SpeculationPathEntry{entry},
+		Version: 1,
+	}, nil).AnyTimes()
+	h.pathSets.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+
+	require.NoError(t, h.run(dep1))
+
+	var got []entity.RequestEvent
+	for _, entry := range h.logs {
+		if entry.Type == entity.RequestLogTypeEvent {
+			got = append(got, entry.Event)
+		}
+	}
+	assert.Contains(t, got, entity.RequestEventInvalidated)
+}
+
 // A merge is decided on the same live passed path a wait would be reported
 // from, so without the gate every landed request would carry a wait it never
 // had.
