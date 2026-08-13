@@ -43,11 +43,17 @@ Greenness is recorded as a **health degree** where **`0` means green** and **hig
 
 A **project** is a caller-defined slice of the repository. Whole-repo greenness answers "is the branch green at this URI"; project greenness answers the question deployments actually need — **"is *this project* green at this URI"**, and its dual, "what is the latest URI at which this project is green". Projects are derived from the build's **target graph**: analysis sees which targets broke and maps them to projects. How targets map to projects is implementer-specific (directory ownership, build metadata, an external service) and lives behind the project-analysis stage, not in the core pipeline.
 
+### Promotion ref — the last green commit, by name
+
+A Queue may have a **promotion ref**: a stable branch name (say `verified-main` for `monorepo/main`) that Stovepipe advances to each commit it establishes green. A deploy gate or cache warmer then fetches that name and needs to know nothing about Stovepipe, URIs, or greenness degrees. It is the pull-shaped counterpart to Hooks' push: the same fact, available to consumers that would rather resolve a ref than subscribe to an event.
+
+The ref is a *cache* of the last-green URI, not a second record of greenness. It only ever moves where the bookmark already points, so it inherits the same forward-only rule, and a commit that a history rewrite has dropped from the branch is skipped rather than retried — the next green commit corrects the ref. Which ref a Queue promotes to, and whether it has one at all, is `SourceControl` configuration resolved from the Queue name alongside the repo and credentials; the pipeline names only the commit, never a branch.
+
 ## Extensions
 
 | Extension | Responsibility |
 |---|---|
-| **SourceControl** | Resolve a Queue name to its current head URI; answer ancestry/comparison questions between two URIs (is the new head a fast-forward descendant of the last green, or was history rewritten?); enumerate commits in a range. The sole owner of URI semantics. |
+| **SourceControl** | Resolve a Queue name to its current head URI; answer ancestry/comparison questions between two URIs (is the new head a fast-forward descendant of the last green, or was history rewritten?); enumerate commits in a range; advance the Queue's **promotion ref** to a commit. The sole owner of URI semantics, including which refs a Queue name resolves to. |
 | **build-runner** | Build a scope at a URI (optionally relative to a baseline URI), returning pass/fail and the target graph. See [build-runner.md](../submitqueue/build-runner.md). |
 | **Hooks** | Publish Stovepipe's greenness events to downstream systems — "this URI / this project is now green (or not green)". Fire-and-forget notification, decoupled so Stovepipe does not know or care who consumes the event. |
 | **Storage** | Persist Queues (incl. last-green URI), Requests, build records, and per-URI / per-project greenness. Key/value-shaped per the extension-design rules in [CLAUDE.md](../../../CLAUDE.md). |
@@ -129,7 +135,7 @@ The pipeline runs in two phases against the same Request. **Phase 1** establishe
 2. **process** — decides build strategy (incremental since last-green vs full monorepo), gates concurrent work per Queue, coalesces backlog to the latest head, and publishes to `build`. See [process.md](steps/process.md).
 3. **build** — runs the build-runner for the chosen scope. A flag derived from `process` decides whether to build relative to the last-green **baseline URI** (incremental) or from scratch (full). It records a build and publishes the BuildID.
 4. **buildsignal** — records the build's status and target graph when the build completes, then releases the Queue's `in_flight_count` slot, projects the terminal status onto the Request (`succeeded` / `failed` / `cancelled`), and publishes the RequestID to `record`.
-5. **record** — writes the whole-repo greenness for the head URI (`0` green / `1` broken to start), derived from the Request's build outcome. On green it advances the Queue's **last-green URI** so the next `process` can build incrementally from here. It fires the **Hooks** extension with the green/not-green event, then fans out into Phase 2. The Queue's `in_flight_count` was already released by `buildsignal` when the build went terminal.
+5. **record** — writes the whole-repo greenness for the head URI (`0` green / `1` broken to start), derived from the Request's build outcome. On green it advances the Queue's **last-green URI** so the next `process` can build incrementally from here, and asks `SourceControl` to advance the Queue's **promotion ref** to the same commit (see [Promotion ref](#promotion-ref)). It fires the **Hooks** extension with the green/not-green event, then fans out into Phase 2. The Queue's `in_flight_count` was already released by `buildsignal` when the build went terminal.
 
 ### Phase 2 — project greenness
 
@@ -147,7 +153,7 @@ The pipeline runs in two phases against the same Request. **Phase 1** establishe
 | **process** | RequestID | build | Build strategy, concurrency gate, backlog coalescing → [process.md](steps/process.md) |
 | **build** | RequestID | buildsignal | Run the build-runner for the chosen scope; baseline = last-green URI iff incremental |
 | **buildsignal** | BuildID | record (P1), record (P2) | Record build status + target graph; release `in_flight_count`; project the outcome onto the Request; signal completion |
-| **record** | RequestID | analyze (P1→P2), Hooks | Write greenness; advance last-green URI on whole-repo green; fire Hooks |
+| **record** | RequestID | analyze (P1→P2), Hooks | Write greenness; on whole-repo green advance last-green URI and the promotion ref; fire Hooks |
 | **analyze** | RequestID | build | Map broken/at-risk targets → projects; decide project-scoped builds |
 
 ## Step RFCs

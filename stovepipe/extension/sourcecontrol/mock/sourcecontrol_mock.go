@@ -102,6 +102,20 @@ func (mr *MockSourceControlMockRecorder) Latest(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Latest", reflect.TypeOf((*MockSourceControl)(nil).Latest), ctx)
 }
 
+// Promote mocks base method.
+func (m *MockSourceControl) Promote(ctx context.Context, uri string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Promote", ctx, uri)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Promote indicates an expected call of Promote.
+func (mr *MockSourceControlMockRecorder) Promote(ctx, uri any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Promote", reflect.TypeOf((*MockSourceControl)(nil).Promote), ctx, uri)
+}
+
 // MockFactory is a mock of Factory interface.
 type MockFactory struct {
 	ctrl     *gomock.Controller

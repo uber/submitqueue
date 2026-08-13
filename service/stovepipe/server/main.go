@@ -130,7 +130,10 @@ func (f *inMemoryCounterFactory) For(config counter.Config) (counter.Counter, er
 
 // fakeSourceControlFactory is the example SourceControl factory. It seeds each queue with a
 // deterministic single-commit history so ingest resolves a stable head URI (and re-ingesting
-// the same queue exercises the dedup path). A real deployment supplies a VCS-backed factory.
+// the same queue exercises the dedup path). It has no ref to promote onto, so a promotion
+// only succeeds or reports the commit as gone, and the local stack shows it in the record
+// consumer's log. A real deployment supplies a VCS-backed factory, which is also where the
+// promotion ref is resolved from the queue name, alongside the repo and credentials.
 type fakeSourceControlFactory struct{}
 
 func (fakeSourceControlFactory) For(cfg sourcecontrol.Config) (sourcecontrol.SourceControl, error) {
