@@ -97,11 +97,14 @@ Opening pull requests by hand gets old fast. `demo-pr` creates them, enqueues th
 make demo-pr                      # 3 independent PRs, each enqueued as it is created
 make demo-pr COUNT=8              # more traffic
 make demo-pr FILES=8              # wider changes, more files per PR
+make demo-pr CONCURRENCY=1        # create them one at a time
 make demo-pr STACKED=true         # one stack, enqueued as a single request
 make demo-pr LAND=false           # create only, print the land command
 ```
 
 Each pull request is enqueued the moment it exists, so the queue is already working on the first while the last is still being opened. That overlap is the point: a queue holding one request at a time never batches, never analyzes a conflict against another batch, and never speculates. Nothing is awaited until every request is in.
+
+Independent pull requests are created **five at a time** by default (`CONCURRENCY`). Opening one is several round trips — a branch, a commit per file, the pull request itself — so creating them serially was most of what a large run spent its time on, and it delayed the overlap the demo exists to show. A stack ignores the setting: each of its changes is based on the branch before it, so the next cannot be cut until the previous head exists. Lower it if the provider starts refusing bursts.
 
 The table is there from the start — one row per land request, drawn before the first pull request exists and filled in as the run proceeds. Whatever is happening right now is a single line underneath it, so creating and enqueuing does not scroll the table away:
 
@@ -128,6 +131,40 @@ A change touches several files rather than one, each committed separately, so it
 The command exits non-zero if any request settles anywhere other than `landed`, so it works in a script. Piped to a file it prints a fresh table whenever a request moves — and not when only the clock did — instead of redrawing in place.
 
 ## Watching it work
+
+The queue itself is readable without creating any traffic:
+
+```bash
+make land-list                       # a table of recent requests
+make land-list SINCE=24h LIMIT=200   # a wider window
+make land-watch                      # follow them until they settle
+```
+
+Both draw the same table `make demo-pr` does — the demo tool and the CLI share it — but against whatever the queue already holds, so watching a queue no longer means adding to it. `land-watch` fixes its set when it starts and exits non-zero if any request in that set finishes anywhere other than `landed`, which makes it usable from a script. A request accepted after the watch begins is not picked up: a watch that grew as the queue did would never finish.
+
+Under the hood these are `client list` and `client watch`, which take a queue and reach any gateway:
+
+```bash
+bazel run //service/submitqueue/gateway/client:gateway -- \
+  -addr sq.example.com:443 -tls list -queue my-queue -since 1h
+```
+
+`-addr` is passed to the dialler untouched, so `dns:///host:port` and `unix:///path.sock` work as well as a plain `host:port`. Transport security is a separate flag rather than part of the address, because gRPC keeps target resolution and credentials apart — there is no `grpcs://` to write.
+
+Bear in mind that a request reads `batched` for the whole of its active life (see above), so a listing of a busy queue is mostly `batched` rows until the pipeline reports its finer stages.
+
+### Authentication
+
+The gateway admits every caller. It is a sandbox stack, and nothing in it checks a credential.
+
+The client can still present one, for a gateway reached through something that does — a proxy, a mesh sidecar, an ingress that terminates auth ahead of the service. It reads `SQ_TOKEN` by default and sends it as `Authorization: Bearer …`; `-token-env` names a different variable, and an unset one sends nothing rather than failing, which is how it stays usable against a stack that wants no credential.
+
+```bash
+SQ_TOKEN=$(cat ~/.sq-token) bazel run //service/submitqueue/gateway/client:gateway -- \
+  -addr sq.example.com:443 -tls list -queue my-queue
+```
+
+### Service logs
 
 ```bash
 docker compose -p submitqueue-provider logs -f runway-service

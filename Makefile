@@ -56,7 +56,10 @@ export SQ_PROVIDER_CONFIG_DIR ?= $(REPO_ROOT)/service/submitqueue/demo/provider/
 DEMO_REPO ?= behinddwalls/sq-demo
 COUNT ?= 3
 FILES ?= 3
+CONCURRENCY ?= 5
 STACKED ?= false
+SINCE ?= 1h
+LIMIT ?= 50
 LAND ?= true
 WATCH ?= true
 QUEUE ?= demo-queue
@@ -169,13 +172,14 @@ clean-proto: ## Clean generated proto files
 	@rm -f $(foreach p,$(PROTO_PACKAGES),$(p)/protopb/*.pb.go $(p)/protopb/*.pb.yarpc.go)
 	@echo "Proto clean complete!"
 
-demo-pr: ## Create N PRs in the demo repo, enqueue each as it is created, and watch (COUNT=3 FILES=3; needs GITHUB_TOKEN)
+demo-pr: ## Create N PRs in the demo repo, enqueue each as it is created, and watch (COUNT=3 FILES=3 CONCURRENCY=5; needs GITHUB_TOKEN)
 	@$(BAZEL) run //service/submitqueue/demo/pr -- \
 		-repo $(DEMO_REPO) \
 		-count $(COUNT) \
 		-files $(FILES) \
+		-concurrency $(CONCURRENCY) \
 		-stacked=$(STACKED) \
-		-gateway $(GATEWAY_ADDR) \
+		-addr $(GATEWAY_ADDR) \
 		-queue $(QUEUE) \
 		-strategy $(STRATEGY) \
 		-land=$(LAND) -watch=$(WATCH)
@@ -242,6 +246,14 @@ land-status: ## Read a landed request's status (SQID=... [QUEUE=demo-queue])
 	@if [ -z "$(SQID)" ]; then echo "Usage: make land-status SQID=demo-queue/1 [QUEUE=demo-queue]"; exit 2; fi
 	@$(BAZEL) run //service/submitqueue/gateway/client:gateway -- \
 		-addr $(GATEWAY_ADDR) status -queue $(QUEUE) -sqid $(SQID)
+
+land-list: ## Show a queue's recent requests as a table (QUEUE=demo-queue SINCE=1h LIMIT=50)
+	@$(BAZEL) run //service/submitqueue/gateway/client:gateway -- \
+		-addr $(GATEWAY_ADDR) list -queue $(QUEUE) -since $(SINCE) -limit $(LIMIT)
+
+land-watch: ## Follow a queue's requests until they settle (QUEUE=demo-queue SINCE=15m LIMIT=50)
+	@$(BAZEL) run //service/submitqueue/gateway/client:gateway -- \
+		-addr $(GATEWAY_ADDR) watch -queue $(QUEUE) -since $(SINCE) -limit $(LIMIT)
 
 license-fix: ## Add missing license headers to source files
 	@$(BAZEL) run //tool/linter/licenseheader -- --fix

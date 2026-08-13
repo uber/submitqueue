@@ -25,19 +25,13 @@ queues:
     # detection.
     analyzer: {type: pathoverlap, by: directory}
 
-    # Every build succeeds instantly, so a land completes in seconds and the
-    # demo exercises the merge rather than waiting on CI.
-    buildRunner: 
-      type: githubactions
-      owner: behinddwalls
-      repo: sq-demo
-      workflow: ci.yml        # file name or numeric workflow id
-      ref: main               # the branch the workflow definition is read from
+    # The build runner is inherited from the defaults above, so every build
+    # succeeds instantly. A land then completes in seconds, and the demo shows
+    # the queue and the merge rather than spending its time waiting on CI.
     #
-    # To run real CI instead, replace the line above with the block below. It
-    # needs a workflow in the target repository that is triggerable by
-    # workflow_dispatch and accepts the sq_base_uris / sq_head_uris inputs, and
-    # a token with the `workflow` scope.
+    # To run real CI instead, add the block below. It needs a workflow in the
+    # target repository that is triggerable by workflow_dispatch and accepts the
+    # sq_base_uris / sq_head_uris inputs, and a token with the `workflow` scope.
     #
     # buildRunner:
     #   type: githubactions
