@@ -15,34 +15,38 @@ Cross-domain Go code (errors, metrics, consumer framework, HTTP helpers, shared 
 
 ## Quick Start
 
-Requires Docker and Docker Compose. See [Development Setup](doc/howto/DEVELOPMENT.md) for full prerequisites.
+Land a change and watch it reach `landed`. Requires Docker and Docker Compose, and nothing else — no repository, no account, no token. See [Development Setup](doc/howto/DEVELOPMENT.md) for full prerequisites.
 
 ```bash
-# Build everything
-make build
-
-# Run unit tests
-make test
-
-# Start full stack locally (Gateway + Orchestrator + MySQL via Docker Compose)
+# Start the full stack (Gateway + Orchestrator + Runway + MySQL)
 make local-submitqueue-start
 
-# Test with grpcurl
-grpcurl -plaintext -d '{"message": "hello"}' localhost:8081 uber.submitqueue.gateway.SubmitQueueGateway/Ping
+# Compose publishes a random host port; the line above prints it, as does this
+make local-submitqueue-ps
+export GATEWAY_ADDR=localhost:<gateway port>
+
+# Submit a change, and follow the receipt it returns
+make land QUEUE=test-queue \
+  URI='git://git.example.com/demo/refs%2Fheads%2Ffeature-a/1111111111111111111111111111111111111111'
+make land-status QUEUE=test-queue SQID=test-queue/1
 
 # Stop services
 make local-stop
 ```
 
-See [service/README.md](service/README.md) for more examples including running individual services and clients.
+Every integration at the edges is faked — the change provider, CI, and the merge itself — so the run is free and finishes in seconds. The queue's own logic is real: validation, batching, conflict analysis, and speculation all run, and the request log records the full trail from `accepted` to `landed`. Nothing is pushed to any repository.
+
+[Quickstart](doc/howto/QUICKSTART.md) explains the change URI, how to make a change fail on demand, and what this does and does not prove. From there, `make e2e-git-test` adds a real git merge (still no credentials), and [PROVIDER-E2E.md](doc/howto/PROVIDER-E2E.md) adds a live provider. See [service/README.md](service/README.md) for running individual services and clients.
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
+| [Quickstart](doc/howto/QUICKSTART.md) | Land a change locally with no credentials |
 | [Development Setup](doc/howto/DEVELOPMENT.md) | Prerequisites, build, environment, IDE setup |
 | [Contributing](CONTRIBUTING.md) | How to contribute, workflow, guidelines |
 | [Testing Guide](doc/howto/TESTING.md) | Unit, integration, and E2E testing patterns |
+| [Landing real changes](doc/howto/PROVIDER-E2E.md) | Running the pipeline against a live provider |
 | [Architecture Guide](CLAUDE.md) | Project layout, patterns, conventions |
 | [Examples](service/README.md) | Running services, clients, API reference |
 | [RFCs](doc/rfc/index.md) | Design documents and proposals |
