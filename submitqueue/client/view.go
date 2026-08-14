@@ -116,12 +116,18 @@ func (rw *Row) elapsed() string {
 	return fmt.Sprintf("%ds", int(end.Sub(rw.Submitted).Seconds()))
 }
 
-// stage is the path the request has taken, as the gateway recorded it. The
-// waiting marker covers the gap between acceptance and the first recorded
-// event, so an accepted request is never shown as though nothing happened.
+// stage is the path the request has taken, as the gateway recorded it.
+//
+// A one-shot listing reads the queue's receipts and does not fetch a history
+// per request, so it has the position each one holds but not how it got there.
+// That is worth showing on its own: a column of "…" says nothing about a queue
+// whose rows are mostly `speculating`.
 func (rw *Row) stage() string {
 	if len(rw.Trail) > 0 {
 		return strings.Join(rw.Trail, " → ")
+	}
+	if rw.Status != "" {
+		return rw.Status
 	}
 	if rw.SQID != "" {
 		return "…"
@@ -139,26 +145,97 @@ func Draw(rows []*Row, status string) {
 // digest reduces a request's recorded history to the trail worth showing, the
 // status it currently holds, and the error the latest event carried. A status
 // recorded more than once in a row is one step in the trail, not several.
+//
+// The history holds two kinds of entry. A status is a position the request
+// reached, and those are the trail's spine. An event is something that happened
+// while it sat at one — a build starting, a passed path waiting on a dependency
+// — and never changes the position, so each is shown against the status it
+// occurred under rather than as a step of its own:
+//
+//	batched → speculating [building ×2, built] → speculated
+//
+// Repeats are counted rather than listed. A batch runs one build per
+// speculation path, so a request that speculated widely records `building` many
+// times, and a trail that spelled each one out would say less than the count
+// does while pushing the rest of the row off the line.
 func digest(events []*pb.HistoryEvent) (trail []string, status, note string) {
 	if len(events) == 0 {
 		return nil, "", ""
 	}
-	for _, e := range events {
-		if e == nil || e.Status == "" {
-			continue
+
+	// Events seen since the last status, in first-seen order with their counts,
+	// so they can be attached once the step they belong to is complete.
+	var pending []string
+	var last string
+	counts := make(map[string]int)
+
+	flush := func() {
+		if len(trail) == 0 || len(pending) == 0 {
+			pending, counts = nil, make(map[string]int)
+			return
 		}
-		if len(trail) > 0 && trail[len(trail)-1] == e.Status {
-			continue
-		}
-		trail = append(trail, e.Status)
+		trail[len(trail)-1] += " [" + strings.Join(annotate(pending, counts), ", ") + "]"
+		pending, counts = nil, make(map[string]int)
 	}
+
+	for _, e := range events {
+		if e == nil {
+			continue
+		}
+		if e.Status == "" {
+			if e.Event == "" {
+				continue
+			}
+			if counts[e.Event] == 0 {
+				pending = append(pending, e.Event)
+			}
+			counts[e.Event]++
+			continue
+		}
+		// A status repeated back-to-back is one step, but anything recorded
+		// against it in between still belongs to that step.
+		if e.Status == last {
+			continue
+		}
+		flush()
+		trail = append(trail, e.Status)
+		last = e.Status
+	}
+	flush()
+
 	if last := events[len(events)-1]; last != nil {
 		status, note = last.Status, last.LastError
 	}
-	if status == "" && len(trail) > 0 {
-		status = trail[len(trail)-1]
+	// The last entry may be an event, which leaves the request where it was.
+	if status == "" {
+		status = currentStatus(events)
 	}
 	return trail, status, note
+}
+
+// annotate renders each event with its count, dropping the count when it
+// happened once.
+func annotate(order []string, counts map[string]int) []string {
+	out := make([]string, 0, len(order))
+	for _, event := range order {
+		if counts[event] > 1 {
+			out = append(out, fmt.Sprintf("%s ×%d", event, counts[event]))
+			continue
+		}
+		out = append(out, event)
+	}
+	return out
+}
+
+// currentStatus is the last position the request reached, ignoring anything
+// recorded while it sat there.
+func currentStatus(events []*pb.HistoryEvent) string {
+	for i := len(events) - 1; i >= 0; i-- {
+		if e := events[i]; e != nil && e.Status != "" {
+			return e.Status
+		}
+	}
+	return ""
 }
 
 // outcome is the one-line verdict shown under the finished table.

@@ -81,10 +81,79 @@ func TestDigest(t *testing.T) {
 			wantNote:   "merge conflict",
 		},
 		{
-			name:       "events without a status do not become steps",
+			name:       "entries carrying neither a status nor an event are ignored",
 			events:     []*pb.HistoryEvent{{Status: ""}, {Status: "accepted"}, {Status: ""}},
 			wantTrail:  []string{"accepted"},
 			wantStatus: "accepted",
+		},
+		{
+			// An event is something that happened while the request sat at a
+			// position, so it belongs to that step rather than being one.
+			name: "an event is shown against the status it happened under",
+			events: []*pb.HistoryEvent{
+				{Status: "batched"},
+				{Status: "speculating"},
+				{Event: "building"},
+				{Event: "built"},
+				{Status: "speculated"},
+			},
+			wantTrail:  []string{"batched", "speculating [building, built]", "speculated"},
+			wantStatus: "speculated",
+		},
+		{
+			// One build per speculation path, so a request that speculated
+			// widely records this many times over.
+			name: "repeats are counted rather than listed",
+			events: []*pb.HistoryEvent{
+				{Status: "speculating"},
+				{Event: "building"}, {Event: "building"}, {Event: "building"},
+				{Event: "built"},
+			},
+			wantTrail:  []string{"speculating [building ×3, built]"},
+			wantStatus: "speculating",
+		},
+		{
+			name: "an event does not move the request off its status",
+			events: []*pb.HistoryEvent{
+				{Status: "speculating"}, {Event: "waiting"},
+			},
+			wantTrail:  []string{"speculating [waiting]"},
+			wantStatus: "speculating",
+		},
+		{
+			name: "each status collects only the events recorded under it",
+			events: []*pb.HistoryEvent{
+				{Status: "speculating"}, {Event: "building"},
+				{Status: "speculated"}, {Event: "invalidated"},
+				{Status: "speculating"}, {Event: "building"}, {Event: "built"},
+			},
+			wantTrail: []string{
+				"speculating [building]", "speculated [invalidated]", "speculating [building, built]",
+			},
+			wantStatus: "speculating",
+		},
+		{
+			name: "a status repeated around its own events is still one step",
+			events: []*pb.HistoryEvent{
+				{Status: "speculating"}, {Event: "building"}, {Status: "speculating"}, {Event: "built"},
+			},
+			wantTrail:  []string{"speculating [building, built]"},
+			wantStatus: "speculating",
+		},
+		{
+			name:       "an event before any status has nothing to attach to",
+			events:     []*pb.HistoryEvent{{Event: "building"}, {Status: "accepted"}},
+			wantTrail:  []string{"accepted"},
+			wantStatus: "accepted",
+		},
+		{
+			name: "an error carried by an event is still reported",
+			events: []*pb.HistoryEvent{
+				{Status: "speculating"}, {Event: "building", LastError: "runner unreachable"},
+			},
+			wantTrail:  []string{"speculating [building]"},
+			wantStatus: "speculating",
+			wantNote:   "runner unreachable",
 		},
 	}
 
@@ -164,6 +233,23 @@ func TestRowStage(t *testing.T) {
 			name: "the states it passed through",
 			row:  Row{SQID: "demo-queue/17", Trail: []string{"accepted", "started", "landed"}},
 			want: "accepted → started → landed",
+		},
+		{
+			// A listing reads receipts rather than histories, so it knows where
+			// a request is without knowing how it got there. That still beats
+			// a column of nothing.
+			name: "the position it holds, when the trail was never fetched",
+			row:  Row{SQID: "demo-queue/17", Status: "speculating"},
+			want: "speculating",
+		},
+		{
+			name: "a fetched trail is preferred over the bare position",
+			row: Row{
+				SQID:   "demo-queue/17",
+				Status: "landed",
+				Trail:  []string{"accepted", "landed"},
+			},
+			want: "accepted → landed",
 		},
 	}
 
