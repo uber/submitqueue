@@ -94,7 +94,11 @@ func NewIngestController(
 func (c *IngestController) Ingest(ctx context.Context, req entity.IngestRequest) (result entity.IngestResult, retErr error) {
 	const opName = "ingest"
 
-	op := metrics.Begin(c.metricsScope, opName, metrics.LongLatencyBuckets)
+	metricsScope := c.metricsScope
+	if req.Queue != "" {
+		metricsScope = metricsScope.Tagged(map[string]string{"queue": req.Queue})
+	}
+	op := metrics.Begin(metricsScope, opName, metrics.LongLatencyBuckets)
 	defer func() { op.Complete(retErr) }()
 
 	if req.Queue == "" {
