@@ -683,13 +683,16 @@ func TestSubscriber_PartitionWorkerPollAndDeliver(t *testing.T) {
 	// Verify offset was initialized only once
 	assert.True(t, w.offsetInitialized)
 
+	// The partition key is deliberately absent: topics partitioned by an entity
+	// ID mint a key per request, batch or build, and tally never reclaims the
+	// subscope a tag value creates. Partition identity stays in the logs.
 	snapshot := metricsScope.Snapshot()
 	var foundStart bool
 	for _, counter := range snapshot.Counters() {
 		if counter.Name() == "test.subscriber.poll.start" {
 			foundStart = true
 			assert.Equal(t, "test_topic", counter.Tags()["topic"])
-			assert.Equal(t, "part-1", counter.Tags()["partition_key"])
+			assert.NotContains(t, counter.Tags(), "partition_key")
 		}
 	}
 	assert.True(t, foundStart, "expected poll.start counter")
@@ -700,7 +703,7 @@ func TestSubscriber_PartitionWorkerPollAndDeliver(t *testing.T) {
 			foundFinish = true
 			assert.Equal(t, "success", histogram.Tags()["result"])
 			assert.Equal(t, "test_topic", histogram.Tags()["topic"])
-			assert.Equal(t, "part-1", histogram.Tags()["partition_key"])
+			assert.NotContains(t, histogram.Tags(), "partition_key")
 		}
 		assert.NotContains(t, histogram.Name(), "poll.latency")
 	}
