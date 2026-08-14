@@ -85,6 +85,8 @@ The third of those is what separates this tool from the replay systems it otherw
 
 What must hold regardless of implementation is narrower, and worth stating because it is what the harness actually asserts. The [invariants](#invariants-and-fault-injection) hold throughout every run, whatever the stages decide. A request's outcome must be explicable by the stage outputs it saw: a candidate is free to change what a stage decides and not free to change how the pipeline responds to a decision. Because the timing model is deliberately not deterministic, that second property is asserted as an invariant during a run rather than checked by comparing two runs event for event.
 
+How a behavioral difference is computed, and what variation is deliberately not reported as one, is [Diffing](#diffing) below.
+
 ## Reproducibility per stage
 
 Not every stage's output can be regenerated on demand, and that decides how its corpus is collected (see [Corpus collection](#corpus-collection)). A stage reproducible from a pinned identity can be replayed against any candidate. A stage that is not can only be compared against the single answer history happened to record.
@@ -95,7 +97,7 @@ Not every stage's output can be regenerated on demand, and that decides how its 
 | validate (dry-run) | `Merger.CheckMergeability` | Yes, if the checked base is pinned | A pure function of two fixed commits. Production resolves the base live, against the target branch's current tip, which only looks non-deterministic because the tip moves. Record the base sha actually checked as part of the identity and it replays like any other git operation. |
 | batch | `conflict.Analyzer` | Yes | [`pathoverlap`](../../submitqueue/extension/conflict/pathoverlap/pathoverlap.go) resolves each batch's changed paths through an injected `changeset.Resolver`, a pure function of git shas. |
 | speculate | `Scorer` | Yes | [`heuristic.Score`](../../submitqueue/extension/scorer/heuristic/scorer.go) resolves a batch's changes through the same kind of resolver, then buckets a static value function against static config. No live or mutable input. |
-| speculate | `Speculator` | Yes | Deterministic given the batch and dependency-graph state and the Scorer's output. No external dependency. |
+| speculate | `Speculator` | Yes | Deterministic given the batch and dependency-graph state and the Scorer's output. No external dependency, and the Generator and Allocator it composes inherit the property. |
 | build | `BuildRunner` | **No** | Pass/fail and duration depend on the CI backend's condition at execution time, such as infra load and flakiness. No identity pins that. See [The build oracle](#the-build-oracle). |
 | merge | `Merger.Merge` | Yes, for the mechanical part | Computing the resulting commit for a given base, change, and strategy is a pure git operation, replayable the same way `CheckMergeability` is. |
 
@@ -147,7 +149,7 @@ Compatibility is worth checking in both directions. Replaying a candidate's corp
 
 **Bounded content.** The corpus holds identities and the derived metadata a stage consumed: change URIs, commit shas, changed-path sets. It never holds file contents or diffs, so retention applies to a small and comparatively insensitive artifact. This is a bound rather than an identity-only guarantee, since resolved path sets are deliberately retained for the durability reason above.
 
-**Tiering.** Three corpus sizes keep the tool usable: a small one checked into the repository that runs in seconds on every change, a medium one exercised nightly, and the full historical corpus on demand for changes that warrant it. Without the small tier, the machinery exists but nobody drives it.
+**Tiering.** Three corpus sizes keep the tool usable: a small one versioned with the repository that runs in seconds on every change, a medium one exercised nightly, and the full historical corpus on demand for changes that warrant it. What the small tier versions is the description — which identities to exercise, under what configuration — rather than a frozen set of recorded outputs, so it stays subject to the regeneration rule above. Without this tier the machinery exists but nobody drives it.
 
 **Selection as code.** The filters that define a corpus, such as which states, which queues, and which window, are sampling decisions that bias every result derived from it. They belong in versioned code, reviewable and diffable like any other input, not in a query pasted into a runbook.
 
@@ -286,7 +288,7 @@ Ordered by how much each step delivers relative to the assumptions it requires, 
 - **Instrumenting every extension call in production.** The obvious way to build a corpus, and largely redundant, since the entities normal operation already persists carry most of what replay needs. A new hot-path write for data that is already durable costs latency and buys little.
 - **Re-executing builds during replay.** Faithful for the paths history actually built, impossible for the rest, and prohibitively expensive at trace scale. A modeled outcome with a declared bias is the honest trade; see [The build oracle](#the-build-oracle).
 - **Full deterministic scheduling.** The strongest fidelity story available, but it means replacing the scheduler rather than injecting a clock, which is a project in its own right. Repetitions and reported intervals absorb the residual noise at a small fraction of the cost.
-- **A corpus of checked-in fixtures.** The obvious route to a reviewable, deterministic baseline, and it rots: interfaces move, entries stop parsing, and refreshing them is manual work that happens only after a confusing failure. Deriving entries from a versioned description costs more up front and retires a permanent maintenance tax; see [Corpus collection](#corpus-collection).
+- **A corpus of frozen recorded outputs, versioned and refreshed by hand.** The obvious route to a reviewable, deterministic baseline, and it rots: interfaces move, entries stop parsing, and refreshing them is manual work that happens only after a confusing failure. What gets versioned instead is the description entries are regenerated from; see [Corpus collection](#corpus-collection). Outputs that can only be mined from history, build results above all, are the exception, and carry provenance for exactly that reason.
 - **Structural-similarity matching to align records.** Necessary where replay regenerates identifiers and no stable key survives, and unnecessary here for exactly that reason. Content-hash alignment on declared keys covers this system's cases at a fraction of the complexity.
 - **Synthetic workloads only.** Hermetic, cheap, and the right basis for the correctness work, but the benchmarking questions turn on conflict structure and arrival bursts that only real traffic exhibits. Synthetic generation stays; it does not stand alone.
 - *Acknowledged:* every Layer 3 number depends on the build oracle, and no amount of harness engineering removes that dependency. The backtest bounds the error rather than eliminating it, which is why the simulator is positioned as a comparison instrument and not a forecast.
