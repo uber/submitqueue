@@ -450,15 +450,27 @@ func registerDLQControllers(
 ) (int, error) {
 	var count int
 
-	processDLQController := dlq.NewController(logger, scope, store, dlq.TopicKey(stovepipemq.TopicKeyProcess), "stovepipe-process-dlq")
+	processDLQController := dlq.NewRequestController(logger, scope, store, dlq.DecodeProcessRequest, dlq.TopicKey(stovepipemq.TopicKeyProcess), "stovepipe-process-dlq")
 	if err := c.Register(processDLQController); err != nil {
 		return count, fmt.Errorf("failed to register process dlq controller: %w", err)
+	}
+	count++
+
+	buildDLQController := dlq.NewRequestController(logger, scope, store, dlq.DecodeBuildRequest, dlq.TopicKey(stovepipemq.TopicKeyBuild), "stovepipe-build-dlq")
+	if err := c.Register(buildDLQController); err != nil {
+		return count, fmt.Errorf("failed to register build dlq controller: %w", err)
 	}
 	count++
 
 	buildSignalDLQController := dlq.NewBuildSignalController(logger, scope, store, dlq.TopicKey(stovepipemq.TopicKeyBuildSignal), "stovepipe-buildsignal-dlq")
 	if err := c.Register(buildSignalDLQController); err != nil {
 		return count, fmt.Errorf("failed to register buildsignal dlq controller: %w", err)
+	}
+	count++
+
+	recordDLQController := dlq.NewRequestController(logger, scope, store, dlq.DecodeRecord, dlq.TopicKey(stovepipemq.TopicKeyRecord), "stovepipe-record-dlq")
+	if err := c.Register(recordDLQController); err != nil {
+		return count, fmt.Errorf("failed to register record dlq controller: %w", err)
 	}
 	count++
 
@@ -512,10 +524,22 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-process-dlq"),
 		},
 		{
+			Key:          dlq.TopicKey(stovepipemq.TopicKeyBuild),
+			Name:         "build_dlq",
+			Queue:        q,
+			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-build-dlq"),
+		},
+		{
 			Key:          dlq.TopicKey(stovepipemq.TopicKeyBuildSignal),
 			Name:         "buildsignal_dlq",
 			Queue:        q,
 			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-buildsignal-dlq"),
+		},
+		{
+			Key:          dlq.TopicKey(stovepipemq.TopicKeyRecord),
+			Name:         "record_dlq",
+			Queue:        q,
+			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-record-dlq"),
 		},
 	})
 }

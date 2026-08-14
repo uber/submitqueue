@@ -24,54 +24,115 @@ import (
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 )
 
-// Controller is the DLQ reconciler for the process stage. It is registered against the
-// process topic's DLQ (see TopicKey) and, on each delivery, decodes the request id from
-// the same ProcessRequest payload the primary process controller consumes, then drives
-// the referenced request to a terminal failed state via failRequest.
-type Controller struct {
+// RequestRef is the request a request-scoped DLQ payload refers to.
+type RequestRef struct {
+	// ID is the request id to reconcile. Format: "request/<queue>/<counter>".
+	ID string
+	// Queue is the name of the queue owning the request, used to resolve its store.
+	// Empty on payloads written before the field existed.
+	Queue string
+}
+
+// RequestRefDecoder recovers the referenced request from a DLQ message's raw bytes.
+// The request-scoped stages carry a distinct payload type each, so the wiring injects
+// the decoder matching the topic being drained.
+type RequestRefDecoder func(payload []byte) (RequestRef, error)
+
+// requestRefPayload is the shape the request-scoped pipeline payloads share: the
+// affected request's id plus its queue. ProcessRequest, BuildRequest, and Record all
+// satisfy it, which is what lets one reconciler serve all three of their DLQs.
+type requestRefPayload interface {
+	proto.Message
+	GetId() string
+	GetQueueName() string
+}
+
+// DecodeProcessRequest decodes the payload the process topic carries.
+func DecodeProcessRequest(payload []byte) (RequestRef, error) {
+	return decodeRequestRef(payload, &stovepipemq.ProcessRequest{})
+}
+
+// DecodeBuildRequest decodes the payload the build topic carries.
+func DecodeBuildRequest(payload []byte) (RequestRef, error) {
+	return decodeRequestRef(payload, &stovepipemq.BuildRequest{})
+}
+
+// DecodeRecord decodes the payload the record topic carries.
+func DecodeRecord(payload []byte) (RequestRef, error) {
+	return decodeRequestRef(payload, &stovepipemq.Record{})
+}
+
+// decodeRequestRef decodes payload into msg and reads the request identity off it.
+// The three payload types are separate messages that happen to carry identical
+// fields, so decoding into the right one is all that varies — and it must stay the
+// right one: contracts evolve per stage, so treating them as interchangeable would
+// make one stage's added field silently misread at another.
+func decodeRequestRef[T requestRefPayload](payload []byte, msg T) (RequestRef, error) {
+	if err := stovepipemq.Unmarshal(payload, msg); err != nil {
+		return RequestRef{}, err
+	}
+	return RequestRef{ID: msg.GetId(), Queue: msg.GetQueueName()}, nil
+}
+
+// requestController is the DLQ reconciler for the request-scoped stages: process,
+// build, and record. It is registered once per stage against that stage's DLQ topic
+// (see TopicKey) with the decoder matching the stage's payload, and on each delivery
+// decodes the request id, then drives the referenced request to a terminal failed
+// state via failRequest.
+//
+// How much each stage's reconciliation actually has to do differs, even though the
+// steps are identical — a request dead-lettering at build is still processing and
+// holding a slot, while one dead-lettering at record has already been driven
+// terminal by buildsignal. See README.md for the per-stage reasoning.
+type requestController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	stores        storage.Factory
+	decode        RequestRefDecoder
+	opName        string
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
 
-// Verify Controller implements consumer.Controller at compile time.
-var _ consumer.Controller = (*Controller)(nil)
+// Verify requestController implements consumer.Controller at compile time.
+var _ consumer.Controller = (*requestController)(nil)
 
-// _opName is the metric operation name shared by every emit in this file.
-const _opName = "process_dlq"
-
-// NewController creates a new DLQ controller for the process stage's dead-letter topic.
-// topicKey is typically dlq.TopicKey(stovepipemq.TopicKeyProcess).
-func NewController(
+// NewRequestController creates a DLQ controller for a request-scoped stage's
+// dead-letter topic. topicKey is typically dlq.TopicKey of the primary topic, and
+// decode must match that topic's payload shape.
+func NewRequestController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
+	decode RequestRefDecoder,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
-) *Controller {
-	return &Controller{
-		logger:        logger.Named("process_dlq_controller"),
-		metricsScope:  scope.SubScope("process_dlq_controller"),
+) consumer.Controller {
+	name := string(topicKey) + "_controller"
+	return &requestController{
+		logger:        logger.Named(name),
+		metricsScope:  scope.SubScope(name),
 		stores:        stores,
+		decode:        decode,
+		opName:        string(topicKey),
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
 }
 
-// Process reconciles a single DLQ delivery for the process topic. Returns nil to ack
-// (success) or an error to nack (retry) — pair this controller only with a consumer
+// Process reconciles a single DLQ delivery for a request-scoped topic. Returns nil to
+// ack (success) or an error to nack (retry) — pair this controller only with a consumer
 // wired with errs.AlwaysRetryableProcessor so a transient reconcile failure retries
 // instead of dead-lettering the DLQ message itself.
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
+func (c *requestController) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
-	pr := &stovepipemq.ProcessRequest{}
-	if err := stovepipemq.Unmarshal(msg.Payload, pr); err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "deserialize_errors", 1)
+	ref, err := c.decode(msg.Payload)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, c.opName, "deserialize_errors", 1)
 		// Decoding the same bytes normally fails deterministically, but this error is
 		// still retried: the DLQ consumer's AlwaysRetryableProcessor (see Process doc)
 		// classifies every error as retryable. That is deliberate — the recoverable
@@ -83,29 +144,29 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		// non-terminal.
 		return fmt.Errorf("failed to decode dlq payload: %w", err)
 	}
-	if pr.Id == "" {
-		metrics.NamedCounter(c.metricsScope, _opName, "empty_id_errors", 1)
+	if ref.ID == "" {
+		metrics.NamedCounter(c.metricsScope, c.opName, "empty_id_errors", 1)
 		return fmt.Errorf("dlq payload decoded to empty request id")
 	}
 
-	store, err := c.stores.For(storage.Config{QueueName: pr.GetQueueName()})
+	store, err := c.stores.For(storage.Config{QueueName: ref.Queue})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, c.opName, "storage_resolve_errors", 1)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
-		return fmt.Errorf("failed to resolve storage for queue %q: %w", pr.GetQueueName(), err)
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", ref.Queue, err)
 	}
 
 	dmeta := delivery.Metadata()
 	c.logger.Warnw("dlq message received",
-		"request_id", pr.Id,
+		"request_id", ref.ID,
 		"attempt", delivery.Attempt(),
 		"dlq_original_topic", dmeta["dlq.original_topic"],
 		"dlq_failure_count", dmeta["dlq.failure_count"],
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
 
-	if err := failRequest(ctx, store, c.logger, pr.Id); err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "reconcile_errors", 1)
+	if err := failRequest(ctx, store, c.logger, ref.ID); err != nil {
+		metrics.NamedCounter(c.metricsScope, c.opName, "reconcile_errors", 1)
 		return err
 	}
 
@@ -113,16 +174,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 }
 
 // Name returns the controller name for logging and metrics.
-func (c *Controller) Name() string {
-	return "process_dlq"
+func (c *requestController) Name() string {
+	return string(c.topicKey)
 }
 
 // TopicKey returns the topic key this controller subscribes to.
-func (c *Controller) TopicKey() consumer.TopicKey {
+func (c *requestController) TopicKey() consumer.TopicKey {
 	return c.topicKey
 }
 
 // ConsumerGroup returns the consumer group for offset tracking.
-func (c *Controller) ConsumerGroup() string {
+func (c *requestController) ConsumerGroup() string {
 	return c.consumerGroup
 }

@@ -59,7 +59,7 @@ Validation is expensive and shares a baseline, so heads arriving while an earlie
 | Source | Field | Meaning |
 |---|---|---|
 | Queue row | `last_green_uri` | Bookmark `record` advances on whole-repo green; empty until first green. |
-| Queue row | `in_flight_count` | Requests past `process` and not yet terminal. `process` increments on admit; `record` (or DLQ reconciliation) decrements on terminal. |
+| Queue row | `in_flight_count` | Requests past `process` and not yet terminal. `process` increments on admit; `buildsignal` (or DLQ reconciliation) decrements when the build goes terminal. |
 | Queue config | `max_concurrent` | Cap on concurrent in-flight validations. **Default 1** (global wiring default for MVP; per-queue override when a Stovepipe `queueconfig` extension lands). |
 
 A slot is held from admit until the build goes terminal (`process → build → buildsignal`), not just while `process` runs. It is released when the Request reaches **any** terminal state and `in_flight_count` is decremented — `buildsignal` recording the build's outcome, success *or* failure, or the DLQ reconciler forcing a terminal `failed` (see [integrity](#in_flight_count-integrity)). A build *failure* frees the slot just like a success; only a Request that never terminates keeps its slot.
@@ -110,11 +110,11 @@ Superseded Requests reach an explicit terminal `superseded` state, so "not yet v
 
 ## Concurrency lifecycle
 
-The gate is **not** tied to `process` returning; a slot taken at admit is held until Phase 1 terminates at `record` (or DLQ reconciliation).
+The gate is **not** tied to `process` returning; a slot taken at admit is held until the build goes terminal at `buildsignal` (or DLQ reconciliation).
 
 **Rules**
 
-1. **One slot per in-flight validation** (MVP: one per Queue). `process` increments `in_flight_count` on admit; `record` decrements on terminal.
+1. **One slot per in-flight validation** (MVP: one per Queue). `process` increments `in_flight_count` on admit; `buildsignal` decrements when the build goes terminal — the slot bounds concurrent *builds*, so it is returned as soon as the build is over rather than waiting for `record` (see [buildsignal.md](buildsignal.md#algorithm)).
 2. **No skip-ahead while in-flight.** The latest head waits for a slot until the running validation completes; it never preempts.
 3. **Intermediates are superseded on sight**, gate open or closed — no slot consumed (step 5).
 4. **Coalesce-to-latest on gate open.** When a slot frees, the waiting latest head is admitted.
@@ -125,7 +125,7 @@ The gate is **not** tied to `process` returning; a slot taken at admit is held u
 1. **A** admitted (`in_flight_count = 1`), published to `build`.
 2. While A runs, **B**, **C**, **D** are ingested (`latest_request_id = D.id`).
 3. B: older than D → **superseded** (acked), though A is still in flight. Same for **C**. D is latest but the gate is closed → **waits for slot** (held).
-4. A's build finishes → `record` records A's greenness, `in_flight_count → 0`.
+4. A's build goes terminal → `buildsignal` releases the slot (`in_flight_count → 0`) and `record` records A's greenness.
 5. D's re-check → gate open, D still latest → **D admitted**, published to `build`.
 6. While D runs, **E**, **F** ingested (`latest_request_id = F.id`). E superseded on sight; F waits for slot.
 7. D completes → slot frees → **F admitted**.
@@ -134,7 +134,7 @@ A, D, F each get a full cycle; B, C, E end `superseded`. No intermediate is vali
 
 **What does not happen**
 
-- `process` returning does **not** free a slot — only `record` (or DLQ reconciliation) does.
+- `process` returning does **not** free a slot — only `buildsignal` (or DLQ reconciliation) does.
 - A newer head does **not** preempt an in-flight validation.
 - Deferred messages are **not** failed or dead-lettered — they wait for the gate (see [Waiting for a slot](#waiting-for-a-slot)).
 
@@ -153,10 +153,12 @@ The window to handle is "count incremented, state not yet `processing`". Admit d
 
 `in_flight_count` is a cache; the source of truth is **the set of non-terminal Request rows for the Queue**. Two rules keep it from drifting:
 
-1. **Decrement is bound to the terminal transition.** The single CAS that moves a Request non-terminal → terminal (in `record` or the DLQ reconciler) also decrements. Being CAS-guarded, it fires exactly once per Request even under redelivery.
+1. **Release precedes the terminal transition.** `Queue` and `Request` are separate entities with no cross-entity transaction, so the decrement cannot share the CAS that moves a Request non-terminal → terminal. It is its own CAS on the Queue row, and both writers — `buildsignal` and the DLQ reconciler — issue it *before* the Request's terminal write, preserving the invariant *a terminal Request has already released its slot*. That invariant is what makes it safe for redelivery and for the DLQ reconciler to skip terminal Requests. The ordering picks which crash failure mode we accept: a crash between the two writes leaves the Request non-terminal, so redelivery repeats both and decrements again — transiently over-admitting by one slot until the zero clamp reconverges — whereas the reverse order would leak the slot permanently. Over-admission is the failure mode this pipeline prefers; see [buildsignal.md](buildsignal.md#algorithm) for the full argument.
 2. **Increment is bound to the admit transition.** `process` increments only on the `accepted → processing` CAS; a redelivery of an already-`processing` Request takes step 3 and does not increment again.
 
-On a crash between admit and `record`, the Request stays non-terminal; visibility-timeout redelivery drives it forward, and the fail-closed DLQ path eventually forces it terminal, decrementing as it does. The count can drift high only transiently and self-heals as stuck Requests terminate. A reconciler that recomputes the count from non-terminal rows can be added later if drift proves real, but isn't required for MVP.
+On a crash between admit and the build going terminal, the Request stays non-terminal; visibility-timeout redelivery drives it forward, and the fail-closed DLQ path eventually forces it terminal, decrementing as it does. The count can drift high only transiently and self-heals as stuck Requests terminate. A reconciler that recomputes the count from non-terminal rows can be added later if drift proves real, but isn't required for MVP.
+
+One residual case escapes both paths: a hard crash between admit's two writes leaves an `accepted` Request holding a slot that neither redelivery nor reconciliation can tell apart from a Request that never claimed one, since neither records per-request slot ownership. The DLQ reconciler therefore releases only for `processing`, the one non-terminal state that can own a slot; widening it to `accepted` would decrement for the far more common Request that never claimed one. Distinguishing them needs the per-request lease sketched under [Per-Queue concurrency gate](#per-queue-concurrency-gate).
 
 ## Edge cases
 
@@ -175,7 +177,7 @@ Runtime coordination only — fields the pipeline writes under CAS:
 |---|---|---|
 | `name` | Stable logical id (`monorepo/main`); the string ingest accepts | ingest (create) |
 | `last_green_uri` | Bookmark; empty until first green | record |
-| `in_flight_count` | Active Phase 1 validations | process (+1), record/DLQ (−1) |
+| `in_flight_count` | Active Phase 1 validations | process (+1), buildsignal/DLQ (−1) |
 | `latest_request_id` | Request id of the newest head ingest accepted | ingest |
 | `version` | Optimistic-locking version | all writers |
 

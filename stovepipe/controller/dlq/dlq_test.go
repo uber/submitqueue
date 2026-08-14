@@ -48,7 +48,7 @@ type staticStorageFactory struct{ store storage.Storage }
 // For returns the fixed store aggregate for any queue.
 func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
 
-func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, dlqMocks) {
+func newController(t *testing.T, ctrl *gomock.Controller, decode RequestRefDecoder, primary consumer.TopicKey) (consumer.Controller, dlqMocks) {
 	t.Helper()
 
 	m := dlqMocks{
@@ -60,7 +60,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, dlqMocks
 	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
 	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 
-	c := NewController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), staticStorageFactory{store: store}, TopicKey(stovepipemq.TopicKeyProcess), "stovepipe-process-dlq")
+	c := NewRequestController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), staticStorageFactory{store: store}, decode, TopicKey(primary), string(TopicKey(primary)))
 	return c, m
 }
 
@@ -80,6 +80,20 @@ func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) consumer.De
 func processPayload(t *testing.T, id string) []byte {
 	t.Helper()
 	b, err := stovepipemq.Marshal(&stovepipemq.ProcessRequest{Id: id})
+	require.NoError(t, err)
+	return b
+}
+
+func buildPayload(t *testing.T, id string) []byte {
+	t.Helper()
+	b, err := stovepipemq.Marshal(&stovepipemq.BuildRequest{Id: id})
+	require.NoError(t, err)
+	return b
+}
+
+func recordPayload(t *testing.T, id string) []byte {
+	t.Helper()
+	b, err := stovepipemq.Marshal(&stovepipemq.Record{Id: id})
 	require.NoError(t, err)
 	return b
 }
@@ -136,6 +150,15 @@ func TestProcess(t *testing.T) {
 			name: "already failed is a no-op",
 			setup: func(m dlqMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateFailed), nil)
+			},
+		},
+		{
+			// The record stage's reconciler sees this state routinely, since
+			// buildsignal stamps the outcome before publishing to record. A
+			// dead-lettered record must not restate a green build as failed.
+			name: "already succeeded is a no-op",
+			setup: func(m dlqMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateSucceeded), nil)
 			},
 		},
 		{
@@ -204,7 +227,7 @@ func TestProcess(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
-			c, m := newController(t, ctrl)
+			c, m := newController(t, ctrl, DecodeProcessRequest, stovepipemq.TopicKeyProcess)
 			tt.setup(m)
 
 			payload := tt.payload
@@ -223,6 +246,60 @@ func TestProcess(t *testing.T) {
 	}
 }
 
+// TestRequestScopedStages covers each request-scoped stage end to end through its own
+// payload type, so a stage wired to the wrong decoder fails here rather than silently
+// leaving its requests stuck.
+func TestRequestScopedStages(t *testing.T) {
+	tests := []struct {
+		name    string
+		primary consumer.TopicKey
+		decode  RequestRefDecoder
+		payload func(t *testing.T, id string) []byte
+	}{
+		{
+			name:    "process",
+			primary: stovepipemq.TopicKeyProcess,
+			decode:  DecodeProcessRequest,
+			payload: processPayload,
+		},
+		{
+			name:    "build",
+			primary: stovepipemq.TopicKeyBuild,
+			decode:  DecodeBuildRequest,
+			payload: buildPayload,
+		},
+		{
+			name:    "record",
+			primary: stovepipemq.TopicKeyRecord,
+			decode:  DecodeRecord,
+			payload: recordPayload,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl, tt.decode, tt.primary)
+
+			m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
+			m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+				Name: testQueue, InFlightCount: 1, Version: 5,
+			}, nil)
+			m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{
+				Name: testQueue, InFlightCount: 0, Version: 5,
+			}, int32(5), int32(6)).Return(nil)
+			failed := requestWithState(entity.RequestStateProcessing)
+			failed.State = entity.RequestStateFailed
+			m.reqStore.EXPECT().Update(gomock.Any(), failed, int32(2), int32(3)).Return(nil)
+
+			require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, tt.payload(t, testID))))
+			assert.Equal(t, TopicKey(tt.primary), c.TopicKey())
+		})
+	}
+}
+
 func TestTopicKey(t *testing.T) {
 	assert.Equal(t, consumer.TopicKey("process_dlq"), TopicKey(stovepipemq.TopicKeyProcess))
+	assert.Equal(t, consumer.TopicKey("build_dlq"), TopicKey(stovepipemq.TopicKeyBuild))
+	assert.Equal(t, consumer.TopicKey("record_dlq"), TopicKey(stovepipemq.TopicKeyRecord))
 }
