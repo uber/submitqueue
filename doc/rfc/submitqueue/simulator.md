@@ -48,21 +48,23 @@ Swappability is defined at the finest seam a queue can wire independently, not a
 
 | Stage | Substitutable seams |
 |---|---|
-| validate | `Validator` |
+| validate | `Validator`; `MergeChecker`, the fail-fast prediction that a request's changes can merge |
 | batch | `conflict.Analyzer`, and the path projection it is constructed with |
-| speculate | `Scorer`; `Speculator`, and separately the Generator and Allocator it composes |
+| speculate | `Scorer`; `Generator` and `Allocator`, each on its own and jointly as the `Speculator` composing them |
 | build | `BuildRunner` |
-| merge | `Merger`, and the merge strategy it applies |
+| merge | `Merger`, which is Runway's rather than SubmitQueue's, and the default strategy it is constructed with |
 
 A composed extension is substitutable both as a whole and in its parts, and the harness has to support holding every part but one fixed. Comparing two Generators under the same Allocator and the same Scorer is the only way to attribute a change in ranking quality to the Generator, and the [diagnostics](#diagnostics) below already measure the two separately. Measuring them apart while being unable to substitute them apart would be an odd place to land.
 
+Not every type in a seam's package is a seam. `Generator.Generate` returns an `Iterator`, and that iterator is part of the Generator's own contract rather than a second wiring point: a queue chooses a Generator, and the Generator decides what it yields. The test is whether a queue can wire the thing independently, which is also why the path projection and the default merge strategy appear above as construction parameters of their extensions rather than as separate rows.
+
 Two consequences follow. A seam joins the variant axis the moment a queue can wire it independently, which is why that list belongs to the extension contract rather than to this document. And wiring a seam proves nothing about exercising it: a corpus that never produced a batch under budget pressure says nothing about an Allocator, however faithfully that Allocator was substituted. Coverage is therefore reported per seam, and a seam the corpus never exercised is reported as untested rather than as agreeing.
 
-Storage, counters, and change providers are substituted too, but as infrastructure rather than as variants. They are what the harness replaces in order to run at all, not what it compares.
+Storage, queue configuration, and change providers are substituted too, but as infrastructure rather than as variants. They are what the harness replaces in order to run at all, not what it compares.
 
 ## Three layers
 
-**Layer 1 — extension replay.** Every behavioral seam in this codebase is a `Factory` interface that takes identity and resolves what it needs internally: `conflict.Analyzer`, `Scorer`, `Speculator`, `BuildRunner`, `Validator`, `Merger` (see [extension-contract.md](extension-contract.md)). That uniformity means one mechanism covers all of them, and it reaches the composed seams above by substituting a `Speculator` assembled from a candidate Generator and the incumbent Allocator, or the reverse. Record the (identity, output) pairs a stage produced, then replay those identities through a candidate and diff the results. Nothing else runs: no other stage, no queue, no storage beyond the stage's own resolver. It is fast enough for every change, and it answers a narrower question than an end-to-end run, which is exactly what makes the answer trustworthy. Does this stage's output differ, given identical input, independent of what anything downstream would have done with it?
+**Layer 1 — extension replay.** Every behavioral seam in this codebase is a `Factory` interface that takes identity and resolves what it needs internally: `conflict.Analyzer`, `Scorer`, `Generator`, `Allocator`, `BuildRunner`, `Validator`, `MergeChecker`, and Runway's `Merger` (see [extension-contract.md](extension-contract.md)). That uniformity means one mechanism covers all of them, and it reaches a composed seam by assembling it from a candidate part and incumbent ones — a `Speculator` built from a candidate Generator and the incumbent Allocator, or the reverse. Record the (identity, output) pairs a stage produced, then replay those identities through a candidate and diff the results. Nothing else runs: no other stage, no queue, no storage beyond the stage's own resolver. It is fast enough for every change, and it answers a narrower question than an end-to-end run, which is exactly what makes the answer trustworthy. Does this stage's output differ, given identical input, independent of what anything downstream would have done with it?
 
 **Layer 2 — controller replay.** Much of the correctness logic lives in controllers rather than extensions. A speculation run is "all controller code, except step 3," per [speculation.md](speculation.md): finalization, refutation, output validation, and the merge gate are all controller-owned. Layer 1 cannot reach them, and Layer 3 is too heavy to run on every change. Layer 2 fills the gap by feeding a recorded queue snapshot to a controller and diffing the actions and writes it emits. This is unusually tractable here, because a speculate run is built as a pure function of a single read: "every run recomputes the whole queue from that single read," with no dependence on any earlier run. That is precisely the property replay wants. Other controllers that are similarly snapshot-determined can use the same mechanism.
 
@@ -94,6 +96,7 @@ Not every stage's output can be regenerated on demand, and that decides how its 
 | Stage | Extension | Reproducible? | Why |
 |---|---|---|---|
 | validate | `Validator` | Yes | Resolves change content at a fixed commit; deterministic given that identity. |
+| validate | `MergeChecker` | Yes, if the checked base is pinned | Predicts mergeability from the request's own change against the target's tip. Same live-tip caveat as the dry run below, and the same fix. |
 | validate (dry-run) | `Merger.CheckMergeability` | Yes, if the checked base is pinned | A pure function of two fixed commits. Production resolves the base live, against the target branch's current tip, which only looks non-deterministic because the tip moves. Record the base sha actually checked as part of the identity and it replays like any other git operation. |
 | batch | `conflict.Analyzer` | Yes | [`pathoverlap`](../../submitqueue/extension/conflict/pathoverlap/pathoverlap.go) resolves each batch's changed paths through an injected `changeset.Resolver`, a pure function of git shas. |
 | speculate | `Scorer` | Yes | [`heuristic.Score`](../../submitqueue/extension/scorer/heuristic/scorer.go) resolves a batch's changes through the same kind of resolver, then buckets a static value function against static config. No live or mutable input. |
