@@ -68,3 +68,33 @@ func TestProvider_Get_ErrorMarker(t *testing.T) {
 	}})
 	require.Error(t, err)
 }
+
+// Without this the path-keyed conflict analyzers see a change that touches
+// nothing, and a batch that touches nothing conflicts with nothing — so a queue
+// configured to serialize on overlap silently runs everything in parallel.
+func TestProvider_Get_ReportsFilesFromTheURI(t *testing.T) {
+	p := New(testCfg)
+
+	infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{
+		URIs: []string{"git://git.example.com/sandbox/refs%2Fheads%2Fa/abc?sq-files=demo/alpha/one.txt,demo/alpha/two.txt"},
+	}})
+	require.NoError(t, err)
+	require.Len(t, infos, 1)
+
+	paths := make([]string, 0, len(infos[0].Details.ChangedFiles))
+	for _, f := range infos[0].Details.ChangedFiles {
+		paths = append(paths, f.Path)
+	}
+	assert.Equal(t, []string{"demo/alpha/one.txt", "demo/alpha/two.txt"}, paths)
+}
+
+func TestProvider_Get_ReportsNoFilesWithoutTheMarker(t *testing.T) {
+	p := New(testCfg)
+
+	infos, err := p.Get(context.Background(), entity.Request{Change: change.Change{
+		URIs: []string{"git://git.example.com/sandbox/refs%2Fheads%2Fa/abc"},
+	}})
+	require.NoError(t, err)
+	require.Len(t, infos, 1)
+	assert.Empty(t, infos[0].Details.ChangedFiles)
+}

@@ -6,7 +6,6 @@ COMPOSE = docker-compose
 
 # SubmitQueue compose files
 COMPOSE_FILE = service/submitqueue/docker-compose.yml
-PROVIDER_COMPOSE_FILE = service/submitqueue/docker-compose.provider.yml
 GATEWAY_COMPOSE_FILE = service/submitqueue/gateway/server/docker-compose.yml
 ORCHESTRATOR_COMPOSE_FILE = service/submitqueue/orchestrator/server/docker-compose.yml
 
@@ -46,15 +45,40 @@ PROTO_PACKAGES = api/base/change api/base/mergestrategy api/base/messagequeue ap
 # Set REPO_ROOT for docker-compose
 export REPO_ROOT := $(shell pwd)
 
-# Which provider the demo stack targets. Selects a configuration directory rather
-# than a code path, so adding a provider means adding a directory — see
+# Which provider the demo stack targets, and the only difference between a free
+# local run and a live one. Selects a configuration directory rather than a code
+# path, so adding a provider is mostly adding a directory — see
 # service/submitqueue/demo/provider/README.md.
-PROVIDER ?= github
+#
+#   fake    a change is a URI; nothing merges anywhere. Needs nothing.
+#   git     branches in a bare repository on disk; real fetch, cherry-pick, push.
+#   github  real pull requests. Needs a repository and GITHUB_TOKEN.
+PROVIDER ?= fake
 export SQ_PROVIDER_CONFIG_DIR ?= $(REPO_ROOT)/service/submitqueue/demo/provider/$(PROVIDER)
 
-# Defaults for `make land` / `make demo-pr` against the provider demo stack.
+# Which compose overlay each mode needs. This cannot live in the provider
+# directory: the two config files say how the services are configured, not what
+# has to be mounted or which credential has to be present for them to start.
+PROVIDER_COMPOSE_FILE_fake = service/submitqueue/docker-compose.fake.yml
+PROVIDER_COMPOSE_FILE_git = service/submitqueue/docker-compose.git.yml
+PROVIDER_COMPOSE_FILE_github = service/submitqueue/docker-compose.provider.yml
+PROVIDER_COMPOSE_FILE = $(PROVIDER_COMPOSE_FILE_$(PROVIDER))
+
+# Where PROVIDER=git keeps the bare repository it merges into. Outside the
+# repository, so a demo leaves nothing in a checkout, and bind-mounted rather
+# than kept in a volume so `git log` on the host can show what landed.
+#
+# SQ_RUNWAY_CHECKOUT_DIR is deliberately not set: unset, Runway's working trees
+# live in a named volume instead of on the host. See docker-compose.git.yml.
+export SQ_GIT_SANDBOX_DIR ?= /tmp/sq-sandbox
+
+# Defaults for `make land` / `make demo-requests` against the provider demo stack.
 DEMO_REPO ?= behinddwalls/sq-demo
 COUNT ?= 3
+# How many folders demo-requests spreads its changes across, which decides how
+# much they conflict: changes sharing a folder are batched in order, changes in
+# different folders go out together. 0 picks one per run.
+FOLDERS ?= 0
 FILES ?= 3
 CONCURRENCY ?= 5
 STACKED ?= false
@@ -77,7 +101,7 @@ define assert_clean
 	fi
 endef
 
-.PHONY: build build-all-linux build-runway-linux build-submitqueue-gateway-client build-submitqueue-gateway-linux build-submitqueue-gateway-server build-submitqueue-orchestrator-linux build-stovepipe-linux build-stovepipe-linux-debug check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator license-fix lint lint-binary lint-fmt lint-license local-init-runway-queue-schema local-init-stovepipe-schemas local-runway-start local-runway-stop local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-debug-start local-stovepipe-logs local-stovepipe-start local-stovepipe-stop mocks proto query-deps query-targets run-client-runway run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
+.PHONY: build build-all-linux build-runway-linux build-submitqueue-gateway-client build-submitqueue-gateway-linux build-submitqueue-gateway-server build-submitqueue-orchestrator-linux build-stovepipe-linux build-stovepipe-linux-debug check-gazelle check-mocks check-tidy clean clean-proto demo-requests deps e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator license-fix lint lint-binary lint-fmt lint-license local-init-runway-queue-schema local-init-stovepipe-schemas local-runway-start local-runway-stop local-submitqueue-stop local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-debug-start local-stovepipe-logs local-stovepipe-start local-stovepipe-stop mocks proto query-deps query-targets run-client-runway run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
 
 
 build: ## Build all services and examples
@@ -172,10 +196,13 @@ clean-proto: ## Clean generated proto files
 	@rm -f $(foreach p,$(PROTO_PACKAGES),$(p)/protopb/*.pb.go $(p)/protopb/*.pb.yarpc.go)
 	@echo "Proto clean complete!"
 
-demo-pr: ## Create N PRs in the demo repo, enqueue each as it is created, and watch (COUNT=3 FILES=3 CONCURRENCY=5; needs GITHUB_TOKEN)
-	@$(BAZEL) run //service/submitqueue/demo/pr -- \
+demo-requests: ## Create N changes, enqueue each as it is created, and watch (PROVIDER=fake|git|github COUNT=3 FOLDERS=0 FILES=3 CONCURRENCY=5)
+	@$(BAZEL) run //service/submitqueue/demo/requests -- \
+		-provider $(PROVIDER) \
 		-repo $(DEMO_REPO) \
+		-sandbox-dir $(SQ_GIT_SANDBOX_DIR) \
 		-count $(COUNT) \
+		-folders $(FOLDERS) \
 		-files $(FILES) \
 		-concurrency $(CONCURRENCY) \
 		-stacked=$(STACKED) \
@@ -277,10 +304,13 @@ lint-message-id: ## Check queue messages are only constructed through platform/p
 lint-queue-shard: ## Check every table's primary key leads with the queue column
 	@$(BAZEL) run //tool/linter/queueshard
 
-local-submitqueue-clean: ## Stop and remove all local services, volumes, and images
+local-submitqueue-clean: ## Stop the stack and remove its volumes, images, and PROVIDER=git's sandbox
 	@echo "Cleaning all services and data..."
-	@$(COMPOSE) -f $(COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down -v --rmi local
-	@echo "All services, volumes, and images removed."
+	@# The overlay is named so that volumes it declares — Runway's checkouts —
+	@# are removed too, rather than surviving as an orphan.
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down -v --rmi local
+	@rm -rf "$(SQ_GIT_SANDBOX_DIR)"
+	@echo "All services, volumes, images, and $(SQ_GIT_SANDBOX_DIR) removed."
 
 local-submitqueue-gateway-start: build-submitqueue-gateway-linux ## Start Gateway service locally (Gateway + 2 MySQL databases)
 	@echo "Starting Gateway with docker-compose..."
@@ -300,26 +330,6 @@ local-submitqueue-gateway-stop: ## Stop Gateway service
 	@echo "Stopping Gateway services..."
 	@$(COMPOSE) -f $(GATEWAY_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
 	@echo "Gateway services stopped."
-
-local-provider-start: build-all-linux ## Start the full stack against a real provider (PROVIDER=github; needs GITHUB_TOKEN)
-	@echo "Starting full stack against provider '$(PROVIDER)' ($(SQ_PROVIDER_CONFIG_DIR))..."
-	@test -f "$(SQ_PROVIDER_CONFIG_DIR)/merge.yaml" \
-		|| { echo "No such provider '$(PROVIDER)': $(SQ_PROVIDER_CONFIG_DIR)/merge.yaml not found"; exit 2; }
-	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -p $(PROVIDER_LOCAL_PROJECT) up -d --build --wait
-	@echo "Applying database schemas..."
-	@$(MAKE) -s local-init-submitqueue-schemas SUBMITQUEUE_LOCAL_PROJECT=$(PROVIDER_LOCAL_PROJECT)
-	@echo ""
-	@echo "✅ Stack is running against provider '$(PROVIDER)'."
-	@echo ""
-	@echo "Gateway gRPC port: $$(docker port $(PROVIDER_LOCAL_PROJECT)-gateway-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'unknown')"
-	@echo ""
-	@echo "Land a change with:"
-	@echo "  make land PR=https://github.com/owner/repo/pull/7 GATEWAY_ADDR=localhost:<gateway port>"
-
-local-provider-stop: ## Stop the provider demo stack
-	@echo "Stopping provider stack..."
-	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -p $(PROVIDER_LOCAL_PROJECT) down
-	@echo "Provider stack stopped."
 
 local-init-submitqueue-schemas: ## Manually apply all database schemas
 	@echo "Applying storage schema to mysql-app..."
@@ -429,17 +439,48 @@ local-submitqueue-restart: build-all-linux ## Restart all services (rebuild and 
 	@echo "Services restarted!"
 	@make local-submitqueue-ps
 
-local-submitqueue-start: build-all-linux ## Start full stack (Gateway + Orchestrator + MySQL)
-	@echo "Starting full stack with docker-compose..."
-	@$(COMPOSE) -f $(COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) up -d --build --wait
+local-submitqueue-start: build-all-linux ## Start full stack (PROVIDER=fake|git|github; github needs GITHUB_TOKEN)
+	@echo "Starting full stack against provider '$(PROVIDER)' ($(SQ_PROVIDER_CONFIG_DIR))..."
+	@test -f "$(SQ_PROVIDER_CONFIG_DIR)/merge.yaml" \
+		|| { echo "No such provider '$(PROVIDER)': $(SQ_PROVIDER_CONFIG_DIR)/merge.yaml not found"; exit 2; }
+	@test -n "$(PROVIDER_COMPOSE_FILE)" \
+		|| { echo "Provider '$(PROVIDER)' has no compose overlay; add PROVIDER_COMPOSE_FILE_$(PROVIDER) to the Makefile"; exit 2; }
+	@if [ "$(PROVIDER)" = "git" ]; then \
+		$(BAZEL) run //tool/gitsandbox -- -sandbox-dir "$(SQ_GIT_SANDBOX_DIR)" || exit 1; \
+	fi
+	@# Rootless Docker maps container root to the host user; rootful Docker needs
+	@# the host UID:GID explicitly, or the services write files into the sandbox
+	@# bind mount that the host user cannot then read or remove. Resolved here
+	@# rather than at parse time, so `make help` does not shell out to Docker.
+	@set -e; \
+	if docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q 'name=rootless'; then \
+		export SQ_CONTAINER_USER=0:0; \
+	else \
+		export SQ_CONTAINER_USER=$$(id -u):$$(id -g); \
+	fi; \
+	$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) up -d --build --wait
 	@echo "Applying database schemas..."
 	@$(MAKE) -s local-init-submitqueue-schemas
 	@echo ""
-	@echo "✅ Full stack is running!"
+	@echo "✅ Stack is running against provider '$(PROVIDER)'."
 	@echo ""
-	@make local-submitqueue-ps
+	@echo "Gateway gRPC port: $$(docker port $(SUBMITQUEUE_LOCAL_PROJECT)-gateway-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'unknown')"
+	@if [ "$(PROVIDER)" = "git" ]; then \
+		echo "Merge target:      $(SQ_GIT_SANDBOX_DIR)/sandbox.git"; \
+	fi
+	@echo ""
+	@echo "Generate traffic with:"
+	@echo "  make demo-requests GATEWAY_ADDR=localhost:<gateway port>"
 
-local-stop: ## Stop all services (keep data)
+local-submitqueue-stop: ## Stop the SubmitQueue stack (keeps data and PROVIDER=git's sandbox)
+	@echo "Stopping SubmitQueue services..."
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
+	@echo "SubmitQueue services stopped. Data volumes preserved."
+	@if [ -d "$(SQ_GIT_SANDBOX_DIR)" ]; then \
+		echo "Sandbox repository left at $(SQ_GIT_SANDBOX_DIR); remove it with 'make local-submitqueue-clean'."; \
+	fi
+
+local-stop: ## Stop every local stack — SubmitQueue, Stovepipe, and Runway (keep data)
 	@echo "Stopping all services..."
 	@$(COMPOSE) -f $(COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
 	@$(COMPOSE) -f $(STOVEPIPE_COMPOSE_FILE) -p $(STOVEPIPE_LOCAL_PROJECT) down

@@ -1,0 +1,55 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "fake.go",
+        "git.go",
+        "github.go",
+        "main.go",
+        "source.go",
+    ],
+    importpath = "github.com/uber/submitqueue/service/submitqueue/demo/requests",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//api/base/mergestrategy/protopb:go_default_library",
+        "//platform/base/change/git:go_default_library",
+        "//platform/base/change/github:go_default_library",
+        "//platform/fakemarker:go_default_library",
+        "//platform/gitexec:go_default_library",
+        "//submitqueue/client:go_default_library",
+        "@org_golang_x_sync//errgroup:go_default_library",
+    ],
+)
+
+go_binary(
+    name = "requests",
+    # -provider git authors changes with the same pinned git the merger uses.
+    # Unused by the other two providers, which touch no repository.
+    args = ["-git=$(location @git//:git)"],
+    data = ["@git"],
+    embed = [":go_default_library"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = [
+        "main_test.go",
+        "source_test.go",
+    ],
+    data = ["@git"],
+    embed = [":go_default_library"],
+    # The git source drives a real repository, with the same pinned git the
+    # merger and the sandbox provisioner use.
+    env = {
+        "SUBMITQUEUE_TEST_GIT": "$(location @git//:git)",
+    },
+    deps = [
+        "//platform/base/change/git:go_default_library",
+        "//platform/fakemarker:go_default_library",
+        "//platform/gitexec:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+    ],
+)

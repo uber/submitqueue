@@ -31,7 +31,7 @@ func TestChangeFilePath_IsUniquePerFileAcrossChangesAndRuns(t *testing.T) {
 	for _, tag := range []string{"0810-1203", "0810-1204"} {
 		for change := 1; change <= 20; change++ {
 			for file := 1; file <= 8; file++ {
-				path := changeFilePath(tag, change, file)
+				path := changeFilePath(tag, resolveFolders(tag, 0), change, file)
 				owner := fmt.Sprintf("%s/%d/%d", tag, change, file)
 				if prev, ok := seen[path]; ok {
 					t.Fatalf("path %s produced for both %s and %s", path, prev, owner)
@@ -42,30 +42,67 @@ func TestChangeFilePath_IsUniquePerFileAcrossChangesAndRuns(t *testing.T) {
 	}
 }
 
-func TestChangeFilePath_ShardsUnderTheDemoRoot(t *testing.T) {
-	path := changeFilePath("0810-1203", 1, 1)
-
-	parts := strings.Split(path, "/")
-	require.Len(t, parts, shardDirs+2, "demo root, %d bucket dirs, and the leaf", shardDirs)
-	assert.Equal(t, "demo", parts[0])
-	for _, bucket := range parts[1 : len(parts)-1] {
-		assert.Len(t, bucket, 2, "each bucket is one hex byte")
-		assert.Regexp(t, "^[0-9a-f]{2}$", bucket)
+func TestChangeFilePath_PutsEveryFileOfAChangeInOneDirectory(t *testing.T) {
+	// The conflict analyzer keys on the directory, so a change spread across
+	// several would overlap with everything and report a conflict that says
+	// nothing about the change.
+	dirs := make(map[string]struct{})
+	for file := 1; file <= 8; file++ {
+		parts := strings.Split(changeFilePath("0810-1203", 5, 1, file), "/")
+		require.Len(t, parts, 3, "demo root, one folder, and the leaf")
+		assert.Equal(t, "demo", parts[0])
+		assert.Regexp(t, `^\d{2}$`, parts[1])
+		dirs[strings.Join(parts[:2], "/")] = struct{}{}
 	}
-	assert.Equal(t, "0810-1203-1-1.txt", parts[len(parts)-1])
+	assert.Len(t, dirs, 1, "one change writes into one directory")
 }
 
-func TestChangeFilePath_SpreadsAcrossManyBuckets(t *testing.T) {
-	// A layout that puts everything in one directory would satisfy the
-	// uniqueness test above while defeating the point of sharding.
-	buckets := make(map[string]struct{})
-	for change := 1; change <= 20; change++ {
-		for file := 1; file <= 4; file++ {
-			parts := strings.Split(changeFilePath("0810-1203", change, file), "/")
-			buckets[strings.Join(parts[1:len(parts)-1], "/")] = struct{}{}
-		}
+// -folders is the dial on what a run demonstrates, so both ends of it have to
+// do what they say.
+func TestChangeFilePath_FollowsTheFolderCount(t *testing.T) {
+	folderOf := func(folders, change int) string {
+		parts := strings.Split(changeFilePath("0810-1203", folders, change, 1), "/")
+		return strings.Join(parts[:2], "/")
 	}
-	assert.Greater(t, len(buckets), 50, "80 files should land in many distinct buckets")
+
+	t.Run("one folder puts every change together", func(t *testing.T) {
+		dirs := make(map[string]struct{})
+		for change := 1; change <= 10; change++ {
+			dirs[folderOf(1, change)] = struct{}{}
+		}
+		assert.Len(t, dirs, 1, "every change must conflict with every other")
+	})
+
+	t.Run("many folders keep changes apart", func(t *testing.T) {
+		dirs := make(map[string]struct{})
+		for change := 1; change <= 3; change++ {
+			dirs[folderOf(64, change)] = struct{}{}
+		}
+		assert.Len(t, dirs, 3, "three changes in 64 folders should not collide")
+	})
+}
+
+func TestResolveFolders(t *testing.T) {
+	t.Run("honors an explicit count", func(t *testing.T) {
+		assert.Equal(t, 1, resolveFolders("0810-1203", 1))
+		assert.Equal(t, 42, resolveFolders("0810-1203", 42))
+	})
+
+	t.Run("picks within the range when unset", func(t *testing.T) {
+		// A demo that cannot be replayed is hard to talk about when something in
+		// it goes wrong, and how the changes were spread is part of what
+		// happened — so the pick follows the run tag.
+		assert.Equal(t, resolveFolders("0810-1203", 0), resolveFolders("0810-1203", 0))
+
+		seen := make(map[int]struct{})
+		for minute := range 60 {
+			folders := resolveFolders(fmt.Sprintf("0810-12%02d", minute), 0)
+			assert.GreaterOrEqual(t, folders, minShardDirs)
+			assert.LessOrEqual(t, folders, maxShardDirs)
+			seen[folders] = struct{}{}
+		}
+		assert.Greater(t, len(seen), 1, "runs must not all pick the same number")
+	})
 }
 
 func TestChangeFileCount(t *testing.T) {
@@ -112,7 +149,10 @@ func TestRowCount(t *testing.T) {
 }
 
 func TestConfigValidate(t *testing.T) {
-	valid := config{token: "t", repo: "owner/name", count: 3, files: 3, concurrency: 5}
+	valid := config{
+		provider: providerGitHub, token: "t", repo: "owner/name",
+		count: 3, files: 3, concurrency: 5,
+	}
 
 	tests := []struct {
 		name    string
@@ -127,6 +167,23 @@ func TestConfigValidate(t *testing.T) {
 		{name: "zero concurrency would never start", mutate: func(c *config) { c.concurrency = 0 }, wantErr: true},
 		{name: "negative concurrency", mutate: func(c *config) { c.concurrency = -1 }, wantErr: true},
 		{name: "repo without an owner", mutate: func(c *config) { c.repo = "name" }, wantErr: true},
+
+		// The credential and the repository are GitHub's alone. Requiring
+		// either of the other two modes to carry them is what would make the
+		// quickstart need a token it has no use for.
+		{name: "fake needs no token", mutate: func(c *config) {
+			c.provider, c.token, c.repo = providerFake, "", ""
+		}},
+		{name: "git needs no token", mutate: func(c *config) {
+			c.provider, c.token, c.repo = providerGit, "", ""
+		}},
+		{name: "an unknown provider", mutate: func(c *config) { c.provider = "gitlab" }, wantErr: true},
+		{name: "no provider at all", mutate: func(c *config) { c.provider = "" }, wantErr: true},
+
+		// Counts are checked for every mode, not just the ones that do I/O.
+		{name: "fake with no changes to make", mutate: func(c *config) {
+			c.provider, c.token, c.repo, c.count = providerFake, "", "", 0
+		}, wantErr: true},
 	}
 
 	for _, tt := range tests {

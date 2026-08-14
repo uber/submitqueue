@@ -24,8 +24,8 @@
 // that is what the merge machinery depends on — which is what lets these
 // assertions gate a pull request. What it deliberately cannot cover is the half
 // that is specific to a change provider: reading change metadata, that
-// provider's CI, and a real change being marked merged. That is the manual
-// tier; see doc/howto/PROVIDER-E2E.md.
+// provider's CI, and a real change being marked merged. Those need a repository
+// and a credential, so they are exercised by hand — see doc/howto/QUICKSTART.md.
 package e2e_test
 
 import (
@@ -50,7 +50,7 @@ import (
 )
 
 // gitQueue is the queue wired to the git merger in
-// service/submitqueue/demo/provider/local/merge.yaml.
+// service/submitqueue/demo/provider/git/merge.yaml.
 const gitQueue = "e2e-git-queue"
 
 // sandboxRemote is the host name used in git:// change URIs. The merger reads
@@ -300,7 +300,7 @@ func (s *GitMergeSuite) stageProviderConfig() string {
 	t := s.T()
 	staged := t.TempDir()
 	for _, name := range []string{"merge.yaml", "profiles.yaml"} {
-		contents, err := os.ReadFile(testutil.Runfile("service/submitqueue/demo/provider/local/" + name))
+		contents, err := os.ReadFile(testutil.Runfile("service/submitqueue/demo/provider/git/" + name))
 		require.NoError(t, err, "reading example config %s", name)
 		require.NoError(t, os.WriteFile(filepath.Join(staged, name), contents, 0o644))
 	}

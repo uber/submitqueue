@@ -13,7 +13,7 @@ go_test(
         "//service/runway/server:docker_test_context",
         "//service/submitqueue:docker-compose.git.yml",
         "//service/submitqueue:docker-compose.yml",
-        "//service/submitqueue/demo/provider/local:config",
+        "//service/submitqueue/demo/provider/git:config",
         "//service/submitqueue/gateway/server:docker_test_context",
         "//service/submitqueue/orchestrator/server:docker_test_context",
         "//submitqueue/extension/storage/mysql/schema",
