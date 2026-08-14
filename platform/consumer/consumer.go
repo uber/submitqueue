@@ -225,7 +225,7 @@ func (m *consumer) subscribe(ctx context.Context, controller Controller) error {
 	m.subscriptions[topicKey] = sub
 
 	// Spawn consumption goroutine
-	go m.consumeLoop(controllerCtx, controller, deliveryChan, done, config.BatchSize)
+	go m.consumeLoop(controllerCtx, controller, topicName, deliveryChan, done, config.BatchSize)
 
 	m.logger.Infow("controller started",
 		"controller", controller.Name(),
@@ -258,13 +258,14 @@ func (m *consumer) subscribe(ctx context.Context, controller Controller) error {
 // Any messages buffered in partition channels but not processed before ctx
 // cancellation are safe to drop — the queue's visibility timeout will make
 // them visible again for redelivery (at-least-once semantics).
-func (m *consumer) consumeLoop(ctx context.Context, controller Controller, deliveryChan <-chan extqueue.Delivery, done chan struct{}, batchSize int) {
+func (m *consumer) consumeLoop(ctx context.Context, controller Controller, topicName string, deliveryChan <-chan extqueue.Delivery, done chan struct{}, batchSize int) {
 	defer close(done)
 
 	topicKey := controller.TopicKey()
 
 	controllerScope := m.metricsScope.Tagged(map[string]string{
 		"controller": controller.Name(),
+		"topic":      topicName,
 		"topic_key":  topicKey.String(),
 	})
 

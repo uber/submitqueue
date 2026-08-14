@@ -642,6 +642,8 @@ func TestConsumer_Stop(t *testing.T) {
 }
 
 func TestConsumer_ObservabilityTags(t *testing.T) {
+	const topicName = "configured-test-topic"
+
 	tests := []struct {
 		name         string
 		handlerError error
@@ -712,7 +714,15 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 			mockQ := queuemock.NewMockQueue(ctrl)
 			mockQ.EXPECT().Subscriber().Return(mockSub)
 
-			reg := newRegistry(t, mockQ, testTopicKeyStart, "test-group")
+			reg, err := NewTopicRegistry([]TopicConfig{
+				{
+					Key:          testTopicKeyStart,
+					Name:         topicName,
+					Queue:        mockQ,
+					Subscription: extqueue.DefaultSubscriptionConfig("test-worker", "test-group"),
+				},
+			})
+			require.NoError(t, err)
 
 			testC := New(logger, testScope, reg, tt.processor, consumergatenoop.New())
 
@@ -723,7 +733,7 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 				},
 			)
 
-			err := testC.Register(handler)
+			err = testC.Register(handler)
 			require.NoError(t, err)
 
 			ctx, cancel := context.WithCancel(context.Background())
@@ -753,6 +763,8 @@ func TestConsumer_ObservabilityTags(t *testing.T) {
 					for key, value := range tt.expectedTags {
 						assert.Equal(t, value, tags[key])
 					}
+					assert.Equal(t, topicName, tags["topic"])
+					assert.Equal(t, testTopicKeyStart.String(), tags["topic_key"])
 				}
 			}
 			assert.True(t, foundLatency, "Should have process.finish metric")
