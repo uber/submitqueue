@@ -34,8 +34,6 @@ Not every stage's output can be regenerated on demand, and the distinction decid
 | build | `BuildRunner` | **No** | Pass/fail and duration depend on the CI backend's condition at execution time — infra load, flakiness — which no identity pins. See [The build oracle](#the-build-oracle). |
 | merge | `Merger.Merge` | Yes, for the mechanical part | Computing the resulting commit for a given (pinned base, change, strategy) is a pure git operation, replayable the same way `CheckMergeability` is. |
 
-Merge deserves a specific note, because the naive assumption is that concurrent pushes make it a race like build's infra-dependence. They do not, by construction: [`merge.go`](../../submitqueue/orchestrator/controller/merge/merge.go) publishes to Runway's merge topic partitioned by `batch.Queue`, and [`platform/consumer`](../../platform/consumer/consumer.go) dispatches each partition key to exactly one goroutine draining it in order — every merge for a given queue runs through one serial worker, never two at once. The base commit for the Nth batch in a queue is deterministically whatever the (N-1)th produced, recoverable from the sequential history with no ambiguity. The only residual risk is a push to the same branch from outside SubmitQueue entirely — a hotfix, another automation, a branch-protection bypass — which is an operating assumption to state explicitly ("no unmanaged pushes during the replay window"), not an architectural gap this design needs to close.
-
 Only `BuildRunner` is genuinely irreproducible. Everything else can be recomputed rather than merely looked up, which is what makes candidate-versus-baseline replay possible at all for those stages.
 
 ## The build oracle
