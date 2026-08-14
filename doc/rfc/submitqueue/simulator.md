@@ -22,7 +22,7 @@ The layers share one idea — a recorded corpus of (identity, output) pairs — 
 
 ## Reproducibility per stage
 
-Not every stage's output can be regenerated on demand. The distinction decides whether a stage belongs in the "recompute and cache" bucket or the "read the audit trail, never regenerate" bucket — and only the former lets replay run against arbitrary candidate implementations rather than a single frozen historical answer.
+Not every stage's output can be regenerated on demand, and the distinction decides how that stage's corpus is collected (see [Corpus collection](#corpus-collection)). Only a stage reproducible from a pinned identity can be replayed against an arbitrary candidate; the rest can be compared against a single frozen historical answer and nothing more.
 
 | Stage | Extension | Reproducible? | Why |
 |---|---|---|---|
@@ -48,22 +48,29 @@ Its blind spot must be stated loudly: two changes that each pass alone can still
 
 ## Corpus collection
 
-Collecting continuously does not require instrumenting every extension call on the hot path. Most of what a corpus needs already accumulates as a side effect of normal operation, through the storage extension every queue already writes to:
+Collecting continuously does not require instrumenting every extension call on the hot path, but normal persistence does not cover everything replay needs either. Three mechanisms apply, and which one a stage uses depends on what its persisted trace actually contains.
 
-- [`entity.RequestLog`](../../submitqueue/entity/request_log.go) — the full state-transition audit trail, already timestamped.
-- [`entity.Batch`](../../submitqueue/entity/batch.go) — its dependency list is `conflict.Analyzer`'s actual output for that batch.
-- [`entity.Build`](../../submitqueue/entity/build.go) — `BuildRunner`'s outcome and duration, the one value that must come from here rather than being recomputed.
-- [`entity.SpeculationPathSet`](../../submitqueue/entity/speculation.go) — the `Speculator`'s resulting path choices.
+**Read from history** where the stored value is losslessly the stage's output:
 
-What is missing is narrower than a general recorder: the *resolved content* a deterministic stage used (changed paths, changeset detail) is not stored, but per the table above it is reconstructible from an identity that is. A resolve-and-cache layer in front of `changeset.Resolver`, keyed on that identity so repeated replays against different candidates do not re-resolve the same content, covers every deterministic stage.
+- [`entity.Build`](../../submitqueue/entity/build.go) — `BuildRunner`'s outcome and duration, the one value that can only come from here.
+- [`entity.SpeculationPathSet`](../../submitqueue/entity/speculation.go) — the `Speculator`'s chosen paths.
+- [`entity.RequestLog`](../../submitqueue/entity/request_log.go) — the timestamped state-transition audit trail, from which land times are derived.
 
-`Scorer`'s raw output is the one value with no persisted trace — only the `Speculator`'s downstream path choice survives. Because `Scorer.Score` is itself deterministic, historical scores remain recomputable by resolving the batch and re-scoring with the baseline configuration. The gap only bites if a future scorer stops being a pure function of resolved batch content, at which point it needs an explicit persisted field.
+**Record at the seam** where the persisted form is a lossy projection rather than the output. `conflict.Analyzer` is the concrete case, and the loss is easy to overlook. The analyzer returns `[]entity.Conflict`, each carrying a batch ID *and* a `ConflictType`; the batch controller reduces that to a list of IDs before storing it ([`batch.go`](../../submitqueue/orchestrator/controller/batch/batch.go)). The type is erased, repeated entries for one pair collapse, only batches that happened to be in flight were evaluated at all, and what survives is the transitive closure rather than what the analyzer directly reported. [`entity.Batch`](../../submitqueue/entity/batch.go)'s dependency list is therefore strong evidence of what the *system did*, which is what Layer 3 needs, and a poor baseline for what the *analyzer said*, which is what Layer 1 compares. Capturing the raw return value at the seam is small, exact, and the same mechanism as [shadow recording](#shadow-recording).
+
+**Resolve and cache the inputs**, in every case. The resolved content a stage consumed — changed paths, changeset detail — is persisted nowhere, and without it no candidate can run at all: a stored verdict records what the old implementation decided and does nothing to let a new one decide. A resolve-and-cache layer in front of `changeset.Resolver` supplies it, keyed by content rather than by a filename or run label so that an edited input cannot silently reuse a stale entry.
+
+That cache is a durability mechanism, not a speed optimization. Stored identities stop resolving over time — branches are deleted, refs garbage-collected, pull requests closed, history rewritten — so a corpus meant to accumulate indefinitely cannot assume a six-month-old sha is still resolvable on demand. Content resolved once is kept.
+
+Two situations require computation even where history holds an answer. **Counterfactual compositions have no stored output at all**: once Layer 3 diverges, batches form that never existed, and "what would the incumbent have said about this batch" is a question history never asked — so the baseline implementation runs fresh alongside the candidate. And **re-deriving a baseline where history does hold it is the corpus's integrity check**: if replaying the incumbent against re-resolved inputs fails to reproduce the stored value, then the inputs are stale, the source has moved, or the assumed configuration is wrong, and that has to surface before any candidate number is believed. It is the Layer 1 analogue of the [backtest](#trusting-the-simulator).
+
+`Scorer`'s raw output has no persisted trace either — only the `Speculator`'s downstream path choice survives — but because `Scorer.Score` is deterministic, historical scores stay recomputable from resolved batch content. That holds only while it remains a pure function of that content; a scorer that reads anything else needs recording at the seam, as conflict does.
 
 **Provenance and versioning.** A recorded output is a valid baseline only if it is known what produced it. Every corpus entry carries the implementation name and version, the queue configuration it ran under, and the commit that built it. Interface drift is not hypothetical in a repository under active development, and a corpus that outlives an interface change must be rejected loudly at replay time rather than silently misattributed.
 
-**Storing identity, not content.** The mining approach has a security property worth making explicit: the corpus holds identities — change URIs, commit shas, path keys — while content is re-resolved at replay time from the source of truth. No durable second copy of proprietary source accumulates, and retention policy applies to a much smaller and less sensitive artifact.
+**Bounded content.** The corpus holds identities and the derived metadata a stage consumed — change URIs, commit shas, changed-path sets — never file contents or diffs. Retention therefore applies to a small and comparatively insensitive artifact. This is a bound, not an identity-only guarantee: resolved path sets are deliberately retained, for the durability reason above.
 
-**Tiering.** Three corpus sizes keep the tool usable: a small one checked into the repository that runs in seconds on every change, a medium one exercised nightly, and the full historical corpus available on demand for changes that warrant it. Without the small tier, the machinery exists but nobody drives it.
+**Tiering.** Three corpus sizes keep the tool usable: a small one checked into the repository that runs in seconds on every change, a medium one exercised nightly, and the full historical corpus available on demand for changes that warrant it. Without the small tier, the machinery exists but nobody drives it. The corpus's selection criteria are versioned code, not a query pasted into a runbook — the filters that define it (which states, which queues, which window) are sampling decisions that bias every result derived from it, and they need to be reviewable and diffable like any other input.
 
 ### Shadow recording
 
