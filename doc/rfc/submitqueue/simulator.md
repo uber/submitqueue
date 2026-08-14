@@ -101,14 +101,30 @@ A candidate should be reported against both, never against agreement rate alone.
 
 A comparison needs a decision rule, and the obvious metric is a trap. **Throughput is largely uninformative under fixed-trace replay.** The queue drains whatever the trace delivers, so total landed count is a property of the input rather than the policy. It becomes meaningful only under saturation, or when a policy changes the failure rate enough to alter how many requests land at all. Reporting it as a headline number invites false confidence.
 
-The axes that actually move are:
+Two tiers of metric serve different purposes. **Outcomes** decide whether a candidate is better. **Diagnostics** explain why it moved, and localize a regression to the stage that caused it.
 
-- **Latency** — land-time distribution, reported at p50, p95, and p99, per queue.
+### Outcomes
+
+- **Latency** — land-time distribution per queue, from p50 through p99. Merge-queue latency is long-tailed and often bimodal, so the middle of the distribution carries information that three widely-spaced percentiles hide.
 - **CI cost** — builds started per landed change, the currency speculation spends to buy latency.
 - **Safety** — escaped conflicts and trunk breakages, per [Evaluating conflict detection](#evaluating-conflict-detection).
 - **Fairness** — worst-case land time, broken down by request size. A policy that improves the median by starving large changes looks good and is not.
 
 Latency and cost trade against each other, so a single scalar verdict hides the trade. Report the pair. Where the question is a policy rather than a bug fix, sweep the build budget so each candidate is a curve rather than a point.
+
+Report these bucketed by hour as well as in aggregate. A policy that keeps up during peak and one that defers work into the quiet hours produce the same totals over a long enough window while behaving nothing alike.
+
+### Diagnostics
+
+These are defined against this system's own model — heads, paths, dependency assumptions, and a queue-wide build budget — so they do not carry over from a queue whose speculation ran linearly over queue order.
+
+**Waste.** Budget-time spent on paths whose result never reached a verdict. This is not a count of cancelled builds. A cancelling path keeps charging the build budget until it reaches terminal, and a path can complete, pass, and still be wasted when a dependency later resolves against its assumption. Its companion is the **refutation rate**, how often a resolved dependency breaks a path's assumption, which reads prediction quality directly.
+
+**Dependency cost.** The interval between a head having a passing build and that head merging. The merge gate is strict, so this is precisely what the dependency graph costs, and therefore what a less conservative `conflict.Analyzer` sets out to reduce. Alongside it sits **coverage**, whether the funded paths span every combination of dependency outcomes, since coverage rather than one lucky path is what makes an early merge sound, and the **bypass rate** that coverage enables.
+
+**Ranking quality.** The interval between the first path funded for a head and the funding of the path that ultimately passed. This isolates whether the Generator ranked well, separately from whether the outcome was right. Its cross-head counterpart is **starvation**: whether the Allocator spreads budget across competing heads or lets one monopolize it.
+
+**Pipeline health.** Dead-letter rate and per-stage queue lag, which a message-driven pipeline has and a polling loop does not, plus compare-and-swap contention as the visible symptom of optimistic-concurrency pressure.
 
 One structural constraint applies to any system-level report. Once two runs diverge they have different batches, different paths, and different builds, with nothing to line up one-to-one. **The request is the only identity that survives divergence.** Per-request outcomes are therefore the finest granularity at which two Layer 3 runs can be compared, and everything else is compared as a distribution.
 
