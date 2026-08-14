@@ -139,7 +139,12 @@ func (rw *Row) stage() string {
 // a caller following requests as they move uses a Tracker instead, which owns
 // the rows and redraws them.
 func Draw(rows []*Row, status string) {
-	newRenderer().draw(rows, status)
+	r := newRenderer()
+	// Nothing will be drawn over this, so a table taller than the window simply
+	// scrolls — which is what a reader of a long listing wants, and why the
+	// height limit a redrawing watch lives under does not apply here.
+	r.oneShot = true
+	r.draw(rows, status)
 }
 
 // digest reduces a request's recorded history to the trail worth showing, the
@@ -280,17 +285,29 @@ func summarize(rows []*Row) error {
 // the number of lines it *emitted* — so one wrapped line desyncs every redraw
 // after it. Everything wide is therefore wrapped deliberately, into lines the
 // renderer counts itself.
+//
+// A frame may not be taller than the window either, for the same reason in the
+// other axis. Drawing more lines than the window holds scrolls it, and the
+// cursor cannot then move back above the first row — every subsequent redraw
+// starts from the wrong place and repaints the whole screen instead of the
+// table. A watch of more requests than fit therefore shows as many as do and
+// says how many it is not showing.
 type renderer struct {
 	inPlace bool
 
-	// width is the terminal's width, re-read before every draw. A watch runs for
-	// minutes and a window can be resized inside them, so this is not a property
-	// the process can sample once — see resize.
-	width int
+	// oneShot marks a renderer that draws once and returns, so its frame is
+	// free to be taller than the window: no later frame has to line up with it.
+	oneShot bool
 
-	// size reports the terminal's width and whether it could be read. Held as a
-	// field so a test can drive a resize without a terminal.
-	size func() (int, bool)
+	// width and height are the terminal's, re-read before every draw. A watch
+	// runs for minutes and a window can be resized inside them, so neither is a
+	// property the process can sample once — see resize.
+	width  int
+	height int
+
+	// size reports the terminal's width and height and whether they could be
+	// read. Held as a field so a test can drive a resize without a terminal.
+	size func() (int, int, bool)
 
 	wRequest int
 	wChanges int
@@ -308,7 +325,7 @@ type renderer struct {
 }
 
 func newRenderer() *renderer {
-	width, sized := terminalSize()
+	width, height, sized := terminalSize()
 	return &renderer{
 		// Redrawing in place requires knowing the width to wrap to. A terminal
 		// that will not report its size is therefore treated as a log: emitting
@@ -317,6 +334,7 @@ func newRenderer() *renderer {
 		// the lines that appeared, so one of those desyncs every frame after it.
 		inPlace:  sized,
 		width:    width,
+		height:   height,
 		size:     terminalSize,
 		wRequest: len("REQUEST"),
 		wChanges: len("CHANGES"),
@@ -333,12 +351,12 @@ func newRenderer() *renderer {
 // Anything that is not a sized terminal — a pipe, a file, a CI log — falls back
 // to a fixed width, since there is no width to discover and a log wants a
 // stable one anyway.
-func terminalSize() (int, bool) {
-	w, _, err := term.GetSize(int(os.Stdout.Fd()))
+func terminalSize() (int, int, bool) {
+	w, h, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || w <= 0 {
-		return defaultLineWidth, false
+		return defaultLineWidth, 0, false
 	}
-	return w, true
+	return w, h, true
 }
 
 // lineWidth is the width to render to. It tolerates a renderer built without
@@ -366,14 +384,22 @@ func (r *renderer) resize() {
 	if !r.inPlace || r.size == nil {
 		return
 	}
-	if w, sized := r.size(); sized {
-		r.width = w
+	if w, h, sized := r.size(); sized {
+		r.width, r.height = w, h
 	}
 }
 
 func (r *renderer) draw(rows []*Row, status string) {
 	r.resize()
-	body := r.body(rows)
+	// Widths come from every row, not just the drawn ones, so a column does not
+	// resize as rows come and go from view.
+	r.fit(rows)
+
+	visible, hidden := r.visibleRows(rows)
+	body := r.body(visible)
+	if hidden > 0 {
+		body = append(body, fmt.Sprintf("  … %d settled request(s) not shown; the window is too short", hidden))
+	}
 
 	if !r.inPlace {
 		sig := signature(rows)
@@ -400,6 +426,74 @@ func (r *renderer) draw(rows []*Row, status string) {
 	// back by exactly this many lines is what keeps the redraw from drifting.
 	r.lastLines = len(body) + 2
 	r.drawn = true
+}
+
+// frameOverhead is what a frame spends on lines other than the table: the blank
+// line and the status line below it, plus the row the cursor rests on, which
+// has to stay inside the window or the next redraw starts a line too low.
+const frameOverhead = 3
+
+// visibleRows is the rows that fit in the window, and how many were left out.
+//
+// Settled requests are dropped first. They have stopped changing, so leaving
+// them out costs a reader nothing `land-list` will not tell them, whereas
+// dropping the ones still moving would hide the only part of the table that is
+// doing anything. Within each group the original order is kept, so rows do not
+// jump around between redraws.
+func (r *renderer) visibleRows(rows []*Row) ([]*Row, int) {
+	// headerLines is the column header and its rule.
+	const headerLines = 2
+
+	// Redirected output is a log, not a window: it scrolls, nothing is
+	// overwritten, and a reader wants every row. So does a one-shot listing,
+	// which is drawn once and scrolled back through rather than redrawn.
+	if !r.inPlace || r.oneShot || r.height <= 0 {
+		return rows, 0
+	}
+	budget := r.height - frameOverhead - headerLines
+	if budget < 1 {
+		return nil, len(rows)
+	}
+
+	heights := make([]int, len(rows))
+	total := 0
+	for i, rw := range rows {
+		heights[i] = len(r.rowLines(rw)) + len(r.noteLines(rw))
+		total += heights[i]
+	}
+	if total <= budget {
+		return rows, 0
+	}
+	// One line goes to the note saying what is not shown.
+	budget--
+
+	// Keep the unsettled first, then settled, then restore the original order,
+	// so what survives is the moving part of the table without being reordered.
+	keep := make([]bool, len(rows))
+	used := 0
+	for _, settled := range []bool{false, true} {
+		for i, rw := range rows {
+			if rw.Done != settled || keep[i] {
+				continue
+			}
+			if used+heights[i] > budget {
+				continue
+			}
+			keep[i] = true
+			used += heights[i]
+		}
+	}
+
+	visible := make([]*Row, 0, len(rows))
+	hidden := 0
+	for i, rw := range rows {
+		if keep[i] {
+			visible = append(visible, rw)
+			continue
+		}
+		hidden++
+	}
+	return visible, hidden
 }
 
 // body renders the header and one line per row.

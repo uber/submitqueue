@@ -396,7 +396,7 @@ func TestDrawFollowsAResize(t *testing.T) {
 	r := newRenderer()
 	r.inPlace = true
 	r.width = width
-	r.size = func() (int, bool) { return width, true }
+	r.size = func() (int, int, bool) { return width, 40, true }
 
 	rows := []*Row{{SQID: "demo-queue/72", Submitted: time.Now(), Trail: longTrail}}
 
@@ -423,7 +423,7 @@ func TestDrawKeepsTheLastWidthWhenTheTerminalStopsAnswering(t *testing.T) {
 	r := newRenderer()
 	r.inPlace = true
 	r.width = 94
-	r.size = func() (int, bool) { return defaultLineWidth, false }
+	r.size = func() (int, int, bool) { return defaultLineWidth, 0, false }
 
 	r.resize()
 	assert.Equal(t, 94, r.width, "an unanswered probe leaves the last known width alone")
@@ -436,7 +436,7 @@ func TestDrawKeepsTheLastWidthWhenTheTerminalStopsAnswering(t *testing.T) {
 func TestNewRendererNeedsASizeToRedrawInPlace(t *testing.T) {
 	// Test stdout is not a sized terminal, which is exactly the case at issue.
 	r := newRenderer()
-	width, sized := terminalSize()
+	width, _, sized := terminalSize()
 	require.False(t, sized, "test stdout is not expected to be a sized terminal")
 	assert.Equal(t, defaultLineWidth, width)
 	assert.False(t, r.inPlace, "without a known width the renderer must not wrap and redraw")
@@ -884,6 +884,104 @@ func TestRowLinesPipedStayOnOneLine(t *testing.T) {
 	require.Len(t, lines, 1)
 	assert.Contains(t, lines[0], "landed")
 	assert.NotContains(t, lines[0], "…")
+}
+
+// A frame taller than the window scrolls it, and the cursor cannot then move
+// back above the first row — so the next redraw starts from the wrong place and
+// repaints the screen instead of the table. Every frame must fit.
+func TestDrawNeverExceedsTheWindowHeight(t *testing.T) {
+	const height = 20
+
+	r := newRenderer()
+	r.inPlace = true
+	r.width = 200
+	r.height = height
+	r.size = func() (int, int, bool) { return 200, height, true }
+
+	rows := make([]*Row, 0, 60)
+	for i := range 60 {
+		rows = append(rows, &Row{
+			SQID:      fmt.Sprintf("demo-queue/%d", i+1),
+			Submitted: time.Now(),
+			Trail:     []string{"accepted", "started", "speculating"},
+		})
+	}
+
+	out := captureStdout(t, func() { r.draw(rows, "watching") })
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	assert.LessOrEqual(t, len(lines), height,
+		"a frame of %d lines in a %d-line window scrolls it and desyncs every redraw after", len(lines), height)
+	assert.Equal(t, len(lines), r.lastLines,
+		"the cursor moves back by lastLines, so it has to be what was emitted")
+}
+
+// The rows worth keeping when they cannot all be kept are the ones still doing
+// something; a settled row is over and `land-list` still has it.
+func TestDrawKeepsMovingRowsWhenTheWindowIsShort(t *testing.T) {
+	const height = 14
+
+	r := newRenderer()
+	r.inPlace = true
+	r.width = 200
+	r.height = height
+	r.size = func() (int, int, bool) { return 200, height, true }
+
+	rows := make([]*Row, 0, 30)
+	for i := range 30 {
+		rows = append(rows, &Row{
+			SQID:      fmt.Sprintf("demo-queue/%d", i+1),
+			Submitted: time.Now(),
+			Status:    "landed",
+			Trail:     []string{"accepted", "landed"},
+			Done:      true,
+		})
+	}
+	moving := &Row{
+		SQID:      "demo-queue/moving",
+		Submitted: time.Now(),
+		Status:    "speculating",
+		Trail:     []string{"accepted", "speculating"},
+	}
+	rows = append(rows, moving)
+
+	out := captureStdout(t, func() { r.draw(rows, "watching") })
+	assert.Contains(t, out, "demo-queue/moving", "the unsettled row must survive the trim")
+	assert.Contains(t, out, "not shown", "and the reader must be told the table is partial")
+}
+
+// A one-shot listing is scrolled back through, not redrawn over, so hiding rows
+// to fit the window would lose them for no reason.
+func TestDrawOneShotKeepsEveryRow(t *testing.T) {
+	rows := make([]*Row, 0, 40)
+	for i := range 40 {
+		rows = append(rows, &Row{
+			SQID:      fmt.Sprintf("demo-queue/%d", i+1),
+			Submitted: time.Now(),
+			Status:    "landed",
+			Done:      true,
+		})
+	}
+
+	out := captureStdout(t, func() { Draw(rows, "40 request(s)") })
+	assert.Contains(t, out, "demo-queue/40", "a listing must not drop rows to fit the window")
+	assert.NotContains(t, out, "not shown")
+}
+
+// Redirected output is a log: it scrolls, nothing is overwritten, and a reader
+// wants every row however many there are.
+func TestDrawPipedKeepsEveryRow(t *testing.T) {
+	r := newRenderer()
+	r.inPlace = false
+	r.height = 10
+
+	rows := make([]*Row, 0, 40)
+	for i := range 40 {
+		rows = append(rows, &Row{SQID: fmt.Sprintf("demo-queue/%d", i+1), Submitted: time.Now(), Done: true})
+	}
+
+	out := captureStdout(t, func() { r.draw(rows, "watching") })
+	assert.Contains(t, out, "demo-queue/40")
+	assert.NotContains(t, out, "not shown")
 }
 
 func TestStageWidthHasAFloor(t *testing.T) {
