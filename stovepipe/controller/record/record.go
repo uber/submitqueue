@@ -18,7 +18,9 @@
 //
 // The durable state is a ValidationFact per validated commit, plus the queue's
 // last-green bookmark, which process reads to choose an incremental build
-// baseline. Downstream hooks are not implemented yet.
+// baseline. A green commit is also promoted, moving the queue's promotion ref so
+// downstream systems can pull the latest green commit by name. Downstream hooks
+// are not implemented yet.
 package record
 
 import (
@@ -33,19 +35,21 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
+	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
 
 // Controller consumes Record messages, records the build's validation fact, and
-// advances the queue's last-green bookmark when that fact is green. Implements
-// consumer.Controller.
+// when that fact is green advances the queue's last-green bookmark and promotes
+// the commit. Implements consumer.Controller.
 type Controller struct {
-	logger        *zap.SugaredLogger
-	metricsScope  tally.Scope
-	stores        storage.Factory
-	topicKey      consumer.TopicKey
-	consumerGroup string
+	logger         *zap.SugaredLogger
+	metricsScope   tally.Scope
+	stores         storage.Factory
+	sourceControls sourcecontrol.Factory
+	topicKey       consumer.TopicKey
+	consumerGroup  string
 }
 
 // Verify Controller implements consumer.Controller interface at compile time.
@@ -64,21 +68,24 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
+	sourceControls sourcecontrol.Factory,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
 	return &Controller{
-		logger:        logger.Named("record_controller"),
-		metricsScope:  scope.SubScope("record_controller"),
-		stores:        stores,
-		topicKey:      topicKey,
-		consumerGroup: consumerGroup,
+		logger:         logger.Named("record_controller"),
+		metricsScope:   scope.SubScope("record_controller"),
+		stores:         stores,
+		sourceControls: sourceControls,
+		topicKey:       topicKey,
+		consumerGroup:  consumerGroup,
 	}
 }
 
-// Process loads the request referenced by the delivery and, when its build
-// succeeded, advances the queue's last-green bookmark. Returns nil to ack
-// (success) or an error to nack (retry) / reject (DLQ).
+// Process loads the request referenced by the delivery, records its validation
+// fact and, when that fact is green, advances the queue's last-green bookmark and
+// promotes the commit. Returns nil to ack (success) or an error to nack (retry) /
+// reject (DLQ).
 //
 // buildsignal stamps the outcome on the request before publishing here, so a
 // request without a build outcome is a producer invariant violation rather
@@ -115,19 +122,32 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	switch request.State {
 	case entity.RequestStateSucceeded, entity.RequestStateFailed:
-		fact, err := c.recordFact(ctx, store, request)
+		fact, created, err := c.recordFact(ctx, store, request)
 		if err != nil {
 			return err
 		}
 		if !fact.IsGreen() {
 			metrics.NamedCounter(c.metricsScope, _opName, "not_green", 1)
+			// Only the writer of the fact reports the latency: a redelivery adopts
+			// the stored fact instead, and a second sample would count one break
+			// twice in the distribution.
+			if created {
+				c.reportFailureDetectionLatency(ctx, request)
+			}
 			return nil
 		}
-		if err := c.advanceLastGreen(ctx, store, request); err != nil {
+		holdsBookmark, err := c.advanceLastGreen(ctx, store, request)
+		if err != nil {
 			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
 			return err
 		}
-		return nil
+		if !holdsBookmark {
+			// A later green commit already holds the bookmark, so it also owns
+			// the promotion ref: promoting this older commit would move the ref
+			// backwards.
+			return nil
+		}
+		return c.promote(ctx, request)
 
 	case entity.RequestStateCancelled:
 		// A cancelled build decided nothing about the commit, so it establishes
@@ -155,8 +175,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // facts are first-writer-wins, so an identity already claimed by this same request —
 // a redelivery after the write but before the bookmark advanced — yields the stored
 // fact instead. Every decision downstream reads that stored fact rather than the
-// request, so a redelivery cannot reach a different verdict than the original.
-func (c *Controller) recordFact(ctx context.Context, store storage.Storage, request entity.Request) (entity.ValidationFact, error) {
+// request, so a redelivery cannot reach a different verdict than the original. The
+// second return reports whether this call is the one that wrote the fact, which is
+// how a caller tells the original delivery from a redelivery.
+func (c *Controller) recordFact(ctx context.Context, store storage.Storage, request entity.Request) (entity.ValidationFact, bool, error) {
 	factStore := store.GetValidationFactStore()
 
 	fact := entity.ValidationFact{
@@ -177,29 +199,100 @@ func (c *Controller) recordFact(ctx context.Context, store storage.Storage, requ
 			"uri", request.URI,
 			"degree", fact.Degree,
 		)
-		return fact, nil
+		return fact, true, nil
 
 	case errors.Is(err, storage.ErrAlreadyExists):
 		stored, getErr := factStore.Get(ctx, request.URI, wholeRepositoryProject)
 		if getErr != nil {
 			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
-			return entity.ValidationFact{}, fmt.Errorf("failed to load the existing fact for uri %s: %w", request.URI, getErr)
+			return entity.ValidationFact{}, false, fmt.Errorf("failed to load the existing fact for uri %s: %w", request.URI, getErr)
 		}
 		if stored.RequestID != request.ID {
 			// Two requests validating one URI would break the dedup ingest
 			// enforces, so this is a broken invariant rather than a race to
 			// resolve. Non-retryable: the stored fact is immutable.
 			metrics.NamedCounter(c.metricsScope, _opName, "invariant_errors", 1)
-			return entity.ValidationFact{}, fmt.Errorf(
+			return entity.ValidationFact{}, false, fmt.Errorf(
 				"fact for uri %s is owned by request %s, not %s", request.URI, stored.RequestID, request.ID)
 		}
 		metrics.NamedCounter(c.metricsScope, _opName, "fact_exists", 1)
-		return stored, nil
+		return stored, false, nil
 
 	default:
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
-		return entity.ValidationFact{}, fmt.Errorf("failed to create the fact for uri %s: %w", request.URI, err)
+		return entity.ValidationFact{}, false, fmt.Errorf("failed to create the fact for uri %s: %w", request.URI, err)
 	}
+}
+
+// reportFailureDetectionLatency records how long the break this build failed on went
+// undetected, measured from the commit timestamp of the base it validated against. A
+// histogram rather than a gauge because the distribution over failures is the point:
+// how long a break typically survives, not how long the last one did.
+//
+// Unlike the last-green age, there is no later moment to sample this from — an elapsed
+// time is only meaningful against the failure that just became known — so the
+// source-control lookup cannot be moved off the delivery path onto a clock. It is
+// confined to failures and made once the fact is durable, and every way it can fail is
+// counted and swallowed so a reporting fault cannot retry an outcome already recorded.
+func (c *Controller) reportFailureDetectionLatency(ctx context.Context, request entity.Request) {
+	queueTag := metrics.NewTag("queue", request.Queue)
+	strategyTag := metrics.NewTag("strategy", string(request.BuildStrategy))
+
+	// Only a strategy that validates a delta pins a base commit, so a full build has
+	// no baseline to measure from. Its failures are counted rather than timed: absent
+	// here is the ordinary case, not a fault.
+	if request.BaseURI == "" {
+		metrics.NamedCounter(c.metricsScope, _opName, "failure_detection_missing", 1, queueTag, strategyTag)
+		return
+	}
+
+	sourceControl, err := c.sourceControls.For(sourcecontrol.Config{QueueName: request.Queue})
+	if err != nil {
+		c.failureDetectionUnobserved(request, "resolve_source_control", err)
+		return
+	}
+
+	info, err := sourceControl.ChangeInfo(ctx, request.BaseURI)
+	if err != nil {
+		c.failureDetectionUnobserved(request, "get_change_info", err)
+		return
+	}
+
+	// SourceControl must report a positive creation timestamp, so a missing one is a
+	// broken extension contract rather than a lookup failure. Measuring from 1970
+	// would drop a decades-long sample into the distribution.
+	if info.CreatedAt <= 0 {
+		c.failureDetectionUnobserved(request, "undated_change", nil)
+		return
+	}
+
+	// A base dated in the future means the provider's clock disagrees with ours; a
+	// negative latency would corrupt the distribution rather than describe it.
+	latency := time.Since(time.UnixMilli(info.CreatedAt))
+	if latency < 0 {
+		c.failureDetectionUnobserved(request, "future_change", nil)
+		return
+	}
+
+	metrics.NamedHistogram(c.metricsScope, _opName, "failure_detection_latency", metrics.ChangeAgeBuckets,
+		queueTag, strategyTag,
+	).RecordDuration(latency)
+}
+
+// failureDetectionUnobserved counts a latency that could not be observed, tagged with
+// the step that failed so an unmeasurable failure can be told apart from a broken
+// dependency.
+func (c *Controller) failureDetectionUnobserved(request entity.Request, step string, err error) {
+	metrics.NamedCounter(c.metricsScope, _opName, "failure_detection_errors", 1,
+		metrics.NewTag("queue", request.Queue),
+		metrics.NewTag("step", step),
+	)
+	c.logger.Warnw("failed to observe how long the build failure went undetected",
+		"queue", request.Queue,
+		"base_uri", request.BaseURI,
+		"step", step,
+		"error", err,
+	)
 }
 
 // degreeFor maps a request's build outcome onto a whole-repository degree. Only the
@@ -213,30 +306,34 @@ func degreeFor(state entity.RequestState) float64 {
 }
 
 // advanceLastGreen points the queue's bookmark at request, retrying on version
-// conflicts. The bookmark only moves forward: a candidate whose id is not newer
-// than the stored one is skipped without a write, which also makes a redelivery
-// of the same request a no-op.
+// conflicts, and reports whether request holds the bookmark afterwards. The
+// bookmark only moves forward: an older candidate is skipped without a write and
+// does not hold it, while a redelivery of the request that already set it holds it
+// without a write, so the promotion that follows is retried.
 //
 // The bookmark is a cache of "newest green URI" derived from the facts, so it is
 // advanced only after the green fact is durable. Losing the advance to a crash is
 // recoverable — the redelivery reloads the same fact and retries — whereas a
 // bookmark with no fact behind it would point at greenness nothing recorded.
-func (c *Controller) advanceLastGreen(ctx context.Context, store storage.Storage, request entity.Request) error {
+func (c *Controller) advanceLastGreen(ctx context.Context, store storage.Storage, request entity.Request) (bool, error) {
 	queueStore := store.GetQueueStore()
 
 	for {
 		queueRow, err := queueStore.Get(ctx, request.Queue)
 		if err != nil {
-			return fmt.Errorf("failed to load queue %s to advance last green: %w", request.Queue, err)
+			return false, fmt.Errorf("failed to load queue %s to advance last green: %w", request.Queue, err)
 		}
 
-		newer, err := isNewerRequest(request.Queue, request.ID, queueRow.LastGreenRequestID)
+		cmp, err := compareToBookmark(request.Queue, request.ID, queueRow.LastGreenRequestID)
 		if err != nil {
 			// Non-retryable: re-parsing the same ids cannot start succeeding.
-			return err
+			return false, err
 		}
-		if !newer {
-			return nil
+		if cmp < 0 {
+			return false, nil
+		}
+		if cmp == 0 {
+			return true, nil
 		}
 
 		updated := queueRow
@@ -247,7 +344,7 @@ func (c *Controller) advanceLastGreen(ctx context.Context, store storage.Storage
 			if errors.Is(err, storage.ErrVersionMismatch) {
 				continue
 			}
-			return fmt.Errorf("failed to advance last green for queue %s: %w", request.Queue, err)
+			return false, fmt.Errorf("failed to advance last green for queue %s: %w", request.Queue, err)
 		}
 
 		metrics.NamedCounter(c.metricsScope, _opName, "last_green_advanced", 1)
@@ -256,21 +353,121 @@ func (c *Controller) advanceLastGreen(ctx context.Context, store storage.Storage
 			"request_id", request.ID,
 			"last_green_uri", request.URI,
 		)
-		return nil
+		c.emitLastGreenTimestamp(ctx, request)
+		return true, nil
 	}
 }
 
-// isNewerRequest reports whether candidate was ingested after current. An empty
-// current means the bookmark has never been set, so any candidate is newer.
-func isNewerRequest(queue, candidate, current string) (bool, error) {
+// emitLastGreenTimestamp emits the creation time of the change the bookmark now
+// points at, once that bookmark is durable. Reporting is best-effort so an
+// observability failure cannot turn a successful record operation into a retry,
+// which is why each cause is counted and logged separately instead of returned.
+func (c *Controller) emitLastGreenTimestamp(ctx context.Context, request entity.Request) {
+	queueTag := metrics.NewTag("queue", request.Queue)
+
+	sourceControl, err := c.sourceControls.For(sourcecontrol.Config{QueueName: request.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "last_green_timestamp_resolve_errors", 1, queueTag)
+		c.logger.Warnw("failed to resolve source control to report the last green timestamp",
+			"queue", request.Queue,
+			"error", err,
+		)
+		return
+	}
+
+	info, err := sourceControl.ChangeInfo(ctx, request.URI)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "last_green_timestamp_errors", 1, queueTag)
+		c.logger.Warnw("failed to look up the last green change timestamp",
+			"queue", request.Queue,
+			"uri", request.URI,
+			"error", err,
+		)
+		return
+	}
+
+	// SourceControl must report a positive creation timestamp, so a missing one
+	// is a broken extension contract rather than a lookup failure. Emitting it
+	// anyway would publish a 1970 timestamp and read as an infinitely stale queue.
+	if info.CreatedAt <= 0 {
+		metrics.NamedCounter(c.metricsScope, _opName, "last_green_timestamp_invalid", 1, queueTag)
+		c.logger.Warnw("source control reported no creation timestamp for the last green change",
+			"queue", request.Queue,
+			"uri", request.URI,
+			"created_at", info.CreatedAt,
+		)
+		return
+	}
+
+	// The gauge carries the creation time as Unix seconds, so subtracting it
+	// from the current time yields the age of the last-green change in seconds.
+	metrics.NamedGauge(
+		c.metricsScope,
+		_opName,
+		"last_green_timestamp_seconds",
+		float64(time.UnixMilli(info.CreatedAt).Unix()),
+		queueTag,
+	)
+}
+
+// promote points the queue's promotion ref at the request's commit so downstream
+// systems can pull the latest green commit by name. Which ref that is — and whether
+// the queue has one at all — is source-control configuration, so this stage names
+// only the commit.
+//
+// Like the bookmark, the ref is a cache of the facts, so it moves only after the
+// green fact is durable. Promotion is idempotent, so a redelivery repeats it
+// harmlessly. A commit that a rewritten history dropped from the ref cannot be
+// promoted by any retry, so that case is counted and skipped rather than failed.
+func (c *Controller) promote(ctx context.Context, request entity.Request) error {
+	sc, err := c.sourceControls.For(sourcecontrol.Config{QueueName: request.Queue})
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
+			metrics.NewTag("stage", "resolve"),
+		)
+		return fmt.Errorf("failed to resolve source control for queue %s: %w", request.Queue, err)
+	}
+
+	if err := sc.Promote(ctx, request.URI); err != nil {
+		if sourcecontrol.IsNotFound(err) {
+			metrics.NamedCounter(c.metricsScope, _opName, "promotions_skipped", 1,
+				metrics.NewTag("reason", "unknown_uri"),
+			)
+			c.logger.Warnw("green commit is no longer on the queue's ref; skipping promotion",
+				"queue", request.Queue,
+				"request_id", request.ID,
+				"uri", request.URI,
+			)
+			return nil
+		}
+
+		metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
+			metrics.NewTag("stage", "promote"),
+		)
+		return fmt.Errorf("failed to promote uri %s of queue %s: %w", request.URI, request.Queue, err)
+	}
+
+	metrics.NamedCounter(c.metricsScope, _opName, "promotions", 1)
+	c.logger.Infow("promoted green commit",
+		"queue", request.Queue,
+		"request_id", request.ID,
+		"uri", request.URI,
+	)
+	return nil
+}
+
+// compareToBookmark orders candidate against the request id currently holding the
+// bookmark, by ingest order, using the sign convention of entity.CompareRequestID.
+// An empty current means the bookmark has never been set, so any candidate is newer.
+func compareToBookmark(queue, candidate, current string) (int, error) {
 	if current == "" {
-		return true, nil
+		return 1, nil
 	}
 	cmp, err := entity.CompareRequestID(queue, candidate, current)
 	if err != nil {
-		return false, fmt.Errorf("failed to compare request ids for queue %s: %w", queue, err)
+		return 0, fmt.Errorf("failed to compare request ids for queue %s: %w", queue, err)
 	}
-	return cmp > 0, nil
+	return cmp, nil
 }
 
 // loadRequest loads the request by id.

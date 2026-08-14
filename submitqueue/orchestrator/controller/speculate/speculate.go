@@ -137,6 +137,15 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		}
 	}
 
+	// A Merging batch has left the set finalize walks, so a message naming it
+	// is the only thing that will look at it again.
+	if batch.State == entity.BatchStateMerging {
+		metrics.NamedCounter(c.metricsScope, opName, "self_heal_merging", 1)
+		if err := c.dispatchMerge(ctx, batch); err != nil {
+			return c.attributed(err, entity.BatchSubject(batch.ID))
+		}
+	}
+
 	return c.run(ctx, store, batch)
 }
 

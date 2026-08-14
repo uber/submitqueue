@@ -15,15 +15,30 @@
 package main
 
 import (
-	"context"
 	"fmt"
+	nethttp "net/http"
 
 	"github.com/uber-go/tally"
+	"go.uber.org/zap"
+	"golang.org/x/oauth2"
+	yamlv3 "gopkg.in/yaml.v3"
+
+	"context"
+
+	platformbuildkite "github.com/uber/submitqueue/platform/buildkite"
+	platformgithubactions "github.com/uber/submitqueue/platform/githubactions"
+	"github.com/uber/submitqueue/platform/http"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
+	buildkiterunner "github.com/uber/submitqueue/submitqueue/extension/buildrunner/buildkite"
 	buildfake "github.com/uber/submitqueue/submitqueue/extension/buildrunner/fake"
+	githubactionsrunner "github.com/uber/submitqueue/submitqueue/extension/buildrunner/githubactions"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
+	cpfake "github.com/uber/submitqueue/submitqueue/extension/changeprovider/fake"
+	githubprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/github"
+	phabprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/phabricator"
+	routingprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/routing"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/all"
 	conflictfake "github.com/uber/submitqueue/submitqueue/extension/conflict/fake"
@@ -38,20 +53,12 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
 	specstandard "github.com/uber/submitqueue/submitqueue/extension/speculation/speculator/standard"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
-	"go.uber.org/zap"
 )
 
-// Profile holds the per-queue extension factories. Grouping them per queue
-// (rather than per extension) lets the wiring read as "for this queue, here are
-// its analyzer, change provider, …", and lets a queue profile start from a
-// baseline and override only what differs.
-//
-// Every field is a Factory rather than a built implementation. Selecting the
-// profile consumes only the queue name; the Config itself is forwarded into the
-// profile's factory, so the implementation is constructed knowing which queue it
-// serves. That matters most for defaultProfile, which backs every queue without
-// an explicit entry: one shared instance could not carry a correct queue name,
-// but one factory can build a correct instance per queue.
+// Profile holds the per-queue extension implementations. Grouping them per
+// queue (rather than per extension) lets the wiring read as "for this queue,
+// here are its analyzer, change provider, …", and lets a queue profile start
+// from a baseline and override only what differs.
 type Profile struct {
 	// ChangeProvider resolves change metadata for requests in this queue.
 	ChangeProvider changeprovider.Factory
@@ -94,10 +101,6 @@ func (p Profiles) For(queue string) Profile {
 	return p.defaultProfile
 }
 
-// Each XFactory method resolves the queue's profile by name, then forwards the
-// whole Config to that profile's factory. The second For(c) is what carries the
-// queue identity past the profile lookup and into the implementation.
-
 // ChangeProviderFactory returns a changeprovider.Factory that resolves the
 // ChangeProvider for each queue from the profile registry.
 func (p Profiles) ChangeProviderFactory() changeprovider.Factory {
@@ -122,11 +125,11 @@ func (p Profiles) AnalyzerFactory() conflict.Factory {
 	})
 }
 
-// StorageFactory returns a storage.Factory that routes each queue to its
-// profile's storage backend before binding the queue-scoped store aggregate.
-func (p Profiles) StorageFactory() storage.Factory {
-	return storageFunc(func(c storage.Config) (storage.Storage, error) {
-		return p.For(c.QueueName).Storage.For(c)
+// SpeculatorFactory returns a speculator.Factory that resolves the Speculator
+// for each queue from the profile registry.
+func (p Profiles) SpeculatorFactory() speculator.Factory {
+	return speculatorFunc(func(c speculator.Config) (speculator.Speculator, error) {
+		return p.For(c.QueueName).Speculator.For(c)
 	})
 }
 
@@ -138,18 +141,17 @@ func (p Profiles) ScorerFactory() scorer.Factory {
 	})
 }
 
-// SpeculatorFactory returns a speculator.Factory that resolves the Speculator
-// for each queue from the profile registry.
-func (p Profiles) SpeculatorFactory() speculator.Factory {
-	return speculatorFunc(func(c speculator.Config) (speculator.Speculator, error) {
-		return p.For(c.QueueName).Speculator.For(c)
+// StorageFactory returns a storage.Factory that routes each queue to its
+// profile's storage backend before binding the queue-scoped store aggregate.
+func (p Profiles) StorageFactory() storage.Factory {
+	return storageFunc(func(c storage.Config) (storage.Storage, error) {
+		return p.For(c.QueueName).Storage.For(c)
 	})
 }
 
 // Thin func-type adapters — the http.HandlerFunc trick applied to each
 // extension Factory interface. Each func type satisfies the Factory contract,
-// letting Profiles cross the host/library boundary without dedicated structs,
-// and letting a Profile field hold a closure instead of a built instance.
+// letting Profiles cross the host/library boundary without dedicated structs.
 
 type changeProviderFunc func(changeprovider.Config) (changeprovider.ChangeProvider, error)
 
@@ -177,119 +179,93 @@ type speculatorFunc func(speculator.Config) (speculator.Speculator, error)
 
 func (f speculatorFunc) For(c speculator.Config) (speculator.Speculator, error) { return f(c) }
 
-// newProfiles builds the per-queue extension profiles for the example.
-// Edge integrations (change provider) and the build runner form a shared
-// baseline; each per-queue profile starts from that baseline and overrides
-// only the extensions that differ — here the conflict analyzer and the scorer.
-// Queues without an explicit profile fall back to the baseline.
+// newProfiles builds the per-queue extension profiles from configuration.
 //
-// Anything expensive and queue-independent — the resolver, the metrics scope,
-// the change provider's HTTP clients — is built once, here. The closures below
-// only construct the cheap per-queue wrapper, which is the same shape
-// counterFactory.For already uses for the MySQL counter.
-func newProfiles(logger *zap.Logger, scope tally.Scope, resolver changeset.Resolver, stores storage.Factory) (Profiles, error) {
-	changeProviders, err := newChangeProviderFactory(logger, scope)
+// Every queue resolves to its own set of implementations, so one deployment can
+// run a queue against a real provider next to one running entirely on fakes —
+// which is what lets the same wiring serve both the hermetic test stack and a
+// live repository.
+func newProfiles(
+	logger *zap.Logger,
+	scope tally.Scope,
+	resolver changeset.Resolver,
+	stores storage.Factory,
+	cfg profilesConfig,
+) (Profiles, error) {
+	b := &profileBuilder{
+		logger:   logger,
+		scope:    scope,
+		resolver: resolver,
+		stores:   stores,
+		built:    make(map[string]any),
+	}
+
+	defaultProfile, err := b.build(cfg.Defaults, "defaults")
 	if err != nil {
-		return Profiles{}, fmt.Errorf("failed to create change provider: %w", err)
+		return Profiles{}, err
 	}
 
-	// batchLines buckets a batch by total lines changed across all its changes —
-	// larger batches are likelier to fail to land.
-	batchLines := func(_ context.Context, changes entity.BatchChanges) (int, error) {
-		return changes.TotalLinesChanged(), nil
-	}
-
-	// heuristicScorer builds a bucketed heuristic scorer, wrapped by scorerfake
-	// so a change URI carrying "sq-fake=score-error" forces a scoring error
-	// end-to-end; the wrapper is a pure passthrough otherwise.
-	heuristicScorer := func(buckets []heuristic.Bucket, scopeName string) scorer.Factory {
-		return scorerFunc(func(c scorer.Config) (scorer.Scorer, error) {
-			return scorerfake.New(c, resolver, heuristic.New(
-				c, resolver, buckets, batchLines, scope.SubScope(scopeName),
-			)), nil
-		})
-	}
-
-	// Baseline profile: shared edge integrations + a fake build runner (every
-	// build succeeds unless a head URI carries a failure marker), plus permissive
-	// defaults for scorer and conflict.
-	//
-	// The analyzer is wrapped by conflictfake with a nil predicate (passthrough)
-	// — swap the predicate (e.g. conflictfake.FailAlways) on a queue to exercise
-	// the analyzer error path, as e2e-conflict-error-queue below does.
-	base := Profile{
-		ChangeProvider: changeProviders,
-		BuildRunner: buildRunnerFunc(func(c buildrunner.Config) (buildrunner.BuildRunner, error) {
-			return buildfake.New(c, resolver), nil
-		}),
-		// TODO: replace the delegate with a real analyzer (e.g. Tango target
-		// analysis). "all" serializes the queue conservatively.
-		Analyzer: analyzerFunc(func(c conflict.Config) (conflict.Analyzer, error) {
-			return conflictfake.New(c, all.New(c), nil), nil
-		}),
-		Storage: stores,
-		Scorer: heuristicScorer(
-			[]heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: 0.5}},
-			"scorer.default",
-		),
-	}
-
-	// test-queue: bucketed heuristic scorer; conservative (serialized) conflicts
-	// inherited from the baseline.
-	testQueue := base
-	testQueue.Scorer = heuristicScorer(
-		[]heuristic.Bucket{
-			{Min: 0, Max: 1, Score: 0.95},
-			{Min: 2, Max: 5, Score: 0.80},
-			{Min: 6, Max: 20, Score: 0.60},
-			{Min: 21, Max: 1<<31 - 1, Score: 0.40},
-		},
-		"scorer.test-queue",
-	)
-
-	// e2e-conflict-error-queue: every conflict analysis fails, exercising the
-	// analyzer error path. Scorer/edge integrations inherit the baseline.
-	conflictErrQueue := base
-	conflictErrQueue.Analyzer = analyzerFunc(func(c conflict.Config) (conflict.Analyzer, error) {
-		return conflictfake.New(c, all.New(c), conflictfake.FailAlways), nil
-	})
-
-	// file-overlap-queue: a real analyzer that serializes only batches sharing
-	// a changed file, resolving each batch's files itself via the resolver.
-	// pathoverlap.ByDirectory would coarsen this to whole directories.
-	fileOverlapQueue := base
-	fileOverlapQueue.Analyzer = analyzerFunc(func(c conflict.Config) (conflict.Analyzer, error) {
-		return pathoverlap.New(c, resolver, pathoverlap.ByFile), nil
-	})
-
-	// e2e-test-queue: composite scorer; no conflicts (maximum parallelism).
-	e2eQueue := base
-	e2eQueue.Analyzer = analyzerFunc(func(c conflict.Config) (conflict.Analyzer, error) {
-		return conflictfake.New(c, none.New(c), nil), nil
-	})
-	e2eQueue.Scorer = scorerFunc(func(c scorer.Config) (scorer.Scorer, error) {
-		flat := func(score float64) scorer.Scorer {
-			return heuristic.New(c, resolver,
-				[]heuristic.Bucket{{Min: 0, Max: 1<<31 - 1, Score: score}}, batchLines, scope)
+	byQueue := make(map[string]Profile, len(cfg.Queues))
+	for _, q := range cfg.Queues {
+		profile, err := b.build(cfg.resolve(q), fmt.Sprintf("queue %q", q.Name))
+		if err != nil {
+			return Profiles{}, err
 		}
-		return scorerfake.New(c, resolver, composite.New(
-			c,
-			map[string]scorer.Scorer{"size": flat(0.8), "flat": flat(0.6)},
-			composite.Avg, scope.SubScope("scorer.e2e-test-queue"),
-		)), nil
-	})
+		byQueue[q.Name] = profile
+	}
 
+	logger.Info("extension profiles built",
+		zap.String("default_change_provider", cfg.Defaults.ChangeProvider.Type),
+		zap.String("default_build_runner", cfg.Defaults.BuildRunner.Type),
+		zap.String("default_analyzer", cfg.Defaults.Analyzer.Type),
+		zap.String("default_scorer", cfg.Defaults.Scorer.Type),
+		zap.Int("queue_overrides", len(byQueue)),
+	)
+	return Profiles{defaultProfile: defaultProfile, byQueue: byQueue}, nil
+}
+
+// profileBuilder constructs extension factories, reusing one factory per
+// distinct configuration.
+//
+// What is reused is the factory, not the implementation: an implementation is
+// built per resolution so it carries the queue's own Config, while everything
+// expensive and queue-independent — the HTTP clients, the resolver, the metrics
+// scopes — is built once here and captured by the factory. Several queues
+// pointing at one repository therefore still share a single HTTP client.
+type profileBuilder struct {
+	logger   *zap.Logger
+	scope    tally.Scope
+	resolver changeset.Resolver
+	stores   storage.Factory
+	built    map[string]any
+}
+
+func (b *profileBuilder) build(cfg queueProfileConfig, where string) (Profile, error) {
+	provider, err := reuse(b, cfg.ChangeProvider, where, b.newChangeProviderFactory)
+	if err != nil {
+		return Profile{}, err
+	}
+	runner, err := reuse(b, cfg.BuildRunner, where, b.newBuildRunnerFactory)
+	if err != nil {
+		return Profile{}, err
+	}
+	analyzer, err := reuse(b, cfg.Analyzer, where, b.newAnalyzerFactory)
+	if err != nil {
+		return Profile{}, err
+	}
+	sc, err := reuse(b, cfg.Scorer, where, b.newScorerFactory)
+	if err != nil {
+		return Profile{}, err
+	}
 	// The speculator is composed last, because it is built from whatever scorer
 	// the profile ended up with.
-	return Profiles{
-		defaultProfile: withSpeculator(base),
-		byQueue: map[string]Profile{
-			"test-queue":               withSpeculator(testQueue),
-			"e2e-test-queue":           withSpeculator(e2eQueue),
-			"e2e-conflict-error-queue": withSpeculator(conflictErrQueue),
-			"file-overlap-queue":       withSpeculator(fileOverlapQueue),
-		},
-	}, nil
+	return withSpeculator(Profile{
+		ChangeProvider: provider,
+		BuildRunner:    runner,
+		Analyzer:       analyzer,
+		Storage:        b.stores,
+		Scorer:         sc,
+	}), nil
 }
 
 // defaultBuildBudget caps how many builds a queue may have occupying CI at
@@ -306,9 +282,8 @@ const defaultBuildBudget = 4
 // policy without touching the speculate controller, which depends only on the
 // Speculator contract.
 //
-// The scorer is resolved at the same queue identity the speculator was asked
-// for, so a queue falling through to defaultProfile gets a speculator whose
-// underlying scorer was also built for that queue.
+// The scorer is resolved lazily, at the queue the speculator itself was asked
+// for, so the queue's identity reaches one level down into the scorer too.
 func withSpeculator(p Profile) Profile {
 	p.Speculator = speculatorFunc(func(c speculator.Config) (speculator.Speculator, error) {
 		sc, err := p.Scorer.For(scorer.Config{QueueName: c.QueueName})
@@ -318,4 +293,351 @@ func withSpeculator(p Profile) Profile {
 		return specstandard.New(c, bestfirst.New(sc), sticky.New(defaultBuildBudget)), nil
 	})
 	return p
+}
+
+// batchLines buckets a batch by total lines changed across all its changes —
+// larger batches are likelier to fail to land.
+func batchLines(_ context.Context, changes entity.BatchChanges) (int, error) {
+	return changes.TotalLinesChanged(), nil
+}
+
+// newScorerFactory builds the configured scorer's factory.
+//
+// Every scorer is wrapped by scorerfake so a change URI carrying
+// "sq-fake=score-error" forces a scoring error end to end; it is a pure
+// passthrough otherwise.
+//
+// The configuration is walked once up front so an unusable scorer config fails
+// at wiring time rather than on the first queue that resolves it.
+func (b *profileBuilder) newScorerFactory(cfg scorerConfig, where string) (scorer.Factory, error) {
+	if _, err := b.buildScorer(scorer.Config{}, cfg, where, "scorer"); err != nil {
+		return nil, err
+	}
+	return scorerFunc(func(c scorer.Config) (scorer.Scorer, error) {
+		inner, err := b.buildScorer(c, cfg, where, "scorer")
+		if err != nil {
+			return nil, err
+		}
+		return scorerfake.New(c, b.resolver, inner), nil
+	}), nil
+}
+
+// buildScorer constructs one scorer for the given queue, recursing for a
+// composite's components. scopeName keeps each component's metrics
+// distinguishable.
+func (b *profileBuilder) buildScorer(c scorer.Config, cfg scorerConfig, where, scopeName string) (scorer.Scorer, error) {
+	switch cfg.Type {
+	case scorerTypeHeuristic:
+		buckets := make([]heuristic.Bucket, 0, len(cfg.Buckets))
+		for _, bc := range cfg.Buckets {
+			buckets = append(buckets, heuristic.Bucket{Min: bc.Min, Max: bc.Max, Score: bc.Score})
+		}
+		return heuristic.New(c, b.resolver, buckets, batchLines, b.scope.SubScope(scopeName)), nil
+
+	case scorerTypeComposite:
+		components := make(map[string]scorer.Scorer, len(cfg.Components))
+		for name, component := range cfg.Components {
+			built, err := b.buildScorer(c, component, where, scopeName+"."+name)
+			if err != nil {
+				return nil, err
+			}
+			components[name] = built
+		}
+		// avg is the only combine the schema admits.
+		return composite.New(c, components, composite.Avg, b.scope.SubScope(scopeName)), nil
+
+	default:
+		return nil, fmt.Errorf("%s: unknown scorer type %q", where, cfg.Type)
+	}
+}
+
+// reuse returns the instance already built for an identical configuration, or
+// builds and remembers one. Identity is the configuration's own YAML encoding,
+// which compares nested optional blocks by value rather than by pointer.
+func reuse[C any, T any](b *profileBuilder, cfg C, where string, make func(C, string) (T, error)) (T, error) {
+	var zero T
+	encoded, err := yamlv3.Marshal(cfg)
+	if err != nil {
+		return zero, fmt.Errorf("%s: failed to key extension config: %w", where, err)
+	}
+	key := fmt.Sprintf("%T:%s", zero, encoded)
+	if existing, ok := b.built[key]; ok {
+		return existing.(T), nil
+	}
+	built, err := make(cfg, where)
+	if err != nil {
+		return zero, err
+	}
+	b.built[key] = built
+	return built, nil
+}
+
+// newChangeProviderFactory builds the configured change provider's factory.
+func (b *profileBuilder) newChangeProviderFactory(cfg changeProviderConfig, where string) (changeprovider.Factory, error) {
+	switch cfg.Type {
+	case changeProviderTypeFake:
+		return changeProviderFunc(func(c changeprovider.Config) (changeprovider.ChangeProvider, error) {
+			return cpfake.New(c), nil
+		}), nil
+
+	case changeProviderTypeGitHub:
+		makeProvider, err := b.newGitHubChangeProvider(*cfg.GitHub, where)
+		if err != nil {
+			return nil, err
+		}
+		if makeProvider == nil {
+			return nil, fmt.Errorf("%s: github change provider needs %s to be set", where, cfg.GitHub.TokenEnv)
+		}
+		return changeProviderFunc(func(c changeprovider.Config) (changeprovider.ChangeProvider, error) {
+			return makeProvider(c), nil
+		}), nil
+
+	case changeProviderTypePhabricator:
+		makeProvider, err := b.newPhabChangeProvider(*cfg.Phabricator, where)
+		if err != nil {
+			return nil, err
+		}
+		if makeProvider == nil {
+			return nil, fmt.Errorf("%s: phabricator change provider needs %s to be set", where, cfg.Phabricator.TokenEnv)
+		}
+		return changeProviderFunc(func(c changeprovider.Config) (changeprovider.ChangeProvider, error) {
+			return makeProvider(c), nil
+		}), nil
+
+	case changeProviderTypeRouting:
+		return b.newRoutingChangeProviderFactory(cfg, where)
+
+	default:
+		return nil, fmt.Errorf("%s: unknown change provider type %q", where, cfg.Type)
+	}
+}
+
+// newRoutingChangeProviderFactory builds a provider that dispatches on the change
+// URI's scheme. A configured provider whose token is unset is left out rather than
+// failing: routing exists for a deployment that reaches several providers, and
+// requiring credentials for all of them to use any of them would make it
+// unusable partway through a migration.
+func (b *profileBuilder) newRoutingChangeProviderFactory(cfg changeProviderConfig, where string) (changeprovider.Factory, error) {
+	var (
+		makeGitHub, makePhab func(changeprovider.Config) changeprovider.ChangeProvider
+		err                  error
+	)
+	if cfg.GitHub != nil {
+		if makeGitHub, err = b.newGitHubChangeProvider(*cfg.GitHub, where); err != nil {
+			return nil, err
+		}
+	}
+	if cfg.Phabricator != nil {
+		if makePhab, err = b.newPhabChangeProvider(*cfg.Phabricator, where); err != nil {
+			return nil, err
+		}
+	}
+
+	if makeGitHub == nil && makePhab == nil {
+		b.logger.Warn("no change provider tokens set; using fake change provider (empty change info unless URI-marked)",
+			zap.String("profile", where))
+		return changeProviderFunc(func(c changeprovider.Config) (changeprovider.ChangeProvider, error) {
+			return cpfake.New(c), nil
+		}), nil
+	}
+
+	return changeProviderFunc(func(c changeprovider.Config) (changeprovider.ChangeProvider, error) {
+		var gh, phab changeprovider.ChangeProvider
+		if makeGitHub != nil {
+			gh = makeGitHub(c)
+		}
+		if makePhab != nil {
+			phab = makePhab(c)
+		}
+		provider, err := routingprovider.NewProvider(routingprovider.Params{Config: c, GitHub: gh, Phabricator: phab})
+		if err != nil {
+			return nil, fmt.Errorf("%s: failed to create routing change provider: %w", where, err)
+		}
+		return provider, nil
+	}), nil
+}
+
+// newGitHubChangeProvider returns a function building the GitHub change provider
+// for a given queue, or nil when its token is unset. The HTTP client and metrics
+// scope are built once here; only the per-queue wrapper is built per call.
+func (b *profileBuilder) newGitHubChangeProvider(cfg githubProviderConfig, where string) (func(changeprovider.Config) changeprovider.ChangeProvider, error) {
+	token, ok := tokenFrom(cfg.TokenEnv)
+	if !ok {
+		return nil, nil
+	}
+	client, err := b.githubClient(cfg.BaseURL, cfg.Timeout, token, where)
+	if err != nil {
+		return nil, err
+	}
+	scope := b.scope.SubScope("changeprovider.github")
+	return func(c changeprovider.Config) changeprovider.ChangeProvider {
+		return githubprovider.NewProvider(githubprovider.Params{
+			Config:       c,
+			HTTPClient:   client,
+			Logger:       b.logger.Sugar(),
+			MetricsScope: scope,
+		})
+	}, nil
+}
+
+// newPhabChangeProvider returns a function building the Phabricator change
+// provider for a given queue, or nil when its token is unset. As with GitHub,
+// the HTTP client is built once here.
+func (b *profileBuilder) newPhabChangeProvider(cfg phabProviderConfig, where string) (func(changeprovider.Config) changeprovider.ChangeProvider, error) {
+	token, ok := tokenFrom(cfg.TokenEnv)
+	if !ok {
+		return nil, nil
+	}
+	client, err := http.NewClient(cfg.Endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("%s: failed to build Phabricator HTTP client: %w", where, err)
+	}
+	client.Timeout = timeoutOr(cfg.Timeout, defaultHTTPTimeout)
+
+	baseTransport := client.Transport.(*http.BaseURLTransport)
+	baseTransport.Next = &apiTokenTransport{token: token, next: baseTransport.Next}
+
+	scope := b.scope.SubScope("changeprovider.phabricator")
+	return func(c changeprovider.Config) changeprovider.ChangeProvider {
+		return phabprovider.NewProvider(phabprovider.Params{
+			Config:       c,
+			HTTPClient:   client,
+			Logger:       b.logger.Sugar(),
+			MetricsScope: scope,
+		})
+	}, nil
+}
+
+// newBuildRunnerFactory builds the configured build runner's factory. The HTTP
+// client is built once here; only the per-queue runner is built per call.
+func (b *profileBuilder) newBuildRunnerFactory(cfg buildRunnerConfig, where string) (buildrunner.Factory, error) {
+	switch cfg.Type {
+	case buildRunnerTypeFake:
+		return buildRunnerFunc(func(c buildrunner.Config) (buildrunner.BuildRunner, error) {
+			return buildfake.New(c, b.resolver), nil
+		}), nil
+
+	case buildRunnerTypeGitHubActions:
+		token, ok := tokenFrom(cfg.TokenEnv)
+		if !ok {
+			return nil, fmt.Errorf("%s: githubactions build runner needs %s to be set", where, cfg.TokenEnv)
+		}
+		client, err := b.githubClient(cfg.BaseURL, cfg.Timeout, token, where)
+		if err != nil {
+			return nil, err
+		}
+		actions := platformgithubactions.NewClient(client, cfg.Owner, cfg.Repo, cfg.Workflow)
+		return buildRunnerFunc(func(c buildrunner.Config) (buildrunner.BuildRunner, error) {
+			return githubactionsrunner.NewBuildRunner(githubactionsrunner.Params{
+				Config:      c,
+				Client:      actions,
+				Resolver:    b.resolver,
+				Logger:      b.logger.Sugar(),
+				Ref:         cfg.Ref,
+				ExtraInputs: cfg.ExtraInputs,
+			}), nil
+		}), nil
+
+	case buildRunnerTypeBuildkite:
+		token, ok := tokenFrom(cfg.TokenEnv)
+		if !ok {
+			return nil, fmt.Errorf("%s: buildkite build runner needs %s to be set", where, cfg.TokenEnv)
+		}
+		client, err := http.NewClient(cfg.BaseURL)
+		if err != nil {
+			return nil, fmt.Errorf("%s: failed to build Buildkite HTTP client: %w", where, err)
+		}
+		client.Timeout = timeoutOr(cfg.Timeout, defaultHTTPTimeout)
+		client.Transport = &oauth2.Transport{
+			Source: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}),
+			Base:   client.Transport,
+		}
+		bk := platformbuildkite.NewClient(client)
+		return buildRunnerFunc(func(c buildrunner.Config) (buildrunner.BuildRunner, error) {
+			return buildkiterunner.NewBuildRunner(buildkiterunner.Params{
+				Config:   c,
+				Client:   bk,
+				Resolver: b.resolver,
+				Logger:   b.logger.Sugar(),
+			}), nil
+		}), nil
+
+	default:
+		return nil, fmt.Errorf("%s: unknown build runner type %q", where, cfg.Type)
+	}
+}
+
+// newAnalyzerFactory builds the configured conflict analyzer's factory. The
+// type is validated here so an unusable config fails at wiring time rather than
+// on the first queue that resolves it.
+func (b *profileBuilder) newAnalyzerFactory(cfg analyzerConfig, where string) (conflict.Factory, error) {
+	switch cfg.Type {
+	case analyzerTypeAll, analyzerTypeNone, analyzerTypePathOverlap:
+	default:
+		return nil, fmt.Errorf("%s: unknown analyzer type %q", where, cfg.Type)
+	}
+
+	return analyzerFunc(func(c conflict.Config) (conflict.Analyzer, error) {
+		var delegate conflict.Analyzer
+		switch cfg.Type {
+		case analyzerTypeAll:
+			// Serializes the queue conservatively.
+			// TODO: replace with a real analyzer (e.g. Tango target analysis).
+			delegate = all.New(c)
+		case analyzerTypeNone:
+			delegate = none.New(c)
+		case analyzerTypePathOverlap:
+			// Serializes only batches whose changed paths collide at the
+			// configured granularity, resolving each batch's paths itself via
+			// the resolver.
+			return pathoverlap.New(c, b.resolver, pathOverlapKey(cfg.By)), nil
+		}
+
+		if cfg.FailAlways {
+			return conflictfake.New(c, delegate, conflictfake.FailAlways), nil
+		}
+		return conflictfake.New(c, delegate, nil), nil
+	}), nil
+}
+
+// pathOverlapKey maps the configured granularity onto the projection the
+// analyzer keys on. The value is validated when the config is loaded, so an
+// unrecognized one here would be a programming error; it falls back to the
+// narrowest granularity rather than widening a queue's conflicts silently.
+func pathOverlapKey(by string) pathoverlap.PathKey {
+	if by == pathOverlapByDirectory {
+		return pathoverlap.ByDirectory
+	}
+	return pathoverlap.ByFile
+}
+
+// githubClient builds an HTTP client rooted at a GitHub API and authenticated
+// with the given token. Shared by the change provider and the Actions runner,
+// which differ only in which endpoints they call.
+func (b *profileBuilder) githubClient(baseURL, timeout, token, where string) (*nethttp.Client, error) {
+	client, err := http.NewClient(baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("%s: failed to build GitHub HTTP client: %w", where, err)
+	}
+	client.Timeout = timeoutOr(timeout, defaultHTTPTimeout)
+	client.Transport = &oauth2.Transport{
+		Source: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}),
+		Base:   client.Transport,
+	}
+	return client, nil
+}
+
+// apiTokenTransport injects a Phabricator API token as a query parameter in
+// each request.
+type apiTokenTransport struct {
+	token string
+	next  nethttp.RoundTripper
+}
+
+func (t *apiTokenTransport) RoundTrip(req *nethttp.Request) (*nethttp.Response, error) {
+	r := req.Clone(req.Context())
+	q := r.URL.Query()
+	q.Set("api.token", t.token)
+	r.URL.RawQuery = q.Encode()
+	return t.next.RoundTrip(r)
 }

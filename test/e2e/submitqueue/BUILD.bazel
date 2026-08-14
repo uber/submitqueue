@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_test")
 go_test(
     name = "go_default_test",
     srcs = [
+        "git_suite_test.go",
         "harness_test.go",
         "suite_test.go",
     ],
@@ -10,11 +11,23 @@ go_test(
         "//platform/extension/counter/mysql/schema",
         "//platform/extension/messagequeue/mysql/schema",
         "//service/runway/server:docker_test_context",
+        "//service/submitqueue:docker-compose.git.yml",
         "//service/submitqueue:docker-compose.yml",
+        "//service/submitqueue/demo/provider/local:config",
         "//service/submitqueue/gateway/server:docker_test_context",
         "//service/submitqueue/orchestrator/server:docker_test_context",
         "//submitqueue/extension/storage/mysql/schema",
+        "@git",
+        "@git//:git_receive_pack",
+        "@git//:git_upload_archive",
+        "@git//:git_upload_pack",
+        "@git//:templates",
     ],
+    # The git suite drives the bare repository with the same pinned git the
+    # merger uses, rather than whatever the host has installed.
+    env = {
+        "SUBMITQUEUE_TEST_GIT": "$(location @git//:git)",
+    },
     tags = [
         "e2e",
         "integration",

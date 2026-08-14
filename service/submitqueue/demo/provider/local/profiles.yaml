@@ -1,0 +1,20 @@
+# Extension profiles for the "local" example: a plain git remote with no provider.
+#
+# There is no provider to ask about a change, and no CI to run, so both edge
+# integrations stay fake. What this example exercises is the merge itself — see
+# merge.yaml.
+
+defaults:
+  # A local git remote has no API to fetch change metadata from; the fake
+  # echoes back each URI it is given.
+  changeProvider: {type: fake}
+  # Every build succeeds immediately, so a land completes in seconds.
+  buildRunner: {type: fake}
+  # Serialize conservatively unless a queue says otherwise.
+  analyzer: {type: all}
+
+queues:
+  - name: e2e-git-queue
+    # Maximum parallelism: batches never conflict, so the test controls
+    # ordering through what it lands rather than through the analyzer.
+    analyzer: {type: none}

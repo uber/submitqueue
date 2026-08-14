@@ -6,11 +6,16 @@ COMPOSE = docker-compose
 
 # SubmitQueue compose files
 COMPOSE_FILE = service/submitqueue/docker-compose.yml
+PROVIDER_COMPOSE_FILE = service/submitqueue/docker-compose.provider.yml
 GATEWAY_COMPOSE_FILE = service/submitqueue/gateway/server/docker-compose.yml
 ORCHESTRATOR_COMPOSE_FILE = service/submitqueue/orchestrator/server/docker-compose.yml
 
 # Fixed project name for local manual testing (tests use unique random names)
 SUBMITQUEUE_LOCAL_PROJECT = submitqueue
+
+# Separate project for the provider demo stack, so it can run alongside the plain
+# local stack without the two sharing containers or volumes.
+PROVIDER_LOCAL_PROJECT = submitqueue-provider
 
 # Stovepipe compose file (single Ping-only service)
 STOVEPIPE_COMPOSE_FILE = service/stovepipe/docker-compose.yml
@@ -41,6 +46,26 @@ PROTO_PACKAGES = api/base/change api/base/mergestrategy api/base/messagequeue ap
 # Set REPO_ROOT for docker-compose
 export REPO_ROOT := $(shell pwd)
 
+# Which provider the demo stack targets. Selects a configuration directory rather
+# than a code path, so adding a provider means adding a directory — see
+# service/submitqueue/demo/provider/README.md.
+PROVIDER ?= github
+export SQ_PROVIDER_CONFIG_DIR ?= $(REPO_ROOT)/service/submitqueue/demo/provider/$(PROVIDER)
+
+# Defaults for `make land` / `make demo-pr` against the provider demo stack.
+DEMO_REPO ?= behinddwalls/sq-demo
+COUNT ?= 3
+FILES ?= 3
+CONCURRENCY ?= 5
+STACKED ?= false
+SINCE ?= 1h
+LIMIT ?= 50
+LAND ?= true
+WATCH ?= true
+QUEUE ?= demo-queue
+STRATEGY ?= SQUASH_REBASE
+GATEWAY_ADDR ?= localhost:8081
+
 # Fails if git working tree is dirty. Usage: $(call assert_clean,fix command)
 define assert_clean
 	@if ! git diff --quiet; then \
@@ -52,7 +77,7 @@ define assert_clean
 	fi
 endef
 
-.PHONY: build build-all-linux build-runway-linux build-submitqueue-gateway-linux build-submitqueue-orchestrator-linux build-stovepipe-linux build-stovepipe-linux-debug check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator license-fix lint lint-fmt lint-license local-init-runway-queue-schema local-init-stovepipe-schemas local-runway-start local-runway-stop local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-debug-start local-stovepipe-logs local-stovepipe-start local-stovepipe-stop mocks proto query-deps query-targets run-client-runway run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
+.PHONY: build build-all-linux build-runway-linux build-submitqueue-gateway-client build-submitqueue-gateway-linux build-submitqueue-gateway-server build-submitqueue-orchestrator-linux build-stovepipe-linux build-stovepipe-linux-debug check-gazelle check-mocks check-tidy clean clean-proto deps e2e-test fmt gazelle integration-test integration-test-submitqueue-consumer integration-test-extensions integration-test-submitqueue-gateway integration-test-submitqueue-orchestrator license-fix lint lint-binary lint-fmt lint-license local-init-runway-queue-schema local-init-stovepipe-schemas local-runway-start local-runway-stop local-submitqueue-clean local-submitqueue-gateway-start local-submitqueue-gateway-stop local-init-submitqueue-schemas local-submitqueue-logs local-submitqueue-orchestrator-start local-submitqueue-orchestrator-stop local-submitqueue-ps local-submitqueue-restart local-submitqueue-start local-stop local-stovepipe-debug-start local-stovepipe-logs local-stovepipe-start local-stovepipe-stop mocks proto query-deps query-targets run-client-runway run-client-submitqueue-gateway run-client-submitqueue-orchestrator run-client-stovepipe run-queue-admin test test-no-cache tidy tidy-bazel tidy-go help
 
 
 build: ## Build all services and examples
@@ -74,6 +99,14 @@ build-runway-linux: ## Build Runway Linux binary for Docker
 	 cp -f bazel-bin/service/runway/server/runway .docker-bin/runway
 	@echo "Runway Linux binary ready at .docker-bin/runway"
 
+build-submitqueue-gateway-client: ## Build the gateway client CLI for the host platform into bin/client
+	@echo "Building gateway client..."
+	@$(BAZEL) build //service/submitqueue/gateway/client:gateway
+	@mkdir -p bin
+	@cp -f bazel-bin/service/submitqueue/gateway/client/gateway_/gateway bin/client 2>/dev/null || \
+	 cp -f bazel-bin/service/submitqueue/gateway/client/gateway bin/client
+	@echo "Gateway client ready at bin/client"
+
 build-submitqueue-gateway-linux: ## Build Gateway Linux binary for Docker
 	@echo "Building Gateway Linux binary for Docker..."
 	@$(BAZEL) build --platforms=@rules_go//go/toolchain:linux_amd64 //service/submitqueue/gateway/server:gateway
@@ -81,6 +114,14 @@ build-submitqueue-gateway-linux: ## Build Gateway Linux binary for Docker
 	@cp -f bazel-bin/service/submitqueue/gateway/server/gateway_/gateway .docker-bin/gateway 2>/dev/null || \
 	 cp -f bazel-bin/service/submitqueue/gateway/server/gateway .docker-bin/gateway
 	@echo "Gateway Linux binary ready at .docker-bin/gateway"
+
+build-submitqueue-gateway-server: ## Build the gateway server for the host platform into bin/server
+	@echo "Building gateway server..."
+	@$(BAZEL) build //service/submitqueue/gateway/server:gateway
+	@mkdir -p bin
+	@cp -f bazel-bin/service/submitqueue/gateway/server/gateway_/gateway bin/server 2>/dev/null || \
+	 cp -f bazel-bin/service/submitqueue/gateway/server/gateway bin/server
+	@echo "Gateway server ready at bin/server"
 
 build-submitqueue-orchestrator-linux: ## Build Orchestrator Linux binary for Docker
 	@echo "Building Orchestrator Linux binary for Docker..."
@@ -131,8 +172,25 @@ clean-proto: ## Clean generated proto files
 	@rm -f $(foreach p,$(PROTO_PACKAGES),$(p)/protopb/*.pb.go $(p)/protopb/*.pb.yarpc.go)
 	@echo "Proto clean complete!"
 
+demo-pr: ## Create N PRs in the demo repo, enqueue each as it is created, and watch (COUNT=3 FILES=3 CONCURRENCY=5; needs GITHUB_TOKEN)
+	@$(BAZEL) run //service/submitqueue/demo/pr -- \
+		-repo $(DEMO_REPO) \
+		-count $(COUNT) \
+		-files $(FILES) \
+		-concurrency $(CONCURRENCY) \
+		-stacked=$(STACKED) \
+		-addr $(GATEWAY_ADDR) \
+		-queue $(QUEUE) \
+		-strategy $(STRATEGY) \
+		-land=$(LAND) -watch=$(WATCH)
+
 deps: tidy-go ## Download and tidy Go dependencies
 	@echo "Dependencies installed!"
+
+e2e-git-test: ## Run the hermetic git E2E (real merger against a bare repo; no credentials)
+	@echo "Running hermetic git end-to-end tests..."
+	@$(BAZEL) test //test/e2e/submitqueue:go_default_test --test_output=errors \
+		--test_filter='TestGitMergeE2E'
 
 e2e-test: ## Run end-to-end tests (hermetic; Bazel builds all inputs; runs in parallel)
 	@echo "Running end-to-end tests (parallel)..."
@@ -169,11 +227,42 @@ integration-test-submitqueue-orchestrator: ## Run Orchestrator integration tests
 	@echo "Running Orchestrator integration tests..."
 	@$(BAZEL) test //test/integration/submitqueue/orchestrator:go_default_test --test_output=streamed
 
+land: ## Land a change or a stack (PR=<url>, PRS="<url> <url>", or URI=<change-uri>)
+	@if [ -z "$(PR)$(PRS)$(URI)$(URIS)" ]; then \
+		echo "Usage: make land PR=https://github.com/owner/repo/pull/7"; \
+		echo "   stack: make land PRS=\"<url-1> <url-2> <url-3>\"   (order is the stack order)"; \
+		echo "   by uri: make land URI=github://github.com/owner/repo/pull/7/<sha>"; \
+		echo "   opts: QUEUE=$(QUEUE) STRATEGY=$(STRATEGY) GATEWAY_ADDR=$(GATEWAY_ADDR)"; \
+		exit 2; \
+	fi
+	@$(BAZEL) run //service/submitqueue/gateway/client:gateway -- \
+		-addr $(GATEWAY_ADDR) land \
+		-queue $(QUEUE) \
+		-strategy $(STRATEGY) \
+		$(if $(PR),-pr $(PR)) $(foreach p,$(PRS),-pr $(p)) \
+		$(if $(URI),-uri $(URI)) $(foreach u,$(URIS),-uri $(u))
+
+land-status: ## Read a landed request's status (SQID=... [QUEUE=demo-queue])
+	@if [ -z "$(SQID)" ]; then echo "Usage: make land-status SQID=demo-queue/1 [QUEUE=demo-queue]"; exit 2; fi
+	@$(BAZEL) run //service/submitqueue/gateway/client:gateway -- \
+		-addr $(GATEWAY_ADDR) status -queue $(QUEUE) -sqid $(SQID)
+
+land-list: ## Show a queue's recent requests as a table (QUEUE=demo-queue SINCE=1h LIMIT=50)
+	@$(BAZEL) run //service/submitqueue/gateway/client:gateway -- \
+		-addr $(GATEWAY_ADDR) list -queue $(QUEUE) -since $(SINCE) -limit $(LIMIT)
+
+land-watch: ## Follow a queue's requests until they settle (QUEUE=demo-queue SINCE=15m LIMIT=50)
+	@$(BAZEL) run //service/submitqueue/gateway/client:gateway -- \
+		-addr $(GATEWAY_ADDR) watch -queue $(QUEUE) -since $(SINCE) -limit $(LIMIT)
+
 license-fix: ## Add missing license headers to source files
 	@$(BAZEL) run //tool/linter/licenseheader -- --fix
 
-lint: lint-fmt lint-license lint-message-id lint-queue-shard ## Run all linters
+lint: lint-binary lint-fmt lint-license lint-message-id lint-queue-shard ## Run all linters
 	@echo "All lint checks passed."
+
+lint-binary: ## Check no binary file is tracked in the repository
+	@$(BAZEL) run //tool/linter/binaryfile
 
 lint-fmt: fmt ## Check code formatting (fails if unformatted)
 	$(call assert_clean,make fmt)
@@ -211,6 +300,26 @@ local-submitqueue-gateway-stop: ## Stop Gateway service
 	@echo "Stopping Gateway services..."
 	@$(COMPOSE) -f $(GATEWAY_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
 	@echo "Gateway services stopped."
+
+local-provider-start: build-all-linux ## Start the full stack against a real provider (PROVIDER=github; needs GITHUB_TOKEN)
+	@echo "Starting full stack against provider '$(PROVIDER)' ($(SQ_PROVIDER_CONFIG_DIR))..."
+	@test -f "$(SQ_PROVIDER_CONFIG_DIR)/merge.yaml" \
+		|| { echo "No such provider '$(PROVIDER)': $(SQ_PROVIDER_CONFIG_DIR)/merge.yaml not found"; exit 2; }
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -p $(PROVIDER_LOCAL_PROJECT) up -d --build --wait
+	@echo "Applying database schemas..."
+	@$(MAKE) -s local-init-submitqueue-schemas SUBMITQUEUE_LOCAL_PROJECT=$(PROVIDER_LOCAL_PROJECT)
+	@echo ""
+	@echo "✅ Stack is running against provider '$(PROVIDER)'."
+	@echo ""
+	@echo "Gateway gRPC port: $$(docker port $(PROVIDER_LOCAL_PROJECT)-gateway-service-1 8080 2>/dev/null | cut -d: -f2 || echo 'unknown')"
+	@echo ""
+	@echo "Land a change with:"
+	@echo "  make land PR=https://github.com/owner/repo/pull/7 GATEWAY_ADDR=localhost:<gateway port>"
+
+local-provider-stop: ## Stop the provider demo stack
+	@echo "Stopping provider stack..."
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -p $(PROVIDER_LOCAL_PROJECT) down
+	@echo "Provider stack stopped."
 
 local-init-submitqueue-schemas: ## Manually apply all database schemas
 	@echo "Applying storage schema to mysql-app..."
@@ -396,20 +505,18 @@ query-deps:
 query-targets:
 	@$(BAZEL) query //...
 
-# Run gateway client (connects to any running gateway service)
-run-client-submitqueue-gateway:
-	@$(BAZEL) run //service/submitqueue/gateway/client:gateway -- -addr $(or $(SERVER_ADDR),localhost:8081) -message "$(or $(MESSAGE),ping)"
+run-client-submitqueue-gateway: ## Run the gateway client (ARGS="land -queue q -pr <url>"; defaults to a ping)
+	@$(BAZEL) run //service/submitqueue/gateway/client:gateway -- \
+		-addr $(or $(SERVER_ADDR),localhost:8081) \
+		$(if $(ARGS),$(ARGS),ping -message "$(or $(MESSAGE),ping)")
 
-# Run orchestrator client (connects to any running orchestrator service)
-run-client-submitqueue-orchestrator:
+run-client-submitqueue-orchestrator: ## Run the orchestrator client against a running orchestrator (SERVER_ADDR, MESSAGE)
 	@$(BAZEL) run //service/submitqueue/orchestrator/client:orchestrator -- -addr $(or $(SERVER_ADDR),localhost:8082) -message "$(or $(MESSAGE),ping)"
 
-# Run stovepipe client (connects to any running stovepipe service)
-run-client-stovepipe:
+run-client-stovepipe: ## Run the Stovepipe client against a running Stovepipe (SERVER_ADDR, MESSAGE)
 	@$(BAZEL) run //service/stovepipe/client:stovepipe -- -addr $(or $(SERVER_ADDR),localhost:8083) -message "$(or $(MESSAGE),ping)"
 
-# Run runway client (connects to any running runway service)
-run-client-runway:
+run-client-runway: ## Run the Runway client against a running Runway (SERVER_ADDR, MESSAGE)
 	@$(BAZEL) run //service/runway/client:runway -- -addr $(or $(SERVER_ADDR),localhost:8086) -message "$(or $(MESSAGE),ping)"
 
 run-queue-admin: ## Run queue-admin CLI (use ARGS to pass arguments, e.g. make run-queue-admin ARGS="list-topics")
@@ -436,4 +543,4 @@ tidy-go: ## Run go mod tidy
 help: ## Show this help message
 	@echo "Available targets:"
 	@echo ""
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-30s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-30s\033[0m %s\n", $$1, $$2}'

@@ -1,0 +1,41 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "conn.go",
+        "land.go",
+        "query.go",
+        "view.go",
+        "watch.go",
+    ],
+    importpath = "github.com/uber/submitqueue/submitqueue/client",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api/base/change/protopb:go_default_library",
+        "//api/base/mergestrategy/protopb:go_default_library",
+        "//api/submitqueue/gateway/protopb:go_default_library",
+        "//submitqueue/entity:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_grpc//credentials:go_default_library",
+        "@org_golang_google_grpc//credentials/insecure:go_default_library",
+        "@org_golang_x_term//:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = [
+        "conn_test.go",
+        "query_test.go",
+        "view_test.go",
+    ],
+    embed = [":go_default_library"],
+    deps = [
+        "//api/submitqueue/gateway/protopb:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_grpc//metadata:go_default_library",
+    ],
+)

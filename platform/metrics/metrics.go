@@ -106,6 +106,28 @@ var (
 		2 * time.Hour,
 		4 * time.Hour,
 	}
+
+	// ChangeAgeBuckets suits durations measured from a source-control change's
+	// commit timestamp. They span minutes to a month because that is the honest
+	// range of such a signal: a break caught in minutes and one that survived a
+	// fortnight are both ordinary observations, and collapsing the tail would hide
+	// exactly the cases worth seeing.
+	ChangeAgeBuckets = tally.DurationBuckets{
+		1 * time.Minute,
+		5 * time.Minute,
+		15 * time.Minute,
+		30 * time.Minute,
+		1 * time.Hour,
+		2 * time.Hour,
+		4 * time.Hour,
+		8 * time.Hour,
+		12 * time.Hour,
+		24 * time.Hour,
+		48 * time.Hour,
+		7 * 24 * time.Hour,
+		14 * 24 * time.Hour,
+		30 * 24 * time.Hour,
+	}
 )
 
 // Op tracks the lifecycle of a named operation. It captures the start time on
@@ -169,6 +191,11 @@ func NamedCounter(scope tally.Scope, name string, counter string, value int64, t
 // RecordValue on each invocation.
 func NamedHistogram(scope tally.Scope, name string, histogram string, buckets tally.Buckets, tags ...Tag) tally.Histogram {
 	return tagged(scope, tags).SubScope(name).Histogram(histogram, buckets)
+}
+
+// NamedGauge sets the {name}.{gauge} gauge to value.
+func NamedGauge(scope tally.Scope, name string, gauge string, value float64, tags ...Tag) {
+	tagged(scope, tags).SubScope(name).Gauge(gauge).Update(value)
 }
 
 // tagsToMap converts a slice of Tag to a map for tally.

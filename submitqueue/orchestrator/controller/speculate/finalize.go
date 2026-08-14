@@ -83,11 +83,12 @@ func (c *Controller) finalize(ctx context.Context, snap *snapshot) error {
 				snap.markDirty(batch.ID)
 			}
 
-			if err := c.reportSpeculation(ctx, batch, set, *snap, before, hadPassed); err != nil {
+			decision := decide(batch, set, *snap)
+
+			if err := c.reportSpeculation(ctx, batch, set, *snap, before, hadPassed, decision); err != nil {
 				return err
 			}
 
-			decision := decide(batch, set, *snap)
 			if decision == outcomeWait {
 				stillOpen = append(stillOpen, batch)
 				continue
@@ -129,31 +130,17 @@ func (c *Controller) finalize(ctx context.Context, snap *snapshot) error {
 	return nil
 }
 
-// reportSpeculation tells a head's members how far speculation has got.
+// reportSpeculation records what the fold above did to a head's passed path.
+// Both facts are per-path and the head stays BatchStateSpeculating throughout,
+// so neither is a status and the request log is the only place they show up.
 //
-// Two moments are worth reporting and neither is a batch state — a head is
-// BatchStateSpeculating from admission until its outcome, so the request log is
-// the only place either becomes visible:
+// before comes from passedEntry, not livePassedPath: that predicate and the
+// fold both exclude a contradicted path, so two livePassedPath calls could
+// never see the loss. Only the run that does the breaking sees it at all.
 //
-//   - the head has a live passed path. Its own work is done and what remains is
-//     other batches finishing, a wait that can run for minutes and reads very
-//     differently to still building.
-//   - it just lost the one it had, because a dependency resolved against that
-//     path's guess. The head is back to building, and without this its members
-//     would go on reading as speculated through the whole rebuild.
-//
-// The second is why before is taken from passedEntry rather than livePassedPath:
-// both that predicate and the fold above exclude a contradicted path, so a pair
-// of livePassedPath calls could never see the loss happen. What is compared is
-// "held a passed build" before the fold against "still has one worth waiting on"
-// after it, and only the run that does the breaking sees the difference — every
-// later run finds the entry already cancelled.
-//
-// Both facts are derived from the snapshot rather than stored, so this runs on
-// every pass over an open head and relies on the occurrence to collapse the
-// repeats: a path ID hashes its head along with its assumptions, so it names the
-// batch too, and one passed path re-observed by a hundred runs is a single entry
-// while a different path winning after a re-plan is correctly a new one.
+// Nothing is stored, so this runs on every pass and leans on the occurrence to
+// collapse repeats — a path ID hashes its head with its assumptions, so one
+// passed path re-observed stays one entry while a re-plan's winner is a new one.
 func (c *Controller) reportSpeculation(
 	ctx context.Context,
 	batch entity.Batch,
@@ -161,20 +148,23 @@ func (c *Controller) reportSpeculation(
 	snap snapshot,
 	before entity.SpeculationPathEntry,
 	hadPassed bool,
+	decision outcome,
 ) error {
 	after, hasPassed := livePassedPath(set, snap)
 
-	status, path := entity.RequestStatusSpeculated, after
+	// A merge is decided on the same live passed path, so an ungated report
+	// would claim a wait on every head that merges straight through.
+	event, path := entity.RequestEventWaiting, after
 	switch {
-	case hasPassed:
-	case hadPassed:
-		status, path = entity.RequestStatusSpeculating, before
+	case hasPassed && decision == outcomeWait:
+	case hadPassed && !hasPassed:
+		event, path = entity.RequestEventInvalidated, before
 	default:
 		return nil
 	}
 
-	if err := corerequest.PublishBatchLogs(ctx, c.registry, batch.Queue, batch.Contains,
-		status, path.ID, map[string]string{
+	if err := corerequest.PublishBatchEvents(ctx, c.registry, batch.Queue, batch.Contains,
+		event, path.ID, map[string]string{
 			"batch_id": batch.ID,
 			"path_id":  path.ID,
 		},
@@ -183,7 +173,7 @@ func (c *Controller) reportSpeculation(
 		// Attributed to this head, not the trigger: the loop walks the whole
 		// queue, so the batch whose members could not be told is usually not the
 		// one the message named.
-		return c.attributed(fmt.Errorf("failed to publish request logs for batch %s: %w", batch.ID, err),
+		return c.attributed(fmt.Errorf("failed to publish request events for batch %s: %w", batch.ID, err),
 			entity.BatchSubject(batch.ID))
 	}
 	return nil
@@ -302,50 +292,30 @@ func (c *Controller) recordOutcome(snap *snapshot, batchID string, decision outc
 // applyOutcome enacts a decided outcome on a batch, reporting whether the
 // state write landed.
 //
-// The publish order differs per arm, but it is one rule read twice: a publish
-// may precede a state write only when the consumer does not read the state
-// that write produces. The merge stage correlates on the batch ID alone, so
-// telling it before the write is safe — a batch recorded Merging that Runway
-// never heard about would merely stall. Conclude does read the state (it
-// reconciles requests from it and rejects a non-terminal batch outright), so
-// it is published only after the write, or it would race the consumer into
-// the dead-letter queue.
-//
-// Losing the state compare-and-swap is not an error: another writer got
-// there, and the next run reads whatever they wrote. It is reported as not
-// landed, because the outcome this run reached is not the one that took
-// effect.
+// Nothing is dispatched until the state it describes is durable, so no
+// consumer can act on an outcome a lost compare-and-swap refused to write. The
+// cost is a dispatch that fails on a batch finalize no longer walks, which the
+// recovery message and Process's self-heal exist to repair.
 func (c *Controller) applyOutcome(ctx context.Context, store storage.Storage, batch entity.Batch, decision outcome, isTriggerBatch bool) (bool, error) {
 	var state entity.BatchState
-	terminal := false
 
 	switch decision {
 	case outcomeMerge:
 		state = entity.BatchStateMerging
-		// A batch merges once, so the dispatch names only that as its cause: a
-		// redelivery that re-derives outcomeMerge because the state write was
-		// lost dedups against the request already sent, instead of asking
-		// Runway to merge the same batch twice.
-		if err := c.publishBatchID(ctx, topickey.TopicKeyMerge, publish.IntentID(batch.ID, "merge-dispatch"), batch.ID, batch.Queue, batch.Queue); err != nil {
-			metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
-			return false, fmt.Errorf("failed to publish batch %s to merge: %w", batch.ID, err)
-		}
 
 	case outcomeFail, outcomeCancel:
-		state, terminal = decision.terminalState()
-		// A batch decided by a cascade is not the one on the message, so no
-		// retry or dead letter would ever come back to it — give it a recovery
-		// message of its own before it turns terminal.
-		if !isTriggerBatch {
-			if err := c.recoverable(ctx, store, batch); err != nil {
-				return false, err
-			}
-		}
+		state, _ = decision.terminalState()
 
 	default:
 		// outcomeWait: nothing to enact. Listed explicitly so an unknown or
 		// zero outcome can never fall into an enacting arm.
 		return false, nil
+	}
+
+	if !isTriggerBatch {
+		if err := c.recoverable(ctx, store, batch); err != nil {
+			return false, err
+		}
 	}
 
 	// Through Transition, so the queue's membership record moves with the
@@ -369,7 +339,13 @@ func (c *Controller) applyOutcome(ctx context.Context, store storage.Storage, ba
 		"state", string(state),
 	)
 
-	if terminal {
+	switch decision {
+	case outcomeMerge:
+		if err := c.dispatchMerge(ctx, batch); err != nil {
+			return true, err
+		}
+
+	case outcomeFail, outcomeCancel:
 		// Named for the run that decided it, so a redelivery re-deriving the
 		// same outcome does not conclude the batch twice, and so it stays
 		// distinct from the conclude mergesignal sends for a merged batch.
@@ -383,15 +359,34 @@ func (c *Controller) applyOutcome(ctx context.Context, store storage.Storage, ba
 	return true, nil
 }
 
-// recoverable gives a batch a message of its own before this run makes it
-// terminal, so its fan-out cannot be stranded by a failure afterwards.
+// dispatchMerge reports speculation finished and hands the batch to the merge
+// stage. The stable ID means a redelivery or the Merging self-heal dedupes
+// against the request already sent instead of merging twice; the status goes
+// first so it cannot be timestamped after the landing the dispatch triggers.
+func (c *Controller) dispatchMerge(ctx context.Context, batch entity.Batch) error {
+	if err := corerequest.PublishBatchLogs(ctx, c.registry, batch.Queue, batch.Contains,
+		entity.RequestStatusSpeculated, batch.ID, map[string]string{"batch_id": batch.ID},
+	); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "request_log_errors", 1)
+		return fmt.Errorf("failed to publish request logs for batch %s: %w", batch.ID, err)
+	}
+
+	if err := c.publishBatchID(ctx, topickey.TopicKeyMerge, publish.IntentID(batch.ID, "merge-dispatch"), batch.ID, batch.Queue, batch.Queue); err != nil {
+		metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
+		return fmt.Errorf("failed to publish batch %s to merge: %w", batch.ID, err)
+	}
+	return nil
+}
+
+// recoverable gives a batch a message of its own before this run moves it out
+// of the speculating set, so what has to follow the write cannot be stranded
+// by a failure afterwards.
 //
-// Every other terminal batch is repaired through the message that names it: a
-// redelivery finds it terminal and re-publishes from Process's self-heal
-// branch, and a persistent failure lands it in the dead-letter queue by name.
-// A batch decided by a cascade has neither — it is not the batch on the
-// message, and once terminal it is gone from the queue listing — so without
-// this its requests would simply stay unreconciled.
+// A batch named by a message is repaired through it: a redelivery re-publishes
+// from one of Process's self-heal branches, and a persistent failure
+// dead-letters by name. A cascade-decided batch has neither, and finalize only
+// walks heads still speculating — so a merged one would never reach Runway,
+// and a terminal one would leave its requests unreconciled.
 //
 // Distinct per publish: the guarantee being bought is that a message exists at
 // all, and a stable ID would let the queue answer "one already did" with a

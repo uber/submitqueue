@@ -18,7 +18,8 @@
 // for the reference git backend, but a Mercurial or Perforce backend would mint
 // its own scheme). Nothing outside an implementation parses a URI — it is a token
 // handed back to ask questions ("what is the latest commit of this ref?", "is A an
-// ancestor of B?"). A SourceControl is bound to a single queue (a repo+ref) at
+// ancestor of B?") or to name the commit to act on ("point the promotion ref at
+// this one"). A SourceControl is bound to a single queue (a repo+ref) at
 // construction by its Factory, so its methods take no queue argument.
 package sourcecontrol
 
@@ -31,6 +32,15 @@ import (
 
 	"github.com/uber/submitqueue/platform/base/page"
 )
+
+// ChangeInfo describes immutable metadata about the source-control change
+// represented by a URI.
+type ChangeInfo struct {
+	// CreatedAt is the millisecond timestamp at which the source-control
+	// provider recorded the immutable change. It does not represent ref-update
+	// or fetch time. Always positive for a resolvable URI.
+	CreatedAt int64
+}
 
 // ErrNotFound is returned when a queue, ref, or URI cannot be resolved by the
 // implementation (for example an unknown queue, or an ancestry query referencing
@@ -47,8 +57,9 @@ func WrapNotFound(err error) error {
 	return fmt.Errorf("%w: %w", ErrNotFound, err)
 }
 
-// SourceControl resolves and compares commit URIs for the single queue it is
-// bound to. Implementations interpret URIs; callers treat them as opaque tokens.
+// SourceControl resolves, compares, and promotes commit URIs for the single
+// queue it is bound to. Implementations interpret URIs; callers treat them as
+// opaque tokens.
 type SourceControl interface {
 	// Latest returns the URI of the latest commit on the queue's ref — the
 	// commit a new validation Request is minted against. Returns ErrNotFound if
@@ -62,6 +73,18 @@ type SourceControl interface {
 	// incremental one. Returns ErrNotFound if either URI is unknown to the ref.
 	IsAncestor(ctx context.Context, ancestor, descendant string) (bool, error)
 
+	// Promote points the queue's promotion ref at uri — a stable name (e.g. a
+	// "verified" branch) that downstream systems pull to get the latest commit
+	// the caller has established as green. The ref is integrator configuration
+	// injected at construction, like the endpoint and credentials, so callers
+	// name only the commit; a backend with no promotion target configured makes
+	// this a no-op. It is idempotent: promoting the URI the ref already points
+	// at changes nothing. Callers promote monotonically, but a history rewrite
+	// can leave the ref somewhere unrelated to uri, and implementations must
+	// still land it on uri rather than refusing. Returns ErrNotFound when uri is
+	// no longer on the queue's ref, which a rewritten history can cause.
+	Promote(ctx context.Context, uri string) error
+
 	// History returns a bounded page of the queue's commit URIs, newest first.
 	// It is paginated with an opaque cursor so a remote backend stays cheap:
 	// callers pass an empty cursor for the first (newest) page and the page's
@@ -71,11 +94,16 @@ type SourceControl interface {
 	// the greenness/status of each commit. Returns ErrNotFound if the cursor does
 	// not refer to a position on the ref.
 	History(ctx context.Context, cursor string, limit int) (page.Page[string], error)
+
+	// ChangeInfo returns immutable metadata for uri. The returned CreatedAt must
+	// be positive. Returns ErrNotFound when uri cannot be resolved.
+	ChangeInfo(ctx context.Context, uri string) (ChangeInfo, error)
 }
 
 // Config carries the per-queue identity handed to a Factory. The system knows
 // only the queue name; everything an implementation needs (the VCS endpoint,
-// credentials, the ref it maps to) is injected at construction by the integrator.
+// credentials, the ref it maps to, the ref it promotes to) is injected at
+// construction by the integrator.
 type Config struct {
 	// QueueName identifies the queue (a repo+ref) this SourceControl serves.
 	QueueName string

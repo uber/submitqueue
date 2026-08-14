@@ -1,0 +1,32 @@
+# Merge targets for the "local" example: a plain git remote with no provider.
+#
+# This is what the hermetic git E2E (`make e2e-git-test`) runs against — a bare
+# repository on a shared volume, addressed by path. It exercises the whole merge
+# machinery (real fetch, cherry-pick, push, head-branch update) with no
+# credential, no network, and no provider account, which is what lets it gate PRs
+# in CI.
+#
+# It doubles as the worked example of a non-GitHub target: nothing below names a
+# provider, because the merger does not have one. See ../README.md.
+
+defaults:
+  # Any queue without an entry below does not merge for real.
+  merger: {type: noop}
+
+queues:
+  - name: e2e-git-queue
+    merger:
+      type: git
+      # A local path needs no credential, so no tokenEnv is named.
+      remoteUrl: file:///srv/git/sandbox.git
+      remote: origin
+      target: main
+      # Provisioned at startup: cloned, remote configured, target checked out.
+      checkoutPath: /var/runway/checkouts/sandbox
+      defaultStrategy: REBASE
+      checkStaleness: true
+      # Rewriting strategies leave the change's original head unreachable from
+      # the target, so its branch is moved to the commit it landed as. On a
+      # provider this is what makes the change show as merged; here it is simply
+      # observable as the branch having moved.
+      updateHeadBranch: true

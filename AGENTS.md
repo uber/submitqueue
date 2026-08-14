@@ -11,6 +11,7 @@ SubmitQueue is a distributed system for managing code submission workflows. It f
 3. **Event sourcing** — store events (what happened) rather than just current state for critical changes.
 4. **Optimistic locking** — use version numbers instead of pessimistic locks. Avoid transactions; prefer optimistic concurrency and retries. **Version arithmetic lives in the controller, not the storage layer.** Update methods take both `oldVersion` (the where-clause guard) and `newVersion` (the value to write); the store performs a pure conditional write. Controllers compute `newVersion = oldVersion + 1`, call the store, and only assign `entity.Version = newVersion` after the call succeeds. Pre-incrementing in memory before the call is a bug pattern — on error the in-memory version drifts ahead of the database. See [submitqueue/extension/storage/README.md](submitqueue/extension/storage/README.md).
 5. **Idempotency keys** — include unique request IDs, check for duplicates before executing.
+6. **Persist before you publish** — when a message hands work to a later stage, write the state first and publish only once the write has succeeded. Publishing first races the consumer against the write: it can load an entity that was never recorded, or a version older than the one the message describes, and then build on an assumption that was never true. Ordered write-then-publish, a failed publish leaves the state durable and the retry re-publishes; the reverse leaves a message describing a state nothing wrote. The exception is a message that depends on nothing the write does — a status log recording a transition, or an idempotent nudge whose consumer re-derives everything from current state. Those publish first on purpose, so that a failure leaves nothing written and the retry redoes the whole step rather than stranding a durable state change with no way to announce it; see `submitqueue/orchestrator/controller/speculate/finalize.go` and `.../buildsignal/buildsignal.go` for the reasoning at those two sites.
 
 ```go
 // Immutable entity pattern
@@ -109,7 +110,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 Controllers receive `consumer.Delivery` (subset interface without Ack/Nack) to enforce separation of business logic from infrastructure.
 
-**Queue payloads: IDs within a boundary, full payloads across one.** When producer and consumer share a store (same service — e.g. `build`→`buildsignal`, `validate`→`mergeconflict`), put only the entity **ID** on the queue and reload from storage (the store is the source of truth, messages stay small, redelivery is idempotent). When a queue **crosses a service boundary** (the consumer cannot read the producer's store — e.g. orchestrator→runway), publish the **full payload** the consumer needs, and have the **client own the correlation ID** so it can match the async result back to the work it is tracking. The queue's **owner defines the wire contract and topic keys** (in its own domain package); the other side imports them.
+**Queue payloads: IDs within a boundary, full payloads across one.** When producer and consumer share a store (same service — e.g. `build`→`buildsignal`, `validate`→`mergeconflict`), put only the entity **ID** on the queue and reload from storage (the store is the source of truth, messages stay small, redelivery is idempotent). Reloading from storage is what makes the publish ordering load-bearing — see "Persist before you publish" above. When a queue **crosses a service boundary** (the consumer cannot read the producer's store — e.g. orchestrator→runway), publish the **full payload** the consumer needs, and have the **client own the correlation ID** so it can match the async result back to the work it is tracking. The queue's **owner defines the wire contract and topic keys** (in its own domain package); the other side imports them.
 
 ### Entities
 
@@ -333,6 +334,32 @@ CI runs on every PR and enforces all checks via a `required-checks` gate. **Befo
 2. **Interfaces for behavior, structs for data** — use interfaces for behavioral contracts (Consumer, Controller, Storage). Use structs for data containers, configs, and registries (TopicRegistry, SubscriptionConfig).
 3. **Value types over pointers** — prefer value types for structs, configs, and return values. Use `(T, bool)` to signal absence instead of `*T`. Pointers only when mutation or shared ownership is needed.
 4. **Errors for failures, not control flow** — reserve `error` returns for unexpected or infrastructure failures. Use result types (structs, bools) for expected outcomes like `(Result, error)` or `(T, bool)`. Avoid sentinel errors that represent non-failure states.
+
+### Comment Style
+
+Comments carry real weight here — the CAS race-window note in `submitqueue/orchestrator/controller/batch/batch.go` and the constant rationales in `platform/extension/messagequeue/mysql/subscriber.go` are load-bearing documentation. That is exactly why noise is expensive: when most comments restate the code, readers skim past all of them, including the ones that matter.
+
+```go
+// Bad — restates the call on the next line.
+// Deserialize request ID from payload
+rid, err := entity.RequestIDFromBytes(msg.Payload)
+
+// Good — records a decision that is invisible in the code.
+// Non-retryable: a missing or unresolvable queue is a malformed message.
+return fmt.Errorf("failed to resolve storage for queue %q: %w", rid.Queue, err)
+```
+
+1. **Comment the *why*, never the *what*** — the code already says what it does. A comment earns its place by adding what the reader cannot see: an invariant, a race window, a rejected alternative, the reason a constant has the value it has, or a classification decision.
+2. **The deletion test** — if the line below were rewritten with different calls but identical behavior, would the comment still be true and still be worth keeping? If it dies with the line, it was narration. Delete it.
+3. **Keep doc comments on exported identifiers short and concise** — say what the reader needs and stop. Where the name already carries the meaning (`Name`, `TopicKey`, `ConsumerGroup`, `NewController`), a brief line is plenty. Spend words only on the non-obvious: units, ownership, nil behavior, concurrency safety, error semantics. Don't pad to fill a template — `make lint` is formatting-only and requires nothing here.
+4. **Never narrate the change** — no `// Now also handles X`, `// Previously we ...`, `// Changed to ...`, `// New:`. A comment addresses the next person reading the file, who has no idea a diff ever happened. Why a change was made belongs in the commit message; why the *code* is the way it is belongs in the comment, written in the present tense as a standing fact.
+5. **No scaffolding comments in tests** — no `// Arrange` / `// Act` / `// Assert`, no `// Setup`, no `// Close queue`, no `// Verify`. The `t.Run` name states the scenario and testify states the assertion. Comment a test only for a non-obvious fixture or to explain why an outcome is the expected one.
+6. **Size the comment to the surprise, and hoist the big ones** — length is justified only by a correspondingly deep hazard. Once an explanation is really about a design rather than about a line, move it to the package doc, a `README.md`, or `doc/rfc/` and leave a one-line pointer. Design essays wedged into function bodies go stale silently.
+7. **`TODO` needs a subject and a successor** — use the existing forms, `// TODO: <what>` or `// TODO(topic): <what>`, and only for genuinely deferred work. Never leave a `TODO` describing work you just finished, and never use one to flag uncertainty about your own change — resolve it or raise it in the PR.
+
+Entity fields are governed separately: see [Entities](#entities) rules 4 and 7 — every field gets a comment, and that comment describes the data, not the choreography.
+
+Rule of thumb: if a reviewer would learn nothing from the comment that they would not learn from the line beneath it, it is noise. Prefer a clearer name, a smaller function, or a named constant over a comment explaining an unclear one.
 
 ### Error Classification (`platform/errs`)
 

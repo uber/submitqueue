@@ -1,6 +1,6 @@
 # Metrics Utilities (`platform/metrics`)
 
-The `metrics` package provides reusable helpers for emitting counters and histograms on a `tally.Scope`.
+The `metrics` package provides reusable helpers for emitting counters, gauges, and histograms on a `tally.Scope`.
 
 ## Design
 
@@ -48,6 +48,7 @@ For ad-hoc metrics that do not fit the operation lifecycle:
 | Function | Emits | Example |
 |----------|-------|---------|
 | `NamedCounter(scope, name, counter, value, ...tags)` | `{name}.{counter}` counter | `publish.attempts` |
+| `NamedGauge(scope, name, gauge, value, ...tags)` | `{name}.{gauge}` gauge | `record.last_green_timestamp_seconds` |
 | `NamedHistogram(scope, name, histogram, buckets, ...tags)` | `{name}.{histogram}` histogram | `process.duration` |
 
 ```go
@@ -57,7 +58,9 @@ h := metrics.NamedHistogram(c.scope, "process", "duration", metrics.FastLatencyB
 h.RecordDuration(elapsed)
 ```
 
-Do not emit gauges or timers. Represent operation latency and completion count with lifecycle histograms, and represent instantaneous quantities as sampled histogram values when needed.
+Use gauges only for state whose latest value is the whole answer, such as a bookmark timestamp. A gauge is reported once per update rather than continuously, so a gauge set on a discrete event produces a sparse series: it carries no value between updates or after a restart, and each replica reports only the updates it made, so queries must aggregate across replicas with `max` or last-value. State that must be readable at any moment needs a periodic re-emit rather than an event-driven one.
+
+Represent operation latency and completion count with lifecycle histograms; do not emit timers.
 
 ### Why histograms, not timers
 
@@ -74,14 +77,15 @@ defer func() { op.Complete(retErr) }()
 metrics.NamedCounter(c.scope, "publish", "attempts", 1, metrics.NewTag("topic", c.topic))
 ```
 
-## Latency Buckets
+## Duration Buckets
 
-There is no default bucket set. The package exports three common sets:
+There is no default bucket set. The package exports four common sets:
 
 | Set | Range | Use for |
 |-----|-------|---------|
 | `FastLatencyBuckets` | ~100µs – 5s | Fast in-process work such as scoring, cache lookups, and CPU-bound operations |
 | `StorageLatencyBuckets` | ~1ms – 1m | Storage and message-queue round trips such as database reads, writes, publishing, and consuming |
 | `LongLatencyBuckets` | ~5ms – 4h | Long-running pipeline work and external calls such as builds, merges, pushes, and provider calls |
+| `ChangeAgeBuckets` | ~1m – 30d | Elapsed time measured from a source-control change's commit timestamp rather than from work this system started |
 
 Pass one of these sets or a custom `tally.DurationBuckets` to `Begin` or `NamedHistogram`.

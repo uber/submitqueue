@@ -6,6 +6,7 @@ go_library(
         "author.go",
         "changeref.go",
         "git_merger.go",
+        "headbranch.go",
         "objects.go",
     ],
     importpath = "github.com/uber/submitqueue/runway/extension/merger/git",
@@ -25,7 +26,10 @@ go_library(
 
 go_test(
     name = "go_default_test",
-    srcs = ["git_merger_test.go"],
+    srcs = [
+        "git_merger_test.go",
+        "headbranch_test.go",
+    ],
     data = [
         "@git",
         "@git//:git_receive_pack",

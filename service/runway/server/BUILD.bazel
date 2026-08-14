@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_binary", "go_cross_binary", "go_library")
+load("@rules_go//go:def.bzl", "go_binary", "go_cross_binary", "go_library", "go_test")
 
 exports_files(
     ["docker-compose.yml"],
@@ -7,7 +7,12 @@ exports_files(
 
 go_library(
     name = "go_default_library",
-    srcs = ["main.go"],
+    srcs = [
+        "checkout.go",
+        "config.go",
+        "gitruntime.go",
+        "main.go",
+    ],
     importpath = "github.com/uber/submitqueue/service/runway/server",
     visibility = ["//visibility:private"],
     deps = [
@@ -33,6 +38,7 @@ go_library(
         "//runway/extension/merger/noop:go_default_library",
         "@com_github_go_sql_driver_mysql//:go_default_library",
         "@com_github_uber_go_tally//:go_default_library",
+        "@in_gopkg_yaml_v3//:go_default_library",
         "@org_golang_google_grpc//:go_default_library",
         "@org_golang_google_grpc//reflection:go_default_library",
         "@org_uber_go_zap//:go_default_library",
@@ -65,4 +71,34 @@ filegroup(
         ":runway_linux",
     ],
     visibility = ["//test:__subpackages__"],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = [
+        "checkout_test.go",
+        "config_test.go",
+    ],
+    # Checkout provisioning runs real git, so the test uses the same pinned
+    # runtime the merger does rather than whatever git the host happens to have.
+    data = [
+        "@git",
+        "@git//:git_receive_pack",
+        "@git//:git_upload_archive",
+        "@git//:git_upload_pack",
+        "@git//:templates",
+        "@git//:templates/description",
+    ],
+    embed = [":go_default_library"],
+    env = {
+        "SUBMITQUEUE_TEST_GIT": "$(location @git//:git)",
+        "SUBMITQUEUE_TEST_GIT_TEMPLATE_DESCRIPTION": "$(location @git//:templates/description)",
+    },
+    deps = [
+        "//api/base/mergestrategy/protopb:go_default_library",
+        "//runway/extension/merger/git:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@org_uber_go_zap//zaptest:go_default_library",
+    ],
 )
