@@ -22,7 +22,63 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	githubchange "github.com/uber/submitqueue/platform/base/change/github"
+	"github.com/uber/submitqueue/submitqueue/client"
 )
+
+// githubSource opens changes as real pull requests, entirely over GitHub's REST
+// API — so it needs no clone and no git binary, only a token.
+type githubSource struct {
+	client *githubClient
+	// host is the authority in the change URIs this source mints, which for
+	// GitHub Enterprise differs from the API root.
+	host string
+}
+
+func newGitHubSource(cfg config, owner, repo string) *githubSource {
+	return &githubSource{
+		client: &githubClient{root: cfg.apiRoot, token: cfg.token, owner: owner, repo: repo},
+		host:   cfg.host,
+	}
+}
+
+func (s *githubSource) baseSHA(ctx context.Context, branch string) (string, error) {
+	return s.client.branchSHA(ctx, branch)
+}
+
+func (s *githubSource) open(ctx context.Context, spec changeSpec) (openedChange, error) {
+	spec.note("creating branch %s", spec.branch)
+	if err := s.client.createBranch(ctx, spec.branch, spec.parentSHA); err != nil {
+		return openedChange{}, fmt.Errorf("create branch %s: %w", spec.branch, err)
+	}
+
+	var headSHA string
+	for k, file := range spec.files {
+		spec.note("committing %s (%d/%d)", file.path, k+1, len(spec.files))
+		sha, err := s.client.commitFile(ctx, spec.branch, file.path, file.body, file.message)
+		if err != nil {
+			return openedChange{}, fmt.Errorf("commit %s to %s: %w", file.path, spec.branch, err)
+		}
+		headSHA = sha
+	}
+
+	spec.note("opening pull request for %s", spec.branch)
+	number, url, err := s.client.openPR(ctx, spec.title, spec.branch, spec.parentBranch)
+	if err != nil {
+		return openedChange{}, fmt.Errorf("open pull request for %s: %w", spec.branch, err)
+	}
+
+	return openedChange{
+		headSHA: headSHA,
+		uri: githubchange.ChangeID{
+			Scheme: "github", Host: s.host, Org: s.client.owner, Repo: s.client.repo,
+			PRNumber: number, HeadCommitSHA: headSHA,
+		}.String(),
+		// The pull request number, clickable where the terminal allows it.
+		cell: client.Cell{Text: fmt.Sprintf("#%d", number), URL: url},
+	}, nil
+}
 
 // githubClient is the slice of GitHub's REST API this tool needs: read a
 // branch, create a branch, commit a file, open a pull request.
@@ -70,7 +126,7 @@ func (g *githubClient) commitFile(ctx context.Context, branch, path, content, me
 }
 
 func (g *githubClient) openPR(ctx context.Context, title, head, base string) (int, string, error) {
-	body := map[string]string{"title": title, "head": head, "base": base, "body": "Opened by service/submitqueue/demo/pr."}
+	body := map[string]string{"title": title, "head": head, "base": base, "body": "Opened by service/submitqueue/demo/requests."}
 	var out struct {
 		Number  int    `json:"number"`
 		HTMLURL string `json:"html_url"`

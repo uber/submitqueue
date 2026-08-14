@@ -1,4 +1,4 @@
-# Extension profiles for the "local" example: a plain git remote with no provider.
+# Extension profiles for the "git" example: a plain git remote with no provider.
 #
 # There is no provider to ask about a change, and no CI to run, so both edge
 # integrations stay fake. What this example exercises is the merge itself — see
@@ -14,6 +14,17 @@ defaults:
   analyzer: {type: all}
 
 queues:
+  # The queue `make demo-requests` and `make land` use by default. Serializes
+  # batches that touch a shared directory, matching the github mode.
+  #
+  # The commits here are real, but the change provider above is not, and it
+  # cannot read a repository to find out what they touched. `make demo-requests`
+  # states the paths it committed on the change URI (`sq-files=`) for the fake
+  # provider to report back. A change submitted by hand carries no such marker
+  # and so conflicts with nothing.
+  - name: demo-queue
+    analyzer: {type: pathoverlap, by: directory}
+
   - name: e2e-git-queue
     # Maximum parallelism: batches never conflict, so the test controls
     # ordering through what it lands rather than through the analyzer.

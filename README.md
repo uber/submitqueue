@@ -15,7 +15,7 @@ Cross-domain Go code (errors, metrics, consumer framework, HTTP helpers, shared 
 
 ## Quick Start
 
-Land a change and watch it reach `landed`. Requires Docker and Docker Compose, and nothing else — no repository, no account, no token. See [Development Setup](doc/howto/DEVELOPMENT.md) for full prerequisites.
+Put traffic through the queue and watch it land. Requires Docker and Docker Compose, and nothing else — no repository, no account, no token. See [Development Setup](doc/howto/DEVELOPMENT.md) for full prerequisites.
 
 ```bash
 # Start the full stack (Gateway + Orchestrator + Runway + MySQL)
@@ -25,28 +25,33 @@ make local-submitqueue-start
 make local-submitqueue-ps
 export GATEWAY_ADDR=localhost:<gateway port>
 
-# Submit a change, and follow the receipt it returns
-make land QUEUE=test-queue \
-  URI='git://git.example.com/demo/refs%2Fheads%2Ffeature-a/1111111111111111111111111111111111111111'
-make land-status QUEUE=test-queue SQID=test-queue/1
+# Create changes, enqueue each as it is created, and watch them settle
+make demo-requests
 
 # Stop services
-make local-stop
+make local-submitqueue-stop
 ```
 
-Every integration at the edges is faked — the change provider, CI, and the merge itself — so the run is free and finishes in seconds. The queue's own logic is real: validation, batching, conflict analysis, and speculation all run, and the request log records the full trail from `accepted` to `landed`. Nothing is pushed to any repository.
+`PROVIDER` decides where changes come from and what landing them does, and it is the only thing that changes between them:
 
-[Quickstart](doc/howto/QUICKSTART.md) explains the change URI, how to make a change fail on demand, and what this does and does not prove. From there, `make e2e-git-test` adds a real git merge (still no credentials), and [PROVIDER-E2E.md](doc/howto/PROVIDER-E2E.md) adds a live provider. See [service/README.md](service/README.md) for running individual services and clients.
+| `PROVIDER` | A change is | Landing it | Needs |
+|---|---|---|---|
+| **`fake`** (default) | a URI, and nothing else | reports success without touching a repository | nothing |
+| **`git`** | a branch in a bare repository on disk | a real fetch, cherry-pick and push | nothing |
+| **`github`** | a real pull request | a real push to a real repository | a repository and a token |
+
+The queue's own logic is real in all three: validation, batching, conflict analysis, speculation, and a request log recording the full trail from `accepted` to `landed`. `PROVIDER=git make local-submitqueue-start` is the first rung where a commit actually reaches a branch, and it still needs no credential.
+
+[Quickstart](doc/howto/QUICKSTART.md) walks all three rungs — proving a change landed with `git log`, making one fail on demand, and what a live provider needs. See [service/README.md](service/README.md) for running individual services and clients.
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
-| [Quickstart](doc/howto/QUICKSTART.md) | Land a change locally with no credentials |
+| [Quickstart](doc/howto/QUICKSTART.md) | Run the stack and land changes — fake, local git, or GitHub |
 | [Development Setup](doc/howto/DEVELOPMENT.md) | Prerequisites, build, environment, IDE setup |
 | [Contributing](CONTRIBUTING.md) | How to contribute, workflow, guidelines |
 | [Testing Guide](doc/howto/TESTING.md) | Unit, integration, and E2E testing patterns |
-| [Landing real changes](doc/howto/PROVIDER-E2E.md) | Running the pipeline against a live provider |
 | [Architecture Guide](CLAUDE.md) | Project layout, patterns, conventions |
 | [Examples](service/README.md) | Running services, clients, API reference |
 | [RFCs](doc/rfc/index.md) | Design documents and proposals |

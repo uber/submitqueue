@@ -16,7 +16,7 @@
 #
 # Required in the environment, all owned by the test:
 #   SQ_PROVIDER_CONFIG_DIR   profiles.yaml / merge.yaml selecting each queue's
-#                            extensions (service/submitqueue/demo/provider/local)
+#                            extensions (service/submitqueue/demo/provider/git)
 #   SQ_GIT_SANDBOX_DIR       the bare repository the merger fetches and pushes
 #   SQ_RUNWAY_CHECKOUT_DIR   storage for the working trees the merger owns
 
@@ -39,7 +39,19 @@ services:
       - ${SQ_PROVIDER_CONFIG_DIR}:/etc/submitqueue:ro
       - ${SQ_GIT_SANDBOX_DIR}:/srv/git
       # A checkout is state, not image content, so it is mounted rather than
-      # baked in — and mounting it is also what makes the path writable by a
-      # service running as a non-root user, which the E2E does so its bind
-      # mounts stay readable from the host.
-      - ${SQ_RUNWAY_CHECKOUT_DIR}:/var/runway/checkouts
+      # baked in.
+      #
+      # Where it is mounted from depends on who is running. The E2E points
+      # SQ_RUNWAY_CHECKOUT_DIR at a host directory, because it runs the services
+      # as the host user and a named volume would arrive owned by root. Left
+      # unset — which is how `make local-submitqueue-start PROVIDER=git` runs it —
+      # it is a named volume instead, keeping the merger's object writes off a
+      # bind mount: this is the directory git clones, cherry-picks and commits
+      # in, and on macOS a freshly written loose object can read back as corrupt
+      # over the host filesystem bridge, failing a merge that has nothing wrong
+      # with it. The bare repository above only receives finished pushes, so it
+      # stays a bind mount and keeps `git log` on the host working.
+      - ${SQ_RUNWAY_CHECKOUT_DIR:-runway-checkouts}:/var/runway/checkouts
+
+volumes:
+  runway-checkouts:

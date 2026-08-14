@@ -21,6 +21,70 @@ import (
 	"github.com/uber/submitqueue/platform/base/change"
 )
 
+func TestFiles(t *testing.T) {
+	tests := []struct {
+		name string
+		uris []string
+		want []string
+	}{
+		{
+			name: "no uris",
+			uris: nil,
+			want: nil,
+		},
+		{
+			name: "no marker",
+			uris: []string{"git://git.example.com/r/refs%2Fheads%2Fa/abc"},
+			want: nil,
+		},
+		{
+			name: "one path",
+			uris: []string{"git://git.example.com/r/x/y?sq-files=demo/alpha/one.txt"},
+			want: []string{"demo/alpha/one.txt"},
+		},
+		{
+			name: "several paths",
+			uris: []string{"git://git.example.com/r/x/y?sq-files=demo/alpha/one.txt,demo/beta/two.txt"},
+			want: []string{"demo/alpha/one.txt", "demo/beta/two.txt"},
+		},
+		{
+			name: "percent-encoded path",
+			uris: []string{"git://git.example.com/r/x/y?sq-files=demo%2Falpha%2Fone.txt"},
+			want: []string{"demo/alpha/one.txt"},
+		},
+		{
+			name: "trimmed at the next parameter",
+			uris: []string{"git://git.example.com/r/x/y?sq-files=demo/alpha/one.txt&sq-fake=build-fail"},
+			want: []string{"demo/alpha/one.txt"},
+		},
+		{
+			// The two markers are independent, and one change may carry both.
+			name: "found after another parameter",
+			uris: []string{"git://git.example.com/r/x/y?sq-fake=build-fail&sq-files=demo/alpha/one.txt"},
+			want: []string{"demo/alpha/one.txt"},
+		},
+		{
+			name: "empty entries are dropped",
+			uris: []string{"git://git.example.com/r/x/y?sq-files=demo/alpha/one.txt,,"},
+			want: []string{"demo/alpha/one.txt"},
+		},
+		{
+			name: "marker on a later uri",
+			uris: []string{
+				"git://git.example.com/r/x/y",
+				"git://git.example.com/r/x/z?sq-files=demo/gamma/three.txt",
+			},
+			want: []string{"demo/gamma/three.txt"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, Files(tt.uris))
+		})
+	}
+}
+
 func TestToken(t *testing.T) {
 	tests := []struct {
 		name string
