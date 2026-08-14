@@ -55,10 +55,10 @@ The ref is a *cache* of the last-green URI, not a second record of greenness. It
 |---|---|
 | **SourceControl** | Resolve a Queue name to its current head URI; answer ancestry/comparison questions between two URIs (is the new head a fast-forward descendant of the last green, or was history rewritten?); enumerate commits in a range; advance the Queue's **promotion ref** to a commit. The sole owner of URI semantics, including which refs a Queue name resolves to. |
 | **build-runner** | Build a scope at a URI (optionally relative to a baseline URI), returning pass/fail and the target graph. See [build-runner.md](../submitqueue/build-runner.md). |
-| **Hooks** | Publish Stovepipe's greenness events to downstream systems — "this URI / this project is now green (or not green)". Fire-and-forget notification, decoupled so Stovepipe does not know or care who consumes the event. |
+| **Hooks** | Deliver Stovepipe's greenness events to downstream systems — "this URI / this project is now green (or not green)". Fire-and-forget notification, decoupled so Stovepipe does not know or care who consumes the event. Not implemented yet; it will be the shared cross-domain hook seam rather than a Stovepipe-specific extension. See [hook-framework.md](../hook-framework.md). |
 | **Storage** | Persist Queues (incl. last-green URI), Requests, build records, and per-URI / per-project greenness. Key/value-shaped per the extension-design rules in [CLAUDE.md](../../../CLAUDE.md). |
 
-The **Hooks** extension is the notification boundary. Whenever a greenness fact is recorded — whole-repo green/not-green, or later a project green/not-green — `record` fires the relevant hook so deployment systems, dashboards, and developer tooling learn about it without polling Stovepipe's store. Hooks are pluggable so each environment can route events to its own downstream (a deploy gate, a Slack notifier, an event bus) without changing the pipeline.
+Hooks are the notification boundary. When a validation fact is recorded — whole-repo green/not-green, or later a project green/not-green — the event reaches deployment systems, dashboards, and developer tooling without any of them polling Stovepipe's store, and each environment can route it to its own downstream (a deploy gate, a Slack notifier, an event bus) without changing the pipeline. The mechanism is the cross-domain hook framework rather than a call out of the recording stage: `record` publishes a `HookEvent` to Stovepipe's `hook` topic, and a dispatcher stage consumes it and invokes the wired hooks, so a slow or failing downstream cannot add latency to the pipeline. Neither half exists yet; see [record.md](steps/record.md#hooks) for the fact-to-event mapping and its open questions.
 
 ## Workflow
 
@@ -125,7 +125,7 @@ The pipeline runs in two phases against the same Request. **Phase 1** establishe
               │                    ┌──────────────────────────────┐   Hooks
               └───────────────────►│ record                       │┄┄┄┄┄►  "project P
                                    │ Capture per-project greenness │      green / not
-                                   │ for the URI; fire Hooks       │      green at URI"
+                                   │ for the URI; hook event       │      green at URI"
                                    └──────────────────────────────┘
 ```
 
@@ -135,13 +135,13 @@ The pipeline runs in two phases against the same Request. **Phase 1** establishe
 2. **process** — decides build strategy (incremental since last-green vs full monorepo), gates concurrent work per Queue, coalesces backlog to the latest head, and publishes to `build`. See [process.md](steps/process.md).
 3. **build** — runs the build-runner for the chosen scope. A flag derived from `process` decides whether to build relative to the last-green **baseline URI** (incremental) or from scratch (full). It records a build and publishes the BuildID.
 4. **buildsignal** — records the build's status and target graph when the build completes, then releases the Queue's `in_flight_count` slot, projects the terminal status onto the Request (`succeeded` / `failed` / `cancelled`), and publishes the RequestID to `record`.
-5. **record** — writes the whole-repo greenness for the head URI (`0` green / `1` broken to start), derived from the Request's build outcome. On green it advances the Queue's **last-green URI** so the next `process` can build incrementally from here, and asks `SourceControl` to advance the Queue's **promotion ref** to the same commit (see [Promotion ref](#promotion-ref)). It fires the **Hooks** extension with the green/not-green event, then fans out into Phase 2. The Queue's `in_flight_count` was already released by `buildsignal` when the build went terminal.
+5. **record** — writes the whole-repo greenness for the head URI (`0` green / `1` broken to start), derived from the Request's build outcome. On green it advances the Queue's **last-green URI** so the next `process` can build incrementally from here, and asks `SourceControl` to advance the Queue's **promotion ref** to the same commit (see [Promotion ref](#promotion-ref--the-last-green-commit-by-name)). It publishes a **hook event** for the green/not-green transition, then fans out into Phase 2. The Queue's `in_flight_count` was already released by `buildsignal` when the build went terminal.
 
 ### Phase 2 — project greenness
 
 6. **analyze** (project-analysis) — takes the build's target graph and maps the relevant targets to **projects**, using whatever implementer-specific mapping is configured. It decides which project-scoped builds / CI jobs are needed to attribute breakage to specific projects, and publishes those builds.
 7. **build → buildsignal** — the project-scoped CI job runs; its artifacts are stored in a blob store (e.g. TerraBlob), and `buildsignal` reads back the status. This is the same machinery as Phase 1, reused at project granularity.
-8. **record** — captures **per-project greenness for the URI** — for each project, green or not at this commit — and fires **Hooks** per project. This is what lets a caller ask "is project P green at URI U?" and "what is the latest URI where project P is green?".
+8. **record** — captures **per-project greenness for the URI** — for each project, green or not at this commit — and publishes one hook event per project. This is what lets a caller ask "is project P green at URI U?" and "what is the latest URI where project P is green?".
 
 `record` appearing twice is intentional: it is one re-entrant stage that records greenness at whatever granularity the current phase produced and notifies downstream. The Request is *complete* when every planned granularity has been recorded, not at a single terminal hop.
 
@@ -153,7 +153,7 @@ The pipeline runs in two phases against the same Request. **Phase 1** establishe
 | **process** | RequestID | build | Build strategy, concurrency gate, backlog coalescing → [process.md](steps/process.md) |
 | **build** | RequestID | buildsignal | Run the build-runner for the chosen scope; baseline = last-green URI iff incremental |
 | **buildsignal** | BuildID | record (P1), record (P2) | Record build status + target graph; release `in_flight_count`; project the outcome onto the Request; signal completion |
-| **record** | RequestID | analyze (P1→P2), Hooks | Write greenness; on whole-repo green advance last-green URI and the promotion ref; fire Hooks |
+| **record** | RequestID | analyze (P1→P2), hook topic | Write greenness; on whole-repo green advance last-green URI and the promotion ref; publish the hook event |
 | **analyze** | RequestID | build | Map broken/at-risk targets → projects; decide project-scoped builds |
 
 ## Step RFCs
@@ -163,6 +163,7 @@ Per-stage design detail lives under `steps/` so this doc stays a pipeline overvi
 - [process.md](steps/process.md) — build-strategy decision, concurrency gate, backlog coalescing, [concurrency lifecycle](steps/process.md#concurrency-lifecycle), entity changes, [waiting for a slot](steps/process.md#waiting-for-a-slot)
 - [build.md](steps/build.md) — trigger-only stage: reads the decided scope off the Request, triggers the build-runner, hands off to buildsignal; the stovepipe `BuildRunner` contract and why it differs from SubmitQueue's
 - [buildsignal.md](steps/buildsignal.md) — the poll loop: hold-based re-poll cadence, target-graph return, per-build partitioning, and the fail-closed handoff to record
+- [record.md](steps/record.md) — turning a terminal build outcome into an immutable validation fact, monotonic last-green advancement and ref promotion, and the deferred hook and analyze handoffs
 
 ## Dedup, idempotency, and history rewrites
 
@@ -170,7 +171,7 @@ Ingestion is idempotent on `(Queue, head URI)`, so duplicate poller reports — 
 
 ## Fail-closed on unprocessable work
 
-Callers gate deployments on greenness, so the dangerous failure is a Request that can never finish and silently leaves a URI with no recorded greenness — indistinguishable, to a naive caller, from "not yet validated". Following SQ's DLQ-reconciliation posture, a Request whose validation can never complete must be driven to a **conservative terminal `failed` outcome** — which whatever records greenness treats as not-green — rather than left non-terminal: gating stays safe (never falsely green), and the pipeline moves on. State writes use optimistic-locking CAS, so a late successful update wins cleanly over the conservative one. See [submitqueue/orchestrator/controller/dlq/README.md](../../../submitqueue/orchestrator/controller/dlq/README.md) for the shared reconcile-only design.
+Callers gate deployments on greenness, so the dangerous failure is a Request that can never finish and silently leaves a URI with no recorded greenness — indistinguishable, to a naive caller, from "not yet validated". Following SQ's DLQ-reconciliation posture, a Request whose validation can never complete must be driven to a **conservative terminal `failed` outcome** — which whatever records greenness treats as not-green — rather than left non-terminal: gating stays safe (never falsely green), and the pipeline moves on. That conservative outcome is **final**, not provisional: validation facts are immutable and first-fact-wins, so a late successful result for a fail-closed URI is dropped rather than overwriting recorded history. The cost is bounded — the branch keeps moving, and the next head re-establishes greenness on its own Request. Note that finality cuts deeper than "the outcome is never revised": a forced `failed` can itself be recorded as a broken fact by a delivery still in flight, so a commit whose build actually passed can end up permanently marked broken. Whether that is correct or a category error is open — see [record.md](steps/record.md#what-fail-closed-actually-guarantees). See [submitqueue/orchestrator/controller/dlq/README.md](../../../submitqueue/orchestrator/controller/dlq/README.md) for the shared reconcile-only design.
 
 ## Open questions
 
