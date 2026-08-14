@@ -39,7 +39,7 @@ For a delivery carrying request id `R`:
    - baseURI = R.BaseURI if R.BuildStrategy == incremental_since_green, else "" (full build).
    - (headURI = R.URI, baseURI) identify the scope; both are opaque SourceControl tokens.
 
-5. Trigger: buildID, err := buildRunner.Trigger(ctx, R.URI, baseURI, metadata)
+5. Trigger: buildID, err := buildRunner.Trigger(ctx, baseURI, R.URI, metadata)
    - Trigger takes no caller-supplied id; the runner mints the build's identity,
      and buildID becomes Build.ID — SubmitQueue's exact convention (see
      "Alternatives considered" under the contract sketch).
@@ -52,8 +52,10 @@ For a delivery carrying request id `R`:
      either domain — the shape is deferred until then, not decided here.
    - failure -> return raw; classifier decides (transient runner blip retryable, bad URI not).
 
-6. Persist Build{ID: buildID.ID, RequestID: R.ID, URI: R.URI, BaseURI: baseURI,
-               Status: accepted, Version: 1} via BuildStore.Create.
+6. Persist Build{ID: buildID.ID, RequestID: R.ID, Status: accepted, Version: 1}
+   via BuildStore.Create.
+   - the row carries no scope; it is recoverable from the Request's immutable fields
+     (see the entity table).
    - a crash between step 5 and this write orphans the triggered build (see Idempotency).
    - ErrAlreadyExists -> benign (reachable only with a backend that returns deterministic ids
      for retried triggers); continue to step 7.
@@ -78,8 +80,8 @@ Every branch is safe under at-least-once redelivery — with SubmitQueue's postu
 - **Request not found** — non-retryable; storage's read-after-write guarantee means a miss here is a storage defect, not a lag condition to retry through.
 - **Strategy not yet visible** — retryable; the producing stage's write is not visible on this reader yet.
 - **Request already terminal** (step 2) — ack, no build. A redelivery after `record` finished, or after `process` superseded the head, never starts a stale build.
-- **Redelivery while the Request is still in flight** (crash or failure anywhere in steps 5–8) — the redelivery re-runs from step 1, `Trigger` mints a fresh id, `Create` persists a second `Build` row, and a second poll loop starts. Harmless, in three layers: both builds target the identical `(headURI, baseURI)` scope; each `Build` polls in its own partition and `buildsignal` short-circuits the moment the Request goes terminal (its step 3); and `record`'s terminal transition is CAS-guarded, so the second verdict is a no-op. A build triggered but never persisted (crash between steps 5 and 6) is the same story minus the row: an orphan the runner finishes and nobody ever reads. Wasted CI compute, not a correctness risk — the same accepted trade as SubmitQueue.
-- **Trigger / publish / other store failure** — nothing durable is left half-written that a redelivery can't reconcile; the error rejects to DLQ, and the fail-closed reconciler drives the Request terminal (see [workflow.md](doc/rfc/stovepipe/workflow.md#fail-closed-on-unprocessable-work)).
+- **Redelivery while the Request is still in flight** (crash or failure anywhere in steps 5–8) — the redelivery re-runs from step 1, `Trigger` mints a fresh id, `Create` persists a second `Build` row, and a second poll loop starts. Harmless, in three layers: both builds target the identical `(headURI, baseURI)` scope; each `Build` polls in its own partition and `buildsignal` short-circuits the moment the Request goes terminal (its step 3); and `buildsignal`'s outcome write is first-writer-wins, so the second verdict cannot flip the Request's state or overwrite the create-only validation fact. A build triggered but never persisted (crash between steps 5 and 6) is the same story minus the row: an orphan the runner finishes and nobody ever reads. Wasted CI compute, not a correctness risk — the same accepted trade as SubmitQueue.
+- **Trigger / publish / other store failure** — nothing durable is left half-written that a redelivery can't reconcile; the error rejects to DLQ, where the fail-closed posture is meant to drive the Request terminal (see [workflow.md](doc/rfc/stovepipe/workflow.md#fail-closed-on-unprocessable-work)). No reconciler consumes `build_dlq` yet, so that last step does not happen today — see [Fail-closed interaction](#fail-closed-interaction).
 
 ## Edge cases
 
@@ -89,6 +91,10 @@ Every branch is safe under at-least-once redelivery — with SubmitQueue's postu
 ## Fail-closed interaction
 
 A build that never reaches step 8 — `Trigger` failing repeatedly, the publish to `buildsignal` never landing, `BuildStore.Create` down — must not wedge its `Request`'s Queue slot forever: `process`'s per-Queue concurrency gate holds `in_flight_count` open until the Request reaches a terminal state (see [process.md](doc/rfc/stovepipe/steps/process.md#concurrency-lifecycle)). `build` does not implement the forcing function itself. Per [workflow.md](doc/rfc/stovepipe/workflow.md#fail-closed-on-unprocessable-work), every non-retryable failure in the algorithm rejects to DLQ (see [Error classification](#error-classification)), and a Request stuck past `MaxAttempts` is driven to a conservative terminal `failed` by the DLQ reconciler, which decrements `in_flight_count` and frees the slot. This is the same posture `buildsignal` relies on for its own poll loop (see [buildsignal.md](doc/rfc/stovepipe/steps/buildsignal.md#fail-closed-interaction)) — `build` and `buildsignal` are two links in the same fail-closed chain that keeps one bad Request from wedging its Queue.
+
+**That chain is not closed at `build` yet.** The `build` subscription enables dead-lettering, but no controller consumes `build_dlq` — the wiring registers only `process_dlq` and `buildsignal_dlq` — so nothing forces the Request terminal and nothing frees the slot. How much that costs depends on how far the delivery got. If a `Build` row was persisted and its signal published, a poll chain survives the dead-letter and `buildsignal` still releases the slot when the build goes terminal. If the message dead-letters before that — `Trigger` failing every attempt, `BuildStore.Create` down, the publish never landing — the Request stays `processing` and its Queue loses a slot for good, which is exactly the failure [buildsignal.md](doc/rfc/stovepipe/steps/buildsignal.md#fail-closed-interaction) describes for a deployment missing its own reconciler.
+
+Whoever wires that reconciler has to decide what it records, not just what it releases: forcing `failed` on a Request whose build may still be running is what produces the permanently-wrong-fact path in [record.md](record.md#what-fail-closed-actually-guarantees), so this gap and that open question belong to the same piece of work.
 
 One boundary is worth stating explicitly: this path fires only when `build` (or a downstream stage) *errors*. A `Trigger` call that returns successfully but the backend never actually runs — or a `Build` row created for a build the runner silently drops — has no protocol-level failure to escalate at the `build` stage; nothing here retries or dead-letters, because nothing failed. That gap surfaces one hop later, when `buildsignal` polls: either the runner reports an error (handled by `buildsignal`'s own classification) or it reports a non-terminal status forever, which is `buildsignal`'s fail-closed boundary to close, not `build`'s (see [buildsignal.md](doc/rfc/stovepipe/steps/buildsignal.md#fail-closed-interaction)). `build`'s liveness responsibility ends at a successful publish to `buildsignal`.
 
@@ -128,7 +134,7 @@ The batches are **identity** — thin references carrying ids, not change conten
 Stovepipe validates **one commit** against a baseline (or in full). Its `build` controller reads two opaque URIs off the `Request` and triggers:
 
 ```go
-buildID, err := buildRunner.Trigger(ctx, headURI, baseURI, metadata)
+buildID, err := buildRunner.Trigger(ctx, baseURI, headURI, metadata)
 ```
 
 There is no batch, no dependency list, and nothing to resolve — the URIs *are* the identity, owned by `SourceControl`. `process` already decided incremental-vs-full; `build` just reads `R.BuildStrategy`/`R.BaseURI` and acts.
@@ -153,16 +159,16 @@ type BuildRunner interface {
     // Trigger starts a new build every call and mints the build's identity —
     // there is no caller-supplied dedup input, matching SubmitQueue's contract
     // exactly (see "Alternatives considered for the build identity" below
-    // for other shapes this doc considered). headURI is the commit
-    // under validation; baseURI is the incremental baseline (empty for a full
-    // build). metadata is caller annotations the runner may echo but must not
+    // for other shapes this doc considered). baseURI is the incremental
+    // baseline (empty for a full build); headURI is the commit under
+    // validation. metadata is caller annotations the runner may echo but must not
     // depend on — empty today, but expected to carry real data eventually (e.g.
     // conflict-graph info, or other upstream decisions relevant to the build)
     // once a concrete need lands in either domain; the shape is deferred until
     // then, not decided here. Runner-side work is async; callers learn progress
     // via Status.
     // Returns the runner-assigned build id, which the caller adopts as Build.ID.
-    Trigger(ctx context.Context, headURI, baseURI string, metadata entity.BuildMetadata) (entity.BuildID, error)
+    Trigger(ctx context.Context, baseURI, headURI string, metadata entity.BuildMetadata) (entity.BuildID, error)
 
     // Status returns the current status. Takes the id Trigger returned
     // (Build.ID). May round-trip to the backend. BuildMetadata is
@@ -189,7 +195,7 @@ type Factory interface{ For(cfg Config) (BuildRunner, error) }
 The shape isn't decided here because project semantics belong to `analyze`, not `build`: how a project maps to a buildable scope (a Bazel target pattern, a directory, a service name) is implementer-specific per [workflow.md](doc/rfc/stovepipe/workflow.md#project---greenness-at-a-finer-grain). The expectation is that this stays an opaque token — following the same "identity in, resolve internally" shape already used for `headURI`/`baseURI` (owned and interpreted by `SourceControl`) — that `build` reads off the `Request`/message and hands to the runner uninterpreted, rather than a structured type `build` would have to understand:
 
 ```go
-Trigger(ctx context.Context, headURI, baseURI string, projectScope entity.ProjectScope, metadata entity.BuildMetadata) (entity.BuildID, error)
+Trigger(ctx context.Context, baseURI, headURI string, projectScope entity.ProjectScope, metadata entity.BuildMetadata) (entity.BuildID, error)
 ```
 
 `ProjectScope` lives in `stovepipe/entity` alongside `BuildID`/`BuildStatus`/`BuildMetadata` — projects have no SubmitQueue equivalent at all, not even a shape to mirror. Its zero value covers Phase 1 (no project — whole-repo/incremental scope only, exactly today's sketch); `analyze` is what would populate a non-zero value for Phase 2. This mirrors the additive optional field already reserved on `BuildRequest` for the same purpose (see [Queue contract additions](#queue-contract-additions)) — the wire message and the extension contract need the same new dimension, and both are deferred to the same design.
@@ -198,7 +204,7 @@ Both `Trigger` and `Status`/`Cancel` differ *in contract* between domains, even 
 
 There is exactly one build id: the runner mints it at `Trigger`, `build` adopts it as `Build.ID`, and every later call and message carries it verbatim — `Status`/`Cancel` take the same value `Trigger` returned, the queue payload is the same value, the store key is the same value. This is SubmitQueue's convention end to end. The id is opaque: no stovepipe reader parses it, derives it, or equates it with another entity's id — the trap SubmitQueue's speculate/cancel path falls into. And per the extension rules a runner keeps only transient local state, so the durable `Request` ↔ `Build` linkage lives in **our** store as `Build.RequestID`, never in the runner.
 
-Supporting entity types: `BuildStatus`, `BuildMetadata`, and `BuildID` live in `stovepipe/entity`, shaped the same as SubmitQueue's `submitqueue/entity` equivalents but defined and duplicated locally rather than shared — `BuildStatus` is the narrow lowercase enum `"" (unknown) / accepted / running / succeeded / failed / cancelled` with an `IsTerminal()` predicate covering the last three, `BuildMetadata` is the free-form `map[string]string`, and `BuildID` is a `{ID string}` wire struct wrapping the one runner-assigned id everywhere it appears — `Trigger`'s return, `Status`/`Cancel`'s parameter, the queue payload. `stovepipe/entity/build.go` keeps what's stovepipe-specific: the `Build` entity itself (`RequestID`/`URI`/`BaseURI` alongside `ID`/`Status`/`Version`). How a target graph reaches `analyze` is out of scope for this doc — left to the `analyze` design.
+Supporting entity types: `BuildStatus`, `BuildMetadata`, and `BuildID` live in `stovepipe/entity`, shaped the same as SubmitQueue's `submitqueue/entity` equivalents but defined and duplicated locally rather than shared — `BuildStatus` is the narrow lowercase enum `"" (unknown) / accepted / running / succeeded / failed / cancelled` with an `IsTerminal()` predicate covering the last three, `BuildMetadata` is the free-form `map[string]string`, and `BuildID` is a `{ID string}` wire struct wrapping the one runner-assigned id everywhere it appears — `Trigger`'s return, `Status`/`Cancel`'s parameter, the queue payload. `stovepipe/entity/build.go` keeps what's stovepipe-specific: the `Build` entity itself (`RequestID` alongside `ID`/`Status`/`Version`). How a target graph reaches `analyze` is out of scope for this doc — left to the `analyze` design.
 
 ### Alternatives considered for sharing the contract
 
@@ -210,7 +216,7 @@ Several shapes for sharing the `BuildRunner` contract across domains were raised
   // package platform/extension/buildrunner
   type BuildRunner interface {
       Trigger(ctx context.Context, base []entity.Batch, head entity.Batch, metadata entity.BuildMetadata) (entity.BuildID, error)
-      TriggerChanges(ctx context.Context, headURI, baseURI string, metadata entity.BuildMetadata) (entity.BuildID, error)
+      TriggerChanges(ctx context.Context, baseURI, headURI string, metadata entity.BuildMetadata) (entity.BuildID, error)
       Status(ctx context.Context, buildID entity.BuildID) (entity.BuildStatus, entity.BuildMetadata, error)
       Cancel(ctx context.Context, buildID entity.BuildID) error
   }
@@ -289,17 +295,17 @@ Either could be adopted independently: the idempotency token, if a backend that 
 
 ## Entity and storage additions needed
 
-**`Build` entity** (`stovepipe/entity/build.go`), following the immutable-except-`Status`/`Version` shape of `entity.Request`; `ID` and `Status` use the stovepipe-local `BuildID`/`BuildStatus` types (see the [contract sketch](#stovepipe-buildrunner-contract-design-sketch)), while `RequestID`/`URI`/`BaseURI` stay stovepipe-specific:
+**`Build` entity** (`stovepipe/entity/build.go`), following the immutable-except-`Status`/`Version` shape of `entity.Request`; `ID` and `Status` use the stovepipe-local `BuildID`/`BuildStatus` types (see the [contract sketch](#stovepipe-buildrunner-contract-design-sketch)), while `RequestID` stays stovepipe-specific:
 
 
 | Field | Role | Mutable? |
 |---|---|---|
 | `ID` | The build's own key — the runner-assigned id returned by `Trigger` (a Buildkite build number, a CI-gateway job id); opaque, never parsed or derived | no |
 | `RequestID` | The `Request` this build validates (`Build`→`Request` navigation) | no |
-| `URI` | Head URI being built (`== Request.URI`) | no |
-| `BaseURI` | Incremental baseline; empty for full builds | no |
 | `Status` | `accepted / running / succeeded / failed / cancelled` | **yes** — `buildsignal` |
 | `Version` | `int32` optimistic-locking version | **yes** — with `Status` |
+
+The row deliberately carries no scope: `R.URI`, `R.BaseURI`, and `R.BuildStrategy` — immutable and reachable through `RequestID` — fully determine what a build ran against.
 
 **States** (`Build.Status`):
 

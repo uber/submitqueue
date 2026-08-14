@@ -51,7 +51,7 @@ make test
 
 ## Try It Locally
 
-After building, start the full stack to confirm everything works end to end:
+After building, start the full stack and land a change through it:
 
 ```bash
 # 1. Confirm Docker is running
@@ -60,15 +60,20 @@ docker ps
 # 2. Start the full stack
 make local-submitqueue-start
 
-# 3. Check services are up (Gateway on :8081, Orchestrator on :8082)
+# 3. Read the gateway's port (Compose publishes a random one)
 make local-submitqueue-ps
+export GATEWAY_ADDR=localhost:<gateway port>
 
-# 4. Test Gateway with grpcurl
-grpcurl -plaintext -d '{"message": "hello"}' localhost:8081 uber.submitqueue.gateway.SubmitQueueGateway/Ping
+# 4. Land a change and follow it to a terminal status
+make land QUEUE=test-queue \
+  URI='git://git.example.com/demo/refs%2Fheads%2Ffeature-a/1111111111111111111111111111111111111111'
+make land-status QUEUE=test-queue SQID=test-queue/1
 
 # 5. Stop services
 make local-stop
 ```
+
+[QUICKSTART.md](QUICKSTART.md) walks through the same run in detail — what the change URI has to look like, how to make a change fail on demand, and which parts of the pipeline are faked.
 
 If any step fails, see [Troubleshooting](#troubleshooting) below.
 
