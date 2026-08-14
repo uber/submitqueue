@@ -1019,7 +1019,6 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) (retErr error) {
 
 	op := metrics.Begin(s.scope, "poll", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", sub.topic),
-		metrics.NewTag("partition_key", partitionKey),
 	)
 	defer func() { op.Complete(retErr) }()
 
@@ -1115,7 +1114,6 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) (retErr error) {
 		messageAge := time.Duration(time.Now().UnixMilli()-row.PublishedAt) * time.Millisecond
 		metrics.NamedHistogram(s.scope, "poll", "message_age", metrics.LongLatencyBuckets,
 			metrics.NewTag("topic", sub.topic),
-			metrics.NewTag("partition_key", partitionKey),
 		).RecordDuration(messageAge)
 
 		// Create delivery ID from offset
@@ -1219,7 +1217,6 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) (retErr error) {
 	if messageCount > 0 {
 		metrics.NamedCounter(s.scope, "poll", "messages_delivered", int64(messageCount),
 			metrics.NewTag("topic", sub.topic),
-			metrics.NewTag("partition_key", partitionKey),
 		)
 	}
 
