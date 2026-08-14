@@ -16,6 +16,30 @@ Three uses pull on it. They need different machinery and carry very different ri
 - **Benchmarking** asks whether that difference improves the system. It needs a running pipeline, a model of build outcomes, and a defensible objective function. Every one of those introduces error.
 - **Correctness exercise** asks whether the system holds its invariants under adverse scheduling. It needs no corpus and no historical data at all, and it catches a class of bug the other two cannot see.
 
+## Scope
+
+The simulator models SubmitQueue and Runway, which together form a closed pre-merge loop. Runway is stateless — no request store, no database, idempotency derived from the VCS — so the harness substitutes storage for one domain only.
+
+Stovepipe is out of scope by design rather than by convenience. It is a post-merge trunk-health poller with no coupling to SubmitQueue in either direction, and its only outputs are hooks, whose contract states that hook outcomes never write pipeline state. Nothing Stovepipe learns can reach the queue. Escaped conflicts, where changes pass individually and break together, surface inside SubmitQueue's own build stage, so measuring them needs no post-merge modeling.
+
+One hazard does live in the gap between the two. Runway performs transforming merges: rebase and squash-rebase rewrite commits, so the tree that lands is not always the tree that was validated. A break introduced by the transform itself is invisible to pre-merge validation, and therefore to any simulation of it. That is a limit on what the safety metric can claim, not a component to model.
+
+## Designing against the unbuilt system
+
+Much of what makes this queue interesting is designed but not yet built, and the simulator is worth more as an instrument for designing those pieces than as a regression test for the pieces that already exist. Three are open policy questions with no obvious right answer, which is exactly the shape of question a simulator answers well.
+
+**Batch grouping.** `Batch.Contains` is a list and the merge path already emits one step per member, but the batch controller writes a single-element slice every time, so a batch holds exactly one request today. The TODO above that code conditions grouping on capacity pressure: accumulate arriving requests into one batch when builds are scarce, or late-join a request into a batch that has not started. How long to wait and how large to let a batch grow are unanswered, and the cost of guessing wrong is failure attribution, since a failed batch of five is a single observation about five changes.
+
+**Conflict relaxation.** Described in [speculation.md](speculation.md) as not implemented: drop the weakest dependencies so a head does not wait on them. Which dependencies are safe to drop is precisely a question of how much escaped-conflict risk buys how much latency.
+
+**Bypass large diff.** A batch whose passed builds cover every way its dependencies could resolve can merge immediately, ahead of them. The Speculator covers that space when it is cheap to do so; the controller-side gate that would act on complete coverage is not built.
+
+Other levers exist but cannot be tuned. The build budget, the allocator's only rationing lever, is a compiled constant of 4 shared by every queue, with a TODO to move it onto `QueueConfig`. Poll cadence is likewise package-level. A budget sweep is among the first things a benchmark would run, and its output is exactly the evidence that would justify making these per-queue.
+
+One more shapes cancellation cost. Cancelling a single request today fails its whole batch, with no path for innocent members to re-enter the queue. That is harmless while batches hold one request and becomes expensive the moment grouping lands — itself a result worth producing before the feature ships.
+
+The consequence for this design is that the harness treats all of these as parameters from the outset rather than constants to be retrofitted. Batch size and accumulation policy, build budget, relaxation aggressiveness, and coverage-based early merge belong on the variant axis of the [comparison model](#comparison-model) whether or not the production code reads them yet.
+
 ## Three layers
 
 **Layer 1 — extension replay.** Every behavioral seam in this codebase is a `Factory` interface that takes identity and resolves what it needs internally: `conflict.Analyzer`, `Scorer`, `Speculator`, `BuildRunner`, `Validator`, `Merger` (see [extension-contract.md](extension-contract.md)). That uniformity means one mechanism covers all of them. Record the (identity, output) pairs a stage produced, then replay those identities through a candidate and diff the results. Nothing else runs: no other stage, no queue, no storage beyond the stage's own resolver. It is fast enough for every change, and it answers a narrower question than an end-to-end run, which is exactly what makes the answer trustworthy. Does this stage's output differ, given identical input, independent of what anything downstream would have done with it?
@@ -60,6 +84,8 @@ Continuous collection does not require instrumenting every extension call on the
 - [`entity.SpeculationPathSet`](../../submitqueue/entity/speculation.go) — the `Speculator`'s chosen paths.
 - [`entity.RequestLog`](../../submitqueue/entity/request_log.go) — the timestamped state-transition audit trail, from which land times are derived.
 
+The request log is the interim trace source, not the intended one. The [hook framework](../hook-framework.md) designs a durable event published on every lifecycle transition, ordered per subject, with the explicit invariant that hook outcomes never write pipeline state — a pure observation point, and cross-domain rather than scoped to SubmitQueue request statuses the way the request log is. Hooks are unbuilt, so the harness derives traces from the log today and inherits its narrower reach. The corpus should anticipate the switch rather than encode request-log specifics.
+
 **Record at the seam** where the persisted form is a lossy projection rather than the output itself. `conflict.Analyzer` is the case that matters, and the loss is easy to miss. The analyzer returns `[]entity.Conflict`, each carrying a batch ID *and* a `ConflictType`. The batch controller reduces that to a list of IDs before storing it ([`batch.go`](../../submitqueue/orchestrator/controller/batch/batch.go)): the type is erased, repeated entries for one pair collapse, only batches that happened to be in flight were evaluated, and what survives is the transitive closure rather than what the analyzer directly reported. [`entity.Batch`](../../submitqueue/entity/batch.go)'s dependency list is therefore strong evidence of what the *system did*, which is what Layer 3 needs, and a weak baseline for what the *analyzer said*, which is what Layer 1 compares. Capturing the raw return value at the seam is small, exact, and the same mechanism as [shadow recording](#shadow-recording).
 
 **Resolve and cache the inputs**, in every case. The resolved content a stage consumed, such as changed paths and changeset detail, is persisted nowhere. Without it no candidate can run at all: a stored verdict records what the old implementation decided and does nothing to let a new one decide. A resolve-and-cache layer in front of `changeset.Resolver` supplies it, keyed by content rather than by a filename or run label, so an edited input cannot silently reuse a stale entry.
@@ -75,6 +101,8 @@ Two situations need computation even where history holds an answer.
 `Scorer`'s raw output has no persisted trace either, since only the `Speculator`'s downstream path choice survives. Because `Scorer.Score` is deterministic, historical scores stay recomputable from resolved batch content. That holds only while it remains a pure function of that content; a scorer that reads anything else needs recording at the seam, as conflict does.
 
 **Provenance and versioning.** A recorded output is a valid baseline only if it is known what produced it. Every corpus entry carries the implementation name and version, the queue configuration it ran under, and the commit that built it. Interface drift is not hypothetical in a repository under active development, and a corpus that outlives an interface change must be rejected loudly at replay time rather than silently misattributed.
+
+**Identity.** Entries key on the canonical change URI defined in [change-uri.md](../change-uri.md). That contract has exactly one valid spelling per change, with full lowercase SHAs and verbatim path segments, and its parsers validate rather than normalize. The corpus must not invent a normalization the rest of the system rejects.
 
 **Bounded content.** The corpus holds identities and the derived metadata a stage consumed: change URIs, commit shas, changed-path sets. It never holds file contents or diffs, so retention applies to a small and comparatively insensitive artifact. This is a bound rather than an identity-only guarantee, since resolved path sets are deliberately retained for the durability reason above.
 
@@ -128,6 +156,8 @@ These are defined against this system's own model — heads, paths, dependency a
 
 One structural constraint applies to any system-level report. Once two runs diverge they have different batches, different paths, and different builds, with nothing to line up one-to-one. **The request is the only identity that survives divergence.** Per-request outcomes are therefore the finest granularity at which two Layer 3 runs can be compared, and everything else is compared as a distribution.
 
+Two notes on borrowing vocabulary. The gateway already defines the customer-facing status strings a report should use as state labels, so the harness should adopt those rather than invent parallel names. And the speculation generator's ranking score is explicitly recomputed per run and not comparable across runs, so ranking quality has to be measured as the timing gap described above rather than by comparing scores. Everything else here is this benchmark's own definition; no design doc in the repository specifies land time, cost, or throughput as a contract.
+
 ## Comparison model
 
 Start pairwise, baseline against one candidate on the same corpus, with the report shaped as a table keyed by (identity, variant). N-way is then the general case rather than a rewrite. The variant axis is deliberately generic: it holds competing implementations, or one implementation at different parameter values. A parameter sweep and an N-way implementation comparison become the same operation over the same report shape, which matters because sweeps over build budget, arrival multiplier, or conflict granularity are how most policy questions actually get answered.
@@ -148,7 +178,11 @@ Two fidelity limits cannot be engineered away, and are documented instead.
 
 The strongest guarantees in this repository are statements about behavior under adverse scheduling: idempotency, optimistic concurrency, persist-before-publish, at-least-once delivery. A Layer 3 harness whose in-memory backends only ever behave *nicely* exercises none of them, and will report a green run for code that breaks in production on the first redelivery.
 
-Two capabilities close that gap, and both are cheap once Layer 3 exists. **Fault injection** lets the in-memory backends behave adversarially within contract: duplicate deliveries, reorder across partitions, expire visibility timeouts, lose compare-and-swap races, fail storage calls, and stall builds past their timeout. **Continuous invariant checking** asserts throughout a run rather than only at the end:
+Two capabilities close that gap, and both are cheap once Layer 3 exists. **Fault injection** lets the in-memory backends behave adversarially within the queue's documented contract: duplicate deliveries, reorder within the freedom the contract allows, expire visibility timeouts, lose compare-and-swap races, fail storage calls, and stall builds past their timeout.
+
+Reproducing that contract faithfully matters more than it sounds, because several of its behaviors are load-bearing and easy for a fake to smooth over. A postponed message is a barrier that blocks its own partition until the delay elapses, while a nacked message deliberately does not block. Postpone resets the attempt count, so only consecutive failures count toward dead-lettering. The acked watermark advances only across a contiguous prefix, so one stuck message holds it back behind later acked ones. Consumer groups are fully isolated from each other's retries. The contract also carries a documented footgun the harness should be able to trigger rather than prevent: strict per-partition serialization depends on the visibility timeout exceeding processing time, and degrades silently to concurrent delivery when it does not.
+
+**Continuous invariant checking** asserts throughout a run rather than only at the end:
 
 - A batch never reaches Succeeded without a passed path whose assumptions match how every dependency actually resolved.
 - The build budget is never exceeded.
@@ -168,6 +202,8 @@ This orchestrator is not. `platform/consumer` dispatches per-partition-key work 
 
 The recommendation is to virtualize only what models elapsed time under our own control: the build oracle's modeled duration, and the workload generator's inter-arrival scheduling, both through a shared logical clock. The surrounding plumbing runs in real but fast wall-clock time. This is not bit-for-bit deterministic, which is why comparisons carry intervals, but it delivers the practical win of replaying a large trace in a small fraction of the time it took to record. Full determinism is worth scoping separately if it proves necessary. It should not block a first working version.
 
+Control over interleaving, though, is not all-or-nothing between accepting noise and replacing the scheduler. The [consumer gate](../consumer-gate.md) already installs middleware ahead of every controller's `Process` call. Closing a gate parks a delivery and postpones it rather than letting it enter the controller; the park is observable, so a harness can wait for a stop to take effect instead of sleeping on it; and opening releases within one re-check. The contract is deliberately storage-agnostic, so an in-memory gate drops into the same seam the file-based implementation uses in end-to-end tests. That gives the harness stop, observe, and release at controller and partition granularity, which is enough to pin down the interleavings a correctness scenario cares about without reproducing wall-clock timing exactly. Message-level breakpoints are named in that RFC as a deferred extension of the same mechanism, and are the natural next increment if scenario control needs to get finer.
+
 ## Delivery
 
 Ordered by how much each step delivers relative to the assumptions it requires, which is not the order the layers are numbered in:
@@ -175,7 +211,7 @@ Ordered by how much each step delivers relative to the assumptions it requires, 
 1. **Layer 1 for `conflict.Analyzer`**, baselined on mined batch dependencies with the resolve-and-cache layer beneath it. The smallest useful thing, and directly the mechanism a new analyzer needs on arrival.
 2. **Shadow recording** for stages with a live candidate, which upgrades the corpus from historical to real-traffic and makes N-way comparison fall out for free.
 3. **Layer 3 skeleton with synthetic workload, invariant checking, and fault injection.** This needs no corpus, no oracle, and no fidelity argument, so it is unblocked immediately, and it catches a class of concurrency bug nothing else in the repository tests.
-4. **Trace replay, the build oracle, the metric set, and the backtest.** The benchmarking capability proper. It depends on every modeling assumption in this document and should not be trusted before the backtest exists.
+4. **Trace replay, the build oracle, the metric set, and the backtest.** The benchmarking capability proper. It depends on every modeling assumption in this document and should not be trusted before the backtest exists. This step is also what unlocks the policy work in [Designing against the unbuilt system](#designing-against-the-unbuilt-system) — batch grouping, budget tuning, relaxation, and coverage-based early merge all need forward simulation and an outcome model to evaluate.
 5. **Layer 2 controller replay**, which can slot in any time after (1).
 
 ## Rejected
