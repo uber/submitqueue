@@ -21,7 +21,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 - [Speculation](submitqueue/speculation.md) - Why SubmitQueue speculates, the path/tree model, and the two pluggable seams: speculation-tree enumeration and path selection
 - [Best-First Speculation Path Generation](submitqueue/speculation-generator-best-first.md) - The default Generator: per-head lazy streams of flip subsets merged best-first across heads, log-probability ranking, and the strict snapshot contract
 - [Modular Queue Wiring](submitqueue/modular-queue-wiring.md) - Declare-don't-assemble engine (`pipeline.Construct`) that unifies topic registry, controller registration, DLQ pairing, and lifecycle ordering into one typed call; services self-declare via Deps struct + Stages slice, hosts own per-queue profiles and transport
-- [Simulator](submitqueue/simulator.md) - Verifying and benchmarking orchestrator-logic changes before they ship: extension replay, controller replay, and whole-pipeline simulation over a corpus mined from existing persistence, plus the build oracle, the metrics that survive replay, and invariant checking under fault injection
+- [Simulator](submitqueue/simulator.md) - Verifying and benchmarking orchestrator-logic changes before they ship: extension replay, controller replay, and whole-pipeline simulation, with substitution defined at the finest seam a queue can wire rather than per stage, plus the build oracle, the four outcomes a replay can produce, the metrics that survive replay, and invariant checking under fault injection
 
 ## Stovepipe
 
