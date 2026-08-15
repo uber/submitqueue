@@ -88,7 +88,55 @@ LAND ?= true
 WATCH ?= true
 QUEUE ?= demo-queue
 STRATEGY ?= SQUASH_REBASE
-GATEWAY_ADDR ?= localhost:8081
+# Where the client looks for the gateway. Left empty, every target below finds
+# the running stack's published port for itself — Compose picks a fresh one on
+# every start, and a number copied out of a previous run's output is the most
+# common reason a demo command cannot connect. Set it to reach a gateway this
+# Makefile did not start.
+GATEWAY_ADDR ?=
+
+# Resolves $(GATEWAY_ADDR), or the local stack's port when it is unset, into
+# $$addr for the recipe that includes it. Not a $(shell ...) assignment: that
+# would run at parse time, shelling out to Docker on every `make help`.
+define resolve_gateway_addr
+	addr="$(GATEWAY_ADDR)"; \
+	port=$$(docker port $(SUBMITQUEUE_LOCAL_PROJECT)-gateway-service-1 8080 2>/dev/null | head -1 | sed 's/.*://'); \
+	if [ -z "$$addr" ]; then \
+		if [ -z "$$port" ]; then \
+			echo "No gateway found: '$(SUBMITQUEUE_LOCAL_PROJECT)' is not running." >&2; \
+			echo "Start it with 'make local-submitqueue-start', or name one with GATEWAY_ADDR=host:port." >&2; \
+			exit 2; \
+		fi; \
+		addr="localhost:$$port"; \
+	elif [ "$(origin GATEWAY_ADDR)" = "environment" ] && [ -n "$$port" ] && [ "$$addr" != "localhost:$$port" ]; then \
+		echo "Note: GATEWAY_ADDR=$$addr is exported in your shell, so that is what will be used." >&2; \
+		echo "      The stack running here is on localhost:$$port — 'unset GATEWAY_ADDR' to use it." >&2; \
+	fi
+endef
+
+# Resolves which provider to create changes for into $$provider, preferring the
+# one the running stack was started with.
+#
+# The two have to agree. A change minted for one provider is meaningless to a
+# stack wired to another: fake changes point at no repository, so a stack
+# running the git merger rejects every one of them as a commit it cannot find,
+# and fifty requests fail identically for a reason that is nowhere in the error.
+# The stack knows which provider it has — it is mounted at /etc/submitqueue —
+# so a run that was not told otherwise asks it rather than guessing.
+define resolve_provider
+	provider="$(PROVIDER)"; \
+	mounted=$$(docker inspect $(SUBMITQUEUE_LOCAL_PROJECT)-orchestrator-service-1 \
+		--format '{{range .Mounts}}{{if eq .Destination "/etc/submitqueue"}}{{.Source}}{{end}}{{end}}' 2>/dev/null); \
+	if [ -n "$$mounted" ]; then \
+		running=$$(basename "$$mounted"); \
+		if [ "$(origin PROVIDER)" = "file" ]; then \
+			provider="$$running"; \
+		elif [ "$$provider" != "$$running" ]; then \
+			echo "Note: creating $$provider changes, but the running stack is '$$running'." >&2; \
+			echo "      They have to match — a $$provider change is not something a '$$running' stack can land." >&2; \
+		fi; \
+	fi
+endef
 
 # Fails if git working tree is dirty. Usage: $(call assert_clean,fix command)
 define assert_clean
@@ -197,8 +245,9 @@ clean-proto: ## Clean generated proto files
 	@echo "Proto clean complete!"
 
 demo-requests: ## Create N changes, enqueue each as it is created, and watch (PROVIDER=fake|git|github COUNT=3 FOLDERS=0 FILES=3 CONCURRENCY=5)
-	@$(BAZEL) run //service/submitqueue/demo/requests -- \
-		-provider $(PROVIDER) \
+	@set -e; $(resolve_gateway_addr); $(resolve_provider); \
+	$(BAZEL) run //service/submitqueue/demo/requests -- \
+		-provider $$provider \
 		-repo $(DEMO_REPO) \
 		-sandbox-dir $(SQ_GIT_SANDBOX_DIR) \
 		-count $(COUNT) \
@@ -206,7 +255,7 @@ demo-requests: ## Create N changes, enqueue each as it is created, and watch (PR
 		-files $(FILES) \
 		-concurrency $(CONCURRENCY) \
 		-stacked=$(STACKED) \
-		-addr $(GATEWAY_ADDR) \
+		-addr $$addr \
 		-queue $(QUEUE) \
 		-strategy $(STRATEGY) \
 		-land=$(LAND) -watch=$(WATCH)
@@ -262,8 +311,9 @@ land: ## Land a change or a stack (PR=<url>, PRS="<url> <url>", or URI=<change-u
 		echo "   opts: QUEUE=$(QUEUE) STRATEGY=$(STRATEGY) GATEWAY_ADDR=$(GATEWAY_ADDR)"; \
 		exit 2; \
 	fi
-	@$(BAZEL) run //service/submitqueue/gateway/client:gateway -- \
-		-addr $(GATEWAY_ADDR) land \
+	@set -e; $(resolve_gateway_addr); \
+	$(BAZEL) run //service/submitqueue/gateway/client:gateway -- \
+		-addr $$addr land \
 		-queue $(QUEUE) \
 		-strategy $(STRATEGY) \
 		$(if $(PR),-pr $(PR)) $(foreach p,$(PRS),-pr $(p)) \
@@ -271,16 +321,19 @@ land: ## Land a change or a stack (PR=<url>, PRS="<url> <url>", or URI=<change-u
 
 land-status: ## Read a landed request's status (SQID=... [QUEUE=demo-queue])
 	@if [ -z "$(SQID)" ]; then echo "Usage: make land-status SQID=demo-queue/1 [QUEUE=demo-queue]"; exit 2; fi
-	@$(BAZEL) run //service/submitqueue/gateway/client:gateway -- \
-		-addr $(GATEWAY_ADDR) status -queue $(QUEUE) -sqid $(SQID)
+	@set -e; $(resolve_gateway_addr); \
+	$(BAZEL) run //service/submitqueue/gateway/client:gateway -- \
+		-addr $$addr status -queue $(QUEUE) -sqid $(SQID)
 
 land-list: ## Show a queue's recent requests as a table (QUEUE=demo-queue SINCE=1h LIMIT=50)
-	@$(BAZEL) run //service/submitqueue/gateway/client:gateway -- \
-		-addr $(GATEWAY_ADDR) list -queue $(QUEUE) -since $(SINCE) -limit $(LIMIT)
+	@set -e; $(resolve_gateway_addr); \
+	$(BAZEL) run //service/submitqueue/gateway/client:gateway -- \
+		-addr $$addr list -queue $(QUEUE) -since $(SINCE) -limit $(LIMIT)
 
 land-watch: ## Follow a queue's requests until they settle (QUEUE=demo-queue SINCE=15m LIMIT=50)
-	@$(BAZEL) run //service/submitqueue/gateway/client:gateway -- \
-		-addr $(GATEWAY_ADDR) watch -queue $(QUEUE) -since $(SINCE) -limit $(LIMIT)
+	@set -e; $(resolve_gateway_addr); \
+	$(BAZEL) run //service/submitqueue/gateway/client:gateway -- \
+		-addr $$addr watch -queue $(QUEUE) -since $(SINCE) -limit $(LIMIT)
 
 license-fix: ## Add missing license headers to source files
 	@$(BAZEL) run //tool/linter/licenseheader -- --fix
@@ -470,7 +523,7 @@ local-submitqueue-start: build-all-linux ## Start full stack (PROVIDER=fake|git|
 	fi
 	@echo ""
 	@echo "Generate traffic with:"
-	@echo "  make demo-requests GATEWAY_ADDR=localhost:<gateway port>"
+	@echo "  make demo-requests"
 
 local-submitqueue-stop: ## Stop the SubmitQueue stack (keeps data and PROVIDER=git's sandbox)
 	@echo "Stopping SubmitQueue services..."

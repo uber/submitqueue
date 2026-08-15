@@ -211,11 +211,21 @@ func run(ctx context.Context, cfg config) error {
 		return nil
 	}
 
+	// A large run has more changes than a window has lines, so the wait happens
+	// in a full-screen view the reader can scroll. Restored before Conclude, so
+	// the final table lands in the scrollback and not on a screen that is about
+	// to be handed back.
+	stop, quit := t.Interact(ctx)
+	defer stop()
+
 	select {
 	case <-ctx.Done():
+		stop()
 		return ctx.Err()
+	case <-quit:
 	case <-t.Settled():
 	}
+	stop()
 	return t.Conclude()
 }
 

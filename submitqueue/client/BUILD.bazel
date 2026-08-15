@@ -6,6 +6,7 @@ go_library(
         "conn.go",
         "land.go",
         "query.go",
+        "tui.go",
         "view.go",
         "watch.go",
     ],
@@ -28,6 +29,7 @@ go_test(
     srcs = [
         "conn_test.go",
         "query_test.go",
+        "tui_test.go",
         "view_test.go",
     ],
     embed = [":go_default_library"],

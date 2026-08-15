@@ -17,6 +17,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -96,8 +97,102 @@ func (t *Tracker) Conclude() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.status = outcome(t.rows)
+	// The interactive view is gone by now, taking the alternate screen with it,
+	// so the last table is drawn into the scrollback the reader keeps. A run
+	// whose result vanished with the window it was drawn in would be a strange
+	// thing to hand someone.
+	//
+	// It is drawn whole, however tall that is. Nothing will be drawn over it,
+	// so a table longer than the window scrolls — which is what a reader of a
+	// finished run wants, and the reason the height limit a live view lives
+	// under does not apply to the last one.
+	t.r.scrollable = false
+	t.r.oneShot = true
 	t.r.draw(t.rows, t.status)
 	return summarize(t.rows)
+}
+
+// Interact puts the terminal into a scrollable full-screen view for as long as
+// the watch runs, and reports when the reader asks to leave.
+//
+// It is optional and degrades rather than fails: without a terminal on both
+// ends there is nothing to take over and nobody to read a key, so the caller
+// gets a no-op stop and a channel that never fires, and the plain redraw is
+// used exactly as before.
+func (t *Tracker) Interact(ctx context.Context) (stop func(), quit <-chan struct{}) {
+	quitCh := make(chan struct{})
+
+	t.mu.Lock()
+	inPlace := t.r.inPlace
+	t.mu.Unlock()
+	if !inPlace {
+		return func() {}, quitCh
+	}
+
+	screen, ok := enterTerminal(os.Stdout)
+	if !ok {
+		return func() {}, quitCh
+	}
+
+	t.mu.Lock()
+	t.r.scrollable = true
+	t.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(ctx)
+	actions := make(chan action, 8)
+	go readKeys(ctx, os.Stdin, actions)
+
+	var once sync.Once
+	restore := func() {
+		once.Do(func() {
+			cancel()
+			screen.restore()
+			t.mu.Lock()
+			t.r.scrollable = false
+			t.mu.Unlock()
+		})
+	}
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case a := <-actions:
+				if a == actionQuit {
+					restore()
+					close(quitCh)
+					return
+				}
+				t.scrollBy(a)
+			}
+		}
+	}()
+
+	// A redraw on a timer as well as on a keypress, so the elapsed column keeps
+	// moving in a view the reader is not touching.
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				t.Update(func() {})
+			}
+		}
+	}()
+
+	return restore, quitCh
+}
+
+// scrollBy moves the view and redraws it.
+func (t *Tracker) scrollBy(a action) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.r.scrollBy(a, len(t.rows))
+	t.r.draw(t.rows, t.status)
 }
 
 // Seal declares that nothing further will be watched, which is what lets an

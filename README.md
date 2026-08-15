@@ -15,17 +15,14 @@ Cross-domain Go code (errors, metrics, consumer framework, HTTP helpers, shared 
 
 ## Quick Start
 
-Put traffic through the queue and watch it land. Requires Docker and Docker Compose, and nothing else — no repository, no account, no token. See [Development Setup](doc/howto/DEVELOPMENT.md) for full prerequisites.
+Put traffic through the queue and watch it land. Requires Docker and Docker Compose, and nothing else — no repository, no account, no token.
 
 ```bash
 # Start the full stack (Gateway + Orchestrator + Runway + MySQL)
 make local-submitqueue-start
 
-# Compose publishes a random host port; the line above prints it, as does this
-make local-submitqueue-ps
-export GATEWAY_ADDR=localhost:<gateway port>
-
-# Create changes, enqueue each as it is created, and watch them settle
+# Create changes, enqueue each as it is created, and watch them settle.
+# It finds the running stack's port and provider itself — nothing to copy.
 make demo-requests
 
 # Stop services

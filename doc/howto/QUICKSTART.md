@@ -28,13 +28,7 @@ Compose publishes each service on a **random** host port so several stacks can r
 Gateway gRPC port: 58537
 ```
 
-Export it, because every command below needs it:
-
-```bash
-export GATEWAY_ADDR=localhost:58537
-```
-
-Leaving it unset does not fall back to anything useful — the client's default is `localhost:8081`, the `go run` port rather than the compose one.
+You do not have to note it down. Every command below finds the running stack's port for itself, which matters because Compose picks a fresh one on every start — a number copied from an earlier run is the most common reason a demo command cannot connect. Set `GATEWAY_ADDR=host:port` only to reach a gateway this Makefile did not start.
 
 ## Put traffic through it
 
@@ -118,6 +112,17 @@ Eight builds means the batch was speculating down eight paths at once, and `wait
 
 `land-watch` fixes its set when it starts and exits non-zero if any request in that set finishes anywhere other than `landed`, which makes it usable from a script. A request accepted after the watch begins is not picked up: a watch that grew as the queue did would never finish.
 
+Watching more requests than the window holds takes over the screen while it runs, the way `top` does, so the table can be scrolled rather than trimmed:
+
+| Key | |
+|---|---|
+| `↑` `↓` or `k` `j` | one row |
+| `PgUp` `PgDn` or `Space` | one screen |
+| `g` `G` | first row, last row |
+| `q` | stop watching |
+
+The view follows the end of the table by default, so new rows and new stages appear without touching it. Scrolling up holds your place; scrolling back to the bottom starts following again. The screen you had is restored on exit and the finished table is printed into it whole, so nothing is lost with the view — and when output is redirected, none of this happens at all and the run stays a plain log.
+
 A listing of a busy queue is mostly `speculating` rows, since that is where a request spends most of its active life — waiting on the build its batch was admitted for.
 
 Under the hood these are `client list` and `client watch`, which take a queue and reach any gateway:
@@ -178,12 +183,13 @@ Gateway gRPC port: 55295
 Merge target:      /tmp/sq-sandbox/sandbox.git
 ```
 
-Then the same command as before, with the same `PROVIDER`:
+Then the same command as before, unchanged:
 
 ```bash
-export GATEWAY_ADDR=localhost:55295
-PROVIDER=git make demo-requests
+make demo-requests
 ```
+
+`demo-requests` creates changes for whichever provider the running stack was started with, so there is nothing to repeat and nothing to keep in sync. The two must agree — a fake change points at no repository, so a stack running the git merger rejects every one of them as a commit it cannot find — and rather than leaving that to memory, a run with no `PROVIDER` of its own asks the stack which one it has. Passing one that disagrees still works, and says so before it starts.
 
 Now `demo-requests` pushes real branches with real commits, and landing them is a real cherry-pick and push. Look at the repository itself:
 
@@ -200,13 +206,11 @@ b5d86d6 seed the sandbox
 
 The commits are there, and they are not the ones that were pushed: `SQUASH_REBASE` replays each change onto the target rather than merging it, which is why the queue can keep the trunk linear.
 
-**`PROVIDER` has to match on both commands.** It selects what the stack merges with *and* what `demo-requests` creates; pointing fake changes at a stack wired to git means asking the merger to fetch a ref that was never pushed.
-
 One property worth seeing, because it is the thing a submit queue exists for. A stack lands as a single push, so no reader ever observes it half-applied:
 
 ```bash
 git -C /tmp/sq-sandbox/sandbox.git reflog show refs/heads/main | wc -l
-PROVIDER=git make demo-requests COUNT=3 STACKED=true
+make demo-requests COUNT=3 STACKED=true
 git -C /tmp/sq-sandbox/sandbox.git reflog show refs/heads/main | wc -l
 ```
 
@@ -257,7 +261,7 @@ PROVIDER=github make local-submitqueue-start
 
 The token is required rather than defaulted: a stack that silently falls back to the fake integrations reports changes as landed without having gone near the provider, which is a much worse way to find out.
 
-From here everything is as before — `PROVIDER=github make demo-requests` opens real pull requests, enqueues them and watches them land.
+From here everything is as before — `make demo-requests` opens real pull requests, enqueues them and watches them land, having picked up from the running stack that this one is GitHub.
 
 ### Land a pull request
 

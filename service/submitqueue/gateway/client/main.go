@@ -282,13 +282,23 @@ func runWatch(ctx context.Context, sq *client.Client, args []string) error {
 	t.Seal()
 	t.Note("watching %d request(s) in %s", len(rows), *queue)
 
+	// A watch of a busy queue holds more requests than a window does, so it runs
+	// as a full-screen view the reader can scroll. Restored before Conclude, so
+	// the final table lands in the scrollback rather than disappearing with the
+	// screen it was drawn on.
+	stop, quit := t.Interact(ctx)
+	defer stop()
+
 	go t.Poll(ctx, sq.Gateway(), *queue)
 
 	select {
 	case <-ctx.Done():
+		stop()
 		return ctx.Err()
+	case <-quit:
 	case <-t.Settled():
 	}
+	stop()
 	return t.Conclude()
 }
 
