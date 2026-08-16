@@ -219,6 +219,7 @@ func newProfiles(
 		zap.String("default_build_runner", cfg.Defaults.BuildRunner.Type),
 		zap.String("default_analyzer", cfg.Defaults.Analyzer.Type),
 		zap.String("default_scorer", cfg.Defaults.Scorer.Type),
+		zap.Int("default_build_budget", cfg.Defaults.Speculator.BuildBudget),
 		zap.Int("queue_overrides", len(byQueue)),
 	)
 	return Profiles{defaultProfile: defaultProfile, byQueue: byQueue}, nil
@@ -265,32 +266,25 @@ func (b *profileBuilder) build(cfg queueProfileConfig, where string) (Profile, e
 		Analyzer:       analyzer,
 		Storage:        b.stores,
 		Scorer:         sc,
-	}), nil
+	}, cfg.Speculator.BuildBudget), nil
 }
-
-// defaultBuildBudget caps how many builds a queue may have occupying CI at
-// once. It is the only rationing lever the allocator has.
-//
-// TODO: move this onto entity.QueueConfig so operators can tune it per queue
-// without a code change. QueueConfig carries only the queue name today.
-const defaultBuildBudget = 4
 
 // withSpeculator returns the profile with its speculator composed from its own
 // scorer: bestfirst ranks a queue's candidate paths by how likely all their
-// assumptions are to hold, and sticky spends the build budget down that ranking
+// assumptions are to hold, and sticky spends buildBudget down that ranking
 // without preempting builds already running. Swapping either part changes the
 // policy without touching the speculate controller, which depends only on the
 // Speculator contract.
 //
 // The scorer is resolved lazily, at the queue the speculator itself was asked
 // for, so the queue's identity reaches one level down into the scorer too.
-func withSpeculator(p Profile) Profile {
+func withSpeculator(p Profile, buildBudget int) Profile {
 	p.Speculator = speculatorFunc(func(c speculator.Config) (speculator.Speculator, error) {
 		sc, err := p.Scorer.For(scorer.Config{QueueName: c.QueueName})
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve scorer for queue %q: %w", c.QueueName, err)
 		}
-		return specstandard.New(c, bestfirst.New(sc), sticky.New(defaultBuildBudget)), nil
+		return specstandard.New(c, bestfirst.New(sc), sticky.New(buildBudget)), nil
 	})
 	return p
 }

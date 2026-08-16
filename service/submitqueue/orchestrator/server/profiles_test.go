@@ -118,7 +118,7 @@ func TestProfilesForwardQueueNameToFactories(t *testing.T) {
 // ask for it at the queue it was itself asked for.
 func TestWithSpeculatorResolvesScorerAtSameQueue(t *testing.T) {
 	var rec recorder
-	profile := withSpeculator(profileRecording(&rec))
+	profile := withSpeculator(profileRecording(&rec), defaultBuildBudget)
 	profiles := Profiles{defaultProfile: profile}
 
 	spec, err := profiles.SpeculatorFactory().For(speculator.Config{QueueName: "unlisted-queue"})
@@ -135,7 +135,7 @@ func TestWithSpeculatorPropagatesScorerError(t *testing.T) {
 	sentinel := errors.New("scorer unavailable")
 	profile := withSpeculator(Profile{
 		Scorer: scorerFunc(func(scorer.Config) (scorer.Scorer, error) { return nil, sentinel }),
-	})
+	}, defaultBuildBudget)
 
 	spec, err := profile.Speculator.For(speculator.Config{QueueName: "any-queue"})
 	require.ErrorIs(t, err, sentinel)

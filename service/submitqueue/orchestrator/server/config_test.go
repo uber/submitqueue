@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
 )
 
 func writeProfiles(t *testing.T, contents string) string {
@@ -373,6 +375,80 @@ func TestNewProfiles_ComposesASpeculatorPerQueue(t *testing.T) {
 			assert.NotNil(t, p.Speculator)
 		})
 	}
+}
+
+// TestNewProfiles_SpendsTheConfiguredBuildBudget is the assertion that matters
+// for the setting: parsing a number proves nothing if it never reaches the
+// allocator, so this drives a real speculator and counts what it proposes.
+//
+// Each batch speculates with no dependencies, so every one is a candidate and
+// the only thing capping the proposals is the budget.
+func TestNewProfiles_SpendsTheConfiguredBuildBudget(t *testing.T) {
+	path := writeProfiles(t, `
+defaults:
+  speculator: {buildBudget: 2}
+queues:
+  - name: wide-queue
+    speculator: {buildBudget: 5}
+  - name: inherits-queue
+    analyzer: {type: none}
+`)
+	cfg, err := loadProfilesConfig(path)
+	require.NoError(t, err)
+	profiles, err := newProfiles(zaptest.NewLogger(t), tally.NoopScope, nil, nil, cfg)
+	require.NoError(t, err)
+
+	batches := make([]entity.Batch, 0, 8)
+	for i := range 8 {
+		batches = append(batches, entity.Batch{
+			ID:    fmt.Sprintf("b%d", i),
+			State: entity.BatchStateSpeculating,
+		})
+	}
+
+	for _, tt := range []struct {
+		queue string
+		want  int
+	}{
+		{queue: "wide-queue", want: 5},
+		{queue: "inherits-queue", want: 2},
+		{queue: "unlisted-queue", want: 2},
+	} {
+		t.Run(tt.queue, func(t *testing.T) {
+			spec, err := profiles.SpeculatorFactory().For(speculator.Config{QueueName: tt.queue})
+			require.NoError(t, err)
+
+			proposals, err := spec.Speculate(context.Background(), batches, nil)
+			require.NoError(t, err)
+			assert.Len(t, proposals, tt.want)
+		})
+	}
+}
+
+func TestLoadProfilesConfig_RejectsBudgets(t *testing.T) {
+	// A negative budget leaves sticky with no free slots forever, so a queue
+	// would batch and then never build — indistinguishable from a stuck queue.
+	path := writeProfiles(t, `
+defaults:
+  speculator: {buildBudget: -1}
+`)
+	_, err := loadProfilesConfig(path)
+	require.Error(t, err)
+}
+
+func TestLoadProfilesConfig_DefaultsAnUnstatedBudget(t *testing.T) {
+	path := writeProfiles(t, `
+defaults: {}
+queues:
+  - name: q
+    speculator: {buildBudget: 9}
+`)
+	cfg, err := loadProfilesConfig(path)
+	require.NoError(t, err)
+
+	assert.Equal(t, defaultBuildBudget, cfg.Defaults.Speculator.BuildBudget)
+	require.NotNil(t, cfg.Queues[0].Speculator)
+	assert.Equal(t, 9, cfg.Queues[0].Speculator.BuildBudget)
 }
 
 func TestLoadProfilesConfig_RejectsBadScorers(t *testing.T) {
