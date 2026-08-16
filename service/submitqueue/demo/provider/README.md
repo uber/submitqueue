@@ -14,10 +14,12 @@ Pick one with `make local-submitqueue-start PROVIDER=<name>`, which bind-mounts 
 | Directory | What it demonstrates | Needs |
 |---|---|---|
 | [`fake/`](fake) | the queue alone: a change is a URI, nothing merges anywhere — the default, and what the quickstart runs | nothing |
-| [`git/`](git) | a plain git remote with no provider at all: real fetch, cherry-pick and push against a bare repository | nothing |
+| [`git/`](git) | a plain git remote with no provider at all: change metadata read out of the repository, and a real fetch, cherry-pick and push against it | nothing |
 | [`github/`](github) | a live provider: GitHub change metadata, a real repository, pull requests marked merged | a repository and a token |
 
-The three are a ladder, and the rung is the only thing that changes: the same commands land against all of them. `git/` is worth reading first of the two real ones. It is proof that the merge machinery has no provider in it — the same Runway code path lands changes against a bare repository addressed by path, with no credential and no API — and it is what the hermetic git E2E (`make e2e-git-test`) runs against.
+The three are a ladder, and the rung is the only thing that changes: the same commands land against all of them. `git/` is worth reading first of the two real ones. It is proof that neither half needs a provider — change metadata comes from reading the repository and the merge is the same Runway code path, both against a bare repository addressed by path, with no credential and no API — and it is what the hermetic git E2E (`make e2e-git-test`) runs against.
+
+Note that the orchestrator and Runway each keep their **own** copy of a queue's repository and configure their own remote for it: the change provider's copy is in `profiles.yaml`, the merger's checkout in `merge.yaml`, and they are independent even when they name the same remote. That is the same shape a deployment has when both point at a remote host.
 
 ## Adding a provider
 

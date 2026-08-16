@@ -19,16 +19,30 @@
 #                            extensions (service/submitqueue/demo/provider/git)
 #   SQ_GIT_SANDBOX_DIR       the bare repository the merger fetches and pushes
 #   SQ_RUNWAY_CHECKOUT_DIR   storage for the working trees the merger owns
+#
+# Optional:
+#   SQ_ORCHESTRATOR_REPO_DIR  storage for the orchestrator's own repository
+#                             copies; a named volume when unset
 
 services:
   orchestrator-service:
     environment:
       # Which change provider, build runner, and conflict analyzer each queue
-      # resolves to. Everything at the edges stays fake here; only the merge is
-      # real.
+      # resolves to. The build runner stays fake here; the change provider and
+      # the merge are real.
       - PROFILES_CONFIG_PATH=/etc/submitqueue/profiles.yaml
     volumes:
       - ${SQ_PROVIDER_CONFIG_DIR}:/etc/submitqueue:ro
+      # The same bare repository Runway merges into, read-only: the orchestrator
+      # only ever fetches from it. Each service keeps its own copy and points
+      # its own remote at this one, which is the arrangement a real deployment
+      # has with both of them pointing at a remote host.
+      - ${SQ_GIT_SANDBOX_DIR}:/srv/git:ro
+      # Where the orchestrator keeps its copies. A named volume rather than a
+      # bind mount for the same reason Runway's checkout is one: this is where
+      # git writes objects, and on macOS a freshly written loose object can read
+      # back as corrupt over the host filesystem bridge.
+      - ${SQ_ORCHESTRATOR_REPO_DIR:-orchestrator-changerepos}:/var/submitqueue/changerepos
 
   runway-service:
     environment:
@@ -55,3 +69,4 @@ services:
 
 volumes:
   runway-checkouts:
+  orchestrator-changerepos:
