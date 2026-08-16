@@ -35,6 +35,7 @@ import (
 	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
+	"github.com/uber/submitqueue/platform/gitexec/gitexectest"
 	"github.com/uber/submitqueue/runway/extension/merger"
 )
 
@@ -1782,52 +1783,13 @@ func mustGitOutput(t *testing.T, dir string, args ...string) []byte {
 
 func testGitRuntime(t *testing.T) GitRuntime {
 	t.Helper()
-	executable := absoluteTestPath(t, "SUBMITQUEUE_TEST_GIT")
-	templateDescription := absoluteTestPath(t, "SUBMITQUEUE_TEST_GIT_TEMPLATE_DESCRIPTION")
+	executable := gitexectest.Git(t)
+	templateDescription := gitexectest.Runfile(t, "SUBMITQUEUE_TEST_GIT_TEMPLATE_DESCRIPTION")
 	return GitRuntime{
 		Executable:  executable,
 		ExecPath:    filepath.Dir(executable),
 		TemplateDir: filepath.Dir(templateDescription),
 	}
-}
-
-func absoluteTestPath(t *testing.T, name string) string {
-	t.Helper()
-	path := os.Getenv(name)
-	require.NotEmpty(t, path)
-	if filepath.IsAbs(path) {
-		_, err := os.Stat(path)
-		require.NoError(t, err)
-		return path
-	}
-	if absolute, err := filepath.Abs(path); err == nil {
-		if _, err := os.Stat(absolute); err == nil {
-			return absolute
-		}
-	}
-
-	// rules_go expands $(location) to an execroot-relative path. Tests run from
-	// their main-repository runfiles directory, so translate an external output
-	// to its canonical repository path under TEST_SRCDIR.
-	const externalMarker = "/external/"
-	slashed := filepath.ToSlash(path)
-	externalPath := ""
-	if strings.HasPrefix(slashed, "external/") {
-		externalPath = strings.TrimPrefix(slashed, "external/")
-	} else if i := strings.Index(slashed, externalMarker); i >= 0 {
-		externalPath = slashed[i+len(externalMarker):]
-	}
-	if externalPath != "" {
-		runfilesRoot := os.Getenv("TEST_SRCDIR")
-		require.NotEmpty(t, runfilesRoot)
-		candidate := filepath.Join(runfilesRoot, filepath.FromSlash(externalPath))
-		_, err := os.Stat(candidate)
-		require.NoError(t, err)
-		return candidate
-	}
-
-	require.FailNowf(t, "resolve test path", "%s=%q is not a runfile", name, path)
-	return ""
 }
 
 func writeFile(path, contents string) error {

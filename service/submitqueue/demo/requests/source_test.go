@@ -28,6 +28,7 @@ import (
 	gitchange "github.com/uber/submitqueue/platform/base/change/git"
 	"github.com/uber/submitqueue/platform/fakemarker"
 	"github.com/uber/submitqueue/platform/gitexec"
+	"github.com/uber/submitqueue/platform/gitexec/gitexectest"
 )
 
 // quietSpec is a changeSpec whose progress notes go nowhere, for tests that
@@ -134,28 +135,6 @@ func TestFakeSource_IsReproducible(t *testing.T) {
 	assert.Equal(t, first.uri, again.uri, "replaying a run must submit the same change")
 }
 
-// testGit resolves the pinned git the test target supplies. See the identical
-// helper in tool/gitsandbox for why the runfile has to be re-rooted.
-func testGit(t *testing.T) string {
-	t.Helper()
-
-	supplied := os.Getenv("SUBMITQUEUE_TEST_GIT")
-	require.NotEmpty(t, supplied, "the test target must supply SUBMITQUEUE_TEST_GIT")
-	if git, err := gitexec.Resolve(supplied); err == nil {
-		return git
-	}
-
-	slashed := filepath.ToSlash(supplied)
-	index := strings.Index(slashed, "/external/")
-	require.GreaterOrEqual(t, index, 0, "SUBMITQUEUE_TEST_GIT=%q is not a runfile", supplied)
-	root := os.Getenv("TEST_SRCDIR")
-	require.NotEmpty(t, root)
-
-	git, err := gitexec.Resolve(filepath.Join(root, filepath.FromSlash(slashed[index+len("/external/"):])))
-	require.NoError(t, err)
-	return git
-}
-
 // sandbox creates a bare repository with one commit on main, standing in for
 // what tool/gitsandbox provisions.
 func sandbox(t *testing.T, git string) string {
@@ -176,7 +155,7 @@ func sandbox(t *testing.T, git string) string {
 }
 
 func TestGitSource_PushesABranchWithACommitPerFile(t *testing.T) {
-	git := testGit(t)
+	git := gitexectest.Git(t)
 	ctx := context.Background()
 	bare := sandbox(t, git)
 
@@ -208,7 +187,7 @@ func TestGitSource_PushesABranchWithACommitPerFile(t *testing.T) {
 }
 
 func TestGitSource_MintsAURIPinningTheHead(t *testing.T) {
-	git := testGit(t)
+	git := gitexectest.Git(t)
 	ctx := context.Background()
 	src, err := newGitSource(ctx, git, sandbox(t, git), "sandbox")
 	require.NoError(t, err)
@@ -232,7 +211,7 @@ func TestGitSource_MintsAURIPinningTheHead(t *testing.T) {
 // A stack is cut from the previous change's head rather than the base, which is
 // what makes the chain land in the order it was built.
 func TestGitSource_StacksOnAPreviousChange(t *testing.T) {
-	git := testGit(t)
+	git := gitexectest.Git(t)
 	ctx := context.Background()
 	bare := sandbox(t, git)
 	src, err := newGitSource(ctx, git, bare, "sandbox")
@@ -256,7 +235,7 @@ func TestGitSource_StacksOnAPreviousChange(t *testing.T) {
 // runs up to -concurrency of these at once, so the source has to serialize them
 // itself; without the lock this corrupts the index or races the branch.
 func TestGitSource_SerializesConcurrentChanges(t *testing.T) {
-	git := testGit(t)
+	git := gitexectest.Git(t)
 	ctx := context.Background()
 	bare := sandbox(t, git)
 	src, err := newGitSource(ctx, git, bare, "sandbox")
@@ -293,7 +272,7 @@ func TestGitSource_SerializesConcurrentChanges(t *testing.T) {
 func TestNewChangeSource_GitRejectsAMissingSandbox(t *testing.T) {
 	_, _, err := newChangeSource(context.Background(), config{
 		provider:   providerGit,
-		git:        testGit(t),
+		git:        gitexectest.Git(t),
 		sandboxDir: filepath.Join(t.TempDir(), "nothing-here"),
 	})
 	require.Error(t, err, "a missing sandbox must say so rather than fail later mid-run")

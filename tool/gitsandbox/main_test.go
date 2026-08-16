@@ -24,40 +24,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber/submitqueue/platform/gitexec"
+	"github.com/uber/submitqueue/platform/gitexec/gitexectest"
 )
 
-// testGit resolves the pinned git the test target supplies, so these assertions
-// exercise the same build the sandbox is seeded with rather than the host's.
-//
-// rules_go expands $(location) to an execroot-relative path, which for an
-// external output has to be re-rooted under the runfiles directory a test runs
-// from — the same re-rooting the git E2E does. Under `bazel run` the binary
-// needs none of this, because it already runs from the runfiles tree.
-func testGit(t *testing.T) string {
-	t.Helper()
-
-	supplied := os.Getenv("SUBMITQUEUE_TEST_GIT")
-	require.NotEmpty(t, supplied, "the test target must supply SUBMITQUEUE_TEST_GIT")
-
-	if git, err := gitexec.Resolve(supplied); err == nil {
-		return git
-	}
-
-	slashed := filepath.ToSlash(supplied)
-	index := strings.Index(slashed, "/external/")
-	require.GreaterOrEqual(t, index, 0, "SUBMITQUEUE_TEST_GIT=%q is not a runfile", supplied)
-	external := slashed[index+len("/external/"):]
-
-	root := os.Getenv("TEST_SRCDIR")
-	require.NotEmpty(t, root)
-
-	git, err := gitexec.Resolve(filepath.Join(root, filepath.FromSlash(external)))
-	require.NoError(t, err, "the test target must supply a git binary")
-	return git
-}
-
 func TestProvision_SeedsABareRepositoryOnTheTargetBranch(t *testing.T) {
-	git := testGit(t)
+	git := gitexectest.Git(t)
 	ctx := context.Background()
 	bare := filepath.Join(t.TempDir(), "sandbox.git")
 
@@ -79,7 +50,7 @@ func TestProvision_SeedsABareRepositoryOnTheTargetBranch(t *testing.T) {
 }
 
 func TestProvision_LeavesAnExistingRepositoryAlone(t *testing.T) {
-	git := testGit(t)
+	git := gitexectest.Git(t)
 	ctx := context.Background()
 	bare := filepath.Join(t.TempDir(), "sandbox.git")
 
@@ -101,7 +72,7 @@ func TestProvision_LeavesAnExistingRepositoryAlone(t *testing.T) {
 // A restarted stack must not lose the history someone is looking at, which is
 // the whole reason provisioning is idempotent rather than a reset.
 func TestProvision_PreservesCommitsLandedAfterSeeding(t *testing.T) {
-	git := testGit(t)
+	git := gitexectest.Git(t)
 	ctx := context.Background()
 	bare := filepath.Join(t.TempDir(), "sandbox.git")
 	require.NoError(t, func() error { _, err := provision(ctx, git, bare, "main"); return err }())
@@ -124,7 +95,7 @@ func TestProvision_PreservesCommitsLandedAfterSeeding(t *testing.T) {
 }
 
 func TestProvision_HonorsTheBranchName(t *testing.T) {
-	git := testGit(t)
+	git := gitexectest.Git(t)
 	ctx := context.Background()
 	bare := filepath.Join(t.TempDir(), "sandbox.git")
 
@@ -138,7 +109,7 @@ func TestProvision_HonorsTheBranchName(t *testing.T) {
 // The reflog is how a reader confirms a stack landed in one push, and bare
 // repositories do not keep one unless asked.
 func TestProvision_EnablesTheReflog(t *testing.T) {
-	git := testGit(t)
+	git := gitexectest.Git(t)
 	ctx := context.Background()
 	bare := filepath.Join(t.TempDir(), "sandbox.git")
 
@@ -156,7 +127,7 @@ func TestProvision_EnablesTheReflog(t *testing.T) {
 // can catch the file mid-name and fail a land for no reason. Nothing to repack,
 // nothing to catch.
 func TestProvision_DisablesAutomaticHousekeeping(t *testing.T) {
-	git := testGit(t)
+	git := gitexectest.Git(t)
 	ctx := context.Background()
 	bare := filepath.Join(t.TempDir(), "sandbox.git")
 
@@ -178,7 +149,7 @@ func TestProvision_DisablesAutomaticHousekeeping(t *testing.T) {
 // so it has to gain them on the next start instead of staying broken until
 // someone deletes it.
 func TestProvision_AppliesSettingsToAnExistingSandbox(t *testing.T) {
-	git := testGit(t)
+	git := gitexectest.Git(t)
 	ctx := context.Background()
 	bare := filepath.Join(t.TempDir(), "sandbox.git")
 
@@ -196,14 +167,14 @@ func TestProvision_AppliesSettingsToAnExistingSandbox(t *testing.T) {
 }
 
 func TestRun_RequiresASandboxDirectory(t *testing.T) {
-	err := run(context.Background(), testGit(t), "", "", "sandbox", "main")
+	err := run(context.Background(), gitexectest.Git(t), "", "", "sandbox", "main")
 	require.Error(t, err)
 }
 
 func TestRun_CreatesTheCheckoutDirectory(t *testing.T) {
 	checkout := filepath.Join(t.TempDir(), "checkouts")
 
-	err := run(context.Background(), testGit(t), t.TempDir(), checkout, "sandbox", "main")
+	err := run(context.Background(), gitexectest.Git(t), t.TempDir(), checkout, "sandbox", "main")
 	require.NoError(t, err)
 
 	info, err := os.Stat(checkout)
@@ -218,7 +189,7 @@ func TestProvision_LeavesNothingBehindWhenCreationFails(t *testing.T) {
 	bare := filepath.Join(t.TempDir(), "sandbox.git")
 
 	// A branch name git refuses, so creation fails partway.
-	_, err := provision(ctx, testGit(t), bare, "refs/heads/")
+	_, err := provision(ctx, gitexectest.Git(t), bare, "refs/heads/")
 	require.Error(t, err)
 
 	_, statErr := os.Stat(bare)
@@ -230,7 +201,7 @@ func TestProvision_LeavesNothingBehindWhenCreationFails(t *testing.T) {
 // The failure above must be recoverable: a corrected run provisions cleanly
 // rather than tripping over remnants of the one before it.
 func TestProvision_SucceedsAfterAFailedAttempt(t *testing.T) {
-	git := testGit(t)
+	git := gitexectest.Git(t)
 	ctx := context.Background()
 	bare := filepath.Join(t.TempDir(), "sandbox.git")
 
