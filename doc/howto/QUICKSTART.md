@@ -163,7 +163,8 @@ SQ_TOKEN=$(cat ~/.sq-token) bazel run //service/submitqueue/gateway/client:gatew
 ### Service logs
 
 ```bash
-docker compose -p submitqueue-provider logs -f runway-service
+make local-submitqueue-logs                  # every service
+docker compose -p submitqueue logs -f runway-service   # one of them
 ```
 
 The message queue logs a line per message published, fetched, leased and acked, which at debug level buries everything else a service says. It is levelled separately from the rest of the service, at info by default. To follow the queue itself — chasing a message that never arrived, or a partition that never got leased — turn it back up:
@@ -276,19 +277,39 @@ PROVIDER=github make local-submitqueue-start
 
 The token is required rather than defaulted: a stack that silently falls back to the fake integrations reports changes as landed without having gone near the provider, which is a much worse way to find out.
 
-From here everything is as before — `make demo-requests` opens real pull requests, enqueues them and watches them land, having picked up from the running stack that this one is GitHub.
+Then the same command as the other two rungs:
 
-### Land a pull request
+```bash
+make demo-requests
+```
 
-Open a pull request against `main` in the scratch repo, then:
+It opens real pull requests, enqueues each as it is created, and watches them land — having picked up from the running stack that this one is GitHub. A three-change run against a scratch repo:
+
+```
+  REQUEST       CHANGES                                           ELAPSED  STAGE
+  ────────────  ────────────────────────────────────────────────  ───────  ──────────────────────────────
+  demo-queue/1  https://github.com/behinddwalls/sq-demo/pull/522      21s  accepted → … → landed
+  demo-queue/2  https://github.com/behinddwalls/sq-demo/pull/523      22s  accepted → … → landed
+  demo-queue/3  https://github.com/behinddwalls/sq-demo/pull/524      25s  accepted → … → landed
+```
+
+All three show **Merged** on GitHub and their commits are on `main`.
+
+Worth understanding *why* they show merged, because nothing called an API to close them. A provider marks a change merged once its head commit is reachable from the target branch. `SQUASH_REBASE` rewrites the commits, so a pull request's original head is nowhere in `main` — and `updateHeadBranch` therefore moves its branch to the commit it landed as. GitHub draws its own conclusion from that.
+
+`make demo-requests STACKED=true` submits a chain instead, each pull request targeting the previous one's branch. All of them land as one push to `main`, and all of them show as merged.
+
+**Your CI does not run these builds.** Even here the build runner is fake, so a land takes seconds and costs no Actions minutes — GitHub supplies the change metadata and takes the push, and nothing else. That is worth knowing before reading `landed` as "CI passed on the combination", because it did not run. See [Using real CI](#using-real-ci) below.
+
+### Land an existing pull request
+
+For a pull request you opened yourself rather than one the demo created:
 
 ```bash
 make land PR=https://github.com/<you>/<repo>/pull/1
 ```
 
-`land` resolves the pull request's head commit and prints the change URI it built, so there is no 40-character SHA to copy. It returns an `sqid` to follow with `make land-status`. When the request reaches `landed`, the pull request shows **Merged** and its commit is on `main`.
-
-Worth understanding *why* it shows merged, because nothing called an API to close it. A provider marks a change merged once its head commit is reachable from the target branch. `SQUASH_REBASE` rewrites the commits, so the pull request's original head is nowhere in `main` — and `updateHeadBranch` therefore moves the pull request's branch to the commit it landed as. GitHub draws its own conclusion from that.
+`land` resolves the pull request's head commit and prints the change URI it built, so there is no 40-character SHA to copy. It returns an `sqid` to follow with `make land-status`.
 
 A stack is a chain of pull requests where each targets the previous one's branch, submitted in order:
 
@@ -298,7 +319,7 @@ make land PRS="https://github.com/<you>/<repo>/pull/1 \
              https://github.com/<you>/<repo>/pull/3"
 ```
 
-The order of `PRS` is the stack order. All three land as one push to `main`, and all three show as merged.
+The order of `PRS` is the stack order.
 
 ### Using real CI
 
@@ -343,7 +364,7 @@ One caveat worth understanding before you rely on the result. A workflow that on
 
 ## Make a change fail
 
-The fakes take instructions through the change URI itself, so a failure needs no configuration change and no restart. Append `?sq-fake=build-fail`:
+Back on the `fake` rung, where a change is a URI and nothing has to exist for one to name it. The fakes take instructions through the change URI itself, so a failure needs no configuration change and no restart. Append `?sq-fake=build-fail`:
 
 ```bash
 make land QUEUE=demo-queue \
@@ -351,6 +372,8 @@ make land QUEUE=demo-queue \
 ```
 
 That request walks the same path as far as `speculating`, records `building`, and then goes terminal at `error` instead of landing. Other tokens follow the same `sq-fake=<token>` convention and are documented on the fake they drive — `provider-error` on the change provider, `unmergeable` and `mergecheck-error` on the merge checker, `trigger-error` and `build-error` on the build runner.
+
+A hand-written URI like the one above belongs to the `fake` rung alone. On `git` it names a commit the merger cannot fetch, and on `github` the change provider tries to resolve it as a pull request — both fail, but for reasons that have nothing to do with the marker.
 
 Submit a good change into the **same folder** as a failing one and you can watch what makes a queue worth having: the two are batched in order, and the second speculates on the first landing. When the first fails, that guess is contradicted, the second re-plans, and it lands anyway.
 
@@ -367,10 +390,10 @@ Both MySQL services mount **anonymous** volumes, so a stop/start cycle orphans a
 
 ## Troubleshooting
 
-**MySQL exits immediately, and the stack fails with `dependency failed to start`.** Check `docker logs submitqueue-provider-mysql-queue-1`. Two causes look similar:
+**MySQL exits immediately, and the stack fails with `dependency failed to start`.** Check `docker logs submitqueue-mysql-queue-1`. Two causes look similar:
 
 - `No space left on device` — Docker is full, usually of the orphaned volumes above; `docker system df` shows the total. `docker volume prune` reclaims every detached volume on the machine, so check `docker volume ls -f dangling=true` first if anything else of yours might be in there.
-- `--initialize specified but the data directory has files in it` — a previous run died partway through initializing. Remove that stack's volumes with `docker compose -f service/submitqueue/docker-compose.yml -p submitqueue-provider down -v` and start again.
+- `--initialize specified but the data directory has files in it` — a previous run died partway through initializing. Remove that stack's volumes with `make local-submitqueue-clean` and start again.
 
 **A land is rejected before it returns an sqid.** The URI failed validation: 40 hex characters of SHA, and a percent-encoded `refs/…` ref.
 
