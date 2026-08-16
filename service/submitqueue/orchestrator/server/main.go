@@ -181,7 +181,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("failed to load extension profiles: %w", err)
 	}
-	profiles, err := newProfiles(logger, scope, changeset.New(storageFty), storageFty, profilesCfg)
+	profiles, err := newProfiles(ctx, logger, scope, changeset.New(storageFty), storageFty, profilesCfg)
 	if err != nil {
 		return fmt.Errorf("failed to build profiles: %w", err)
 	}

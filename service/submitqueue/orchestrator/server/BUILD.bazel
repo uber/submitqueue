@@ -8,6 +8,7 @@ exports_files(
 go_library(
     name = "orchestrator_lib",
     srcs = [
+        "changerepo.go",
         "config.go",
         "main.go",
         "profiles.go",
@@ -36,6 +37,7 @@ go_library(
         "//submitqueue/extension/buildrunner/githubactions:go_default_library",
         "//submitqueue/extension/changeprovider:go_default_library",
         "//submitqueue/extension/changeprovider/fake:go_default_library",
+        "//submitqueue/extension/changeprovider/git:go_default_library",
         "//submitqueue/extension/changeprovider/github:go_default_library",
         "//submitqueue/extension/changeprovider/phabricator:go_default_library",
         "//submitqueue/extension/changeprovider/routing:go_default_library",
@@ -101,8 +103,16 @@ go_test(
         "config_test.go",
         "profiles_test.go",
     ],
+    # The pinned git, for the tests that resolve a git change provider against a
+    # real repository.
+    data = ["@git"],
     embed = [":orchestrator_lib"],  # keep
+    env = {
+        "SUBMITQUEUE_TEST_GIT": "$(location @git//:git)",
+    },
     deps = [
+        "//platform/base/change:go_default_library",
+        "//platform/gitexec/gitexectest:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/buildrunner:go_default_library",
         "//submitqueue/extension/changeprovider:go_default_library",

@@ -25,6 +25,7 @@ import (
 // Change provider types selectable from configuration.
 const (
 	changeProviderTypeFake        = "fake"
+	changeProviderTypeGit         = "git"
 	changeProviderTypeGitHub      = "github"
 	changeProviderTypePhabricator = "phabricator"
 	changeProviderTypeRouting     = "routing"
@@ -74,6 +75,10 @@ const defaultBuildBudget = 4
 
 // Defaults for the provider integrations, matching each vendor's convention.
 const (
+	// defaultGitRemote and defaultGitTokenUser match git's own convention and
+	// the username a forge expects a token to be presented under.
+	defaultGitRemote      = "origin"
+	defaultGitTokenUser   = "x-access-token"
 	defaultGitHubTokenEnv = "GITHUB_TOKEN"
 	defaultGitHubBaseURL  = "https://api.github.com"
 	defaultPhabTokenEnv   = "PHAB_API_TOKEN"
@@ -121,8 +126,35 @@ type queueProfileConfig struct {
 // dispatches between them on the change URI's scheme.
 type changeProviderConfig struct {
 	Type        string                `yaml:"type"`
+	Git         *gitProviderConfig    `yaml:"git"`
 	GitHub      *githubProviderConfig `yaml:"github"`
 	Phabricator *phabProviderConfig   `yaml:"phabricator"`
+}
+
+// gitProviderConfig configures the git change provider, which derives change
+// metadata from a repository rather than asking a service for it.
+//
+// It mirrors Runway's merger block deliberately: each service keeps its own
+// copy of a queue's repository and says for itself where that copy fetches
+// from, so the two are configured independently even when they name the same
+// remote.
+type gitProviderConfig struct {
+	// RemoteURL is where this service's copy fetches from. A URL or a local
+	// path; a bind-mounted bare repository and a remote host differ only here.
+	RemoteURL string `yaml:"remoteUrl"`
+	// Remote is the name the copy records RemoteURL under.
+	Remote string `yaml:"remote"`
+	// Target is the branch a change's first commit is measured against.
+	Target string `yaml:"target"`
+	// RepoPath is where this service keeps its copy. It belongs to this service
+	// alone — another service reading the same remote keeps its own.
+	RepoPath string `yaml:"repoPath"`
+	// TokenEnv names the environment variable holding a credential for an
+	// http(s) remote. Empty means the remote needs none, which is the case for a
+	// local path and for SSH served by the host's own configuration.
+	TokenEnv string `yaml:"tokenEnv"`
+	// TokenUser is the username the credential is presented under.
+	TokenUser string `yaml:"tokenUser"`
 }
 
 // githubProviderConfig configures the GitHub change provider.
@@ -269,6 +301,41 @@ func (c *profilesConfig) normalizeAndValidate() error {
 			}
 		}
 	}
+	return c.validateGitRepoPaths()
+}
+
+// validateGitRepoPaths rejects two queues keeping their copies in one directory
+// while disagreeing about what that copy is.
+//
+// A shared path is legitimate — two queues on the same repository should share
+// one copy, and sharing it is what makes them share its lock. Sharing it with a
+// different remote or target is not: whichever queue was built first silently
+// decides what the other one reads.
+func (c profilesConfig) validateGitRepoPaths() error {
+	type owner struct {
+		queue string
+		cfg   gitProviderConfig
+	}
+	byPath := make(map[string]owner)
+
+	for _, q := range c.Queues {
+		resolved := c.resolve(q)
+		if resolved.ChangeProvider.Type != changeProviderTypeGit || resolved.ChangeProvider.Git == nil {
+			continue
+		}
+		git := *resolved.ChangeProvider.Git
+		previous, seen := byPath[git.RepoPath]
+		if !seen {
+			byPath[git.RepoPath] = owner{queue: q.Name, cfg: git}
+			continue
+		}
+		if previous.cfg.RemoteURL != git.RemoteURL || previous.cfg.Target != git.Target {
+			return fmt.Errorf(
+				"queues %q and %q share repoPath %q but read different repositories (%s@%s vs %s@%s); give each its own path",
+				previous.queue, q.Name, git.RepoPath,
+				previous.cfg.RemoteURL, previous.cfg.Target, git.RemoteURL, git.Target)
+		}
+	}
 	return nil
 }
 
@@ -317,6 +384,8 @@ func (c *changeProviderConfig) normalizeAndValidate(where string) error {
 	switch c.Type {
 	case changeProviderTypeFake:
 		return nil
+	case changeProviderTypeGit:
+		return c.ensureGit(where)
 	case changeProviderTypeGitHub:
 		c.ensureGitHub()
 	case changeProviderTypePhabricator:
@@ -339,6 +408,31 @@ func (c *changeProviderConfig) normalizeAndValidate(where string) error {
 		}
 	default:
 		return fmt.Errorf("%s: unknown change provider type %q", where, c.Type)
+	}
+	return nil
+}
+
+// ensureGit defaults and checks the git block. Three values have no sensible
+// default and are required: there is no public git remote to fall back on, no
+// universal trunk name, and nowhere obvious to keep a copy.
+func (c *changeProviderConfig) ensureGit(where string) error {
+	if c.Git == nil {
+		c.Git = &gitProviderConfig{}
+	}
+	if c.Git.Remote == "" {
+		c.Git.Remote = defaultGitRemote
+	}
+	if c.Git.TokenUser == "" {
+		c.Git.TokenUser = defaultGitTokenUser
+	}
+	if c.Git.RemoteURL == "" {
+		return fmt.Errorf("%s: git change provider requires remoteUrl", where)
+	}
+	if c.Git.Target == "" {
+		return fmt.Errorf("%s: git change provider requires target", where)
+	}
+	if c.Git.RepoPath == "" {
+		return fmt.Errorf("%s: git change provider requires repoPath", where)
 	}
 	return nil
 }

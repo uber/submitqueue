@@ -102,7 +102,15 @@ func (r *Repo) Provision(ctx context.Context) error {
 			return err
 		}
 	}
-	return r.configureRemote(ctx)
+	if err := r.configureRemote(ctx); err != nil {
+		return err
+	}
+
+	// Fetch once here, which is what makes provisioning worth doing at startup
+	// at all: an unreachable remote, a wrong URL, or a credential that does not
+	// work fails the service that is misconfigured. Initializing a directory and
+	// recording a remote would succeed against a remote that does not exist.
+	return r.fetchTarget(ctx)
 }
 
 // configureRemote records the remote, correcting it if the configuration
@@ -268,6 +276,31 @@ func commandEnv() []string {
 		}
 	}
 	return env
+}
+
+// SetConfig writes one local configuration value into the repository at path.
+//
+// Exported for an Auth implementation, which configures a repository from
+// outside this package and would otherwise have to find and run git itself.
+func SetConfig(ctx context.Context, path, key, value string) error {
+	git, err := resolveGit("")
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, git, "config", key, value)
+	cmd.Dir = path
+	cmd.Env = commandEnv()
+
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		message := strings.TrimSpace(stderr.String())
+		if message == "" {
+			message = err.Error()
+		}
+		return fmt.Errorf("git config %s: %s", key, message)
+	}
+	return nil
 }
 
 // resolveGit locates the git binary, preferring an explicit path, then
