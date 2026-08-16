@@ -4,13 +4,15 @@ Start the stack, put traffic through it, and watch changes land — beginning wi
 
 The stack always runs the same way. What changes is where the changes come from and what landing them does, chosen with `PROVIDER`:
 
-| `PROVIDER` | A change is | Landing it | Needs |
-|---|---|---|---|
-| **`fake`** (default) | a URI, and nothing else | reports success without touching a repository | nothing |
-| **`git`** | a branch in a bare repository on disk | a real fetch, cherry-pick and push | nothing |
-| **`github`** | a real pull request | a real push to a real repository | a repository and a token |
+| `PROVIDER` | A change is | Building it | Landing it | Needs |
+|---|---|---|---|---|
+| **`fake`** (default) | a URI, and nothing else | instant fake pass | reports success without touching a repository | nothing |
+| **`git`** | a branch in a bare repository on disk | instant fake pass | a real fetch, cherry-pick and push | nothing |
+| **`github`** | a real pull request | a real GitHub Actions run per batch | a real push to a real repository | a repository, a token, and CI minutes |
 
 They are a ladder, not alternatives: the same commands work on each rung, so you can start with the one that needs nothing and only pay for what you want to see next. Each is a directory of configuration under [`service/submitqueue/demo/provider/`](../../service/submitqueue/demo/provider) — the difference between rungs is two YAML files, not a code path.
+
+The queue's own logic is real on every rung; what changes is how much of the world around it is. Two things are worth knowing before reading a `landed` as more than it is. On `fake` and `git` **the build is faked**, so `landed` means the pipeline ran, not that anything was tested. And on `fake` and `git` the change provider is faked too: it cannot read a repository to see what a change touched, so `make demo-requests` states the paths on the change URI itself (`sq-files=`) for the conflict analyzer to key on. A change submitted by hand on those rungs touches nothing as far as the analyzer can tell, and conflicts with nothing.
 
 ## Start the stack
 
@@ -252,9 +254,9 @@ For a **fine-grained** token, grant these repository permissions. Each is here b
 | Contents | Read and write | the git merger — clone, fetch, push to the target branch, and force-move each landed change's head branch |
 | Pull requests | Read | the change provider reads pull request metadata, and `land -pr` reads the head commit |
 | Pull requests | Read **and write** | only for `make demo-requests`, which opens pull requests |
-| Actions | Read and write | only if you switch the build runner to GitHub Actions — dispatch a run, poll it, cancel it |
+| Actions | Read and write | the build runner — dispatch a run per batch, poll it, cancel it |
 
-A **classic** PAT needs `repo`, plus `workflow` if you use the GitHub Actions build runner.
+A **classic** PAT needs `repo` and `workflow`.
 
 Two things people get caught by. Fine-grained tokens must have the repository explicitly selected under "Repository access" — org-owned repositories also need the org to have approved fine-grained tokens at all. And **Contents: Read and write is the one that cannot be reduced**: landing *is* pushing, so a read-only token fails at the last step, after everything else has appeared to work.
 
@@ -299,7 +301,7 @@ Worth understanding *why* they show merged, because nothing called an API to clo
 
 `make demo-requests STACKED=true` submits a chain instead, each pull request targeting the previous one's branch. All of them land as one push to `main`, and all of them show as merged.
 
-**Your CI does not run these builds.** Even here the build runner is fake, so a land takes seconds and costs no Actions minutes — GitHub supplies the change metadata and takes the push, and nothing else. That is worth knowing before reading `landed` as "CI passed on the combination", because it did not run. See [Using real CI](#using-real-ci) below.
+**These builds are real.** This rung dispatches your workflow once per speculative batch and polls it to completion, so `landed` here means a build of that batch passed — not that a fake said so. It is the only rung where nothing is faked, and the only one that costs you Actions minutes. [Using real CI](#using-real-ci) below covers what the workflow has to accept and why testing the *combination* is the whole point.
 
 ### Land an existing pull request
 
@@ -323,14 +325,12 @@ The order of `PRS` is the stack order.
 
 ### Using real CI
 
-The demo keeps the build runner fake so a land finishes in seconds. Switching to real GitHub Actions takes three things.
+This rung runs your workflow for real — `profiles.yaml` already selects the `githubactions` runner. Two things have to be true of the repository you point it at.
 
-**1. The workflow must be dispatchable.** The runner triggers builds with `POST /actions/workflows/{id}/dispatches`, which only works if the workflow declares `workflow_dispatch`. A typical scratch-repo `ci.yml` triggered on `pull_request` alone cannot be dispatched at all — GitHub rejects it. Add the trigger and the inputs the runner sends:
+**The workflow must be dispatchable, and must accept the `sq_*` inputs.** The runner triggers builds with `POST /actions/workflows/{id}/dispatches`, which only works if the workflow declares `workflow_dispatch`. A typical scratch-repo `ci.yml` triggered on `pull_request` alone cannot be dispatched at all — GitHub rejects the call:
 
 ```yaml
 on:
-  pull_request:
-  merge_group:
   workflow_dispatch:
     inputs:
       sq_head_uris:
@@ -347,20 +347,11 @@ on:
         required: false
 ```
 
-**2. Point the runner at it.** Replace the `buildRunner` line for the queue in `profiles.yaml`:
+**And the workflow must apply both input sets**, which is the part that decides whether any of this means anything. A workflow that checks out the pull request and builds it tests *that change alone* — not what a submit queue is for. The point of speculation is the **combination**: `sq_base_uris` are the in-flight changes assumed to land first, `sq_head_uris` is the batch under test on top of them. A workflow that ignores them is green about the wrong thing, and the queue is only exercising its trigger-and-poll loop.
 
-```yaml
-buildRunner:
-  type: githubactions
-  owner: behinddwalls
-  repo: sq-demo
-  workflow: ci.yml        # file name or numeric workflow id
-  ref: main               # the branch the workflow definition is read from
-```
+Two consequences worth planning for. A land now takes as long as the workflow does, so runs are minutes rather than seconds. And every speculation path dispatched is a run: the queue's [build budget](#put-traffic-through-it) is the cap on how many can be in flight at once, and on a metered account it is a spending control as much as a CI one.
 
-**3. Grant Actions: Read and write** on the token (see the permissions table above).
-
-One caveat worth understanding before you rely on the result. A workflow that only checks out the pull request tests *that change alone* — which is not what a submit queue is for. The point of speculation is to test the **combination**: `sq_base_uris` are the in-flight changes assumed to land first, and `sq_head_uris` is the batch under test on top of them. Until the workflow actually applies both, a green run says nothing about whether the batch lands cleanly, and the queue is only exercising its trigger-and-poll loop.
+`pull_request` is deliberately absent above. With the queue dispatching a run per batch, leaving it on doubles the runs and tests something the queue already covers.
 
 ## Make a change fail
 
