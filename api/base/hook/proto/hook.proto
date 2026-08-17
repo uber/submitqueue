@@ -1,0 +1,58 @@
+// Copyright (c) 2026 Uber Technologies, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package uber.base.hook;
+
+import "google/protobuf/struct.proto";
+
+import "api/base/messagequeue/proto/messagequeue.proto";
+
+option go_package = "github.com/uber/submitqueue/api/base/hook/protopb";
+option java_multiple_files = true;
+option java_outer_classname = "HookProto";
+option java_package = "com.uber.submitqueue.base.hook";
+
+// HookEvent is one fire-and-forget lifecycle event. Every domain publishes this
+// same shape to its own hook topic, so a sink that consumes several domains
+// reads one schema rather than one per producer.
+message HookEvent {
+    option (uber.base.messagequeue.topic_keys) = "hook";
+
+    // id is the opaque identity of this occurrence, derived from the transition
+    // it describes so that replaying the transition mints the same id. It is
+    // the queue's dedupe key and a hook's idempotency key, and is never parsed.
+    string id = 1;
+    // source is the domain that produced the event. An open string rather than
+    // an enum so a new producer does not break existing consumers.
+    string source = 2;
+    // type is what happened, as one dotted open string: "request.landed",
+    // "batch.failed", etc. It is the only dimension a consumer filters on, and
+    // open for the same reason as source.
+    string type = 3;
+    // timestamp_ms is when the occurrence happened, in milliseconds since the
+    // Unix epoch, on the publisher's clock.
+    int64 timestamp_ms = 4;
+    // version is the subject's optimistic-locking version immediately after the
+    // transition, and 0 when the transition was not a versioned write. A hook
+    // compares it against the subject's current version to tell a current event
+    // from one that has since been superseded.
+    int32 version = 5;
+    // payload carries the facts specific to type, always including the
+    // subject's id, and must carry any fact recorded nowhere else because the
+    // event is that fact's only durable record. Add-only, and never an entity
+    // snapshot: hooks resolve entities from their stores.
+    google.protobuf.Struct payload = 6;
+}
