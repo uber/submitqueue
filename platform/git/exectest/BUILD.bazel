@@ -3,7 +3,7 @@ load("@rules_go//go:def.bzl", "go_library")
 go_library(
     name = "go_default_library",
     srcs = ["gitexectest.go"],
-    importpath = "github.com/uber/submitqueue/platform/gitexec/gitexectest",
+    importpath = "github.com/uber/submitqueue/platform/git/exectest",
     visibility = ["//visibility:public"],
     deps = ["@com_github_stretchr_testify//require:go_default_library"],
 )

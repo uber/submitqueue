@@ -44,7 +44,7 @@ import (
 	changepb "github.com/uber/submitqueue/api/base/change/protopb"
 	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	gatewaypb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
-	"github.com/uber/submitqueue/platform/gitexec/gitexectest"
+	gitexectest "github.com/uber/submitqueue/platform/git/exectest"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/test/testutil"
 	"google.golang.org/grpc"

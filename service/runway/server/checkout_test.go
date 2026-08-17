@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 
-	"github.com/uber/submitqueue/platform/gitexec/gitexectest"
+	gitexectest "github.com/uber/submitqueue/platform/git/exectest"
 	gitmerger "github.com/uber/submitqueue/runway/extension/merger/git"
 )
 

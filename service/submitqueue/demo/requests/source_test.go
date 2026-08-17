@@ -27,8 +27,8 @@ import (
 	"github.com/stretchr/testify/require"
 	gitchange "github.com/uber/submitqueue/platform/base/change/git"
 	"github.com/uber/submitqueue/platform/fakemarker"
-	"github.com/uber/submitqueue/platform/gitexec"
-	"github.com/uber/submitqueue/platform/gitexec/gitexectest"
+	gitexec "github.com/uber/submitqueue/platform/git/exec"
+	gitexectest "github.com/uber/submitqueue/platform/git/exectest"
 )
 
 // quietSpec is a changeSpec whose progress notes go nowhere, for tests that
