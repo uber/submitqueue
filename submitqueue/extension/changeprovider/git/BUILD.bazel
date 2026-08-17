@@ -3,10 +3,8 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "go_default_library",
     srcs = [
-        "auth.go",
         "numstat.go",
         "provider.go",
-        "repo.go",
     ],
     importpath = "github.com/uber/submitqueue/submitqueue/extension/changeprovider/git",
     visibility = ["//visibility:public"],
@@ -32,7 +30,9 @@ go_test(
     },
     deps = [
         "//platform/base/change:go_default_library",
+        "//platform/git/exec:go_default_library",
         "//platform/git/exectest:go_default_library",
+        "//platform/git/repo:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/changeprovider:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",

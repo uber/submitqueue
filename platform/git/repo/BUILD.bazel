@@ -1,0 +1,30 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "auth.go",
+        "repo.go",
+    ],
+    importpath = "github.com/uber/submitqueue/platform/git/repo",
+    visibility = ["//visibility:public"],
+    deps = ["//platform/git/exec:go_default_library"],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["repo_test.go"],
+    # The pinned git, so these assertions describe the build the services run
+    # rather than whatever the host happens to have.
+    data = ["@git"],
+    embed = [":go_default_library"],
+    env = {
+        "SUBMITQUEUE_TEST_GIT": "$(location @git//:git)",
+    },
+    deps = [
+        "//platform/git/exec:go_default_library",
+        "//platform/git/exectest:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+    ],
+)

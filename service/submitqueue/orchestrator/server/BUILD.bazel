@@ -26,6 +26,7 @@ go_library(
         "//platform/extension/counter:go_default_library",
         "//platform/extension/counter/mysql:go_default_library",
         "//platform/extension/messagequeue/mysql:go_default_library",
+        "//platform/git/repo:go_default_library",
         "//platform/githubactions:go_default_library",
         "//platform/http:go_default_library",
         "//platform/pipeline:go_default_library",

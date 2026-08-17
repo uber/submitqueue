@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -31,7 +30,9 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/uber/submitqueue/platform/base/change"
+	gitexec "github.com/uber/submitqueue/platform/git/exec"
 	gitexectest "github.com/uber/submitqueue/platform/git/exectest"
+	gitrepo "github.com/uber/submitqueue/platform/git/repo"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 )
@@ -45,7 +46,7 @@ type fixture struct {
 	remote   string
 	work     string
 	provider changeprovider.ChangeProvider
-	repo     *Repo
+	repo     *gitrepo.Repo
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -70,7 +71,7 @@ func newFixture(t *testing.T) *fixture {
 	f.run(f.work, "commit", "-m", "seed")
 	f.run(f.work, "push", "origin", "main")
 
-	repo, err := NewRepo(RepoConfig{
+	repo, err := gitrepo.NewRepo(gitrepo.RepoConfig{
 		Git:       git,
 		Path:      filepath.Join(root, "copy.git"),
 		RemoteURL: f.remote,
@@ -91,9 +92,7 @@ func newFixture(t *testing.T) *fixture {
 
 func (f *fixture) run(dir string, args ...string) string {
 	f.t.Helper()
-	cmd := exec.Command(f.git, args...)
-	cmd.Dir = dir
-	cmd.Env = commandEnv()
+	cmd := gitexec.Command(context.Background(), f.git, dir, args...)
 	out, err := cmd.CombinedOutput()
 	require.NoError(f.t, err, "git %s: %s", strings.Join(args, " "), out)
 	return strings.TrimSpace(string(out))
@@ -264,7 +263,7 @@ func TestGet_FetchesACommitItHasNotSeen(t *testing.T) {
 	f := newFixture(t)
 	head := f.push("feature/later", f.mainSHA(), map[string]string{"late.txt": "late\n"}, "later")
 
-	require.False(t, f.repo.hasCommit(context.Background(), head),
+	require.False(t, f.repo.HasCommit(context.Background(), head),
 		"the fixture must start without the commit for this to prove anything")
 
 	infos := f.get(f.uri("feature/later", head))
@@ -346,33 +345,5 @@ func TestGet_ConcurrentReadsAreSerialized(t *testing.T) {
 	for i := range heads {
 		require.NoError(t, errs[i])
 		assert.Equal(t, []string{fmt.Sprintf("pkg/c%d/f.go", i)}, pathsOf(results[i][0]))
-	}
-}
-
-func TestProvision_IsIdempotentAndKeepsWhatItFetched(t *testing.T) {
-	f := newFixture(t)
-	ctx := context.Background()
-	head := f.push("feature/keep", f.mainSHA(), map[string]string{"keep.txt": "keep\n"}, "keep")
-	f.get(f.uri("feature/keep", head))
-
-	require.NoError(t, f.repo.Provision(ctx))
-	assert.True(t, f.repo.hasCommit(ctx, head),
-		"re-provisioning must not discard objects already fetched")
-}
-
-func TestNewRepo_RejectsAnIncompleteConfiguration(t *testing.T) {
-	git := gitexectest.Git(t)
-	for _, tt := range []struct {
-		name string
-		cfg  RepoConfig
-	}{
-		{name: "no path", cfg: RepoConfig{Git: git, RemoteURL: "u", Target: "main"}},
-		{name: "no remote url", cfg: RepoConfig{Git: git, Path: "p", Target: "main"}},
-		{name: "no target", cfg: RepoConfig{Git: git, Path: "p", RemoteURL: "u"}},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewRepo(tt.cfg)
-			require.Error(t, err)
-		})
 	}
 }
