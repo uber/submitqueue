@@ -26,6 +26,7 @@ import (
 
 	"go.uber.org/zap"
 
+	gitexec "github.com/uber/submitqueue/platform/git/exec"
 	gitmerger "github.com/uber/submitqueue/runway/extension/merger/git"
 )
 
@@ -190,8 +191,9 @@ func setLocalConfig(checkoutPath, key, value string) error {
 }
 
 // runGit invokes the pinned git in dir with an environment scrubbed of ambient
-// configuration but retaining what is needed to reach a remote — the same split
-// the merger draws, so provisioning and merging authenticate identically.
+// configuration but retaining what is needed to reach a remote. It composes that
+// environment through gitexec.Env, the same source the merger uses, so
+// provisioning and merging authenticate — and behave — identically.
 func runGit(ctx context.Context, runtime gitmerger.GitRuntime, dir string, args ...string) ([]byte, error) {
 	full := append([]string{
 		"--exec-path=" + runtime.ExecPath,
@@ -200,27 +202,17 @@ func runGit(ctx context.Context, runtime gitmerger.GitRuntime, dir string, args 
 
 	cmd := exec.CommandContext(ctx, runtime.Executable, full...)
 	cmd.Dir = dir
-	cmd.Env = []string{
-		"HOME=" + filepath.Join(dir, ".submitqueue-git-home"),
-		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_CONFIG_GLOBAL=" + os.DevNull,
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_EXEC_PATH=" + runtime.ExecPath,
-		"GIT_TEMPLATE_DIR=" + runtime.TemplateDir,
-		"LC_ALL=C",
-		"LANG=C",
-	}
-	for _, name := range []string{
-		"PATH", "SSH_AUTH_SOCK", "SSH_AGENT_PID",
-		"GIT_SSH", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT",
-		"GIT_SSL_CAINFO", "GIT_SSL_CAPATH", "SSL_CERT_DIR", "SSL_CERT_FILE",
-		"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
-		"http_proxy", "https_proxy", "no_proxy",
-	} {
-		if v, ok := os.LookupEnv(name); ok {
-			cmd.Env = append(cmd.Env, name+"="+v)
-		}
-	}
+	cmd.Env = gitexec.Env(gitexec.EnvOptions{
+		Transport:   true,
+		Passthrough: runtime.PassthroughEnv,
+		Literal: []string{
+			"HOME=" + filepath.Join(dir, ".submitqueue-git-home"),
+			"GIT_EXEC_PATH=" + runtime.ExecPath,
+			"GIT_TEMPLATE_DIR=" + runtime.TemplateDir,
+			"LC_ALL=C",
+			"LANG=C",
+		},
+	})
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
