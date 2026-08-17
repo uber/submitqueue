@@ -14,8 +14,8 @@
 
 // Package tango provides a conflict.Analyzer that reports a conflict between
 // two batches when their changed build targets overlap. The targets a batch
-// affects are resolved through an injected TargetResolver, whose production
-// implementation calls the Tango service.
+// affects are resolved through an injected resolver.TargetResolver, whose
+// production implementation calls the Tango service.
 package tango
 
 import (
@@ -24,25 +24,19 @@ import (
 
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
+	"github.com/uber/submitqueue/submitqueue/extension/dependency/resolver"
 )
-
-// TargetResolver resolves the set of build targets a batch affects. The
-// production implementation translates the batch's changes into a Tango
-// GetChangedTargets call; tests supply a fake.
-type TargetResolver interface {
-	ChangedTargets(ctx context.Context, batch entity.Batch) ([]string, error)
-}
 
 // New returns a conflict.Analyzer that flags an in-flight batch as conflicting
 // when its changed build targets overlap with the candidate batch's, bound to
 // the queue named in cfg.
-func New(cfg conflict.Config, targets TargetResolver) conflict.Analyzer {
+func New(cfg conflict.Config, targets resolver.TargetResolver) conflict.Analyzer {
 	return &analyzer{cfg: cfg, targets: targets}
 }
 
 type analyzer struct {
 	cfg     conflict.Config
-	targets TargetResolver
+	targets resolver.TargetResolver
 	// TODO: cache resolved target sets per batch ID so in-flight batches
 	// compared against successive arrivals pay only one resolution each. Consider
 	// a TTL for high-traffic queues where trunk moves fast, and a max-size cap.
