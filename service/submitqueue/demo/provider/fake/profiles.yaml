@@ -17,6 +17,11 @@ defaults:
   buildRunner: {type: fake}
   # Serialize conservatively unless a queue says otherwise.
   analyzer: {type: all}
+  # How many builds a queue may have occupying CI at once, across all of its
+  # in-flight batches. This is the dial on how much speculation a run shows: at
+  # 1 the queue explores one path at a time, and raising it lets it hedge more
+  # of the outcomes it is waiting on. Four is the built-in default.
+  speculator: {buildBudget: 4}
 
 queues:
   # The queue `make demo-requests` and `make land` use by default.

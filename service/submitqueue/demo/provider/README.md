@@ -4,7 +4,7 @@ Each directory here is one **provider** — a code-hosting system SubmitQueue la
 
 | File | Selects |
 |---|---|
-| `profiles.yaml` | the change provider, build runner, and conflict analyzer each queue resolves to (read by the orchestrator) |
+| `profiles.yaml` | the change provider, build runner, conflict analyzer, scorer and build budget each queue resolves to (read by the orchestrator) |
 | `merge.yaml` | the merge target each queue lands on (read by Runway) |
 
 Neither holds a secret. Each integration names the *environment variable* carrying its credential, so these files stay committable and rotating a token needs no edit.

@@ -70,6 +70,21 @@ Every change writes all of its files into one folder under `demo/`, and `FOLDERS
 
 Set it deliberately when you want a run to show one thing. `FOLDERS=1` puts every change in the same place, so the queue serializes the lot and each change speculates on the one before it. A number well above `COUNT` keeps them all apart, so they go out together.
 
+How much speculation that turns into is capped by the queue's **build budget** — how many builds it may have occupying CI at once, counted across every in-flight batch rather than per batch. It defaults to 4 and is set per queue in the provider's `profiles.yaml`:
+
+```yaml
+defaults:
+  speculator: {buildBudget: 4}
+
+queues:
+  - name: demo-queue
+    speculator: {buildBudget: 12}
+```
+
+It is the other half of `FOLDERS`. Folders decide how many dependencies there are to speculate *about*; the budget decides how many of the possible outcomes the queue may hedge at once. `FOLDERS=1 buildBudget: 1` explores one path at a time and lands the slowest; raising the budget lets the queue build the "it fails" branch alongside the "it succeeds" one, which is what makes a failure cost nothing. A trail like `speculating [building ×8, built ×8]` below is a queue that kept finding paths worth funding.
+
+Changing it needs a restart, since the file is read at startup — `make local-submitqueue-stop && make local-submitqueue-start`.
+
 You can watch the queue reach that conclusion:
 
 ```bash
@@ -108,7 +123,7 @@ accepted → started → validating → validated → batching → batched →
 speculating [building ×8, built ×8, waiting] → speculated → landing → landed
 ```
 
-Eight builds means the batch was speculating down eight paths at once, and `waiting` means one of them passed and then sat on a dependency that had not resolved. A request that sailed through reads `speculating [building, built]` instead — the same position, a very different amount of work behind it.
+Eight builds means the batch explored eight paths before one of them landed it — not eight at the same time, since the build budget above caps how many may hold CI at once and a finished build frees its slot for the next. `waiting` means a path passed and then sat on a dependency that had not resolved. A request that sailed through reads `speculating [building, built]` instead — the same position, a very different amount of work behind it.
 
 `land-watch` fixes its set when it starts and exits non-zero if any request in that set finishes anywhere other than `landed`, which makes it usable from a script. A request accepted after the watch begins is not picked up: a watch that grew as the queue did would never finish.
 

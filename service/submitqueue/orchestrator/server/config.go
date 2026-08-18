@@ -66,6 +66,12 @@ const (
 // Ways a composite scorer combines its components.
 const combineAvg = "avg"
 
+// defaultBuildBudget is how many builds a queue may have occupying CI at once
+// when it states no budget of its own. Four is enough for speculation to be
+// visible — a queue that can only build one path never speculates — while
+// staying well inside what a modest CI pool absorbs.
+const defaultBuildBudget = 4
+
 // Defaults for the provider integrations, matching each vendor's convention.
 const (
 	defaultGitHubTokenEnv = "GITHUB_TOKEN"
@@ -98,6 +104,7 @@ type namedQueueProfileConfig struct {
 	BuildRunner    *buildRunnerConfig    `yaml:"buildRunner"`
 	Analyzer       *analyzerConfig       `yaml:"analyzer"`
 	Scorer         *scorerConfig         `yaml:"scorer"`
+	Speculator     *speculatorConfig     `yaml:"speculator"`
 }
 
 // queueProfileConfig is the full set of extensions a queue resolves to.
@@ -106,6 +113,7 @@ type queueProfileConfig struct {
 	BuildRunner    buildRunnerConfig    `yaml:"buildRunner"`
 	Analyzer       analyzerConfig       `yaml:"analyzer"`
 	Scorer         scorerConfig         `yaml:"scorer"`
+	Speculator     speculatorConfig     `yaml:"speculator"`
 }
 
 // changeProviderConfig selects how change metadata is fetched. The github and
@@ -189,6 +197,16 @@ type bucketConfig struct {
 	Score float64 `yaml:"score"`
 }
 
+// speculatorConfig tunes how much CI a queue's speculation may occupy. It has no
+// `type`: there is one speculator, composed from the queue's scorer, and what
+// varies between queues is what it is allowed to spend.
+type speculatorConfig struct {
+	// BuildBudget caps how many builds this queue may have occupying CI at once,
+	// counted across every in-flight batch rather than per batch. Absent or 0
+	// takes defaultBuildBudget; must not be negative.
+	BuildBudget int `yaml:"buildBudget"`
+}
+
 // loadProfilesConfig reads and validates the profiles configuration at path.
 func loadProfilesConfig(path string) (profilesConfig, error) {
 	data, err := os.ReadFile(path)
@@ -245,6 +263,11 @@ func (c *profilesConfig) normalizeAndValidate() error {
 				return err
 			}
 		}
+		if q.Speculator != nil {
+			if err := q.Speculator.normalizeAndValidate(where); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -265,6 +288,9 @@ func (c profilesConfig) resolve(q namedQueueProfileConfig) queueProfileConfig {
 	if q.Scorer != nil {
 		profile.Scorer = *q.Scorer
 	}
+	if q.Speculator != nil {
+		profile.Speculator = *q.Speculator
+	}
 	return profile
 }
 
@@ -278,7 +304,10 @@ func (p *queueProfileConfig) normalizeAndValidate(where string) error {
 	if err := p.Analyzer.normalizeAndValidate(where); err != nil {
 		return err
 	}
-	return p.Scorer.normalizeAndValidate(where)
+	if err := p.Scorer.normalizeAndValidate(where); err != nil {
+		return err
+	}
+	return p.Speculator.normalizeAndValidate(where)
 }
 
 func (c *changeProviderConfig) normalizeAndValidate(where string) error {
@@ -429,6 +458,19 @@ func (s *scorerConfig) normalizeAndValidate(where string) error {
 		}
 	default:
 		return fmt.Errorf("%s: unknown scorer type %q", where, s.Type)
+	}
+	return nil
+}
+
+func (s *speculatorConfig) normalizeAndValidate(where string) error {
+	// A negative budget is rejected rather than clamped: sticky would compute no
+	// free slots from it, so the queue would batch and then never build anything,
+	// which looks like a stuck queue rather than a misconfigured one.
+	if s.BuildBudget < 0 {
+		return fmt.Errorf("%s: build budget %d is negative", where, s.BuildBudget)
+	}
+	if s.BuildBudget == 0 {
+		s.BuildBudget = defaultBuildBudget
 	}
 	return nil
 }
