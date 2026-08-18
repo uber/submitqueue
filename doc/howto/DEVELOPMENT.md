@@ -60,15 +60,11 @@ docker ps
 # 2. Start the full stack
 make local-submitqueue-start
 
-# 3. Read the gateway's port (Compose publishes a random one)
-make local-submitqueue-ps
-export GATEWAY_ADDR=localhost:<gateway port>
-
-# 4. Create changes, enqueue them, and watch them land
+# 3. Create changes, enqueue them, and watch them land
 make demo-requests
 
-# 5. Stop services
-make local-stop
+# 4. Stop services
+make local-submitqueue-stop
 ```
 
 [QUICKSTART.md](QUICKSTART.md) walks through the same run in detail, and on to `PROVIDER=git`, which lands real commits into a repository on disk — still with no credential.

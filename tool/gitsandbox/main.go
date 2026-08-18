@@ -97,7 +97,9 @@ func provision(ctx context.Context, git, bare, branch string) (bool, error) {
 	// HEAD is written by `git init` before anything else, so its presence marks
 	// a repository that has at least been initialized.
 	if _, err := os.Stat(filepath.Join(bare, "HEAD")); err == nil {
-		return false, nil
+		// Settings are re-applied rather than assumed, so a sandbox created by
+		// an older version gains them without having to be thrown away.
+		return false, configure(ctx, git, bare)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(bare), 0o755); err != nil {
@@ -123,12 +125,43 @@ func create(ctx context.Context, git, bare, branch string) error {
 	if err := gitexec.Run(ctx, git, "", "init", "--bare", "-b", branch, bare); err != nil {
 		return err
 	}
-	// Bare repositories do not log ref updates by default, and the reflog is
-	// how a reader confirms a whole stack landed in a single push.
-	if err := gitexec.Run(ctx, git, bare, "config", "core.logAllRefUpdates", "true"); err != nil {
+	if err := configure(ctx, git, bare); err != nil {
 		return err
 	}
 	return seed(ctx, git, bare, branch)
+}
+
+// configure applies the settings the sandbox needs to be both readable and
+// safe to share between the host and the containers.
+func configure(ctx context.Context, git, bare string) error {
+	settings := [][2]string{
+		// Bare repositories do not log ref updates by default, and the reflog
+		// is how a reader confirms a whole stack landed in a single push.
+		{"core.logAllRefUpdates", "true"},
+
+		// No automatic housekeeping, which here is a correctness setting rather
+		// than a tuning one.
+		//
+		// Git runs `gc --auto` after every push by default, and packing refs
+		// rewrites packed-refs wholesale. That is safe on one filesystem, where
+		// the replacement is a rename nobody can observe halfway — but this
+		// repository is written from the host and read from inside a container
+		// through a bind mount, and that boundary does not preserve the
+		// guarantee. A run pushing fifty branches gives fifty chances for the
+		// merger to read a packed-refs truncated mid-name and fail a land that
+		// had nothing wrong with it. Left unpacked, there is nothing to rewrite;
+		// loose refs cost a sandbox that gets deleted nothing.
+		{"gc.auto", "0"},
+		{"receive.autogc", "false"},
+		{"maintenance.auto", "false"},
+	}
+
+	for _, s := range settings {
+		if err := gitexec.Run(ctx, git, bare, "config", s[0], s[1]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // seed commits an initial file on the target branch, through a throwaway clone

@@ -150,6 +150,51 @@ func TestProvision_EnablesTheReflog(t *testing.T) {
 	assert.Equal(t, "true", value)
 }
 
+// Git packs refs after a push by default, rewriting packed-refs wholesale. The
+// host writes this repository and a container reads it through a bind mount,
+// which does not preserve the atomicity that makes the rewrite safe — a reader
+// can catch the file mid-name and fail a land for no reason. Nothing to repack,
+// nothing to catch.
+func TestProvision_DisablesAutomaticHousekeeping(t *testing.T) {
+	git := testGit(t)
+	ctx := context.Background()
+	bare := filepath.Join(t.TempDir(), "sandbox.git")
+
+	_, err := provision(ctx, git, bare, "main")
+	require.NoError(t, err)
+
+	for setting, want := range map[string]string{
+		"gc.auto":          "0",
+		"receive.autogc":   "false",
+		"maintenance.auto": "false",
+	} {
+		got, err := gitexec.Output(ctx, git, bare, "config", "--get", setting)
+		require.NoError(t, err, "%s must be set", setting)
+		assert.Equal(t, want, got, setting)
+	}
+}
+
+// A sandbox made before these settings existed is reused rather than recreated,
+// so it has to gain them on the next start instead of staying broken until
+// someone deletes it.
+func TestProvision_AppliesSettingsToAnExistingSandbox(t *testing.T) {
+	git := testGit(t)
+	ctx := context.Background()
+	bare := filepath.Join(t.TempDir(), "sandbox.git")
+
+	_, err := provision(ctx, git, bare, "main")
+	require.NoError(t, err)
+	require.NoError(t, gitexec.Run(ctx, git, bare, "config", "receive.autogc", "true"))
+
+	created, err := provision(ctx, git, bare, "main")
+	require.NoError(t, err)
+	require.False(t, created, "an existing sandbox is reused, not recreated")
+
+	got, err := gitexec.Output(ctx, git, bare, "config", "--get", "receive.autogc")
+	require.NoError(t, err)
+	assert.Equal(t, "false", got)
+}
+
 func TestRun_RequiresASandboxDirectory(t *testing.T) {
 	err := run(context.Background(), testGit(t), "", "", "sandbox", "main")
 	require.Error(t, err)

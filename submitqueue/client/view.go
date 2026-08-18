@@ -179,7 +179,16 @@ func digest(events []*pb.HistoryEvent) (trail []string, status, note string) {
 			pending, counts = nil, make(map[string]int)
 			return
 		}
-		trail[len(trail)-1] += " [" + strings.Join(annotate(pending, counts), ", ") + "]"
+		events := strings.Join(annotate(pending, counts), ", ")
+		// A request that has settled cannot be doing anything, so an event
+		// recorded against a terminal status is work that outlived it: a build
+		// for a speculation path nobody needed any more, which reported before
+		// the runner could be told to stop. Saying when it happened keeps the
+		// trail from reading as though a landed change built itself afterwards.
+		if terminalStatuses[last] {
+			events = "after: " + events
+		}
+		trail[len(trail)-1] += " [" + events + "]"
 		pending, counts = nil, make(map[string]int)
 	}
 
@@ -299,6 +308,16 @@ type renderer struct {
 	// free to be taller than the window: no later frame has to line up with it.
 	oneShot bool
 
+	// scrollable marks the full-screen view, where the reader can move a window
+	// over the rows instead of the renderer choosing which ones to drop.
+	scrollable bool
+	scroll     scroll
+
+	// lastCapacity is how many rows the last frame had room for. A keypress has
+	// to move the window by a page without knowing the rows or their heights,
+	// and the last frame is the best evidence of what a page is.
+	lastCapacity int
+
 	// width and height are the terminal's, re-read before every draw. A watch
 	// runs for minutes and a window can be resized inside them, so neither is a
 	// property the process can sample once — see resize.
@@ -395,6 +414,11 @@ func (r *renderer) draw(rows []*Row, status string) {
 	// resize as rows come and go from view.
 	r.fit(rows)
 
+	if r.scrollable {
+		r.drawScrollable(rows, status)
+		return
+	}
+
 	visible, hidden := r.visibleRows(rows)
 	body := r.body(visible)
 	if hidden > 0 {
@@ -432,6 +456,97 @@ func (r *renderer) draw(rows []*Row, status string) {
 // line and the status line below it, plus the row the cursor rests on, which
 // has to stay inside the window or the next redraw starts a line too low.
 const frameOverhead = 3
+
+// drawScrollable paints the full-screen view: a window over the rows that the
+// reader moves, and a footer saying where in the table it sits.
+//
+// It repaints from the top of the screen rather than counting lines backwards.
+// The alternate buffer never scrolls — the frame is built to fit — so there is
+// no previous frame to find, and the whole class of drift the in-place redraw
+// has to guard against does not arise.
+func (r *renderer) drawScrollable(rows []*Row, status string) {
+	capacity := r.rowCapacity(rows)
+	r.lastCapacity = capacity
+	r.scroll.clamp(len(rows), capacity)
+	window := r.scroll.window(rows, capacity)
+
+	var out strings.Builder
+	out.WriteString("\033[H")
+	for _, line := range r.body(window) {
+		out.WriteString("\033[K")
+		out.WriteString(line)
+		out.WriteString("\r\n")
+	}
+	out.WriteString("\033[K\r\n")
+	out.WriteString("\033[K  ▸ ")
+	out.WriteString(truncate(status, r.lineWidth()-4))
+	out.WriteString("\r\n")
+	out.WriteString("\033[K  ")
+	out.WriteString(truncate(r.scrollFooter(len(rows), len(window)), r.lineWidth()-2))
+	// Erase whatever the previous frame left below this one, which is how a
+	// table that shrinks does not leave its own tail on screen.
+	out.WriteString("\033[J")
+	fmt.Print(out.String())
+}
+
+// scrollFooter says which rows are on screen and how to move them.
+func (r *renderer) scrollFooter(total, shown int) string {
+	keys := "↑↓ PgUp/PgDn  g/G top/bottom  q quit"
+	if shown >= total {
+		return fmt.Sprintf("%d request(s)   %s", total, keys)
+	}
+	following := ""
+	if r.scroll.follow {
+		following = "  following"
+	}
+	return fmt.Sprintf("%d-%d of %d%s   %s",
+		r.scroll.offset+1, r.scroll.offset+shown, total, following, keys)
+}
+
+// rowCapacity is how many rows the window has room for, given that rows are not
+// all one line tall — a wrapped stage or an error note makes one taller.
+//
+// Measured from the rows actually at the top of the view, so a window of tall
+// rows holds fewer of them rather than overflowing. The floor of one keeps a
+// very short terminal drawing something rather than nothing.
+func (r *renderer) rowCapacity(rows []*Row) int {
+	// The header, its rule, a blank line, the status line, the footer, and the
+	// row the cursor rests on.
+	const chrome = 6
+
+	budget := r.height - chrome
+	if r.height <= 0 {
+		budget = len(rows)
+	}
+	if budget < 1 {
+		return 1
+	}
+
+	used, count := 0, 0
+	for _, rw := range rows[min(r.scroll.offset, len(rows)):] {
+		height := len(r.rowLines(rw)) + len(r.noteLines(rw))
+		if used+height > budget && count > 0 {
+			break
+		}
+		used += height
+		count++
+	}
+	if count < 1 {
+		return 1
+	}
+	return count
+}
+
+// scrollBy moves the view by one action, over a table of the given size.
+func (r *renderer) scrollBy(a action, total int) {
+	r.resize()
+	capacity := r.lastCapacity
+	if capacity < 1 {
+		// Nothing drawn yet, so no measured page. One row still moves.
+		capacity = 1
+	}
+	r.scroll.apply(a, total, capacity)
+}
 
 // visibleRows is the rows that fit in the window, and how many were left out.
 //

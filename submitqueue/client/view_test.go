@@ -147,6 +147,20 @@ func TestDigest(t *testing.T) {
 			wantStatus: "accepted",
 		},
 		{
+			// Seen in a real run: a build for a speculation path nobody needed
+			// any more finished after the batch had landed, and was recorded
+			// against every request in it. Attaching it like any other event
+			// would read as a landed change building itself afterwards.
+			name: "work recorded after the request settled says so",
+			events: []*pb.HistoryEvent{
+				{Status: "landing"},
+				{Status: "landed"},
+				{Event: "building"}, {Event: "built"},
+			},
+			wantTrail:  []string{"landing", "landed [after: building, built]"},
+			wantStatus: "landed",
+		},
+		{
 			name: "an error carried by an event is still reported",
 			events: []*pb.HistoryEvent{
 				{Status: "speculating"}, {Event: "building", LastError: "runner unreachable"},
