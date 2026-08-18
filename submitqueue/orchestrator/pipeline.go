@@ -18,10 +18,15 @@
 package orchestrator
 
 import (
+	"fmt"
+
 	"github.com/uber-go/tally"
+	basehook "github.com/uber/submitqueue/api/base/hook"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/extension/counter"
+	hookext "github.com/uber/submitqueue/platform/extension/hook"
+	platformhook "github.com/uber/submitqueue/platform/hook"
 	"github.com/uber/submitqueue/platform/pipeline"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
@@ -77,6 +82,10 @@ type Deps struct {
 
 	// Validator resolves the validator for each queue.
 	Validator validator.Factory
+
+	// Hook receives lifecycle events for fire-and-forget side effects. Wire
+	// noop when the deployment has no integrations.
+	Hook hookext.Hook
 }
 
 // Stages is the orchestrator's pipeline topology as a typed table.
@@ -209,6 +218,22 @@ var Stages = []pipeline.Stage[Deps]{
 		},
 		DLQ: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
 			return dlq.NewDLQBatchController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
+		},
+	},
+	// Any stage can publish here and this one publishes nothing onward, so the
+	// row sits outside the flow the rest of the table is ordered by.
+	{
+		Key:           basehook.TopicKeyHook,
+		Name:          "submitqueue-hook",
+		ConsumerGroup: "orchestrator",
+		New: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
+			if d.Hook == nil {
+				return nil, fmt.Errorf("hook is required; wire noop when the deployment has no integrations")
+			}
+			return platformhook.NewDispatcher(d.Logger, d.Scope, d.Hook, sc.TopicKey, sc.ConsumerGroup), nil
+		},
+		DLQ: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
+			return platformhook.NewDLQController(d.Logger, d.Scope, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 	},
 }
