@@ -17,8 +17,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,7 +29,10 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/uber/submitqueue/platform/base/change"
+	"github.com/uber/submitqueue/platform/gitexec/gitexectest"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
 )
@@ -264,7 +270,7 @@ func TestNewProfiles_ResolvesPerQueueAnalyzers(t *testing.T) {
 	// Asserted on behavior rather than instance identity: the analyzers are
 	// stateless value types, so what matters is that each queue got the type it
 	// asked for.
-	profiles, err := newProfiles(zaptest.NewLogger(t), tally.NoopScope, nil, nil, defaultProfilesConfig())
+	profiles, err := newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, defaultProfilesConfig())
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -306,7 +312,7 @@ defaults:
 	cfg, err := loadProfilesConfig(path)
 	require.NoError(t, err)
 
-	_, err = newProfiles(zaptest.NewLogger(t), tally.NoopScope, nil, nil, cfg)
+	_, err = newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, cfg)
 	require.Error(t, err)
 }
 
@@ -323,7 +329,7 @@ defaults:
 	cfg, err := loadProfilesConfig(path)
 	require.NoError(t, err)
 
-	profiles, err := newProfiles(zaptest.NewLogger(t), tally.NoopScope, nil, nil, cfg)
+	profiles, err := newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, cfg)
 	require.NoError(t, err)
 	assert.NotNil(t, profiles.For("anything").ChangeProvider)
 }
@@ -365,7 +371,7 @@ func keysOf(m map[string]scorerConfig) []string {
 func TestNewProfiles_ComposesASpeculatorPerQueue(t *testing.T) {
 	// Speculation is only "on" if every queue resolves to a real speculator —
 	// a nil one leaves the stage inert and nothing ever gets built.
-	profiles, err := newProfiles(zaptest.NewLogger(t), tally.NoopScope, nil, nil, defaultProfilesConfig())
+	profiles, err := newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, defaultProfilesConfig())
 	require.NoError(t, err)
 
 	for _, queue := range []string{"test-queue", "e2e-test-queue", "file-overlap-queue", "unlisted"} {
@@ -395,7 +401,7 @@ queues:
 `)
 	cfg, err := loadProfilesConfig(path)
 	require.NoError(t, err)
-	profiles, err := newProfiles(zaptest.NewLogger(t), tally.NoopScope, nil, nil, cfg)
+	profiles, err := newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, cfg)
 	require.NoError(t, err)
 
 	batches := make([]entity.Batch, 0, 8)
@@ -423,6 +429,197 @@ queues:
 			assert.Len(t, proposals, tt.want)
 		})
 	}
+}
+
+func TestLoadProfilesConfig_GitChangeProvider(t *testing.T) {
+	t.Run("defaults what it can and keeps what is given", func(t *testing.T) {
+		path := writeProfiles(t, `
+defaults:
+  changeProvider:
+    type: git
+    git:
+      remoteUrl: file:///srv/git/sandbox.git
+      target: main
+      repoPath: /var/submitqueue/changerepos/demo
+`)
+		cfg, err := loadProfilesConfig(path)
+		require.NoError(t, err)
+
+		git := cfg.Defaults.ChangeProvider.Git
+		require.NotNil(t, git)
+		assert.Equal(t, "file:///srv/git/sandbox.git", git.RemoteURL)
+		assert.Equal(t, "main", git.Target)
+		assert.Equal(t, defaultGitRemote, git.Remote)
+		assert.Equal(t, defaultGitTokenUser, git.TokenUser)
+	})
+
+	// Each of the three has no default that could be right: there is no public
+	// git remote, no universal trunk name, and nowhere obvious to keep a copy.
+	for _, tt := range []struct {
+		name    string
+		omitted string
+		yaml    string
+	}{
+		{
+			name: "remoteUrl", omitted: "remoteUrl",
+			yaml: "git:\n      target: main\n      repoPath: /var/repos/x",
+		},
+		{
+			name: "target", omitted: "target",
+			yaml: "git:\n      remoteUrl: file:///srv/git/x.git\n      repoPath: /var/repos/x",
+		},
+		{
+			name: "repoPath", omitted: "repoPath",
+			yaml: "git:\n      remoteUrl: file:///srv/git/x.git\n      target: main",
+		},
+	} {
+		t.Run("rejects a missing "+tt.name, func(t *testing.T) {
+			path := writeProfiles(t, `
+defaults:
+  changeProvider:
+    type: git
+    `+tt.yaml+"\n")
+			_, err := loadProfilesConfig(path)
+			require.Error(t, err)
+		})
+	}
+}
+
+// Two queues on one repository should share a copy — that is how they share its
+// lock. Sharing a directory while disagreeing about what is in it is the
+// mistake: whichever queue is built first silently decides what the other reads.
+func TestLoadProfilesConfig_RejectsQueuesSharingARepoPathWithDifferentRepositories(t *testing.T) {
+	shared := `
+defaults:
+  changeProvider: {type: fake}
+queues:
+  - name: a
+    changeProvider:
+      type: git
+      git:
+        remoteUrl: file:///srv/git/one.git
+        target: main
+        repoPath: /var/repos/shared
+  - name: b
+    changeProvider:
+      type: git
+      git:
+        remoteUrl: file:///srv/git/two.git
+        target: main
+        repoPath: /var/repos/shared
+`
+	_, err := loadProfilesConfig(writeProfiles(t, shared))
+	require.Error(t, err)
+
+	agreeing := `
+defaults:
+  changeProvider: {type: fake}
+queues:
+  - name: a
+    changeProvider:
+      type: git
+      git:
+        remoteUrl: file:///srv/git/one.git
+        target: main
+        repoPath: /var/repos/shared
+  - name: b
+    changeProvider:
+      type: git
+      git:
+        remoteUrl: file:///srv/git/one.git
+        target: main
+        repoPath: /var/repos/shared
+`
+	_, err = loadProfilesConfig(writeProfiles(t, agreeing))
+	require.NoError(t, err, "queues that agree about the repository may share a copy")
+}
+
+// TestNewProfiles_GitChangeProviderReadsARealRepository is the seam test for
+// the wiring: configuration in, a provider out that answers from a repository.
+// Everything between — provisioning, the injected auth, the factory case — only
+// works if all of it lines up.
+func TestNewProfiles_GitChangeProviderReadsARealRepository(t *testing.T) {
+	git := gitexectest.Git(t)
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	work := filepath.Join(root, "work")
+
+	run := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command(git, args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+
+	run("", "init", "--bare", "-b", "main", remote)
+	run("", "clone", remote, work)
+	run(work, "config", "user.name", "Test")
+	run(work, "config", "user.email", "test@example.invalid")
+	require.NoError(t, os.WriteFile(filepath.Join(work, "seed.txt"), []byte("seed\n"), 0o644))
+	run(work, "add", ".")
+	run(work, "commit", "-m", "seed")
+	run(work, "push", "origin", "main")
+
+	run(work, "checkout", "-B", "feature/x", "main")
+	require.NoError(t, os.MkdirAll(filepath.Join(work, "pkg/a"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(work, "pkg/a/one.go"), []byte("a\nb\n"), 0o644))
+	run(work, "add", "-A")
+	run(work, "commit", "-m", "change")
+	run(work, "push", "origin", "feature/x")
+	head := run(work, "rev-parse", "HEAD")
+
+	path := writeProfiles(t, fmt.Sprintf(`
+defaults:
+  changeProvider:
+    type: git
+    git:
+      remoteUrl: %s
+      target: main
+      repoPath: %s
+`, remote, filepath.Join(root, "copy.git")))
+
+	cfg, err := loadProfilesConfig(path)
+	require.NoError(t, err)
+	profiles, err := newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, cfg)
+	require.NoError(t, err)
+
+	provider, err := profiles.ChangeProviderFactory().For(changeprovider.Config{QueueName: "q"})
+	require.NoError(t, err)
+
+	uri := fmt.Sprintf("git://git.example.com/demo/%s/%s", url.PathEscape("refs/heads/feature/x"), head)
+	infos, err := provider.Get(context.Background(), entity.Request{
+		Queue:  "q",
+		Change: change.Change{URIs: []string{uri}},
+	})
+	require.NoError(t, err)
+
+	require.Len(t, infos, 1)
+	require.Len(t, infos[0].Details.ChangedFiles, 1)
+	assert.Equal(t, "pkg/a/one.go", infos[0].Details.ChangedFiles[0].Path,
+		"the wired provider must report what the repository actually says")
+	assert.Equal(t, 2, infos[0].Details.ChangedFiles[0].LinesAdded)
+}
+
+func TestNewProfiles_GitChangeProviderFailsOnAnUnreachableRemote(t *testing.T) {
+	// Provisioning happens at wiring time precisely so this is a startup
+	// failure, not something discovered inside a queue's retry loop.
+	path := writeProfiles(t, fmt.Sprintf(`
+defaults:
+  changeProvider:
+    type: git
+    git:
+      remoteUrl: %s
+      target: main
+      repoPath: %s
+`, filepath.Join(t.TempDir(), "does-not-exist.git"), filepath.Join(t.TempDir(), "copy.git")))
+
+	cfg, err := loadProfilesConfig(path)
+	require.NoError(t, err)
+
+	_, err = newProfiles(context.Background(), zaptest.NewLogger(t), tally.NoopScope, nil, nil, cfg)
+	require.Error(t, err)
 }
 
 func TestLoadProfilesConfig_RejectsBudgets(t *testing.T) {

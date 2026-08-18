@@ -136,13 +136,15 @@ func (s *gitSource) open(ctx context.Context, spec changeSpec) (openedChange, er
 
 	return openedChange{
 		headSHA: headSHA,
-		// The commits are real, but the fake change provider is what the
-		// orchestrator asks about them, and it cannot read a repository — so the
-		// paths just committed are stated on the URI for it to report back.
-		uri: withFiles(gitchange.ChangeID{
+		// Nothing is stated about what this change touches. The orchestrator
+		// keeps its own copy of this repository and reads that out of the
+		// commits, which is the whole difference between this rung and the fake
+		// one — and what makes a change pushed by hand behave the same as one
+		// from here.
+		uri: gitchange.ChangeID{
 			Scheme: "git", Remote: gitRemote, Repo: s.repo,
 			Ref: "refs/heads/" + spec.branch, CommitSHA: headSHA,
-		}.String(), spec.files),
+		}.String(),
 		// No pull request to number, so the branch names the change. Empty URL:
 		// a branch in a bare repository has nothing to open.
 		cell: client.Cell{Text: spec.branch},

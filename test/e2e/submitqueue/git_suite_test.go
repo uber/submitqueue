@@ -44,6 +44,7 @@ import (
 	changepb "github.com/uber/submitqueue/api/base/change/protopb"
 	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	gatewaypb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
+	"github.com/uber/submitqueue/platform/gitexec/gitexectest"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/test/testutil"
 	"google.golang.org/grpc"
@@ -85,7 +86,7 @@ func (s *GitMergeSuite) SetupSuite() {
 	s.ctx = context.Background()
 	s.log = testutil.NewTestLogger(t)
 
-	s.git = pinnedGit(t)
+	s.git = gitexectest.Git(t)
 	containerUser := dockerContainerUser(t)
 	t.Setenv("SQ_CONTAINER_USER", containerUser)
 	t.Setenv("SQ_CONSUMER_GATE_DIR", t.TempDir())
@@ -305,42 +306,6 @@ func (s *GitMergeSuite) stageProviderConfig() string {
 		require.NoError(t, os.WriteFile(filepath.Join(staged, name), contents, 0o644))
 	}
 	return staged
-}
-
-// pinnedGit resolves the git build the test target supplies, rather than
-// whatever git the host has. The assertions here depend on repository
-// mechanics, and an ambient git brings ambient configuration — hooks, signing,
-// templates — with it.
-//
-// rules_go expands $(location) to an execroot-relative path, which for an
-// external output has to be re-rooted under the runfiles directory the test
-// runs from.
-func pinnedGit(t *testing.T) string {
-	t.Helper()
-	path := os.Getenv("SUBMITQUEUE_TEST_GIT")
-	require.NotEmpty(t, path, "SUBMITQUEUE_TEST_GIT must be set by the test target")
-
-	if absolute, err := filepath.Abs(path); err == nil {
-		if _, err := os.Stat(absolute); err == nil {
-			return absolute
-		}
-	}
-
-	slashed := filepath.ToSlash(path)
-	external := ""
-	if strings.HasPrefix(slashed, "external/") {
-		external = strings.TrimPrefix(slashed, "external/")
-	} else if i := strings.Index(slashed, "/external/"); i >= 0 {
-		external = slashed[i+len("/external/"):]
-	}
-	require.NotEmpty(t, external, "SUBMITQUEUE_TEST_GIT=%q is not a runfile", path)
-
-	root := os.Getenv("TEST_SRCDIR")
-	require.NotEmpty(t, root)
-	candidate := filepath.Join(root, filepath.FromSlash(external))
-	_, err := os.Stat(candidate)
-	require.NoError(t, err)
-	return candidate
 }
 
 // seedRepository creates the bare repository Runway merges into, plus a working

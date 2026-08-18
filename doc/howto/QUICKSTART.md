@@ -4,15 +4,17 @@ Start the stack, put traffic through it, and watch changes land — beginning wi
 
 The stack always runs the same way. What changes is where the changes come from and what landing them does, chosen with `PROVIDER`:
 
-| `PROVIDER` | A change is | Building it | Landing it | Needs |
-|---|---|---|---|---|
-| **`fake`** (default) | a URI, and nothing else | instant fake pass | reports success without touching a repository | nothing |
-| **`git`** | a branch in a bare repository on disk | instant fake pass | a real fetch, cherry-pick and push | nothing |
-| **`github`** | a real pull request | a real GitHub Actions run per batch | a real push to a real repository | a repository, a token, and CI minutes |
+| `PROVIDER` | A change is | Read from | Building it | Landing it | Needs |
+|---|---|---|---|---|---|
+| **`fake`** (default) | a URI, and nothing else | the URI itself | instant fake pass | reports success without touching a repository | nothing |
+| **`git`** | a branch in a bare repository on disk | the repository | instant fake pass | a real fetch, cherry-pick and push | nothing |
+| **`github`** | a real pull request | GitHub's API | a real GitHub Actions run per batch | a real push to a real repository | a repository, a token, and CI minutes |
 
 They are a ladder, not alternatives: the same commands work on each rung, so you can start with the one that needs nothing and only pay for what you want to see next. Each is a directory of configuration under [`service/submitqueue/demo/provider/`](../../service/submitqueue/demo/provider) — the difference between rungs is two YAML files, not a code path.
 
-The queue's own logic is real on every rung; what changes is how much of the world around it is. Two things are worth knowing before reading a `landed` as more than it is. On `fake` and `git` **the build is faked**, so `landed` means the pipeline ran, not that anything was tested. And on `fake` and `git` the change provider is faked too: it cannot read a repository to see what a change touched, so `make demo-requests` states the paths on the change URI itself (`sq-files=`) for the conflict analyzer to key on. A change submitted by hand on those rungs touches nothing as far as the analyzer can tell, and conflicts with nothing.
+The queue's own logic is real on every rung; what changes is how much of the world around it is. The one thing to keep in mind before reading a `landed` as more than it is: on `fake` and `git` **the build is faked**, so it means the pipeline ran, not that anything was tested.
+
+"Read from" is what the queue knows about a change — which files it touches, how large it is — and it is what conflict analysis and scoring are computed from. Only `fake` invents it: a change there is a URI pointing at nothing, so `make demo-requests` states the paths on the URI itself (`sq-files=`) and the fake reads them back, which means a change submitted by hand on that rung conflicts with nothing. On `git` the orchestrator keeps its own copy of the repository and reads the commits, so a change pushed by anyone is described correctly.
 
 ## Start the stack
 

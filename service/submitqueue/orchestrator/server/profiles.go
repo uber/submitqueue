@@ -36,6 +36,7 @@ import (
 	githubactionsrunner "github.com/uber/submitqueue/submitqueue/extension/buildrunner/githubactions"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	cpfake "github.com/uber/submitqueue/submitqueue/extension/changeprovider/fake"
+	gitprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/git"
 	githubprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/github"
 	phabprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/phabricator"
 	routingprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/routing"
@@ -186,6 +187,7 @@ func (f speculatorFunc) For(c speculator.Config) (speculator.Speculator, error) 
 // which is what lets the same wiring serve both the hermetic test stack and a
 // live repository.
 func newProfiles(
+	ctx context.Context,
 	logger *zap.Logger,
 	scope tally.Scope,
 	resolver changeset.Resolver,
@@ -193,6 +195,7 @@ func newProfiles(
 	cfg profilesConfig,
 ) (Profiles, error) {
 	b := &profileBuilder{
+		ctx:      ctx,
 		logger:   logger,
 		scope:    scope,
 		resolver: resolver,
@@ -234,6 +237,10 @@ func newProfiles(
 // scopes — is built once here and captured by the factory. Several queues
 // pointing at one repository therefore still share a single HTTP client.
 type profileBuilder struct {
+	// ctx bounds work done while building a profile — provisioning a change
+	// provider's repository reaches the network, and a shutdown during startup
+	// should stop it rather than wait it out.
+	ctx      context.Context
 	logger   *zap.Logger
 	scope    tally.Scope
 	resolver changeset.Resolver
@@ -372,6 +379,23 @@ func (b *profileBuilder) newChangeProviderFactory(cfg changeProviderConfig, wher
 	case changeProviderTypeFake:
 		return changeProviderFunc(func(c changeprovider.Config) (changeprovider.ChangeProvider, error) {
 			return cpfake.New(c), nil
+		}), nil
+
+	case changeProviderTypeGit:
+		// One copy per distinct configuration, provisioned now. Queues whose
+		// blocks are identical share it — and therefore share its lock — because
+		// reuse hands them the same factory.
+		repo, err := newChangeRepo(b.ctx, *cfg.Git)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", where, err)
+		}
+		return changeProviderFunc(func(c changeprovider.Config) (changeprovider.ChangeProvider, error) {
+			return gitprovider.New(gitprovider.Params{
+				Config:       c,
+				Repo:         repo,
+				Logger:       b.logger.Sugar(),
+				MetricsScope: b.scope,
+			}), nil
 		}), nil
 
 	case changeProviderTypeGitHub:

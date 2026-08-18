@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/uber/submitqueue/platform/gitexec/gitexectest"
 	gitmerger "github.com/uber/submitqueue/runway/extension/merger/git"
 )
 
@@ -33,43 +34,13 @@ import (
 // runs real git, so these tests use the same runtime the merger will.
 func testRuntime(t *testing.T) gitmerger.GitRuntime {
 	t.Helper()
-	executable := runfilePath(t, "SUBMITQUEUE_TEST_GIT")
-	templateDescription := runfilePath(t, "SUBMITQUEUE_TEST_GIT_TEMPLATE_DESCRIPTION")
+	executable := gitexectest.Git(t)
+	templateDescription := gitexectest.Runfile(t, "SUBMITQUEUE_TEST_GIT_TEMPLATE_DESCRIPTION")
 	return gitmerger.GitRuntime{
 		Executable:  executable,
 		ExecPath:    filepath.Dir(executable),
 		TemplateDir: filepath.Dir(templateDescription),
 	}
-}
-
-// runfilePath resolves a $(location)-expanded path from the test environment.
-// rules_go emits an execroot-relative path, which for an external output has to
-// be re-rooted under the runfiles directory the test actually runs from.
-func runfilePath(t *testing.T, name string) string {
-	t.Helper()
-	path := os.Getenv(name)
-	require.NotEmpty(t, path, "%s must be set by the test target", name)
-	if absolute, err := filepath.Abs(path); err == nil {
-		if _, err := os.Stat(absolute); err == nil {
-			return absolute
-		}
-	}
-
-	slashed := filepath.ToSlash(path)
-	external := ""
-	if strings.HasPrefix(slashed, "external/") {
-		external = strings.TrimPrefix(slashed, "external/")
-	} else if i := strings.Index(slashed, "/external/"); i >= 0 {
-		external = slashed[i+len("/external/"):]
-	}
-	require.NotEmpty(t, external, "%s=%q is not a runfile", name, path)
-
-	root := os.Getenv("TEST_SRCDIR")
-	require.NotEmpty(t, root)
-	candidate := filepath.Join(root, filepath.FromSlash(external))
-	_, err := os.Stat(candidate)
-	require.NoError(t, err)
-	return candidate
 }
 
 // seedBareRepo creates a bare repository holding one commit on branch and

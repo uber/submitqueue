@@ -17,15 +17,32 @@ queues:
   # The queue `make demo-requests` and `make land` use by default. Serializes
   # batches that touch a shared directory, matching the github mode.
   #
-  # The commits here are real, but the change provider above is not, and it
-  # cannot read a repository to find out what they touched. `make demo-requests`
-  # states the paths it committed on the change URI (`sq-files=`) for the fake
-  # provider to report back. A change submitted by hand carries no such marker
-  # and so conflicts with nothing.
+  # Both halves are real here. The change provider keeps its own copy of the
+  # same bare repository Runway merges into and reads each change out of it, so
+  # the analyzer keys on paths that were actually committed — including for a
+  # change submitted by hand, which nothing else could have described.
   - name: demo-queue
+    changeProvider:
+      type: git
+      git:
+        # The orchestrator's own copy, and its own remote pointing at the
+        # sandbox — mounted read-only, since it only ever fetches. Runway
+        # configures the same repository separately for itself in merge.yaml.
+        remoteUrl: file:///srv/git/sandbox.git
+        target: main
+        repoPath: /var/submitqueue/changerepos/demo
     analyzer: {type: pathoverlap, by: directory}
 
   - name: e2e-git-queue
+    # Its own copy, separate from demo-queue's: the two agree about the
+    # repository but not about everything else, and a shared path would make
+    # whichever was built first decide for both.
+    changeProvider:
+      type: git
+      git:
+        remoteUrl: file:///srv/git/sandbox.git
+        target: main
+        repoPath: /var/submitqueue/changerepos/sandbox
     # Maximum parallelism: batches never conflict, so the test controls
     # ordering through what it lands rather than through the analyzer.
     analyzer: {type: none}
