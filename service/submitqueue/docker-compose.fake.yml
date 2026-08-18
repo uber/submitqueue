@@ -1,0 +1,37 @@
+# Compose overlay: run the stack with nothing outside the queue.
+#
+# Layered over docker-compose.yml, which it does not modify:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.fake.yml up
+#
+# or, more simply, `make local-submitqueue-start` — this is the default provider.
+#
+# The lightest of the three overlays, and the only one that mounts nothing but
+# configuration: there is no repository to reach and no credential to carry, so
+# a change is a URI and the merge is a no-op. See demo/provider/fake.
+#
+# Required in the environment:
+#   SQ_PROVIDER_CONFIG_DIR  directory holding profiles.yaml and merge.yaml
+#
+# The stack would run without this overlay at all — the orchestrator falls back
+# to fake integrations when no profiles are configured, and Runway to the noop
+# merger. Mounting the configuration anyway is what makes the mode a file
+# someone can read and diff against ../git and ../github, rather than a
+# behaviour they have to know about.
+
+services:
+  orchestrator-service:
+    environment:
+      # Which change provider, build runner, and conflict analyzer each queue
+      # resolves to.
+      - PROFILES_CONFIG_PATH=/etc/submitqueue/profiles.yaml
+    volumes:
+      - ${SQ_PROVIDER_CONFIG_DIR:?set SQ_PROVIDER_CONFIG_DIR, e.g. ./service/submitqueue/demo/provider/fake}:/etc/submitqueue:ro
+
+  runway-service:
+    environment:
+      # Per-queue merge targets. Every queue here resolves to the noop merger,
+      # which reports success without touching a repository.
+      - MERGE_CONFIG_PATH=/etc/submitqueue/merge.yaml
+    volumes:
+      - ${SQ_PROVIDER_CONFIG_DIR:?set SQ_PROVIDER_CONFIG_DIR, e.g. ./service/submitqueue/demo/provider/fake}:/etc/submitqueue:ro

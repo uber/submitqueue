@@ -1,0 +1,35 @@
+# Extension profiles for the "fake" example: nothing outside the queue is real.
+#
+# The default provider, and the one the quickstart runs. There is no repository,
+# no CI, and no credential anywhere — a change is a URI and nothing more. What
+# it exercises is the queue itself: validation, batching, conflict analysis,
+# speculation, and the request log.
+#
+# Everything here is what the orchestrator would fall back to on its own with no
+# configuration at all. It is written out because a mode you can read in a file
+# is easier to trust than one implied by an absent one, and because it makes the
+# difference from ../git and ../github a diff rather than an explanation.
+
+defaults:
+  # No provider to ask, so the fake echoes back each URI it is given.
+  changeProvider: {type: fake}
+  # Every build succeeds immediately, so a land completes in seconds.
+  buildRunner: {type: fake}
+  # Serialize conservatively unless a queue says otherwise.
+  analyzer: {type: all}
+
+queues:
+  # The queue `make demo-requests` and `make land` use by default.
+  #
+  # Serializes batches that touch a shared directory, so changes land in
+  # parallel unless they land in the same folder — the same setting the git and
+  # github modes use, so what a run shows does not depend on which one it ran
+  # against.
+  #
+  # This keys on the files a change reports, and no provider can be asked about
+  # a change that exists nowhere. `make demo-requests` therefore states the
+  # paths on the change URI (`sq-files=`) and the fake change provider reports
+  # them back. A change submitted by hand carries no such marker, touches
+  # nothing as far as the analyzer can tell, and so never conflicts.
+  - name: demo-queue
+    analyzer: {type: pathoverlap, by: directory}

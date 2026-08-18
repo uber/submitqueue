@@ -21,6 +21,7 @@
 package fakemarker
 
 import (
+	"net/url"
 	"strings"
 
 	"github.com/uber/submitqueue/platform/base/change"
@@ -55,4 +56,43 @@ func TokenInChanges(changes []change.Change) string {
 		}
 	}
 	return ""
+}
+
+// FilesPrefix introduces the paths a change touches: "sq-files=a.txt,b/c.txt".
+//
+// A real provider is asked what a change changed. A fake one has no repository
+// to ask, so the caller states it — which is what lets a conflict analyzer that
+// keys on paths do its actual job against changes that were never pushed
+// anywhere.
+const FilesPrefix = "sq-files="
+
+// Files returns the paths listed by the first URI carrying a file marker, or nil
+// if none do. Paths are comma-separated and percent-decoded, and the list ends
+// at the first "&" or "#" so it can sit among other query parameters.
+func Files(uris []string) []string {
+	for _, u := range uris {
+		i := strings.Index(u, FilesPrefix)
+		if i < 0 {
+			continue
+		}
+		rest := u[i+len(FilesPrefix):]
+		if j := strings.IndexAny(rest, "&#"); j >= 0 {
+			rest = rest[:j]
+		}
+
+		var paths []string
+		for _, raw := range strings.Split(rest, ",") {
+			decoded, err := url.QueryUnescape(raw)
+			if err != nil {
+				// A path that will not decode is not worth failing a demo over;
+				// the marker is a convenience, not a contract.
+				decoded = raw
+			}
+			if trimmed := strings.TrimSpace(decoded); trimmed != "" {
+				paths = append(paths, trimmed)
+			}
+		}
+		return paths
+	}
+	return nil
 }

@@ -20,6 +20,11 @@
 //
 //	sq-fake=provider-error -> non-nil error
 //
+// A URI may also carry the paths its change touches, which a real provider would
+// have reported from the repository:
+//
+//	sq-files=pkg/a/one.go,pkg/b/two.go
+//
 // This lets a single running stack exercise negative paths purely by varying
 // request payloads. It is intended for examples and tests only, never
 // production.
@@ -53,6 +58,11 @@ func New(cfg changeprovider.Config) changeprovider.ChangeProvider {
 
 // Get returns one ChangeInfo per URI in the request's change, unless a recognized
 // marker token requests a failure. The "one ChangeInfo per URI" contract is preserved.
+//
+// A URI may also state the paths it touches, which is what lets a path-keyed
+// conflict analyzer work against changes no provider knows about. Line counts
+// are reported as a single added line each: the analyzers that read paths do not
+// weigh them, and inventing a number would only look like data.
 func (provider) Get(_ context.Context, request entity.Request) ([]entity.ChangeInfo, error) {
 	change := request.Change
 	if fakemarker.Token(change.URIs) == tokenError {
@@ -61,7 +71,12 @@ func (provider) Get(_ context.Context, request entity.Request) ([]entity.ChangeI
 
 	infos := make([]entity.ChangeInfo, 0, len(change.URIs))
 	for _, uri := range change.URIs {
-		infos = append(infos, entity.ChangeInfo{URI: uri})
+		info := entity.ChangeInfo{URI: uri}
+		for _, path := range fakemarker.Files([]string{uri}) {
+			info.Details.ChangedFiles = append(info.Details.ChangedFiles,
+				entity.ChangedFile{Path: path, LinesAdded: 1})
+		}
+		infos = append(infos, info)
 	}
 	return infos, nil
 }

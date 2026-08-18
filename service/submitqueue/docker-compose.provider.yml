@@ -4,7 +4,7 @@
 #
 #   docker compose -f docker-compose.yml -f docker-compose.provider.yml up
 #
-# or, more simply, `make local-provider-start PROVIDER=github`.
+# or, more simply, `make local-submitqueue-start PROVIDER=github`.
 #
 # Nothing here names a provider. Which one is reached is decided entirely by the
 # configuration directory bind-mounted at /etc/submitqueue — see

@@ -64,16 +64,14 @@ make local-submitqueue-start
 make local-submitqueue-ps
 export GATEWAY_ADDR=localhost:<gateway port>
 
-# 4. Land a change and follow it to a terminal status
-make land QUEUE=test-queue \
-  URI='git://git.example.com/demo/refs%2Fheads%2Ffeature-a/1111111111111111111111111111111111111111'
-make land-status QUEUE=test-queue SQID=test-queue/1
+# 4. Create changes, enqueue them, and watch them land
+make demo-requests
 
 # 5. Stop services
 make local-stop
 ```
 
-[QUICKSTART.md](QUICKSTART.md) walks through the same run in detail — what the change URI has to look like, how to make a change fail on demand, and which parts of the pipeline are faked.
+[QUICKSTART.md](QUICKSTART.md) walks through the same run in detail, and on to `PROVIDER=git`, which lands real commits into a repository on disk — still with no credential.
 
 If any step fails, see [Troubleshooting](#troubleshooting) below.
 

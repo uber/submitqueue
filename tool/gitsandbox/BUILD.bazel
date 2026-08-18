@@ -1,0 +1,38 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["main.go"],
+    importpath = "github.com/uber/submitqueue/tool/gitsandbox",
+    visibility = ["//visibility:private"],
+    deps = ["//platform/gitexec:go_default_library"],
+)
+
+go_binary(
+    name = "gitsandbox",
+    # The pinned git the merger uses, rather than whatever the host has, so a
+    # sandbox is seeded by the same build that later merges into it. `args` is
+    # honored by `bazel run`, and flags the Makefile appends after `--` still
+    # win, since Go's flag package takes the last occurrence.
+    args = ["-git=$(location @git//:git)"],
+    data = ["@git"],
+    embed = [":go_default_library"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["main_test.go"],
+    data = ["@git"],
+    embed = [":go_default_library"],
+    # The same pinned git the binary seeds with, so these assertions cannot
+    # pass against a host git that behaves differently.
+    env = {
+        "SUBMITQUEUE_TEST_GIT": "$(location @git//:git)",
+    },
+    deps = [
+        "//platform/gitexec:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+    ],
+)

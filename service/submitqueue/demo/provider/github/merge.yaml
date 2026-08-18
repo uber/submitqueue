@@ -1,7 +1,7 @@
 # Merge targets for the GitHub demo.
 #
 # Edit the three placeholders below to point at your own scratch repository,
-# then: make local-provider-start PROVIDER=github
+# then: make local-submitqueue-start PROVIDER=github
 #
 # This file holds no secret. `tokenEnv` names the environment variable carrying
 # the credential, so the file stays committable and rotating the token needs no
