@@ -37,6 +37,7 @@ import (
 	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	mysqlcounter "github.com/uber/submitqueue/platform/extension/counter/mysql"
+	hooknoop "github.com/uber/submitqueue/platform/extension/hook/noop"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/platform/pipeline"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
@@ -198,6 +199,7 @@ func run() error {
 		Analyzer:       profiles.AnalyzerFactory(),
 		Speculator:     profiles.SpeculatorFactory(),
 		Validator:      validatorFactory{},
+		Hook:           hooknoop.New(),
 	}
 
 	// Assemble the pipeline: one call builds the topic registry, creates
