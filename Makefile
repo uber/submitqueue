@@ -12,10 +12,6 @@ ORCHESTRATOR_COMPOSE_FILE = service/submitqueue/orchestrator/server/docker-compo
 # Fixed project name for local manual testing (tests use unique random names)
 SUBMITQUEUE_LOCAL_PROJECT = submitqueue
 
-# Separate project for the provider demo stack, so it can run alongside the plain
-# local stack without the two sharing containers or volumes.
-PROVIDER_LOCAL_PROJECT = submitqueue-provider
-
 # Stovepipe compose file (single Ping-only service)
 STOVEPIPE_COMPOSE_FILE = service/stovepipe/docker-compose.yml
 STOVEPIPE_DEBUG_COMPOSE_FILE = service/stovepipe/docker-compose.debug.yml
@@ -525,10 +521,14 @@ local-submitqueue-start: build-all-linux ## Start full stack (PROVIDER=fake|git|
 	@echo "Generate traffic with:"
 	@echo "  make demo-requests"
 
-local-submitqueue-stop: ## Stop the SubmitQueue stack (keeps data and PROVIDER=git's sandbox)
+local-submitqueue-stop: ## Stop the SubmitQueue stack (keeps PROVIDER=git's sandbox; the databases do not survive)
 	@echo "Stopping SubmitQueue services..."
 	@$(COMPOSE) -f $(COMPOSE_FILE) -f $(PROVIDER_COMPOSE_FILE) -p $(SUBMITQUEUE_LOCAL_PROJECT) down
-	@echo "SubmitQueue services stopped. Data volumes preserved."
+	@# Both MySQL services mount anonymous volumes, so `down` detaches them and
+	@# the next `up` creates fresh ones. Saying "data preserved" here would be
+	@# read as "your requests are still there", which they are not.
+	@echo "SubmitQueue services stopped. The databases were on anonymous volumes and start empty next time;"
+	@echo "'make local-submitqueue-clean' deletes the orphaned ones."
 	@if [ -d "$(SQ_GIT_SANDBOX_DIR)" ]; then \
 		echo "Sandbox repository left at $(SQ_GIT_SANDBOX_DIR); remove it with 'make local-submitqueue-clean'."; \
 	fi
