@@ -105,7 +105,16 @@ make land-list SINCE=24h LIMIT=200   # a wider window
 make land-watch                      # follow them until they settle
 ```
 
-Both draw the same table `make demo-requests` does — the demo tool and the CLI share it — but against whatever the queue already holds, so watching a queue no longer means adding to it. They do not carry the same information, though: `list` is a one-shot read of the queue's receipts and does not fetch histories, so its `STAGE` column is always `…`, while `watch` follows the history API and fills the trail in as each request moves.
+Both draw the same table `make demo-requests` does — the demo tool and the CLI share it — but against whatever the queue already holds, so watching a queue no longer means adding to it. They do not carry the same information, though: `list` is a one-shot read of the queue's receipts and does not fetch a history per request, so its `STAGE` column shows where each request is and not how it got there, while `watch` follows the history API and fills the whole trail in as each one moves.
+
+That trail carries more than positions. A request records events while it sits at one — a build starting or finishing, a passed path waiting on a dependency — and those are shown against the status they happened under, with repeats counted:
+
+```
+accepted → started → validating → validated → batching → batched →
+speculating [building ×8, built ×8, waiting] → speculated → landing → landed
+```
+
+Eight builds means the batch was speculating down eight paths at once, and `waiting` means one of them passed and then sat on a dependency that had not resolved. A request that sailed through reads `speculating [building, built]` instead — the same position, a very different amount of work behind it.
 
 `land-watch` fixes its set when it starts and exits non-zero if any request in that set finishes anywhere other than `landed`, which makes it usable from a script. A request accepted after the watch begins is not picked up: a watch that grew as the queue did would never finish.
 
