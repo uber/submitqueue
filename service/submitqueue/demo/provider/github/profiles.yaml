@@ -25,17 +25,23 @@ queues:
     # detection.
     analyzer: {type: pathoverlap, by: directory}
 
-    # The build runner is inherited from the defaults above, so every build
-    # succeeds instantly. A land then completes in seconds, and the demo shows
-    # the queue and the merge rather than spending its time waiting on CI.
+    # Real CI. Each speculative batch is a workflow_dispatch, polled to
+    # completion, so `landed` here means a build of that batch passed rather
+    # than that a fake said so — this is the one rung where nothing is faked.
     #
-    # To run real CI instead, add the block below. It needs a workflow in the
-    # target repository that is triggerable by workflow_dispatch and accepts the
-    # sq_base_uris / sq_head_uris inputs, and a token with the `workflow` scope.
+    # The cost is honest too: a land takes as long as the workflow does, and
+    # every speculation path dispatched is Actions minutes spent. Set the build
+    # budget accordingly — see `speculator: {buildBudget: N}`.
     #
-    # buildRunner:
-    #   type: githubactions
-    #   owner: behinddwalls
-    #   repo: sq-demo
-    #   workflow: submitqueue-validate.yml
-    #   ref: main
+    # ---- point these at your own scratch repo ----
+    buildRunner:
+      type: githubactions
+      owner: behinddwalls
+      repo: sq-demo
+      # File name or numeric id. The workflow must declare workflow_dispatch and
+      # accept the four sq_* inputs; a workflow triggered only by pull_request
+      # cannot be dispatched at all and GitHub rejects the call.
+      workflow: ci.yml
+      # The branch the workflow definition is read from, not the code under test.
+      ref: main
+    # ----------------------------------------------
