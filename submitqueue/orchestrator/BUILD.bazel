@@ -23,6 +23,7 @@ go_library(
         "//submitqueue/orchestrator/controller/buildsignal:go_default_library",
         "//submitqueue/orchestrator/controller/cancel:go_default_library",
         "//submitqueue/orchestrator/controller/conclude:go_default_library",
+        "//submitqueue/orchestrator/controller/dependencyanalysis:go_default_library",
         "//submitqueue/orchestrator/controller/dlq:go_default_library",
         "//submitqueue/orchestrator/controller/merge:go_default_library",
         "//submitqueue/orchestrator/controller/mergeconflictsignal:go_default_library",

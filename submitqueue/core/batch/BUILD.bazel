@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "go_default_library",
     srcs = [
+        "find.go",
         "list.go",
         "transition.go",
     ],
@@ -18,6 +19,7 @@ go_library(
 go_test(
     name = "go_default_test",
     srcs = [
+        "find_test.go",
         "list_test.go",
         "transition_test.go",
     ],

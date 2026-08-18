@@ -575,3 +575,90 @@ func (s *E2EIntegrationSuite) TestCancel_CaughtPreBatch_NeverLands() {
 		"request %s must stay terminal cancelled after its stale check signal is processed", req.sqid)
 	s.assertStatusesNever(req, entity.RequestStatusBatched, entity.RequestStatusLanded)
 }
+
+// A batch delivery that is retried after its ack was lost must not enrol the
+// request into a second batch. Both batches would be analyzed, promoted and
+// admitted, and both would merge the same change.
+//
+// The build gate is what makes the redelivery land in the window that matters:
+// with the build for the first batch held, the request cannot reach a terminal
+// state, so the retry finds it exactly as a lost ack would — claimed, carried
+// by a live batch, and still in flight.
+//
+// The second request is the settle signal. The batch topic is partitioned by
+// queue and consumed in order, so its batch existing proves the redelivered
+// message ahead of it has already been handled, and the association count is
+// safe to assert.
+func (s *E2EIntegrationSuite) TestBatchRedelivery_DoesNotEnrolTheRequestTwice() {
+	t := s.T()
+
+	const queue = "e2e-redelivery-queue"
+	const gateGroup = "orchestrator"
+	// Nothing has landed on this queue, so the first batch is predictable, and
+	// the build topic partitions by batch ID.
+	const heldBatch = queue + "/batch/1"
+
+	s.closeGate(gateGroup, heldBatch, "e2e: hold the build so the request stays in flight for the redelivery")
+	// Reopen even if an assertion below fails, so teardown does not stop the
+	// stack with a delivery still parked. Opening twice is a no-op.
+	defer s.openGate(gateGroup, heldBatch)
+
+	req := s.land(queue, "github://github.example.com/uber/e2e-redelivery/pull/1/abcdef0123456789abcdef0123456789abcdef01")
+	require.Equal(t, heldBatch, s.awaitBatchID(req), "the first batch of a fresh queue must be batch/1")
+	s.awaitStatus(req, entity.RequestStatusSpeculating)
+
+	s.redeliverBatchMessage(req)
+
+	settle := s.land(queue, "github://github.example.com/uber/e2e-redelivery/pull/2/1234567890abcdef1234567890abcdef12345678")
+	settleBatch := s.awaitBatchID(settle)
+	require.NotEqual(t, heldBatch, settleBatch)
+
+	assert.Equal(t, []string{heldBatch}, s.batchIDsFor(req),
+		"the redelivery must resume the existing batch, not mint another")
+
+	s.openGate(gateGroup, heldBatch)
+	s.awaitStatus(req, entity.RequestStatusLanded)
+	s.awaitStatus(settle, entity.RequestStatusLanded)
+}
+
+// A batch left in Created is dependency-eligible, so everything created after
+// it serializes behind it — and nothing will name it on the speculate topic
+// again. Without a run that looks for such batches the queue wedges here with
+// no way out, which is how CODEM-444 stalled a 100-PR run.
+//
+// The strand is built from a real batch rather than seeded rows so the request,
+// its association and its path set are all genuine: the only thing missing is
+// the announcement, which is exactly what the bug destroyed.
+//
+// Against a pipeline without the repair this test does not fail fast — the
+// batch simply never moves and the suite runs to Bazel's timeout, which is how
+// this harness reports a stall.
+func (s *E2EIntegrationSuite) TestStrandedBatch_IsAdmittedByALaterRun() {
+	t := s.T()
+
+	const queue = "e2e-strand-queue"
+	const gateGroup = "orchestrator"
+	const heldBatch = queue + "/batch/1"
+
+	s.closeGate(gateGroup, heldBatch, "e2e: hold the build so the batch can be stranded while still in flight")
+	defer s.openGate(gateGroup, heldBatch)
+
+	req := s.land(queue, "github://github.example.com/uber/e2e-strand/pull/1/abcdef0123456789abcdef0123456789abcdef01")
+	require.Equal(t, heldBatch, s.awaitBatchID(req), "the first batch of a fresh queue must be batch/1")
+	s.awaitStatus(req, entity.RequestStatusSpeculating)
+
+	// Its build is parked, so the queue is quiet and this write cannot race.
+	s.strandInCreated(queue, heldBatch)
+	require.Equal(t, entity.BatchStateCreated, s.batchState(queue, heldBatch))
+
+	// Any later request wakes the queue; the run it triggers is what has to
+	// notice the stranded batch.
+	trigger := s.land(queue, "github://github.example.com/uber/e2e-strand/pull/2/1234567890abcdef1234567890abcdef12345678")
+	s.awaitBatchID(trigger)
+
+	s.awaitBatchState(queue, heldBatch, entity.BatchStateSpeculating)
+
+	s.openGate(gateGroup, heldBatch)
+	s.awaitStatus(req, entity.RequestStatusLanded)
+	s.awaitStatus(trigger, entity.RequestStatusLanded)
+}

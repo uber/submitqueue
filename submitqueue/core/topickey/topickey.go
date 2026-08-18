@@ -29,6 +29,11 @@ const (
 	TopicKeyValidate TopicKey = "validate"
 	// TopicKeyBatch is the pipeline stage where validated requests are published for batching.
 	TopicKeyBatch TopicKey = "batch"
+	// TopicKeyDependencyAnalysis is the pipeline stage where newly created batches are
+	// published for conflict analysis. Messages must be partitioned by queue:
+	// analysis reads the queue's dependency-eligible batches, so two batches of
+	// one queue analyzed concurrently would each miss the other.
+	TopicKeyDependencyAnalysis TopicKey = "dependency-analysis"
 	// TopicKeySpeculate is the pipeline stage where batches are published for speculation.
 	TopicKeySpeculate TopicKey = "speculate"
 	// TopicKeyBuild is the pipeline stage where speculated batches are published for builds.

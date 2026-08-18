@@ -12,6 +12,11 @@ queues:
   # serializes behind every in-flight one. That is what lets e2e build a
   # dependency chain and exercise how a dependent is woken.
   - name: e2e-chain-queue
+  # Also baseline-profile queues. Each owns a whole queue so its first batch is
+  # predictably "<queue>/batch/1", which is what lets e2e close a build gate on
+  # that batch before anything is landed.
+  - name: e2e-redelivery-queue
+  - name: e2e-strand-queue
   # Routes to an analyzer that always errors (conflictfake.FailAlways) so e2e can
   # exercise the conflict-analysis error path. See newQueueRegistry in the
   # orchestrator example server.

@@ -199,6 +199,7 @@ The message types are generated; the contract package adds only generic `protojs
 
 ### Naming Conventions
 
+- **Identifiers must be self-describing**: a function, method, or variable name states *what* it acts on, not just the verb. `associate`, `index`, `claim`, `announce`, `publish` are all questions — associate what, index what, publish where? Name them `associateRequestsWithBatch`, `writeDependentIndexes`, `claimRequestsForBatch`, `publishToSpeculate`. The test: read the name at the call site, with no surrounding context and without opening the definition — if you cannot say what it does to what, it is underspecified. Being a private helper on a controller is not an excuse; that is exactly where bare verbs accumulate. Length is cheap and a reader's second lookup is not, but stop at the point the name stops adding information: `publishToSpeculate` earns its suffix, `publishToSpeculateTopicViaRegistry` does not. This is also the cheapest way to satisfy [Comment Style](#comment-style) rule 1 — a name that answers "what" removes the comment that would have had to.
 - **Directories**: singular (`mock/`, `entity/`, not `mocks/`, `entities/`)
 - **Files**: `{method}.go`, `{entity}.go`, `{file}_test.go`, `BUILD.bazel`
 - **Proto files**: `{service}.proto`
@@ -337,7 +338,9 @@ CI runs on every PR and enforces all checks via a `required-checks` gate. **Befo
 
 ### Comment Style
 
-Comments carry real weight here — the CAS race-window note in `submitqueue/orchestrator/controller/batch/batch.go` and the constant rationales in `platform/extension/messagequeue/mysql/subscriber.go` are load-bearing documentation. That is exactly why noise is expensive: when most comments restate the code, readers skim past all of them, including the ones that matter.
+**The default is no comment.** Most lines need none: the code already says what it does, and a comment that repeats it costs a reader time while teaching them nothing. When a comment does not clear the bar below, delete it rather than shortening it.
+
+This matters because noise is contagious. A file whose comments narrate its statements trains readers to skim every comment in it, including the one that would have warned them about a race. Aim for the shape of the good example below — a single line recording a decision that is invisible in the code. A hazard that genuinely needs forty lines to explain is a design note filed in the wrong place; see rule 4.
 
 ```go
 // Bad — restates the call on the next line.
@@ -349,12 +352,12 @@ rid, err := entity.RequestIDFromBytes(msg.Payload)
 return fmt.Errorf("failed to resolve storage for queue %q: %w", rid.Queue, err)
 ```
 
-1. **Comment the *why*, never the *what*** — the code already says what it does. A comment earns its place by adding what the reader cannot see: an invariant, a race window, a rejected alternative, the reason a constant has the value it has, or a classification decision.
-2. **The deletion test** — if the line below were rewritten with different calls but identical behavior, would the comment still be true and still be worth keeping? If it dies with the line, it was narration. Delete it.
-3. **Keep doc comments on exported identifiers short and concise** — say what the reader needs and stop. Where the name already carries the meaning (`Name`, `TopicKey`, `ConsumerGroup`, `NewController`), a brief line is plenty. Spend words only on the non-obvious: units, ownership, nil behavior, concurrency safety, error semantics. Don't pad to fill a template — `make lint` is formatting-only and requires nothing here.
-4. **Never narrate the change** — no `// Now also handles X`, `// Previously we ...`, `// Changed to ...`, `// New:`. A comment addresses the next person reading the file, who has no idea a diff ever happened. Why a change was made belongs in the commit message; why the *code* is the way it is belongs in the comment, written in the present tense as a standing fact.
-5. **No scaffolding comments in tests** — no `// Arrange` / `// Act` / `// Assert`, no `// Setup`, no `// Close queue`, no `// Verify`. The `t.Run` name states the scenario and testify states the assertion. Comment a test only for a non-obvious fixture or to explain why an outcome is the expected one.
-6. **Size the comment to the surprise, and hoist the big ones** — length is justified only by a correspondingly deep hazard. Once an explanation is really about a design rather than about a line, move it to the package doc, a `README.md`, or `doc/rfc/` and leave a one-line pointer. Design essays wedged into function bodies go stale silently.
+1. **Name the category, or write nothing.** A comment earns its place only by recording one of: an invariant a reader could violate; a race or ordering hazard; an idempotency or deduplication assumption; a rejected alternative and why it fails; the rationale for a magic value; a classification decision the types do not carry (retryable vs not, user vs infra); a contract with another file that cannot be seen from this one. If you cannot say which of those a comment is, there is no comment to write.
+2. **Budgets, so the judgement is not yours to make.** Inline comments inside function bodies: at most one comment line per ten lines of code in the file, and no single block longer than five lines. Doc comments on unexported identifiers: at most two lines, and none at all where the name already says it. Doc comments on exported identifiers: at most five lines, spent on contract only — units, nil behavior, concurrency safety, error semantics, idempotency. Package docs are unbounded: that is where design belongs.
+3. **These openers are always narration.** `Fetch/Get/Read X`, `Deserialize/Parse X`, `Publish/Send X to Y`, `Persist/Store/Save X`, `Create/Build X`, `Check if X`, `Loop over X`, `Return X`. Each restates the call beneath it. Delete on sight.
+4. **One hazard, one home.** Explain a hazard once, at the site that owns it; elsewhere stay silent or point to it in a few words. Once the explanation is about a design rather than a line, move it to the package doc, a `README.md`, or `doc/rfc/` and leave a one-line pointer. Design essays wedged into function bodies go stale silently and are the main way the budgets in rule 2 get blown.
+5. **Never narrate the change** — no `// Now also handles X`, `// Previously we ...`, `// Changed to ...`, `// New:`. A comment addresses the next person reading the file, who has no idea a diff ever happened. Why a change was made belongs in the commit message; why the *code* is the way it is belongs in the comment, written in the present tense as a standing fact.
+6. **No scaffolding comments in tests** — no `// Arrange` / `// Act` / `// Assert`, no `// Setup`, no `// Close queue`, no `// Verify`. The `t.Run` name states the scenario and testify states the assertion. Comment a test only for a non-obvious fixture or to explain why an outcome is the expected one.
 7. **`TODO` needs a subject and a successor** — use the existing forms, `// TODO: <what>` or `// TODO(topic): <what>`, and only for genuinely deferred work. Never leave a `TODO` describing work you just finished, and never use one to flag uncertainty about your own change — resolve it or raise it in the PR.
 
 Entity fields are governed separately: see [Entities](#entities) rules 4 and 7 — every field gets a comment, and that comment describes the data, not the choreography.

@@ -31,11 +31,18 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber-go/tally"
 	changepb "github.com/uber/submitqueue/api/base/change/protopb"
 	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	gatewaypb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
+	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/extension/consumergate"
+	queuemysql "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
+	"github.com/uber/submitqueue/platform/publish"
+	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	"go.uber.org/zap"
 )
 
 func pollUntil(interval time.Duration, condition func() bool) {
@@ -245,6 +252,90 @@ func (s *E2EIntegrationSuite) assertStatusCount(req request, status entity.Reque
 	}
 	assert.Equalf(t, want, seen,
 		"GetRequestHistoryByID for %s should record %q %d time(s); got %v", req.sqid, status, want, got)
+}
+
+// batchIDsFor returns every batch the request has ever been associated with,
+// so a test can assert that a redelivery did not leave a second one behind.
+func (s *E2EIntegrationSuite) batchIDsFor(req request) []string {
+	t := s.T()
+	store, err := s.appStorage.For(req.queue)
+	require.NoError(t, err, "failed to resolve operating store for queue %s", req.queue)
+
+	associations, err := store.GetRequestBatchStore().GetByRequestID(s.ctx, req.sqid)
+	require.NoError(t, err, "failed to read batch associations for %s", req.sqid)
+
+	ids := make([]string, 0, len(associations))
+	for _, a := range associations {
+		ids = append(ids, a.BatchID)
+	}
+	return ids
+}
+
+// redeliverBatchMessage re-publishes the request onto the batch topic, which is
+// exactly what the pipeline sees when a batch delivery is retried after its ack
+// was lost.
+//
+// The message ID has to be a fresh one: the queue deduplicates on (topic,
+// partition key, message ID) against rows it has not collected yet, so reusing
+// the original would make this publish a silent no-op.
+func (s *E2EIntegrationSuite) redeliverBatchMessage(req request) {
+	t := s.T()
+
+	queue, err := queuemysql.NewQueue(queuemysql.Params{
+		DB:           s.queueDB,
+		Logger:       zap.NewNop(),
+		MetricsScope: tally.NoopScope,
+	})
+	require.NoError(t, err, "failed to open the queue for a manual publish")
+	defer func() { require.NoError(t, queue.Close()) }()
+
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: topickey.TopicKeyBatch, Name: topickey.TopicKeyBatch.String(), Queue: queue},
+	})
+	require.NoError(t, err)
+
+	payload, err := entity.RequestID{ID: req.sqid, Queue: req.queue}.ToBytes()
+	require.NoError(t, err)
+
+	require.NoError(t, publish.Message(s.ctx, registry, topickey.TopicKeyBatch,
+		publish.UniqueID(req.sqid), payload, req.queue), "failed to redeliver the batch message")
+	s.log.Logf("Redelivered the batch message for %s", req.sqid)
+}
+
+// batchState reads a batch's current state from the operating store.
+func (s *E2EIntegrationSuite) batchState(queue, batchID string) entity.BatchState {
+	t := s.T()
+	store, err := s.appStorage.For(queue)
+	require.NoError(t, err, "failed to resolve operating store for queue %s", queue)
+	batch, err := store.GetBatchStore().Get(s.ctx, batchID)
+	require.NoError(t, err, "failed to read batch %s", batchID)
+	return batch.State
+}
+
+// awaitBatchState polls the operating store until the batch reaches want.
+func (s *E2EIntegrationSuite) awaitBatchState(queue, batchID string, want entity.BatchState) {
+	pollUntil(persistPollInterval, func() bool {
+		got := s.batchState(queue, batchID)
+		s.log.Logf("Batch %s is %q (want %q)", batchID, got, want)
+		return got == want
+	})
+}
+
+// strandInCreated puts a batch back into Created, reproducing the state a batch
+// is left in when it is promoted but its announcement never reaches speculate.
+// Nothing will name it on the speculate topic again, so only a run that looks
+// for it can move it on.
+func (s *E2EIntegrationSuite) strandInCreated(queue, batchID string) {
+	t := s.T()
+	store, err := s.appStorage.For(queue)
+	require.NoError(t, err, "failed to resolve operating store for queue %s", queue)
+
+	batch, err := store.GetBatchStore().Get(s.ctx, batchID)
+	require.NoError(t, err, "failed to read batch %s", batchID)
+
+	_, err = corebatch.Transition(s.ctx, store, batch, entity.BatchStateCreated)
+	require.NoError(t, err, "failed to strand batch %s in created", batchID)
+	s.log.Logf("Stranded batch %s in created with no announcement in flight", batchID)
 }
 
 // closeGate closes the consumer gate for the consumer group, scoped to one

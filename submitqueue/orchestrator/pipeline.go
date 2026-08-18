@@ -36,6 +36,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/buildsignal"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/cancel"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/conclude"
+	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/dependencyanalysis"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/dlq"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/merge"
 	"github.com/uber/submitqueue/submitqueue/orchestrator/controller/mergeconflictsignal"
@@ -139,10 +140,21 @@ var Stages = []pipeline.Stage[Deps]{
 		Name:          "batch",
 		ConsumerGroup: "orchestrator",
 		New: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
-			return batch.NewController(d.Logger, d.Scope, sc.Registry, d.Counter, d.Storage, d.Analyzer, sc.TopicKey, sc.ConsumerGroup), nil
+			return batch.NewController(d.Logger, d.Scope, sc.Registry, d.Counter, d.Storage, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 		DLQ: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
 			return dlq.NewDLQRequestController(d.Logger, d.Scope, d.Storage, sc.Registry, dlq.DecodeRequestID, sc.TopicKey, sc.ConsumerGroup), nil
+		},
+	},
+	{
+		Key:           topickey.TopicKeyDependencyAnalysis,
+		Name:          "dependency-analysis",
+		ConsumerGroup: "orchestrator",
+		New: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
+			return dependencyanalysis.NewController(d.Logger, d.Scope, d.Storage, d.Analyzer, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
+		},
+		DLQ: func(d Deps, sc pipeline.StageContext) (consumer.Controller, error) {
+			return dlq.NewDLQBatchController(d.Logger, d.Scope, d.Storage, sc.Registry, sc.TopicKey, sc.ConsumerGroup), nil
 		},
 	},
 	{

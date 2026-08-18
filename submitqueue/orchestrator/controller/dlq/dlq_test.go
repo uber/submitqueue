@@ -39,6 +39,14 @@ type staticStorageFactory struct{ store storage.Storage }
 // For returns the fixed store aggregate for any queue.
 func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
 
+// noBatchAssociations answers the owning-batch lookup with nothing, i.e. no
+// batch ever enrolled the request.
+func noBatchAssociations(ctrl *gomock.Controller) *storagemock.MockRequestBatchStore {
+	s := storagemock.NewMockRequestBatchStore(ctrl)
+	s.EXPECT().GetByRequestID(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	return s
+}
+
 func newQueueBatchStateStore(ctrl *gomock.Controller) *storagemock.MockQueueBatchStateStore {
 	s := storagemock.NewMockQueueBatchStateStore(ctrl)
 	s.EXPECT().Put(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()

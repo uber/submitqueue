@@ -51,6 +51,9 @@ const (
 	// RequestStatusValidated indicates that the request has been validated (duplicate check, merge check etc.) successfully. It corresponds to the RequestStateValidated state.
 	RequestStatusValidated RequestStatus = "validated"
 
+	// RequestStatusBatching indicates that a batch has been created for the request and is resolving what it must serialize behind.
+	RequestStatusBatching RequestStatus = "batching"
+
 	// RequestStatusBatched indicates that the request has been included in a new batch and will be sent to speculation.
 	RequestStatusBatched RequestStatus = "batched"
 

@@ -22,10 +22,12 @@ type BatchState string
 const (
 	// BatchStateUnknown is the unreachable state. It is set by default when the structure is initialized. It should never be seen in the system.
 	BatchStateUnknown BatchState = ""
-	// BatchStateCreating indicates that the batch has been persisted but its dependency reverse indexes may not yet be fully initialized.
-	// A Creating batch is not eligible to be referenced as a dependency.
+	// BatchStateCreating indicates that the batch has been persisted but its dependency set and reverse indexes may not yet be complete.
+	// Dependencies is empty in this state, and a Creating batch is not eligible to be referenced as a dependency.
 	BatchStateCreating BatchState = "creating"
-	// BatchStateCreated indicates that the batch and its dependency reverse indexes are fully initialized and ready for processing.
+	// BatchStateCreated indicates that the batch's dependency set and reverse indexes are final and it is ready for processing.
+	// A Created batch is eligible to be referenced as a dependency, so it is also certain to be admitted: one that could stall
+	// here would be an unresolvable dependency for every batch created after it.
 	BatchStateCreated BatchState = "created"
 	// BatchStateSpeculating is the state of a batch that is undergoing speculative execution.
 	BatchStateSpeculating BatchState = "speculating"
@@ -161,6 +163,8 @@ type Batch struct {
 	// - queueA/batch/1 will be empty
 	// - queueA/batch/2 will contain queueA/batch/1
 	// - queueA/batch/3 will contain queueA/batch/1
+	//
+	// The list is empty while the batch is Creating and final from Created onwards.
 	Dependencies []string
 
 	// The state of the batch lifecycle this batch is in. Updateable field with Version for optimistic locking.
