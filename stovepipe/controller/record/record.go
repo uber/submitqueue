@@ -72,9 +72,10 @@ func NewController(
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
+	name := string(topicKey) + "_controller"
 	return &Controller{
-		logger:         logger.Named("record_controller"),
-		metricsScope:   scope.SubScope("record_controller"),
+		logger:         logger.Named(name),
+		metricsScope:   scope.SubScope(name),
 		stores:         stores,
 		sourceControls: sourceControls,
 		topicKey:       topicKey,
@@ -477,7 +478,7 @@ func (c *Controller) loadRequest(ctx context.Context, store storage.Storage, id 
 
 // Name returns the controller name for logging and metrics.
 func (c *Controller) Name() string {
-	return "record"
+	return string(c.topicKey)
 }
 
 // TopicKey returns the topic key this controller subscribes to.

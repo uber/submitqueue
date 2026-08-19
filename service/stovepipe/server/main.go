@@ -290,7 +290,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, storageFty, registry)
+	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, storageFty, registry, scf)
 	if err != nil {
 		return err
 	}
@@ -447,6 +447,7 @@ func registerDLQControllers(
 	scope tally.Scope,
 	store storage.Factory,
 	registry consumer.TopicRegistry,
+	scf sourcecontrol.Factory,
 ) (int, error) {
 	var count int
 
@@ -462,9 +463,15 @@ func registerDLQControllers(
 	}
 	count++
 
-	buildSignalDLQController := dlq.NewDLQBuildSignalController(logger, scope, store, dlq.TopicKey(stovepipemq.TopicKeyBuildSignal), "stovepipe-buildsignal-dlq")
+	buildSignalDLQController := dlq.NewDLQBuildSignalController(logger, scope, store, registry, dlq.TopicKey(stovepipemq.TopicKeyBuildSignal), "stovepipe-buildsignal-dlq")
 	if err := c.Register(buildSignalDLQController); err != nil {
 		return count, fmt.Errorf("failed to register buildsignal dlq controller: %w", err)
+	}
+	count++
+
+	recordDLQController := record.NewController(logger, scope, store, scf, dlq.TopicKey(stovepipemq.TopicKeyRecord), "stovepipe-record-dlq")
+	if err := c.Register(recordDLQController); err != nil {
+		return count, fmt.Errorf("failed to register record dlq controller: %w", err)
 	}
 	count++
 
@@ -528,6 +535,12 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Name:         "buildsignal_dlq",
 			Queue:        q,
 			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-buildsignal-dlq"),
+		},
+		{
+			Key:          dlq.TopicKey(stovepipemq.TopicKeyRecord),
+			Name:         "record_dlq",
+			Queue:        q,
+			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-record-dlq"),
 		},
 	})
 }

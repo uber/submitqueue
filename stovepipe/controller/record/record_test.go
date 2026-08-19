@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
+	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
@@ -94,6 +95,10 @@ func (failingSourceControlFactory) For(sourcecontrol.Config) (sourcecontrol.Sour
 }
 
 func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, recordMocks) {
+	return newControllerForTopic(t, ctrl, stovepipemq.TopicKeyRecord, "stovepipe-record")
+}
+
+func newControllerForTopic(t *testing.T, ctrl *gomock.Controller, topicKey consumer.TopicKey, consumerGroup string) (*Controller, recordMocks) {
 	t.Helper()
 
 	scope := tally.NewTestScope("", nil)
@@ -115,10 +120,18 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, recordMo
 		scope,
 		staticStorageFactory{store: store},
 		staticSourceControlFactory{sourceControl: m.sourceControl},
-		stovepipemq.TopicKeyRecord,
-		"stovepipe-record",
+		topicKey,
+		consumerGroup,
 	)
 	return c, m
+}
+
+func TestControllerIdentity(t *testing.T) {
+	c, _ := newControllerForTopic(t, gomock.NewController(t), consumer.TopicKey("record_dlq"), "stovepipe-record-dlq")
+
+	assert.Equal(t, "record_dlq", c.Name())
+	assert.Equal(t, consumer.TopicKey("record_dlq"), c.TopicKey())
+	assert.Equal(t, "stovepipe-record-dlq", c.ConsumerGroup())
 }
 
 func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) *consumermock.MockDelivery {

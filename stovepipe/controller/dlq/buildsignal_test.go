@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/consumer"
+	mqmock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -36,6 +37,7 @@ type buildSignalDLQMocks struct {
 	reqStore   *storagemock.MockRequestStore
 	queueStore *storagemock.MockQueueStore
 	buildStore *storagemock.MockBuildStore
+	publisher  *mqmock.MockPublisher
 }
 
 func newBuildSignalController(t *testing.T, ctrl *gomock.Controller) (consumer.Controller, buildSignalDLQMocks) {
@@ -45,17 +47,25 @@ func newBuildSignalController(t *testing.T, ctrl *gomock.Controller) (consumer.C
 		reqStore:   storagemock.NewMockRequestStore(ctrl),
 		queueStore: storagemock.NewMockQueueStore(ctrl),
 		buildStore: storagemock.NewMockBuildStore(ctrl),
+		publisher:  mqmock.NewMockPublisher(ctrl),
 	}
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
 	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(m.buildStore).AnyTimes()
+	queue := mqmock.NewMockQueue(ctrl)
+	queue.EXPECT().Publisher().Return(m.publisher).AnyTimes()
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: stovepipemq.TopicKeyRecord, Name: "record", Queue: queue},
+	})
+	require.NoError(t, err)
 
 	c := NewDLQBuildSignalController(
 		zap.NewNop().Sugar(),
 		tally.NewTestScope("test", nil),
 		staticStorageFactory{store: store},
+		registry,
 		TopicKey(stovepipemq.TopicKeyBuildSignal),
 		"stovepipe-buildsignal-dlq",
 	)
@@ -104,11 +114,21 @@ func TestBuildSignalProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "already terminal request is a no-op",
+			name: "already terminal request republishes record work",
 			setup: func(m buildSignalDLQMocks) {
 				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(), nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateSucceeded), nil)
+				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil)
 			},
+		},
+		{
+			name: "record republish failure is returned",
+			setup: func(m buildSignalDLQMocks) {
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(), nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateSucceeded), nil)
+				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(assert.AnError)
+			},
+			wantErr: true,
 		},
 		{
 			name: "build not found is a no-op",

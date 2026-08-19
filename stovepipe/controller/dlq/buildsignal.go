@@ -22,6 +22,7 @@ import (
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
@@ -53,6 +54,7 @@ type buildSignalController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	stores        storage.Factory
+	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -67,6 +69,7 @@ func NewDLQBuildSignalController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
+	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) consumer.Controller {
@@ -75,6 +78,7 @@ func NewDLQBuildSignalController(
 		logger:        logger.Named(name),
 		metricsScope:  scope.SubScope(name),
 		stores:        stores,
+		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
@@ -139,17 +143,43 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 		return nil
 	}
 
-	// Every request reachable from a build row is either still processing, and holding
-	// the slot failRequest releases, or already terminal, and past releasing it: build
-	// triggers only once process has written the strategy, which lands in the same CAS
-	// as accepted→processing, and processing exits only to a terminal outcome.
-	if err := failRequest(ctx, store, c.logger, build.RequestID); err != nil {
+	request, found, err := loadRequest(ctx, store, c.logger, build.RequestID)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "reconcile_errors", 1)
+		return err
+	}
+	if !found {
+		return nil
+	}
+
+	// The primary controller commits the outcome before publishing record work.
+	// A failure in that handoff must replay record rather than treating the
+	// already-terminal request as fully reconciled.
+	if request.State.HasBuildOutcome() {
+		if err := c.publishRecord(ctx, request.ID, request.Queue); err != nil {
+			metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "record_publish_errors", 1)
+			return fmt.Errorf("failed to publish record for request %s: %w", request.ID, err)
+		}
+		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "record_republished", 1)
+		return nil
+	}
+
+	if err := failLoadedRequest(ctx, store, c.logger, request); err != nil {
 		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "reconcile_errors", 1)
 		return err
 	}
 
 	metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "reconciled", 1)
 	return nil
+}
+
+// publishRecord resumes the primary controller's interrupted terminal handoff.
+func (c *buildSignalController) publishRecord(ctx context.Context, requestID, queue string) error {
+	payload, err := stovepipemq.Marshal(&stovepipemq.Record{Id: requestID, QueueName: queue})
+	if err != nil {
+		return fmt.Errorf("failed to serialize record: %w", err)
+	}
+	return publish.Message(ctx, c.registry, stovepipemq.TopicKeyRecord, publish.IntentID(requestID), payload, requestID)
 }
 
 // Name returns the controller name for logging and metrics.
