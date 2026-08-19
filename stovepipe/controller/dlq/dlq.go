@@ -85,31 +85,20 @@ func TopicKey(main consumer.TopicKey) consumer.TopicKey {
 // doc/rfc/stovepipe/steps/process.md#in_flight_count-integrity for the broader
 // counter-drift story.
 func failRequest(ctx context.Context, store storage.Storage, logger *zap.SugaredLogger, requestID string) error {
-	request, found, err := loadRequest(ctx, store, logger, requestID)
-	if err != nil || !found {
-		return err
-	}
-	return failLoadedRequest(ctx, store, logger, request)
-}
-
-func loadRequest(ctx context.Context, store storage.Storage, logger *zap.SugaredLogger, requestID string) (entity.Request, bool, error) {
 	request, err := store.GetRequestStore().Get(ctx, requestID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			logger.Warnw("dlq reconcile: request not found, skipping",
 				"request_id", requestID,
 			)
-			return entity.Request{}, false, nil
+			return nil
 		}
-		return entity.Request{}, false, fmt.Errorf("failed to get request %s: %w", requestID, err)
+		return fmt.Errorf("failed to get request %s: %w", requestID, err)
 	}
-	return request, true, nil
-}
 
-func failLoadedRequest(ctx context.Context, store storage.Storage, logger *zap.SugaredLogger, request entity.Request) error {
 	if request.State.IsTerminal() {
 		logger.Infow("dlq reconcile: request already terminal, skipping",
-			"request_id", request.ID,
+			"request_id", requestID,
 			"state", string(request.State),
 		)
 		return nil
@@ -117,7 +106,7 @@ func failLoadedRequest(ctx context.Context, store storage.Storage, logger *zap.S
 
 	if request.State == entity.RequestStateProcessing {
 		if err := releaseSlot(ctx, store, logger, request.Queue); err != nil {
-			return fmt.Errorf("failed to release queue slot for request %s: %w", request.ID, err)
+			return fmt.Errorf("failed to release queue slot for request %s: %w", requestID, err)
 		}
 	}
 
@@ -125,10 +114,10 @@ func failLoadedRequest(ctx context.Context, store storage.Storage, logger *zap.S
 	updated.State = entity.RequestStateFailed
 	newVersion := request.Version + 1
 	if err := store.GetRequestStore().Update(ctx, updated, request.Version, newVersion); err != nil {
-		return fmt.Errorf("failed to update request %s state to failed: %w", request.ID, err)
+		return fmt.Errorf("failed to update request %s state to failed: %w", requestID, err)
 	}
 	logger.Infow("dlq reconcile: request forced terminal failed",
-		"request_id", request.ID,
+		"request_id", requestID,
 		"previous_state", string(request.State),
 	)
 	return nil

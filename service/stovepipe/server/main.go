@@ -463,7 +463,7 @@ func registerDLQControllers(
 	}
 	count++
 
-	buildSignalDLQController := dlq.NewDLQBuildSignalController(logger, scope, store, registry, dlq.TopicKey(stovepipemq.TopicKeyBuildSignal), "stovepipe-buildsignal-dlq")
+	buildSignalDLQController := dlq.NewDLQBuildSignalController(logger, scope, store, dlq.TopicKey(stovepipemq.TopicKeyBuildSignal), "stovepipe-buildsignal-dlq")
 	if err := c.Register(buildSignalDLQController); err != nil {
 		return count, fmt.Errorf("failed to register buildsignal dlq controller: %w", err)
 	}
