@@ -456,7 +456,7 @@ func registerDLQControllers(
 	}
 	count++
 
-	buildDLQController := dlq.NewBuildController(logger, scope, store, dlq.TopicKey(stovepipemq.TopicKeyBuild), "stovepipe-build-dlq")
+	buildDLQController := dlq.NewDLQBuildController(logger, scope, store, dlq.TopicKey(stovepipemq.TopicKeyBuild), "stovepipe-build-dlq")
 	if err := c.Register(buildDLQController); err != nil {
 		return count, fmt.Errorf("failed to register build dlq controller: %w", err)
 	}

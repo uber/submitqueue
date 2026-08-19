@@ -26,9 +26,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// BuildController reconciles build-stage dead letters by failing the request
+// buildController reconciles build-stage dead letters by failing the request
 // whose build could not be triggered, persisted, or handed to the poll loop.
-type BuildController struct {
+type buildController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	stores        storage.Factory
@@ -36,21 +36,22 @@ type BuildController struct {
 	consumerGroup string
 }
 
-var _ consumer.Controller = (*BuildController)(nil)
+var _ consumer.Controller = (*buildController)(nil)
 
 const _buildOpName = "build_dlq"
 
-// NewBuildController creates a reconciler for the build dead-letter topic.
-func NewBuildController(
+// NewDLQBuildController creates a reconciler for the build dead-letter topic.
+func NewDLQBuildController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
-) *BuildController {
-	return &BuildController{
-		logger:        logger.Named("build_dlq_controller"),
-		metricsScope:  scope.SubScope("build_dlq_controller"),
+) consumer.Controller {
+	name := string(topicKey) + "_controller"
+	return &buildController{
+		logger:        logger.Named(name),
+		metricsScope:  scope.SubScope(name),
 		stores:        stores,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -58,33 +59,33 @@ func NewBuildController(
 }
 
 // Process drives the request named by a dead-lettered BuildRequest to failed.
-func (c *BuildController) Process(ctx context.Context, delivery consumer.Delivery) error {
-	request := &stovepipemq.BuildRequest{}
-	if err := stovepipemq.Unmarshal(delivery.Message().Payload, request); err != nil {
+func (c *buildController) Process(ctx context.Context, delivery consumer.Delivery) error {
+	buildRequest := &stovepipemq.BuildRequest{}
+	if err := stovepipemq.Unmarshal(delivery.Message().Payload, buildRequest); err != nil {
 		metrics.NamedCounter(c.metricsScope, _buildOpName, "deserialize_errors", 1)
-		return fmt.Errorf("failed to decode build dlq payload: %w", err)
+		return fmt.Errorf("failed to decode dlq payload: %w", err)
 	}
-	if request.Id == "" {
+	if buildRequest.Id == "" {
 		metrics.NamedCounter(c.metricsScope, _buildOpName, "empty_id_errors", 1)
 		return fmt.Errorf("build dlq payload decoded to empty request id")
 	}
 
-	store, err := c.stores.For(storage.Config{QueueName: request.GetQueueName()})
+	store, err := c.stores.For(storage.Config{QueueName: buildRequest.GetQueueName()})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, _buildOpName, "storage_resolve_errors", 1)
-		return fmt.Errorf("failed to resolve storage for queue %q: %w", request.GetQueueName(), err)
+		return fmt.Errorf("failed to resolve storage for queue %q: %w", buildRequest.GetQueueName(), err)
 	}
 
 	metadata := delivery.Metadata()
-	c.logger.Warnw("build dlq message received",
-		"request_id", request.Id,
+	c.logger.Warnw("dlq message received",
+		"request_id", buildRequest.Id,
 		"attempt", delivery.Attempt(),
 		"dlq_original_topic", metadata["dlq.original_topic"],
 		"dlq_failure_count", metadata["dlq.failure_count"],
 		"dlq_last_error", metadata["dlq.last_error"],
 	)
 
-	if err := failRequest(ctx, store, c.logger, request.Id); err != nil {
+	if err := failRequest(ctx, store, c.logger, buildRequest.Id); err != nil {
 		metrics.NamedCounter(c.metricsScope, _buildOpName, "reconcile_errors", 1)
 		return err
 	}
@@ -93,10 +94,10 @@ func (c *BuildController) Process(ctx context.Context, delivery consumer.Deliver
 }
 
 // Name returns the controller name.
-func (c *BuildController) Name() string { return "build_dlq" }
+func (c *buildController) Name() string { return string(c.topicKey) }
 
 // TopicKey returns the dead-letter topic key.
-func (c *BuildController) TopicKey() consumer.TopicKey { return c.topicKey }
+func (c *buildController) TopicKey() consumer.TopicKey { return c.topicKey }
 
 // ConsumerGroup returns the offset-tracking group.
-func (c *BuildController) ConsumerGroup() string { return c.consumerGroup }
+func (c *buildController) ConsumerGroup() string { return c.consumerGroup }

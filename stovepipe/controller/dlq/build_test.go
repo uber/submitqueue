@@ -56,7 +56,7 @@ func TestBuildProcess(t *testing.T) {
 			store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
 			store.EXPECT().GetQueueStore().Return(queueStore).AnyTimes()
 
-			controller := NewBuildController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), staticStorageFactory{store: store}, TopicKey(stovepipemq.TopicKeyBuild), "stovepipe-build-dlq")
+			controller := NewDLQBuildController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), staticStorageFactory{store: store}, TopicKey(stovepipemq.TopicKeyBuild), "stovepipe-build-dlq")
 			if !tt.wantErr {
 				reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
 				queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue, InFlightCount: 1, Version: 5}, nil)
