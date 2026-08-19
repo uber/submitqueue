@@ -296,7 +296,7 @@ func TestProcess_TimestampReportingFailureDoesNotFailRecord(t *testing.T) {
 func TestProcess_UnresolvableSourceControlCountsTimestampFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c, m := newController(t, ctrl)
-	c.sourceControls = failingSourceControlFactory{}
+	c.sourceControl = failingSourceControlFactory{}
 
 	m.reqStore.EXPECT().Get(gomock.Any(), testID).
 		Return(requestWithState(entity.RequestStateSucceeded), nil)
@@ -398,7 +398,7 @@ func TestProcess_UnobservableDetectionLatencyDoesNotFailRecord(t *testing.T) {
 			name: "source control cannot be resolved",
 			step: "resolve_source_control",
 			setup: func(c *Controller, _ recordMocks) {
-				c.sourceControls = failingSourceControlFactory{}
+				c.sourceControl = failingSourceControlFactory{}
 			},
 		},
 		{
@@ -579,7 +579,7 @@ func TestProcess_PromotionErrorsPropagate(t *testing.T) {
 		{
 			name: "source control resolve fails",
 			setup: func(c *Controller, _ recordMocks) {
-				c.sourceControls = failingSourceControlFactory{}
+				c.sourceControl = failingSourceControlFactory{}
 			},
 		},
 		{

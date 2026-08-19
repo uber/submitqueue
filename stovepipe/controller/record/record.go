@@ -44,12 +44,12 @@ import (
 // when that fact is green advances the queue's last-green bookmark and promotes
 // the commit. Implements consumer.Controller.
 type Controller struct {
-	logger         *zap.SugaredLogger
-	metricsScope   tally.Scope
-	stores         storage.Factory
-	sourceControls sourcecontrol.Factory
-	topicKey       consumer.TopicKey
-	consumerGroup  string
+	logger        *zap.SugaredLogger
+	metricsScope  tally.Scope
+	stores        storage.Factory
+	sourceControl sourcecontrol.Factory
+	topicKey      consumer.TopicKey
+	consumerGroup string
 }
 
 // Verify Controller implements consumer.Controller interface at compile time.
@@ -68,18 +68,18 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
-	sourceControls sourcecontrol.Factory,
+	sourceControl sourcecontrol.Factory,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
 	name := string(topicKey) + "_controller"
 	return &Controller{
-		logger:         logger.Named(name),
-		metricsScope:   scope.SubScope(name),
-		stores:         stores,
-		sourceControls: sourceControls,
-		topicKey:       topicKey,
-		consumerGroup:  consumerGroup,
+		logger:        logger.Named(name),
+		metricsScope:  scope.SubScope(name),
+		stores:        stores,
+		sourceControl: sourceControl,
+		topicKey:      topicKey,
+		consumerGroup: consumerGroup,
 	}
 }
 
@@ -247,7 +247,7 @@ func (c *Controller) reportFailureDetectionLatency(ctx context.Context, request 
 		return
 	}
 
-	sourceControl, err := c.sourceControls.For(sourcecontrol.Config{QueueName: request.Queue})
+	sourceControl, err := c.sourceControl.For(sourcecontrol.Config{QueueName: request.Queue})
 	if err != nil {
 		c.failureDetectionUnobserved(request, "resolve_source_control", err)
 		return
@@ -366,7 +366,7 @@ func (c *Controller) advanceLastGreen(ctx context.Context, store storage.Storage
 func (c *Controller) emitLastGreenTimestamp(ctx context.Context, request entity.Request) {
 	queueTag := metrics.NewTag("queue", request.Queue)
 
-	sourceControl, err := c.sourceControls.For(sourcecontrol.Config{QueueName: request.Queue})
+	sourceControl, err := c.sourceControl.For(sourcecontrol.Config{QueueName: request.Queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "last_green_timestamp_resolve_errors", 1, queueTag)
 		c.logger.Warnw("failed to resolve source control to report the last green timestamp",
@@ -421,7 +421,7 @@ func (c *Controller) emitLastGreenTimestamp(ctx context.Context, request entity.
 // harmlessly. A commit that a rewritten history dropped from the ref cannot be
 // promoted by any retry, so that case is counted and skipped rather than failed.
 func (c *Controller) promote(ctx context.Context, request entity.Request) error {
-	sc, err := c.sourceControls.For(sourcecontrol.Config{QueueName: request.Queue})
+	sc, err := c.sourceControl.For(sourcecontrol.Config{QueueName: request.Queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
 			metrics.NewTag("stage", "resolve"),
