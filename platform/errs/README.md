@@ -44,12 +44,43 @@ An `ErrorProcessor` runs the per-chain pass that turns a raw chain into a wrappe
 Two implementations ship in this package:
 
 - **`NewClassifierProcessor(classifiers...)`** — the standard pass for primary pipeline consumers. Walks the chain twice:
-  1. **Pass 1 — framework-wrap check.** A cheap type switch looks for an existing `*userError` / `*infraError` anywhere in the chain. If found, the chain is already interpretable and the processor returns `err` unchanged. **No classifier is invoked.**
+  1. **Pass 1 — framework-wrap check.** Looks for an existing `*userError` / `*infraError` on the error's single-cause spine. If found, the chain is already interpretable and the processor returns `err` unchanged. **No classifier is invoked.**
   2. **Pass 2 — classifier walk.** From outermost to innermost node, each registered classifier is asked for a verdict. The first non-`Unknown` verdict wins and `err` is wrapped with the matching framework constructor.
 
   If no classifier recognises anything, `err` is returned unchanged — and behaves as non-retryable infra at the helper layer.
 
 - **`AlwaysRetryableProcessor`** — unconditionally wraps every non-nil error with `NewRetryableError`, overriding any inner framework wrap. Use it for narrowly-scoped consumers — typically DLQ reconciliation — that must redeliver on any failure because there is no further dead-letter destination. Side-effect: an inner `*infraError(dependency=true)` is masked by the outer `retryable=true` wrap, since `errors.As` matches the outermost `*infraError` first. This is acceptable for the intended DLQ use case where only `IsRetryable` drives transport behaviour; do not pair this processor with a primary pipeline consumer or genuine user errors will retry forever instead of reaching their DLQ.
+
+### Grouped errors
+
+`Group(errs...)` reports several failures that happened together as one error. It drops nils and returns nil when every member is nil, so a step that fans work out to independent handlers can accumulate failures in a loop and return the result directly:
+
+```go
+var failures []error
+for _, h := range handlers {
+    if err := h.Handle(ctx, event); err != nil {
+        failures = append(failures, fmt.Errorf("%s: %w", h.Name(), err))
+    }
+}
+return errs.Group(failures...)
+```
+
+Pass 2 descends into a group's members as well as into ordinary single-cause wraps; Pass 1 walks only the single-cause spine. Without that descent, `errors.Unwrap` returns nil for a group, so a walk built on it alone sees the group node and nothing beneath it, and every member goes unclassified.
+
+**Grouping is opt-in — only `Group` is weighed.** `Unwrap() []error` is also what `errors.Join` and `fmt.Errorf` with several `%w` produce, and there the extra causes are incidental: a cleanup failure hung off the real one, or context that happens to be an error. Weighing those would let an unrelated sibling decide retryability for the whole chain. `Group` is the one spelling that means "these failures are independent, rank them against each other", so the walk keys on that type and every other multi-cause error stays opaque — classified by its outermost recognisable node like any single-cause chain. A caller that wants its members ranked says so by returning `Group`, as `submitqueue/extension/validator/composite` does for its children.
+
+The two shapes combine differently, because they mean different things:
+
+- **Down a wrap chain**, the outermost verdict wins. A wrapper saw the error it wrapped and classified anyway, so it speaks with more knowledge than its cause.
+- **Across the members of a group**, nothing shadows anything. The members are independent failures reported together, and their order is the order the caller ran them in, not a precedence. They combine by rank, so the result cannot depend on which member failed first.
+
+The rank puts retryable above non-retryable, because the two mistakes cost differently: a wrong "retryable" spends a bounded retry budget and then dead-letters anyway, while a wrong "non-retryable" throws away a failure that would have cleared on its own. Within a retryability tier, the verdict that implicates this service outranks the one pointing elsewhere, so a partly-local failure is not reported as a pure dependency or user problem — that ordering only moves attribution, since every non-retryable verdict produces the same transport outcome. See `verdictRank` for the table.
+
+A framework wrap classifies the subtree beneath it and no further. Above a group it covers the whole group and Pass 1 returns the error verbatim, so no member is consulted. *Inside* a member it is one member's account of one failure, with no standing to classify the failures beside it — so it contributes its own verdict to the rank like any other member. That is what keeps a sibling's transient failure from being discarded by a member that happened to arrive pre-classified, and it also removes an ordering artifact: two wrapped members of differing retryability used to resolve by whichever one `errors.As` reached first.
+
+The losing member keeps its wrap in the chain, so `IsUserError` and `IsRetryable` can both report true for the same grouped error — one from a member, one from the outer wrap. Only the outer wrap drives the retry decision, the same way it does under `AlwaysRetryableProcessor`; `IsUserError` carries that precedence as a contract note, since a caller checking it before `IsRetryable` would drop the transient member.
+
+One operational consequence worth knowing before relying on any of this: **retrying a group re-runs everything.** The retry redelivers to every child, including the ones that succeeded, so children must be idempotent, and a child that fails persistently with a retryable-looking error (a decommissioned service returning connection-refused, say) will spend the whole retry budget on every message. Drop such a child rather than absorbing it.
 
 ### Choosing a processor
 
@@ -131,7 +162,7 @@ if err != nil {
 Two practical rules fall out of the short-circuit semantics:
 
 - **Wrap with a framework constructor as soon as the controller knows the right verdict.** Any wrap added later in the chain still wins, but wrapping early keeps the intent close to the decision.
-- **A wrap anywhere in the chain blocks all classifiers — including for nodes deeper than the wrap.** If you want a classifier to still get a look at the cause, do not wrap above it. (In practice this is rare: controllers wrap because they have the final answer.)
+- **A wrap blocks all classifiers beneath it, including for nodes deeper than the wrap.** If you want a classifier to still get a look at the cause, do not wrap above it. (In practice this is rare: controllers wrap because they have the final answer.) It does not block the sibling members of a group, which are classified and ranked independently.
 
 ### When *not* to classify in a controller
 

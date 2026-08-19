@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "errs.go",
         "failure.go",
+        "group.go",
         "processor.go",
     ],
     importpath = "github.com/uber/submitqueue/platform/errs",
@@ -17,6 +18,7 @@ go_test(
     srcs = [
         "errs_test.go",
         "failure_test.go",
+        "group_test.go",
         "processor_test.go",
     ],
     embed = [":go_default_library"],
