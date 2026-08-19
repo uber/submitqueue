@@ -29,6 +29,21 @@ import (
 	"go.uber.org/zap"
 )
 
+func newBuildController(t *testing.T, ctrl *gomock.Controller) (consumer.Controller, dlqMocks) {
+	t.Helper()
+
+	m := dlqMocks{
+		reqStore:   storagemock.NewMockRequestStore(ctrl),
+		queueStore: storagemock.NewMockQueueStore(ctrl),
+	}
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
+	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
+
+	c := NewDLQBuildController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), staticStorageFactory{store: store}, TopicKey(stovepipemq.TopicKeyBuild), "stovepipe-build-dlq")
+	return c, m
+}
+
 func buildPayload(t *testing.T, id string) []byte {
 	t.Helper()
 	payload, err := stovepipemq.Marshal(&stovepipemq.BuildRequest{Id: id, QueueName: testQueue})
@@ -40,9 +55,20 @@ func TestBuildProcess(t *testing.T) {
 	tests := []struct {
 		name    string
 		payload []byte
+		setup   func(m dlqMocks)
 		wantErr bool
 	}{
-		{name: "processing request is failed"},
+		{
+			name: "processing request is failed",
+			setup: func(m dlqMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue, InFlightCount: 1, Version: 5}, nil)
+				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{Name: testQueue, Version: 5}, int32(5), int32(6)).Return(nil)
+				updated := requestWithState(entity.RequestStateProcessing)
+				updated.State = entity.RequestStateFailed
+				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
+			},
+		},
 		{name: "malformed payload is returned", payload: []byte("not-a-proto"), wantErr: true},
 		{name: "empty request id is returned", payload: buildPayload(t, ""), wantErr: true},
 	}
@@ -50,20 +76,9 @@ func TestBuildProcess(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
-			reqStore := storagemock.NewMockRequestStore(ctrl)
-			queueStore := storagemock.NewMockQueueStore(ctrl)
-			store := storagemock.NewMockStorage(ctrl)
-			store.EXPECT().GetRequestStore().Return(reqStore).AnyTimes()
-			store.EXPECT().GetQueueStore().Return(queueStore).AnyTimes()
-
-			controller := NewDLQBuildController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), staticStorageFactory{store: store}, TopicKey(stovepipemq.TopicKeyBuild), "stovepipe-build-dlq")
-			if !tt.wantErr {
-				reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
-				queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{Name: testQueue, InFlightCount: 1, Version: 5}, nil)
-				queueStore.EXPECT().Update(gomock.Any(), entity.Queue{Name: testQueue, Version: 5}, int32(5), int32(6)).Return(nil)
-				updated := requestWithState(entity.RequestStateProcessing)
-				updated.State = entity.RequestStateFailed
-				reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
+			controller, mocks := newBuildController(t, ctrl)
+			if tt.setup != nil {
+				tt.setup(mocks)
 			}
 
 			payload := tt.payload
