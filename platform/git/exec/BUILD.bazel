@@ -3,6 +3,6 @@ load("@rules_go//go:def.bzl", "go_library")
 go_library(
     name = "go_default_library",
     srcs = ["gitexec.go"],
-    importpath = "github.com/uber/submitqueue/platform/gitexec",
+    importpath = "github.com/uber/submitqueue/platform/git/exec",
     visibility = ["//visibility:public"],
 )

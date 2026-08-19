@@ -48,7 +48,7 @@ go_test(
         "//api/base/mergestrategy/protopb:go_default_library",
         "//api/runway/messagequeue:go_default_library",
         "//api/runway/messagequeue/protopb:go_default_library",
-        "//platform/gitexec/gitexectest:go_default_library",
+        "//platform/git/exectest:go_default_library",
         "//runway/extension/merger:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",

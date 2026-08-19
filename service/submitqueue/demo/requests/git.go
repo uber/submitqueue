@@ -22,7 +22,7 @@ import (
 	"sync"
 
 	gitchange "github.com/uber/submitqueue/platform/base/change/git"
-	"github.com/uber/submitqueue/platform/gitexec"
+	gitexec "github.com/uber/submitqueue/platform/git/exec"
 	"github.com/uber/submitqueue/submitqueue/client"
 )
 

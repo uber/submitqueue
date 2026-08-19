@@ -23,8 +23,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/uber/submitqueue/platform/gitexec"
-	"github.com/uber/submitqueue/platform/gitexec/gitexectest"
+	gitexec "github.com/uber/submitqueue/platform/git/exec"
+	gitexectest "github.com/uber/submitqueue/platform/git/exectest"
 )
 
 func TestProvision_SeedsABareRepositoryOnTheTargetBranch(t *testing.T) {

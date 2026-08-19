@@ -5,7 +5,7 @@ go_library(
     srcs = ["main.go"],
     importpath = "github.com/uber/submitqueue/tool/gitsandbox",
     visibility = ["//visibility:private"],
-    deps = ["//platform/gitexec:go_default_library"],
+    deps = ["//platform/git/exec:go_default_library"],
 )
 
 go_binary(
@@ -31,8 +31,8 @@ go_test(
         "SUBMITQUEUE_TEST_GIT": "$(location @git//:git)",
     },
     deps = [
-        "//platform/gitexec:go_default_library",
-        "//platform/gitexec/gitexectest:go_default_library",
+        "//platform/git/exec:go_default_library",
+        "//platform/git/exectest:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
     ],

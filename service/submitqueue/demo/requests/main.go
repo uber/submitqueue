@@ -67,7 +67,7 @@ import (
 	"time"
 
 	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
-	"github.com/uber/submitqueue/platform/gitexec"
+	gitexec "github.com/uber/submitqueue/platform/git/exec"
 	"github.com/uber/submitqueue/submitqueue/client"
 	"golang.org/x/sync/errgroup"
 )

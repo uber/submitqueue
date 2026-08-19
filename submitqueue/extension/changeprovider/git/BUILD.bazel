@@ -32,7 +32,7 @@ go_test(
     },
     deps = [
         "//platform/base/change:go_default_library",
-        "//platform/gitexec/gitexectest:go_default_library",
+        "//platform/git/exectest:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/changeprovider:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",

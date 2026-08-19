@@ -32,7 +32,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/uber/submitqueue/platform/gitexec"
+	gitexec "github.com/uber/submitqueue/platform/git/exec"
 )
 
 // seedFile is committed so the target branch exists with something on it. A

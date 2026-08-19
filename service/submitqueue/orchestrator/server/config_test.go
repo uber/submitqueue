@@ -30,7 +30,7 @@ import (
 	"go.uber.org/zap/zaptest"
 
 	"github.com/uber/submitqueue/platform/base/change"
-	"github.com/uber/submitqueue/platform/gitexec/gitexectest"
+	gitexectest "github.com/uber/submitqueue/platform/git/exectest"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"

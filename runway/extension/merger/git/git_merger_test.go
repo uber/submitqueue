@@ -35,7 +35,7 @@ import (
 	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
-	"github.com/uber/submitqueue/platform/gitexec/gitexectest"
+	gitexectest "github.com/uber/submitqueue/platform/git/exectest"
 	"github.com/uber/submitqueue/runway/extension/merger"
 )
 
