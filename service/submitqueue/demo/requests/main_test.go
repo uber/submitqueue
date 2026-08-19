@@ -15,12 +15,18 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	"github.com/uber/submitqueue/submitqueue/client"
 )
 
 func TestChangeFilePath_IsUniquePerFileAcrossChangesAndRuns(t *testing.T) {
@@ -206,4 +212,62 @@ func TestShapeReportsConcurrency(t *testing.T) {
 		"one at a time is just sequential; saying so adds nothing")
 	assert.Contains(t, shape(config{count: 10, concurrency: 5, stacked: true}), "stacked",
 		"a stack is sequential whatever the limit says")
+	assert.Contains(t, shape(config{count: 10, concurrency: 5, land: true, burst: true}), "all enqueued at once")
+	assert.NotContains(t, shape(config{count: 10, concurrency: 5, burst: true, land: false}), "at once",
+		"burst is a landing decision; with nothing to land there is no burst")
+}
+
+// recordingSource counts how many changes have been created, so a test can
+// observe creation relative to enqueuing. It creates through fakeSource, so it
+// stands in for any provider — the two-phase orchestration under test is the
+// same whichever one is wired.
+type recordingSource struct {
+	created *int64
+}
+
+func (recordingSource) baseSHA(context.Context, string) (string, error) { return "base", nil }
+
+func (r recordingSource) open(ctx context.Context, spec changeSpec) (openedChange, error) {
+	atomic.AddInt64(r.created, 1)
+	return fakeSource{}.open(ctx, spec)
+}
+
+// landerFunc adapts a function to the lander interface.
+type landerFunc func(context.Context, string, []string, mergestrategypb.Strategy) (string, error)
+
+func (f landerFunc) Land(ctx context.Context, queue string, uris []string, s mergestrategypb.Strategy) (string, error) {
+	return f(ctx, queue, uris, s)
+}
+
+// TestCreateBurst_EnqueuesOnlyAfterEveryChangeIsCreated is the property -burst
+// exists for: no request reaches the queue until the last change has been
+// created, so they all arrive together. It is provider-independent — burst runs
+// every source through the same two phases.
+func TestCreateBurst_EnqueuesOnlyAfterEveryChangeIsCreated(t *testing.T) {
+	const count = 8
+	cfg := config{count: count, concurrency: 4, files: 3, folders: 3, land: true, burst: true, queue: "q", prefix: "demo"}
+
+	var created int64
+	src := recordingSource{created: &created}
+
+	var mu sync.Mutex
+	createdWhenLanded := make([]int64, 0, count)
+	lander := landerFunc(func(context.Context, string, []string, mergestrategypb.Strategy) (string, error) {
+		mu.Lock()
+		createdWhenLanded = append(createdWhenLanded, atomic.LoadInt64(&created))
+		mu.Unlock()
+		return "sqid", nil
+	})
+
+	tracker := client.NewTracker(client.NewRows(count))
+	got, err := createBurst(context.Background(), src, lander, cfg,
+		mergestrategypb.Strategy_SQUASH_REBASE, "run", "base", tracker)
+	require.NoError(t, err)
+	require.Len(t, got, count)
+
+	require.Len(t, createdWhenLanded, count, "every change is enqueued exactly once")
+	for _, seen := range createdWhenLanded {
+		assert.Equal(t, int64(count), seen,
+			"burst enqueues nothing until every change has been created")
+	}
 }

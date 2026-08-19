@@ -78,6 +78,9 @@ FOLDERS ?= 0
 FILES ?= 3
 CONCURRENCY ?= 5
 STACKED ?= false
+# BURST=true creates every change first, then enqueues them all at once instead
+# of as each is created. Independent changes only; a stack always lands as one.
+BURST ?= false
 SINCE ?= 1h
 LIMIT ?= 50
 LAND ?= true
@@ -240,7 +243,7 @@ clean-proto: ## Clean generated proto files
 	@rm -f $(foreach p,$(PROTO_PACKAGES),$(p)/protopb/*.pb.go $(p)/protopb/*.pb.yarpc.go)
 	@echo "Proto clean complete!"
 
-demo-requests: ## Create N changes, enqueue each as it is created, and watch (PROVIDER=fake|git|github COUNT=3 FOLDERS=0 FILES=3 CONCURRENCY=5)
+demo-requests: ## Create N changes, enqueue each as it is created, and watch (PROVIDER=fake|git|github COUNT=3 FOLDERS=0 FILES=3 CONCURRENCY=5 BURST=false)
 	@set -e; $(resolve_gateway_addr); $(resolve_provider); \
 	$(BAZEL) run //service/submitqueue/demo/requests -- \
 		-provider $$provider \
@@ -251,6 +254,7 @@ demo-requests: ## Create N changes, enqueue each as it is created, and watch (PR
 		-files $(FILES) \
 		-concurrency $(CONCURRENCY) \
 		-stacked=$(STACKED) \
+		-burst=$(BURST) \
 		-addr $$addr \
 		-queue $(QUEUE) \
 		-strategy $(STRATEGY) \
