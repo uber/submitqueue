@@ -12,21 +12,9 @@ A stack's changes are cut one from the next. Measuring every change against the 
 
 A change that shares no history with what it claims to land on is an error, not a change that touches nothing.
 
-## Its own copy
+## What this package is, and isn't
 
-Each service keeps its own copy of a queue's repository and configures its own remote for it, so this provider's copy is independent of anything a merger keeps. Where that copy fetches from is configuration: a bind-mounted bare repository and a remote host are the same code path, differing only in the URL.
-
-The copy is bare. Nothing here checks anything out — the provider answers questions about commits and never produces one — so there is no working tree to leave dirty and no index to corrupt.
-
-Git commands against one repository cannot safely interleave, so every provider sharing a copy shares its lock.
-
-Provisioning happens once, at wiring time, rather than on first use: resolving a provider happens per message on the validate path, so a copy created there would put a clone inside a retry loop and hide an unreachable remote behind queue processing instead of failing the service that owns the configuration.
-
-## Authentication
-
-The provider does not decide what a credential is. It takes an `Auth` implementation and calls it before each fetch; an integrator supplies one that reads an environment variable, calls a secrets manager, or mints a short-lived token, and only that implementation changes when the answer does. `Auth` is called per fetch rather than once so an expiring credential can be refreshed.
-
-A nil `Auth` means the remote needs none. That covers a local path, and an SSH remote served by the host's own SSH configuration and agent — the environment a fetch needs to reach a remote is passed through, while the configuration that could change what a diff says is not.
+This package is only the derivation: parse the URI, pick the baseline, read the diff and author, shape the result. Everything about *reaching* the repository — the local bare copy, fetching, merge bases, authentication, the git command environment — is transport plumbing that lives in [`platform/git/repo`](../../../../platform/git/repo) (built on [`platform/git/exec`](../../../../platform/git/exec)), which the merger and any other git caller share. The provider depends on a small `Repository` interface it defines, so it holds no `os/exec` and no credential handling of its own.
 
 ## Tests
 

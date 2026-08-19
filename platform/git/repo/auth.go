@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package git
+package gitrepo
 
 import "context"
 
 // Auth prepares a local repository to authenticate to its remote.
 //
-// This provider never decides what a credential is, where it comes from, or how
+// This package never decides what a credential is, where it comes from, or how
 // long it lives. An integrator wires an implementation in — reading an
 // environment variable, calling a secrets manager, minting a short-lived token —
 // and only that implementation changes when the answer does.

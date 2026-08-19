@@ -22,7 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	gitprovider "github.com/uber/submitqueue/submitqueue/extension/changeprovider/git"
+	gitrepo "github.com/uber/submitqueue/platform/git/repo"
 )
 
 // credentialFile holds the git configuration fragment carrying a token. It is
@@ -31,11 +31,11 @@ import (
 // and from there into logs and dead-letter payloads.
 const credentialFile = "submitqueue-changeprovider-credentials.config"
 
-// tokenAuth is the default gitprovider.Auth: a credential read from an
+// tokenAuth is the default gitrepo.Auth: a credential read from an
 // environment variable and presented to git as an HTTP header.
 //
-// It is deliberately here rather than in the extension. The extension takes an
-// Auth and calls it; what a credential is and where it comes from is a
+// It is deliberately here in the wiring rather than in gitrepo. gitrepo takes
+// an Auth and calls it; what a credential is and where it comes from is a
 // deployment's business, so a deployment that mints short-lived tokens or
 // reads a secrets manager supplies its own implementation instead of this one
 // and changes nothing else.
@@ -73,7 +73,7 @@ func (a tokenAuth) Apply(ctx context.Context, repoPath, remoteURL string) error 
 
 	// include.path resolves relative to the config file holding it, so the bare
 	// filename lands beside it. A bare repository's config is at its root.
-	return gitprovider.SetConfig(ctx, repoPath, "include.path", credentialFile)
+	return gitrepo.SetConfig(ctx, repoPath, "include.path", credentialFile)
 }
 
 func isHTTPRemote(remoteURL string) bool {
@@ -87,13 +87,13 @@ func isHTTPRemote(remoteURL string) bool {
 // provider is resolved once per message on the validate path, so a clone
 // started there would sit inside a retry loop and report an unreachable remote
 // as a queue processing failure instead of a service that is misconfigured.
-func newChangeRepo(ctx context.Context, cfg gitProviderConfig) (*gitprovider.Repo, error) {
-	var auth gitprovider.Auth
+func newChangeRepo(ctx context.Context, cfg gitProviderConfig) (*gitrepo.Repo, error) {
+	var auth gitrepo.Auth
 	if cfg.TokenEnv != "" {
 		auth = tokenAuth{tokenEnv: cfg.TokenEnv, tokenUser: cfg.TokenUser}
 	}
 
-	repo, err := gitprovider.NewRepo(gitprovider.RepoConfig{
+	repo, err := gitrepo.NewRepo(gitrepo.RepoConfig{
 		Path:      cfg.RepoPath,
 		RemoteURL: cfg.RemoteURL,
 		Remote:    cfg.Remote,
