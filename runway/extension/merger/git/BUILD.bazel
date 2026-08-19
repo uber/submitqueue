@@ -17,6 +17,7 @@ go_library(
         "//api/runway/messagequeue/protopb:go_default_library",
         "//platform/base/change/git:go_default_library",
         "//platform/base/change/github:go_default_library",
+        "//platform/git/exec:go_default_library",
         "//platform/metrics:go_default_library",
         "//runway/extension/merger:go_default_library",
         "@com_github_uber_go_tally//:go_default_library",

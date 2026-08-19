@@ -77,7 +77,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -89,6 +88,7 @@ import (
 	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
+	gitexec "github.com/uber/submitqueue/platform/git/exec"
 	coremetrics "github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/runway/extension/merger"
 )
@@ -1094,74 +1094,23 @@ func newGitCommand(ctx context.Context, runtime GitRuntime, dir string, args ...
 
 	cmd := exec.CommandContext(ctx, runtime.Executable, gitArgs...)
 	cmd.Dir = dir
-	cmd.Env = []string{
-		"HOME=" + filepath.Join(dir, ".submitqueue-git-home"),
-		"XDG_CONFIG_HOME=" + filepath.Join(dir, ".submitqueue-git-home", "xdg"),
-		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_CONFIG_GLOBAL=" + os.DevNull,
-		"GIT_ATTR_NOSYSTEM=1",
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_PAGER=cat",
-		"GIT_EDITOR=:",
-		"GIT_EXEC_PATH=" + runtime.ExecPath,
-		"GIT_TEMPLATE_DIR=" + runtime.TemplateDir,
-		"LC_ALL=C",
-		"LANG=C",
-	}
-	cmd.Env = append(cmd.Env, passthroughEnv(runtime.PassthroughEnv)...)
+	// HOME and XDG_CONFIG_HOME are isolated to the checkout rather than inherited,
+	// so the runtime's literals — appended last — override any HOME a deployment
+	// passed through. The remaining literals pin git's runtime; the scrub set and
+	// transport variables come from the shared composer.
+	cmd.Env = gitexec.Env(gitexec.EnvOptions{
+		Transport:   true,
+		Passthrough: runtime.PassthroughEnv,
+		Literal: []string{
+			"HOME=" + filepath.Join(dir, ".submitqueue-git-home"),
+			"XDG_CONFIG_HOME=" + filepath.Join(dir, ".submitqueue-git-home", "xdg"),
+			"GIT_EXEC_PATH=" + runtime.ExecPath,
+			"GIT_TEMPLATE_DIR=" + runtime.TemplateDir,
+			"LC_ALL=C",
+			"LANG=C",
+		},
+	})
 	return cmd
-}
-
-// authEnvNames are the variables inherited from the parent process when set.
-//
-// Scrubbing the environment is about denying git ambient *configuration* that
-// could change what a merge produces. Reaching the remote is a separate
-// concern, and these carry it: an SSH remote authenticates through the agent
-// socket, git locates its ssh and credential helpers through PATH, and TLS and
-// proxy settings decide whether an HTTPS remote is reachable at all. Dropping
-// them does not make the merge more hermetic, it just makes fetch and push
-// fail — and at Uber, where a uSSH certificate lives in the agent, it fails as
-// an opaque authentication error rather than an obviously missing variable.
-//
-// None of these can influence merge semantics, which is what keeps them
-// compatible with the scrubbing above.
-var authEnvNames = []string{
-	"SSH_AUTH_SOCK",
-	"SSH_AGENT_PID",
-	"PATH",
-	"GIT_SSH",
-	"GIT_SSH_COMMAND",
-	"GIT_SSH_VARIANT",
-	"GIT_SSL_CAINFO",
-	"GIT_SSL_CAPATH",
-	"SSL_CERT_DIR",
-	"SSL_CERT_FILE",
-	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
-	"http_proxy", "https_proxy", "no_proxy",
-}
-
-// passthroughEnv returns "NAME=value" entries for the auth and transport
-// variables that are actually set, plus any extra names the deployment asked
-// for. An unset variable is omitted rather than exported empty, which for
-// SSH_AUTH_SOCK is the difference between "use the agent" and "there is no
-// agent".
-func passthroughEnv(extra []string) []string {
-	names := make([]string, 0, len(authEnvNames)+len(extra))
-	names = append(names, authEnvNames...)
-	names = append(names, extra...)
-
-	seen := make(map[string]bool, len(names))
-	env := make([]string, 0, len(names))
-	for _, name := range names {
-		if name == "" || seen[name] {
-			continue
-		}
-		seen[name] = true
-		if v, ok := os.LookupEnv(name); ok {
-			env = append(env, name+"="+v)
-		}
-	}
-	return env
 }
 
 // isConcreteStrategy reports whether s names a concrete integration strategy
