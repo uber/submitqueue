@@ -282,15 +282,15 @@ func run() error {
 	// Each factory is constructed once and threaded through every consumer of
 	// it, so a real (stateful) backend introduced later is shared rather than
 	// silently duplicated across controllers.
-	sourceControls := fakeSourceControlFactory{}
+	sourceControl := fakeSourceControlFactory{}
 	brf := fakeBuildRunnerFactory{}
 
 	storageFty := storageFactory{backend: store}
-	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, registry, sourceControls, brf)
+	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, registry, sourceControl, brf)
 	if err != nil {
 		return err
 	}
-	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, storageFty, registry, sourceControls)
+	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, storageFty, registry, sourceControl)
 	if err != nil {
 		return err
 	}
@@ -318,7 +318,7 @@ func run() error {
 		logger.Sugar(),
 		scope,
 		newInMemoryCounterFactory(),
-		sourceControls,
+		sourceControl,
 		storageFty,
 		registry,
 	)
@@ -398,7 +398,7 @@ func registerPrimaryControllers(
 	scope tally.Scope,
 	store storage.Factory,
 	registry consumer.TopicRegistry,
-	sourceControls sourcecontrol.Factory,
+	sourceControl sourcecontrol.Factory,
 	brf buildrunner.Factory,
 ) (int, error) {
 	var count int
@@ -408,7 +408,7 @@ func registerPrimaryControllers(
 		scope,
 		store,
 		queueconfigdefault.NewStore(),
-		sourceControls,
+		sourceControl,
 		registry,
 		stovepipemq.TopicKeyProcess,
 		"stovepipe-process",
@@ -430,7 +430,7 @@ func registerPrimaryControllers(
 	}
 	count++
 
-	recordController := record.NewController(logger, scope, store, sourceControls, stovepipemq.TopicKeyRecord, "stovepipe-record")
+	recordController := record.NewController(logger, scope, store, sourceControl, stovepipemq.TopicKeyRecord, "stovepipe-record")
 	if err := c.Register(recordController); err != nil {
 		return count, fmt.Errorf("failed to register record controller: %w", err)
 	}
@@ -447,7 +447,7 @@ func registerDLQControllers(
 	scope tally.Scope,
 	store storage.Factory,
 	registry consumer.TopicRegistry,
-	sourceControls sourcecontrol.Factory,
+	sourceControl sourcecontrol.Factory,
 ) (int, error) {
 	var count int
 
@@ -469,7 +469,7 @@ func registerDLQControllers(
 	}
 	count++
 
-	recordDLQController := record.NewController(logger, scope, store, sourceControls, dlq.TopicKey(stovepipemq.TopicKeyRecord), "stovepipe-record-dlq")
+	recordDLQController := record.NewController(logger, scope, store, sourceControl, dlq.TopicKey(stovepipemq.TopicKeyRecord), "stovepipe-record-dlq")
 	if err := c.Register(recordDLQController); err != nil {
 		return count, fmt.Errorf("failed to register record dlq controller: %w", err)
 	}
