@@ -48,7 +48,7 @@ type staticStorageFactory struct{ store storage.Storage }
 // For returns the fixed store aggregate for any queue.
 func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { return f.store, nil }
 
-func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, dlqMocks) {
+func newController(t *testing.T, ctrl *gomock.Controller) (consumer.Controller, dlqMocks) {
 	t.Helper()
 
 	m := dlqMocks{
@@ -60,7 +60,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, dlqMocks
 	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
 	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 
-	c := NewController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), staticStorageFactory{store: store}, TopicKey(stovepipemq.TopicKeyProcess), "stovepipe-process-dlq")
+	c := NewDLQRequestController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), staticStorageFactory{store: store}, TopicKey(stovepipemq.TopicKeyProcess), "stovepipe-process-dlq")
 	return c, m
 }
 

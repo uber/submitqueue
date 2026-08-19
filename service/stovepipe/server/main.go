@@ -450,7 +450,7 @@ func registerDLQControllers(
 ) (int, error) {
 	var count int
 
-	processDLQController := dlq.NewController(logger, scope, store, dlq.TopicKey(stovepipemq.TopicKeyProcess), "stovepipe-process-dlq")
+	processDLQController := dlq.NewDLQRequestController(logger, scope, store, dlq.TopicKey(stovepipemq.TopicKeyProcess), "stovepipe-process-dlq")
 	if err := c.Register(processDLQController); err != nil {
 		return count, fmt.Errorf("failed to register process dlq controller: %w", err)
 	}
@@ -462,7 +462,7 @@ func registerDLQControllers(
 	}
 	count++
 
-	buildSignalDLQController := dlq.NewBuildSignalController(logger, scope, store, dlq.TopicKey(stovepipemq.TopicKeyBuildSignal), "stovepipe-buildsignal-dlq")
+	buildSignalDLQController := dlq.NewDLQBuildSignalController(logger, scope, store, dlq.TopicKey(stovepipemq.TopicKeyBuildSignal), "stovepipe-buildsignal-dlq")
 	if err := c.Register(buildSignalDLQController); err != nil {
 		return count, fmt.Errorf("failed to register buildsignal dlq controller: %w", err)
 	}
