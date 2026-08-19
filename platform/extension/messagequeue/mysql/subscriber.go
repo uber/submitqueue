@@ -49,12 +49,6 @@ const (
 	// so it converges over multiple calls even with large backlogs.
 	watermarkAdvancementLimit = 1000
 
-	// gcIdleTickInterval controls how often GC runs during idle poll ticks.
-	// GC runs every Nth idle tick instead of every tick to avoid excessive
-	// queries when many partitions are idle (e.g., 50 idle partitions at 100ms
-	// poll interval = 500 GC queries/sec without throttling).
-	gcIdleTickInterval = 100
-
 	// heartbeatPurgeAfterLeaseDurations sets the age threshold for purging
 	// abandoned heartbeat rows, as a multiple of LeaseDurationMs (10x = 5min
 	// at defaults). Well past every transient window in the protocol — a row
@@ -80,6 +74,13 @@ const (
 	// refresh or remove) a stale lease on a partition with no messages.
 	leasePurgeAfterLeaseDurations = 10
 )
+
+// gcTickInterval is the number of poll ticks between garbage collection runs.
+// GC runs every Nth tick regardless of delivery activity; without throttling,
+// many partitions polling in lockstep would flood the store with queries
+// (e.g., 50 partitions at 100ms poll interval = 500 GC queries/sec). A var so
+// tests can shorten it; production always uses the default.
+var gcTickInterval = 100
 
 // HookSignal identifies the type of subscriber lifecycle event.
 // Named after behavioral concerns (what happened) rather than implementation
@@ -167,8 +168,7 @@ type partitionWorker struct {
 	// partition. Set once on the first successful poll, avoiding repeated
 	// initialization calls on every tick.
 	offsetInitialized bool
-	// gcCounter counts idle poll ticks. GC only runs every gcIdleTickInterval
-	// ticks to avoid excessive queries when many partitions are idle.
+	// gcCounter counts poll ticks since the last garbage collection run.
 	gcCounter int
 }
 
@@ -1200,17 +1200,14 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) (retErr error) {
 		)
 	}
 
-	// Run GC periodically (throttled to every Nth idle tick)
-	if messageCount == 0 {
-		w.gcCounter++
-		if w.gcCounter >= gcIdleTickInterval {
-			w.gcCounter = 0
-			if err := w.garbageCollect(ctx); err != nil {
-				return fmt.Errorf("garbage collect: %w", err)
-			}
-		}
-	} else {
+	// GC runs every Nth tick regardless of delivery activity; an idle-only
+	// gate starved continuously busy partitions of garbage collection.
+	w.gcCounter++
+	if w.gcCounter >= gcTickInterval {
 		w.gcCounter = 0
+		if err := w.garbageCollect(ctx); err != nil {
+			return fmt.Errorf("garbage collect: %w", err)
+		}
 	}
 
 	// Record poll metrics
