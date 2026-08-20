@@ -10,13 +10,13 @@ Two requirements: side effects must never stall or fail the pipeline, and "fire 
 
 ## Proposal
 
-When a controller performs a transition, it also publishes a **hook event** to a durable `hook` topic. A thin per-domain dispatcher stage consumes it and hands each event to the **hooks** the host wired — no-op by default, real integrations as they arrive.
+When a controller performs a transition, it also publishes a **hook event** to a durable `hook` topic. A thin per-domain hook stage consumes it, asks the host's **hooks resolver** which integrations that event belongs to, and runs them — none by default, real integrations as they arrive.
 
 ```
-pipeline controller                              dispatcher stage (per domain)
-state write → hook publish → downstream ──▶ [hook topic] ──▶ decode → validate → hook.Handle
-                                                 │                         ├─ noop (default)
-                                                 │ retries exhausted       └─ composite ─▶ warehouse, code host, …
+pipeline controller                              hook stage (per domain)
+state write → hook publish → downstream ──▶ [hook topic] ──▶ decode → validate → Hooks.For(event)
+                                                 │                                   └─▶ warehouse, code host, …
+                                                 │ retries exhausted
                                                  ▼
                                              [hook_dlq] ──▶ log full event + page; manual republish
 ```
@@ -58,12 +58,13 @@ Delivery promise:
 
 ### Hooks and dispatch
 
-- Extension at `platform/extension/hook/`, singleton shape (counter precedent), wired once per host; no per-queue factory.
+- Extension at `platform/extension/hook/`: the `Hook` contract plus a `Hooks` resolver the host builds in wiring. No `Config` and no `Factory` — selection is the resolver's, and only wiring knows the queue topology.
 - Hook contract: at-least-once, idempotent by `id`, plain errors, never writes pipeline state; ignore an event by returning nil (no filter API).
-- Ships `noop` (default) and `composite` (runs all children, joins failures, names failing children). A cross-domain sink is the same impl wired into each domain.
-- Dispatcher: decode, validate (`id`/`source`/`type` non-empty), invoke. Malformed events dead-letter, never silently acked; hook errors retry then dead-letter, with errs classifiers fast-pathing permanent failures.
+- `Hooks.For(event)` keys on the event, not a queue name: the envelope carries no queue, and which scope selects hooks (queue, source, type) differs per domain. Resolving to none is ordinary. Ships `noop` for a host that wants an explicit placeholder. A cross-domain sink is the same impl wired into each domain.
+- Controller (`platform/hook`, wired by each service): decode, validate (`id`/`source`/`type` non-empty), resolve, invoke all. Malformed events dead-letter, never silently acked; hook errors retry then dead-letter, with errs classifiers fast-pathing permanent failures.
+- Mixed outcomes: every resolved hook runs even after one fails, and the failures are attributed and joined. `errs` weighs each branch of a joined error, so a transient failure alongside a permanent one still retries.
 - DLQ reconciler: log the full event with its failure attribution, page (new metric — the log DLQ only warns), then ack. Manual republish recovers; pipeline state is never touched.
-- Per-hook retry isolation later: consumer groups on the same `hook` topic key, once the registry supports multiple groups per key and rejection becomes group-local (today it moves the shared row). Until then the composite's shared budget is accepted.
+- Per-hook retry isolation later: consumer groups on the same `hook` topic key, once the registry supports multiple groups per key and rejection becomes group-local (today it moves the shared row). Until then one shared budget for all of an event's hooks is accepted.
 
 ## Example
 
