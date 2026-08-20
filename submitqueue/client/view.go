@@ -272,7 +272,11 @@ func summarize(rows []*Row) error {
 	var failed []string
 	for _, rw := range rows {
 		if rw.Status != string(entity.RequestStatusLanded) {
-			failed = append(failed, fmt.Sprintf("%s=%s", rw.SQID, rw.Status))
+			entry := fmt.Sprintf("%s=%s", rw.SQID, rw.Status)
+			if rw.Note != "" {
+				entry += ": " + rw.Note
+			}
+			failed = append(failed, entry)
 		}
 	}
 	if len(failed) > 0 {

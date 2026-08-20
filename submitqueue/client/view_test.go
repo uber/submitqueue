@@ -504,6 +504,12 @@ func TestOutcome(t *testing.T) {
 func TestSummarize(t *testing.T) {
 	assert.NoError(t, summarize([]*Row{{SQID: "q/1", Status: "landed"}}))
 	assert.Error(t, summarize([]*Row{{SQID: "q/1", Status: "landed"}, {SQID: "q/2", Status: "error"}}))
+
+	// A failure reason, when the request carries one, is part of the summary so a
+	// scripted run reports why rather than only that.
+	err := summarize([]*Row{{SQID: "q/2", Status: "error", Note: "merge failed: conflict in foo.go"}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "q/2=error: merge failed: conflict in foo.go")
 }
 
 // TestRowLineAlignment is the column contract: on every row the stage begins at

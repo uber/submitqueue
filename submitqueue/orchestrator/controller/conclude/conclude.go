@@ -22,6 +22,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	corerequest "github.com/uber/submitqueue/submitqueue/core/request"
+	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
@@ -123,8 +124,11 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// the batch but missing from the store is a hard error — the whole batch is
 	// retried (and eventually dead-lettered) rather than silently skipped. We
 	// translate the result into per-outcome logs and metrics.
+	// The failure reason rides the conclude message, not the batch: the failing
+	// stage stamps it here and it is empty on the landed and cancelled paths.
+	failureReason := msg.Metadata[topickey.MetadataKeyFailureReason]
 	for _, requestID := range batch.Contains {
-		res, err := corerequest.TerminateRequest(ctx, store, c.registry, requestID, requestState, "", map[string]string{
+		res, err := corerequest.TerminateRequest(ctx, store, c.registry, requestID, requestState, failureReason, map[string]string{
 			"batch_id": batch.ID,
 		})
 		if err != nil {
