@@ -14,7 +14,7 @@ import (
 	reflect "reflect"
 
 	entity "github.com/uber/submitqueue/submitqueue/entity"
-	scorer "github.com/uber/submitqueue/submitqueue/extension/scorer"
+	scorer "github.com/uber/submitqueue/submitqueue/extension/speculation/scorer"
 	gomock "go.uber.org/mock/gomock"
 )
 
