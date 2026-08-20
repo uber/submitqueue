@@ -28,6 +28,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/allocator/sticky"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/generator/bestfirst"
 	generatormock "github.com/uber/submitqueue/submitqueue/extension/speculation/generator/mock"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/predictor"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
 )
 
@@ -44,10 +45,13 @@ func assumptionFor(p entity.SpeculationPath, dep string) entity.DependencyAssump
 	return entity.DependencyAssumptionUnknown
 }
 
-// constScorer is a minimal scorer.Scorer that scores every batch identically.
-type constScorer struct{ v float64 }
+// constPredictor is a minimal predictor.Predictor that prices every
+// batch identically.
+type constPredictor struct{ v float64 }
 
-func (c constScorer) Score(context.Context, entity.Batch) (float64, error) { return c.v, nil }
+func (c constPredictor) Predict(context.Context, entity.Batch, entity.SpeculationPathSet) (predictor.Probability, error) {
+	return predictor.Probability(c.v), nil
+}
 
 func TestComposed_EndToEnd_NaivePair(t *testing.T) {
 	batches := []entity.Batch{
@@ -56,7 +60,7 @@ func TestComposed_EndToEnd_NaivePair(t *testing.T) {
 	}
 
 	// bestfirst generator + sticky allocator with a 2-build budget.
-	spec := New(testCfg, bestfirst.New(constScorer{0.9}), sticky.New(2))
+	spec := New(testCfg, bestfirst.New(constPredictor{0.9}), sticky.New(2))
 	got, err := spec.Speculate(context.Background(), batches, nil)
 	require.NoError(t, err)
 
@@ -89,7 +93,7 @@ func TestComposed_WiresGeneratorIntoAllocator(t *testing.T) {
 	gen := generatormock.NewMockGenerator(ctrl)
 	alloc := allocatormock.NewMockAllocator(ctrl)
 
-	gen.EXPECT().Generate(gomock.Any(), batches).Return(iter, nil)
+	gen.EXPECT().Generate(gomock.Any(), batches, gomock.Any()).Return(iter, nil)
 	alloc.EXPECT().Allocate(gomock.Any(), pathSets, iter).Return(want, nil)
 
 	got, err := New(testCfg, gen, alloc).Speculate(context.Background(), batches, pathSets)
@@ -104,7 +108,7 @@ func TestComposed_PropagatesGeneratorError(t *testing.T) {
 	gen := generatormock.NewMockGenerator(ctrl)
 	alloc := allocatormock.NewMockAllocator(ctrl)
 
-	gen.EXPECT().Generate(gomock.Any(), gomock.Any()).Return(nil, errGenerate)
+	gen.EXPECT().Generate(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errGenerate)
 	// Allocate must not be called when Generate fails (no alloc.EXPECT()).
 
 	_, err := New(testCfg, gen, alloc).Speculate(context.Background(), nil, nil)
@@ -122,7 +126,7 @@ func TestComposed_PropagatesContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	spec := New(testCfg, bestfirst.New(constScorer{0.9}), sticky.New(2))
+	spec := New(testCfg, bestfirst.New(constPredictor{0.9}), sticky.New(2))
 	got, err := spec.Speculate(ctx, batches, nil)
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Nil(t, got)
