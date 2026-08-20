@@ -43,18 +43,18 @@ func (m *MockGenerator) EXPECT() *MockGeneratorMockRecorder {
 }
 
 // Generate mocks base method.
-func (m *MockGenerator) Generate(ctx context.Context, batches []entity.Batch) (generator.Iterator, error) {
+func (m *MockGenerator) Generate(ctx context.Context, batches []entity.Batch, pathSets []entity.SpeculationPathSet) (generator.Iterator, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Generate", ctx, batches)
+	ret := m.ctrl.Call(m, "Generate", ctx, batches, pathSets)
 	ret0, _ := ret[0].(generator.Iterator)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Generate indicates an expected call of Generate.
-func (mr *MockGeneratorMockRecorder) Generate(ctx, batches any) *gomock.Call {
+func (mr *MockGeneratorMockRecorder) Generate(ctx, batches, pathSets any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Generate", reflect.TypeOf((*MockGenerator)(nil).Generate), ctx, batches)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Generate", reflect.TypeOf((*MockGenerator)(nil).Generate), ctx, batches, pathSets)
 }
 
 // MockIterator is a mock of Iterator interface.
