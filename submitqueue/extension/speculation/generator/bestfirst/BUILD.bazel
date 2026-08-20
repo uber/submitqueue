@@ -7,8 +7,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//submitqueue/entity:go_default_library",
-        "//submitqueue/extension/scorer:go_default_library",
         "//submitqueue/extension/speculation/generator:go_default_library",
+        "//submitqueue/extension/speculation/scorer:go_default_library",
     ],
 )
 
@@ -18,8 +18,8 @@ go_test(
     embed = [":go_default_library"],
     deps = [
         "//submitqueue/entity:go_default_library",
-        "//submitqueue/extension/scorer:go_default_library",
         "//submitqueue/extension/speculation/generator:go_default_library",
+        "//submitqueue/extension/speculation/scorer:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
     ],

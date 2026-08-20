@@ -3,13 +3,13 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "go_default_library",
     srcs = ["fake.go"],
-    importpath = "github.com/uber/submitqueue/submitqueue/extension/scorer/fake",
+    importpath = "github.com/uber/submitqueue/submitqueue/extension/speculation/scorer/fake",
     visibility = ["//visibility:public"],
     deps = [
         "//platform/fakemarker:go_default_library",
         "//submitqueue/core/changeset:go_default_library",
         "//submitqueue/entity:go_default_library",
-        "//submitqueue/extension/scorer:go_default_library",
+        "//submitqueue/extension/speculation/scorer:go_default_library",
     ],
 )
 
@@ -21,8 +21,8 @@ go_test(
         "//submitqueue/core/changeset:go_default_library",
         "//submitqueue/core/changeset/fake:go_default_library",
         "//submitqueue/entity:go_default_library",
-        "//submitqueue/extension/scorer:go_default_library",
-        "//submitqueue/extension/scorer/heuristic:go_default_library",
+        "//submitqueue/extension/speculation/scorer:go_default_library",
+        "//submitqueue/extension/speculation/scorer/heuristic:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
         "@com_github_uber_go_tally//:go_default_library",

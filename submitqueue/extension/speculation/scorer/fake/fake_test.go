@@ -24,8 +24,8 @@ import (
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	changesetfake "github.com/uber/submitqueue/submitqueue/core/changeset/fake"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/scorer"
-	"github.com/uber/submitqueue/submitqueue/extension/scorer/heuristic"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer/heuristic"
 )
 
 // testCfg is the per-queue identity used by every case in this file.
