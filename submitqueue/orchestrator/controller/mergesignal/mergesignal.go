@@ -122,6 +122,18 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return nil
 	}
 
+	// A merge failure's reason travels to conclude on the fan-out message, not on
+	// the batch, so it reaches the request's terminal log without becoming durable
+	// batch state. Empty on the merged path. Computed before the idempotency check
+	// so a redelivered failed batch re-fans-out with its reason intact.
+	var failureReason string
+	if result.Outcome != runwaypb.Outcome_SUCCEEDED {
+		failureReason = result.Reason
+		if failureReason == "" {
+			failureReason = "merge failed"
+		}
+	}
+
 	// Idempotency: a previous delivery already transitioned this batch to a
 	// terminal state. Repair the membership record (a prior attempt may have
 	// CAS'd without completing the record move), re-fan-out in case that
@@ -132,7 +144,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			metrics.NamedCounter(c.metricsScope, opName, "state_update_errors", 1)
 			return err
 		}
-		return c.fanout(ctx, batch.ID, batch.Queue)
+		return c.fanout(ctx, batch.ID, batch.Queue, failureReason)
 	}
 
 	var newState entity.BatchState
@@ -157,7 +169,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return err
 	}
 
-	return c.fanout(ctx, batch.ID, batch.Queue)
+	return c.fanout(ctx, batch.ID, batch.Queue, failureReason)
 }
 
 // fanout publishes the batch ID to conclude (so requests are updated) and to
@@ -170,12 +182,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 // scoped the same way because speculate publishes there too when a batch goes
 // terminal on its own; the two mean the same thing but are decided at
 // different moments, so neither may swallow the other.
-func (c *Controller) fanout(ctx context.Context, batchID, queue string) error {
-	if err := c.publish(ctx, topickey.TopicKeyConclude, publish.IntentID(batchID, "conclude", "merged"), batchID, queue); err != nil {
+func (c *Controller) fanout(ctx context.Context, batchID, queue, failureReason string) error {
+	var concludeMeta map[string]string
+	if failureReason != "" {
+		concludeMeta = map[string]string{topickey.MetadataKeyFailureReason: failureReason}
+	}
+	if err := c.publish(ctx, topickey.TopicKeyConclude, publish.IntentID(batchID, "conclude", "merged"), batchID, queue, concludeMeta); err != nil {
 		metrics.NamedCounter(c.metricsScope, "process", "publish_conclude_errors", 1)
 		return fmt.Errorf("failed to publish to conclude: %w", err)
 	}
-	if err := c.publish(ctx, topickey.TopicKeySpeculate, publish.IntentID(batchID, "merged"), batchID, queue); err != nil {
+	if err := c.publish(ctx, topickey.TopicKeySpeculate, publish.IntentID(batchID, "merged"), batchID, queue, nil); err != nil {
 		metrics.NamedCounter(c.metricsScope, "process", "publish_speculate_errors", 1)
 		return fmt.Errorf("failed to publish to speculate: %w", err)
 	}
@@ -183,14 +199,15 @@ func (c *Controller) fanout(ctx context.Context, batchID, queue string) error {
 }
 
 // publish publishes a batch ID to the given topic key under msgID, stamped
-// with and partitioned by the batch's queue.
-func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, msgID, batchID, queue string) error {
+// with and partitioned by the batch's queue. metadata rides the message as
+// side-band headers (nil for none).
+func (c *Controller) publish(ctx context.Context, key consumer.TopicKey, msgID, batchID, queue string, metadata map[string]string) error {
 	payload, err := entity.BatchID{ID: batchID, Queue: queue}.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
 
-	if err := publish.Message(ctx, c.registry, key, msgID, payload, queue); err != nil {
+	if err := publish.MessageWithMetadata(ctx, c.registry, key, msgID, payload, queue, metadata); err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 

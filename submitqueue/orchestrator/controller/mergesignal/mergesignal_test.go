@@ -218,21 +218,41 @@ func TestProcess_NotMergedMarksBatchFailed(t *testing.T) {
 		Version:      3,
 	}
 	batchStore.EXPECT().Get(gomock.Any(), testBatchID).Return(batch, nil)
+	// The failed transition records only the terminal state; the reason travels
+	// to conclude on the message, not on the batch.
 	batchStore.EXPECT().Update(gomock.Any(), batchWithState(batch, entity.BatchStateFailed), int32(3), int32(4)).Return(nil)
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetQueueBatchStateStore().Return(newQueueBatchStateStore(ctrl)).AnyTimes()
 	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
 
-	var got []string
-	c := newController(t, store, recordingRegistry(t, ctrl, &got))
+	byTopic := map[string]entityqueue.Message{}
+	pub := queuemock.NewMockPublisher(ctrl)
+	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, topic string, msg entityqueue.Message) error {
+			byTopic[topic] = msg
+			return nil
+		},
+	).AnyTimes()
+	q := queuemock.NewMockQueue(ctrl)
+	q.EXPECT().Publisher().Return(pub).AnyTimes()
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: q},
+		{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: q},
+	})
+	require.NoError(t, err)
 
 	res := runwaymq.MergeResult{Id: testBatchID, Outcome: runwaypb.Outcome_FAILED, Reason: "conflict in foo.go"}
 	msg := entityqueue.NewMessage(testBatchID, resultPayload(t, res), testQueue, nil)
 	// Not-merged is an expected terminal outcome, so Process acks (no error).
-	require.NoError(t, c.Process(context.Background(), newDelivery(ctrl, msg)))
+	require.NoError(t, newController(t, store, registry).Process(context.Background(), newDelivery(ctrl, msg)))
 
-	assert.ElementsMatch(t, []string{"conclude", "speculate"}, got)
+	require.Contains(t, byTopic, "conclude")
+	require.Contains(t, byTopic, "speculate")
+	// The merge reason rides the conclude message so conclude can stamp it on
+	// the request's terminal log; the speculate wake-up carries none.
+	assert.Equal(t, "conflict in foo.go", byTopic["conclude"].Metadata[topickey.MetadataKeyFailureReason])
+	assert.Empty(t, byTopic["speculate"].Metadata[topickey.MetadataKeyFailureReason])
 }
 
 func TestProcess_CancellingShortCircuit(t *testing.T) {
