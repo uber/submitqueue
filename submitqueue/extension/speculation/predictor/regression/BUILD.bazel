@@ -2,25 +2,28 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "go_default_library",
-    srcs = ["bestfirst.go"],
-    importpath = "github.com/uber/submitqueue/submitqueue/extension/speculation/generator/bestfirst",
+    srcs = ["regression.go"],
+    importpath = "github.com/uber/submitqueue/submitqueue/extension/speculation/predictor/regression",
     visibility = ["//visibility:public"],
     deps = [
+        "//platform/metrics:go_default_library",
         "//submitqueue/entity:go_default_library",
-        "//submitqueue/extension/speculation/generator:go_default_library",
         "//submitqueue/extension/speculation/predictor:go_default_library",
+        "//submitqueue/extension/speculation/scorer:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
     ],
 )
 
 go_test(
     name = "go_default_test",
-    srcs = ["bestfirst_test.go"],
+    srcs = ["regression_test.go"],
     embed = [":go_default_library"],
     deps = [
         "//submitqueue/entity:go_default_library",
-        "//submitqueue/extension/speculation/generator:go_default_library",
         "//submitqueue/extension/speculation/predictor:go_default_library",
+        "//submitqueue/extension/speculation/scorer:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
     ],
 )
