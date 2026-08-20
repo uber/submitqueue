@@ -38,7 +38,7 @@ type buildSignalDLQMocks struct {
 	buildStore *storagemock.MockBuildStore
 }
 
-func newBuildSignalController(t *testing.T, ctrl *gomock.Controller) (*BuildSignalController, buildSignalDLQMocks) {
+func newBuildSignalController(t *testing.T, ctrl *gomock.Controller) (consumer.Controller, buildSignalDLQMocks) {
 	t.Helper()
 
 	m := buildSignalDLQMocks{
@@ -52,7 +52,7 @@ func newBuildSignalController(t *testing.T, ctrl *gomock.Controller) (*BuildSign
 	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 	store.EXPECT().GetBuildStore().Return(m.buildStore).AnyTimes()
 
-	c := NewBuildSignalController(
+	c := NewDLQBuildSignalController(
 		zap.NewNop().Sugar(),
 		tally.NewTestScope("test", nil),
 		staticStorageFactory{store: store},
