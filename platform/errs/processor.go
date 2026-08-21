@@ -50,10 +50,9 @@ type ErrorProcessor interface {
 // Semantics of Process on the returned processor:
 //
 //   - nil in, nil out.
-//   - If err's chain already carries a framework classification (*userError
-//     or *infraError anywhere in the chain), returns err unchanged — the chain
-//     is already interpretable by IsUserError / IsRetryable /
-//     IsDependencyError.
+//   - If err carries a framework classification (*userError or *infraError) on
+//     its single-cause spine, returns err unchanged — the chain is already
+//     interpretable by IsUserError / IsRetryable / IsDependencyError.
 //   - Otherwise, walks the chain from outermost to innermost, asking each
 //     classifier per node. The FIRST non-Unknown verdict wins; the outermost
 //     such node determines the wrap. err is wrapped with the framework
@@ -61,15 +60,20 @@ type ErrorProcessor interface {
 //     -> NewRetryableError, etc.) and the wrapped error is returned.
 //   - Verdict Infra means "non-retryable infra" — which is already the default
 //     behavior for an unwrapped chain, so no wrap is added.
-//   - If no classifier recognises anything, err is returned unchanged.
+//   - If no classifier recognizes anything, err is returned unchanged.
 //
-// Implementation: two passes over the chain. Pass 1 is a cheap type check
-// looking for an existing framework wrap and short-circuits if one is found —
-// no classifier is invoked. Pass 2 runs the configured classifiers per node.
-// Walking the chain is cheap relative to a classifier call, so this avoids
-// running classifiers whenever the chain is already classified deeper down.
+// Implementation: two passes over the chain. Pass 1 looks for an existing
+// framework wrap and short-circuits if one is found — no classifier is invoked.
+// Pass 2 runs the configured classifiers per node. Walking the chain is cheap
+// relative to a classifier call, so this avoids running classifiers whenever
+// the chain is already classified deeper down.
 //
-// Passing no classifiers is valid — the processor will still honour any
+// Both passes traverse joined errors (errors.Join, or anything else exposing
+// Unwrap() []error) as well as ordinary single-cause wraps. A wrap classifies
+// the subtree beneath it and no more, so a wrapped branch of a join is weighed
+// against its siblings instead of answering for them; classify documents how.
+//
+// Passing no classifiers is valid — the processor will still honor any
 // framework wrap already in the chain and otherwise return err unchanged.
 //
 // NOTE: this central classifier model cannot disambiguate errors of the same
@@ -90,29 +94,20 @@ func (p classifierProcessor) Process(err error) error {
 		return nil
 	}
 
-	// Pass 1 — cheap framework-wrap check. If any node already carries a
-	// framework type, the chain is interpretable as-is and classifiers are
-	// never invoked.
+	// Pass 1 — framework-wrap check, along the single-cause spine only. A wrap
+	// found here sits above everything else in err, so it classifies the whole
+	// error and is returned verbatim. The walk stops at a join because
+	// errors.Unwrap yields nothing for one, which is the behavior we want: a
+	// wrap inside one branch speaks only for that branch, and classify weighs
+	// it against its siblings rather than letting it silently answer for them.
 	for cur := err; cur != nil; cur = errors.Unwrap(cur) {
-		switch cur.(type) {
-		case *userError, *infraError:
+		if wrapVerdict(cur) != Unknown {
 			return err
 		}
 	}
 
-	// Pass 2 — run classifiers per node from outermost to innermost. Stop at
-	// the first non-Unknown verdict.
-	var verdict Verdict
-	for cur := err; cur != nil && verdict == Unknown; cur = errors.Unwrap(cur) {
-		for _, c := range p.classifiers {
-			if v := c.Classify(cur); v != Unknown {
-				verdict = v
-				break
-			}
-		}
-	}
-
-	switch verdict {
+	// Pass 2 — classify the chain and wrap with the verdict it reaches.
+	switch p.classify(err) {
 	case User:
 		return NewUserError(err)
 	case InfraRetryable:
@@ -125,6 +120,113 @@ func (p classifierProcessor) Process(err error) error {
 	// Unknown or Infra — no wrap needed; the existing chain already behaves as
 	// non-retryable infra at the IsRetryable / IsUserError layer.
 	return err
+}
+
+// classify returns the verdict for err — from a framework wrap if it carries
+// one, otherwise from the configured classifiers — or Unknown when nothing
+// recognizes any node in it.
+//
+// The walk treats the two ways an error can contain another differently,
+// because they mean different things:
+//
+//   - Down a wrap chain (Unwrap() error) the outermost verdict wins. A wrapper
+//     saw the error it wrapped and chose to add context on top of it, so it
+//     speaks with more knowledge than its cause.
+//   - Across the branches of a join (Unwrap() []error) nothing shadows anything.
+//     The branches are independent failures that happened to be reported
+//     together, and their order is the order the caller ran them in, not a
+//     precedence. They combine by verdictRank so that the result cannot depend
+//     on which branch failed first.
+//
+// The second rule is why a framework wrap does not get the short-circuit it
+// gets on the spine: within a join it is one branch's account of one failure,
+// with no standing to classify the failures beside it.
+func (p classifierProcessor) classify(err error) Verdict {
+	for cur := err; cur != nil; {
+		// A wrap is authoritative for everything it contains, so it answers for
+		// this subtree without consulting a classifier.
+		if v := wrapVerdict(cur); v != Unknown {
+			return v
+		}
+
+		for _, c := range p.classifiers {
+			if v := c.Classify(cur); v != Unknown {
+				return v
+			}
+		}
+
+		if joined, ok := cur.(interface{ Unwrap() []error }); ok {
+			verdict := Unknown
+			for _, branch := range joined.Unwrap() {
+				if v := p.classify(branch); verdictRank(v) > verdictRank(verdict) {
+					verdict = v
+				}
+			}
+			return verdict
+		}
+
+		cur = errors.Unwrap(cur)
+	}
+	return Unknown
+}
+
+// wrapVerdict returns the verdict the framework wrap err carries, or Unknown if
+// err is not a wrap. It inspects the single node it is given, never the chain.
+// Every wrap maps to a real verdict, which is what makes Unknown usable as the
+// "not a wrap" answer.
+func wrapVerdict(err error) Verdict {
+	switch e := err.(type) {
+	case *userError:
+		return User
+	case *infraError:
+		switch {
+		case e.retryable && e.dependency:
+			return InfraDependencyRetryable
+		case e.retryable:
+			return InfraRetryable
+		case e.dependency:
+			return InfraDependency
+		default:
+			return Infra
+		}
+	}
+	return Unknown
+}
+
+// verdictRank orders verdicts for combining the independent branches of a
+// joined error. The highest-ranked branch verdict becomes the verdict for the
+// join as a whole.
+//
+// It must be an explicit table rather than a comparison on Verdict itself,
+// whose constants are declaration-ordered and not severity-ordered:
+// InfraDependency numerically exceeds InfraRetryable, so ranking by value would
+// let a non-retryable branch discard a retryable sibling.
+//
+// Two principles set the order. Retryable outranks non-retryable because the
+// two mistakes cost differently — a wrong "retryable" spends a bounded retry
+// budget and then dead-letters anyway, while a wrong "non-retryable" throws
+// away a failure that would have cleared on its own and leaves it for someone
+// to find and replay by hand. Within a retryability tier the verdict that
+// implicates this service outranks the one that points elsewhere, so a failure
+// that is partly ours is not reported as a pure dependency or user problem and
+// routed away from the people who can fix it. That second ordering only moves
+// attribution: every verdict in the non-retryable tier yields the same transport
+// outcome.
+func verdictRank(v Verdict) int {
+	switch v {
+	case InfraRetryable:
+		return 5
+	case InfraDependencyRetryable:
+		return 4
+	case Infra:
+		return 3
+	case User:
+		return 2
+	case InfraDependency:
+		return 1
+	default: // Unknown
+		return 0
+	}
 }
 
 // AlwaysRetryableProcessor classifies every non-nil error as InfraRetryable by

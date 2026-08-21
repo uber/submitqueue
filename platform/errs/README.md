@@ -44,12 +44,29 @@ An `ErrorProcessor` runs the per-chain pass that turns a raw chain into a wrappe
 Two implementations ship in this package:
 
 - **`NewClassifierProcessor(classifiers...)`** — the standard pass for primary pipeline consumers. Walks the chain twice:
-  1. **Pass 1 — framework-wrap check.** A cheap type switch looks for an existing `*userError` / `*infraError` anywhere in the chain. If found, the chain is already interpretable and the processor returns `err` unchanged. **No classifier is invoked.**
+  1. **Pass 1 — framework-wrap check.** Looks for an existing `*userError` / `*infraError` on the error's single-cause spine. If found, the chain is already interpretable and the processor returns `err` unchanged. **No classifier is invoked.**
   2. **Pass 2 — classifier walk.** From outermost to innermost node, each registered classifier is asked for a verdict. The first non-`Unknown` verdict wins and `err` is wrapped with the matching framework constructor.
 
   If no classifier recognises anything, `err` is returned unchanged — and behaves as non-retryable infra at the helper layer.
 
 - **`AlwaysRetryableProcessor`** — unconditionally wraps every non-nil error with `NewRetryableError`, overriding any inner framework wrap. Use it for narrowly-scoped consumers — typically DLQ reconciliation — that must redeliver on any failure because there is no further dead-letter destination. Side-effect: an inner `*infraError(dependency=true)` is masked by the outer `retryable=true` wrap, since `errors.As` matches the outermost `*infraError` first. This is acceptable for the intended DLQ use case where only `IsRetryable` drives transport behaviour; do not pair this processor with a primary pipeline consumer or genuine user errors will retry forever instead of reaching their DLQ.
+
+### Joined errors
+
+Both passes descend into joined errors — `errors.Join`, `fmt.Errorf` with more than one `%w`, or any other error exposing `Unwrap() []error` — as well as ordinary single-cause wraps. This matters for anything that fans work out to several children and reports their failures together, `submitqueue/extension/validator/composite` being the current example: `errors.Unwrap` returns nil for a join, so a walk built on it alone sees the join node and nothing beneath it, and every branch goes unclassified.
+
+The two shapes combine differently, because they mean different things:
+
+- **Down a wrap chain**, the outermost verdict wins. A wrapper saw the error it wrapped and classified anyway, so it speaks with more knowledge than its cause.
+- **Across the branches of a join**, nothing shadows anything. The branches are independent failures reported together, and their order is the order the caller ran them in, not a precedence. They combine by rank, so the result cannot depend on which branch failed first.
+
+The rank puts retryable above non-retryable, because the two mistakes cost differently: a wrong "retryable" spends a bounded retry budget and then dead-letters anyway, while a wrong "non-retryable" throws away a failure that would have cleared on its own. Within a retryability tier, the verdict that implicates this service outranks the one pointing elsewhere, so a partly-local failure is not reported as a pure dependency or user problem — that ordering only moves attribution, since every non-retryable verdict produces the same transport outcome. See `verdictRank` for the table.
+
+A framework wrap classifies the subtree beneath it and no further. Above a join it covers the whole join and Pass 1 returns the error verbatim, so no branch is consulted. *Inside* a branch it is one branch's account of one failure, with no standing to classify the failures beside it — so it contributes its own verdict to the rank like any other branch. That is what keeps a sibling's transient failure from being discarded by a branch that happened to arrive pre-classified, and it also removes an ordering artifact: two wrapped branches of differing retryability used to resolve by whichever one `errors.As` reached first.
+
+The losing branch keeps its wrap in the chain, so `IsUserError` and `IsRetryable` can both report true for the same joined error — one from a branch, one from the outer wrap. Only the outer wrap drives the retry decision, the same way it does under `AlwaysRetryableProcessor`.
+
+One operational consequence worth knowing before relying on any of this: **retrying a join re-runs everything.** The retry redelivers to every child, including the ones that succeeded, so children must be idempotent, and a child that fails persistently with a retryable-looking error (a decommissioned service returning connection-refused, say) will spend the whole retry budget on every message. Drop such a child rather than absorbing it.
 
 ### Choosing a processor
 
@@ -131,7 +148,7 @@ if err != nil {
 Two practical rules fall out of the short-circuit semantics:
 
 - **Wrap with a framework constructor as soon as the controller knows the right verdict.** Any wrap added later in the chain still wins, but wrapping early keeps the intent close to the decision.
-- **A wrap anywhere in the chain blocks all classifiers — including for nodes deeper than the wrap.** If you want a classifier to still get a look at the cause, do not wrap above it. (In practice this is rare: controllers wrap because they have the final answer.)
+- **A wrap blocks all classifiers beneath it, including for nodes deeper than the wrap.** If you want a classifier to still get a look at the cause, do not wrap above it. (In practice this is rare: controllers wrap because they have the final answer.) It does not block the sibling branches of a join, which are classified and ranked independently.
 
 ### When *not* to classify in a controller
 
