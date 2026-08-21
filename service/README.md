@@ -13,9 +13,9 @@ Each domain has its own subdirectory with a dedicated README:
 | Service | Port | Domain | RPCs | Backing stores |
 |---------|------|--------|------|----------------|
 | **SubmitQueue Gateway** | 8081 | `submitqueue` | `Ping`, `Land`, `Cancel`, `GetRequestSummaryByID`, `GetRequestSummaryByChangeURI`, `List`, `GetRequestHistoryByID`, `GetRequestHistoryByChangeURI` | MySQL app + queue |
-| **SubmitQueue Orchestrator** | 8082 | `submitqueue` | `Ping` (+ consumes 9 pipeline topics) | MySQL app + queue |
-| **Stovepipe** | 8083 | `stovepipe` | `Ping`, `Ingest` (+ consumes the process topic) | MySQL storage + queue |
-| **Runway** | 8086 | `runway` | `Ping` (+ consumes merge-conflict-check & merge topics) | MySQL queue |
+| **SubmitQueue Orchestrator** | 8082 | `submitqueue` | `Ping` (+ consumes pipeline topics: start, cancel, validate, batch, dependency-analysis, speculate, build, buildsignal, submitqueue-merge, conclude, log, plus DLQ topics, and the two Runway signal topics) | MySQL app + queue |
+| **Stovepipe** | 8083 | `stovepipe` | `Ping`, `Ingest` (+ consumes the process, build, buildsignal, and record topics, plus DLQ topics) | MySQL storage + queue |
+| **Runway** | 8086 | `runway` | `Ping` (+ consumes merge-conflict-check & runway-merge topics) | MySQL queue |
 
 Ports above are the `go run` defaults; under Docker Compose each server listens on `:8080` inside its container and is published on a random ephemeral host port (use `make local-*-ps` / `docker port` to discover it).
 
@@ -34,7 +34,8 @@ service/
 │       └── client/                     # Orchestrator ping client
 ├── stovepipe/
 │   ├── docker-compose.yml              # Stovepipe service + storage MySQL + queue MySQL
-│   ├── server/                         # Stovepipe gRPC server + Dockerfile
+│   ├── docker-compose.debug.yml        # Debug variant with delve
+│   ├── server/                         # Stovepipe gRPC server + Dockerfile + compose
 │   └── client/                         # Stovepipe ping client
 └── runway/
     ├── server/                         # Runway gRPC server + Dockerfile + compose
@@ -53,6 +54,7 @@ make local-submitqueue-orchestrator-start   # orchestrator-only stack
 
 # Stovepipe service (gRPC service + storage MySQL + queue MySQL)
 make local-stovepipe-start
+make local-stovepipe-logs
 
 # Runway service (consumer + queue MySQL)
 make local-runway-start

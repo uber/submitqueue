@@ -73,9 +73,9 @@ make build-all-linux                # Build Linux binaries for the local docker-
 - Speed: Fast (< 1s typically)
 
 **2. Integration Tests** - Service in isolation with real dependencies
-- Location: `test/integration/submitqueue/{service}/`
-- Run: `make integration-test-{service}`
-- Containers: MySQL + one service
+- Location: `test/integration/submitqueue/<area>/` (e.g., `gateway/`, `orchestrator/`, `extension/<ext>/`)
+- Run: `make integration-test-submitqueue-gateway`, `make integration-test-submitqueue-orchestrator`, `make integration-test-submitqueue-consumer`, or `make integration-test-extensions`
+- Containers: MySQL + one service or the extension's dependencies
 - Tests one service isolated from others
 
 **3. E2E Tests** - Complete workflows across all services
@@ -194,14 +194,14 @@ make local-stop
 make local-submitqueue-gateway-start
 
 # Test Ping API (port shown by make local-submitqueue-ps)
-grpcurl -plaintext -d '{"message": "hello"}' localhost:<PORT> submitqueue.SubmitQueueGateway/Ping
+grpcurl -plaintext -d '{"message": "hello"}' localhost:<PORT> uber.submitqueue.gateway.SubmitQueueGateway/Ping
 
 # Test Land API
 grpcurl -plaintext -d '{
   "queue": "test-queue",
   "change": {"source": "github", "ids": ["PR-123"]},
   "strategy": "REBASE"
-}' localhost:<PORT> submitqueue.SubmitQueueGateway/Land
+}' localhost:<PORT> uber.submitqueue.gateway.SubmitQueueGateway/Land
 
 # Stop
 make local-submitqueue-gateway-stop
@@ -213,7 +213,7 @@ make local-submitqueue-gateway-stop
 make local-submitqueue-orchestrator-start
 
 # Test Ping API (port shown by make local-submitqueue-ps)
-grpcurl -plaintext -d '{"message": "hello"}' localhost:<PORT> submitqueue.SubmitQueueOrchestrator/Ping
+grpcurl -plaintext -d '{"message": "hello"}' localhost:<PORT> uber.submitqueue.orchestrator.SubmitQueueOrchestrator/Ping
 
 # Stop
 make local-submitqueue-orchestrator-stop
@@ -256,18 +256,18 @@ brew install grpcurl  # macOS
 grpcurl -plaintext localhost:<PORT> list
 
 # Describe a service
-grpcurl -plaintext localhost:<PORT> describe submitqueue.SubmitQueueGateway
+grpcurl -plaintext localhost:<PORT> describe uber.submitqueue.gateway.SubmitQueueGateway
 
 # Call Ping
 grpcurl -plaintext -d '{"message": "test"}' \
-  localhost:<PORT> submitqueue.SubmitQueueGateway/Ping
+  localhost:<PORT> uber.submitqueue.gateway.SubmitQueueGateway/Ping
 
 # Call Land
 grpcurl -plaintext -d '{
   "queue": "my-queue",
   "change": {"source": "github", "ids": ["PR-456"]},
   "strategy": "REBASE"
-}' localhost:<PORT> submitqueue.SubmitQueueGateway/Land
+}' localhost:<PORT> uber.submitqueue.gateway.SubmitQueueGateway/Land
 ```
 
 ### Available Commands
@@ -363,9 +363,9 @@ docker network ls | grep sq-test | awk '{print $1}' | xargs docker network rm
 
 ### Adding Integration Tests
 
-1. Add test to `test/integration/submitqueue/{service}/suite_test.go`
-2. Use suite's resources (`s.client`, `s.db`)
-3. Run: `make integration-test-{service}`
+1. Add test to `test/integration/submitqueue/<area>/suite_test.go` (e.g., `test/integration/submitqueue/gateway/suite_test.go` for Gateway, `test/integration/submitqueue/orchestrator/suite_test.go` for Orchestrator, or a subdirectory under `test/integration/submitqueue/extension/` for extension tests).
+2. Use suite's resources (`s.client`, `s.db`).
+3. Run the matching Makefile target such as `make integration-test-submitqueue-gateway`.
 
 Example:
 ```go
@@ -387,7 +387,7 @@ assert.Equal(s.T(), "expected", resp.Value)
 
 ## See Also
 
-- [CLAUDE.md](../../CLAUDE.md) - Development guidelines and project structure
+- [AGENTS.md](../../AGENTS.md) - Development guidelines and project structure
 - [service/submitqueue/docker-compose.yml](../../service/submitqueue/docker-compose.yml) - Full stack service definitions
 - [service/submitqueue/gateway/server/docker-compose.yml](../../service/submitqueue/gateway/server/docker-compose.yml) - Gateway isolation
 - [service/submitqueue/orchestrator/server/docker-compose.yml](../../service/submitqueue/orchestrator/server/docker-compose.yml) - Orchestrator isolation
