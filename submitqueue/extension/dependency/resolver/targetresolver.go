@@ -16,7 +16,7 @@
 // of build targets a batch affects. The interface is deliberately free of
 // Tango wire types so that each deployment can provide its own adapter against
 // whatever proto import path its monorepo uses — the analyzer sees only batch
-// identity in and target names out.
+// identity in and targets out.
 package resolver
 
 import (
@@ -25,9 +25,19 @@ import (
 	"github.com/uber/submitqueue/submitqueue/entity"
 )
 
+// Target is a build target a batch affects.
+type Target struct {
+	// Name identifies the target (e.g. "//service/foo:lib").
+	Name string
+	// Attributes carries backend-specific metadata the analyzer does not
+	// interpret today. Future consumers (e.g. conflict relaxation) can read
+	// keys like "distance" or "rule_type" without an interface change.
+	Attributes map[string]string
+}
+
 // TargetResolver resolves the set of build targets a batch affects. The
 // production implementation translates the batch's changes into a Tango
 // GetChangedTargets call; tests supply a fake.
 type TargetResolver interface {
-	ChangedTargets(ctx context.Context, batch entity.Batch) ([]string, error)
+	ChangedTargets(ctx context.Context, batch entity.Batch) ([]Target, error)
 }

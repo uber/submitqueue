@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package tango provides a conflict.Analyzer that reports a conflict between
-// two batches when their changed build targets overlap. The targets a batch
-// affects are resolved through an injected resolver.TargetResolver, whose
-// production implementation calls the Tango service.
-package tango
+// Package targetoverlap provides a conflict.Analyzer that reports a conflict
+// between two batches when their changed build targets overlap. The targets a
+// batch affects are resolved through an injected resolver.TargetResolver,
+// keeping the analyzer independent of any particular target-resolution backend.
+package targetoverlap
 
 import (
 	"context"
@@ -52,7 +52,7 @@ func (a *analyzer) Analyze(ctx context.Context, batch entity.Batch, inFlight []e
 
 	// TODO: when TargetResolver fails, fall back to a queue-configured
 	// analyzer (all or none) instead of propagating the error. The queue config
-	// decides whether a Tango outage over-serializes (all) or maximizes
+	// decides whether a resolver outage over-serializes (all) or maximizes
 	// parallelism (none).
 	candidate, err := a.resolve(ctx, batch)
 	if err != nil {
@@ -87,7 +87,7 @@ func (a *analyzer) resolve(ctx context.Context, batch entity.Batch) (map[string]
 
 	keys := make(map[string]struct{}, len(targets))
 	for _, t := range targets {
-		keys[t] = struct{}{}
+		keys[t.Name] = struct{}{}
 	}
 	return keys, nil
 }

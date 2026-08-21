@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tango
+package targetoverlap
 
 import (
 	"context"
@@ -24,6 +24,7 @@ import (
 
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
+	"github.com/uber/submitqueue/submitqueue/extension/dependency/resolver"
 )
 
 // fakeResolver is an in-test TargetResolver that returns pre-configured target
@@ -47,11 +48,16 @@ func (f *fakeResolver) failWith(err error) *fakeResolver {
 	return f
 }
 
-func (f *fakeResolver) ChangedTargets(_ context.Context, batch entity.Batch) ([]string, error) {
+func (f *fakeResolver) ChangedTargets(_ context.Context, batch entity.Batch) ([]resolver.Target, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
-	return f.targets[batch.ID], nil
+	names := f.targets[batch.ID]
+	targets := make([]resolver.Target, len(names))
+	for i, n := range names {
+		targets[i] = resolver.Target{Name: n}
+	}
+	return targets, nil
 }
 
 func cfg() conflict.Config {
@@ -123,14 +129,14 @@ func TestAnalyze(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resolver := newFakeResolver().set(tt.candidate, tt.candTargets...)
+			r := newFakeResolver().set(tt.candidate, tt.candTargets...)
 			inFlight := make([]entity.Batch, 0, len(tt.inFlight))
 			for _, f := range tt.inFlight {
-				resolver.set(f.id, f.targets...)
+				r.set(f.id, f.targets...)
 				inFlight = append(inFlight, entity.Batch{ID: f.id})
 			}
 
-			got, err := New(cfg(), resolver).Analyze(context.Background(), entity.Batch{ID: tt.candidate}, inFlight)
+			got, err := New(cfg(), r).Analyze(context.Background(), entity.Batch{ID: tt.candidate}, inFlight)
 			require.NoError(t, err)
 
 			var ids []string
@@ -150,17 +156,17 @@ func TestAnalyze_EmptyInFlight(t *testing.T) {
 }
 
 func TestAnalyze_ResolverError(t *testing.T) {
-	sentinel := errors.New("tango unavailable")
+	sentinel := errors.New("resolver unavailable")
 
 	t.Run("candidate resolution fails", func(t *testing.T) {
-		resolver := newFakeResolver().failWith(sentinel)
-		_, err := New(cfg(), resolver).Analyze(context.Background(), entity.Batch{ID: "cand"}, []entity.Batch{{ID: "x"}})
+		r := newFakeResolver().failWith(sentinel)
+		_, err := New(cfg(), r).Analyze(context.Background(), entity.Batch{ID: "cand"}, []entity.Batch{{ID: "x"}})
 		require.ErrorIs(t, err, sentinel)
 	})
 
 	t.Run("in-flight resolution fails", func(t *testing.T) {
-		resolver := newFakeResolver().set("cand", "//foo:lib").failWith(sentinel)
-		_, err := New(cfg(), resolver).Analyze(context.Background(), entity.Batch{ID: "cand"}, []entity.Batch{{ID: "x"}})
+		r := newFakeResolver().set("cand", "//foo:lib").failWith(sentinel)
+		_, err := New(cfg(), r).Analyze(context.Background(), entity.Batch{ID: "cand"}, []entity.Batch{{ID: "x"}})
 		require.ErrorIs(t, err, sentinel)
 	})
 }
