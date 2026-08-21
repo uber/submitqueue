@@ -346,12 +346,19 @@ func (c *Controller) applyOutcome(ctx context.Context, store storage.Storage, ba
 		}
 
 	case outcomeFail, outcomeCancel:
+		// A failed batch carries its reason to conclude on the message, so the
+		// requests' terminal log records why speculation could not land it.
+		// Cancellation carries none — the cancel path owns that reason.
+		var concludeMeta map[string]string
+		if decision == outcomeFail {
+			concludeMeta = map[string]string{topickey.MetadataKeyFailureReason: "no speculation path could pass; every candidate build failed"}
+		}
 		// Named for the run that decided it, so a redelivery re-deriving the
 		// same outcome does not conclude the batch twice, and so it stays
 		// distinct from the conclude mergesignal sends for a merged batch.
 		// A conclude that goes missing is recovered by fanout, which is
 		// deliberately un-deduplicated.
-		if err := c.publishBatchID(ctx, topickey.TopicKeyConclude, publish.IntentID(batch.ID, "conclude", "speculate"), batch.ID, batch.Queue, batch.Queue); err != nil {
+		if err := c.publishBatchIDWithMetadata(ctx, topickey.TopicKeyConclude, publish.IntentID(batch.ID, "conclude", "speculate"), batch.ID, batch.Queue, batch.Queue, concludeMeta); err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "publish_errors", 1)
 			return true, fmt.Errorf("failed to publish batch %s to conclude: %w", batch.ID, err)
 		}

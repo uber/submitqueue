@@ -784,6 +784,11 @@ func TestRun_FailedHeadConcludesAfterTheStateWrite(t *testing.T) {
 	assert.Equal(t, []string{"conclude"}, h.published)
 	assert.Empty(t, publishedBeforeWrite,
 		"conclude rejects a non-terminal batch, so it must not be published before the write")
+	// The failure reason rides the conclude message so conclude can stamp it on
+	// the failed requests' terminal log, without persisting it as batch state.
+	require.Len(t, h.messages, 1)
+	assert.Equal(t, "no speculation path could pass; every candidate build failed",
+		h.messages[0].Metadata[topickey.MetadataKeyFailureReason])
 }
 
 // A failure resolves a dependency, which can fail everything stacked on it. The

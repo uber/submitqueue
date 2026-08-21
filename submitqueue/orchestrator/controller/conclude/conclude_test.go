@@ -450,6 +450,57 @@ func TestController_Process(t *testing.T) {
 	}
 }
 
+// TestController_Process_FailedBatchCarriesReasonToRequestLog is the propagation
+// this change exists for: the failure reason carried on the conclude message
+// reaches the request's terminal error log, instead of the empty message the
+// request used to carry.
+func TestController_Process_FailedBatchCarriesReasonToRequestLog(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	const reason = "merge failed: conflict in pkg/a/foo.go"
+	batch := entity.Batch{
+		ID:       "test-queue/batch/9",
+		Queue:    "test-queue",
+		Contains: []string{"test-queue/9"},
+		State:    entity.BatchStateFailed,
+		Version:  2,
+	}
+
+	batchStore := storagemock.NewMockBatchStore(ctrl)
+	batchStore.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
+
+	request := entity.Request{ID: "test-queue/9", Queue: "test-queue", Version: 1, State: entity.RequestStateProcessing}
+	requestStore := storagemock.NewMockRequestStore(ctrl)
+	requestStore.EXPECT().Get(gomock.Any(), "test-queue/9").Return(request, nil)
+	requestStore.EXPECT().Update(gomock.Any(), requestWithState(request, entity.RequestStateError), int32(1), int32(2)).Return(nil)
+
+	store := storagemock.NewMockStorage(ctrl)
+	store.EXPECT().GetBatchStore().Return(batchStore).AnyTimes()
+	store.EXPECT().GetRequestStore().Return(requestStore).AnyTimes()
+
+	controller, pub := newTestController(t, ctrl, store, false)
+
+	var logged entity.RequestLog
+	pub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, msg entityqueue.Message) error {
+			log, err := entity.RequestLogFromBytes(msg.Payload)
+			require.NoError(t, err)
+			logged = log
+			return nil
+		},
+	)
+
+	msg := entityqueue.NewMessage(batch.ID, batchIDPayload(t, batch.ID), batch.Queue, map[string]string{topickey.MetadataKeyFailureReason: reason})
+	delivery := consumermock.NewMockDelivery(ctrl)
+	delivery.EXPECT().Message().Return(msg).AnyTimes()
+	delivery.EXPECT().Attempt().Return(1).AnyTimes()
+
+	require.NoError(t, controller.Process(context.Background(), delivery))
+
+	assert.Equal(t, entity.RequestStatusError, logged.Status)
+	assert.Equal(t, reason, logged.LastError)
+}
+
 func TestController_Process_StorageFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
