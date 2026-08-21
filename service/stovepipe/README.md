@@ -1,14 +1,18 @@
 # Stovepipe Service
 
-Runnable wiring for the **Stovepipe** domain — a single-service domain (the domain *is* the service). The server exposes two RPCs and runs one internal pipeline stage as a queue consumer:
+Runnable wiring for the **Stovepipe** domain — a single-service domain (the domain *is* the service). The server exposes two RPCs and runs the internal pipeline stages as queue consumers:
 
 - **`Ping`** — health check.
 - **`Ingest`** — resolves a queue's head commit, persists a `Request` (and its head URI) to storage, and publishes the request to the **process** stage.
 - **process consumer** (`TopicKeyProcess`) — reloads the persisted `Request` from storage and runs the process stage (`stovepipe/controller/process`).
+- **build consumer** (`TopicKeyBuild`) — reloads the persisted `Request` and triggers the build-runner, then publishes to `buildsignal`.
+- **buildsignal consumer** (`TopicKeyBuildSignal`) — polls/records the build's terminal status and releases the queue's in-flight slot, then publishes to `record`.
+- **record consumer** (`TopicKeyRecord`) — writes the whole-repo validation fact, advances the queue's last-green bookmark and promotion ref, and publishes hook events.
+- **DLQ reconciler** — for each internal topic, a `_dlq` consumer that drives stuck requests to a conservative terminal state so the queue's slot is freed.
 
-The ingest → process hop stays inside one service and one store, so only the request **ID** travels on the queue; the consumer reloads from storage (the source of truth), which keeps messages small and redelivery idempotent. The process topic key and its internal wire contract are owned by the domain under `stovepipe/core/messagequeue/`.
+The ingest → process → build → buildsignal → record hop stays inside one service and one store, so the queue messages carry only request **IDs**; the consumers reload from storage (the source of truth), which keeps messages small and redelivery idempotent. The process, build, buildsignal, and record topic keys and their internal wire contract are owned by the domain under `stovepipe/core/messagequeue/`.
 
-Stovepipe therefore needs two MySQL databases: a **storage** database (the `request` and `request_uri` tables) and a **queue** database (messaging infrastructure).
+Stovepipe therefore needs two MySQL databases: a **storage** database (the `queue`, `request`, `request_uri`, and `build` tables) and a **queue** database (messaging infrastructure).
 
 ## Wiring notes
 
@@ -22,14 +26,15 @@ Stovepipe therefore needs two MySQL databases: a **storage** database (the `requ
 ```
 stovepipe/
 ├── docker-compose.yml      # Stovepipe service + storage MySQL + queue MySQL
+├── docker-compose.debug.yml # Debug variant with delve
 ├── server/
-│   ├── main.go             # gRPC server (Ping, Ingest) + process-stage consumer wiring
+│   ├── main.go             # gRPC server (Ping, Ingest) + pipeline consumer wiring
 │   └── Dockerfile
 └── client/
     └── main.go             # Ping client (default :8083)
 ```
 
-The Stovepipe controllers live under [`stovepipe/controller/`](../../stovepipe/controller) and its extensions under [`stovepipe/extension/`](../../stovepipe/extension); this directory only contains the runnable wiring and a Docker Compose stack for manual testing.
+The Stovepipe controllers live under [`stovepipe/controller/`](../../stovepipe/controller) (subdirectories for `ingest`, `process`, `build`, `buildsignal`, `record`, and `dlq`) and its extensions under [`stovepipe/extension/`](../../stovepipe/extension); this directory only contains the runnable wiring and a Docker Compose stack for manual testing.
 
 ## Configuration
 
