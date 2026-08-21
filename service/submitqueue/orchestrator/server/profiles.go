@@ -45,12 +45,14 @@ import (
 	conflictfake "github.com/uber/submitqueue/submitqueue/extension/conflict/fake"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/none"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict/pathoverlap"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/allocator/sticky"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/generator/bestfirst"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/predictor"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/predictor/regression"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer/composite"
 	scorerfake "github.com/uber/submitqueue/submitqueue/extension/speculation/scorer/fake"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer/heuristic"
-	"github.com/uber/submitqueue/submitqueue/extension/speculation/allocator/sticky"
-	"github.com/uber/submitqueue/submitqueue/extension/speculation/generator/bestfirst"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
 	specstandard "github.com/uber/submitqueue/submitqueue/extension/speculation/speculator/standard"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
@@ -79,6 +81,10 @@ type Profile struct {
 	// scorer feeds the queue's speculator, which ranks candidate paths by how
 	// likely their assumptions are to hold.
 	Scorer scorer.Factory
+
+	// Predictor turns this queue's scorer price into the probability the
+	// generator ranks on, revising it with the batch's observed progress.
+	Predictor predictor.Factory
 
 	// Speculator decides which of this queue's speculation paths to build and
 	// which running ones to preempt, within the build budget.
@@ -142,6 +148,14 @@ func (p Profiles) ScorerFactory() scorer.Factory {
 	})
 }
 
+// PredictorFactory returns a predictor.Factory that resolves the
+// OutcomePredictor for each queue from the profile registry.
+func (p Profiles) PredictorFactory() predictor.Factory {
+	return predictorFunc(func(c predictor.Config) (predictor.OutcomePredictor, error) {
+		return p.For(c.QueueName).Predictor.For(c)
+	})
+}
+
 // StorageFactory returns a storage.Factory that routes each queue to its
 // profile's storage backend before binding the queue-scoped store aggregate.
 func (p Profiles) StorageFactory() storage.Factory {
@@ -175,6 +189,10 @@ func (f storageFunc) For(c storage.Config) (storage.Storage, error) { return f(c
 type scorerFunc func(scorer.Config) (scorer.Scorer, error)
 
 func (f scorerFunc) For(c scorer.Config) (scorer.Scorer, error) { return f(c) }
+
+type predictorFunc func(predictor.Config) (predictor.OutcomePredictor, error)
+
+func (f predictorFunc) For(c predictor.Config) (predictor.OutcomePredictor, error) { return f(c) }
 
 type speculatorFunc func(speculator.Config) (speculator.Speculator, error)
 
@@ -265,33 +283,71 @@ func (b *profileBuilder) build(cfg queueProfileConfig, where string) (Profile, e
 	if err != nil {
 		return Profile{}, err
 	}
-	// The speculator is composed last, because it is built from whatever scorer
-	// the profile ended up with.
-	return withSpeculator(Profile{
+	// The predictor and the speculator are composed last, because each is built
+	// from what the profile ended up with one level below it.
+	return withSpeculator(withPredictor(Profile{
 		ChangeProvider: provider,
 		BuildRunner:    runner,
 		Analyzer:       analyzer,
 		Storage:        b.stores,
 		Scorer:         sc,
-	}, cfg.Speculator.BuildBudget), nil
+	}, cfg.Predictor, b.scope), cfg.Speculator.BuildBudget), nil
+}
+
+// withPredictor returns the profile with its predictor composed over its own
+// scorer: the scorer prices the batch's change, and the predictor revises that
+// price with what the batch's builds have done.
+//
+// The scorer is resolved lazily, at the queue the predictor itself was asked
+// for, so the queue's identity reaches one level down into the scorer too.
+func withPredictor(p Profile, cfg predictorConfig, scope tally.Scope) Profile {
+	p.Predictor = predictorFunc(func(c predictor.Config) (predictor.OutcomePredictor, error) {
+		sc, err := p.Scorer.For(scorer.Config{QueueName: c.QueueName})
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve scorer for queue %q: %w", c.QueueName, err)
+		}
+		return regression.New(c, sc, factorsFrom(cfg), scope.SubScope("predictor")), nil
+	})
+	return p
+}
+
+// factorsFrom reads the configured factors onto the named fields the predictor
+// takes, leaving an unstated one neutral. Names are validated when the config
+// is loaded.
+func factorsFrom(cfg predictorConfig) regression.Factors {
+	factors := regression.AllOnes()
+	for name, factor := range cfg.Factors {
+		switch name {
+		case factorPathPassed:
+			factors.PathPassed = factor
+		case factorPathFailed:
+			factors.PathFailed = factor
+		case factorMerging:
+			factors.Merging = factor
+		case factorCancelling:
+			factors.Cancelling = factor
+		}
+	}
+	return factors
 }
 
 // withSpeculator returns the profile with its speculator composed from its own
-// scorer: bestfirst ranks a queue's candidate paths by how likely all their
+// predictor: bestfirst ranks a queue's candidate paths by how likely all their
 // assumptions are to hold, and sticky spends buildBudget down that ranking
 // without preempting builds already running. Swapping either part changes the
 // policy without touching the speculate controller, which depends only on the
 // Speculator contract.
 //
-// The scorer is resolved lazily, at the queue the speculator itself was asked
-// for, so the queue's identity reaches one level down into the scorer too.
+// The predictor is resolved lazily, at the queue the speculator itself was
+// asked for, so the queue's identity reaches down through the predictor to the
+// scorer under it.
 func withSpeculator(p Profile, buildBudget int) Profile {
 	p.Speculator = speculatorFunc(func(c speculator.Config) (speculator.Speculator, error) {
-		sc, err := p.Scorer.For(scorer.Config{QueueName: c.QueueName})
+		pred, err := p.Predictor.For(predictor.Config{QueueName: c.QueueName})
 		if err != nil {
-			return nil, fmt.Errorf("failed to resolve scorer for queue %q: %w", c.QueueName, err)
+			return nil, fmt.Errorf("failed to resolve predictor for queue %q: %w", c.QueueName, err)
 		}
-		return specstandard.New(c, bestfirst.New(sc), sticky.New(buildBudget)), nil
+		return specstandard.New(c, bestfirst.New(pred), sticky.New(buildBudget)), nil
 	})
 	return p
 }

@@ -67,6 +67,22 @@ const (
 // Ways a composite scorer combines its components.
 const combineAvg = "avg"
 
+// Predictor types selectable from configuration.
+const predictorTypeRegression = "regression"
+
+// Evidence a regression predictor prices, as named in configuration. The set is
+// closed: a factor under any other name would be applied to nothing and never
+// noticed.
+const (
+	factorPathPassed = "pathPassed"
+	factorPathFailed = "pathFailed"
+	factorMerging    = "merging"
+	factorCancelling = "cancelling"
+)
+
+// neutralFactor leaves the scorer's price untouched: odds multiplied by one.
+const neutralFactor = 1.0
+
 // defaultBuildBudget is how many builds a queue may have occupying CI at once
 // when it states no budget of its own. Four is enough for speculation to be
 // visible — a queue that can only build one path never speculates — while
@@ -110,6 +126,7 @@ type namedQueueProfileConfig struct {
 	Analyzer       *analyzerConfig       `yaml:"analyzer"`
 	Scorer         *scorerConfig         `yaml:"scorer"`
 	Speculator     *speculatorConfig     `yaml:"speculator"`
+	Predictor      *predictorConfig      `yaml:"predictor"`
 }
 
 // queueProfileConfig is the full set of extensions a queue resolves to.
@@ -119,6 +136,7 @@ type queueProfileConfig struct {
 	Analyzer       analyzerConfig       `yaml:"analyzer"`
 	Scorer         scorerConfig         `yaml:"scorer"`
 	Speculator     speculatorConfig     `yaml:"speculator"`
+	Predictor      predictorConfig      `yaml:"predictor"`
 }
 
 // changeProviderConfig selects how change metadata is fetched. The github and
@@ -239,6 +257,17 @@ type speculatorConfig struct {
 	BuildBudget int `yaml:"buildBudget"`
 }
 
+// predictorConfig tunes how a queue turns its scorer's price into the
+// probability the generator ranks on. The scorer being revised is the queue's
+// own, so it is not named again here.
+type predictorConfig struct {
+	Type string `yaml:"type"`
+	// Factors multiply the odds of the scorer's price, one per piece of
+	// evidence, keyed by evidence name. An omitted factor is neutral, so an
+	// omitted block ranks on the scorer's price alone.
+	Factors map[string]float64 `yaml:"factors"`
+}
+
 // loadProfilesConfig reads and validates the profiles configuration at path.
 func loadProfilesConfig(path string) (profilesConfig, error) {
 	data, err := os.ReadFile(path)
@@ -300,6 +329,11 @@ func (c *profilesConfig) normalizeAndValidate() error {
 				return err
 			}
 		}
+		if q.Predictor != nil {
+			if err := q.Predictor.normalizeAndValidate(where); err != nil {
+				return err
+			}
+		}
 	}
 	return c.validateGitRepoPaths()
 }
@@ -358,6 +392,9 @@ func (c profilesConfig) resolve(q namedQueueProfileConfig) queueProfileConfig {
 	if q.Speculator != nil {
 		profile.Speculator = *q.Speculator
 	}
+	if q.Predictor != nil {
+		profile.Predictor = *q.Predictor
+	}
 	return profile
 }
 
@@ -374,7 +411,10 @@ func (p *queueProfileConfig) normalizeAndValidate(where string) error {
 	if err := p.Scorer.normalizeAndValidate(where); err != nil {
 		return err
 	}
-	return p.Speculator.normalizeAndValidate(where)
+	if err := p.Speculator.normalizeAndValidate(where); err != nil {
+		return err
+	}
+	return p.Predictor.normalizeAndValidate(where)
 }
 
 func (c *changeProviderConfig) normalizeAndValidate(where string) error {
@@ -552,6 +592,31 @@ func (s *scorerConfig) normalizeAndValidate(where string) error {
 		}
 	default:
 		return fmt.Errorf("%s: unknown scorer type %q", where, s.Type)
+	}
+	return nil
+}
+
+// normalizeAndValidate applies defaults and rejects a predictor that could not
+// be built. An empty block is a regression predictor with every factor neutral,
+// which prices a batch at exactly its scorer's price.
+func (p *predictorConfig) normalizeAndValidate(where string) error {
+	if p.Type == "" {
+		p.Type = predictorTypeRegression
+	}
+	if p.Type != predictorTypeRegression {
+		return fmt.Errorf("%s: unknown predictor type %q", where, p.Type)
+	}
+	for name, factor := range p.Factors {
+		switch name {
+		case factorPathPassed, factorPathFailed, factorMerging, factorCancelling:
+		default:
+			return fmt.Errorf("%s: unknown predictor factor %q", where, name)
+		}
+		// Zero would pin every batch carrying the evidence to a probability of
+		// zero, and a negative multiplier on odds means nothing at all.
+		if factor <= 0 {
+			return fmt.Errorf("%s: predictor factor %q is %v, must be positive", where, name, factor)
+		}
 	}
 	return nil
 }

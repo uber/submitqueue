@@ -47,7 +47,7 @@ func New(cfg speculator.Config, gen generator.Generator, alloc allocator.Allocat
 // allocator spend the budget over the resulting candidate iterator, reconciling
 // it against the path sets.
 func (s spec) Speculate(ctx context.Context, batches []entity.Batch, pathSets []entity.SpeculationPathSet) ([]entity.Speculation, error) {
-	iter, err := s.gen.Generate(ctx, batches)
+	iter, err := s.gen.Generate(ctx, batches, pathSets)
 	if err != nil {
 		return nil, err
 	}

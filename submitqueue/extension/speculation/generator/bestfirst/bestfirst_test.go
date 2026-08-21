@@ -28,25 +28,26 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/generator"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/predictor"
 )
 
-// stubScorer scores each batch by ID, defaulting to 0.5 for unknown batches. It
-// is a minimal scorer.Scorer for exercising the generator without a resolver.
-type stubScorer struct {
+// stubPredictor prices each batch by ID, defaulting to 0.5 for unknown batches.
+// It is a minimal predictor.OutcomePredictor for exercising the generator
+// without a scorer under it.
+type stubPredictor struct {
 	scores map[string]float64
 }
 
-func (s stubScorer) Score(_ context.Context, b entity.Batch) (float64, error) {
+func (s stubPredictor) Predict(_ context.Context, b entity.Batch, _ entity.SpeculationPathSet) (predictor.Probability, error) {
 	if v, ok := s.scores[b.ID]; ok {
-		return v, nil
+		return predictor.Probability(v), nil
 	}
 	return 0.5, nil
 }
 
-func scored(scores map[string]float64) scorer.Scorer {
-	return stubScorer{scores: scores}
+func scored(scores map[string]float64) predictor.OutcomePredictor {
+	return stubPredictor{scores: scores}
 }
 
 // drainAll pulls every candidate from an iterator.
@@ -125,41 +126,43 @@ func iteratorOf(t *testing.T, iter generator.Iterator) *candidateIterator {
 	return it
 }
 
-// countingScorer records how many times each batch is scored.
-type countingScorer struct {
+// countingPredictor records how many times each batch is priced.
+type countingPredictor struct {
 	scores map[string]float64
 	calls  map[string]int
 	total  int
 }
 
-func newCountingScorer(scores map[string]float64) *countingScorer {
-	return &countingScorer{scores: scores, calls: map[string]int{}}
+func newCountingPredictor(scores map[string]float64) *countingPredictor {
+	return &countingPredictor{scores: scores, calls: map[string]int{}}
 }
 
-func (c *countingScorer) Score(_ context.Context, b entity.Batch) (float64, error) {
+func (c *countingPredictor) Predict(_ context.Context, b entity.Batch, _ entity.SpeculationPathSet) (predictor.Probability, error) {
 	c.calls[b.ID]++
 	c.total++
 	if v, ok := c.scores[b.ID]; ok {
-		return v, nil
+		return predictor.Probability(v), nil
 	}
 	return 0.5, nil
 }
 
-// errScorer always fails, to exercise error propagation from scoring.
-type errScorer struct{}
+// errPredictor always fails, to exercise error propagation from pricing.
+type errPredictor struct{}
 
-func (errScorer) Score(context.Context, entity.Batch) (float64, error) {
+func (errPredictor) Predict(context.Context, entity.Batch, entity.SpeculationPathSet) (predictor.Probability, error) {
 	return 0, assert.AnError
 }
 
-// constScorer scores every batch identically, regardless of ID.
-type constScorer struct{ v float64 }
+// constPredictor prices every batch identically, regardless of ID.
+type constPredictor struct{ v float64 }
 
-func (c constScorer) Score(context.Context, entity.Batch) (float64, error) { return c.v, nil }
+func (c constPredictor) Predict(context.Context, entity.Batch, entity.SpeculationPathSet) (predictor.Probability, error) {
+	return predictor.Probability(c.v), nil
+}
 
 // wideHead builds one Speculating head over n unresolved dependencies, each at a
 // distinct score so no two combinations tie.
-func wideHead(n int) ([]entity.Batch, scorer.Scorer) {
+func wideHead(n int) ([]entity.Batch, predictor.OutcomePredictor) {
 	head := entity.Batch{ID: "q/head", State: entity.BatchStateSpeculating}
 	batches := []entity.Batch{}
 	scores := map[string]float64{}
@@ -181,7 +184,7 @@ func TestBestFirst_OrderingAndEnumeration(t *testing.T) {
 	}
 	sc := scored(map[string]float64{"q/A": 0.9, "q/B": 0.8})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := forHead(drainAll(t, iter), "q/C")
 
@@ -222,7 +225,7 @@ func TestBestFirst_PinsResolvedDependencies(t *testing.T) {
 				{ID: "q/A", State: tt.state},
 				{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/A"}},
 			}
-			iter, err := New(scored(nil)).Generate(context.Background(), batches)
+			iter, err := New(scored(nil)).Generate(context.Background(), batches, nil)
 			require.NoError(t, err)
 			cands := forHead(drainAll(t, iter), "q/H")
 
@@ -245,7 +248,7 @@ func TestBestFirst_ResolvedDependenciesDropOutOfSearch(t *testing.T) {
 			Dependencies: []string{"q/succeeded", "q/failed", "q/open"}},
 	}
 	iter, err := New(scored(map[string]float64{"q/open": 0.7})).
-		Generate(context.Background(), batches)
+		Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := forHead(drainAll(t, iter), "q/H")
 
@@ -269,7 +272,7 @@ func TestBestFirst_EmitsExactSequenceAcrossHeads(t *testing.T) {
 	}
 	sc := scored(map[string]float64{"q/A": 0.9, "q/B": 0.8})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := drainAll(t, iter)
 
@@ -304,7 +307,7 @@ func TestBestFirst_PreferredAssumptionFollowsScore(t *testing.T) {
 	}
 	sc := scored(map[string]float64{"q/high": 0.8, "q/low": 0.3})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := drainAll(t, iter)
 
@@ -352,7 +355,7 @@ func TestBestFirst_OnlySpeculatingHeadsProduceCandidates(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			batches := []entity.Batch{{ID: "q/H", State: tt.state}}
 
-			iter, err := New(scored(nil)).Generate(context.Background(), batches)
+			iter, err := New(scored(nil)).Generate(context.Background(), batches, nil)
 			require.NoError(t, err)
 			cands := drainAll(t, iter)
 
@@ -371,7 +374,7 @@ func TestBestFirst_HeadWithNoDependencies(t *testing.T) {
 		{ID: "q/H", State: entity.BatchStateSpeculating},
 	}
 
-	iter, err := New(scored(nil)).Generate(context.Background(), batches)
+	iter, err := New(scored(nil)).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := drainAll(t, iter)
 
@@ -390,7 +393,7 @@ func TestBestFirst_AbsorbsScorerError(t *testing.T) {
 		{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/A"}},
 	}
 
-	iter, err := New(errScorer{}).Generate(context.Background(), batches)
+	iter, err := New(errPredictor{}).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 
 	cands := forHead(drainAll(t, iter), "q/H")
@@ -406,15 +409,48 @@ func TestBestFirst_NeverScoresAnAbsentDependency(t *testing.T) {
 	batches := []entity.Batch{
 		{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/missing"}},
 	}
-	sc := newCountingScorer(map[string]float64{})
+	sc := newCountingPredictor(map[string]float64{})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 
 	cands := drainAll(t, iter)
 	require.Len(t, cands, 2, "the absent dependency is still an open question with two sides")
 	assert.Zero(t, sc.total, "the scorer is never handed a batch the snapshot did not carry")
 	assert.InDelta(t, math.Log(defaultProbability), cands[0].RankingScore, 1e-9)
+}
+
+// recordingPredictor keeps the path set each batch was priced against.
+type recordingPredictor struct {
+	seen map[string]entity.SpeculationPathSet
+}
+
+func (r *recordingPredictor) Predict(_ context.Context, b entity.Batch, paths entity.SpeculationPathSet) (predictor.Probability, error) {
+	r.seen[b.ID] = paths
+	return 0.5, nil
+}
+
+// Each dependency is priced against its own progress, not the queue's. A
+// dependency with no set has simply never speculated, which is silence rather
+// than an error.
+func TestBestFirst_PricesEachDependencyAgainstItsOwnPathSet(t *testing.T) {
+	batches := []entity.Batch{
+		{ID: "q/built", State: entity.BatchStateSpeculating},
+		{ID: "q/fresh", State: entity.BatchStateSpeculating},
+		{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/built", "q/fresh"}},
+	}
+	built := entity.SpeculationPathSet{
+		Queue: "q",
+		Head:  "q/built",
+		Paths: []entity.SpeculationPathEntry{{ID: "p1", Status: entity.SpeculationPathStatusPassed}},
+	}
+	pred := &recordingPredictor{seen: map[string]entity.SpeculationPathSet{}}
+
+	_, err := New(pred).Generate(context.Background(), batches, []entity.SpeculationPathSet{built})
+	require.NoError(t, err)
+
+	assert.Equal(t, built, pred.seen["q/built"], "a dependency is priced against its own set")
+	assert.Equal(t, entity.SpeculationPathSet{}, pred.seen["q/fresh"], "a dependency that never speculated has no set")
 }
 
 // A merging dependency is still in progress — the merge can fail — so it stays
@@ -426,9 +462,9 @@ func TestBestFirst_MergingDependencyStaysOpen(t *testing.T) {
 		{ID: "q/landing", State: entity.BatchStateMerging},
 		{ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: []string{"q/landing"}},
 	}
-	sc := newCountingScorer(map[string]float64{"q/landing": 0.9})
+	sc := newCountingPredictor(map[string]float64{"q/landing": 0.9})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := drainAll(t, iter)
 
@@ -443,7 +479,7 @@ func TestBestFirst_GeneratesOnlyWhatIsPulled(t *testing.T) {
 	const deps, space = 12, 1 << 12
 	batches, sc := wideHead(deps)
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	it := iteratorOf(t, iter)
 
@@ -480,7 +516,7 @@ func TestBestFirst_DrainYieldsEveryCombinationOnce(t *testing.T) {
 	}
 	sc := scored(map[string]float64{"q/A": 0.9, "q/B": 0.7, "q/C": 0.6})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := drainAll(t, iter)
 
@@ -530,7 +566,7 @@ func TestBestFirst_ScoresGloballyNonIncreasing(t *testing.T) {
 	}
 	sc := scored(map[string]float64{"q/A": 0.85, "q/B": 0.3, "q/C": 0.65})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := drainAll(t, iter)
 
@@ -554,7 +590,7 @@ func TestBestFirst_EqualScoresOrderDeterministically(t *testing.T) {
 			{ID: "q/c", State: entity.BatchStateSpeculating},
 		}
 
-		iter, err := New(scored(nil)).Generate(context.Background(), batches)
+		iter, err := New(scored(nil)).Generate(context.Background(), batches, nil)
 		require.NoError(t, err)
 		cands := drainAll(t, iter)
 
@@ -577,7 +613,7 @@ func TestBestFirst_EqualScoresOrderDeterministically(t *testing.T) {
 		}
 		sc := scored(map[string]float64{"q/coinA": 0.5, "q/coinB": 0.5})
 
-		iter, err := New(sc).Generate(context.Background(), batches)
+		iter, err := New(sc).Generate(context.Background(), batches, nil)
 		require.NoError(t, err)
 		cands := drainAll(t, iter)
 
@@ -612,9 +648,9 @@ func TestBestFirst_EqualScoresOrderDeterministically(t *testing.T) {
 		}
 		sc := scored(map[string]float64{"q/A": 0.5, "q/B": 0.5, "q/C": 0.5})
 
-		first, err := New(sc).Generate(context.Background(), batches)
+		first, err := New(sc).Generate(context.Background(), batches, nil)
 		require.NoError(t, err)
-		second, err := New(sc).Generate(context.Background(), batches)
+		second, err := New(sc).Generate(context.Background(), batches, nil)
 		require.NoError(t, err)
 
 		a, b := drainAll(t, first), drainAll(t, second)
@@ -625,9 +661,9 @@ func TestBestFirst_EqualScoresOrderDeterministically(t *testing.T) {
 
 func TestBestFirst_NextMakesNoScorerCalls(t *testing.T) {
 	batches, _ := wideHead(6)
-	sc := newCountingScorer(map[string]float64{})
+	sc := newCountingPredictor(map[string]float64{})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 
 	afterGenerate := sc.total
@@ -645,9 +681,9 @@ func TestBestFirst_MemoizesDependencyScoresAcrossHeads(t *testing.T) {
 		{ID: "q/H2", State: entity.BatchStateSpeculating, Dependencies: []string{"q/shared"}},
 		{ID: "q/H3", State: entity.BatchStateSpeculating, Dependencies: []string{"q/shared"}},
 	}
-	sc := newCountingScorer(map[string]float64{"q/shared": 0.7})
+	sc := newCountingPredictor(map[string]float64{"q/shared": 0.7})
 
-	_, err := New(sc).Generate(context.Background(), batches)
+	_, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, sc.calls["q/shared"], "a shared dependency is scored once")
@@ -679,7 +715,7 @@ func TestBestFirst_MatchesBruteForceEnumeration(t *testing.T) {
 					ID: "q/H", State: entity.BatchStateSpeculating, Dependencies: deps,
 				})
 
-				iter, err := New(scored(scores)).Generate(context.Background(), batches)
+				iter, err := New(scored(scores)).Generate(context.Background(), batches, nil)
 				require.NoError(t, err)
 				got := drainAll(t, iter)
 
@@ -750,7 +786,7 @@ func TestBestFirst_WideHeadsRankWithoutUnderflow(t *testing.T) {
 	wide("q/narrow", narrowWidth)
 	wide("q/wide", wideWidth)
 
-	iter, err := New(constScorer{depScore}).Generate(context.Background(), batches)
+	iter, err := New(constPredictor{depScore}).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 
 	first, ok, err := iter.Next(context.Background())
@@ -788,7 +824,7 @@ func TestBestFirst_HonorsCancelledContext(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		iter, err := New(scored(nil)).Generate(ctx, batches)
+		iter, err := New(scored(nil)).Generate(ctx, batches, nil)
 		require.ErrorIs(t, err, context.Canceled)
 		assert.Nil(t, iter)
 	})
@@ -797,7 +833,7 @@ func TestBestFirst_HonorsCancelledContext(t *testing.T) {
 		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Minute))
 		defer cancel()
 
-		_, err := New(scored(nil)).Generate(ctx, batches)
+		_, err := New(scored(nil)).Generate(ctx, batches, nil)
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 	})
 
@@ -805,7 +841,7 @@ func TestBestFirst_HonorsCancelledContext(t *testing.T) {
 		// Generate on a live context so the stream has candidates waiting; the
 		// cancel lands between pulls, which is where a caller that has given up
 		// actually stops.
-		iter, err := New(scored(nil)).Generate(context.Background(), batches)
+		iter, err := New(scored(nil)).Generate(context.Background(), batches, nil)
 		require.NoError(t, err)
 
 		_, ok, err := iter.Next(context.Background())
@@ -829,17 +865,17 @@ func TestBestFirst_HonorsCancelledContext(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		iter, err := New(cancellingScorer{cancel: cancel}).Generate(ctx, batches)
+		iter, err := New(cancellingPredictor{cancel: cancel}).Generate(ctx, batches, nil)
 		require.ErrorIs(t, err, context.Canceled)
 		assert.Nil(t, iter)
 	})
 }
 
-// cancellingScorer kills the context and then fails, the way a scorer whose
-// own call was cancelled would.
-type cancellingScorer struct{ cancel context.CancelFunc }
+// cancellingPredictor kills the context and then fails, the way a predictor
+// whose own call was cancelled would.
+type cancellingPredictor struct{ cancel context.CancelFunc }
 
-func (s cancellingScorer) Score(context.Context, entity.Batch) (float64, error) {
+func (s cancellingPredictor) Predict(context.Context, entity.Batch, entity.SpeculationPathSet) (predictor.Probability, error) {
 	s.cancel()
 	return 0, context.Canceled
 }
@@ -870,7 +906,7 @@ func TestBestFirst_DefaultsScoreOutsideUnitInterval(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			iter, err := New(constScorer{tt.score}).Generate(context.Background(), batches)
+			iter, err := New(constPredictor{tt.score}).Generate(context.Background(), batches, nil)
 			require.NoError(t, err)
 			cands := drainAll(t, iter)
 
@@ -898,7 +934,7 @@ func TestBestFirst_ImpossibleFlipScoresNegativeInfinity(t *testing.T) {
 	}
 	sc := scored(map[string]float64{"q/certain": 1.0, "q/toss": 0.6})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := drainAll(t, iter)
 
@@ -930,9 +966,9 @@ func TestBestFirst_ResolvedDependenciesAreNeverScored(t *testing.T) {
 		{ID: "q/H", State: entity.BatchStateSpeculating,
 			Dependencies: []string{"q/passed", "q/broke", "q/stopped", "q/running"}},
 	}
-	sc := newCountingScorer(map[string]float64{"q/running": 0.8})
+	sc := newCountingPredictor(map[string]float64{"q/running": 0.8})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	cands := drainAll(t, iter)
 
@@ -953,7 +989,7 @@ func TestBestFirst_ReturnedPathsAreIndependent(t *testing.T) {
 	// scribbling on what it was handed must not reach the paths still to come.
 	batches, _ := wideHead(3)
 	iter, err := New(scored(map[string]float64{"q/dep00": 0.9, "q/dep01": 0.8, "q/dep02": 0.7})).
-		Generate(context.Background(), batches)
+		Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 
 	first, ok, err := iter.Next(context.Background())
@@ -1010,7 +1046,7 @@ func TestBestFirst_ScoresAreSummedFromTheHeadsBestScore(t *testing.T) {
 		want[s.scoreFor(taken)]++
 	}
 
-	iter, err := New(scored(scores)).Generate(context.Background(), batches)
+	iter, err := New(scored(scores)).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	got := map[float64]int{}
 	for _, c := range drainAll(t, iter) {
@@ -1038,7 +1074,7 @@ func TestBestFirst_UntouchedHeadsNeverWorkOutFlips(t *testing.T) {
 		scores[dep] = 0.6 + 0.005*float64(i)
 	}
 
-	iter, err := New(scored(scores)).Generate(context.Background(), batches)
+	iter, err := New(scored(scores)).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 	it := iteratorOf(t, iter)
 
@@ -1078,7 +1114,7 @@ func TestBestFirst_AFailedPullConsumesNothing(t *testing.T) {
 	}
 	sc := scored(map[string]float64{"q/dep": 0.8})
 
-	iter, err := New(sc).Generate(context.Background(), batches)
+	iter, err := New(sc).Generate(context.Background(), batches, nil)
 	require.NoError(t, err)
 
 	cancelled, cancel := context.WithCancel(context.Background())
