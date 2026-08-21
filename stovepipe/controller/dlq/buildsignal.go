@@ -30,7 +30,7 @@ import (
 // _buildSignalOpName is the metric operation name shared by every emit in this file.
 const _buildSignalOpName = "buildsignal_dlq"
 
-// BuildSignalController is the DLQ reconciler for the buildsignal stage. The
+// buildSignalController is the DLQ reconciler for the buildsignal stage. The
 // payload names a build, not a request, so it takes one more step than the
 // process reconciler: read the build to get its RequestID, then fail that
 // request via failRequest.
@@ -49,7 +49,7 @@ const _buildSignalOpName = "buildsignal_dlq"
 // There is nothing useful to fix: record decides greenness from Request.State,
 // not Build.Status, and writing a terminal status here would claim we saw an
 // outcome we never saw.
-type BuildSignalController struct {
+type buildSignalController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	stores        storage.Factory
@@ -57,22 +57,23 @@ type BuildSignalController struct {
 	consumerGroup string
 }
 
-// Verify BuildSignalController implements consumer.Controller at compile time.
-var _ consumer.Controller = (*BuildSignalController)(nil)
+// Verify buildSignalController implements consumer.Controller at compile time.
+var _ consumer.Controller = (*buildSignalController)(nil)
 
-// NewBuildSignalController creates a DLQ controller for the buildsignal stage's
+// NewDLQBuildSignalController creates a DLQ controller for the buildsignal stage's
 // dead-letter topic. topicKey is typically
 // dlq.TopicKey(stovepipemq.TopicKeyBuildSignal).
-func NewBuildSignalController(
+func NewDLQBuildSignalController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
-) *BuildSignalController {
-	return &BuildSignalController{
-		logger:        logger.Named("buildsignal_dlq_controller"),
-		metricsScope:  scope.SubScope("buildsignal_dlq_controller"),
+) consumer.Controller {
+	name := string(topicKey) + "_controller"
+	return &buildSignalController{
+		logger:        logger.Named(name),
+		metricsScope:  scope.SubScope(name),
 		stores:        stores,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -83,7 +84,7 @@ func NewBuildSignalController(
 // to ack (success) or an error to nack (retry) — pair this controller only with a
 // consumer wired with errs.AlwaysRetryableProcessor so a transient reconcile
 // failure retries instead of dead-lettering the DLQ message itself.
-func (c *BuildSignalController) Process(ctx context.Context, delivery consumer.Delivery) error {
+func (c *buildSignalController) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
 	sig := &stovepipemq.BuildSignal{}
@@ -152,16 +153,16 @@ func (c *BuildSignalController) Process(ctx context.Context, delivery consumer.D
 }
 
 // Name returns the controller name for logging and metrics.
-func (c *BuildSignalController) Name() string {
-	return "buildsignal_dlq"
+func (c *buildSignalController) Name() string {
+	return string(c.topicKey)
 }
 
 // TopicKey returns the topic key this controller subscribes to.
-func (c *BuildSignalController) TopicKey() consumer.TopicKey {
+func (c *buildSignalController) TopicKey() consumer.TopicKey {
 	return c.topicKey
 }
 
 // ConsumerGroup returns the consumer group for offset tracking.
-func (c *BuildSignalController) ConsumerGroup() string {
+func (c *buildSignalController) ConsumerGroup() string {
 	return c.consumerGroup
 }

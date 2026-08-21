@@ -51,3 +51,9 @@ const (
 	// TopicKeyLog is the pipeline stage where per-request logs are written.
 	TopicKeyLog TopicKey = "log"
 )
+
+// MetadataKeyFailureReason is the conclude message's metadata attribute carrying
+// a failed batch's human-readable reason. Set by the failure sites (merge and
+// speculate) on the conclude publish and read by conclude to stamp the request's
+// terminal log; absent on the landed and cancelled paths.
+const MetadataKeyFailureReason = "failure_reason"

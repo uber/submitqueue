@@ -47,6 +47,13 @@ import (
 // which is what makes redelivery safe, while a new cause about the same entity
 // can never be swallowed by an older row.
 func Message(ctx context.Context, registry consumer.TopicRegistry, key consumer.TopicKey, msgID string, payload []byte, partitionKey string) error {
+	return MessageWithMetadata(ctx, registry, key, msgID, payload, partitionKey, nil)
+}
+
+// MessageWithMetadata is Message with side-band message metadata (headers/attributes)
+// attached to the delivery. Use it to carry diagnostic context that is not part of
+// the payload — the backend persists and redelivers metadata alongside the message.
+func MessageWithMetadata(ctx context.Context, registry consumer.TopicRegistry, key consumer.TopicKey, msgID string, payload []byte, partitionKey string, metadata map[string]string) error {
 	q, ok := registry.Queue(key)
 	if !ok {
 		return fmt.Errorf("no queue registered for topic key %s", key)
@@ -56,7 +63,7 @@ func Message(ctx context.Context, registry consumer.TopicRegistry, key consumer.
 		return fmt.Errorf("no topic name registered for topic key %s", key)
 	}
 
-	msg := entityqueue.NewMessage(msgID, payload, partitionKey, nil)
+	msg := entityqueue.NewMessage(msgID, payload, partitionKey, metadata)
 	return q.Publisher().Publish(ctx, topicName, msg)
 }
 
