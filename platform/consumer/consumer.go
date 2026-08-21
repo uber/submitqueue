@@ -207,13 +207,20 @@ func (m *consumer) subscribe(ctx context.Context, controller Controller) error {
 	}
 
 	subscriber := q.Subscriber()
-	deliveryChan, err := subscriber.Subscribe(ctx, topicName, config)
+
+	// Subscribe ties the subscription's lifetime to the ctx it receives, so the
+	// raw ctx must not reach it: that ctx is cancelled on SIGTERM, which would
+	// close deliveryChan the moment shutdown begins and cut consumeLoop's drain
+	// short. Detaching keeps teardown ordered by Stop and subscriber.Close.
+	detachedCtx := context.WithoutCancel(ctx)
+
+	deliveryChan, err := subscriber.Subscribe(detachedCtx, topicName, config)
 	if err != nil {
 		return fmt.Errorf("subscribe failed: %w", err)
 	}
 
 	// Manage the controller lifecycle independently of the caller's context.
-	controllerCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	controllerCtx, cancel := context.WithCancel(detachedCtx)
 
 	// Track active subscription
 	done := make(chan struct{})

@@ -126,6 +126,14 @@ type subscription struct {
 	// Close() waits on this to know the entire subscription is shut down.
 	wg sync.WaitGroup
 
+	// done is closed once managePartitions has exited, which implies
+	// deliveryCh is already closed. Subscribe consults it to tell a live
+	// subscription from one whose ctx was cancelled independently of Close,
+	// so it can replace the stale entry instead of handing a new caller a
+	// closed channel. A channel rather than a flag: signalling it must not
+	// require a lock (see managePartitions).
+	done chan struct{}
+
 	// workerWg tracks all partition worker goroutines independently of wg.
 	// During shutdown, managePartitions waits on workerWg before closing
 	// deliveryCh to guarantee no worker can send on a closed channel.
@@ -472,7 +480,10 @@ func (s *subscriber) advanceWatermark(ctx context.Context, consumerGroup, topic,
 	return nil
 }
 
-// Subscribe starts consuming messages from the specified topic
+// Subscribe starts consuming messages from the specified topic. The returned
+// channel is closed when ctx is cancelled or Close is called, whichever comes
+// first. Consumption that must outlive a request-scoped ctx and be torn down
+// only by Close therefore needs a detached context (context.WithoutCancel).
 func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueue.SubscriptionConfig) (_ <-chan extqueue.Delivery, retErr error) {
 	op := metrics.Begin(s.scope, "subscribe", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
 	defer func() { op.Complete(retErr) }()
@@ -491,10 +502,18 @@ func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueu
 	s.subMu.Lock()
 	defer s.subMu.Unlock()
 
-	// Check if already subscribed
+	// A subscription whose supervisor already exited (its ctx was cancelled
+	// without Close, which would have cleared the map) has a closed
+	// deliveryCh. Evicting it here and falling through to build a fresh one
+	// keeps that closed channel from being handed to the next caller.
 	if sub, exists := s.subscriptions[subKey]; exists {
-		s.logger.Debugw("reusing existing subscription", "topic", topic, "consumer_group", config.ConsumerGroup)
-		return sub.deliveryCh, nil
+		select {
+		case <-sub.done:
+			delete(s.subscriptions, subKey)
+		default:
+			s.logger.Debugw("reusing existing subscription", "topic", topic, "consumer_group", config.ConsumerGroup)
+			return sub.deliveryCh, nil
+		}
 	}
 
 	s.logger.Infow("creating new subscription",
@@ -505,15 +524,16 @@ func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueu
 		"batch_size", config.BatchSize,
 	)
 
-	// Create new subscription
-	// Use a cancellable context for managing the subscription lifecycle
-	// and close will cancel the context to signal goroutines to stop
-	subCtx, cancel := context.WithCancel(context.Background())
+	// Derived from the caller's ctx, so cancelling ctx tears this subscription
+	// down exactly as Close does. Close cancels subCtx directly and so remains
+	// effective for a caller whose ctx never completes.
+	subCtx, cancel := context.WithCancel(ctx)
 	sub := &subscription{
 		topic:      topic,
 		config:     config,
 		deliveryCh: make(chan extqueue.Delivery, config.BatchSize*2),
 		cancelFunc: cancel,
+		done:       make(chan struct{}),
 		workers:    make(map[string]*partitionWorker),
 	}
 
@@ -549,9 +569,14 @@ func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueu
 //  3. workerWg.Wait(): blocks until all workers have fully exited -- this ensures
 //     no worker can send on deliveryCh after step 4
 //  4. close(deliveryCh): safe because step 3 guarantees no senders remain
-//  5. managePartitions returns -> wg.Done() fires -> Close() unblocks
+//  5. managePartitions returns -> done and wg.Done() fire -> Close() unblocks
 func (s *subscriber) managePartitions(ctx context.Context, sub *subscription) {
 	defer sub.wg.Done()
+	// Deferred so every exit path marks the subscription stale for Subscribe.
+	// Must not take s.subMu: Close holds it across cancelFunc()+wg.Wait() for
+	// every subscription, so locking here would deadlock against the very
+	// Close that triggered this shutdown.
+	defer close(sub.done)
 
 	cfg := sub.config
 	// Common log fields for all operations in this subscription's lifecycle.
