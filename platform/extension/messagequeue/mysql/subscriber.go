@@ -1200,21 +1200,22 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) (retErr error) {
 		)
 	}
 
+	// Record poll metrics
+	if messageCount > 0 {
+		metrics.NamedCounter(s.scope, "poll", "messages_delivered", int64(messageCount),
+			metrics.NewTag("topic", sub.topic),
+		)
+	}
+
 	// GC runs every Nth tick regardless of delivery activity; an idle-only
 	// gate starved continuously busy partitions of garbage collection.
+	// Metrics are reported above so a GC failure cannot drop the delivery count.
 	w.gcCounter++
 	if w.gcCounter >= gcTickInterval {
 		w.gcCounter = 0
 		if err := w.garbageCollect(ctx); err != nil {
 			return fmt.Errorf("garbage collect: %w", err)
 		}
-	}
-
-	// Record poll metrics
-	if messageCount > 0 {
-		metrics.NamedCounter(s.scope, "poll", "messages_delivered", int64(messageCount),
-			metrics.NewTag("topic", sub.topic),
-		)
 	}
 
 	return nil

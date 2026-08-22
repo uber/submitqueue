@@ -2287,6 +2287,14 @@ func (s *SQLQueueIntegrationSuite) TestGCReclaimsAckedRowsUnderContinuousTraffic
 	require.NoError(t, err)
 	defer q.Close()
 
+	// Seed the backlog before subscribing so the GC counter starts at zero
+	// when polling begins and cannot fire mid-drain on a slow runner.
+	const initialBatch = 200
+	for i := 0; i < initialBatch; i++ {
+		require.NoError(t, q.Publisher().Publish(s.ctx, topic,
+			entityqueue.NewMessage(fmt.Sprintf("gc-%d", i), []byte("x"), partition, nil)))
+	}
+
 	// Fast poll so the 100-tick GC cadence elapses quickly; at the 100ms
 	// default it would take 10s of continuous traffic before reclamation.
 	cfg := testSubConfig("worker-gc-busy", consumerGroup)
@@ -2302,16 +2310,12 @@ func (s *SQLQueueIntegrationSuite) TestGCReclaimsAckedRowsUnderContinuousTraffic
 		return n
 	}
 
-	// Establish an acked backlog: 200 acked rows that survive consumption
-	// because only GC deletes message rows.
-	const initialBatch = 200
-	for i := 0; i < initialBatch; i++ {
-		require.NoError(t, q.Publisher().Publish(s.ctx, topic,
-			entityqueue.NewMessage(fmt.Sprintf("gc-%d", i), []byte("x"), partition, nil)))
-	}
+	// Drain the acked backlog; the rows survive consumption because only GC
+	// deletes message rows.
 	receiveN(t, deliveryChan, initialBatch, func(d extqueue.Delivery, _ int) {
 		require.NoError(t, d.Ack(s.ctx))
 	})
+	drainSignals(signalCh)
 	require.Equal(t, initialBatch, countMessages())
 
 	// Continuous traffic keeps the partition busy for well over 100 poll ticks;
@@ -2322,6 +2326,8 @@ func (s *SQLQueueIntegrationSuite) TestGCReclaimsAckedRowsUnderContinuousTraffic
 			entityqueue.NewMessage(fmt.Sprintf("gc-busy-%d", i), []byte("y"), partition, nil)))
 		delivery := receive(t, deliveryChan)
 		require.NoError(t, delivery.Ack(s.ctx))
+		// Drain signals so the worker's blocking send cannot stall the traffic loop.
+		drainSignals(signalCh)
 	}
 
 	waitForCondition(t, signalCh, func() bool {
