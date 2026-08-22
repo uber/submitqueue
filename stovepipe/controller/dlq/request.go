@@ -84,6 +84,7 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 		// non-terminal.
 		return fmt.Errorf("failed to decode dlq payload: %w", err)
 	}
+	c = c.forQueue(pr.GetQueueName())
 	if pr.Id == "" {
 		metrics.NamedCounter(c.metricsScope, _opName, "empty_id_errors", 1)
 		return fmt.Errorf("dlq payload decoded to empty request id")
@@ -126,4 +127,13 @@ func (c *requestController) TopicKey() consumer.TopicKey {
 // ConsumerGroup returns the consumer group for offset tracking.
 func (c *requestController) ConsumerGroup() string {
 	return c.consumerGroup
+}
+
+func (c *Controller) forQueue(queue string) *Controller {
+	if queue == "" {
+		return c
+	}
+	scoped := *c
+	scoped.metricsScope = c.metricsScope.Tagged(map[string]string{"queue": queue})
+	return &scoped
 }

@@ -109,7 +109,7 @@ func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) *consumermo
 
 func processPayload(t *testing.T, id string) []byte {
 	t.Helper()
-	b, err := stovepipemq.Marshal(&stovepipemq.ProcessRequest{Id: id})
+	b, err := stovepipemq.Marshal(&stovepipemq.ProcessRequest{Id: id, QueueName: testQueue})
 	require.NoError(t, err)
 	return b
 }
@@ -313,7 +313,7 @@ func TestProcessEmitsAdmittedStrategyMetric(t *testing.T) {
 
 	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, processPayload(t, testID))))
 
-	counter, ok := scope.Snapshot().Counters()["test.process_controller.process.admitted+strategy=full"]
+	counter, ok := scope.Snapshot().Counters()["test.process_controller.process.admitted+queue=monorepo/main,strategy=full"]
 	require.True(t, ok)
 	assert.Equal(t, int64(1), counter.Value())
 }
@@ -338,7 +338,7 @@ func TestProcessEmitsSourceControlResolutionMetric(t *testing.T) {
 
 	require.Error(t, c.Process(context.Background(), delivery(t, ctrl, processPayload(t, testID))))
 
-	counter, ok := scope.Snapshot().Counters()["test.process_controller.process.source_control_errors+stage=resolve"]
+	counter, ok := scope.Snapshot().Counters()["test.process_controller.process.source_control_errors+queue=monorepo/main,stage=resolve"]
 	require.True(t, ok)
 	assert.Equal(t, int64(1), counter.Value())
 }

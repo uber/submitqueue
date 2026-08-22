@@ -108,6 +108,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		// Non-retryable: a malformed message will never succeed regardless of retries.
 		return fmt.Errorf("failed to deserialize build signal: %w", err)
 	}
+	c = c.forQueue(sig.GetQueueName())
 
 	store, err := c.stores.For(storage.Config{QueueName: sig.GetQueueName()})
 	if err != nil {
@@ -375,4 +376,13 @@ func (c *Controller) TopicKey() consumer.TopicKey {
 // ConsumerGroup returns the consumer group for offset tracking.
 func (c *Controller) ConsumerGroup() string {
 	return c.consumerGroup
+}
+
+func (c *Controller) forQueue(queue string) *Controller {
+	if queue == "" {
+		return c
+	}
+	scoped := *c
+	scoped.metricsScope = c.metricsScope.Tagged(map[string]string{"queue": queue})
+	return &scoped
 }

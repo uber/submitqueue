@@ -96,6 +96,7 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 		// without saying so.
 		return fmt.Errorf("failed to decode dlq payload: %w", err)
 	}
+	c = c.forQueue(sig.GetQueueName())
 	if sig.Id == "" {
 		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "empty_id_errors", 1)
 		return fmt.Errorf("dlq payload decoded to empty build id")
@@ -165,4 +166,13 @@ func (c *buildSignalController) TopicKey() consumer.TopicKey {
 // ConsumerGroup returns the consumer group for offset tracking.
 func (c *buildSignalController) ConsumerGroup() string {
 	return c.consumerGroup
+}
+
+func (c *BuildSignalController) forQueue(queue string) *BuildSignalController {
+	if queue == "" {
+		return c
+	}
+	scoped := *c
+	scoped.metricsScope = c.metricsScope.Tagged(map[string]string{"queue": queue})
+	return &scoped
 }
