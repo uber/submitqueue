@@ -710,6 +710,64 @@ func TestSubscriber_PartitionWorkerPollAndDeliver(t *testing.T) {
 	assert.True(t, foundFinish, "expected poll.finish histogram")
 }
 
+// TestSubscriber_PollAndDeliver_GCOnBusyTicks verifies that garbage collection
+// runs on a partition that delivers a message on every poll tick. GC was gated
+// on idle ticks, so a continuously busy partition never reclaimed acked rows.
+func TestSubscriber_PollAndDeliver_GCOnBusyTicks(t *testing.T) {
+	old := gcTickInterval
+	gcTickInterval = 2
+	t.Cleanup(func() { gcTickInterval = old })
+
+	ctrl := gomock.NewController(t)
+
+	mockMessageStore := NewMockmessageStore(ctrl)
+	mockOffsetStore := NewMockoffsetStore(ctrl)
+	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+
+	s := setupSubscriberTest(t, mockMessageStore, mockOffsetStore, mockLeaseStore).(*subscriber)
+
+	cfg := testSubscriptionConfig()
+	deliveryCh := make(chan extqueue.Delivery, 10)
+	sub := &subscription{
+		topic:      "test_topic",
+		config:     cfg,
+		deliveryCh: deliveryCh,
+		workers:    make(map[string]*partitionWorker),
+	}
+	w := &partitionWorker{
+		partitionKey: "part-1",
+		sub:          sub,
+		subscriber:   s,
+		done:         make(chan struct{}),
+	}
+
+	row := messageRow{
+		ID:           "msg-1",
+		Offset:       1,
+		PartitionKey: "part-1",
+		Payload:      []byte("payload"),
+		PublishedAt:  time.Now().UnixMilli(),
+	}
+	// Every poll delivers one message, so the partition never idles.
+	mockMessageStore.EXPECT().FetchByOffset(gomock.Any(), "test_topic", "part-1", int64(0), cfg.BatchSize).
+		Return([]messageRow{row}, nil).Times(3)
+	mockOffsetStore.EXPECT().Initialize(gomock.Any(), "test_topic", "part-1", cfg.ConsumerGroup).Return(nil)
+
+	// The counter reaches gcTickInterval on the second busy tick.
+	mockOffsetStore.EXPECT().GetMinAckedOffset(gomock.Any(), "test_topic", "part-1").Return(int64(1), true, nil)
+	mockMessageStore.EXPECT().GarbageCollect(gomock.Any(), "test_topic", "part-1", int64(1)).Return(int64(1), nil)
+
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		require.NoError(t, w.pollAndDeliver(ctx))
+		select {
+		case <-deliveryCh:
+		default:
+			t.Fatal("expected a delivery on every busy tick")
+		}
+	}
+}
+
 // TestSubscriber_PollAndDeliver_PostponedBarrier verifies that a postponed
 // message halts the partition scan (barrier), while a nacked message is
 // skipped and later offsets keep flowing.
