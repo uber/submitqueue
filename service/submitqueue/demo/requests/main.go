@@ -92,6 +92,7 @@ type config struct {
 	files       int
 	concurrency int
 	stacked     bool
+	burst       bool
 	prefix      string
 	land        bool
 	watch       bool
@@ -120,6 +121,8 @@ func parseFlags() config {
 	flag.IntVar(&c.concurrency, "concurrency", 5,
 		"how many changes to create at once; a stack ignores it, being sequential by nature, and -provider git serializes its git commands")
 	flag.BoolVar(&c.stacked, "stacked", false, "chain the changes and enqueue them as one stack")
+	flag.BoolVar(&c.burst, "burst", false,
+		"create every change first, then enqueue them all at once instead of as each is created; independent changes only")
 	flag.StringVar(&c.prefix, "prefix", "demo", "branch name prefix")
 	flag.BoolVar(&c.land, "land", true, "enqueue each change as it is created")
 	flag.BoolVar(&c.watch, "watch", true, "watch the requests until they all settle")
@@ -241,6 +244,9 @@ func rowCount(cfg config) int {
 func shape(cfg config) string {
 	if cfg.stacked {
 		return "stacked, enqueued as one request once the chain exists"
+	}
+	if cfg.burst && cfg.land {
+		return fmt.Sprintf("independent, created %d at a time, then all enqueued at once", cfg.concurrency)
 	}
 	if cfg.concurrency > 1 {
 		return fmt.Sprintf("independent, %d at a time, each enqueued as soon as it is created", cfg.concurrency)
@@ -432,6 +438,12 @@ func changeFileCount(tag string, change, min int) int {
 	return min + int(sum[0]%4)
 }
 
+// lander enqueues a request. *client.Client is the real one; a test supplies
+// its own to observe when each change is enqueued relative to when it is created.
+type lander interface {
+	Land(ctx context.Context, queue string, uris []string, strategy mergestrategypb.Strategy) (string, error)
+}
+
 // createAndEnqueue creates the changes and puts them on the queue, filling
 // in the tracker's rows as it goes and reporting each step beneath the table.
 //
@@ -451,7 +463,7 @@ func changeFileCount(tag string, change, min int) int {
 func createAndEnqueue(
 	ctx context.Context,
 	src changeSource,
-	sq *client.Client,
+	sq lander,
 	cfg config,
 	strategy mergestrategypb.Strategy,
 	tag, baseSHA string,
@@ -480,12 +492,16 @@ func createAndEnqueue(
 func createIndependent(
 	ctx context.Context,
 	src changeSource,
-	sq *client.Client,
+	sq lander,
 	cfg config,
 	strategy mergestrategypb.Strategy,
 	tag, baseSHA string,
 	t *client.Tracker,
 ) ([]change, error) {
+	if cfg.burst && cfg.land {
+		return createBurst(ctx, src, sq, cfg, strategy, tag, baseSHA, t)
+	}
+
 	rows := t.Rows()
 	// Indexed rather than appended: the workers finish in whatever order the
 	// provider answers them, and the caller still wants the run's own order.
@@ -521,6 +537,62 @@ func createIndependent(
 	return created, nil
 }
 
+// createBurst creates every change first and only then enqueues them, firing
+// all the Land calls together so the requests arrive at the queue in one burst.
+//
+// The default path lands each change the moment it exists, so the queue starts
+// working while later changes are still being created. Burst trades that early
+// overlap for a simultaneous arrival: useful for watching the queue admit a
+// large batch at once. It does not make creation faster — with -provider git the
+// creation phase is still serialized on a single work tree — it only separates
+// creation from enqueuing so the enqueues are not spread across it.
+func createBurst(
+	ctx context.Context,
+	src changeSource,
+	sq lander,
+	cfg config,
+	strategy mergestrategypb.Strategy,
+	tag, baseSHA string,
+	t *client.Tracker,
+) ([]change, error) {
+	rows := t.Rows()
+	created := make([]change, cfg.count)
+
+	create, createCtx := errgroup.WithContext(ctx)
+	create.SetLimit(cfg.concurrency)
+	for i := 1; i <= cfg.count; i++ {
+		create.Go(func() error {
+			c, err := createOne(createCtx, src, cfg, tag, baseSHA, cfg.base, i, t, rows[i-1])
+			if err != nil {
+				return err
+			}
+			created[i-1] = c
+			return nil
+		})
+	}
+	if err := create.Wait(); err != nil {
+		return nil, err
+	}
+
+	t.Note("enqueuing %d changes at once", cfg.count)
+	land, landCtx := errgroup.WithContext(ctx)
+	land.SetLimit(cfg.concurrency)
+	for i := 1; i <= cfg.count; i++ {
+		land.Go(func() error {
+			sqid, err := sq.Land(landCtx, cfg.queue, urisOf([]change{created[i-1]}), strategy)
+			if err != nil {
+				return err
+			}
+			t.Update(func() { rows[i-1].SQID, rows[i-1].Submitted = sqid, time.Now() })
+			return nil
+		})
+	}
+	if err := land.Wait(); err != nil {
+		return nil, err
+	}
+	return created, nil
+}
+
 // createStack creates the changes one after another, each based on the one
 // before it, and submits the whole chain as a single request.
 //
@@ -530,7 +602,7 @@ func createIndependent(
 func createStack(
 	ctx context.Context,
 	src changeSource,
-	sq *client.Client,
+	sq lander,
 	cfg config,
 	strategy mergestrategypb.Strategy,
 	tag, baseSHA string,

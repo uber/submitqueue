@@ -28,6 +28,7 @@ go_library(
         "//platform/extension/consumergate/noop:go_default_library",
         "//platform/extension/messagequeue:go_default_library",
         "//platform/extension/messagequeue/mysql:go_default_library",
+        "//platform/git/exec:go_default_library",
         "//runway/controller:go_default_library",
         "//runway/controller/dlq:go_default_library",
         "//runway/controller/merge:go_default_library",

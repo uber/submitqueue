@@ -26,11 +26,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// Controller is the DLQ reconciler for the process stage. It is registered against the
+// requestController is the DLQ reconciler for the process stage. It is registered against the
 // process topic's DLQ (see TopicKey) and, on each delivery, decodes the request id from
 // the same ProcessRequest payload the primary process controller consumes, then drives
 // the referenced request to a terminal failed state via failRequest.
-type Controller struct {
+type requestController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	stores        storage.Factory
@@ -38,24 +38,25 @@ type Controller struct {
 	consumerGroup string
 }
 
-// Verify Controller implements consumer.Controller at compile time.
-var _ consumer.Controller = (*Controller)(nil)
+// Verify requestController implements consumer.Controller at compile time.
+var _ consumer.Controller = (*requestController)(nil)
 
 // _opName is the metric operation name shared by every emit in this file.
 const _opName = "process_dlq"
 
-// NewController creates a new DLQ controller for the process stage's dead-letter topic.
+// NewDLQRequestController creates a DLQ controller for the process stage's dead-letter topic.
 // topicKey is typically dlq.TopicKey(stovepipemq.TopicKeyProcess).
-func NewController(
+func NewDLQRequestController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
-) *Controller {
-	return &Controller{
-		logger:        logger.Named("process_dlq_controller"),
-		metricsScope:  scope.SubScope("process_dlq_controller"),
+) consumer.Controller {
+	name := string(topicKey) + "_controller"
+	return &requestController{
+		logger:        logger.Named(name),
+		metricsScope:  scope.SubScope(name),
 		stores:        stores,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
@@ -66,7 +67,7 @@ func NewController(
 // (success) or an error to nack (retry) — pair this controller only with a consumer
 // wired with errs.AlwaysRetryableProcessor so a transient reconcile failure retries
 // instead of dead-lettering the DLQ message itself.
-func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error {
+func (c *requestController) Process(ctx context.Context, delivery consumer.Delivery) error {
 	msg := delivery.Message()
 
 	pr := &stovepipemq.ProcessRequest{}
@@ -113,16 +114,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 }
 
 // Name returns the controller name for logging and metrics.
-func (c *Controller) Name() string {
-	return "process_dlq"
+func (c *requestController) Name() string {
+	return string(c.topicKey)
 }
 
 // TopicKey returns the topic key this controller subscribes to.
-func (c *Controller) TopicKey() consumer.TopicKey {
+func (c *requestController) TopicKey() consumer.TopicKey {
 	return c.topicKey
 }
 
 // ConsumerGroup returns the consumer group for offset tracking.
-func (c *Controller) ConsumerGroup() string {
+func (c *requestController) ConsumerGroup() string {
 	return c.consumerGroup
 }

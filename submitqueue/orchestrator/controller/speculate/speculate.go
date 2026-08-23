@@ -224,11 +224,18 @@ func (c *Controller) fanout(ctx context.Context, batchID, queue string) error {
 // want the queue, so a queue's batches are processed in order, but the build
 // dispatch partitions by batch so heads dispatch in parallel.
 func (c *Controller) publishBatchID(ctx context.Context, key consumer.TopicKey, msgID, batchID, queue, partitionKey string) error {
+	return c.publishBatchIDWithMetadata(ctx, key, msgID, batchID, queue, partitionKey, nil)
+}
+
+// publishBatchIDWithMetadata is publishBatchID with side-band message metadata
+// attached to the delivery (nil for none). Used to carry a failed batch's reason
+// to conclude without persisting it as batch state.
+func (c *Controller) publishBatchIDWithMetadata(ctx context.Context, key consumer.TopicKey, msgID, batchID, queue, partitionKey string, metadata map[string]string) error {
 	payload, err := entity.BatchID{ID: batchID, Queue: queue}.ToBytes()
 	if err != nil {
 		return fmt.Errorf("failed to serialize batch ID: %w", err)
 	}
-	return publish.Message(ctx, c.registry, key, msgID, payload, partitionKey)
+	return publish.MessageWithMetadata(ctx, c.registry, key, msgID, payload, partitionKey, metadata)
 }
 
 // attributed records what a failure was about and counts it by subject type.

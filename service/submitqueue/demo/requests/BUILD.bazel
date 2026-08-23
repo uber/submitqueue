@@ -46,10 +46,12 @@ go_test(
         "SUBMITQUEUE_TEST_GIT": "$(location @git//:git)",
     },
     deps = [
+        "//api/base/mergestrategy/protopb:go_default_library",
         "//platform/base/change/git:go_default_library",
         "//platform/fakemarker:go_default_library",
         "//platform/git/exec:go_default_library",
         "//platform/git/exectest:go_default_library",
+        "//submitqueue/client:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
     ],
