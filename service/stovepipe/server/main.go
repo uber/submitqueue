@@ -28,6 +28,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
+	basehook "github.com/uber/submitqueue/api/base/hook"
 	pb "github.com/uber/submitqueue/api/stovepipe/protopb"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
@@ -36,8 +37,11 @@ import (
 	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
 	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
 	"github.com/uber/submitqueue/platform/extension/counter"
+	hookext "github.com/uber/submitqueue/platform/extension/hook"
+	hooknoop "github.com/uber/submitqueue/platform/extension/hook/noop"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
+	platformhook "github.com/uber/submitqueue/platform/hook"
 	"github.com/uber/submitqueue/service/stovepipe/server/mapper"
 	"github.com/uber/submitqueue/stovepipe/controller"
 	"github.com/uber/submitqueue/stovepipe/controller/build"
@@ -147,6 +151,16 @@ type fakeBuildRunnerFactory struct{}
 
 func (fakeBuildRunnerFactory) For(cfg buildrunner.Config) (buildrunner.BuildRunner, error) {
 	return buildrunnerfake.New(cfg), nil
+}
+
+// hookResolver sends every event to the no-op hook. Which hooks an event goes to is host
+// policy, so the resolver lives here rather than in the extension package. A deployment
+// with real integrations swaps this for one that selects on the event's source and type.
+type hookResolver struct{}
+
+// For returns the hooks that run for event.
+func (hookResolver) For(*basehook.HookEvent) []hookext.Hook {
+	return []hookext.Hook{hooknoop.New()}
 }
 
 func main() {
@@ -286,7 +300,7 @@ func run() error {
 	brf := fakeBuildRunnerFactory{}
 
 	storageFty := storageFactory{backend: store}
-	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, registry, sourceControl, brf)
+	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, registry, sourceControl, brf, hookResolver{})
 	if err != nil {
 		return err
 	}
@@ -400,6 +414,7 @@ func registerPrimaryControllers(
 	registry consumer.TopicRegistry,
 	sourceControl sourcecontrol.Factory,
 	brf buildrunner.Factory,
+	hooks hookext.Hooks,
 ) (int, error) {
 	var count int
 
@@ -433,6 +448,12 @@ func registerPrimaryControllers(
 	recordController := record.NewController(logger, scope, store, sourceControl, stovepipemq.TopicKeyRecord, "stovepipe-record")
 	if err := c.Register(recordController); err != nil {
 		return count, fmt.Errorf("failed to register record controller: %w", err)
+	}
+	count++
+
+	hookController := platformhook.NewController(logger, scope, hooks, basehook.TopicKeyHook, "stovepipe-hook")
+	if err := c.Register(hookController); err != nil {
+		return count, fmt.Errorf("failed to register hook controller: %w", err)
 	}
 	count++
 
@@ -475,6 +496,12 @@ func registerDLQControllers(
 	}
 	count++
 
+	hookDLQController := platformhook.NewDLQController(logger, scope, dlq.TopicKey(basehook.TopicKeyHook), "stovepipe-hook-dlq")
+	if err := c.Register(hookDLQController); err != nil {
+		return count, fmt.Errorf("failed to register hook dlq controller: %w", err)
+	}
+	count++
+
 	return count, nil
 }
 
@@ -484,6 +511,9 @@ func registerDLQControllers(
 // topic and the buildsignal consumer subscribes to it, and also republishes to itself while
 // polling. buildsignal publishes to the record topic once a build reaches a terminal status,
 // and the record consumer subscribes to it.
+//
+// The hook topic name is domain-qualified because its key is shared across domains: two
+// domains pointed at one queue backend would otherwise consume each other's events.
 func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRegistry, error) {
 	return consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{
@@ -519,6 +549,14 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			),
 		},
 		{
+			Key:   basehook.TopicKeyHook,
+			Name:  "stovepipe-hook",
+			Queue: q,
+			Subscription: extqueue.DefaultSubscriptionConfig(
+				subscriberName, "stovepipe-hook",
+			),
+		},
+		{
 			Key:          dlq.TopicKey(stovepipemq.TopicKeyProcess),
 			Name:         "process_dlq",
 			Queue:        q,
@@ -541,6 +579,12 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 			Name:         "record_dlq",
 			Queue:        q,
 			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-record-dlq"),
+		},
+		{
+			Key:          dlq.TopicKey(basehook.TopicKeyHook),
+			Name:         "stovepipe-hook_dlq",
+			Queue:        q,
+			Subscription: extqueue.DLQSubscriptionConfig(subscriberName, "stovepipe-hook-dlq"),
 		},
 	})
 }

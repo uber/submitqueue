@@ -7,7 +7,8 @@ Runnable wiring for the **Stovepipe** domain — a single-service domain (the do
 - **process consumer** (`TopicKeyProcess`) — reloads the persisted `Request` from storage and runs the process stage (`stovepipe/controller/process`).
 - **build consumer** (`TopicKeyBuild`) — reloads the persisted `Request` and triggers the build-runner, then publishes to `buildsignal`.
 - **buildsignal consumer** (`TopicKeyBuildSignal`) — polls/records the build's terminal status and releases the queue's in-flight slot, then publishes to `record`.
-- **record consumer** (`TopicKeyRecord`) — writes the whole-repo validation fact, advances the queue's last-green bookmark and promotion ref, and publishes hook events.
+- **record consumer** (`TopicKeyRecord`) — writes the whole-repo validation fact, and advances the queue's last-green bookmark and promotion ref.
+- **hook consumer** (`TopicKeyHook`) — hands each lifecycle event to the hooks `hookResolver` returns (`platform/hook`). Nothing publishes to this topic yet and the resolver returns only `noop`, so events are accepted and discarded. Its topic name is domain-qualified (`stovepipe-hook`) because the key is shared across domains.
 - **DLQ reconciler** — for each internal topic, a `_dlq` consumer that drives stuck requests to a conservative terminal state so the queue's slot is freed.
 
 The ingest → process → build → buildsignal → record hop stays inside one service and one store, so the queue messages carry only request **IDs**; the consumers reload from storage (the source of truth), which keeps messages small and redelivery idempotent. The process, build, buildsignal, and record topic keys and their internal wire contract are owned by the domain under `stovepipe/core/messagequeue/`.
@@ -43,7 +44,7 @@ The Stovepipe controllers live under [`stovepipe/controller/`](../../stovepipe/c
 | `STORAGE_MYSQL_DSN` | yes      | Storage database DSN (`request`, `request_uri`) | —             |
 | `QUEUE_MYSQL_DSN`   | yes      | Queue database DSN                       | —                    |
 | `PORT`              | no       | gRPC listen address                      | `:8083`              |
-| `HOSTNAME`          | no       | Subscriber name for the process consumer | `stovepipe-<unix_ts>` |
+| `HOSTNAME`          | no       | Subscriber name for the queue consumers  | `stovepipe-<unix_ts>` |
 
 ## Running
 
