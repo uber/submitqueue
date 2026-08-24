@@ -87,35 +87,34 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	pr := &stovepipemq.ProcessRequest{}
 	if err := stovepipemq.Unmarshal(msg.Payload, pr); err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a malformed message will never succeed regardless of retries.
 		return fmt.Errorf("failed to deserialize process request: %w", err)
 	}
-
 	store, err := c.stores.For(storage.Config{QueueName: pr.GetQueueName()})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", pr.GetQueueName(), err)
 	}
 
 	request, err := c.loadRequest(ctx, store, pr.Id)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
 
 	// The payload's queue must match the request's authoritative queue; a
 	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
 	if pr.GetQueueName() != "" && pr.GetQueueName() != request.Queue {
-		metrics.NamedCounter(c.metricsScope, _opName, "queue_mismatch", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "queue_mismatch", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("payload queue %q does not match queue %q of request %s", pr.GetQueueName(), request.Queue, request.ID)
 	}
 
 	switch request.State {
 	case entity.RequestStateProcessing:
 		if err := c.publishBuild(ctx, request.ID, request.Queue); err != nil {
-			metrics.NamedCounter(c.metricsScope, _opName, "publish_errors", 1)
+			metrics.NamedCounter(c.metricsScope, _opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
 			return fmt.Errorf("failed to publish request %s to build: %w", request.ID, err)
 		}
 		return nil
@@ -142,7 +141,7 @@ func (c *Controller) processAccepted(ctx context.Context, store storage.Storage,
 	queueRow, err := c.loadQueue(ctx, store, request.Queue)
 	if err != nil {
 		if !errs.IsRetryable(err) {
-			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		}
 		return err
 	}
@@ -183,10 +182,10 @@ func (c *Controller) coalesce(ctx context.Context, store storage.Storage, reques
 		return false, nil
 	}
 	if err := c.supersedeRequest(ctx, store, request); err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return false, err
 	}
-	metrics.NamedCounter(c.metricsScope, _opName, "superseded", 1)
+	metrics.NamedCounter(c.metricsScope, _opName, "superseded", 1, metrics.TagsFromContext(ctx)...)
 	c.logger.Infow("superseded request for newer head",
 		"request_id", request.ID,
 		"queue", request.Queue,
@@ -207,14 +206,14 @@ func (c *Controller) admitLatestHead(ctx context.Context, store storage.Storage,
 
 	for {
 		if queueRow.InFlightCount >= cfg.MaxConcurrent {
-			return c.holdForBuildSlot(delivery, request, queueRow.InFlightCount, cfg.GateWaitDelayMs)
+			return c.holdForBuildSlot(ctx, delivery, request, queueRow.InFlightCount, cfg.GateWaitDelayMs)
 		}
 
 		if queueRow.LastGreenURI != "" && sc == nil {
 			sc, err = c.sourceControl.For(sourcecontrol.Config{QueueName: request.Queue})
 			if err != nil {
 				metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
-					metrics.NewTag("stage", "resolve"),
+					metrics.TagsFromContext(ctx, metrics.NewTag("stage", "resolve"))...,
 				)
 				return fmt.Errorf("failed to resolve source control for queue %s: %w", request.Queue, err)
 			}
@@ -254,12 +253,12 @@ func (c *Controller) admitLatestHead(ctx context.Context, store storage.Storage,
 	}
 
 	if err := c.publishBuild(ctx, request.ID, request.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "publish_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to publish request %s to build: %w", request.ID, err)
 	}
 
 	metrics.NamedCounter(c.metricsScope, _opName, "admitted", 1,
-		metrics.NewTag("strategy", string(request.BuildStrategy)),
+		metrics.TagsFromContext(ctx, metrics.NewTag("strategy", string(request.BuildStrategy)))...,
 	)
 	c.logger.Infow("admitted request to build",
 		"request_id", request.ID,
@@ -282,7 +281,7 @@ func (c *Controller) deriveBuildStrategy(ctx context.Context, sc sourcecontrol.S
 	if err != nil {
 		if sourcecontrol.IsNotFound(err) {
 			metrics.NamedCounter(c.metricsScope, _opName, "strategy_fallbacks", 1,
-				metrics.NewTag("reason", "unknown_ancestry"),
+				metrics.TagsFromContext(ctx, metrics.NewTag("reason", "unknown_ancestry"))...,
 			)
 			c.logger.Warnw("last-green URI is not in request history; using full build",
 				"queue", request.Queue,
@@ -292,7 +291,7 @@ func (c *Controller) deriveBuildStrategy(ctx context.Context, sc sourcecontrol.S
 			return entity.BuildStrategyFull, "", nil
 		}
 		metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
-			metrics.NewTag("stage", "ancestry"),
+			metrics.TagsFromContext(ctx, metrics.NewTag("stage", "ancestry"))...,
 		)
 		return entity.BuildStrategyUnknown, "", fmt.Errorf("failed to check ancestry for queue %s: %w", request.Queue, err)
 	}
@@ -394,7 +393,7 @@ func (c *Controller) releaseBuildSlot(ctx context.Context, store storage.Storage
 			)
 			return
 		}
-		metrics.NamedCounter(c.metricsScope, _opName, "slot_released", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "slot_released", 1, metrics.TagsFromContext(ctx)...)
 		return
 	}
 }
@@ -430,9 +429,9 @@ func (c *Controller) supersedeRequest(ctx context.Context, store storage.Storage
 // delayMs and the gate is re-checked, without burning MaxAttempts — the partition
 // (keyed by queue name) waits with it. delayMs must be positive: a non-positive
 // hold would redeliver immediately and hot-loop the gate check.
-func (c *Controller) holdForBuildSlot(delivery consumer.Delivery, request entity.Request, inFlightCount int32, delayMs int64) error {
+func (c *Controller) holdForBuildSlot(ctx context.Context, delivery consumer.Delivery, request entity.Request, inFlightCount int32, delayMs int64) error {
 	if delayMs <= 0 {
-		metrics.NamedCounter(c.metricsScope, _opName, "config_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "config_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("requires a positive gate wait delay for queue %s, got %dms", request.Queue, delayMs)
 	}
 

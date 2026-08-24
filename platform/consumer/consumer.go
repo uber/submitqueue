@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/extension/consumergate"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
@@ -371,6 +372,13 @@ func (m *consumer) processPartition(ctx context.Context, controller Controller, 
 func (m *consumer) processDelivery(ctx context.Context, controller Controller, delivery extqueue.Delivery, controllerScope tally.Scope) {
 	const opName = "process"
 
+	msg := delivery.Message()
+	queueName := msg.Metadata[entityqueue.MetadataKeyQueueName]
+	ctx = entityqueue.WithQueueName(ctx, queueName)
+	if queueName != "" {
+		ctx = metrics.WithContextTags(ctx, metrics.NewTag("queue", queueName))
+	}
+
 	// Consumer gate: a delivery whose gate is closed is recorded as parked and
 	// postponed (barrier + re-check on redelivery); a false return also covers
 	// shutdown-while-checking, where the delivery is left in flight so its
@@ -380,7 +388,6 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 		return
 	}
 
-	msg := delivery.Message()
 	topicKey := controller.TopicKey()
 
 	m.logger.Debugw("processing delivery",
@@ -396,7 +403,7 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 
 	// Call controller with wrapped delivery
 	start := time.Now()
-	op := metrics.Begin(controllerScope, opName, metrics.LongLatencyBuckets)
+	op := metrics.Begin(controllerScope, opName, metrics.LongLatencyBuckets, metrics.TagsFromContext(ctx)...)
 	err := controller.Process(ctx, wrapped)
 
 	elapsed := time.Since(start)
@@ -419,7 +426,7 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 		// A failure outcome wins over a recorded hold — a hold is only honored
 		// on success, so retry accounting and dead-lettering stay meaningful.
 		if wrapped.held {
-			metrics.NamedCounter(controllerScope, opName, "hold_ignored", 1)
+			metrics.NamedCounter(controllerScope, opName, "hold_ignored", 1, metrics.TagsFromContext(ctx)...)
 			m.logger.Warnw("hold recorded but controller returned error, failure outcome wins",
 				"controller", controller.Name(),
 				"topic_key", topicKey,
@@ -451,7 +458,7 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 			)
 
 			// Reject moves to DLQ (or acks if DLQ disabled)
-			rejectOp := metrics.Begin(controllerScope, "reject", metrics.StorageLatencyBuckets)
+			rejectOp := metrics.Begin(controllerScope, "reject", metrics.StorageLatencyBuckets, metrics.TagsFromContext(ctx)...)
 			rejectErr := delivery.Reject(ctx, controllerFailure)
 			rejectOp.Complete(rejectErr)
 			if rejectErr != nil {
@@ -485,7 +492,7 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 		// Nack requeues immediately - the visibility timeout spaces retries.
 		// The failure travels with it so that the attempt which finally spends
 		// the retry budget can dead-letter saying why.
-		nackOp := metrics.Begin(controllerScope, "nack", metrics.StorageLatencyBuckets)
+		nackOp := metrics.Begin(controllerScope, "nack", metrics.StorageLatencyBuckets, metrics.TagsFromContext(ctx)...)
 		nackErr := delivery.Nack(ctx, controllerFailure)
 		nackOp.Complete(nackErr)
 		if nackErr != nil {
@@ -505,7 +512,7 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 	// the visibility timeout lapses into a normal redelivery, so the hold
 	// loop's liveness never depends on this write succeeding.
 	if wrapped.held {
-		postponeOp := metrics.Begin(controllerScope, "postpone", metrics.StorageLatencyBuckets)
+		postponeOp := metrics.Begin(controllerScope, "postpone", metrics.StorageLatencyBuckets, metrics.TagsFromContext(ctx)...)
 		postponeErr := delivery.Postpone(ctx, wrapped.holdDelayMs)
 		postponeOp.Complete(postponeErr)
 		if postponeErr != nil {
@@ -530,7 +537,7 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 	}
 
 	// Controller succeeded - ack message
-	ackOp := metrics.Begin(controllerScope, "ack", metrics.StorageLatencyBuckets)
+	ackOp := metrics.Begin(controllerScope, "ack", metrics.StorageLatencyBuckets, metrics.TagsFromContext(ctx)...)
 	ackErr := delivery.Ack(ctx)
 	ackOp.Complete(ackErr)
 	if ackErr != nil {
@@ -578,7 +585,7 @@ func (m *consumer) checkGate(ctx context.Context, controller Controller, deliver
 			// into a normal redelivery.
 			return false
 		}
-		metrics.NamedCounter(scope, opName, "enter_errors", 1)
+		metrics.NamedCounter(scope, opName, "enter_errors", 1, metrics.TagsFromContext(ctx)...)
 		m.logger.Errorw("gate check failed, failing open",
 			"consumer_group", consumerGroup,
 			"topic", topic,
@@ -600,7 +607,7 @@ func (m *consumer) checkGate(ctx context.Context, controller Controller, deliver
 		// earlier re-check, the gate has opened and the record must go so
 		// observers see an empty parked set. A no-op when never parked.
 		if unparkErr := entry.Unpark(ctx, descriptor); unparkErr != nil {
-			metrics.NamedCounter(scope, opName, "unpark_errors", 1)
+			metrics.NamedCounter(scope, opName, "unpark_errors", 1, metrics.TagsFromContext(ctx)...)
 			m.logger.Warnw("failed to remove parked record on admit",
 				"consumer_group", consumerGroup,
 				"topic", topic,
@@ -615,7 +622,7 @@ func (m *consumer) checkGate(ctx context.Context, controller Controller, deliver
 	// partition waits behind it (barrier) and the gate is re-checked on
 	// redelivery without burning retry budget.
 	if parkErr := entry.Park(ctx, descriptor); parkErr != nil {
-		metrics.NamedCounter(scope, opName, "park_errors", 1)
+		metrics.NamedCounter(scope, opName, "park_errors", 1, metrics.TagsFromContext(ctx)...)
 		m.logger.Warnw("failed to write parked record, postponing anyway",
 			"consumer_group", consumerGroup,
 			"topic", topic,
@@ -624,8 +631,8 @@ func (m *consumer) checkGate(ctx context.Context, controller Controller, deliver
 		)
 	}
 
-	metrics.NamedCounter(scope, opName, "parked", 1)
-	postponeOp := metrics.Begin(scope, "postpone", metrics.StorageLatencyBuckets)
+	metrics.NamedCounter(scope, opName, "parked", 1, metrics.TagsFromContext(ctx)...)
+	postponeOp := metrics.Begin(scope, "postpone", metrics.StorageLatencyBuckets, metrics.TagsFromContext(ctx)...)
 	postponeErr := delivery.Postpone(ctx, m.gateRecheckDelayMs)
 	postponeOp.Complete(postponeErr)
 	if postponeErr != nil {

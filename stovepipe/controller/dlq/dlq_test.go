@@ -24,6 +24,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
+	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -37,9 +38,15 @@ const (
 	testID    = "request/monorepo/main/7"
 )
 
+func queueContext() context.Context {
+	ctx := entityqueue.WithQueueName(context.Background(), testQueue)
+	return metrics.WithContextTags(ctx, metrics.NewTag("queue", testQueue))
+}
+
 type dlqMocks struct {
-	reqStore   *storagemock.MockRequestStore
-	queueStore *storagemock.MockQueueStore
+	reqStore     *storagemock.MockRequestStore
+	queueStore   *storagemock.MockQueueStore
+	metricsScope tally.TestScope
 }
 
 // staticStorageFactory resolves every queue to one fixed store aggregate.
@@ -51,16 +58,18 @@ func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { ret
 func newController(t *testing.T, ctrl *gomock.Controller) (consumer.Controller, dlqMocks) {
 	t.Helper()
 
+	scope := tally.NewTestScope("test", nil)
 	m := dlqMocks{
-		reqStore:   storagemock.NewMockRequestStore(ctrl),
-		queueStore: storagemock.NewMockQueueStore(ctrl),
+		reqStore:     storagemock.NewMockRequestStore(ctrl),
+		queueStore:   storagemock.NewMockQueueStore(ctrl),
+		metricsScope: scope,
 	}
 
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
 	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 
-	c := NewDLQRequestController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), staticStorageFactory{store: store}, TopicKey(stovepipemq.TopicKeyProcess), "stovepipe-process-dlq")
+	c := NewDLQRequestController(zap.NewNop().Sugar(), scope, staticStorageFactory{store: store}, TopicKey(stovepipemq.TopicKeyProcess), "stovepipe-process-dlq")
 	return c, m
 }
 
@@ -79,7 +88,7 @@ func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) consumer.De
 
 func processPayload(t *testing.T, id string) []byte {
 	t.Helper()
-	b, err := stovepipemq.Marshal(&stovepipemq.ProcessRequest{Id: id})
+	b, err := stovepipemq.Marshal(&stovepipemq.ProcessRequest{Id: id, QueueName: testQueue})
 	require.NoError(t, err)
 	return b
 }
@@ -95,10 +104,11 @@ func requestWithState(state entity.RequestState) entity.Request {
 
 func TestProcess(t *testing.T) {
 	tests := []struct {
-		name    string
-		payload []byte
-		setup   func(m dlqMocks)
-		wantErr bool
+		name       string
+		payload    []byte
+		setup      func(m dlqMocks)
+		wantErr    bool
+		wantMetric string
 	}{
 		{
 			// No queue expectations: an accepted request never claimed a slot,
@@ -194,10 +204,11 @@ func TestProcess(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "empty request id is not retryable",
-			payload: processPayload(t, ""),
-			setup:   func(m dlqMocks) {},
-			wantErr: true,
+			name:       "empty request id is not retryable",
+			payload:    processPayload(t, ""),
+			setup:      func(m dlqMocks) {},
+			wantErr:    true,
+			wantMetric: "test.process_dlq_controller.process_dlq.empty_id_errors+queue=monorepo/main",
 		},
 	}
 
@@ -212,7 +223,12 @@ func TestProcess(t *testing.T) {
 				payload = processPayload(t, testID)
 			}
 
-			err := c.Process(context.Background(), delivery(t, ctrl, payload))
+			err := c.Process(queueContext(), delivery(t, ctrl, payload))
+			if tt.wantMetric != "" {
+				counter, ok := m.metricsScope.Snapshot().Counters()[tt.wantMetric]
+				require.True(t, ok)
+				assert.EqualValues(t, 1, counter.Value())
+			}
 
 			if tt.wantErr {
 				require.Error(t, err)

@@ -96,28 +96,27 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	rec := &stovepipemq.Record{}
 	if err := stovepipemq.Unmarshal(msg.Payload, rec); err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a malformed message will never succeed regardless of retries.
 		return fmt.Errorf("failed to deserialize record: %w", err)
 	}
-
 	store, err := c.stores.For(storage.Config{QueueName: rec.GetQueueName()})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", rec.GetQueueName(), err)
 	}
 
 	request, err := c.loadRequest(ctx, store, rec.Id)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
 
 	// The payload's queue must match the request's authoritative queue; a
 	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
 	if rec.GetQueueName() != "" && rec.GetQueueName() != request.Queue {
-		metrics.NamedCounter(c.metricsScope, _opName, "queue_mismatch", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "queue_mismatch", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("payload queue %q does not match queue %q of request %s", rec.GetQueueName(), request.Queue, request.ID)
 	}
 
@@ -128,7 +127,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 			return err
 		}
 		if !fact.IsGreen() {
-			metrics.NamedCounter(c.metricsScope, _opName, "not_green", 1)
+			metrics.NamedCounter(c.metricsScope, _opName, "not_green", 1, metrics.TagsFromContext(ctx)...)
 			// Only the writer of the fact reports the latency: a redelivery adopts
 			// the stored fact instead, and a second sample would count one break
 			// twice in the distribution.
@@ -139,7 +138,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		}
 		holdsBookmark, err := c.advanceLastGreen(ctx, store, request)
 		if err != nil {
-			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 			return err
 		}
 		if !holdsBookmark {
@@ -153,20 +152,20 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	case entity.RequestStateCancelled:
 		// A cancelled build decided nothing about the commit, so it establishes
 		// no fact. The identity stays unclaimed; the next commit re-validates.
-		metrics.NamedCounter(c.metricsScope, _opName, "cancelled", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "cancelled", 1, metrics.TagsFromContext(ctx)...)
 		return nil
 
 	case entity.RequestStateSuperseded:
 		// Terminal without a build outcome. buildsignal never publishes for a
 		// superseded request, so this is unreachable in practice.
-		metrics.NamedCounter(c.metricsScope, _opName, "superseded", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "superseded", 1, metrics.TagsFromContext(ctx)...)
 		return nil
 
 	default:
 		// Non-retryable: buildsignal publishes only after committing the
 		// outcome, so a non-terminal request here is a broken invariant that
 		// retrying cannot fix.
-		metrics.NamedCounter(c.metricsScope, _opName, "invariant_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "invariant_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("request %s reached record in non-terminal state %q", request.ID, request.State)
 	}
 }
@@ -193,7 +192,7 @@ func (c *Controller) recordFact(ctx context.Context, store storage.Storage, requ
 	err := factStore.Create(ctx, fact)
 	switch {
 	case err == nil:
-		metrics.NamedCounter(c.metricsScope, _opName, "fact_created", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "fact_created", 1, metrics.TagsFromContext(ctx)...)
 		c.logger.Infow("recorded validation fact",
 			"queue", request.Queue,
 			"request_id", request.ID,
@@ -205,22 +204,22 @@ func (c *Controller) recordFact(ctx context.Context, store storage.Storage, requ
 	case errors.Is(err, storage.ErrAlreadyExists):
 		stored, getErr := factStore.Get(ctx, request.URI, wholeRepositoryProject)
 		if getErr != nil {
-			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 			return entity.ValidationFact{}, false, fmt.Errorf("failed to load the existing fact for uri %s: %w", request.URI, getErr)
 		}
 		if stored.RequestID != request.ID {
 			// Two requests validating one URI would break the dedup ingest
 			// enforces, so this is a broken invariant rather than a race to
 			// resolve. Non-retryable: the stored fact is immutable.
-			metrics.NamedCounter(c.metricsScope, _opName, "invariant_errors", 1)
+			metrics.NamedCounter(c.metricsScope, _opName, "invariant_errors", 1, metrics.TagsFromContext(ctx)...)
 			return entity.ValidationFact{}, false, fmt.Errorf(
 				"fact for uri %s is owned by request %s, not %s", request.URI, stored.RequestID, request.ID)
 		}
-		metrics.NamedCounter(c.metricsScope, _opName, "fact_exists", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "fact_exists", 1, metrics.TagsFromContext(ctx)...)
 		return stored, false, nil
 
 	default:
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return entity.ValidationFact{}, false, fmt.Errorf("failed to create the fact for uri %s: %w", request.URI, err)
 	}
 }
@@ -236,26 +235,25 @@ func (c *Controller) recordFact(ctx context.Context, store storage.Storage, requ
 // confined to failures and made once the fact is durable, and every way it can fail is
 // counted and swallowed so a reporting fault cannot retry an outcome already recorded.
 func (c *Controller) reportFailureDetectionLatency(ctx context.Context, request entity.Request) {
-	queueTag := metrics.NewTag("queue", request.Queue)
 	strategyTag := metrics.NewTag("strategy", string(request.BuildStrategy))
 
 	// Only a strategy that validates a delta pins a base commit, so a full build has
 	// no baseline to measure from. Its failures are counted rather than timed: absent
 	// here is the ordinary case, not a fault.
 	if request.BaseURI == "" {
-		metrics.NamedCounter(c.metricsScope, _opName, "failure_detection_missing", 1, queueTag, strategyTag)
+		metrics.NamedCounter(c.metricsScope, _opName, "failure_detection_missing", 1, metrics.TagsFromContext(ctx, strategyTag)...)
 		return
 	}
 
 	sourceControl, err := c.sourceControl.For(sourcecontrol.Config{QueueName: request.Queue})
 	if err != nil {
-		c.failureDetectionUnobserved(request, "resolve_source_control", err)
+		c.failureDetectionUnobserved(ctx, request, "resolve_source_control", err)
 		return
 	}
 
 	info, err := sourceControl.ChangeInfo(ctx, request.BaseURI)
 	if err != nil {
-		c.failureDetectionUnobserved(request, "get_change_info", err)
+		c.failureDetectionUnobserved(ctx, request, "get_change_info", err)
 		return
 	}
 
@@ -263,7 +261,7 @@ func (c *Controller) reportFailureDetectionLatency(ctx context.Context, request 
 	// broken extension contract rather than a lookup failure. Measuring from 1970
 	// would drop a decades-long sample into the distribution.
 	if info.CreatedAt <= 0 {
-		c.failureDetectionUnobserved(request, "undated_change", nil)
+		c.failureDetectionUnobserved(ctx, request, "undated_change", nil)
 		return
 	}
 
@@ -271,22 +269,21 @@ func (c *Controller) reportFailureDetectionLatency(ctx context.Context, request 
 	// negative latency would corrupt the distribution rather than describe it.
 	latency := time.Since(time.UnixMilli(info.CreatedAt))
 	if latency < 0 {
-		c.failureDetectionUnobserved(request, "future_change", nil)
+		c.failureDetectionUnobserved(ctx, request, "future_change", nil)
 		return
 	}
 
 	metrics.NamedHistogram(c.metricsScope, _opName, "failure_detection_latency", metrics.ChangeAgeBuckets,
-		queueTag, strategyTag,
+		metrics.TagsFromContext(ctx, strategyTag)...,
 	).RecordDuration(latency)
 }
 
 // failureDetectionUnobserved counts a latency that could not be observed, tagged with
 // the step that failed so an unmeasurable failure can be told apart from a broken
 // dependency.
-func (c *Controller) failureDetectionUnobserved(request entity.Request, step string, err error) {
+func (c *Controller) failureDetectionUnobserved(ctx context.Context, request entity.Request, step string, err error) {
 	metrics.NamedCounter(c.metricsScope, _opName, "failure_detection_errors", 1,
-		metrics.NewTag("queue", request.Queue),
-		metrics.NewTag("step", step),
+		metrics.TagsFromContext(ctx, metrics.NewTag("step", step))...,
 	)
 	c.logger.Warnw("failed to observe how long the build failure went undetected",
 		"queue", request.Queue,
@@ -348,7 +345,7 @@ func (c *Controller) advanceLastGreen(ctx context.Context, store storage.Storage
 			return false, fmt.Errorf("failed to advance last green for queue %s: %w", request.Queue, err)
 		}
 
-		metrics.NamedCounter(c.metricsScope, _opName, "last_green_advanced", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "last_green_advanced", 1, metrics.TagsFromContext(ctx)...)
 		c.logger.Infow("advanced last green bookmark",
 			"queue", request.Queue,
 			"request_id", request.ID,
@@ -364,11 +361,9 @@ func (c *Controller) advanceLastGreen(ctx context.Context, store storage.Storage
 // observability failure cannot turn a successful record operation into a retry,
 // which is why each cause is counted and logged separately instead of returned.
 func (c *Controller) emitLastGreenTimestamp(ctx context.Context, request entity.Request) {
-	queueTag := metrics.NewTag("queue", request.Queue)
-
 	sourceControl, err := c.sourceControl.For(sourcecontrol.Config{QueueName: request.Queue})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "last_green_timestamp_resolve_errors", 1, queueTag)
+		metrics.NamedCounter(c.metricsScope, _opName, "last_green_timestamp_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		c.logger.Warnw("failed to resolve source control to report the last green timestamp",
 			"queue", request.Queue,
 			"error", err,
@@ -378,7 +373,7 @@ func (c *Controller) emitLastGreenTimestamp(ctx context.Context, request entity.
 
 	info, err := sourceControl.ChangeInfo(ctx, request.URI)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "last_green_timestamp_errors", 1, queueTag)
+		metrics.NamedCounter(c.metricsScope, _opName, "last_green_timestamp_errors", 1, metrics.TagsFromContext(ctx)...)
 		c.logger.Warnw("failed to look up the last green change timestamp",
 			"queue", request.Queue,
 			"uri", request.URI,
@@ -391,7 +386,7 @@ func (c *Controller) emitLastGreenTimestamp(ctx context.Context, request entity.
 	// is a broken extension contract rather than a lookup failure. Emitting it
 	// anyway would publish a 1970 timestamp and read as an infinitely stale queue.
 	if info.CreatedAt <= 0 {
-		metrics.NamedCounter(c.metricsScope, _opName, "last_green_timestamp_invalid", 1, queueTag)
+		metrics.NamedCounter(c.metricsScope, _opName, "last_green_timestamp_invalid", 1, metrics.TagsFromContext(ctx)...)
 		c.logger.Warnw("source control reported no creation timestamp for the last green change",
 			"queue", request.Queue,
 			"uri", request.URI,
@@ -407,7 +402,7 @@ func (c *Controller) emitLastGreenTimestamp(ctx context.Context, request entity.
 		_opName,
 		"last_green_timestamp_seconds",
 		float64(time.UnixMilli(info.CreatedAt).Unix()),
-		queueTag,
+		metrics.TagsFromContext(ctx)...,
 	)
 }
 
@@ -424,7 +419,7 @@ func (c *Controller) promote(ctx context.Context, request entity.Request) error 
 	sc, err := c.sourceControl.For(sourcecontrol.Config{QueueName: request.Queue})
 	if err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
-			metrics.NewTag("stage", "resolve"),
+			metrics.TagsFromContext(ctx, metrics.NewTag("stage", "resolve"))...,
 		)
 		return fmt.Errorf("failed to resolve source control for queue %s: %w", request.Queue, err)
 	}
@@ -432,7 +427,7 @@ func (c *Controller) promote(ctx context.Context, request entity.Request) error 
 	if err := sc.Promote(ctx, request.URI); err != nil {
 		if sourcecontrol.IsNotFound(err) {
 			metrics.NamedCounter(c.metricsScope, _opName, "promotions_skipped", 1,
-				metrics.NewTag("reason", "unknown_uri"),
+				metrics.TagsFromContext(ctx, metrics.NewTag("reason", "unknown_uri"))...,
 			)
 			c.logger.Warnw("green commit is no longer on the queue's ref; skipping promotion",
 				"queue", request.Queue,
@@ -443,12 +438,12 @@ func (c *Controller) promote(ctx context.Context, request entity.Request) error 
 		}
 
 		metrics.NamedCounter(c.metricsScope, _opName, "source_control_errors", 1,
-			metrics.NewTag("stage", "promote"),
+			metrics.TagsFromContext(ctx, metrics.NewTag("stage", "promote"))...,
 		)
 		return fmt.Errorf("failed to promote uri %s of queue %s: %w", request.URI, request.Queue, err)
 	}
 
-	metrics.NamedCounter(c.metricsScope, _opName, "promotions", 1)
+	metrics.NamedCounter(c.metricsScope, _opName, "promotions", 1, metrics.TagsFromContext(ctx)...)
 	c.logger.Infow("promoted green commit",
 		"queue", request.Queue,
 		"request_id", request.ID,

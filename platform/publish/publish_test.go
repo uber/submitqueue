@@ -60,6 +60,64 @@ func TestMessage(t *testing.T) {
 	assert.Equal(t, "msg-1", published.ID)
 	assert.Equal(t, []byte("payload"), published.Payload)
 	assert.Equal(t, "partition-1", published.PartitionKey)
+	assert.Empty(t, published.Metadata)
+}
+
+func TestMessage_PropagatesQueueNameFromContext(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	registry, publisher := newTestRegistry(t, ctrl)
+
+	var published entityqueue.Message
+	publisher.EXPECT().
+		Publish(gomock.Any(), "test-topic", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+			published = msg
+			return nil
+		})
+
+	ctx := entityqueue.WithQueueName(context.Background(), "monorepo/main")
+	require.NoError(t, Message(ctx, registry, testKey, "msg-1", []byte("payload"), "partition-1"))
+	assert.Equal(t, "monorepo/main", published.Metadata[entityqueue.MetadataKeyQueueName])
+}
+
+func TestMessageWithMetadata_MergesContextWithoutMutatingInput(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	registry, publisher := newTestRegistry(t, ctrl)
+
+	var published entityqueue.Message
+	publisher.EXPECT().
+		Publish(gomock.Any(), "test-topic", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+			published = msg
+			return nil
+		})
+
+	metadata := map[string]string{"failure_reason": "build failed"}
+	ctx := entityqueue.WithQueueName(context.Background(), "monorepo/main")
+	require.NoError(t, MessageWithMetadata(ctx, registry, testKey, "msg-1", []byte("payload"), "partition-1", metadata))
+	assert.Equal(t, map[string]string{
+		"failure_reason":                 "build failed",
+		entityqueue.MetadataKeyQueueName: "monorepo/main",
+	}, published.Metadata)
+	assert.Equal(t, map[string]string{"failure_reason": "build failed"}, metadata)
+}
+
+func TestMessageWithMetadata_ExplicitQueueNameWins(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	registry, publisher := newTestRegistry(t, ctrl)
+
+	var published entityqueue.Message
+	publisher.EXPECT().
+		Publish(gomock.Any(), "test-topic", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+			published = msg
+			return nil
+		})
+
+	ctx := entityqueue.WithQueueName(context.Background(), "inbound")
+	metadata := map[string]string{entityqueue.MetadataKeyQueueName: "outbound"}
+	require.NoError(t, MessageWithMetadata(ctx, registry, testKey, "msg-1", []byte("payload"), "partition-1", metadata))
+	assert.Equal(t, "outbound", published.Metadata[entityqueue.MetadataKeyQueueName])
 }
 
 func TestMessage_UnregisteredKey(t *testing.T) {

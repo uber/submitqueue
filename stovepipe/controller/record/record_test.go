@@ -26,6 +26,7 @@ import (
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
+	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
@@ -42,6 +43,11 @@ const (
 	testURI     = "git://remote/monorepo/main/head-sha"
 	testBaseURI = "git://remote/monorepo/main/base-sha"
 )
+
+func queueContext() context.Context {
+	ctx := entityqueue.WithQueueName(context.Background(), testQueue)
+	return metrics.WithContextTags(ctx, metrics.NewTag("queue", testQueue))
+}
 
 // Metric names as they appear in a snapshot, so a case asserts on the series an
 // operator queries rather than on how the emit is composed.
@@ -228,7 +234,7 @@ func TestProcess_AdvancesBookmarkOnSuccess(t *testing.T) {
 				Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
 			m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(nil)
 
-			require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 			assert.Equal(t, tt.wantURI, written.LastGreenURI)
 			assert.Equal(t, testID, written.LastGreenRequestID)
 
@@ -281,7 +287,7 @@ func TestProcess_TimestampReportingFailureDoesNotFailRecord(t *testing.T) {
 			m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).Return(tt.info, tt.err)
 			m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(nil)
 
-			require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 			assert.Empty(t, m.metricsScope.Snapshot().Gauges())
 			counter, ok := m.metricsScope.Snapshot().Counters()[tt.wantCounter]
 			require.True(t, ok)
@@ -305,7 +311,7 @@ func TestProcess_UnresolvableSourceControlCountsTimestampFailure(t *testing.T) {
 	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow("", "", 1), nil)
 	m.queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
 
-	require.Error(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+	require.Error(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 	assert.Empty(t, m.metricsScope.Snapshot().Gauges())
 	counter, ok := m.metricsScope.Snapshot().Counters()["record_controller.record.last_green_timestamp_resolve_errors+queue=monorepo/main"]
 	require.True(t, ok)
@@ -323,9 +329,12 @@ func TestProcess_RecordsBrokenFactWithoutAdvancing(t *testing.T) {
 	m.expectFactCreated(&fact)
 	// No queue reads or writes: a broken fact never moves the bookmark.
 
-	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 	assert.Equal(t, entity.DegreeBroken, fact.Degree)
 	assert.False(t, fact.IsGreen())
+	counter, ok := m.metricsScope.Snapshot().Counters()["record_controller.record.not_green+queue=monorepo/main"]
+	require.True(t, ok)
+	assert.EqualValues(t, 1, counter.Value())
 }
 
 func TestProcess_ReportsFailureDetectionLatency(t *testing.T) {
@@ -338,7 +347,7 @@ func TestProcess_ReportsFailureDetectionLatency(t *testing.T) {
 	m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testBaseURI).
 		Return(sourcecontrol.ChangeInfo{CreatedAt: time.Now().Add(-time.Hour).UnixMilli()}, nil)
 
-	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 
 	histogram, ok := m.metricsScope.Snapshot().Histograms()[failureDetectionLatency]
 	require.True(t, ok)
@@ -360,7 +369,7 @@ func TestProcess_FullBuildFailureHasNoBaseline(t *testing.T) {
 	var fact entity.ValidationFact
 	m.expectFactCreated(&fact)
 
-	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 
 	snapshot := m.metricsScope.Snapshot()
 	assert.Empty(t, snapshot.Histograms(), "a build with no baseline has no latency to report")
@@ -381,7 +390,7 @@ func TestProcess_RedeliveredFailureIsNotResampled(t *testing.T) {
 	m.factStore.EXPECT().Get(gomock.Any(), testURI, wholeRepositoryProject).
 		Return(entity.ValidationFact{URI: testURI, Degree: entity.DegreeBroken, RequestID: testID}, nil)
 
-	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 	assert.Empty(t, m.metricsScope.Snapshot().Histograms())
 }
 
@@ -437,7 +446,7 @@ func TestProcess_UnobservableDetectionLatencyDoesNotFailRecord(t *testing.T) {
 			var fact entity.ValidationFact
 			m.expectFactCreated(&fact)
 
-			require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 
 			snapshot := m.metricsScope.Snapshot()
 			assert.Empty(t, snapshot.Histograms(), "no latency may be reported when it cannot be observed")
@@ -485,7 +494,7 @@ func TestProcess_AdoptsExistingFactFromSameRequest(t *testing.T) {
 				m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(nil)
 			}
 
-			require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 		})
 	}
 }
@@ -501,7 +510,7 @@ func TestProcess_ExistingFactFromDifferentRequestFails(t *testing.T) {
 		Return(entity.ValidationFact{URI: testURI, Degree: entity.DegreeGreen, RequestID: "request/monorepo/main/1"}, nil)
 	// The bookmark must not move on an identity this request does not own.
 
-	require.Error(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+	require.Error(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 }
 
 func TestProcess_SkipsBookmarkWhenNotNewer(t *testing.T) {
@@ -541,7 +550,7 @@ func TestProcess_SkipsBookmarkWhenNotNewer(t *testing.T) {
 				m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(nil)
 			}
 
-			require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 			assert.NotContains(
 				t,
 				m.metricsScope.Snapshot().Gauges(),
@@ -568,7 +577,7 @@ func TestProcess_SkipsPromotionWhenCommitLeftTheRef(t *testing.T) {
 	// it, so the message is acked rather than sent round again.
 	m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(sourcecontrol.ErrNotFound)
 
-	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 }
 
 func TestProcess_PromotionErrorsPropagate(t *testing.T) {
@@ -607,7 +616,7 @@ func TestProcess_PromotionErrorsPropagate(t *testing.T) {
 
 			// The bookmark already advanced, so the redelivery re-promotes the
 			// same commit; failing here is what makes that retry happen.
-			require.Error(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+			require.Error(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 		})
 	}
 }
@@ -629,7 +638,7 @@ func TestProcess_TerminalWithoutFactDoesNotTouchStores(t *testing.T) {
 			m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(tt.state), nil)
 			// Neither a fact nor a queue write: these outcomes decide nothing.
 
-			require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 		})
 	}
 }
@@ -651,7 +660,7 @@ func TestProcess_NonTerminalRequestFails(t *testing.T) {
 
 			m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(tt.state), nil)
 
-			require.Error(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+			require.Error(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 		})
 	}
 }
@@ -680,7 +689,7 @@ func TestProcess_RetriesBookmarkOnVersionMismatch(t *testing.T) {
 		Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
 	m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(nil)
 
-	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 }
 
 func TestProcess_MalformedRequestIDFails(t *testing.T) {
@@ -694,7 +703,7 @@ func TestProcess_MalformedRequestIDFails(t *testing.T) {
 	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).
 		Return(queueRow("git://remote/monorepo/main/old", "not-a-request-id", 1), nil)
 
-	require.Error(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+	require.Error(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 }
 
 func TestProcess_StorageErrorsPropagate(t *testing.T) {
@@ -758,7 +767,7 @@ func TestProcess_StorageErrorsPropagate(t *testing.T) {
 			c, m := newController(t, ctrl)
 			tt.setup(m)
 
-			require.Error(t, c.Process(context.Background(), delivery(t, ctrl, recordPayload(t, testID))))
+			require.Error(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 		})
 	}
 }
@@ -767,7 +776,7 @@ func TestProcess_MalformedPayloadFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c, _ := newController(t, ctrl)
 
-	require.Error(t, c.Process(context.Background(), delivery(t, ctrl, []byte("not-protojson"))))
+	require.Error(t, c.Process(queueContext(), delivery(t, ctrl, []byte("not-protojson"))))
 }
 
 func TestProcess_QueueMismatchFails(t *testing.T) {
@@ -782,5 +791,5 @@ func TestProcess_QueueMismatchFails(t *testing.T) {
 	payload, err := stovepipemq.Marshal(&stovepipemq.Record{Id: testID, QueueName: "monorepo/other"})
 	require.NoError(t, err)
 
-	require.Error(t, c.Process(context.Background(), delivery(t, ctrl, payload)))
+	require.Error(t, c.Process(queueContext(), delivery(t, ctrl, payload)))
 }

@@ -89,7 +89,7 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 
 	sig := &stovepipemq.BuildSignal{}
 	if err := stovepipemq.Unmarshal(msg.Payload, sig); err != nil {
-		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Retried rather than acked, for the same deployment-skew reason the
 		// process reconciler gives: a newer producer's payload decodes fine once
 		// the rollout finishes, and acking here would skip the slot release
@@ -97,13 +97,13 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 		return fmt.Errorf("failed to decode dlq payload: %w", err)
 	}
 	if sig.Id == "" {
-		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "empty_id_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "empty_id_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("dlq payload decoded to empty build id")
 	}
 
 	store, err := c.stores.For(storage.Config{QueueName: sig.GetQueueName()})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", sig.GetQueueName(), err)
 	}
@@ -124,10 +124,10 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 			// Create. There is no request to recover from this payload; the build
 			// stage's own DLQ handles the request that triggered it.
 			c.logger.Warnw("dlq reconcile: build not found, skipping", "build_id", sig.Id)
-			metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "build_not_found", 1)
+			metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "build_not_found", 1, metrics.TagsFromContext(ctx)...)
 			return nil
 		}
-		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "build_store_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "build_store_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to get build %s: %w", sig.Id, err)
 	}
 
@@ -135,7 +135,7 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 		// Defensive: a build with no request has nothing to reconcile and no slot
 		// to release. Ack it so the DLQ does not grow forever.
 		c.logger.Errorw("dlq reconcile: build has empty request id, skipping", "build_id", sig.Id)
-		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "build_missing_request", 1)
+		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "build_missing_request", 1, metrics.TagsFromContext(ctx)...)
 		return nil
 	}
 
@@ -144,11 +144,11 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 	// triggers only once process has written the strategy, which lands in the same CAS
 	// as accepted→processing, and processing exits only to a terminal outcome.
 	if err := failRequest(ctx, store, c.logger, build.RequestID); err != nil {
-		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "reconcile_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "reconcile_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
 
-	metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "reconciled", 1)
+	metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "reconciled", 1, metrics.TagsFromContext(ctx)...)
 	return nil
 }
 

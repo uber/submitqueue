@@ -27,6 +27,7 @@ import (
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
 	mqmock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
@@ -44,6 +45,11 @@ const (
 	testOlderID = "request/monorepo/main/3"
 	testURI     = "git://repo/monorepo/main/abc123"
 )
+
+func queueContext(queueName string) context.Context {
+	ctx := entityqueue.WithQueueName(context.Background(), queueName)
+	return metrics.WithContextTags(ctx, metrics.NewTag("queue", queueName))
+}
 
 type processMocks struct {
 	reqStore      *storagemock.MockRequestStore
@@ -109,7 +115,7 @@ func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) *consumermo
 
 func processPayload(t *testing.T, id string) []byte {
 	t.Helper()
-	b, err := stovepipemq.Marshal(&stovepipemq.ProcessRequest{Id: id})
+	b, err := stovepipemq.Marshal(&stovepipemq.ProcessRequest{Id: id, QueueName: testQueue})
 	require.NoError(t, err)
 	return b
 }
@@ -133,7 +139,7 @@ func TestProcessBuildPublishRequiresRegisteredTopic(t *testing.T) {
 		ID: testID, Queue: testQueue, State: entity.RequestStateProcessing, Version: 2,
 	}, nil)
 
-	err := c.Process(context.Background(), delivery(t, ctrl, processPayload(t, testID)))
+	err := c.Process(queueContext(testQueue), delivery(t, ctrl, processPayload(t, testID)))
 
 	require.Error(t, err)
 	assert.False(t, errs.IsRetryable(err))
@@ -166,6 +172,7 @@ func expectBuildPublish(t *testing.T, m processMocks, id string) {
 		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
 			assert.Equal(t, id, msg.ID)
 			assert.Equal(t, id, msg.PartitionKey)
+			assert.Equal(t, testQueue, msg.Metadata[entityqueue.MetadataKeyQueueName])
 			buildReq := &stovepipemq.BuildRequest{}
 			require.NoError(t, stovepipemq.Unmarshal(msg.Payload, buildReq))
 			assert.Equal(t, id, buildReq.Id)
@@ -236,7 +243,7 @@ func TestDeriveBuildStrategy(t *testing.T) {
 			if tt.queue.LastGreenURI != "" {
 				sc = m.sourceControl
 			}
-			strategy, baseURI, err := c.deriveBuildStrategy(context.Background(), sc, tt.queue, acceptedRequest(testID))
+			strategy, baseURI, err := c.deriveBuildStrategy(queueContext(tt.queue.Name), sc, tt.queue, acceptedRequest(testID))
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -280,7 +287,7 @@ func TestDeriveBuildStrategyEmitsSourceControlMetrics(t *testing.T) {
 			m.sourceControl.EXPECT().IsAncestor(gomock.Any(), lastGreenURI, testURI).Return(false, tt.ancestryErr)
 
 			_, _, err := c.deriveBuildStrategy(
-				context.Background(),
+				queueContext(testQueue),
 				m.sourceControl,
 				entity.Queue{Name: testQueue, LastGreenURI: lastGreenURI},
 				acceptedRequest(testID),
@@ -291,7 +298,7 @@ func TestDeriveBuildStrategyEmitsSourceControlMetrics(t *testing.T) {
 			} else {
 				require.Error(t, err)
 			}
-			counter, ok := scope.Snapshot().Counters()["test.process_controller.process."+tt.metricName+"+"+tt.metricTags]
+			counter, ok := scope.Snapshot().Counters()["test.process_controller.process."+tt.metricName+"+queue="+testQueue+","+tt.metricTags]
 			require.True(t, ok)
 			assert.Equal(t, int64(1), counter.Value())
 		})
@@ -311,9 +318,9 @@ func TestProcessEmitsAdmittedStrategyMetric(t *testing.T) {
 	}, nil)
 	expectAdmit(t, m, testID)
 
-	require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, processPayload(t, testID))))
+	require.NoError(t, c.Process(queueContext(testQueue), delivery(t, ctrl, processPayload(t, testID))))
 
-	counter, ok := scope.Snapshot().Counters()["test.process_controller.process.admitted+strategy=full"]
+	counter, ok := scope.Snapshot().Counters()["test.process_controller.process.admitted+queue=monorepo/main,strategy=full"]
 	require.True(t, ok)
 	assert.Equal(t, int64(1), counter.Value())
 }
@@ -336,9 +343,9 @@ func TestProcessEmitsSourceControlResolutionMetric(t *testing.T) {
 		For(sourcecontrol.Config{QueueName: testQueue}).
 		Return(nil, errors.New("source control unavailable"))
 
-	require.Error(t, c.Process(context.Background(), delivery(t, ctrl, processPayload(t, testID))))
+	require.Error(t, c.Process(queueContext(testQueue), delivery(t, ctrl, processPayload(t, testID))))
 
-	counter, ok := scope.Snapshot().Counters()["test.process_controller.process.source_control_errors+stage=resolve"]
+	counter, ok := scope.Snapshot().Counters()["test.process_controller.process.source_control_errors+queue=monorepo/main,stage=resolve"]
 	require.True(t, ok)
 	assert.Equal(t, int64(1), counter.Value())
 }
@@ -403,7 +410,7 @@ func TestProcessRederivesStrategyAfterQueueReload(t *testing.T) {
 			m.reqStore.EXPECT().Update(gomock.Any(), updatedRequest, int32(1), int32(2)).Return(nil)
 			expectBuildPublish(t, m, testID)
 
-			require.NoError(t, c.Process(context.Background(), delivery(t, ctrl, processPayload(t, testID))))
+			require.NoError(t, c.Process(queueContext(testQueue), delivery(t, ctrl, processPayload(t, testID))))
 		})
 	}
 }
@@ -803,7 +810,7 @@ func TestProcess(t *testing.T) {
 				d.EXPECT().Hold(tt.wantHoldMs)
 			}
 
-			err := c.Process(context.Background(), d)
+			err := c.Process(queueContext(testQueue), d)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -825,7 +832,7 @@ func TestHoldForBuildSlotRequiresPositiveDelay(t *testing.T) {
 	d := consumermock.NewMockDelivery(ctrl)
 	// No Hold expectation: the guard must reject before recording a hold.
 
-	err := c.holdForBuildSlot(d, acceptedRequest(testID), 1, 0)
+	err := c.holdForBuildSlot(queueContext(testQueue), d, acceptedRequest(testID), 1, 0)
 
 	require.Error(t, err)
 	assert.False(t, errs.IsRetryable(err))

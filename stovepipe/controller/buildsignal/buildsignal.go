@@ -104,34 +104,33 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	sig := &stovepipemq.BuildSignal{}
 	if err := stovepipemq.Unmarshal(msg.Payload, sig); err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a malformed message will never succeed regardless of retries.
 		return fmt.Errorf("failed to deserialize build signal: %w", err)
 	}
-
 	store, err := c.stores.For(storage.Config{QueueName: sig.GetQueueName()})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", sig.GetQueueName(), err)
 	}
 
 	build, err := c.loadBuild(ctx, store, sig.Id)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
 
 	request, err := c.loadRequest(ctx, store, build.RequestID)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
 
 	// The payload's queue must match the request's authoritative queue; a
 	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
 	if sig.GetQueueName() != "" && sig.GetQueueName() != request.Queue {
-		metrics.NamedCounter(c.metricsScope, _opName, "queue_mismatch", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "queue_mismatch", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("payload queue %q does not match queue %q of request %s", sig.GetQueueName(), request.Queue, request.ID)
 	}
 
@@ -214,12 +213,12 @@ func (c *Controller) finishRequest(ctx context.Context, store storage.Storage, r
 	}
 
 	if err := c.releaseBuildSlot(ctx, store, request.Queue); err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
 
 	if err := c.markOutcome(ctx, store, request, outcomeState(status)); err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
 	return nil
@@ -268,7 +267,7 @@ func (c *Controller) markOutcome(ctx context.Context, store storage.Storage, req
 		updated.Version = newVersion
 		*request = updated
 		metrics.NamedCounter(c.metricsScope, _opName, "outcomes", 1,
-			metrics.NewTag("state", string(state)),
+			metrics.TagsFromContext(ctx, metrics.NewTag("state", string(state)))...,
 		)
 		return nil
 	}
@@ -300,7 +299,7 @@ func (c *Controller) releaseBuildSlot(ctx context.Context, store storage.Storage
 			}
 			return fmt.Errorf("failed to release build slot for queue %s: %w", queueName, err)
 		}
-		metrics.NamedCounter(c.metricsScope, _opName, "slot_released", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "slot_released", 1, metrics.TagsFromContext(ctx)...)
 		return nil
 	}
 }

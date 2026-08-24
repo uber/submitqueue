@@ -30,9 +30,34 @@ type Tag struct {
 	Value string
 }
 
+type contextTagsKey struct{}
+
 // NewTag creates a Tag with the given key and value.
 func NewTag(key, value string) Tag {
 	return Tag{Key: key, Value: value}
+}
+
+// WithContextTags returns a child context carrying the supplied metric tags.
+// Tags already carried by ctx are preserved, and both inputs are copied.
+func WithContextTags(ctx context.Context, tags ...Tag) context.Context {
+	existing, _ := ctx.Value(contextTagsKey{}).([]Tag)
+	contextTags := make([]Tag, 0, len(existing)+len(tags))
+	contextTags = append(contextTags, existing...)
+	contextTags = append(contextTags, tags...)
+	return context.WithValue(ctx, contextTagsKey{}, contextTags)
+}
+
+// TagsFromContext appends metric tags explicitly carried by ctx. Additional
+// tags are preserved, and context-derived tags win when the same key is present.
+func TagsFromContext(ctx context.Context, tags ...Tag) []Tag {
+	stored, _ := ctx.Value(contextTagsKey{}).([]Tag)
+	if len(stored) == 0 {
+		return tags
+	}
+
+	contextTags := make([]Tag, 0, len(tags)+len(stored))
+	contextTags = append(contextTags, tags...)
+	return append(contextTags, stored...)
 }
 
 // Common duration bucket sets for latency histograms. Operations differ widely

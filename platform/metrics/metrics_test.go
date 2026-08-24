@@ -158,6 +158,22 @@ func TestNamedGauge(t *testing.T) {
 	assert.Equal(t, float64(42), g.Value())
 }
 
+func TestTagsFromContext(t *testing.T) {
+	contextTags := []Tag{NewTag("queue", "monorepo/main")}
+	ctx := WithContextTags(context.Background(), contextTags...)
+	contextTags[0] = NewTag("queue", "changed")
+	ctx = WithContextTags(ctx, NewTag("controller", "build"))
+
+	tags := TagsFromContext(ctx, NewTag("result", "success"), NewTag("queue", "wrong"))
+	assert.Equal(t, []Tag{
+		NewTag("result", "success"),
+		NewTag("queue", "wrong"),
+		NewTag("queue", "monorepo/main"),
+		NewTag("controller", "build"),
+	}, tags)
+	assert.Empty(t, TagsFromContext(context.Background()))
+}
+
 func TestLatencyBuckets_Sorted(t *testing.T) {
 	sets := map[string]tally.DurationBuckets{
 		"FastLatencyBuckets":    FastLatencyBuckets,
