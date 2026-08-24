@@ -16,13 +16,13 @@ package composite
 
 import (
 	"context"
-	"errors"
 
+	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/validator"
 )
 
-// compositeValidator runs all validators and joins their errors.
+// compositeValidator runs all validators and groups their errors.
 type compositeValidator struct {
 	// cfg is the per-queue identity this validator was built for.
 	cfg validator.Config
@@ -31,17 +31,19 @@ type compositeValidator struct {
 }
 
 // New creates a Validator bound to the queue named in cfg that evaluates all
-// child validators and joins their errors.
+// child validators and groups their errors.
 func New(cfg validator.Config, validators []validator.Validator) validator.Validator {
 	return &compositeValidator{cfg: cfg, validators: validators}
 }
 
 func (c *compositeValidator) Validate(ctx context.Context, request entity.Request) error {
-	var errs []error
+	var failures []error
 	for _, v := range c.validators {
 		if err := v.Validate(ctx, request); err != nil {
-			errs = append(errs, err)
+			failures = append(failures, err)
 		}
 	}
-	return errors.Join(errs...)
+	// Group, not errors.Join: the children ran independently, so each failure
+	// must be classified on its own rather than the first one speaking for all.
+	return errs.Group(failures...)
 }
