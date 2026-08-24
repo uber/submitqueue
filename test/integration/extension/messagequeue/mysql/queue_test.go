@@ -2268,6 +2268,73 @@ func (s *SQLQueueIntegrationSuite) TestIdleLeaseRelease() {
 	t.Logf("Idle lease released and partition resurrected on new traffic")
 }
 
+// TestGCReclaimsAckedRowsUnderContinuousTraffic verifies that garbage
+// collection reclaims acked rows on a partition that never idles. GC was gated
+// on idle poll ticks, so a continuously busy partition grew its message log
+// without bound; it must now run on its own tick cadence regardless of traffic.
+func (s *SQLQueueIntegrationSuite) TestGCReclaimsAckedRowsUnderContinuousTraffic() {
+	t := s.T()
+
+	topic := "gc_busy_topic"
+	partition := "gc-busy-part"
+	consumerGroup := "gc-busy-cg"
+
+	signalCh := make(chan queueMySQL.HookSignal, 100)
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB: s.db, Logger: zaptest.NewLogger(t), MetricsScope: tally.NoopScope,
+		OnSignal: signalCh,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	// Seed the backlog before subscribing so the GC counter starts at zero
+	// when polling begins and cannot fire mid-drain on a slow runner.
+	const initialBatch = 200
+	for i := 0; i < initialBatch; i++ {
+		require.NoError(t, q.Publisher().Publish(s.ctx, topic,
+			entityqueue.NewMessage(fmt.Sprintf("gc-%d", i), []byte("x"), partition, nil)))
+	}
+
+	// Fast poll so the 100-tick GC cadence elapses quickly; at the 100ms
+	// default it would take 10s of continuous traffic before reclamation.
+	cfg := testSubConfig("worker-gc-busy", consumerGroup)
+	cfg.PollIntervalMs = 50
+	deliveryChan, err := q.Subscriber().Subscribe(s.ctx, topic, cfg)
+	require.NoError(t, err)
+
+	countMessages := func() int {
+		var n int
+		require.NoError(t, s.db.QueryRowContext(s.ctx,
+			"SELECT COUNT(*) FROM queue_messages WHERE topic = ? AND partition_key = ?",
+			topic, partition).Scan(&n))
+		return n
+	}
+
+	// Drain the acked backlog; the rows survive consumption because only GC
+	// deletes message rows.
+	receiveN(t, deliveryChan, initialBatch, func(d extqueue.Delivery, _ int) {
+		require.NoError(t, d.Ack(s.ctx))
+	})
+	drainSignals(signalCh)
+	require.Equal(t, initialBatch, countMessages())
+
+	// Continuous traffic keeps the partition busy for well over 100 poll ticks;
+	// GC must reclaim the acked backlog without ever observing an idle tick.
+	const continuousTrafficIterations = 150
+	for i := 0; i < continuousTrafficIterations; i++ {
+		require.NoError(t, q.Publisher().Publish(s.ctx, topic,
+			entityqueue.NewMessage(fmt.Sprintf("gc-busy-%d", i), []byte("y"), partition, nil)))
+		delivery := receive(t, deliveryChan)
+		require.NoError(t, delivery.Ack(s.ctx))
+		// Drain signals so the worker's blocking send cannot stall the traffic loop.
+		drainSignals(signalCh)
+	}
+
+	waitForCondition(t, signalCh, func() bool {
+		return countMessages() < initialBatch
+	}, "acked backlog should be garbage collected while the partition stays busy")
+}
+
 // TestNackDoesNotBlockOtherMessages verifies that nacking a message does not
 // block delivery of subsequent messages in the same partition. The nacked
 // message should be skipped (invisible) while later messages are delivered.
