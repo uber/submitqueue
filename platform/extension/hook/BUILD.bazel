@@ -1,0 +1,9 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["hook.go"],
+    importpath = "github.com/uber/submitqueue/platform/extension/hook",
+    visibility = ["//visibility:public"],
+    deps = ["//api/base/hook:go_default_library"],
+)
