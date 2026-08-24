@@ -1,16 +1,16 @@
 # Runway Workflow
 
-Runway is the landing service: it owns VCS operations — mergeability checking and landing — on behalf of SubmitQueue. Runway is a single service (the domain *is* the service): it subscribes to two inbound topics (`merge-conflict-checker`, `merger`) and publishes results to two outbound topics (`merge-conflict-checker-signal`, `merger-signal`). It is a consumer-only service with no gateway; work arrives via topic queues and results leave via topic queues.
+Runway is the landing service: it owns VCS operations — mergeability checking and landing — on behalf of SubmitQueue. Runway is a single service (the domain *is* the service): it subscribes to two inbound topics (`merge-conflict-check`, `runway-merge`) and publishes results to two outbound topics (`merge-conflict-check-signal`, `merge-signal`). It is a consumer-only service with no gateway; work arrives via topic queues and results leave via topic queues.
 
 ## Merge-conflict check and merge
 
-The two queues operate at different granularities:
+The two queues are the same shape but different commit semantics:
 
-- **merge-conflict-check** is request-level. A merge request carries an ordered sequence of steps (changes + merge strategy). Runway performs a read-only trial merge and publishes per-step mergeability results back.
+- **merge-conflict-check** is a dry run. A merge request carries an ordered sequence of steps (changes + merge strategy). Runway performs a read-only trial merge and publishes per-step mergeability results back.
 
-- **merge** is batch-level. A merge request carries the same payload but Runway commits the result and reports the revisions it produced (per-step output IDs).
+- **merge** is the committing version. A merge request carries the same payload but Runway commits the result and reports the revisions it produced (per-step output IDs).
 
-A third operation — **promote** — pushes a commit to a ref as-is (`--ff-only`). The primary use case is forwarding a landed SHA from `main` to `verified/main` without creating a new merge commit. Promote reuses the merge queue with the `PROMOTE` merge strategy; Runway fast-forwards the target ref and reports the same SHA back as the output ID.
+- **promote** is a special `PROMOTE` strategy on the `merge` queue: it pushes a commit to a ref as-is (`--ff-only`). The primary use case is forwarding a landed SHA from `main` to `verified/main` without creating a new merge commit.
 
 These are independent input-output flows. A merge-conflict check can run without a merge ever running, and a merge does not depend on a prior check.
 
@@ -23,39 +23,39 @@ The outbound topics partition by SubmitQueue queue name, matching SubmitQueue's 
 ## Workflow
 
 ```
-                 ┌─────────────────────────────────────────────────────┐
-                 │              submitqueue orchestrator                │
-                 └──────────┬───────────────────────────┬──────────────┘
-                            │                           │
-                  MergeRequest (dry run)      MergeRequest (commit)
-                            │                           │
-                            ▼                           ▼
-              [merge-conflict-checker]              [merger]
-                            │                           │
-               merge-conflict-check ctrl          merge ctrl
-                       (read-only)            (apply + commit)
-                            │                           │
-                       MergeResult                 MergeResult
-                            │                           │
-                            ▼                           ▼
-           [merge-conflict-checker-signal]       [merger-signal]
-                            │                           │
-                            ▼                           ▼
-                 ┌──────────┬───────────────────────────┬──────────────┐
-                 │  merge-conflict-check-       merge-signal ctrl       │
-                 │  signal ctrl              (update batch state,       │
-                 │  (update request            fan out to conclude)     │
-                 │   mergeability)                                      │
-                 │              submitqueue orchestrator                │
-                 └─────────────────────────────────────────────────────┘
+                  ┌─────────────────────────────────────────────────────┐
+                  │              submitqueue orchestrator                │
+                  └──────────┬───────────────────────────┬──────────────┘
+                             │                           │
+                   MergeRequest (dry run)      MergeRequest (commit)
+                             │                           │
+                             ▼                           ▼
+               [merge-conflict-check]              [runway-merge]
+                             │                           │
+                merge-conflict-check ctrl          merge ctrl
+                        (read-only)            (apply + commit)
+                             │                           │
+                        MergeResult                 MergeResult
+                             │                           │
+                             ▼                           ▼
+            [merge-conflict-check-signal]       [merge-signal]
+                             │                           │
+                             ▼                           ▼
+                  ┌──────────┬───────────────────────────┬──────────────┐
+                  │  merge-conflict-check-       merge-signal ctrl       │
+                  │  signal ctrl              (update batch state,       │
+                  │  (update request            fan out to conclude)     │
+                  │   mergeability)                                      │
+                  │              submitqueue orchestrator                │
+                  └─────────────────────────────────────────────────────┘
 ```
 
 ## Per-controller summary
 
 | Controller | In | Out | One-line role |
 |---|---|---|---|
-| **merge-conflict-check** | MergeRequest | MergeResult -> merge-conflict-checker-signal | Dry-run merge: check mergeability of ordered steps against the target branch (read-only) |
-| **merge** | MergeRequest | MergeResult -> merger-signal | Apply, commit, and report per-step output IDs |
+| **merge-conflict-check** | MergeRequest | MergeResult -> merge-conflict-check-signal | Dry-run merge: check mergeability of ordered steps against the target branch (read-only) |
+| **merge** | MergeRequest | MergeResult -> merge-signal | Apply, commit, and report per-step output IDs |
 
 The merge-conflict-check controller always publishes a result — even when all steps are mergeable — so SubmitQueue receives a definitive answer. On infrastructure error it nacks for retry.
 
@@ -83,8 +83,8 @@ Runway has no persistent state — no request store, no job store, no database. 
 
 ### Runway
 
-Runway is a single service. It subscribes to two inbound topics (`merge-conflict-checker`, `merger`), performs VCS operations through a pluggable extension, and publishes results to two outbound topics (`merge-conflict-checker-signal`, `merger-signal`). It owns no persistent data.
+Runway is a single service. It subscribes to two inbound topics (`merge-conflict-check`, `runway-merge`), performs VCS operations through a pluggable extension, and publishes results to two outbound topics (`merge-conflict-check-signal`, `merge-signal`). It owns no persistent data.
 
 ### Shared: the messaging queue
 
-Runway communicates with SubmitQueue only through the messaging queue. The inbound topics are owned by runway; the outbound topics are owned by SubmitQueue.
+Runway communicates with SubmitQueue only through the messaging queue. The contract is owned by Runway and published under `api/runway/messagequeue/`; both inbound and outbound topic keys live there. SubmitQueue publishes `MergeRequest` messages and consumes the `MergeResult` signals.

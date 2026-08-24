@@ -151,7 +151,7 @@ So `build`'s `Trigger` gets its own shape under `stovepipe/extension/buildrunner
 
 ### Stovepipe `BuildRunner` contract (design sketch)
 
-Not implemented here. `BuildID`, `BuildStatus`, and `BuildMetadata` are defined locally in `stovepipe/entity`, shaped the same as SubmitQueue's equivalents in `submitqueue/entity` but not the same Go types — per the reviewer preference recorded in [Alternatives considered for sharing the contract](#alternatives-considered-for-sharing-the-contract), a shared `platform/base`/`platform/extension/buildrunner` contract was considered and set aside in favor of keeping each domain's interface separate and reusing at the implementation layer instead. `stovepipe/extension/buildrunner` holds `Trigger`, `Status`, `Cancel`, `Config`, and the `Factory` interface, per [CLAUDE.md](CLAUDE.md)'s extension rules.
+Not implemented here. `BuildID`, `BuildStatus`, and `BuildMetadata` are defined locally in `stovepipe/entity`, shaped the same as SubmitQueue's equivalents in `submitqueue/entity` but not the same Go types — per the reviewer preference recorded in [Alternatives considered for sharing the contract](#alternatives-considered-for-sharing-the-contract), a shared `platform/base`/`platform/extension/buildrunner` contract was considered and set aside in favor of keeping each domain's interface separate and reusing at the implementation layer instead. `stovepipe/extension/buildrunner` holds `Trigger`, `Status`, `Cancel`, `Config`, and the `Factory` interface, per [AGENTS.md](AGENTS.md)'s extension rules.
 
 ```go
 // package buildrunner (stovepipe/extension/buildrunner)
@@ -266,7 +266,7 @@ Key the `Build` by identity derived from the Request — `buildKey(R) = R.ID` fo
 | Pros | Cons |
 |---|---|
 | Redelivery dedup by direct get: checking `BuildStore.Get(buildKey(R))` before triggering means at-least-once delivery never starts a second build | A second id concept (`Build.ID` beside `Build.RunnerBuildID`) carried by every entity, signature, and reader forever |
-| `Request` → `Build` navigation with no reverse index, per the KV key-derivation rule in CLAUDE.md | No current reader needs to *derive* a build id — the id travels in every message hop, so each consumer already holds the key it needs |
+| `Request` → `Build` navigation with no reverse index, per the KV key-derivation rule in [AGENTS.md](AGENTS.md) | No current reader needs to *derive* a build id — the id travels in every message hop, so each consumer already holds the key it needs |
 | Enforces (rather than assumes) the direct-navigation property SubmitQueue's speculate takes on faith | Diverges entity shape and controller flow from SubmitQueue, weakening the "structurally the same controller" claim and dual-implementing-backend symmetry |
 
 Trade-offs: the dedup guards a rare event at a permanent modeling cost. The duplicate it prevents arises only from a redelivery inside the trigger window — rare, and already harmless (identical scope; `buildsignal`'s superseded short-circuit and its first-writer-wins outcome CAS make the loser a no-op — see [Idempotency](#idempotency)). The prospective key-derivers — a future canceller, or `analyze` reaching back to the Phase-1 target graph — would need to be handed the id by their producing stage instead, if those designs land.
@@ -326,9 +326,9 @@ Plus the `BuildID{ID string}` wire type in `stovepipe/entity` (same "id only tra
 
 - `Create(ctx, build entity.Build) error` — `ErrAlreadyExists` if the id is taken.
 - `Get(ctx, id string) (entity.Build, error)` — `ErrNotFound` if absent.
-- `Update(ctx, build entity.Build, oldVersion, newVersion int32) error` — pure conditional write; `ErrVersionMismatch` on a stale guard. The controller computes `newVersion = oldVersion + 1`, calls the store, and assigns `build.Version = newVersion` only on success (see [CLAUDE.md](CLAUDE.md) and the [storage README](submitqueue/extension/storage/README.md)).
+- `Update(ctx, build entity.Build, oldVersion, newVersion int32) error` — pure conditional write; `ErrVersionMismatch` on a stale guard. The controller computes `newVersion = oldVersion + 1`, calls the store, and assigns `build.Version = newVersion` only on success (see [AGENTS.md](AGENTS.md) and the [storage README](submitqueue/extension/storage/README.md)).
 
-Single-key reads/writes only — no list-by-request, no query-by-attribute — per the key/value-shaped extension rule in [CLAUDE.md](CLAUDE.md).
+Single-key reads/writes only — no list-by-request, no query-by-attribute — per the key/value-shaped extension rule in [AGENTS.md](AGENTS.md).
 
 **`Request` additions** (extending the existing entity, which already has `ID/Queue/URI/State/Version`):
 
