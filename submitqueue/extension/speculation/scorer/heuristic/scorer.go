@@ -22,7 +22,7 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/scorer"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer"
 )
 
 // ValueFunc extracts a single numeric value from a batch of changes for bucketing.
