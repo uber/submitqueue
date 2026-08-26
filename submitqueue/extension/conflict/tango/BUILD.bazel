@@ -3,7 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "go_default_library",
     srcs = ["tango.go"],
-    importpath = "github.com/uber/submitqueue/submitqueue/extension/dependency/conflict/tango",
+    importpath = "github.com/uber/submitqueue/submitqueue/extension/conflict/tango",
     visibility = ["//visibility:public"],
     deps = [
         "//submitqueue/entity:go_default_library",
