@@ -29,6 +29,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 
 	"github.com/uber-go/tally"
+	basehook "github.com/uber/submitqueue/api/base/hook"
 	pb "github.com/uber/submitqueue/api/submitqueue/orchestrator/protopb"
 	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
 	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
@@ -37,6 +38,8 @@ import (
 	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	mysqlcounter "github.com/uber/submitqueue/platform/extension/counter/mysql"
+	hookext "github.com/uber/submitqueue/platform/extension/hook"
+	hooknoop "github.com/uber/submitqueue/platform/extension/hook/noop"
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/platform/pipeline"
 	"github.com/uber/submitqueue/submitqueue/core/changeset"
@@ -199,6 +202,7 @@ func run() error {
 		Analyzer:       profiles.AnalyzerFactory(),
 		Speculator:     profiles.SpeculatorFactory(),
 		Validator:      validatorFactory{},
+		Hooks:          hookResolver{},
 	}
 
 	// Assemble the pipeline: one call builds the topic registry, creates
@@ -437,6 +441,17 @@ func (f counterFactory) For(config counter.Config) (counter.Counter, error) {
 		return nil, fmt.Errorf("queue name must not be empty")
 	}
 	return mysqlcounter.NewCounter(f.db, f.scope, config.QueueName), nil
+}
+
+// hookResolver sends every event to the no-op hook. Which hooks an event goes
+// to is host policy, so the resolver lives here rather than in the extension
+// package. A deployment with real integrations swaps this for one that selects
+// on the event's source and type.
+type hookResolver struct{}
+
+// For returns the hooks that run for event.
+func (hookResolver) For(*basehook.HookEvent) []hookext.Hook {
+	return []hookext.Hook{hooknoop.New()}
 }
 
 // validatorFactory routes every queue to the always-passing fake validator.

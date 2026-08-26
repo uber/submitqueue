@@ -11,7 +11,7 @@ Designed for large monorepos and fast-moving teams where concurrent changes can 
 
 ## Repository layout
 
-Cross-domain Go code (errors, metrics, consumer framework, HTTP helpers, shared entities, shared extension contracts) lives under [`platform/`](platform/README.md). Each product domain has its own tree (`submitqueue/`, `stovepipe/`, …) and grows into `gateway/`, `orchestrator/`, `entity/`, `extension/`, and domain-local `core/` — though a domain may start smaller (Stovepipe is currently a single Ping-only service with just `controller/`). See [CLAUDE.md](CLAUDE.md) for conventions and import paths.
+Cross-domain Go code (errors, metrics, consumer framework, HTTP helpers, shared entities, shared extension contracts) lives under [`platform/`](platform/README.md). Each product domain has its own tree (`submitqueue/`, `stovepipe/`, …) and grows into `gateway/`, `orchestrator/`, `entity/`, `extension/`, and domain-local `core/` — though a domain may start smaller (Stovepipe is currently a single Ping-only service with just `controller/`). See [AGENTS.md](AGENTS.md) for conventions and import paths.
 
 ## Quick Start
 
@@ -49,7 +49,7 @@ The queue's own logic is real in all three: validation, batching, conflict analy
 | [Development Setup](doc/howto/DEVELOPMENT.md) | Prerequisites, build, environment, IDE setup |
 | [Contributing](CONTRIBUTING.md) | How to contribute, workflow, guidelines |
 | [Testing Guide](doc/howto/TESTING.md) | Unit, integration, and E2E testing patterns |
-| [Architecture Guide](CLAUDE.md) | Project layout, patterns, conventions |
+| [Architecture Guide](AGENTS.md) | Project layout, patterns, conventions |
 | [Examples](service/README.md) | Running services, clients, API reference |
 | [RFCs](doc/rfc/index.md) | Design documents and proposals |
 

@@ -24,7 +24,7 @@ import (
 	"github.com/uber/submitqueue/submitqueue/extension/buildrunner"
 	"github.com/uber/submitqueue/submitqueue/extension/changeprovider"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
-	"github.com/uber/submitqueue/submitqueue/extension/scorer"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/speculator"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 )

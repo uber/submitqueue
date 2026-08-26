@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/scorer"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer"
 )
 
 // testCfg is the per-queue identity used by every case in this file.

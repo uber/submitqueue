@@ -12,7 +12,7 @@ The orchestrator's example `main.go` (`example/submitqueue/orchestrator/server/m
 
 Adding a new queue today requires changes in **three places**: YAML config (`queues.yaml`), Go code (`newQueueRegistry`), and a recompile. Adding a new pipeline stage requires **two coordinated edits** (topic list + controller registration). The topic → subscription → DLQ subscription → DLQ controller linkage is maintained by copy-paste across 12 stages, where forgetting any half creates a silent failure.
 
-The [TODO on line 475](../../../service/submitqueue/orchestrator/server/main.go) already flags the queue-registry pattern as a candidate for promotion into the domain layer, contingent on a trigger: a second consumer needing the same wiring, data-driven config, or lifecycle requirements.
+The queue-registry pattern is flagged as a candidate for promotion into the domain layer once a second consumer needs the same wiring, data-driven config, or lifecycle requirements. Today the orchestrator's `main.go` wires it inline.
 
 ## Vocabulary
 

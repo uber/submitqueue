@@ -199,7 +199,7 @@ Per-queue knobs such as `max_concurrent` live outside this row — see [Per-Queu
 | *(owned by buildsignal)* succeeded / failed / cancelled | Phase 1 build outcome | **yes** |
 | *(later)* building, recording, … | Finer states as downstream stages need them | — |
 
-Transitions use the repo's optimistic-locking pattern: compute `newVersion = oldVersion + 1`, call `RequestStore.Update(ctx, req, oldVersion, newVersion)`, assign `req.Version = newVersion` only on success (see [storage README](../../../../submitqueue/extension/storage/README.md) and [CLAUDE.md](../../../../CLAUDE.md)).
+Transitions use the repo's optimistic-locking pattern: compute `newVersion = oldVersion + 1`, call `RequestStore.Update(ctx, req, oldVersion, newVersion)`, assign `req.Version = newVersion` only on success (see [storage README](../../../../submitqueue/extension/storage/README.md) and [AGENTS.md](../../../../AGENTS.md)).
 
 ## Storage contract additions
 

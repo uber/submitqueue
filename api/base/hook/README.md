@@ -40,9 +40,9 @@ The binding between a topic key and its payload lives in the message's `topic_ke
 
 | Message | Direction | Topic key |
 |---|---|---|
-| `HookEvent` | producing domain → hook dispatcher | `hook` |
+| `HookEvent` | producing domain → hook stage | `hook` |
 
-The key is per-host: each domain runs its own hook topic and its own dispatcher, so two domains sharing one queue backend must map `hook` to distinct topic names.
+The key is per-host: each domain runs its own hook topic and its own hook controller, so two domains sharing one queue backend must map `hook` to distinct topic names.
 
 ## Evolution
 

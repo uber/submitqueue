@@ -114,7 +114,18 @@ func TestSubscriber_Subscribe(t *testing.T) {
 			mockOffsetStore := NewMockoffsetStore(ctrl)
 			mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
 
+			// Reached via releaseAllLeases on the shutdown path, and by the
+			// discovery ticker if it fires before teardown.
+			mockLeaseStore.EXPECT().GetLeasedPartitions(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]string{}, nil).AnyTimes()
+
 			sub := setupSubscriberTest(t, mockMessageStore, mockOffsetStore, mockLeaseStore)
+			// Close waits for managePartitions to exit; a bare cancel would only
+			// signal it. Registered after the ctrl.Finish defer above so LIFO
+			// runs it first — gomock fails a mock call made after Finish.
+			defer func() {
+				require.NoError(t, sub.Close())
+			}()
+
 			ctx := context.Background()
 			cfg := testSubscriptionConfig()
 
@@ -130,6 +141,67 @@ func TestSubscriber_Subscribe(t *testing.T) {
 				assert.Equal(t, channels[0], channels[1], "should return same channel for same topic and consumer group")
 			}
 		})
+	}
+}
+
+func TestSubscriber_SubscribeContextCancellation(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockMessageStore := NewMockmessageStore(ctrl)
+	mockOffsetStore := NewMockoffsetStore(ctrl)
+	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+	mockLeaseStore.EXPECT().GetLeasedPartitions(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]string{}, nil).AnyTimes()
+
+	sub := setupSubscriberTest(t, mockMessageStore, mockOffsetStore, mockLeaseStore)
+	defer func() {
+		require.NoError(t, sub.Close())
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ch, err := sub.Subscribe(ctx, "test_topic", testSubscriptionConfig())
+	require.NoError(t, err)
+
+	cancel()
+
+	// Closing deliveryCh is the last step of the shutdown path, so a blocking
+	// receive is the synchronization point (test timeout handles a hang).
+	_, ok := <-ch
+	assert.False(t, ok, "delivery channel should close when the subscribe context is cancelled")
+}
+
+func TestSubscriber_SubscribeReplacesStaleSubscription(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockMessageStore := NewMockmessageStore(ctrl)
+	mockOffsetStore := NewMockoffsetStore(ctrl)
+	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+	mockLeaseStore.EXPECT().GetLeasedPartitions(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]string{}, nil).AnyTimes()
+
+	sub := setupSubscriberTest(t, mockMessageStore, mockOffsetStore, mockLeaseStore)
+	defer func() {
+		require.NoError(t, sub.Close())
+	}()
+
+	cfg := testSubscriptionConfig()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stale, err := sub.Subscribe(ctx, "test_topic", cfg)
+	require.NoError(t, err)
+
+	cancel()
+	_, ok := <-stale
+	require.False(t, ok)
+
+	fresh, err := sub.Subscribe(context.Background(), "test_topic", cfg)
+	require.NoError(t, err)
+	assert.NotEqual(t, stale, fresh, "a new subscription must not reuse the stale closed channel")
+
+	select {
+	case _, ok := <-fresh:
+		t.Fatalf("new subscription channel should be open, receive returned ok=%v", ok)
+	default:
 	}
 }
 
@@ -708,6 +780,64 @@ func TestSubscriber_PartitionWorkerPollAndDeliver(t *testing.T) {
 		assert.NotContains(t, histogram.Name(), "poll.latency")
 	}
 	assert.True(t, foundFinish, "expected poll.finish histogram")
+}
+
+// TestSubscriber_PollAndDeliver_GCOnBusyTicks verifies that garbage collection
+// runs on a partition that delivers a message on every poll tick. GC was gated
+// on idle ticks, so a continuously busy partition never reclaimed acked rows.
+func TestSubscriber_PollAndDeliver_GCOnBusyTicks(t *testing.T) {
+	old := gcTickInterval
+	gcTickInterval = 2
+	t.Cleanup(func() { gcTickInterval = old })
+
+	ctrl := gomock.NewController(t)
+
+	mockMessageStore := NewMockmessageStore(ctrl)
+	mockOffsetStore := NewMockoffsetStore(ctrl)
+	mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+
+	s := setupSubscriberTest(t, mockMessageStore, mockOffsetStore, mockLeaseStore).(*subscriber)
+
+	cfg := testSubscriptionConfig()
+	deliveryCh := make(chan extqueue.Delivery, 10)
+	sub := &subscription{
+		topic:      "test_topic",
+		config:     cfg,
+		deliveryCh: deliveryCh,
+		workers:    make(map[string]*partitionWorker),
+	}
+	w := &partitionWorker{
+		partitionKey: "part-1",
+		sub:          sub,
+		subscriber:   s,
+		done:         make(chan struct{}),
+	}
+
+	row := messageRow{
+		ID:           "msg-1",
+		Offset:       1,
+		PartitionKey: "part-1",
+		Payload:      []byte("payload"),
+		PublishedAt:  time.Now().UnixMilli(),
+	}
+	// Every poll delivers one message, so the partition never idles.
+	mockMessageStore.EXPECT().FetchByOffset(gomock.Any(), "test_topic", "part-1", int64(0), cfg.BatchSize).
+		Return([]messageRow{row}, nil).Times(3)
+	mockOffsetStore.EXPECT().Initialize(gomock.Any(), "test_topic", "part-1", cfg.ConsumerGroup).Return(nil)
+
+	// The counter reaches gcTickInterval on the second busy tick.
+	mockOffsetStore.EXPECT().GetMinAckedOffset(gomock.Any(), "test_topic", "part-1").Return(int64(1), true, nil)
+	mockMessageStore.EXPECT().GarbageCollect(gomock.Any(), "test_topic", "part-1", int64(1)).Return(int64(1), nil)
+
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		require.NoError(t, w.pollAndDeliver(ctx))
+		select {
+		case <-deliveryCh:
+		default:
+			t.Fatal("expected a delivery on every busy tick")
+		}
+	}
 }
 
 // TestSubscriber_PollAndDeliver_PostponedBarrier verifies that a postponed

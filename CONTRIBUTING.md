@@ -5,7 +5,7 @@ Thank you for your interest in contributing to SubmitQueue! Whether you are repo
 ## Getting Started
 
 1. Read the [Development Setup](doc/howto/DEVELOPMENT.md) guide for prerequisites, building, and running tests.
-2. Review the [Architecture Guide](CLAUDE.md) to understand project layout, conventions, and code style.
+2. Review the [Architecture Guide](AGENTS.md) to understand project layout, conventions, and code style.
 3. Check the [Testing Guide](doc/howto/TESTING.md) for testing patterns and requirements.
 
 ## Development Workflow
@@ -34,7 +34,7 @@ Thank you for your interest in contributing to SubmitQueue! Whether you are repo
 - Include tests for new functionality.
 - Ensure all existing tests pass (`make test`).
 - Ensure CI passes before requesting review.
-- Follow the existing code style and patterns described in the [Architecture Guide](CLAUDE.md).
+- Follow the existing code style and patterns described in the [Architecture Guide](AGENTS.md).
 - Fill out the PR template with a description, motivation, and test plan.
 
 ## Code Review

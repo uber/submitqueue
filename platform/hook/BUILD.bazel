@@ -1,0 +1,42 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "controller.go",
+        "dlq.go",
+    ],
+    importpath = "github.com/uber/submitqueue/platform/hook",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api/base/hook:go_default_library",
+        "//platform/consumer:go_default_library",
+        "//platform/errs:go_default_library",
+        "//platform/extension/hook:go_default_library",
+        "//platform/metrics:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = [
+        "controller_test.go",
+        "dlq_test.go",
+    ],
+    embed = [":go_default_library"],
+    deps = [
+        "//api/base/hook:go_default_library",
+        "//platform/base/failure:go_default_library",
+        "//platform/base/messagequeue:go_default_library",
+        "//platform/consumer/mock:go_default_library",
+        "//platform/extension/hook:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@com_github_uber_go_tally//:go_default_library",
+        "@org_golang_google_protobuf//types/known/structpb:go_default_library",
+        "@org_uber_go_mock//gomock:go_default_library",
+        "@org_uber_go_zap//:go_default_library",
+    ],
+)

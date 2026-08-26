@@ -49,12 +49,6 @@ const (
 	// so it converges over multiple calls even with large backlogs.
 	watermarkAdvancementLimit = 1000
 
-	// gcIdleTickInterval controls how often GC runs during idle poll ticks.
-	// GC runs every Nth idle tick instead of every tick to avoid excessive
-	// queries when many partitions are idle (e.g., 50 idle partitions at 100ms
-	// poll interval = 500 GC queries/sec without throttling).
-	gcIdleTickInterval = 100
-
 	// heartbeatPurgeAfterLeaseDurations sets the age threshold for purging
 	// abandoned heartbeat rows, as a multiple of LeaseDurationMs (10x = 5min
 	// at defaults). Well past every transient window in the protocol — a row
@@ -80,6 +74,13 @@ const (
 	// refresh or remove) a stale lease on a partition with no messages.
 	leasePurgeAfterLeaseDurations = 10
 )
+
+// gcTickInterval is the number of poll ticks between garbage collection runs.
+// GC runs every Nth tick regardless of delivery activity; without throttling,
+// many partitions polling in lockstep would flood the store with queries
+// (e.g., 50 partitions at 100ms poll interval = 500 GC queries/sec). A var so
+// tests can shorten it; production always uses the default.
+var gcTickInterval = 100
 
 // HookSignal identifies the type of subscriber lifecycle event.
 // Named after behavioral concerns (what happened) rather than implementation
@@ -126,6 +127,14 @@ type subscription struct {
 	// Close() waits on this to know the entire subscription is shut down.
 	wg sync.WaitGroup
 
+	// done is closed once managePartitions has exited, which implies
+	// deliveryCh is already closed. Subscribe consults it to tell a live
+	// subscription from one whose ctx was cancelled independently of Close,
+	// so it can replace the stale entry instead of handing a new caller a
+	// closed channel. A channel rather than a flag: signalling it must not
+	// require a lock (see managePartitions).
+	done chan struct{}
+
 	// workerWg tracks all partition worker goroutines independently of wg.
 	// During shutdown, managePartitions waits on workerWg before closing
 	// deliveryCh to guarantee no worker can send on a closed channel.
@@ -167,8 +176,7 @@ type partitionWorker struct {
 	// partition. Set once on the first successful poll, avoiding repeated
 	// initialization calls on every tick.
 	offsetInitialized bool
-	// gcCounter counts idle poll ticks. GC only runs every gcIdleTickInterval
-	// ticks to avoid excessive queries when many partitions are idle.
+	// gcCounter counts poll ticks since the last garbage collection run.
 	gcCounter int
 }
 
@@ -472,7 +480,10 @@ func (s *subscriber) advanceWatermark(ctx context.Context, consumerGroup, topic,
 	return nil
 }
 
-// Subscribe starts consuming messages from the specified topic
+// Subscribe starts consuming messages from the specified topic. The returned
+// channel is closed when ctx is cancelled or Close is called, whichever comes
+// first. Consumption that must outlive a request-scoped ctx and be torn down
+// only by Close therefore needs a detached context (context.WithoutCancel).
 func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueue.SubscriptionConfig) (_ <-chan extqueue.Delivery, retErr error) {
 	op := metrics.Begin(s.scope, "subscribe", metrics.StorageLatencyBuckets, metrics.NewTag("topic", topic))
 	defer func() { op.Complete(retErr) }()
@@ -491,10 +502,18 @@ func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueu
 	s.subMu.Lock()
 	defer s.subMu.Unlock()
 
-	// Check if already subscribed
+	// A subscription whose supervisor already exited (its ctx was cancelled
+	// without Close, which would have cleared the map) has a closed
+	// deliveryCh. Evicting it here and falling through to build a fresh one
+	// keeps that closed channel from being handed to the next caller.
 	if sub, exists := s.subscriptions[subKey]; exists {
-		s.logger.Debugw("reusing existing subscription", "topic", topic, "consumer_group", config.ConsumerGroup)
-		return sub.deliveryCh, nil
+		select {
+		case <-sub.done:
+			delete(s.subscriptions, subKey)
+		default:
+			s.logger.Debugw("reusing existing subscription", "topic", topic, "consumer_group", config.ConsumerGroup)
+			return sub.deliveryCh, nil
+		}
 	}
 
 	s.logger.Infow("creating new subscription",
@@ -505,15 +524,16 @@ func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueu
 		"batch_size", config.BatchSize,
 	)
 
-	// Create new subscription
-	// Use a cancellable context for managing the subscription lifecycle
-	// and close will cancel the context to signal goroutines to stop
-	subCtx, cancel := context.WithCancel(context.Background())
+	// Derived from the caller's ctx, so cancelling ctx tears this subscription
+	// down exactly as Close does. Close cancels subCtx directly and so remains
+	// effective for a caller whose ctx never completes.
+	subCtx, cancel := context.WithCancel(ctx)
 	sub := &subscription{
 		topic:      topic,
 		config:     config,
 		deliveryCh: make(chan extqueue.Delivery, config.BatchSize*2),
 		cancelFunc: cancel,
+		done:       make(chan struct{}),
 		workers:    make(map[string]*partitionWorker),
 	}
 
@@ -549,9 +569,14 @@ func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueu
 //  3. workerWg.Wait(): blocks until all workers have fully exited -- this ensures
 //     no worker can send on deliveryCh after step 4
 //  4. close(deliveryCh): safe because step 3 guarantees no senders remain
-//  5. managePartitions returns -> wg.Done() fires -> Close() unblocks
+//  5. managePartitions returns -> done and wg.Done() fire -> Close() unblocks
 func (s *subscriber) managePartitions(ctx context.Context, sub *subscription) {
 	defer sub.wg.Done()
+	// Deferred so every exit path marks the subscription stale for Subscribe.
+	// Must not take s.subMu: Close holds it across cancelFunc()+wg.Wait() for
+	// every subscription, so locking here would deadlock against the very
+	// Close that triggered this shutdown.
+	defer close(sub.done)
 
 	cfg := sub.config
 	// Common log fields for all operations in this subscription's lifecycle.
@@ -1200,24 +1225,22 @@ func (w *partitionWorker) pollAndDeliver(ctx context.Context) (retErr error) {
 		)
 	}
 
-	// Run GC periodically (throttled to every Nth idle tick)
-	if messageCount == 0 {
-		w.gcCounter++
-		if w.gcCounter >= gcIdleTickInterval {
-			w.gcCounter = 0
-			if err := w.garbageCollect(ctx); err != nil {
-				return fmt.Errorf("garbage collect: %w", err)
-			}
-		}
-	} else {
-		w.gcCounter = 0
-	}
-
 	// Record poll metrics
 	if messageCount > 0 {
 		metrics.NamedCounter(s.scope, "poll", "messages_delivered", int64(messageCount),
 			metrics.NewTag("topic", sub.topic),
 		)
+	}
+
+	// GC runs every Nth tick regardless of delivery activity; an idle-only
+	// gate starved continuously busy partitions of garbage collection.
+	// Metrics are reported above so a GC failure cannot drop the delivery count.
+	w.gcCounter++
+	if w.gcCounter >= gcTickInterval {
+		w.gcCounter = 0
+		if err := w.garbageCollect(ctx); err != nil {
+			return fmt.Errorf("garbage collect: %w", err)
+		}
 	}
 
 	return nil

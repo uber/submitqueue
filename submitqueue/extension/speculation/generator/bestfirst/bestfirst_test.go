@@ -28,8 +28,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/uber/submitqueue/submitqueue/entity"
-	"github.com/uber/submitqueue/submitqueue/extension/scorer"
 	"github.com/uber/submitqueue/submitqueue/extension/speculation/generator"
+	"github.com/uber/submitqueue/submitqueue/extension/speculation/scorer"
 )
 
 // stubScorer scores each batch by ID, defaulting to 0.5 for unknown batches. It

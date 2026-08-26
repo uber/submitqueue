@@ -48,7 +48,7 @@ A `Get` immediately following a successful write (`Create`/`Update`) — by the 
 
 ## Key-value contract
 
-Store interfaces are designed for the storage technology *space*, not for SQL (see the Extensions section of the repo `CLAUDE.md`): every method must be satisfiable by a plain key-value backend (DynamoDB, Bigtable, an in-memory map) as cheaply as by MySQL. Concretely, a store exposes only get/put/conditional-update **by primary key**. No lookups by other attributes, no listings filtered server-side, no joins.
+Store interfaces are designed for the storage technology *space*, not for SQL (see the Extensions section of the repo [AGENTS.md](../../../../AGENTS.md)): every method must be satisfiable by a plain key-value backend (DynamoDB, Bigtable, an in-memory map) as cheaply as by MySQL. Concretely, a store exposes only get/put/conditional-update **by primary key**. No lookups by other attributes, no listings filtered server-side, no joins.
 
 **The smell test is the index.** If implementing a proposed store method in MySQL requires adding a secondary index (`KEY idx_*`) to the schema, the method is a query-by-attribute in disguise and the contract has left the key-value space — a KV backend would need a global secondary index or a hand-maintained index table to fake it. Treat a new `KEY` line in a schema diff as a design review flag, not a tuning detail.
 
