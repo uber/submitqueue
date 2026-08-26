@@ -1,4 +1,4 @@
 exports_files(
     ["orchestrator.proto"],
-    visibility = ["//tool/proto:__pkg__"],
+    visibility = ["//visibility:public"],
 )
