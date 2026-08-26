@@ -250,6 +250,308 @@ func (x *IngestResponse) GetId() string {
 	return ""
 }
 
+// ValidationResult is the immutable validation verdict for one scope.
+type ValidationResult struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Degree measures how broken the scope is on [0.0, 1.0]. Zero is fully
+	// green and one is fully broken.
+	Degree        float64 `protobuf:"fixed64,1,opt,name=degree,proto3" json:"degree,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ValidationResult) Reset() {
+	*x = ValidationResult{}
+	mi := &file_stovepipe_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ValidationResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ValidationResult) ProtoMessage() {}
+
+func (x *ValidationResult) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ValidationResult.ProtoReflect.Descriptor instead.
+func (*ValidationResult) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ValidationResult) GetDegree() float64 {
+	if x != nil {
+		return x.Degree
+	}
+	return 0
+}
+
+// GetProjectStatusByURIRequest selects the authoritative validation for an exact commit URI.
+type GetProjectStatusByURIRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Logical queue containing the request.
+	Queue string `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
+	// Exact VCS-agnostic commit URI whose authoritative request is selected.
+	ChangeUri string `protobuf:"bytes,2,opt,name=change_uri,json=changeUri,proto3" json:"change_uri,omitempty"`
+	// Optional exact project scope. When absent, one page of planned projects is returned.
+	Project *string `protobuf:"bytes,3,opt,name=project,proto3,oneof" json:"project,omitempty"`
+	// Maximum projects to return. Zero selects the server default.
+	PageSize int32 `protobuf:"varint,4,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	// Opaque continuation token. Empty selects the first page.
+	PageToken     string `protobuf:"bytes,5,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetProjectStatusByURIRequest) Reset() {
+	*x = GetProjectStatusByURIRequest{}
+	mi := &file_stovepipe_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetProjectStatusByURIRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetProjectStatusByURIRequest) ProtoMessage() {}
+
+func (x *GetProjectStatusByURIRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetProjectStatusByURIRequest.ProtoReflect.Descriptor instead.
+func (*GetProjectStatusByURIRequest) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *GetProjectStatusByURIRequest) GetQueue() string {
+	if x != nil {
+		return x.Queue
+	}
+	return ""
+}
+
+func (x *GetProjectStatusByURIRequest) GetChangeUri() string {
+	if x != nil {
+		return x.ChangeUri
+	}
+	return ""
+}
+
+func (x *GetProjectStatusByURIRequest) GetProject() string {
+	if x != nil && x.Project != nil {
+		return *x.Project
+	}
+	return ""
+}
+
+func (x *GetProjectStatusByURIRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *GetProjectStatusByURIRequest) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
+// ProjectValidation is the recorded validation for one planned project.
+type ProjectValidation struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Stable project identifier.
+	Project string `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
+	// Immutable verdict for the project. Unset until its fact is recorded.
+	Result        *ValidationResult `protobuf:"bytes,2,opt,name=result,proto3" json:"result,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProjectValidation) Reset() {
+	*x = ProjectValidation{}
+	mi := &file_stovepipe_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProjectValidation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProjectValidation) ProtoMessage() {}
+
+func (x *ProjectValidation) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProjectValidation.ProtoReflect.Descriptor instead.
+func (*ProjectValidation) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ProjectValidation) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *ProjectValidation) GetResult() *ValidationResult {
+	if x != nil {
+		return x.Result
+	}
+	return nil
+}
+
+// GetProjectStatusByURIResponse contains the authoritative request's current validation projection.
+type GetProjectStatusByURIResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Globally unique identifier of the authoritative request.
+	RequestId string `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// Logical queue containing the request.
+	Queue string `protobuf:"bytes,2,opt,name=queue,proto3" json:"queue,omitempty"`
+	// VCS-agnostic commit URI validated by the request.
+	ChangeUri string `protobuf:"bytes,3,opt,name=change_uri,json=changeUri,proto3" json:"change_uri,omitempty"`
+	// Baseline URI for incremental validation. Empty for a full build.
+	BaseUri string `protobuf:"bytes,4,opt,name=base_uri,json=baseUri,proto3" json:"base_uri,omitempty"`
+	// Stable public lifecycle state of the request.
+	RequestState string `protobuf:"bytes,5,opt,name=request_state,json=requestState,proto3" json:"request_state,omitempty"`
+	// Immutable whole-repository verdict. Unset until its fact is recorded.
+	RepositoryResult *ValidationResult `protobuf:"bytes,6,opt,name=repository_result,json=repositoryResult,proto3" json:"repository_result,omitempty"`
+	// Whether every planned project has one durable result and completion is recorded.
+	ProjectResultsComplete bool `protobuf:"varint,7,opt,name=project_results_complete,json=projectResultsComplete,proto3" json:"project_results_complete,omitempty"`
+	// Planned projects in stable project order, with any recorded verdicts.
+	Projects []*ProjectValidation `protobuf:"bytes,8,rep,name=projects,proto3" json:"projects,omitempty"`
+	// Opaque continuation token. Empty on the final page.
+	NextPageToken string `protobuf:"bytes,9,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetProjectStatusByURIResponse) Reset() {
+	*x = GetProjectStatusByURIResponse{}
+	mi := &file_stovepipe_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetProjectStatusByURIResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetProjectStatusByURIResponse) ProtoMessage() {}
+
+func (x *GetProjectStatusByURIResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetProjectStatusByURIResponse.ProtoReflect.Descriptor instead.
+func (*GetProjectStatusByURIResponse) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *GetProjectStatusByURIResponse) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *GetProjectStatusByURIResponse) GetQueue() string {
+	if x != nil {
+		return x.Queue
+	}
+	return ""
+}
+
+func (x *GetProjectStatusByURIResponse) GetChangeUri() string {
+	if x != nil {
+		return x.ChangeUri
+	}
+	return ""
+}
+
+func (x *GetProjectStatusByURIResponse) GetBaseUri() string {
+	if x != nil {
+		return x.BaseUri
+	}
+	return ""
+}
+
+func (x *GetProjectStatusByURIResponse) GetRequestState() string {
+	if x != nil {
+		return x.RequestState
+	}
+	return ""
+}
+
+func (x *GetProjectStatusByURIResponse) GetRepositoryResult() *ValidationResult {
+	if x != nil {
+		return x.RepositoryResult
+	}
+	return nil
+}
+
+func (x *GetProjectStatusByURIResponse) GetProjectResultsComplete() bool {
+	if x != nil {
+		return x.ProjectResultsComplete
+	}
+	return false
+}
+
+func (x *GetProjectStatusByURIResponse) GetProjects() []*ProjectValidation {
+	if x != nil {
+		return x.Projects
+	}
+	return nil
+}
+
+func (x *GetProjectStatusByURIResponse) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
+}
+
 var File_stovepipe_proto protoreflect.FileDescriptor
 
 const file_stovepipe_proto_rawDesc = "" +
@@ -265,10 +567,38 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\rIngestRequest\x12\x14\n" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\" \n" +
 	"\x0eIngestResponse\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id2\xcb\x01\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"*\n" +
+	"\x10ValidationResult\x12\x16\n" +
+	"\x06degree\x18\x01 \x01(\x01R\x06degree\"\xba\x01\n" +
+	"\x1cGetProjectStatusByURIRequest\x12\x14\n" +
+	"\x05queue\x18\x01 \x01(\tR\x05queue\x12\x1d\n" +
+	"\n" +
+	"change_uri\x18\x02 \x01(\tR\tchangeUri\x12\x1d\n" +
+	"\aproject\x18\x03 \x01(\tH\x00R\aproject\x88\x01\x01\x12\x1b\n" +
+	"\tpage_size\x18\x04 \x01(\x05R\bpageSize\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\x05 \x01(\tR\tpageTokenB\n" +
+	"\n" +
+	"\b_project\"s\n" +
+	"\x11ProjectValidation\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12D\n" +
+	"\x06result\x18\x02 \x01(\v2,.uber.submitqueue.stovepipe.ValidationResultR\x06result\"\xbb\x03\n" +
+	"\x1dGetProjectStatusByURIResponse\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x14\n" +
+	"\x05queue\x18\x02 \x01(\tR\x05queue\x12\x1d\n" +
+	"\n" +
+	"change_uri\x18\x03 \x01(\tR\tchangeUri\x12\x19\n" +
+	"\bbase_uri\x18\x04 \x01(\tR\abaseUri\x12#\n" +
+	"\rrequest_state\x18\x05 \x01(\tR\frequestState\x12Y\n" +
+	"\x11repository_result\x18\x06 \x01(\v2,.uber.submitqueue.stovepipe.ValidationResultR\x10repositoryResult\x128\n" +
+	"\x18project_results_complete\x18\a \x01(\bR\x16projectResultsComplete\x12I\n" +
+	"\bprojects\x18\b \x03(\v2-.uber.submitqueue.stovepipe.ProjectValidationR\bprojects\x12&\n" +
+	"\x0fnext_page_token\x18\t \x01(\tR\rnextPageToken2\xdc\x02\n" +
 	"\tStovepipe\x12[\n" +
 	"\x04Ping\x12'.uber.submitqueue.stovepipe.PingRequest\x1a(.uber.submitqueue.stovepipe.PingResponse\"\x00\x12a\n" +
-	"\x06Ingest\x12).uber.submitqueue.stovepipe.IngestRequest\x1a*.uber.submitqueue.stovepipe.IngestResponse\"\x00Be\n" +
+	"\x06Ingest\x12).uber.submitqueue.stovepipe.IngestRequest\x1a*.uber.submitqueue.stovepipe.IngestResponse\"\x00\x12\x8e\x01\n" +
+	"\x15GetProjectStatusByURI\x128.uber.submitqueue.stovepipe.GetProjectStatusByURIRequest\x1a9.uber.submitqueue.stovepipe.GetProjectStatusByURIResponse\"\x00Be\n" +
 	"\x1ecom.uber.submitqueue.stovepipeB\x0eStovepipeProtoP\x01Z1github.com/uber/submitqueue/api/stovepipe/protopbb\x06proto3"
 
 var (
@@ -283,23 +613,32 @@ func file_stovepipe_proto_rawDescGZIP() []byte {
 	return file_stovepipe_proto_rawDescData
 }
 
-var file_stovepipe_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_stovepipe_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_stovepipe_proto_goTypes = []any{
-	(*PingRequest)(nil),    // 0: uber.submitqueue.stovepipe.PingRequest
-	(*PingResponse)(nil),   // 1: uber.submitqueue.stovepipe.PingResponse
-	(*IngestRequest)(nil),  // 2: uber.submitqueue.stovepipe.IngestRequest
-	(*IngestResponse)(nil), // 3: uber.submitqueue.stovepipe.IngestResponse
+	(*PingRequest)(nil),                   // 0: uber.submitqueue.stovepipe.PingRequest
+	(*PingResponse)(nil),                  // 1: uber.submitqueue.stovepipe.PingResponse
+	(*IngestRequest)(nil),                 // 2: uber.submitqueue.stovepipe.IngestRequest
+	(*IngestResponse)(nil),                // 3: uber.submitqueue.stovepipe.IngestResponse
+	(*ValidationResult)(nil),              // 4: uber.submitqueue.stovepipe.ValidationResult
+	(*GetProjectStatusByURIRequest)(nil),  // 5: uber.submitqueue.stovepipe.GetProjectStatusByURIRequest
+	(*ProjectValidation)(nil),             // 6: uber.submitqueue.stovepipe.ProjectValidation
+	(*GetProjectStatusByURIResponse)(nil), // 7: uber.submitqueue.stovepipe.GetProjectStatusByURIResponse
 }
 var file_stovepipe_proto_depIdxs = []int32{
-	0, // 0: uber.submitqueue.stovepipe.Stovepipe.Ping:input_type -> uber.submitqueue.stovepipe.PingRequest
-	2, // 1: uber.submitqueue.stovepipe.Stovepipe.Ingest:input_type -> uber.submitqueue.stovepipe.IngestRequest
-	1, // 2: uber.submitqueue.stovepipe.Stovepipe.Ping:output_type -> uber.submitqueue.stovepipe.PingResponse
-	3, // 3: uber.submitqueue.stovepipe.Stovepipe.Ingest:output_type -> uber.submitqueue.stovepipe.IngestResponse
-	2, // [2:4] is the sub-list for method output_type
-	0, // [0:2] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	4, // 0: uber.submitqueue.stovepipe.ProjectValidation.result:type_name -> uber.submitqueue.stovepipe.ValidationResult
+	4, // 1: uber.submitqueue.stovepipe.GetProjectStatusByURIResponse.repository_result:type_name -> uber.submitqueue.stovepipe.ValidationResult
+	6, // 2: uber.submitqueue.stovepipe.GetProjectStatusByURIResponse.projects:type_name -> uber.submitqueue.stovepipe.ProjectValidation
+	0, // 3: uber.submitqueue.stovepipe.Stovepipe.Ping:input_type -> uber.submitqueue.stovepipe.PingRequest
+	2, // 4: uber.submitqueue.stovepipe.Stovepipe.Ingest:input_type -> uber.submitqueue.stovepipe.IngestRequest
+	5, // 5: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:input_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIRequest
+	1, // 6: uber.submitqueue.stovepipe.Stovepipe.Ping:output_type -> uber.submitqueue.stovepipe.PingResponse
+	3, // 7: uber.submitqueue.stovepipe.Stovepipe.Ingest:output_type -> uber.submitqueue.stovepipe.IngestResponse
+	7, // 8: uber.submitqueue.stovepipe.Stovepipe.GetProjectStatusByURI:output_type -> uber.submitqueue.stovepipe.GetProjectStatusByURIResponse
+	6, // [6:9] is the sub-list for method output_type
+	3, // [3:6] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_stovepipe_proto_init() }
@@ -307,13 +646,14 @@ func file_stovepipe_proto_init() {
 	if File_stovepipe_proto != nil {
 		return
 	}
+	file_stovepipe_proto_msgTypes[5].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_stovepipe_proto_rawDesc), len(file_stovepipe_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

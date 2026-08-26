@@ -2,7 +2,7 @@
 
 ## Summary
 
-Stovepipe exposes the current validation of one queue and commit through `GetProjectStatusByURI`. The response combines request lifecycle, the whole-repository result, and the request's complete planned project list with any results recorded for those projects.
+Stovepipe exposes the current validation of one queue and commit through `GetProjectStatusByURI`. The commit URI resolves to its newest authoritative request. The response combines that request's lifecycle, whole-repository result, and complete planned project list with any results recorded for those projects.
 
 This is a current-state API, not another history projection. It reads `Request` for lifecycle and scope, `ValidationFact` for immutable results, and a request-owned project manifest for enumeration and completion. The manifest is also the single project list used by validation planning and downstream consumers.
 
@@ -53,7 +53,7 @@ The existing degree scale answers “how broken is this scope”: `0.0` is fully
 
 ## Selection and Projection
 
-`queue` and `change_uri` identify one request through the existing request-URI mapping. Permanent ingest deduplication makes this cardinality one request per `(queue, change_uri)`. The controller binds storage to the queue, reads `request_uri` by its `(queue, URI)` primary key, then reads `request` by its `(queue, request ID)` primary key. It does not scan or query the Request table by an attribute.
+`queue` and `change_uri` resolve one request through the durable authoritative request-URI mapping. The current insert-once mapping selects the only request; future revalidation advances it to the newest accepted request without changing the API. The controller binds storage to the queue, reads `request_uri` by its `(queue, URI)` primary key, then reads `request` by its `(queue, request ID)` primary key. It does not scan or query the Request table by an attribute. Once a newer request becomes authoritative, its failure does not fall back to an older successful attempt.
 
 The controller verifies that the loaded Request has the requested queue and URI before loading its project manifest and whole-repository fact. Request URI is immutable once the request and mapping are created; storage updates must not permit the two records to diverge.
 
@@ -83,7 +83,7 @@ Request terminal state and result completion are intentionally distinct. The cur
 
 Pagination follows SubmitQueue's queue-listing convention: an empty token selects the first page, zero page size selects the server default, and `next_page_token` is empty on the final page. The initial default is 50 projects and the maximum is 200.
 
-The controller reads the immutable manifest in `project ASC` order and inspects one project beyond the effective page size before issuing a continuation token. The opaque, versioned token represents the exclusive position after the last returned project and is bound to the queue, change URI, resolved request ID, and all-project selector mode. Decoding produces a typed manifest cursor; neither the manifest store nor the fact store parses public tokens. The cursor may include a deterministic chunk position in addition to the last project ID without exposing either representation to clients. Page size is not bound, so callers may change it between pages. A malformed token, unsupported version, or token reused for another query is invalid.
+The controller reads the immutable manifest in `project ASC` order and inspects one project beyond the effective page size before issuing a continuation token. The opaque, versioned token represents the exclusive position after the last returned project and is bound to the queue, change URI, resolved request ID, and all-project selector mode. Binding the resolved request ID keeps an in-progress traversal on the same validation if a newer request becomes authoritative between pages. Decoding produces a typed manifest cursor; neither the manifest store nor the fact store parses public tokens. The cursor may include a deterministic chunk position in addition to the last project ID without exposing either representation to clients. Page size is not bound, so callers may change it between pages. A malformed token, unsupported version, or token reused for another query is invalid.
 
 After reading one manifest page, the controller loads its project facts through bounded parallel exact reads. The caller owns that concurrency; the fact-store contract remains a portable single-key `Get` rather than requiring SQL `IN`, batch atomicity, or a secondary index.
 
@@ -93,7 +93,7 @@ The manifest is immutable, so pages neither skip nor duplicate project identitie
 
 URI, request ID, queue, and project identity use byte-exact comparison. MySQL schemas declare an explicit binary collation for these key columns rather than inherit the server's case- or accent-insensitive default. API validation and storage schemas use the same explicit length limits, so an oversized selector is rejected before lookup rather than failing or truncating inside a backend.
 
-The insert-once request-URI mapping intentionally selects only one request today. Supporting revalidation of the same URI requires a separate design that widens validation-fact identity and changes the mapping into an explicitly versioned authoritative-attempt pointer. It must not silently turn this method into an ambiguous multi-request lookup.
+The insert-once request-URI mapping selects the only request today. Supporting revalidation of the same URI widens validation-fact identity and changes the mapping into an explicitly versioned authoritative-request pointer advanced only after the new Request is durable. The point lookup remains singular; discovering older attempts can be added independently as a request-list API.
 
 ## Errors and Authorization
 

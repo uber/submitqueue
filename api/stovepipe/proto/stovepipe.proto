@@ -54,6 +54,57 @@ message IngestResponse {
     string id = 1;
 }
 
+// ValidationResult is the immutable validation verdict for one scope.
+message ValidationResult {
+    // Degree measures how broken the scope is on [0.0, 1.0]. Zero is fully
+    // green and one is fully broken.
+    double degree = 1;
+}
+
+// GetProjectStatusByURIRequest selects the authoritative validation for an exact commit URI.
+message GetProjectStatusByURIRequest {
+    // Logical queue containing the request.
+    string queue = 1;
+    // Exact VCS-agnostic commit URI whose authoritative request is selected.
+    string change_uri = 2;
+    // Optional exact project scope. When absent, one page of planned projects is returned.
+    optional string project = 3;
+    // Maximum projects to return. Zero selects the server default.
+    int32 page_size = 4;
+    // Opaque continuation token. Empty selects the first page.
+    string page_token = 5;
+}
+
+// ProjectValidation is the recorded validation for one planned project.
+message ProjectValidation {
+    // Stable project identifier.
+    string project = 1;
+    // Immutable verdict for the project. Unset until its fact is recorded.
+    ValidationResult result = 2;
+}
+
+// GetProjectStatusByURIResponse contains the authoritative request's current validation projection.
+message GetProjectStatusByURIResponse {
+    // Globally unique identifier of the authoritative request.
+    string request_id = 1;
+    // Logical queue containing the request.
+    string queue = 2;
+    // VCS-agnostic commit URI validated by the request.
+    string change_uri = 3;
+    // Baseline URI for incremental validation. Empty for a full build.
+    string base_uri = 4;
+    // Stable public lifecycle state of the request.
+    string request_state = 5;
+    // Immutable whole-repository verdict. Unset until its fact is recorded.
+    ValidationResult repository_result = 6;
+    // Whether every planned project has one durable result and completion is recorded.
+    bool project_results_complete = 7;
+    // Planned projects in stable project order, with any recorded verdicts.
+    repeated ProjectValidation projects = 8;
+    // Opaque continuation token. Empty on the final page.
+    string next_page_token = 9;
+}
+
 // Stovepipe provides the Stovepipe API.
 service Stovepipe {
     // Ping returns a response indicating the service is alive
@@ -61,4 +112,6 @@ service Stovepipe {
     // Ingest admits a queue's newly observed commit into the validation pipeline and returns
     // the minted request ID. The caller hands off asynchronously; validation happens later.
     rpc Ingest(IngestRequest) returns (IngestResponse) {}
+    // GetProjectStatusByURI returns current validation for an exact commit URI's authoritative request.
+    rpc GetProjectStatusByURI(GetProjectStatusByURIRequest) returns (GetProjectStatusByURIResponse) {}
 }
