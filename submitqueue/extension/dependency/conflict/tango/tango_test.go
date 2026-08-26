@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package targetoverlap
+package tango
 
 import (
 	"context"
@@ -24,7 +24,6 @@ import (
 
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
-	"github.com/uber/submitqueue/submitqueue/extension/dependency/resolver"
 )
 
 // fakeResolver is an in-test TargetResolver that returns pre-configured target
@@ -48,14 +47,14 @@ func (f *fakeResolver) failWith(err error) *fakeResolver {
 	return f
 }
 
-func (f *fakeResolver) ChangedTargets(_ context.Context, batch entity.Batch) ([]resolver.Target, error) {
+func (f *fakeResolver) ChangedTargets(_ context.Context, batch entity.Batch) ([]Target, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
 	names := f.targets[batch.ID]
-	targets := make([]resolver.Target, len(names))
+	targets := make([]Target, len(names))
 	for i, n := range names {
-		targets[i] = resolver.Target{Name: n}
+		targets[i] = Target{Name: n}
 	}
 	return targets, nil
 }
@@ -156,7 +155,7 @@ func TestAnalyze_EmptyInFlight(t *testing.T) {
 }
 
 func TestAnalyze_ResolverError(t *testing.T) {
-	sentinel := errors.New("resolver unavailable")
+	sentinel := errors.New("tango unavailable")
 
 	t.Run("candidate resolution fails", func(t *testing.T) {
 		r := newFakeResolver().failWith(sentinel)

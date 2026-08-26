@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package targetoverlap provides a conflict.Analyzer that reports a conflict
-// between two batches when their changed build targets overlap. The targets a
-// batch affects are resolved through an injected resolver.TargetResolver,
-// keeping the analyzer independent of any particular target-resolution backend.
-package targetoverlap
+// Package tango provides a conflict.Analyzer that reports a conflict between
+// two batches when their changed build targets overlap. The targets a batch
+// affects are resolved through an injected TargetResolver, whose production
+// implementation calls the Tango service. The interface is deliberately free
+// of Tango wire types so that each deployment can provide its own adapter
+// against whatever proto import path its monorepo uses.
+package tango
 
 import (
 	"context"
@@ -24,19 +26,39 @@ import (
 
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/conflict"
-	"github.com/uber/submitqueue/submitqueue/extension/dependency/resolver"
 )
+
+// Target is a build target a batch affects, carrying the fields Tango reports
+// for each changed target. The analyzer reads only Name for overlap today;
+// ChangeType and Distance are available for future consumers such as conflict
+// relaxation.
+type Target struct {
+	// Name identifies the target (e.g. "//service/foo:lib").
+	Name string
+	// ChangeType classifies how the target changed: "new", "deleted", or "changed".
+	ChangeType string
+	// Distance from the nearest directly changed source file in the reverse
+	// dependency graph. 0 = directly changed, 1+ = transitive.
+	Distance int
+}
+
+// TargetResolver resolves the set of build targets a batch affects. The
+// production implementation translates the batch's changes into a Tango
+// GetChangedTargets call; tests supply a fake.
+type TargetResolver interface {
+	ChangedTargets(ctx context.Context, batch entity.Batch) ([]Target, error)
+}
 
 // New returns a conflict.Analyzer that flags an in-flight batch as conflicting
 // when its changed build targets overlap with the candidate batch's, bound to
 // the queue named in cfg.
-func New(cfg conflict.Config, targets resolver.TargetResolver) conflict.Analyzer {
+func New(cfg conflict.Config, targets TargetResolver) conflict.Analyzer {
 	return &analyzer{cfg: cfg, targets: targets}
 }
 
 type analyzer struct {
 	cfg     conflict.Config
-	targets resolver.TargetResolver
+	targets TargetResolver
 	// TODO: cache resolved target sets per batch ID so in-flight batches
 	// compared against successive arrivals pay only one resolution each. Consider
 	// a TTL for high-traffic queues where trunk moves fast, and a max-size cap.
@@ -52,7 +74,7 @@ func (a *analyzer) Analyze(ctx context.Context, batch entity.Batch, inFlight []e
 
 	// TODO: when TargetResolver fails, fall back to a queue-configured
 	// analyzer (all or none) instead of propagating the error. The queue config
-	// decides whether a resolver outage over-serializes (all) or maximizes
+	// decides whether a Tango outage over-serializes (all) or maximizes
 	// parallelism (none).
 	candidate, err := a.resolve(ctx, batch)
 	if err != nil {
@@ -78,7 +100,7 @@ func (a *analyzer) Analyze(ctx context.Context, batch entity.Batch, inFlight []e
 	return conflicts, nil
 }
 
-// resolve returns the set of build targets the batch affects.
+// resolve returns the set of target names the batch affects.
 func (a *analyzer) resolve(ctx context.Context, batch entity.Batch) (map[string]struct{}, error) {
 	targets, err := a.targets.ChangedTargets(ctx, batch)
 	if err != nil {
