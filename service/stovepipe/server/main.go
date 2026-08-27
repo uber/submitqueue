@@ -35,6 +35,7 @@ import (
 	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
 	httperrs "github.com/uber/submitqueue/platform/errs/http"
 	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
+	yarpcerrs "github.com/uber/submitqueue/platform/errs/yarpc"
 	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	hookext "github.com/uber/submitqueue/platform/extension/hook"
@@ -284,6 +285,7 @@ func run() error {
 		errs.NewClassifierProcessor(
 			genericerrs.Classifier,
 			httperrs.Classifier,
+			yarpcerrs.Classifier,
 			mysqlerrs.Classifier,
 		),
 		consumergatenoop.New(),

@@ -89,7 +89,7 @@ One operational consequence worth knowing before relying on any of this: **retry
 
 ## Adding a Backend-Specific Classifier
 
-Backend classifiers live alongside the extension they classify, under `platform/errs/<backend>/`. The canonical examples are `platform/errs/mysql` (MySQL driver errors), `platform/errs/http` (rejected status codes and transport failures from clients built on `platform/http`), and `platform/errs/generic` (transport-agnostic concerns such as `context.Canceled`).
+Backend classifiers live alongside the extension they classify, under `platform/errs/<backend>/`. The canonical examples are `platform/errs/mysql` (MySQL driver errors), `platform/errs/http` (rejected status codes and transport failures from clients built on `platform/http`), `platform/errs/yarpc` (YARPC status codes), and `platform/errs/generic` (transport-agnostic concerns such as `context.Canceled`).
 
 A classifier:
 
@@ -124,20 +124,26 @@ import (
     genericerrs "github.com/uber/submitqueue/platform/errs/generic"
     httperrs    "github.com/uber/submitqueue/platform/errs/http"
     mysqlerrs   "github.com/uber/submitqueue/platform/errs/mysql"
+    yarpcerrs   "github.com/uber/submitqueue/platform/errs/yarpc"
 )
 
 c := consumer.New(logger, scope, registry,
     errs.NewClassifierProcessor(
         genericerrs.Classifier,
         httperrs.Classifier,
+        yarpcerrs.Classifier,
         mysqlerrs.Classifier,
     ),
 )
 ```
 
+Classifiers are not installed globally. A host that wants YARPC statuses classified adds `yarpcerrs.Classifier` to the `ErrorProcessor` at the boundary that consumes those errors, as above. This wiring covers outbound YARPC failures returned into that processor; inbound RPC handlers do not pass through it automatically and need their own transport middleware or mapper if they require the same classification.
+
 `httperrs` precedes `mysqlerrs` for a reason worth knowing before reordering the list: the MySQL classifier treats any `net.Error` as retryable infra, and the `*url.Error` an HTTP client returns satisfies `net.Error`. Whichever runs first claims that node, so with the order reversed an HTTP transport failure is classified as a MySQL one — retryable either way, but no longer attributed to the dependency it came from. This is the cross-extension ambiguity `NewClassifierProcessor` documents as deferred; registration order is the workaround.
 
-Tests follow the same shape: assert per-node behaviour against `Classifier.Classify(node)` directly, and assert end-to-end behaviour by running `errs.NewClassifierProcessor(Classifier).Process(err)` and checking the helpers (`IsRetryable`, `IsUserError`, …) on the result. See `platform/errs/mysql/mysql_test.go` and `platform/errs/generic/generic_test.go`.
+The YARPC classifier reads the typed status code rather than matching its rendered message. Cancellation is retryable caller-side infrastructure; transient or ambiguous server codes (`Unknown`, `DeadlineExceeded`, `ResourceExhausted`, `Aborted`, `Internal`, and `Unavailable`) are retryable dependency failures; request verdicts and permanent server failures are non-retryable dependency failures. A deadline may expire after a mutating RPC succeeded, so this classification relies on the repository-wide requirement that queue-driven operations are idempotent.
+
+Tests follow the same shape: assert per-node behaviour against `Classifier.Classify(node)` directly, and assert end-to-end behaviour by running `errs.NewClassifierProcessor(Classifier).Process(err)` and checking the helpers (`IsRetryable`, `IsUserError`, …) on the result. See `platform/errs/mysql/mysql_test.go`, `platform/errs/yarpc/yarpc_test.go`, and `platform/errs/generic/generic_test.go`.
 
 ## Overriding Classification from a Controller
 
