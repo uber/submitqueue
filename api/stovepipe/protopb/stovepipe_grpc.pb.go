@@ -34,8 +34,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Stovepipe_Ping_FullMethodName   = "/uber.submitqueue.stovepipe.Stovepipe/Ping"
-	Stovepipe_Ingest_FullMethodName = "/uber.submitqueue.stovepipe.Stovepipe/Ingest"
+	Stovepipe_Ping_FullMethodName                  = "/uber.submitqueue.stovepipe.Stovepipe/Ping"
+	Stovepipe_Ingest_FullMethodName                = "/uber.submitqueue.stovepipe.Stovepipe/Ingest"
+	Stovepipe_GetProjectStatusByURI_FullMethodName = "/uber.submitqueue.stovepipe.Stovepipe/GetProjectStatusByURI"
 )
 
 // StovepipeClient is the client API for Stovepipe service.
@@ -49,6 +50,8 @@ type StovepipeClient interface {
 	// Ingest admits a queue's newly observed commit into the validation pipeline and returns
 	// the minted request ID. The caller hands off asynchronously; validation happens later.
 	Ingest(ctx context.Context, in *IngestRequest, opts ...grpc.CallOption) (*IngestResponse, error)
+	// GetProjectStatusByURI returns current validation for an exact commit URI's authoritative request.
+	GetProjectStatusByURI(ctx context.Context, in *GetProjectStatusByURIRequest, opts ...grpc.CallOption) (*GetProjectStatusByURIResponse, error)
 }
 
 type stovepipeClient struct {
@@ -79,6 +82,16 @@ func (c *stovepipeClient) Ingest(ctx context.Context, in *IngestRequest, opts ..
 	return out, nil
 }
 
+func (c *stovepipeClient) GetProjectStatusByURI(ctx context.Context, in *GetProjectStatusByURIRequest, opts ...grpc.CallOption) (*GetProjectStatusByURIResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetProjectStatusByURIResponse)
+	err := c.cc.Invoke(ctx, Stovepipe_GetProjectStatusByURI_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StovepipeServer is the server API for Stovepipe service.
 // All implementations must embed UnimplementedStovepipeServer
 // for forward compatibility.
@@ -90,6 +103,8 @@ type StovepipeServer interface {
 	// Ingest admits a queue's newly observed commit into the validation pipeline and returns
 	// the minted request ID. The caller hands off asynchronously; validation happens later.
 	Ingest(context.Context, *IngestRequest) (*IngestResponse, error)
+	// GetProjectStatusByURI returns current validation for an exact commit URI's authoritative request.
+	GetProjectStatusByURI(context.Context, *GetProjectStatusByURIRequest) (*GetProjectStatusByURIResponse, error)
 	mustEmbedUnimplementedStovepipeServer()
 }
 
@@ -105,6 +120,9 @@ func (UnimplementedStovepipeServer) Ping(context.Context, *PingRequest) (*PingRe
 }
 func (UnimplementedStovepipeServer) Ingest(context.Context, *IngestRequest) (*IngestResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Ingest not implemented")
+}
+func (UnimplementedStovepipeServer) GetProjectStatusByURI(context.Context, *GetProjectStatusByURIRequest) (*GetProjectStatusByURIResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetProjectStatusByURI not implemented")
 }
 func (UnimplementedStovepipeServer) mustEmbedUnimplementedStovepipeServer() {}
 func (UnimplementedStovepipeServer) testEmbeddedByValue()                   {}
@@ -163,6 +181,24 @@ func _Stovepipe_Ingest_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Stovepipe_GetProjectStatusByURI_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetProjectStatusByURIRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StovepipeServer).GetProjectStatusByURI(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Stovepipe_GetProjectStatusByURI_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StovepipeServer).GetProjectStatusByURI(ctx, req.(*GetProjectStatusByURIRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Stovepipe_ServiceDesc is the grpc.ServiceDesc for Stovepipe service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -177,6 +213,10 @@ var Stovepipe_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Ingest",
 			Handler:    _Stovepipe_Ingest_Handler,
+		},
+		{
+			MethodName: "GetProjectStatusByURI",
+			Handler:    _Stovepipe_GetProjectStatusByURI_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

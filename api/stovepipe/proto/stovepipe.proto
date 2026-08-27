@@ -54,6 +54,76 @@ message IngestResponse {
     string id = 1;
 }
 
+// GetProjectStatusByURIRequest selects the authoritative validation for an exact commit URI.
+message GetProjectStatusByURIRequest {
+    // Logical queue containing the request.
+    string queue = 1;
+    // Exact VCS-agnostic commit URI whose authoritative request is selected.
+    string change_uri = 2;
+    // Optional exact project scope. When set, page_size and page_token must be zero and empty;
+    // when absent, one page of planned projects is returned.
+    optional string project = 3;
+    // Maximum projects to return. Zero selects the server default; negative values and values
+    // above the server maximum are invalid.
+    int32 page_size = 4;
+    // Opaque continuation token. Empty selects the first page.
+    string page_token = 5;
+}
+
+// ProjectStatus contains one planned project and any recorded result.
+message ProjectStatus {
+    // Stable project identifier.
+    string project = 1;
+    // Breakage degree measures how broken the project is on [0.0, 1.0]. Unset until its fact is
+    // recorded; zero is fully green and one is fully broken. Values are directly comparable:
+    // lower values are greener, and any value above zero is not green.
+    optional double breakage_degree = 2;
+}
+
+// RequestState is the stable public lifecycle of a validation request.
+enum RequestState {
+    // REQUEST_STATE_UNSPECIFIED is the zero value and is never returned by a successful read.
+    REQUEST_STATE_UNSPECIFIED = 0;
+    // REQUEST_STATE_ACCEPTED means validation has not started.
+    REQUEST_STATE_ACCEPTED = 1;
+    // REQUEST_STATE_PROCESSING means validation is in progress.
+    REQUEST_STATE_PROCESSING = 2;
+    // REQUEST_STATE_SUCCEEDED means validation completed successfully.
+    REQUEST_STATE_SUCCEEDED = 3;
+    // REQUEST_STATE_FAILED means validation completed unsuccessfully.
+    REQUEST_STATE_FAILED = 4;
+    // REQUEST_STATE_CANCELLED means validation was cancelled before reaching a verdict.
+    REQUEST_STATE_CANCELLED = 5;
+    // REQUEST_STATE_SUPERSEDED means a newer head replaced the request before it ran.
+    REQUEST_STATE_SUPERSEDED = 6;
+}
+
+// GetProjectStatusByURIResponse contains the authoritative request's current validation projection.
+message GetProjectStatusByURIResponse {
+    // Globally unique identifier of the authoritative request.
+    string request_id = 1;
+    // Logical queue containing the request.
+    string queue = 2;
+    // VCS-agnostic commit URI validated by the request.
+    string change_uri = 3;
+    // Baseline URI for incremental validation. Empty for a full build.
+    string base_uri = 4;
+    // Stable public lifecycle state and terminal outcome of the request.
+    RequestState request_state = 5;
+    // Breakage degree measures how broken the whole repository is on [0.0, 1.0]. Unset until its
+    // fact is recorded; zero is fully green and one is fully broken. Values are directly
+    // comparable: lower values are greener, and any value above zero is not green.
+    optional double repository_breakage_degree = 6;
+    // Whether every planned project has one durable result and completion is recorded. False
+    // until the project list is available.
+    bool project_results_complete = 7;
+    // Planned projects in stable project order, with any recorded breakage degrees. Empty until
+    // the project list is available.
+    repeated ProjectStatus projects = 8;
+    // Opaque continuation token. Empty on the final page.
+    string next_page_token = 9;
+}
+
 // Stovepipe provides the Stovepipe API.
 service Stovepipe {
     // Ping returns a response indicating the service is alive
@@ -61,4 +131,6 @@ service Stovepipe {
     // Ingest admits a queue's newly observed commit into the validation pipeline and returns
     // the minted request ID. The caller hands off asynchronously; validation happens later.
     rpc Ingest(IngestRequest) returns (IngestResponse) {}
+    // GetProjectStatusByURI returns current validation for an exact commit URI's authoritative request.
+    rpc GetProjectStatusByURI(GetProjectStatusByURIRequest) returns (GetProjectStatusByURIResponse) {}
 }
