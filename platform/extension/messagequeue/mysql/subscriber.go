@@ -16,6 +16,7 @@ package mysql
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -1014,6 +1015,18 @@ func (w *partitionWorker) run(ctx context.Context) {
 			// return to — the only recovery is to retry on the next tick, which
 			// happens automatically. All pollAndDeliver operations are idempotent.
 			if err := w.pollAndDeliver(ctx); err != nil {
+				// A stopped worker has no next tick to recover on. Its context is
+				// deliberately cancelled to interrupt any in-flight store call, so
+				// the resulting error is part of normal teardown.
+				if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
+					w.subscriber.logger.Infow("poll canceled while stopping partition worker",
+						"topic", w.sub.topic,
+						"partition_key", w.partitionKey,
+						"consumer_group", w.sub.config.ConsumerGroup,
+						"subscriber_name", w.sub.config.SubscriberName,
+					)
+					return
+				}
 				w.subscriber.logger.Errorw("poll failed",
 					"topic", w.sub.topic,
 					"partition_key", w.partitionKey,
