@@ -1,0 +1,25 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = ["hookevent.go"],
+    importpath = "github.com/uber/submitqueue/stovepipe/core/hookevent",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api/base/hook:go_default_library",
+        "//stovepipe/entity:go_default_library",
+        "@org_golang_google_protobuf//types/known/structpb:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["hookevent_test.go"],
+    embed = [":go_default_library"],
+    deps = [
+        "//api/base/hook:go_default_library",
+        "//stovepipe/entity:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+    ],
+)

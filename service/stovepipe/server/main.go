@@ -447,7 +447,7 @@ func registerPrimaryControllers(
 	}
 	count++
 
-	recordController := record.NewController(logger, scope, store, sourceControl, stovepipemq.TopicKeyRecord, "stovepipe-record")
+	recordController := record.NewController(logger, scope, store, sourceControl, registry, stovepipemq.TopicKeyRecord, "stovepipe-record")
 	if err := c.Register(recordController); err != nil {
 		return count, fmt.Errorf("failed to register record controller: %w", err)
 	}
@@ -492,7 +492,7 @@ func registerDLQControllers(
 	}
 	count++
 
-	recordDLQController := record.NewController(logger, scope, store, sourceControl, dlq.TopicKey(stovepipemq.TopicKeyRecord), "stovepipe-record-dlq")
+	recordDLQController := record.NewController(logger, scope, store, sourceControl, registry, dlq.TopicKey(stovepipemq.TopicKeyRecord), "stovepipe-record-dlq")
 	if err := c.Register(recordDLQController); err != nil {
 		return count, fmt.Errorf("failed to register record dlq controller: %w", err)
 	}

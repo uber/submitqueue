@@ -23,10 +23,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	basehook "github.com/uber/submitqueue/api/base/hook"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
+	mqmock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/stovepipe/core/hookevent"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
@@ -66,7 +69,31 @@ type recordMocks struct {
 	queueStore    *storagemock.MockQueueStore
 	factStore     *storagemock.MockValidationFactStore
 	sourceControl *sourcecontrolmock.MockSourceControl
+	hooks         *hookRecorder
 	metricsScope  tally.TestScope
+}
+
+// hookRecorder stands in for the hook topic, decoding whatever the controller
+// publishes so a case can assert on the announcement rather than on the queue
+// plumbing carrying it. Setting err makes the publish fail.
+type hookRecorder struct {
+	events []*basehook.HookEvent
+	err    error
+}
+
+// only returns the single event the controller published, failing the case when
+// it published any other number.
+func (r *hookRecorder) only(t *testing.T) *basehook.HookEvent {
+	t.Helper()
+	require.Len(t, r.events, 1)
+	return r.events[0]
+}
+
+// payload returns the event's payload as a plain map.
+func payload(t *testing.T, event *basehook.HookEvent) map[string]any {
+	t.Helper()
+	require.NotNil(t, event.GetPayload())
+	return event.GetPayload().AsMap()
 }
 
 // expectFactCreated wires a successful fact write and captures it, so a case can
@@ -113,6 +140,7 @@ func newControllerForTopic(t *testing.T, ctrl *gomock.Controller, topicKey consu
 		queueStore:    storagemock.NewMockQueueStore(ctrl),
 		factStore:     storagemock.NewMockValidationFactStore(ctrl),
 		sourceControl: sourcecontrolmock.NewMockSourceControl(ctrl),
+		hooks:         &hookRecorder{},
 		metricsScope:  scope,
 	}
 
@@ -121,11 +149,35 @@ func newControllerForTopic(t *testing.T, ctrl *gomock.Controller, topicKey consu
 	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 	store.EXPECT().GetValidationFactStore().Return(m.factStore).AnyTimes()
 
+	publisher := mqmock.NewMockPublisher(ctrl)
+	publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+			if m.hooks.err != nil {
+				return m.hooks.err
+			}
+			event := &basehook.HookEvent{}
+			if err := basehook.Unmarshal(msg.Payload, event); err != nil {
+				return err
+			}
+			m.hooks.events = append(m.hooks.events, event)
+			return nil
+		}).AnyTimes()
+
+	queue := mqmock.NewMockQueue(ctrl)
+	queue.EXPECT().Publisher().Return(publisher).AnyTimes()
+
+	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
+		{Key: stovepipemq.TopicKeyRecord, Name: "record", Queue: queue},
+		{Key: basehook.TopicKeyHook, Name: "stovepipe-hook", Queue: queue},
+	})
+	require.NoError(t, err)
+
 	c := NewController(
 		zap.NewNop().Sugar(),
 		scope,
 		staticStorageFactory{store: store},
 		staticSourceControlFactory{sourceControl: m.sourceControl},
+		registry,
 		topicKey,
 		consumerGroup,
 	)
@@ -623,11 +675,19 @@ func TestProcess_PromotionErrorsPropagate(t *testing.T) {
 
 func TestProcess_TerminalWithoutFactDoesNotTouchStores(t *testing.T) {
 	tests := []struct {
-		name  string
-		state entity.RequestState
+		name           string
+		state          entity.RequestState
+		wantEventTypes []string
 	}{
-		{name: "cancelled", state: entity.RequestStateCancelled},
-		{name: "superseded", state: entity.RequestStateSuperseded},
+		{
+			name:           "cancelled announces that no verdict is coming",
+			state:          entity.RequestStateCancelled,
+			wantEventTypes: []string{string(hookevent.TypeValidationRepositoryCancelled)},
+		},
+		{
+			name:  "superseded announces nothing",
+			state: entity.RequestStateSuperseded,
+		},
 	}
 
 	for _, tt := range tests {
@@ -639,8 +699,145 @@ func TestProcess_TerminalWithoutFactDoesNotTouchStores(t *testing.T) {
 			// Neither a fact nor a queue write: these outcomes decide nothing.
 
 			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
+
+			var got []string
+			for _, event := range m.hooks.events {
+				got = append(got, event.GetType())
+			}
+			assert.Equal(t, tt.wantEventTypes, got)
 		})
 	}
+}
+
+func TestProcess_AnnouncesRecordedValidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		state      entity.RequestState
+		wantDegree float64
+	}{
+		{name: "green", state: entity.RequestStateSucceeded, wantDegree: entity.DegreeGreen},
+		{name: "broken", state: entity.RequestStateFailed, wantDegree: entity.DegreeBroken},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			c, m := newController(t, ctrl)
+
+			request := requestWithState(tt.state)
+			request.BaseURI = testBaseURI
+			request.BuildStrategy = entity.BuildStrategyIncrementalSinceGreen
+
+			m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+			var fact entity.ValidationFact
+			m.expectFactCreated(&fact)
+
+			if tt.wantDegree == entity.DegreeGreen {
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow("", "", 1), nil)
+				m.queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
+				m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).
+					Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
+				m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(nil)
+			} else {
+				m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testBaseURI).
+					Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
+			}
+
+			require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
+
+			event := m.hooks.only(t)
+			assert.Equal(t, hookevent.Source, event.GetSource())
+			assert.Equal(t, string(hookevent.TypeValidationRepositoryRecorded), event.GetType())
+			assert.Positive(t, event.GetTimestampMs())
+
+			assert.Equal(t, map[string]any{"queue": testQueue, "request_id": testID}, payload(t, event))
+			// The degree the event does not carry is on the fact a hook reads instead.
+			assert.Equal(t, tt.wantDegree, fact.Degree)
+		})
+	}
+}
+
+func TestProcess_AnnouncesCancelledValidation(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).
+		Return(requestWithState(entity.RequestStateCancelled), nil)
+
+	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
+
+	event := m.hooks.only(t)
+	assert.Equal(t, string(hookevent.TypeValidationRepositoryCancelled), event.GetType())
+	assert.Equal(t, map[string]any{"queue": testQueue, "request_id": testID}, payload(t, event))
+}
+
+// The announcement is the last thing the stage does, so a hook reacting to a green
+// commit by reading the bookmark or resolving the promotion ref cannot find either
+// still pointing at the commit this event supersedes.
+func TestProcess_AnnouncesOnlyAfterDerivedCachesMove(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).
+		Return(requestWithState(entity.RequestStateSucceeded), nil)
+	var fact entity.ValidationFact
+	m.expectFactCreated(&fact)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow("", "", 1), nil)
+	m.queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).
+		DoAndReturn(func(context.Context, entity.Queue, int32, int32) error {
+			assert.Empty(t, m.hooks.events, "the bookmark must advance before the announcement")
+			return nil
+		})
+	m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).
+		Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
+	m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).
+		DoAndReturn(func(context.Context, string) error {
+			assert.Empty(t, m.hooks.events, "the promotion must land before the announcement")
+			return nil
+		})
+
+	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
+	assert.Len(t, m.hooks.events, 1)
+}
+
+// The id is derived from the transition rather than the clock, which is what lets
+// the queue dedupe a redelivery and a hook stay idempotent without an outbox.
+func TestProcess_RedeliveryAnnouncesTheSameEventID(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(failedRequest(), nil).Times(2)
+	var fact entity.ValidationFact
+	m.expectFactCreated(&fact)
+	m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testBaseURI).
+		Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
+
+	m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
+	m.factStore.EXPECT().Get(gomock.Any(), testURI, wholeRepositoryProject).
+		Return(entity.ValidationFact{URI: testURI, Degree: entity.DegreeBroken, RequestID: testID}, nil)
+
+	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
+	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
+
+	require.Len(t, m.hooks.events, 2)
+	assert.Equal(t, m.hooks.events[0].GetId(), m.hooks.events[1].GetId())
+}
+
+// A failed announcement fails the delivery: the fact is already durable, so the
+// retry re-runs an idempotent chain, and dead-lettering keeps the loss visible
+// rather than acking an outcome nothing downstream heard about.
+func TestProcess_AnnouncementFailureFailsRecord(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	m.hooks.err = errors.New("boom")
+
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(failedRequest(), nil)
+	var fact entity.ValidationFact
+	m.expectFactCreated(&fact)
+	m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testBaseURI).
+		Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
+
+	require.Error(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 }
 
 func TestProcess_NonTerminalRequestFails(t *testing.T) {

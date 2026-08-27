@@ -2,10 +2,10 @@
 
 `record` turns a terminal build outcome into a durable validation fact.
 
-- Phase 1 records whole-repository greenness. On green it also advances the Queue's last-green bookmark and promotes the commit onto the Queue's promotion ref. This is implemented: see [stovepipe/controller/record/record.go](../../../../stovepipe/controller/record/record.go).
+- Phase 1 records whole-repository greenness. On green it also advances the Queue's last-green bookmark and promotes the commit onto the Queue's promotion ref, then announces the outcome as a hook event. This is implemented: see [stovepipe/controller/record/record.go](../../../../stovepipe/controller/record/record.go).
 - Phase 2 records greenness per project instead of per repository. Sketched here, to be expanded before implementation.
 
-Notifying downstream systems is **not** implemented in either phase. It will ride the cross-domain hook framework instead of a Stovepipe-specific extension; see [Hooks](#hooks).
+Notifying downstream systems rides the cross-domain hook framework rather than a Stovepipe-specific extension; see [Hooks](#hooks).
 
 See [workflow.md](../workflow.md) for the whole pipeline, [build.md](build.md) for how builds are created, and [buildsignal.md](buildsignal.md) for the terminal-only handoff into this stage.
 
@@ -34,8 +34,8 @@ For a delivery carrying a `Record` payload:
 5. Inspect R.State.
    - succeeded / failed -> continue. buildsignal stamps the outcome before it
      publishes here, and both values are verdicts about the code.
-   - cancelled -> ack, no fact: the build decided nothing about the commit (see
-     "When to record an outcome").
+   - cancelled -> publish a validation.repository.cancelled HookEvent and ack, no
+     fact: the build decided nothing about the commit (see "When to record an outcome").
    - superseded -> ack, no fact. Unreachable in practice.
    - accepted / processing / anything else -> return a non-retryable invariant error.
 
@@ -44,8 +44,9 @@ For a delivery carrying a `Record` payload:
    - ErrAlreadyExists -> load and reconcile the existing immutable fact.
    - other store error -> return raw.
 
-7. If the persisted fact is not green, ack. Report how long the break went undetected
-   first, but only if step 6 is the write that created the fact (see "Observability").
+7. If the persisted fact is not green, skip to step 10: a break moves neither the
+   bookmark nor the ref, but is still announced. Report how long it went undetected
+   first, and only if step 6 is the write that created the fact (see "Observability").
 
 8. Advance the bookmark to (R.URI, R.ID) in a CAS retry loop, which also reports
    whether R holds the bookmark afterwards:
@@ -56,15 +57,19 @@ For a delivery carrying a `Record` payload:
    - ErrVersionMismatch                 -> reload and re-evaluate.
 
 9. If R holds the bookmark, ask SourceControl to point the promotion ref at R.URI.
-   Otherwise ack: whichever commit holds the bookmark owns the ref.
-   - ErrNotFound -> count and ack. A rewritten history dropped the commit from the
+   Otherwise skip: whichever commit holds the bookmark owns the ref.
+   - ErrNotFound -> count and skip. A rewritten history dropped the commit from the
      ref, and no retry can promote it.
    - other error -> return raw.
 
-10. ack.
+10. Publish a validation.repository.recorded HookEvent naming the request whose fact
+    was persisted.
+    - publish failure -> return raw; non-retryable, so it dead-letters.
+
+11. ack.
 ```
 
-Every decision after step 6 uses the persisted fact, not the outcome read from this delivery's Request. The first immutable fact controls the bookmark and the ref, and will control the hook event. Once hooks land, the publish becomes a new step between 9 and 10.
+Every decision after step 6 uses the persisted fact, not the outcome read from this delivery's Request. The first immutable fact controls the bookmark, the ref, and the hook event.
 
 ## Validation facts
 
@@ -99,7 +104,7 @@ Absence is still distinct from degree `0`. Callers gating deployments must treat
 
 A fact is written only when the Request reaches `succeeded` or `failed`. A `cancelled` build is acked with no fact.
 
-The fail-closed path is subtler than "no fact". A DLQ reconciler forces the Request to `failed` and does not itself publish here, so reconciliation on its own records nothing. That is not the same as nothing being recorded: a `buildsignal` delivery still in flight can reach this stage afterwards, and it will write `DegreeBroken` from the forced state. See [What fail-closed actually guarantees](#what-fail-closed-actually-guarantees).
+The fail-closed path is subtler than "no fact". A DLQ reconciler forces the Request to `failed` and does not itself publish here, so reconciliation on its own records nothing. That is not the same as nothing being recorded: a `buildsignal` delivery still in flight can reach this stage afterwards, and it will write `DegreeBroken` from the forced state. See [DLQ and fail-closed behavior](#dlq-and-fail-closed-behavior).
 
 ### Phase 1 degree mapping
 
@@ -156,7 +161,7 @@ Recording a fact is when the rest of the company can learn "this URI is now gree
 
 The mechanics are already settled in [hook-framework.md](../../hook-framework.md) — the envelope, the delivery promise, the per-domain dispatcher stage, the `hook_dlq`, and the reasoning behind each. This section covers only what Stovepipe has to decide for validation facts. The earlier design here, a Stovepipe `Hooks` extension called with `Notify(ctx, ValidationFactRef{…})` as the last algorithm step, is rejected there on both halves: inline calls couple pipeline latency to third-party integrations and drop the notification on a crash between the state write and the call, and a per-domain contract multiplies schemas and sinks for no gain.
 
-None of it is built. It needs the shared `HookEvent` contract at `api/base/hook/` and the hook extension at `platform/extension/hook/`, plus Stovepipe's own share: a `hook` topic key, a dispatcher stage, a `hook_dlq` reconciler, and the wiring for all three.
+The shared `HookEvent` contract at `api/base/hook/`, the hook extension at `platform/extension/hook/`, and Stovepipe's dispatcher stage and `hook_dlq` reconciler are all in place, and this stage publishes to them. What no deployment has yet is a hook that does something with the event: the resolver in `service/stovepipe/server/main.go` returns `noop`.
 
 ### Where the publish belongs
 
@@ -166,35 +171,38 @@ Last thing before the ack, after the fact write and after both caches derived fr
 create fact → advance bookmark (green only) → promote (bookmark holder only) → publish HookEvent → [Phase 2: publish to analyze] → ack
 ```
 
-Last because the payload carries no entity snapshot and hooks resolve entities from stores: a hook reacting to "URI is green" by reading `LastGreenURI`, or by fetching the promotion ref, must not find either still pointing at the previous commit. Inside the delivery rather than after it, because that is what makes the event lossless without an outbox — the state writes are recognize-and-skip on redelivery, so a crash before the ack replays the whole chain.
+Last because the payload names the Request rather than snapshotting it, and hooks resolve entities from stores: a hook reacting to "URI is green" by reading `LastGreenURI`, or by fetching the promotion ref, must not find either still pointing at the previous commit. Inside the delivery rather than after it, because that is what makes the event lossless without an outbox — the state writes are recognize-and-skip on redelivery, so a crash before the ack replays the whole chain.
 
 ### Event shape
 
 
-| Envelope field | Value for a validation fact                                     |
-| -------------- | --------------------------------------------------------------- |
-| `source`       | `stovepipe`                                                     |
-| `type`         | `validation.repository.recorded` (see below)                    |
-| `version`      | `0` — a fact is create-only and has no version to report        |
-| `timestamp_ms` | Publish time; the fact's own `CreatedAt` travels in the payload |
-| `id`           | `source` / `type` / request id (see below)                      |
+| Envelope field | Value for a validation fact                                                     |
+| -------------- | --------------------------------------------------------------------------------- |
+| `source`       | `stovepipe`                                                                     |
+| `type`         | `validation.repository.recorded` or `validation.repository.cancelled` (see below) |
+| `version`      | `0` — a fact is create-only and has no version to report                        |
+| `timestamp_ms` | Publish time                                                                    |
+| `id`           | `source` / `type` / request id / `0`                                            |
 
 
 The **subject** is the Request — a payload fact rather than an envelope field, but it is what `id` is minted from and what the event partitions on. The Request over the URI keeps partitioning identical to the `record` topic's own, so per-request ordering carries through the seam, and it hands a consumer a way back into the pipeline. The two are near-interchangeable anyway: ingest dedups on `(queue, uri)`, so one Request means one URI.
 
-The payload carries the fact's identity and value: `queue`, `uri`, `project`, `degree`, `request_id`. `queue` has to be there because neither the envelope nor the fact entity carries one, so the event is the only place a cross-queue consumer sees it. `degree` is there even though a hook could read it from the store: the fact is immutable, so the staleness objection behind the no-snapshots rule does not apply, and it is what a consumer branches on to tell green from broken. Build failure detail stays off, since the payload is reserved for facts persisted nowhere else and a failed build's detail is durable on the `Build` row.
+Both types carry identity and nothing else: `queue` and `request_id`. A hook resolves the fact, its degree, and the bookmark from the stores. `queue` has to be there because neither the envelope nor the fact entity carries one, and a hook needs it to resolve per-queue storage before it can load anything by `request_id`. Identity rather than a snapshot because a snapshot is never fresher than its publish moment, so a consumer acting on one may be reasoning about state that has since moved; the cost is a store read per hook.
+
+So a hook reads state as it is when the hook runs, not as it was when the event was published. That is the same ordering the step list depends on, and a consumer needing the values a green commit was recorded with reads the immutable fact rather than the bookmark or the ref.
 
 ### What the `type` carries
 
 Data belongs in `type` when consumers need to avoid receiving the event, and in the payload when they need to interpret it. The type names the scope, `validation.repository.recorded`, with `validation.project.recorded` beside it in Phase 2.
 
+`validation.repository.cancelled` is a separate type rather than a `state` on the recorded one, because the two differ in what a consumer can do with them: a recorded event carries a verdict to act on, a cancelled event only says to stop waiting. A sink that gates on greenness subscribes to one and ignores the other, and naming a cancellation "recorded" would claim a fact that was never written.
 ### What a consumer can and cannot assume
 
 Ordering is per-subject only and the subject is the Request, so events for *different* Requests can arrive out of order. A consumer must not infer "the newest green commit" from arrival order; it should compare request ids by ingest order (`entity.CompareRequestID`) or read the bookmark, which is monotonic by construction.
 
-Absence of an event is not a signal: a cancelled build records nothing, and a Request abandoned before any build went terminal never reaches this stage, so a consumer waiting for one event per ingested commit waits forever on those. Gating keeps treating "no recorded fact" as not green. The converse holds too — an event is not proof the code was tested, since a fail-closed Request can produce a broken fact without a build having failed.
+Absence of an event is not a signal. A Request abandoned before any build went terminal never reaches this stage, and a superseded one publishes nothing, so a consumer waiting for one event per ingested commit waits forever on those. Gating keeps treating "no recorded fact" as not green. The converse holds too — an event is not proof the code was tested, since a fail-closed Request can produce a broken fact without a build having failed.
 
-Hooks here must be idempotent on `id`, as everywhere. "Fire-and-forget" describes downstream consumption, not the publish: `record` never waits for a hook, but a failed *publish* fails the delivery. Per `[platform/errs](../../../../platform/errs/README.md)` rule 4 it is not wrapped retryable just because replaying it is convenient, so it dead-letters, which is where the missing `record_dlq` reconciler stops being theoretical: the fact is durable and only the notification is lost.
+Hooks here must be idempotent on `id`, as everywhere. "Fire-and-forget" describes downstream consumption, not the publish: `record` never waits for a hook, but a failed *publish* fails the delivery. Per `[platform/errs](../../../../platform/errs/README.md)` rule 4 it is not wrapped retryable just because replaying it is convenient, so it dead-letters. The `record_dlq` consumer is this same controller on the dead-letter topic, so it re-runs this identical idempotent algorithm and the republish is its own recovery path: the fact is already durable, and only the notification was outstanding.
 
 ## Request lifecycle
 
@@ -246,7 +254,7 @@ Partitioning by request id keeps completion bookkeeping single-writer per Reques
 
 ## Edge cases and idempotency
 
-Every effect is recognize-and-skip, so a redelivery after a complete run re-runs each step as a no-op. Once hooks land the publish re-fires, and the framework's dedupe on `id` absorbs it.
+Every effect is recognize-and-skip, so a redelivery after a complete run re-runs each step as a no-op. The publish re-fires, and the queue's dedupe on the derived `id` absorbs it.
 
 - **Request not visible.** A storage defect rather than lag, since the publish follows the committed outcome write. Non-retryable.
 - **Fact already created.** Load it and continue from the stored fact. A fact from a *different* Request, or a Request carrying no build outcome, is an invariant violation rather than an expected outcome.
@@ -255,7 +263,7 @@ Every effect is recognize-and-skip, so a redelivery after a complete run re-runs
 - **Green fact recorded out of order across Requests.** An older green commit can reach this stage after a newer one. Its fact is written as usual, since facts are per-URI and independent, but the bookmark guard skips it, and because it does not hold the bookmark it does not promote either. Neither cache moves backwards.
 - **Cancelled build.** Stovepipe never initiates cancellation, but a backend may still report it. No fact is written; the slot was already released and the Request already stamped `cancelled`. The fact identity stays unclaimed, and nothing can claim it today, since `cancelled` is terminal and re-validation does not exist. Recovery in practice is the next commit; the unclaimed identity only matters to a future re-run mechanism (see [Supporting re-run of the same URI](#supporting-re-run-of-the-same-uri)).
 - **History rewrite while a build runs.** The Request keeps the strategy and URI pinned at admission, and record stores the fact about that immutable URI. A later head is handled independently by `process`. If the rewrite dropped the commit from the ref, the fact and the bookmark still stand, since they describe a commit and not a ref, and only the promotion is skipped.
-- **A fail-closed terminal outranks a build that passed.** The degree derives from `R.State`, so a Request forced to `failed` by DLQ reconciliation records `DegreeBroken` even when one of its builds reports success afterwards. Reachable today, and permanent once written; see [What fail-closed actually guarantees](#what-fail-closed-actually-guarantees).
+- **A fail-closed terminal outranks a build that passed.** The degree derives from `R.State`, so a Request forced to `failed` by DLQ reconciliation records `DegreeBroken` even when one of its builds reports success afterwards. Reachable today, and permanent once written; see [DLQ and fail-closed behavior](#dlq-and-fail-closed-behavior).
 - **Crash between the fact write and the bookmark advance.** Redelivery reloads the existing fact and re-applies the idempotent guard.
 - **Crash between the bookmark advance and the promotion.** Redelivery finds its own id on the bookmark, reports that it holds it, and retries the idempotent promotion.
 
@@ -267,7 +275,7 @@ Every effect is recognize-and-skip, so a redelivery after a complete run re-runs
 
 Two different things put a message there, and only one is a poison payload. A delivery that fails with its retry budget spent is dead-lettered by the nack itself, carrying the reason it actually failed. A delivery that never reaches a nack, because it crashed or because its **ack failed** and the visibility timeout redelivered it, is dead-lettered by the poll loop once `retry_count` reaches `MaxAttempts` (3 by default), without the controller running on that final attempt and with only a generic reason recorded. So a missing reconciler exposes more than malformed messages: a fact can be lost to a storage failure that would have succeeded on a later retry, or to an ack that never landed even though the write did.
 
-Gating stays safe, because everything this stage can lose reads as not-green: a Request with no fact is indistinguishable from one not yet validated. What is lost is the *fact*. A green build whose fact write permanently failed leaves the URI looking unvalidated, which costs the queue an incremental baseline and forces a full build at the next head. Once hooks land, a lost notification joins that list, and unlike the fact it gets no second chance from a later commit.
+Gating stays safe, because everything this stage can lose reads as not-green: a Request with no fact is indistinguishable from one not yet validated. What is lost is the *fact*. A green build whose fact write permanently failed leaves the URI looking unvalidated, which costs the queue an incremental baseline and forces a full build at the next head. A lost notification joins that list, and unlike the fact it gets no second chance from a later commit.
 
 This is the same failure shape [buildsignal.md](buildsignal.md#what-it-costs-when-a-backend-does-not-classify-status-errors) describes for a deployment that registers primary consumers without their reconciler. When the reconciler is built it should re-run this same idempotent algorithm from the request id, under `errs.AlwaysRetryableProcessor`: write and publish the immutable fact as usual if the Request carries a build outcome, keep retrying if Request storage is temporarily unavailable, and treat a malformed payload or a permanently missing Request as poison, which needs an operational alert rather than more retries.
 
