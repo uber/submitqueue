@@ -84,28 +84,27 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	br := &stovepipemq.BuildRequest{}
 	if err := stovepipemq.Unmarshal(msg.Payload, br); err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a malformed message will never succeed regardless of retries.
 		return fmt.Errorf("failed to deserialize build request: %w", err)
 	}
-
 	store, err := c.stores.For(storage.Config{QueueName: br.GetQueueName()})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", br.GetQueueName(), err)
 	}
 
 	request, err := c.loadRequest(ctx, store, br.Id)
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
 
 	// The payload's queue must match the request's authoritative queue; a
 	// mismatch is a malformed message. Non-retryable — reject to the DLQ.
 	if br.GetQueueName() != "" && br.GetQueueName() != request.Queue {
-		metrics.NamedCounter(c.metricsScope, _opName, "queue_mismatch", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "queue_mismatch", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("payload queue %q does not match queue %q of request %s", br.GetQueueName(), request.Queue, request.ID)
 	}
 
@@ -123,7 +122,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	// process decided the scope; build never re-derives incremental-vs-full.
 	if request.BuildStrategy == entity.BuildStrategyUnknown {
-		metrics.NamedCounter(c.metricsScope, _opName, "strategy_not_visible", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "strategy_not_visible", 1, metrics.TagsFromContext(ctx)...)
 		return errs.NewRetryableError(fmt.Errorf("request %s has no build strategy yet", request.ID))
 	}
 	baseURI := ""

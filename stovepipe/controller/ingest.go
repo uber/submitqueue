@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/extension/counter"
@@ -300,6 +301,7 @@ func (c *IngestController) publishProcess(ctx context.Context, id, queue string)
 		return fmt.Errorf("failed to serialize process request: %w", err)
 	}
 
+	ctx = entityqueue.WithQueueName(ctx, queue)
 	if err := publish.Message(ctx, c.registry, stovepipemq.TopicKeyProcess, publish.IntentID(id), payload, queue); err != nil {
 		return fmt.Errorf("failed to publish process request: %w", err)
 	}

@@ -26,6 +26,7 @@ package publish
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -34,7 +35,8 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 )
 
-// Message publishes payload to the topic registered for key.
+// Message publishes payload to the topic registered for key. Allowlisted
+// delivery context is propagated as message metadata.
 //
 // msgID selects the dedup behavior, so the caller must choose it deliberately.
 // The queue deduplicates on (topic, partition key, message ID) against every
@@ -53,6 +55,8 @@ func Message(ctx context.Context, registry consumer.TopicRegistry, key consumer.
 // MessageWithMetadata is Message with side-band message metadata (headers/attributes)
 // attached to the delivery. Use it to carry diagnostic context that is not part of
 // the payload — the backend persists and redelivers metadata alongside the message.
+// Allowlisted delivery context, currently only the queue name, is propagated unless
+// the caller supplies that metadata key explicitly.
 func MessageWithMetadata(ctx context.Context, registry consumer.TopicRegistry, key consumer.TopicKey, msgID string, payload []byte, partitionKey string, metadata map[string]string) error {
 	q, ok := registry.Queue(key)
 	if !ok {
@@ -63,8 +67,24 @@ func MessageWithMetadata(ctx context.Context, registry consumer.TopicRegistry, k
 		return fmt.Errorf("no topic name registered for topic key %s", key)
 	}
 
-	msg := entityqueue.NewMessage(msgID, payload, partitionKey, metadata)
+	msg := entityqueue.NewMessage(msgID, payload, partitionKey, metadataFromContext(ctx, metadata))
 	return q.Publisher().Publish(ctx, topicName, msg)
+}
+
+func metadataFromContext(ctx context.Context, metadata map[string]string) map[string]string {
+	metadata = maps.Clone(metadata)
+	if _, exists := metadata[entityqueue.MetadataKeyQueueName]; exists {
+		return metadata
+	}
+	queueName, ok := entityqueue.QueueName(ctx)
+	if !ok || queueName == "" {
+		return metadata
+	}
+	if metadata == nil {
+		metadata = make(map[string]string)
+	}
+	metadata[entityqueue.MetadataKeyQueueName] = queueName
+	return metadata
 }
 
 // IntentID names the occasion to publish rather than the entity published

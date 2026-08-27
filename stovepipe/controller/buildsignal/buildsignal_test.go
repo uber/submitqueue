@@ -27,6 +27,7 @@ import (
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
 	mqmock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
@@ -43,6 +44,11 @@ const (
 	testBuildID = "bk-1"
 )
 
+func queueContext() context.Context {
+	ctx := entityqueue.WithQueueName(context.Background(), testQueue)
+	return metrics.WithContextTags(ctx, metrics.NewTag("queue", testQueue))
+}
+
 // buildsignalMocks bundles the mocks a buildsignal controller test case wires
 // expectations on.
 type buildsignalMocks struct {
@@ -52,6 +58,7 @@ type buildsignalMocks struct {
 	runnerFactory *buildrunnermock.MockFactory
 	runner        *buildrunnermock.MockBuildRunner
 	publisher     *mqmock.MockPublisher
+	metricsScope  tally.TestScope
 }
 
 // staticStorageFactory resolves every queue to one fixed store aggregate.
@@ -63,6 +70,7 @@ func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { ret
 func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildsignalMocks) {
 	t.Helper()
 
+	scope := tally.NewTestScope("test", nil)
 	m := buildsignalMocks{
 		reqStore:      storagemock.NewMockRequestStore(ctrl),
 		buildStore:    storagemock.NewMockBuildStore(ctrl),
@@ -70,6 +78,7 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildsig
 		runnerFactory: buildrunnermock.NewMockFactory(ctrl),
 		runner:        buildrunnermock.NewMockBuildRunner(ctrl),
 		publisher:     mqmock.NewMockPublisher(ctrl),
+		metricsScope:  scope,
 	}
 
 	store := storagemock.NewMockStorage(ctrl)
@@ -86,8 +95,19 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildsig
 	})
 	require.NoError(t, err)
 
-	c := NewController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), staticStorageFactory{store: store}, m.runnerFactory, registry, stovepipemq.TopicKeyBuildSignal, "stovepipe-buildsignal")
+	c := NewController(zap.NewNop().Sugar(), scope, staticStorageFactory{store: store}, m.runnerFactory, registry, stovepipemq.TopicKeyBuildSignal, "stovepipe-buildsignal")
 	return c, m
+}
+
+func TestProcessTagsMetricsWithQueue(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(entity.Build{}, assert.AnError)
+
+	require.Error(t, c.Process(queueContext(), delivery(t, ctrl, buildSignalPayload(t, testBuildID))))
+	counter, ok := m.metricsScope.Snapshot().Counters()["test.buildsignal_controller.buildsignal.storage_errors+queue=monorepo/main"]
+	require.True(t, ok)
+	assert.EqualValues(t, 1, counter.Value())
 }
 
 func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) *consumermock.MockDelivery {
@@ -100,7 +120,7 @@ func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) *consumermo
 
 func buildSignalPayload(t *testing.T, id string) []byte {
 	t.Helper()
-	b, err := stovepipemq.Marshal(&stovepipemq.BuildSignal{Id: id})
+	b, err := stovepipemq.Marshal(&stovepipemq.BuildSignal{Id: id, QueueName: testQueue})
 	require.NoError(t, err)
 	return b
 }
@@ -403,7 +423,7 @@ func TestProcess(t *testing.T) {
 				d.EXPECT().Hold(tt.wantHoldMs)
 			}
 
-			err := c.Process(context.Background(), d)
+			err := c.Process(queueContext(), d)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -429,13 +449,14 @@ func TestPublishRecordCarriesRequestID(t *testing.T) {
 			return nil
 		})
 
-	require.NoError(t, c.publishRecord(context.Background(), testID, "monorepo/main"))
+	require.NoError(t, c.publishRecord(queueContext(), testID, "monorepo/main"))
 
 	var payload stovepipemq.Record
 	require.NoError(t, stovepipemq.Unmarshal(got.Payload, &payload))
 	assert.Equal(t, testID, payload.Id)
 	assert.Equal(t, testID, got.ID)
 	assert.Equal(t, testID, got.PartitionKey)
+	assert.Equal(t, "monorepo/main", got.Metadata[entityqueue.MetadataKeyQueueName])
 }
 
 func TestOutcomeState(t *testing.T) {

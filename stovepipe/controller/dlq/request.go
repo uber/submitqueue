@@ -72,7 +72,7 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 
 	pr := &stovepipemq.ProcessRequest{}
 	if err := stovepipemq.Unmarshal(msg.Payload, pr); err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Decoding the same bytes normally fails deterministically, but this error is
 		// still retried: the DLQ consumer's AlwaysRetryableProcessor (see Process doc)
 		// classifies every error as retryable. That is deliberate — the recoverable
@@ -85,13 +85,13 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 		return fmt.Errorf("failed to decode dlq payload: %w", err)
 	}
 	if pr.Id == "" {
-		metrics.NamedCounter(c.metricsScope, _opName, "empty_id_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "empty_id_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("dlq payload decoded to empty request id")
 	}
 
 	store, err := c.stores.For(storage.Config{QueueName: pr.GetQueueName()})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		// Non-retryable: a missing or unresolvable queue is a malformed message.
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", pr.GetQueueName(), err)
 	}
@@ -106,7 +106,7 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 	)
 
 	if err := failRequest(ctx, store, c.logger, pr.Id); err != nil {
-		metrics.NamedCounter(c.metricsScope, _opName, "reconcile_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _opName, "reconcile_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
 

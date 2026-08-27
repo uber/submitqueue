@@ -26,6 +26,7 @@ go_test(
         "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
         "//platform/consumer/mock:go_default_library",
+        "//platform/metrics:go_default_library",
         "//stovepipe/core/messagequeue:go_default_library",
         "//stovepipe/entity:go_default_library",
         "//stovepipe/extension/sourcecontrol:go_default_library",

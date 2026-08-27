@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//api/stovepipe/protopb:go_default_library",
+        "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
         "//platform/errs:go_default_library",
         "//platform/extension/counter:go_default_library",
@@ -33,6 +34,7 @@ go_test(
     embed = [":go_default_library"],
     deps = [
         "//api/stovepipe/protopb:go_default_library",
+        "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
         "//platform/extension/counter:go_default_library",
         "//platform/extension/counter/mock:go_default_library",

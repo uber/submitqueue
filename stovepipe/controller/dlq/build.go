@@ -62,17 +62,17 @@ func NewDLQBuildController(
 func (c *buildController) Process(ctx context.Context, delivery consumer.Delivery) error {
 	buildRequest := &stovepipemq.BuildRequest{}
 	if err := stovepipemq.Unmarshal(delivery.Message().Payload, buildRequest); err != nil {
-		metrics.NamedCounter(c.metricsScope, _buildOpName, "deserialize_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _buildOpName, "deserialize_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to decode dlq payload: %w", err)
 	}
 	if buildRequest.Id == "" {
-		metrics.NamedCounter(c.metricsScope, _buildOpName, "empty_id_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _buildOpName, "empty_id_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("build dlq payload decoded to empty request id")
 	}
 
 	store, err := c.stores.For(storage.Config{QueueName: buildRequest.GetQueueName()})
 	if err != nil {
-		metrics.NamedCounter(c.metricsScope, _buildOpName, "storage_resolve_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _buildOpName, "storage_resolve_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("failed to resolve storage for queue %q: %w", buildRequest.GetQueueName(), err)
 	}
 
@@ -86,10 +86,10 @@ func (c *buildController) Process(ctx context.Context, delivery consumer.Deliver
 	)
 
 	if err := failRequest(ctx, store, c.logger, buildRequest.Id); err != nil {
-		metrics.NamedCounter(c.metricsScope, _buildOpName, "reconcile_errors", 1)
+		metrics.NamedCounter(c.metricsScope, _buildOpName, "reconcile_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}
-	metrics.NamedCounter(c.metricsScope, _buildOpName, "reconciled", 1)
+	metrics.NamedCounter(c.metricsScope, _buildOpName, "reconciled", 1, metrics.TagsFromContext(ctx)...)
 	return nil
 }
 

@@ -27,6 +27,7 @@ import (
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/errs"
 	mqmock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
@@ -45,6 +46,11 @@ const (
 	testBuildID = "bk-1"
 )
 
+func queueContext() context.Context {
+	ctx := entityqueue.WithQueueName(context.Background(), testQueue)
+	return metrics.WithContextTags(ctx, metrics.NewTag("queue", testQueue))
+}
+
 // buildMocks bundles the mocks a build controller test case wires expectations on.
 type buildMocks struct {
 	reqStore      *storagemock.MockRequestStore
@@ -52,6 +58,7 @@ type buildMocks struct {
 	runnerFactory *buildrunnermock.MockFactory
 	runner        *buildrunnermock.MockBuildRunner
 	publisher     *mqmock.MockPublisher
+	metricsScope  tally.TestScope
 }
 
 // staticStorageFactory resolves every queue to one fixed store aggregate.
@@ -63,12 +70,14 @@ func (f staticStorageFactory) For(storage.Config) (storage.Storage, error) { ret
 func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildMocks) {
 	t.Helper()
 
+	scope := tally.NewTestScope("test", nil)
 	m := buildMocks{
 		reqStore:      storagemock.NewMockRequestStore(ctrl),
 		buildStore:    storagemock.NewMockBuildStore(ctrl),
 		runnerFactory: buildrunnermock.NewMockFactory(ctrl),
 		runner:        buildrunnermock.NewMockBuildRunner(ctrl),
 		publisher:     mqmock.NewMockPublisher(ctrl),
+		metricsScope:  scope,
 	}
 
 	store := storagemock.NewMockStorage(ctrl)
@@ -83,8 +92,47 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildMoc
 	})
 	require.NoError(t, err)
 
-	c := NewController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), staticStorageFactory{store: store}, m.runnerFactory, registry, stovepipemq.TopicKeyBuild, "stovepipe-build")
+	c := NewController(zap.NewNop().Sugar(), scope, staticStorageFactory{store: store}, m.runnerFactory, registry, stovepipemq.TopicKeyBuild, "stovepipe-build")
 	return c, m
+}
+
+func TestProcessTagsMetricsWithQueue(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).
+		Return(processingRequest(entity.BuildStrategyUnknown, ""), nil)
+	m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+
+	require.Error(t, c.Process(queueContext(), delivery(t, ctrl, buildPayload(t, testID))))
+	counter, ok := m.metricsScope.Snapshot().Counters()["test.build_controller.build.strategy_not_visible+queue=monorepo/main"]
+	require.True(t, ok)
+	assert.EqualValues(t, 1, counter.Value())
+}
+
+func TestProcessTagsDeserializeErrorsFromContext(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+
+	require.Error(t, c.Process(queueContext(), delivery(t, ctrl, []byte("not-protojson"))))
+	counter, ok := m.metricsScope.Snapshot().Counters()["test.build_controller.build.deserialize_errors+queue=monorepo/main"]
+	require.True(t, ok)
+	assert.EqualValues(t, 1, counter.Value())
+}
+
+func TestPublishBuildSignalCarriesQueueMetadata(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+
+	var got entityqueue.Message
+	m.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+			got = msg
+			return nil
+		})
+
+	require.NoError(t, c.publishBuildSignal(queueContext(), testBuildID, testQueue))
+	assert.Equal(t, testBuildID, got.PartitionKey)
+	assert.Equal(t, testQueue, got.Metadata[entityqueue.MetadataKeyQueueName])
 }
 
 func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) consumer.Delivery {
@@ -97,7 +145,7 @@ func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) consumer.De
 
 func buildPayload(t *testing.T, id string) []byte {
 	t.Helper()
-	b, err := stovepipemq.Marshal(&stovepipemq.BuildRequest{Id: id})
+	b, err := stovepipemq.Marshal(&stovepipemq.BuildRequest{Id: id, QueueName: testQueue})
 	require.NoError(t, err)
 	return b
 }
@@ -295,7 +343,7 @@ func TestProcess(t *testing.T) {
 				payload = buildPayload(t, testID)
 			}
 
-			err := c.Process(context.Background(), delivery(t, ctrl, payload))
+			err := c.Process(queueContext(), delivery(t, ctrl, payload))
 
 			if tt.wantErr {
 				require.Error(t, err)

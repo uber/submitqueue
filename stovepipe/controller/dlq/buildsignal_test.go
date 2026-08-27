@@ -15,7 +15,6 @@
 package dlq
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -33,18 +32,21 @@ import (
 const testBuildID = "go-code-on-odin-submitqueue/builds/2867068"
 
 type buildSignalDLQMocks struct {
-	reqStore   *storagemock.MockRequestStore
-	queueStore *storagemock.MockQueueStore
-	buildStore *storagemock.MockBuildStore
+	reqStore     *storagemock.MockRequestStore
+	queueStore   *storagemock.MockQueueStore
+	buildStore   *storagemock.MockBuildStore
+	metricsScope tally.TestScope
 }
 
 func newBuildSignalController(t *testing.T, ctrl *gomock.Controller) (consumer.Controller, buildSignalDLQMocks) {
 	t.Helper()
 
+	scope := tally.NewTestScope("test", nil)
 	m := buildSignalDLQMocks{
-		reqStore:   storagemock.NewMockRequestStore(ctrl),
-		queueStore: storagemock.NewMockQueueStore(ctrl),
-		buildStore: storagemock.NewMockBuildStore(ctrl),
+		reqStore:     storagemock.NewMockRequestStore(ctrl),
+		queueStore:   storagemock.NewMockQueueStore(ctrl),
+		buildStore:   storagemock.NewMockBuildStore(ctrl),
+		metricsScope: scope,
 	}
 
 	store := storagemock.NewMockStorage(ctrl)
@@ -54,7 +56,7 @@ func newBuildSignalController(t *testing.T, ctrl *gomock.Controller) (consumer.C
 
 	c := NewDLQBuildSignalController(
 		zap.NewNop().Sugar(),
-		tally.NewTestScope("test", nil),
+		scope,
 		staticStorageFactory{store: store},
 		TopicKey(stovepipemq.TopicKeyBuildSignal),
 		"stovepipe-buildsignal-dlq",
@@ -80,10 +82,11 @@ func build() entity.Build {
 
 func TestBuildSignalProcess(t *testing.T) {
 	tests := []struct {
-		name    string
-		payload []byte
-		setup   func(m buildSignalDLQMocks)
-		wantErr bool
+		name       string
+		payload    []byte
+		setup      func(m buildSignalDLQMocks)
+		wantErr    bool
+		wantMetric string
 	}{
 		{
 			// The case this reconciler exists for: a poll message that
@@ -147,10 +150,11 @@ func TestBuildSignalProcess(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "empty build id is returned as an error",
-			payload: buildSignalPayload(t, ""),
-			setup:   func(buildSignalDLQMocks) {},
-			wantErr: true,
+			name:       "empty build id is returned as an error",
+			payload:    buildSignalPayload(t, ""),
+			setup:      func(buildSignalDLQMocks) {},
+			wantErr:    true,
+			wantMetric: "test.buildsignal_dlq_controller.buildsignal_dlq.empty_id_errors+queue=monorepo/main",
 		},
 	}
 
@@ -165,7 +169,12 @@ func TestBuildSignalProcess(t *testing.T) {
 				payload = buildSignalPayload(t, testBuildID)
 			}
 
-			err := c.Process(context.Background(), delivery(t, ctrl, payload))
+			err := c.Process(queueContext(), delivery(t, ctrl, payload))
+			if tt.wantMetric != "" {
+				counter, ok := m.metricsScope.Snapshot().Counters()[tt.wantMetric]
+				require.True(t, ok)
+				assert.EqualValues(t, 1, counter.Value())
+			}
 
 			if tt.wantErr {
 				require.Error(t, err)

@@ -2,14 +2,20 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "go_default_library",
-    srcs = ["message.go"],
+    srcs = [
+        "context.go",
+        "message.go",
+    ],
     importpath = "github.com/uber/submitqueue/platform/base/messagequeue",
     visibility = ["//visibility:public"],
 )
 
 go_test(
     name = "go_default_test",
-    srcs = ["message_test.go"],
+    srcs = [
+        "context_test.go",
+        "message_test.go",
+    ],
     embed = [":go_default_library"],
     deps = ["@com_github_stretchr_testify//assert:go_default_library"],
 )

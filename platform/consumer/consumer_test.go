@@ -33,6 +33,7 @@ import (
 	consumergatenoop "github.com/uber/submitqueue/platform/extension/consumergate/noop"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	"github.com/uber/submitqueue/platform/metrics"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
@@ -286,10 +287,14 @@ func TestConsumer_ProcessDelivery_Success(t *testing.T) {
 	c := New(logger, tally.NoopScope, reg, errs.NewClassifierProcessor(), consumergatenoop.New())
 
 	handledMsg := ""
+	handledQueue := ""
+	var handledTags []metrics.Tag
 	handler := &testController{}
 	setupController(handler, "test-handler", testTopicKeyStart, "test-group",
 		func(ctx context.Context, delivery Delivery) error {
 			handledMsg = delivery.Message().ID
+			handledQueue, _ = entityqueue.QueueName(ctx)
+			handledTags = metrics.TagsFromContext(ctx)
 			return nil
 		},
 	)
@@ -303,7 +308,9 @@ func TestConsumer_ProcessDelivery_Success(t *testing.T) {
 	err = c.Start(ctx)
 	require.NoError(t, err)
 
-	msg := entityqueue.NewMessage("test-msg-1", []byte("payload"), "partition1", nil)
+	msg := entityqueue.NewMessage("test-msg-1", []byte("payload"), "partition1", map[string]string{
+		entityqueue.MetadataKeyQueueName: "monorepo/main",
+	})
 	mockDel := queuemock.NewMockDelivery(ctrl)
 	done := setupDelivery(mockDel, msg, nil, nil)
 
@@ -311,6 +318,8 @@ func TestConsumer_ProcessDelivery_Success(t *testing.T) {
 	<-done
 
 	assert.Equal(t, "test-msg-1", handledMsg)
+	assert.Equal(t, "monorepo/main", handledQueue)
+	assert.Equal(t, []metrics.Tag{metrics.NewTag("queue", "monorepo/main")}, handledTags)
 
 	err = c.Stop(30000)
 	require.NoError(t, err)

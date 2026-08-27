@@ -36,6 +36,7 @@ go_test(
         "//platform/extension/consumergate/noop:go_default_library",
         "//platform/extension/messagequeue:go_default_library",
         "//platform/extension/messagequeue/mock:go_default_library",
+        "//platform/metrics:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
         "@com_github_uber_go_tally//:go_default_library",

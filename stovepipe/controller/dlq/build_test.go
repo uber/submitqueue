@@ -15,7 +15,6 @@
 package dlq
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,15 +31,17 @@ import (
 func newBuildController(t *testing.T, ctrl *gomock.Controller) (consumer.Controller, dlqMocks) {
 	t.Helper()
 
+	scope := tally.NewTestScope("test", nil)
 	m := dlqMocks{
-		reqStore:   storagemock.NewMockRequestStore(ctrl),
-		queueStore: storagemock.NewMockQueueStore(ctrl),
+		reqStore:     storagemock.NewMockRequestStore(ctrl),
+		queueStore:   storagemock.NewMockQueueStore(ctrl),
+		metricsScope: scope,
 	}
 	store := storagemock.NewMockStorage(ctrl)
 	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
 	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 
-	c := NewDLQBuildController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), staticStorageFactory{store: store}, TopicKey(stovepipemq.TopicKeyBuild), "stovepipe-build-dlq")
+	c := NewDLQBuildController(zap.NewNop().Sugar(), scope, staticStorageFactory{store: store}, TopicKey(stovepipemq.TopicKeyBuild), "stovepipe-build-dlq")
 	return c, m
 }
 
@@ -53,10 +54,11 @@ func buildPayload(t *testing.T, id string) []byte {
 
 func TestBuildProcess(t *testing.T) {
 	tests := []struct {
-		name    string
-		payload []byte
-		setup   func(m dlqMocks)
-		wantErr bool
+		name       string
+		payload    []byte
+		setup      func(m dlqMocks)
+		wantErr    bool
+		wantMetric string
 	}{
 		{
 			name: "processing request is failed",
@@ -68,9 +70,15 @@ func TestBuildProcess(t *testing.T) {
 				updated.State = entity.RequestStateFailed
 				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
 			},
+			wantMetric: "test.build_dlq_controller.build_dlq.reconciled+queue=monorepo/main",
 		},
 		{name: "malformed payload is returned", payload: []byte("not-a-proto"), wantErr: true},
-		{name: "empty request id is returned", payload: buildPayload(t, ""), wantErr: true},
+		{
+			name:       "empty request id is returned",
+			payload:    buildPayload(t, ""),
+			wantErr:    true,
+			wantMetric: "test.build_dlq_controller.build_dlq.empty_id_errors+queue=monorepo/main",
+		},
 	}
 
 	for _, tt := range tests {
@@ -85,7 +93,12 @@ func TestBuildProcess(t *testing.T) {
 			if payload == nil {
 				payload = buildPayload(t, testID)
 			}
-			err := controller.Process(context.Background(), delivery(t, ctrl, payload))
+			err := controller.Process(queueContext(), delivery(t, ctrl, payload))
+			if tt.wantMetric != "" {
+				counter, ok := mocks.metricsScope.Snapshot().Counters()[tt.wantMetric]
+				require.True(t, ok)
+				assert.EqualValues(t, 1, counter.Value())
+			}
 			if tt.wantErr {
 				require.Error(t, err)
 				return

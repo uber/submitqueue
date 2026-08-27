@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	countermock "github.com/uber/submitqueue/platform/extension/counter/mock"
@@ -115,6 +116,22 @@ func expectAdvanceLatestRequestIDNoOp(m ingestMocks, queue, id string) {
 		LatestRequestID: id,
 		Version:         1,
 	}, nil)
+}
+
+func TestPublishProcessCarriesQueueMetadata(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newIngestController(t, ctrl)
+
+	var got entityqueue.Message
+	m.publisher.EXPECT().Publish(gomock.Any(), "process", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
+			got = msg
+			return nil
+		})
+
+	require.NoError(t, c.publishProcess(context.Background(), "request/monorepo/main/7", testQueue))
+	assert.Equal(t, testQueue, got.PartitionKey)
+	assert.Equal(t, testQueue, got.Metadata[entityqueue.MetadataKeyQueueName])
 }
 
 func TestIngestController_Ingest(t *testing.T) {
