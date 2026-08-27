@@ -143,7 +143,7 @@ Classifiers are not installed globally. A host that wants YARPC statuses classif
 
 The YARPC classifier reads the typed status code rather than matching its rendered message. Cancellation is retryable caller-side infrastructure; transient or ambiguous server codes (`Unknown`, `DeadlineExceeded`, `ResourceExhausted`, `Aborted`, `Internal`, and `Unavailable`) are retryable dependency failures; request verdicts and permanent server failures are non-retryable dependency failures. A deadline may expire after a mutating RPC succeeded, so this classification relies on the repository-wide requirement that queue-driven operations are idempotent.
 
-Tests follow the same shape: assert per-node behaviour against `Classifier.Classify(node)` directly, and assert end-to-end behaviour by running `errs.NewClassifierProcessor(Classifier).Process(err)` and checking the helpers (`IsRetryable`, `IsUserError`, …) on the result. See `platform/errs/mysql/mysql_test.go` and `platform/errs/generic/generic_test.go`.
+Tests follow the same shape: assert per-node behaviour against `Classifier.Classify(node)` directly, and assert end-to-end behaviour by running `errs.NewClassifierProcessor(Classifier).Process(err)` and checking the helpers (`IsRetryable`, `IsUserError`, …) on the result. See `platform/errs/mysql/mysql_test.go`, `platform/errs/yarpc/yarpc_test.go`, and `platform/errs/generic/generic_test.go`.
 
 ## Overriding Classification from a Controller
 
