@@ -137,11 +137,13 @@ c := consumer.New(logger, scope, registry,
 )
 ```
 
+Classifiers are not installed globally. A host that wants YARPC statuses classified adds `yarpcerrs.Classifier` to the `ErrorProcessor` at the boundary that consumes those errors, as above. This wiring covers outbound YARPC failures returned into that processor; inbound RPC handlers do not pass through it automatically and need their own transport middleware or mapper if they require the same classification.
+
 `httperrs` precedes `mysqlerrs` for a reason worth knowing before reordering the list: the MySQL classifier treats any `net.Error` as retryable infra, and the `*url.Error` an HTTP client returns satisfies `net.Error`. Whichever runs first claims that node, so with the order reversed an HTTP transport failure is classified as a MySQL one — retryable either way, but no longer attributed to the dependency it came from. This is the cross-extension ambiguity `NewClassifierProcessor` documents as deferred; registration order is the workaround.
 
 The YARPC classifier reads the typed status code rather than matching its rendered message. Cancellation is retryable caller-side infrastructure; transient or ambiguous server codes (`Unknown`, `DeadlineExceeded`, `ResourceExhausted`, `Aborted`, `Internal`, and `Unavailable`) are retryable dependency failures; request verdicts and permanent server failures are non-retryable dependency failures. A deadline may expire after a mutating RPC succeeded, so this classification relies on the repository-wide requirement that queue-driven operations are idempotent.
 
-Tests follow the same shape: assert per-node behaviour against `Classifier.Classify(node)` directly, and assert end-to-end behaviour by running `errs.NewClassifierProcessor(Classifier).Process(err)` and checking the helpers (`IsRetryable`, `IsUserError`, …) on the result. See `platform/errs/mysql/mysql_test.go`, `platform/errs/yarpc/yarpc_test.go`, and `platform/errs/generic/generic_test.go`.
+Tests follow the same shape: assert per-node behaviour against `Classifier.Classify(node)` directly, and assert end-to-end behaviour by running `errs.NewClassifierProcessor(Classifier).Process(err)` and checking the helpers (`IsRetryable`, `IsUserError`, …) on the result. See `platform/errs/mysql/mysql_test.go` and `platform/errs/generic/generic_test.go`.
 
 ## Overriding Classification from a Controller
 
