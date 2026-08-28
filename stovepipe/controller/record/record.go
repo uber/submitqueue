@@ -19,8 +19,12 @@
 // The durable state is a ValidationFact per validated commit, plus the queue's
 // last-green bookmark, which process reads to choose an incremental build
 // baseline. A green commit is also promoted, moving the queue's promotion ref so
-// downstream systems can pull the latest green commit by name. Downstream hooks
-// are not implemented yet.
+// downstream systems can pull the latest green commit by name.
+//
+// The outcome is then announced as a hook event, so integrations outside the
+// pipeline learn that a commit is green or broken. See
+// doc/rfc/stovepipe/steps/record.md for the event shape and
+// doc/rfc/hook-framework.md for the delivery promise.
 package record
 
 import (
@@ -30,8 +34,11 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
+	basehook "github.com/uber/submitqueue/api/base/hook"
 	"github.com/uber/submitqueue/platform/consumer"
+	platformhook "github.com/uber/submitqueue/platform/hook"
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/stovepipe/core/hookevent"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
@@ -48,6 +55,7 @@ type Controller struct {
 	metricsScope  tally.Scope
 	stores        storage.Factory
 	sourceControl sourcecontrol.Factory
+	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -69,6 +77,7 @@ func NewController(
 	scope tally.Scope,
 	stores storage.Factory,
 	sourceControl sourcecontrol.Factory,
+	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) *Controller {
@@ -78,15 +87,16 @@ func NewController(
 		metricsScope:  scope.SubScope(name),
 		stores:        stores,
 		sourceControl: sourceControl,
+		registry:      registry,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
 }
 
 // Process loads the request referenced by the delivery, records its validation
-// fact and, when that fact is green, advances the queue's last-green bookmark and
-// promotes the commit. Returns nil to ack (success) or an error to nack (retry) /
-// reject (DLQ).
+// fact, applies that fact to the caches derived from it, and announces the
+// outcome as a hook event. Returns nil to ack (success) or an error to nack
+// (retry) / reject (DLQ).
 //
 // buildsignal stamps the outcome on the request before publishing here, so a
 // request without a build outcome is a producer invariant violation rather
@@ -126,34 +136,16 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		if err != nil {
 			return err
 		}
-		if !fact.IsGreen() {
-			metrics.NamedCounter(c.metricsScope, _opName, "not_green", 1, metrics.TagsFromContext(ctx)...)
-			// Only the writer of the fact reports the latency: a redelivery adopts
-			// the stored fact instead, and a second sample would count one break
-			// twice in the distribution.
-			if created {
-				c.reportFailureDetectionLatency(ctx, request)
-			}
-			return nil
-		}
-		holdsBookmark, err := c.advanceLastGreen(ctx, store, request)
-		if err != nil {
-			metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
+		if err := c.applyFactToDerivedCaches(ctx, store, request, fact, created); err != nil {
 			return err
 		}
-		if !holdsBookmark {
-			// A later green commit already holds the bookmark, so it also owns
-			// the promotion ref: promoting this older commit would move the ref
-			// backwards.
-			return nil
-		}
-		return c.promote(ctx, request)
+		return c.publishHookEvent(ctx, request, hookevent.NewValidationRepositoryRecorded(request))
 
 	case entity.RequestStateCancelled:
 		// A cancelled build decided nothing about the commit, so it establishes
 		// no fact. The identity stays unclaimed; the next commit re-validates.
 		metrics.NamedCounter(c.metricsScope, _opName, "cancelled", 1, metrics.TagsFromContext(ctx)...)
-		return nil
+		return c.publishHookEvent(ctx, request, hookevent.NewValidationRepositoryCancelled(request))
 
 	case entity.RequestStateSuperseded:
 		// Terminal without a build outcome. buildsignal never publishes for a
@@ -168,6 +160,41 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, _opName, "invariant_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("request %s reached record in non-terminal state %q", request.ID, request.State)
 	}
+}
+
+// applyFactToDerivedCaches moves the two caches that follow the persisted fact: a
+// green fact advances the queue's bookmark and, when this request ends up holding
+// it, promotes the commit. A broken fact moves neither, and instead reports how
+// long the break it names went undetected.
+func (c *Controller) applyFactToDerivedCaches(
+	ctx context.Context,
+	store storage.Storage,
+	request entity.Request,
+	fact entity.ValidationFact,
+	createdFact bool,
+) error {
+	if !fact.IsGreen() {
+		metrics.NamedCounter(c.metricsScope, _opName, "not_green", 1, metrics.TagsFromContext(ctx)...)
+		// Only the writer of the fact reports the latency: a redelivery adopts
+		// the stored fact instead, and a second sample would count one break
+		// twice in the distribution.
+		if createdFact {
+			c.reportFailureDetectionLatency(ctx, request)
+		}
+		return nil
+	}
+
+	holdsBookmark, err := c.advanceLastGreen(ctx, store, request)
+	if err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
+		return err
+	}
+	if !holdsBookmark {
+		// A later green commit already holds the bookmark, so it also owns the
+		// promotion ref: promoting this older commit would move the ref backwards.
+		return nil
+	}
+	return c.promote(ctx, request)
 }
 
 // recordFact writes the request's outcome as an immutable whole-repository fact and
@@ -448,6 +475,34 @@ func (c *Controller) promote(ctx context.Context, request entity.Request) error 
 		"queue", request.Queue,
 		"request_id", request.ID,
 		"uri", request.URI,
+	)
+	return nil
+}
+
+// publishHookEvent sends one event about request to the domain's hook topic.
+//
+// Called last, after the fact write and after both caches derived from it have
+// moved: the payload names the request rather than snapshotting it, so a hook
+// reacting to a green commit by reading the bookmark or resolving the promotion
+// ref must not find either still pointing at the previous commit.
+//
+// Partitioning by request id matches the record topic's own, carrying
+// per-request ordering across the seam.
+func (c *Controller) publishHookEvent(ctx context.Context, request entity.Request, event *basehook.HookEvent) error {
+	if err := platformhook.Publish(ctx, c.registry, event, request.ID); err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "hook_errors", 1, metrics.TagsFromContext(ctx)...)
+		return fmt.Errorf("failed to announce %s for request %s: %w", event.GetType(), request.ID, err)
+	}
+
+	metrics.NamedCounter(c.metricsScope, _opName, "hook_events_published", 1,
+		metrics.TagsFromContext(ctx, metrics.NewTag("event_type", event.GetType()))...,
+	)
+	c.logger.Infow("announced validation outcome",
+		"queue", request.Queue,
+		"request_id", request.ID,
+		"uri", request.URI,
+		"event_type", event.GetType(),
+		"event_id", event.GetId(),
 	)
 	return nil
 }

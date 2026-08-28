@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package hook holds the consumer side of the hooks framework: the controller
-// that turns hook events on a queue into hook.Hook calls, and the reconciler for
-// the events that never made it.
+// Package hook holds the domain-neutral mechanics of the hooks framework: the
+// controller that turns hook events on a queue into hook.Hook calls, the
+// reconciler for the events that never made it, and the helper a producer
+// publishes an event through.
 //
 // The controller is domain-neutral. Each domain runs its own hook topic and its
 // own instance of this stage — "per-domain" is about the topic and the wiring,
