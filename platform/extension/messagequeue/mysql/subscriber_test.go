@@ -25,7 +25,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/uber/submitqueue/platform/base/failure"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
@@ -1010,6 +1012,111 @@ func TestSubscriber_StopAllWorkers(t *testing.T) {
 	// Verify all done channels are closed (test timeout handles hangs)
 	for _, doneCh := range doneChans {
 		<-doneCh
+	}
+}
+
+func TestPartitionWorker_RunPollErrorLogging(t *testing.T) {
+	tests := []struct {
+		name             string
+		pollError        func(context.Context) error
+		cancelDuringPoll bool
+		expectedLogError string
+	}{
+		{
+			name: "worker cancellation is informational",
+			pollError: func(ctx context.Context) error {
+				<-ctx.Done()
+				return ctx.Err()
+			},
+			cancelDuringPoll: true,
+		},
+		{
+			name: "store cancellation on active worker is logged",
+			pollError: func(context.Context) error {
+				return context.Canceled
+			},
+			expectedLogError: "get acked offset: context canceled",
+		},
+		{
+			name: "store failure is logged",
+			pollError: func(context.Context) error {
+				return errors.New("store unavailable")
+			},
+			expectedLogError: "get acked offset: store unavailable",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockMessageStore := NewMockmessageStore(ctrl)
+			mockOffsetStore := NewMockoffsetStore(ctrl)
+			mockLeaseStore := NewMockpartitionLeaseStore(ctrl)
+
+			pollStarted := make(chan struct{}, 1)
+			mockOffsetStore.EXPECT().Initialize(gomock.Any(), "test_topic", "part-1", "test-consumer").Return(nil)
+			mockOffsetStore.EXPECT().GetAckedOffset(gomock.Any(), "test_topic", "part-1", "test-consumer").DoAndReturn(
+				func(ctx context.Context, _, _, _ string) (int64, error) {
+					select {
+					case pollStarted <- struct{}{}:
+					default:
+					}
+					return 0, tt.pollError(ctx)
+				},
+			).AnyTimes()
+
+			core, logs := observer.New(zap.InfoLevel)
+			s := NewSubscriber(
+				zap.New(core).Sugar(),
+				tally.NoopScope,
+				mockMessageStore,
+				mockOffsetStore,
+				mockLeaseStore,
+				newTestHeartbeatStore(ctrl),
+				newTestDeliveryStateStore(ctrl),
+			)
+			s.OnSignal = make(chan HookSignal, 1)
+			cfg := testSubscriptionConfig()
+			cfg.PollIntervalMs = 1
+			sub := &subscription{
+				topic:      "test_topic",
+				config:     cfg,
+				deliveryCh: make(chan extqueue.Delivery, 1),
+			}
+			worker := &partitionWorker{
+				partitionKey: "part-1",
+				sub:          sub,
+				subscriber:   s,
+				done:         make(chan struct{}),
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			sub.workerWg.Add(1)
+			go worker.run(ctx)
+
+			<-pollStarted
+			if tt.cancelDuringPoll {
+				cancel()
+			} else {
+				<-s.OnSignal
+				cancel()
+			}
+			<-worker.done
+
+			pollFailures := logs.FilterMessage("poll failed").All()
+			stoppedPolls := logs.FilterMessage("poll canceled while stopping partition worker").All()
+			if tt.expectedLogError != "" {
+				require.NotEmpty(t, pollFailures)
+				for _, entry := range pollFailures {
+					assert.Equal(t, zap.ErrorLevel, entry.Level)
+					assert.Equal(t, tt.expectedLogError, entry.ContextMap()["error"])
+				}
+			} else {
+				assert.Empty(t, pollFailures)
+				require.Len(t, stoppedPolls, 1)
+				assert.Equal(t, zap.InfoLevel, stoppedPolls[0].Level)
+			}
+		})
 	}
 }
 
