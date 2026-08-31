@@ -4,6 +4,7 @@ go_library(
     name = "go_default_library",
     srcs = [
         "build.go",
+        "get_project_status_by_uri.go",
         "ingest.go",
         "queue.go",
         "queue_config.go",
