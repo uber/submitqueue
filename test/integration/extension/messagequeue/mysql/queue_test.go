@@ -2824,23 +2824,28 @@ func (s *SQLQueueIntegrationSuite) TestCrashAfterRetryLimitDoesNotLoseMessages()
 	require.NoError(t, deliveries["msg-A"].Ack(s.ctx))
 	t.Logf("Acked msg-A")
 
-	// Nack B — eligible for redelivery after its retry backoff.
+	// Keep C in flight while B exhausts its retry budget.
+	heldVisibilityMs := subConfig.LeaseDurationMs + subConfig.VisibilityTimeoutMs
+	require.NoError(t, deliveries["msg-C"].ExtendVisibilityTimeout(s.ctx, heldVisibilityMs))
+
 	require.NoError(t, deliveries["msg-B"].Nack(s.ctx, failure.New("msg-B failed")))
-	t.Logf("Nacked msg-B, waiting for retry-limit to trigger auto-DLQ")
+	retryDelivery := receive(t, deliveryChan1)
+	require.Equal(t, "msg-B", retryDelivery.Message().ID)
+	require.Equal(t, 2, retryDelivery.Attempt())
 
-	// Do NOT ack msg-C — simulating in-flight at crash time.
+	dlqTopic := topic + subConfig.DLQ.TopicSuffix
+	dlqConfig := testSubConfig("worker-1", "crash-retry-dlq-cg")
+	dlqDeliveryChan, err := q1.Subscriber().Subscribe(s.ctx, dlqTopic, dlqConfig)
+	require.NoError(t, err)
 
-	// Wait for msg-B to be redelivered and auto-DLQ'd by the poll loop.
-	// The poll loop picks up the nacked msg-B, sees retry_count >= MaxAttempts, moves it to DLQ.
-	// We just need to wait long enough for that to happen before crashing.
-	// A short sleep is acceptable here as we're waiting for the subscriber's
-	// internal processing, not for a test condition. But let's use receive
-	// to see if B comes back (it shouldn't, since auto-DLQ handles it internally).
+	const expireVisibilityMs = int64(1)
+	require.NoError(t, retryDelivery.ExtendVisibilityTimeout(s.ctx, expireVisibilityMs))
+	dlqDelivery := receive(t, dlqDeliveryChan)
+	require.Equal(t, "msg-B", dlqDelivery.Message().ID)
+	require.NoError(t, dlqDelivery.Ack(s.ctx))
 
-	// Give the poll loop time to process the nack and auto-DLQ msg-B
-	// We can't use event-driven wait here because auto-DLQ happens inside pollAndDeliver
-	// without delivering to the channel. A brief pause lets the poll loop run.
-	// Simulate crash
+	// Crash with C still unacked, but make it immediately recoverable once the lease expires.
+	require.NoError(t, deliveries["msg-C"].ExtendVisibilityTimeout(s.ctx, expireVisibilityMs))
 	q1.Close()
 	t.Logf("Worker-1 crashed (queue closed)")
 
