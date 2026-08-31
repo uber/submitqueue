@@ -60,7 +60,7 @@ type RequestLog struct {
 	Queue string `json:"queue"`
 	// RequestID identifies the request whose log contains this record.
 	RequestID string `json:"request_id"`
-	// TimestampMs is the occurrence time in Unix milliseconds.
+	// TimestampMs is when the occurrence was first retained, in Unix milliseconds.
 	TimestampMs int64 `json:"timestamp_ms"`
 	// State is the durable request state recorded by a state record and is unset on an event record.
 	State RequestState `json:"state"`

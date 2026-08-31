@@ -79,7 +79,7 @@ type RequestLog struct {
     Queue string
     // RequestID identifies the request whose log contains this record.
     RequestID string
-    // TimestampMs is the durable occurrence time in Unix milliseconds.
+    // TimestampMs is when the occurrence was first retained, in Unix milliseconds.
     TimestampMs int64
     // State is the durable request state recorded by a state entry. It is unset on an event entry.
     State RequestState
@@ -154,7 +154,7 @@ Terminal entries retain domain reasons rather than transport mechanisms. Initial
 | Build finished | Request ID, event kind, and build ID |
 | Validation fact recorded | Request ID, event kind, and whole-repository fact identity |
 
-The recorder calls `RequestLogStore.Create`. If the ID already exists, it loads the stored record and compares every semantic field. Identical content is idempotent success; conflicting content is an internal consistency error, and the stored record is never overwritten.
+The controller passes the recorder the `RequestLogStore` from the same queue-scoped storage aggregate used for the source write. The recorder assigns the current time immediately before the first insertion attempt and calls `Create`. If the ID already exists, it loads the stored record and compares every domain field. The first successfully retained timestamp is authoritative and is not compared with a later retry's newly sampled time. Identical domain content is idempotent success; conflicting content is an internal consistency error, and the stored record is never overwritten.
 
 ## Storage Contract
 
@@ -188,11 +188,11 @@ Request-log durability is part of completing a pipeline transition. The source w
 
 For a Request transition, the controller:
 
-1. builds an immutable updated copy with transition context and `StateChangedAtMs`;
+1. builds an immutable updated copy for the state transition;
 2. computes `newVersion = oldVersion + 1`;
 3. calls `RequestStore.Update(updated, oldVersion, newVersion)`;
 4. assigns the in-memory version only after the store succeeds;
-5. asks the recorder to create the log record from durable Request data;
+5. asks the recorder to create the log record from the durable Request and the bounded context still owned by that stage;
 6. publishes the downstream handoff.
 
 Request creation, Build changes, and fact creation use the same source-write, log-write, dependent-publish ordering. A request-log outage can leave a source update visible, but it cannot allow dependent processing to move past an unrecorded transition.
@@ -224,7 +224,7 @@ This is rollout work, not deferred cleanup: a mandatory request log without a du
 
 Rollout therefore:
 
-1. deploys source timestamp and provenance fields, request-log storage, recorder, and readers;
+1. deploys request-log storage, the recorder, and readers;
 2. enables writers and verifies every repair path stage by stage;
 3. enables the public API after every writer and repair path is active.
 
@@ -246,7 +246,7 @@ Identifiers, outcome reasons, and reasonable per-request build counts have expli
 
 Contract tests cover required-field validation, stable IDs, idempotent create/reload, conflict detection, queue binding, deterministic ordering, equal-timestamp tie breaking, and empty histories.
 
-Writer tests cover source success followed by log failure, redelivery with the log record absent or present, CAS loss, conflicting terminal writers, downstream publish failure, stable timestamps, and controller-owned version arithmetic. End-to-end tests cover successful, failed, cancelled, superseded, and fail-closed paths plus idempotent redelivery.
+Writer tests cover source success followed by log failure, redelivery with the log record absent or present, CAS loss, conflicting terminal writers, downstream publish failure, first-insert timestamp reuse, and controller-owned version arithmetic. End-to-end tests cover successful, failed, cancelled, superseded, and fail-closed paths plus idempotent redelivery.
 
 Tests reconstruct the latest Request state from state entries by request version and compare it with `RequestStore.Get`. They separately verify that only a durable fact produces green or broken.
 
