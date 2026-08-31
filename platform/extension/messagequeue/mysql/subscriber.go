@@ -503,7 +503,7 @@ func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueu
 		return nil, ErrSubscriberClosed
 	}
 	if err := validateRetryConfig(config.Retry); err != nil {
-		return nil, fmt.Errorf("subscribe topic %q: invalid retry config: %w", topic, err)
+		return nil, fmt.Errorf("subscribe topic %q: %w: %v", topic, ErrInvalidConfig, err)
 	}
 
 	// Create subscription key (topic + consumer group must be unique)

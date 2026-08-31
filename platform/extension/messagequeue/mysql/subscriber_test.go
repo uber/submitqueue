@@ -172,7 +172,7 @@ func TestSubscriber_SubscribeRejectsInvalidRetryConfig(t *testing.T) {
 
 			ch, err := sub.Subscribe(context.Background(), "test_topic", extqueue.SubscriptionConfig{Retry: tt.retry})
 			require.Nil(t, ch)
-			require.ErrorContains(t, err, "invalid retry config")
+			require.ErrorIs(t, err, ErrInvalidConfig)
 			assert.ErrorContains(t, err, tt.wantErr)
 		})
 	}
