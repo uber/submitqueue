@@ -66,13 +66,16 @@ type RetryConfig struct {
 	// After this many attempts, the message is moved to DLQ (if enabled).
 	MaxAttempts int
 
-	// InitialBackoffMs is the initial backoff duration for retries (in milliseconds).
+	// InitialBackoffMs is the delay after the first failed attempt (in milliseconds).
+	// A non-positive value disables retry delay.
 	InitialBackoffMs int64
 
-	// MaxBackoffMs is the maximum backoff duration (in milliseconds).
+	// MaxBackoffMs is the maximum retry delay (in milliseconds).
+	// A non-positive value leaves the delay uncapped.
 	MaxBackoffMs int64
 
-	// BackoffMultiplier is the multiplier for exponential backoff.
+	// BackoffMultiplier scales the delay after each failed attempt.
+	// Values less than or equal to one produce a constant delay.
 	BackoffMultiplier float64
 }
 

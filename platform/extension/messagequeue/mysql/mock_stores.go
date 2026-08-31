@@ -533,17 +533,17 @@ func (mr *MockdeliveryStateStoreMockRecorder) MarkDelivered(ctx, consumerGroup, 
 }
 
 // MarkNacked mocks base method.
-func (m *MockdeliveryStateStore) MarkNacked(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64) error {
+func (m *MockdeliveryStateStore) MarkNacked(ctx context.Context, consumerGroup, topic, partitionKey string, offset, delayMs int64) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MarkNacked", ctx, consumerGroup, topic, partitionKey, offset)
+	ret := m.ctrl.Call(m, "MarkNacked", ctx, consumerGroup, topic, partitionKey, offset, delayMs)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // MarkNacked indicates an expected call of MarkNacked.
-func (mr *MockdeliveryStateStoreMockRecorder) MarkNacked(ctx, consumerGroup, topic, partitionKey, offset any) *gomock.Call {
+func (mr *MockdeliveryStateStoreMockRecorder) MarkNacked(ctx, consumerGroup, topic, partitionKey, offset, delayMs any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkNacked", reflect.TypeOf((*MockdeliveryStateStore)(nil).MarkNacked), ctx, consumerGroup, topic, partitionKey, offset)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkNacked", reflect.TypeOf((*MockdeliveryStateStore)(nil).MarkNacked), ctx, consumerGroup, topic, partitionKey, offset, delayMs)
 }
 
 // MarkPostponed mocks base method.

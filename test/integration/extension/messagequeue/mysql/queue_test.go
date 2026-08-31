@@ -650,6 +650,41 @@ func (s *SQLQueueIntegrationSuite) TestVisibilityTimeoutAndRetry() {
 	t.Logf("Successfully tested ExtendVisibilityTimeout and visibility timeout retry")
 }
 
+func (s *SQLQueueIntegrationSuite) TestNackBackoff() {
+	t := s.T()
+
+	signalCh := make(chan queueMySQL.HookSignal, 100)
+	q, err := queueMySQL.NewQueue(queueMySQL.Params{
+		DB:           s.db,
+		Logger:       zaptest.NewLogger(t),
+		MetricsScope: tally.NoopScope,
+		OnSignal:     signalCh,
+	})
+	require.NoError(t, err)
+	defer q.Close()
+
+	const retryDelayMs = 500
+	subConfig := testSubConfig("worker-1", "nack-backoff-consumer")
+	subConfig.PollIntervalMs = 50
+	subConfig.Retry.InitialBackoffMs = retryDelayMs
+	subConfig.Retry.MaxBackoffMs = 2 * retryDelayMs
+	subConfig.Retry.BackoffMultiplier = 2
+
+	deliveryChan, err := q.Subscriber().Subscribe(s.ctx, "nack_backoff_topic", subConfig)
+	require.NoError(t, err)
+	require.NoError(t, q.Publisher().Publish(s.ctx, "nack_backoff_topic",
+		entityqueue.NewMessage("retry-msg", []byte("test"), "retry-partition", nil)))
+
+	firstDelivery := receive(t, deliveryChan)
+	assert.Equal(t, 1, firstDelivery.Attempt())
+	require.NoError(t, firstDelivery.Nack(s.ctx, failure.New("retry later")))
+
+	assertNoDelivery(t, deliveryChan, signalCh, queueMySQL.SignalDeliveryCheck, 3)
+	retryDelivery := receive(t, deliveryChan)
+	assert.Equal(t, 2, retryDelivery.Attempt())
+	require.NoError(t, retryDelivery.Ack(s.ctx))
+}
+
 func (s *SQLQueueIntegrationSuite) TestIdempotentPublish() {
 	t := s.T()
 
@@ -1132,9 +1167,6 @@ func (s *SQLQueueIntegrationSuite) TestDeadLetterQueue() {
 
 	t.Logf("Published poison message, will nack repeatedly")
 
-	// Receive and nack the message MaxAttempts times.
-	// Each iteration: receive the message, nack with 0 delay, then wait for
-	// the visibility timeout to expire so the message becomes deliverable again.
 	// Each nack carries why it failed; the last one is the reason recorded
 	// against the dead letter.
 	for attempt := 1; attempt <= subConfig.Retry.MaxAttempts; attempt++ {
@@ -1143,7 +1175,6 @@ func (s *SQLQueueIntegrationSuite) TestDeadLetterQueue() {
 		assert.Equal(t, attempt, delivery.Attempt())
 		assert.Equal(t, "poison-msg", delivery.Message().ID)
 
-		// Nack without delay to retry immediately
 		nackFailure := failure.New(
 			fmt.Sprintf("processing failed on attempt %d", attempt),
 			failure.Subject{Type: "widget", ID: "widget-7"},
@@ -2793,7 +2824,7 @@ func (s *SQLQueueIntegrationSuite) TestCrashAfterRetryLimitDoesNotLoseMessages()
 	require.NoError(t, deliveries["msg-A"].Ack(s.ctx))
 	t.Logf("Acked msg-A")
 
-	// Nack B — immediately visible again for redelivery
+	// Nack B — eligible for redelivery after its retry backoff.
 	require.NoError(t, deliveries["msg-B"].Nack(s.ctx, failure.New("msg-B failed")))
 	t.Logf("Nacked msg-B, waiting for retry-limit to trigger auto-DLQ")
 
@@ -2809,9 +2840,6 @@ func (s *SQLQueueIntegrationSuite) TestCrashAfterRetryLimitDoesNotLoseMessages()
 	// Give the poll loop time to process the nack and auto-DLQ msg-B
 	// We can't use event-driven wait here because auto-DLQ happens inside pollAndDeliver
 	// without delivering to the channel. A brief pause lets the poll loop run.
-	// The poll interval is 100ms and nack delay is 100ms, so 1s is generous.
-	// Actually, we CAN just crash and let worker-2 recover everything.
-
 	// Simulate crash
 	q1.Close()
 	t.Logf("Worker-1 crashed (queue closed)")

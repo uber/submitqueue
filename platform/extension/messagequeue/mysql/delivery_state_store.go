@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/uber-go/tally"
@@ -146,16 +147,21 @@ func (s *sqldeliveryStateStore) MarkAcked(ctx context.Context, consumerGroup, to
 	return nil
 }
 
-// MarkNacked sets invisible_until = now, making the message immediately
-// eligible for redelivery on the next poll.
+// MarkNacked makes the message eligible for redelivery after delayMs.
 // retry_count is NOT incremented here — it is incremented by MarkDelivered on redelivery.
-func (s *sqldeliveryStateStore) MarkNacked(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64) (retErr error) {
+func (s *sqldeliveryStateStore) MarkNacked(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64, delayMs int64) (retErr error) {
 	op := metrics.Begin(s.scope, "mark_nacked", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup))
 	defer func() { op.Complete(retErr) }()
 
-	invisibleUntil := time.Now().UnixMilli()
+	nowMs := time.Now().UnixMilli()
+	invisibleUntil := nowMs
+	if delayMs > math.MaxInt64-nowMs {
+		invisibleUntil = math.MaxInt64
+	} else if delayMs > 0 {
+		invisibleUntil += delayMs
+	}
 
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (consumer_group, topic, partition_key, message_offset, acked, invisible_until, retry_count)

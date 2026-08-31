@@ -18,7 +18,9 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"math"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
@@ -26,6 +28,13 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/zap/zaptest"
 )
+
+type unixMillisAtLeast int64
+
+func (minimum unixMillisAtLeast) Match(value driver.Value) bool {
+	got, ok := value.(int64)
+	return ok && got >= int64(minimum)
+}
 
 func newTestDeliveryStateStoreWithMock(t *testing.T) (deliveryStateStore, *sql.DB, sqlmock.Sqlmock) {
 	t.Helper()
@@ -201,18 +210,20 @@ func TestDeliveryStateStore_MarkNacked(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			store, db, mock := newTestDeliveryStateStoreWithMock(t)
 			defer db.Close()
+			const retryDelayMs = int64(1000)
+			invisibleUntil := unixMillisAtLeast(time.Now().UnixMilli() + retryDelayMs)
 
 			if tt.wantErr {
 				mock.ExpectExec("INSERT INTO queue_delivery_state").
-					WithArgs("group-1", "orders", "part-1", int64(5), sqlmock.AnyArg()).
+					WithArgs("group-1", "orders", "part-1", int64(5), invisibleUntil).
 					WillReturnError(assert.AnError)
 			} else {
 				mock.ExpectExec("INSERT INTO queue_delivery_state").
-					WithArgs("group-1", "orders", "part-1", int64(5), sqlmock.AnyArg()).
+					WithArgs("group-1", "orders", "part-1", int64(5), invisibleUntil).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			}
 
-			err := store.MarkNacked(context.Background(), "group-1", "orders", "part-1", 5)
+			err := store.MarkNacked(context.Background(), "group-1", "orders", "part-1", 5, retryDelayMs)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -222,6 +233,18 @@ func TestDeliveryStateStore_MarkNacked(t *testing.T) {
 			assert.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
+}
+
+func TestDeliveryStateStore_MarkNackedSaturatesTimestamp(t *testing.T) {
+	store, db, mock := newTestDeliveryStateStoreWithMock(t)
+	defer db.Close()
+
+	mock.ExpectExec("INSERT INTO queue_delivery_state").
+		WithArgs("group-1", "orders", "part-1", int64(5), int64(math.MaxInt64)).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	require.NoError(t, store.MarkNacked(context.Background(), "group-1", "orders", "part-1", 5, math.MaxInt64))
+	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestDeliveryStateStore_MarkPostponed(t *testing.T) {

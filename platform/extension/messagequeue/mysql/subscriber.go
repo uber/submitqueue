@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"sync"
@@ -331,9 +332,8 @@ func (d *sqlDelivery) Nack(ctx context.Context, f failure.Failure) error {
 		return d.deadLetter(ctx, f)
 	}
 
-	// Mark as nacked in delivery state (per consumer group): immediately
-	// eligible for redelivery on the next poll.
-	if err := d.subscriber.deliveryStateStore.MarkNacked(ctx, d.consumerGroup, d.topic, d.partitionKey, d.offset); err != nil {
+	retryDelayMs := retryBackoffMs(d.retry, d.attempt)
+	if err := d.subscriber.deliveryStateStore.MarkNacked(ctx, d.consumerGroup, d.topic, d.partitionKey, d.offset, retryDelayMs); err != nil {
 		return err
 	}
 
@@ -341,6 +341,7 @@ func (d *sqlDelivery) Nack(ctx context.Context, f failure.Failure) error {
 		"topic", d.topic,
 		"partition_key", d.partitionKey,
 		"message_id", d.messageID,
+		"retry_delay_ms", retryDelayMs,
 	)
 
 	d.acknowledged = true
@@ -1507,4 +1508,28 @@ func (s *subscriber) Close() (retErr error) {
 
 	s.logger.Infow("subscriber closed")
 	return nil
+}
+
+func retryBackoffMs(retry extqueue.RetryConfig, attempt int) int64 {
+	backoffMs := retry.InitialBackoffMs
+	if backoffMs <= 0 {
+		return 0
+	}
+	if retry.MaxBackoffMs > 0 && backoffMs >= retry.MaxBackoffMs {
+		return retry.MaxBackoffMs
+	}
+
+	multiplier := retry.BackoffMultiplier
+	if multiplier <= 1 || math.IsNaN(multiplier) || attempt <= 1 {
+		return backoffMs
+	}
+
+	backoff := float64(backoffMs) * math.Pow(multiplier, float64(attempt-1))
+	if retry.MaxBackoffMs > 0 && backoff >= float64(retry.MaxBackoffMs) {
+		return retry.MaxBackoffMs
+	}
+	if backoff >= float64(math.MaxInt64) {
+		return math.MaxInt64
+	}
+	return int64(backoff)
 }
