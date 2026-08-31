@@ -21,7 +21,7 @@ For a delivery carrying request id `R`:
 2. If R.State is terminal (superseded / succeeded / failed / cancelled):
    - ack and return (idempotent no-op).
 3. If R.State is processing (strategy already recorded):
-   - re-publish R to build (the prior publish may have failed), ack, return.
+   - re-announce validation start and re-publish R to build (either prior publish may have failed), ack, return.
 4. R.State is accepted. Load the Queue row Q.
 5. Coalesce: if CompareRequestID(R.Queue, R.ID, Q.latest_request_id) < 0:
    - a newer head exists -> mark R superseded, ack, return. (No slot consumed.)
@@ -31,8 +31,9 @@ For a delivery carrying request id `R`:
    a. Derive build strategy + baseline (see "Build-strategy decision").
    b. CAS the Queue row: in_flight_count += 1.
    c. CAS the Request: accepted -> processing, persist build_strategy + base_uri.
-   d. Publish R to build.
-   e. ack.
+   d. Announce validation start on the hook topic (see "Hooks").
+   e. Publish R to build.
+   f. ack.
 ```
 
 Step 5 runs regardless of the gate: an intermediate head is superseded on sight (even mid-validation), because superseding consumes no slot.
@@ -138,12 +139,28 @@ A, D, F each get a full cycle; B, C, E end `superseded`. No intermediate is vali
 - A newer head does **not** preempt an in-flight validation.
 - Deferred messages are **not** failed or dead-lettered — they wait for the gate (see [Waiting for a slot](#waiting-for-a-slot)).
 
+## Hooks
+
+Admitting a request is when the rest of the company can learn "validation of this commit has begun". `process` publishes that as a `HookEvent` on Stovepipe's durable `hook` topic — the same seam `record` uses to announce the outcome. The mechanics (envelope, delivery promise, per-domain dispatcher stage, `hook_dlq`) are settled in [hook-framework.md](../../hook-framework.md); this section covers only what admitting has to decide.
+
+The event type is `validation.repository.started`. Its payload names the Queue and the Request and nothing else, exactly as the terminal events in [record.md](record.md#hooks) do: a hook resolves the commit, the chosen strategy, and the baseline from the request store rather than reading a snapshot off the wire.
+
+Published after the admit CAS and before the publish to `build`:
+
+```
+CAS accepted -> processing → publish HookEvent → publish to build → ack
+```
+
+After the CAS because the payload names the Request rather than snapshotting it, and the two facts a start event exists to carry — the scope it chose and the baseline it builds on — are written by that very CAS. A hook that reloads the Request must not find it still `accepted` with neither set. Before the build publish because the announce is the cheaper of the two to retry: a failed announce leaves nothing downstream to undo, whereas announcing after the build publish would make a failed announce force the redelivery to re-publish a build that was already accepted.
+
+Only an admit announces. A Request that coalescing supersedes never reaches step 7, so it produces no start event — and a start event is not a promise that a verdict follows, since an admitted Request can still be cancelled or driven to a fail-closed outcome. Consumers pairing a start with an end must tolerate a start that never gets one.
+
 ## Idempotency and at-least-once delivery
 
 Every branch is safe under redelivery:
 
 - **accepted, no strategy** → full admit path. On a crash after incrementing `in_flight_count` but before persisting `processing`, redelivery re-reads `accepted` and re-runs; the increment re-applies only if the count CAS hasn't already moved (see integrity below).
-- **processing** → re-publish to `build` and ack. The `build` consumer is keyed on the request id and idempotent, so a duplicate publish is harmless.
+- **processing** → re-announce the start event, re-publish to `build`, ack. The `build` consumer is keyed on the request id and idempotent, so a duplicate publish is harmless, and the start event's id is derived from the transition rather than the clock, so a re-announce carries the id the first attempt would have and consumers dedupe on it. Re-announcing here is what makes the event at-least-once rather than at-most-once: this is the only branch a redelivery takes once `processing` is durable, so an admit that failed after the state write would otherwise lose the event for good.
 - **terminal** (superseded / recorded) → ack, no-op.
 - **deferred (waiting for slot)** → no state or count change; pure deferral (re-enters when the held delivery comes due).
 
