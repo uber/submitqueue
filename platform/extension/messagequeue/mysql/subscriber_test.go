@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -142,6 +143,37 @@ func TestSubscriber_Subscribe(t *testing.T) {
 			if tt.expectSame && len(channels) == 2 {
 				assert.Equal(t, channels[0], channels[1], "should return same channel for same topic and consumer group")
 			}
+		})
+	}
+}
+
+func TestSubscriber_SubscribeRejectsInvalidRetryConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		retry   extqueue.RetryConfig
+		wantErr string
+	}{
+		{name: "negative max attempts", retry: extqueue.RetryConfig{MaxAttempts: -1}, wantErr: "MaxAttempts"},
+		{name: "negative initial backoff", retry: extqueue.RetryConfig{InitialBackoffMs: -1}, wantErr: "InitialBackoffMs"},
+		{name: "negative max backoff", retry: extqueue.RetryConfig{MaxBackoffMs: -1}, wantErr: "MaxBackoffMs"},
+		{name: "initial backoff above safety ceiling", retry: extqueue.RetryConfig{InitialBackoffMs: maxRetryBackoffMs + 1}, wantErr: "InitialBackoffMs"},
+		{name: "max backoff above safety ceiling", retry: extqueue.RetryConfig{MaxBackoffMs: maxRetryBackoffMs + 1}, wantErr: "MaxBackoffMs"},
+		{name: "initial backoff above configured maximum", retry: extqueue.RetryConfig{InitialBackoffMs: 2000, MaxBackoffMs: 1000}, wantErr: "must not exceed MaxBackoffMs"},
+		{name: "negative multiplier", retry: extqueue.RetryConfig{BackoffMultiplier: -1}, wantErr: "BackoffMultiplier"},
+		{name: "NaN multiplier", retry: extqueue.RetryConfig{BackoffMultiplier: math.NaN()}, wantErr: "BackoffMultiplier"},
+		{name: "infinite multiplier", retry: extqueue.RetryConfig{BackoffMultiplier: math.Inf(1)}, wantErr: "BackoffMultiplier"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			sub := setupSubscriberTest(t, NewMockmessageStore(ctrl), NewMockoffsetStore(ctrl), NewMockpartitionLeaseStore(ctrl))
+			t.Cleanup(func() { require.NoError(t, sub.Close()) })
+
+			ch, err := sub.Subscribe(context.Background(), "test_topic", extqueue.SubscriptionConfig{Retry: tt.retry})
+			require.Nil(t, ch)
+			require.ErrorContains(t, err, "invalid retry config")
+			assert.ErrorContains(t, err, tt.wantErr)
 		})
 	}
 }

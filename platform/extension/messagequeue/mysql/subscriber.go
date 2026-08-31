@@ -502,6 +502,9 @@ func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueu
 	if closed {
 		return nil, ErrSubscriberClosed
 	}
+	if err := validateRetryConfig(config.Retry); err != nil {
+		return nil, fmt.Errorf("subscribe topic %q: invalid retry config: %w", topic, err)
+	}
 
 	// Create subscription key (topic + consumer group must be unique)
 	subKey := topic + ":" + config.ConsumerGroup
@@ -1539,4 +1542,29 @@ func retryBackoffMs(retry extqueue.RetryConfig, attempt int) int64 {
 		return maxBackoffMs
 	}
 	return int64(backoff)
+}
+
+func validateRetryConfig(retry extqueue.RetryConfig) error {
+	if retry.MaxAttempts < 0 {
+		return fmt.Errorf("retry MaxAttempts must be non-negative, got %d", retry.MaxAttempts)
+	}
+	if retry.InitialBackoffMs < 0 {
+		return fmt.Errorf("retry InitialBackoffMs must be non-negative, got %d", retry.InitialBackoffMs)
+	}
+	if retry.MaxBackoffMs < 0 {
+		return fmt.Errorf("retry MaxBackoffMs must be non-negative, got %d", retry.MaxBackoffMs)
+	}
+	if retry.InitialBackoffMs > maxRetryBackoffMs {
+		return fmt.Errorf("retry InitialBackoffMs must not exceed %d, got %d", maxRetryBackoffMs, retry.InitialBackoffMs)
+	}
+	if retry.MaxBackoffMs > maxRetryBackoffMs {
+		return fmt.Errorf("retry MaxBackoffMs must not exceed %d, got %d", maxRetryBackoffMs, retry.MaxBackoffMs)
+	}
+	if retry.MaxBackoffMs > 0 && retry.InitialBackoffMs > retry.MaxBackoffMs {
+		return fmt.Errorf("retry InitialBackoffMs (%d) must not exceed MaxBackoffMs (%d)", retry.InitialBackoffMs, retry.MaxBackoffMs)
+	}
+	if retry.BackoffMultiplier < 0 || math.IsNaN(retry.BackoffMultiplier) || math.IsInf(retry.BackoffMultiplier, 0) {
+		return fmt.Errorf("retry BackoffMultiplier must be finite and non-negative, got %v", retry.BackoffMultiplier)
+	}
+	return nil
 }

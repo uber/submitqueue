@@ -18,7 +18,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/uber-go/tally"
@@ -155,14 +154,10 @@ func (s *sqldeliveryStateStore) MarkNacked(ctx context.Context, consumerGroup, t
 		metrics.NewTag("consumer_group", consumerGroup))
 	defer func() { op.Complete(retErr) }()
 
-	nowMs := time.Now().UnixMilli()
-	invisibleUntil := nowMs
-	if delayMs > math.MaxInt64-nowMs {
-		return fmt.Errorf("mark nacked topic=%s partition=%s offset=%d: retry delay %d overflows visibility timestamp", topic, partitionKey, offset, delayMs)
+	if delayMs < 0 || delayMs > maxRetryBackoffMs {
+		return fmt.Errorf("mark nacked topic=%s partition=%s offset=%d: retry delay %d is outside [0, %d]", topic, partitionKey, offset, delayMs, maxRetryBackoffMs)
 	}
-	if delayMs > 0 {
-		invisibleUntil += delayMs
-	}
+	invisibleUntil := time.Now().UnixMilli() + delayMs
 
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (consumer_group, topic, partition_key, message_offset, acked, invisible_until, retry_count)

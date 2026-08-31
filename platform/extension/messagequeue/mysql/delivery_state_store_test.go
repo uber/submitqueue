@@ -18,7 +18,6 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"math"
 	"testing"
 	"time"
 
@@ -235,13 +234,25 @@ func TestDeliveryStateStore_MarkNacked(t *testing.T) {
 	}
 }
 
-func TestDeliveryStateStore_MarkNackedRejectsTimestampOverflow(t *testing.T) {
-	store, db, mock := newTestDeliveryStateStoreWithMock(t)
-	defer db.Close()
+func TestDeliveryStateStore_MarkNackedRejectsInvalidDelay(t *testing.T) {
+	tests := []struct {
+		name    string
+		delayMs int64
+	}{
+		{name: "negative", delayMs: -1},
+		{name: "above safety ceiling", delayMs: maxRetryBackoffMs + 1},
+	}
 
-	err := store.MarkNacked(context.Background(), "group-1", "orders", "part-1", 5, math.MaxInt64)
-	require.ErrorContains(t, err, "overflows visibility timestamp")
-	assert.NoError(t, mock.ExpectationsWereMet())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, db, mock := newTestDeliveryStateStoreWithMock(t)
+			defer db.Close()
+
+			err := store.MarkNacked(context.Background(), "group-1", "orders", "part-1", 5, tt.delayMs)
+			require.ErrorContains(t, err, "is outside")
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestDeliveryStateStore_MarkPostponed(t *testing.T) {
