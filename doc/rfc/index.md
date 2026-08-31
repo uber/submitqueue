@@ -29,6 +29,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 - [Build stage](stovepipe/steps/build.md) - Trigger-only stage and Stovepipe's URI-based BuildRunner contract
 - [Buildsignal stage](stovepipe/steps/buildsignal.md) - Build polling, terminal status persistence, and the handoff to record
 - [Record stage](stovepipe/steps/record.md) - Immutable validation facts keyed by `(queue, uri, project)`, monotonic last-green bookmark advancement and ref promotion, and the deferred hook-event and analyze handoffs
+- [Request Log](stovepipe/request-log.md) - Append-only request lifecycle log, durable source context, idempotent storage, and reliable write and repair paths
 
 ## Runway
 
