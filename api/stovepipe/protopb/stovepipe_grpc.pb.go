@@ -34,8 +34,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Stovepipe_Ping_FullMethodName   = "/uber.submitqueue.stovepipe.Stovepipe/Ping"
-	Stovepipe_Ingest_FullMethodName = "/uber.submitqueue.stovepipe.Stovepipe/Ingest"
+	Stovepipe_Ping_FullMethodName                   = "/uber.submitqueue.stovepipe.Stovepipe/Ping"
+	Stovepipe_Ingest_FullMethodName                 = "/uber.submitqueue.stovepipe.Stovepipe/Ingest"
+	Stovepipe_GetRequestHistoryByID_FullMethodName  = "/uber.submitqueue.stovepipe.Stovepipe/GetRequestHistoryByID"
+	Stovepipe_GetRequestHistoryByURI_FullMethodName = "/uber.submitqueue.stovepipe.Stovepipe/GetRequestHistoryByURI"
 )
 
 // StovepipeClient is the client API for Stovepipe service.
@@ -49,6 +51,10 @@ type StovepipeClient interface {
 	// Ingest admits a queue's newly observed commit into the validation pipeline and returns
 	// the minted request ID. The caller hands off asynchronously; validation happens later.
 	Ingest(ctx context.Context, in *IngestRequest, opts ...grpc.CallOption) (*IngestResponse, error)
+	// GetRequestHistoryByID returns retained history for one request ID.
+	GetRequestHistoryByID(ctx context.Context, in *GetRequestHistoryByIDRequest, opts ...grpc.CallOption) (*GetRequestHistoryByIDResponse, error)
+	// GetRequestHistoryByURI returns retained histories for an exact commit URI.
+	GetRequestHistoryByURI(ctx context.Context, in *GetRequestHistoryByURIRequest, opts ...grpc.CallOption) (*GetRequestHistoryByURIResponse, error)
 }
 
 type stovepipeClient struct {
@@ -79,6 +85,26 @@ func (c *stovepipeClient) Ingest(ctx context.Context, in *IngestRequest, opts ..
 	return out, nil
 }
 
+func (c *stovepipeClient) GetRequestHistoryByID(ctx context.Context, in *GetRequestHistoryByIDRequest, opts ...grpc.CallOption) (*GetRequestHistoryByIDResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetRequestHistoryByIDResponse)
+	err := c.cc.Invoke(ctx, Stovepipe_GetRequestHistoryByID_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *stovepipeClient) GetRequestHistoryByURI(ctx context.Context, in *GetRequestHistoryByURIRequest, opts ...grpc.CallOption) (*GetRequestHistoryByURIResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetRequestHistoryByURIResponse)
+	err := c.cc.Invoke(ctx, Stovepipe_GetRequestHistoryByURI_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StovepipeServer is the server API for Stovepipe service.
 // All implementations must embed UnimplementedStovepipeServer
 // for forward compatibility.
@@ -90,6 +116,10 @@ type StovepipeServer interface {
 	// Ingest admits a queue's newly observed commit into the validation pipeline and returns
 	// the minted request ID. The caller hands off asynchronously; validation happens later.
 	Ingest(context.Context, *IngestRequest) (*IngestResponse, error)
+	// GetRequestHistoryByID returns retained history for one request ID.
+	GetRequestHistoryByID(context.Context, *GetRequestHistoryByIDRequest) (*GetRequestHistoryByIDResponse, error)
+	// GetRequestHistoryByURI returns retained histories for an exact commit URI.
+	GetRequestHistoryByURI(context.Context, *GetRequestHistoryByURIRequest) (*GetRequestHistoryByURIResponse, error)
 	mustEmbedUnimplementedStovepipeServer()
 }
 
@@ -105,6 +135,12 @@ func (UnimplementedStovepipeServer) Ping(context.Context, *PingRequest) (*PingRe
 }
 func (UnimplementedStovepipeServer) Ingest(context.Context, *IngestRequest) (*IngestResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Ingest not implemented")
+}
+func (UnimplementedStovepipeServer) GetRequestHistoryByID(context.Context, *GetRequestHistoryByIDRequest) (*GetRequestHistoryByIDResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetRequestHistoryByID not implemented")
+}
+func (UnimplementedStovepipeServer) GetRequestHistoryByURI(context.Context, *GetRequestHistoryByURIRequest) (*GetRequestHistoryByURIResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetRequestHistoryByURI not implemented")
 }
 func (UnimplementedStovepipeServer) mustEmbedUnimplementedStovepipeServer() {}
 func (UnimplementedStovepipeServer) testEmbeddedByValue()                   {}
@@ -163,6 +199,42 @@ func _Stovepipe_Ingest_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Stovepipe_GetRequestHistoryByID_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRequestHistoryByIDRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StovepipeServer).GetRequestHistoryByID(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Stovepipe_GetRequestHistoryByID_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StovepipeServer).GetRequestHistoryByID(ctx, req.(*GetRequestHistoryByIDRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Stovepipe_GetRequestHistoryByURI_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRequestHistoryByURIRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StovepipeServer).GetRequestHistoryByURI(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Stovepipe_GetRequestHistoryByURI_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StovepipeServer).GetRequestHistoryByURI(ctx, req.(*GetRequestHistoryByURIRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Stovepipe_ServiceDesc is the grpc.ServiceDesc for Stovepipe service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -177,6 +249,14 @@ var Stovepipe_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Ingest",
 			Handler:    _Stovepipe_Ingest_Handler,
+		},
+		{
+			MethodName: "GetRequestHistoryByID",
+			Handler:    _Stovepipe_GetRequestHistoryByID_Handler,
+		},
+		{
+			MethodName: "GetRequestHistoryByURI",
+			Handler:    _Stovepipe_GetRequestHistoryByURI_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
