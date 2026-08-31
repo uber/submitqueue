@@ -75,6 +75,11 @@ const (
 	// discovered partitions, so nothing would ever steal (and thereby
 	// refresh or remove) a stale lease on a partition with no messages.
 	leasePurgeAfterLeaseDurations = 10
+
+	// maxRetryBackoffMs bounds how long one failed message can pin its
+	// partition's contiguous ack watermark. Callers may choose a lower cap;
+	// this ceiling also applies when MaxBackoffMs is unset.
+	maxRetryBackoffMs = int64(time.Minute / time.Millisecond)
 )
 
 // gcTickInterval is the number of poll ticks between garbage collection runs.
@@ -1515,8 +1520,13 @@ func retryBackoffMs(retry extqueue.RetryConfig, attempt int) int64 {
 	if backoffMs <= 0 {
 		return 0
 	}
-	if retry.MaxBackoffMs > 0 && backoffMs >= retry.MaxBackoffMs {
-		return retry.MaxBackoffMs
+
+	maxBackoffMs := retry.MaxBackoffMs
+	if maxBackoffMs <= 0 || maxBackoffMs > maxRetryBackoffMs {
+		maxBackoffMs = maxRetryBackoffMs
+	}
+	if backoffMs >= maxBackoffMs {
+		return maxBackoffMs
 	}
 
 	multiplier := retry.BackoffMultiplier
@@ -1525,11 +1535,8 @@ func retryBackoffMs(retry extqueue.RetryConfig, attempt int) int64 {
 	}
 
 	backoff := float64(backoffMs) * math.Pow(multiplier, float64(attempt-1))
-	if retry.MaxBackoffMs > 0 && backoff >= float64(retry.MaxBackoffMs) {
-		return retry.MaxBackoffMs
-	}
-	if backoff >= float64(math.MaxInt64) {
-		return math.MaxInt64
+	if backoff >= float64(maxBackoffMs) {
+		return maxBackoffMs
 	}
 	return int64(backoff)
 }

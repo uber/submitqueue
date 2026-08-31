@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"testing"
 	"time"
 
@@ -482,9 +481,14 @@ func TestSQLDelivery_NackDeadLettersWhenBudgetSpent(t *testing.T) {
 			wantRetryDelayMs: 2,
 		},
 		{
-			name: "uncapped overflow saturates", attempt: 2,
-			retry:            extqueue.RetryConfig{MaxAttempts: 3, InitialBackoffMs: math.MaxInt64, BackoffMultiplier: 2},
-			wantRetryDelayMs: math.MaxInt64,
+			name: "uncapped backoff uses safety ceiling", attempt: 3,
+			retry:            extqueue.RetryConfig{MaxAttempts: 4, InitialBackoffMs: 1000, BackoffMultiplier: 10},
+			wantRetryDelayMs: maxRetryBackoffMs,
+		},
+		{
+			name: "configured cap cannot exceed safety ceiling", attempt: 3,
+			retry:            extqueue.RetryConfig{MaxAttempts: 4, InitialBackoffMs: 1000, MaxBackoffMs: 120000, BackoffMultiplier: 10},
+			wantRetryDelayMs: maxRetryBackoffMs,
 		},
 		{
 			name: "unset initial delay retries immediately", attempt: 1,

@@ -158,8 +158,9 @@ func (s *sqldeliveryStateStore) MarkNacked(ctx context.Context, consumerGroup, t
 	nowMs := time.Now().UnixMilli()
 	invisibleUntil := nowMs
 	if delayMs > math.MaxInt64-nowMs {
-		invisibleUntil = math.MaxInt64
-	} else if delayMs > 0 {
+		return fmt.Errorf("mark nacked topic=%s partition=%s offset=%d: retry delay %d overflows visibility timestamp", topic, partitionKey, offset, delayMs)
+	}
+	if delayMs > 0 {
 		invisibleUntil += delayMs
 	}
 

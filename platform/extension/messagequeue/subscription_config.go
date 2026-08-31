@@ -71,7 +71,8 @@ type RetryConfig struct {
 	InitialBackoffMs int64
 
 	// MaxBackoffMs is the maximum retry delay (in milliseconds).
-	// A non-positive value leaves the delay uncapped.
+	// A non-positive value leaves the delay without a caller-provided cap;
+	// implementations may still impose a safety ceiling.
 	MaxBackoffMs int64
 
 	// BackoffMultiplier scales the delay after each failed attempt.

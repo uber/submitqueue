@@ -235,15 +235,12 @@ func TestDeliveryStateStore_MarkNacked(t *testing.T) {
 	}
 }
 
-func TestDeliveryStateStore_MarkNackedSaturatesTimestamp(t *testing.T) {
+func TestDeliveryStateStore_MarkNackedRejectsTimestampOverflow(t *testing.T) {
 	store, db, mock := newTestDeliveryStateStoreWithMock(t)
 	defer db.Close()
 
-	mock.ExpectExec("INSERT INTO queue_delivery_state").
-		WithArgs("group-1", "orders", "part-1", int64(5), int64(math.MaxInt64)).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-
-	require.NoError(t, store.MarkNacked(context.Background(), "group-1", "orders", "part-1", 5, math.MaxInt64))
+	err := store.MarkNacked(context.Background(), "group-1", "orders", "part-1", 5, math.MaxInt64)
+	require.ErrorContains(t, err, "overflows visibility timestamp")
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
