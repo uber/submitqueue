@@ -100,6 +100,7 @@ func resetStorage(t *testing.T, db *sql.DB) {
 	t.Helper()
 
 	for _, statement := range []string{
+		"TRUNCATE TABLE request_history",
 		"TRUNCATE TABLE request_uri",
 		"TRUNCATE TABLE request",
 		"TRUNCATE TABLE build",
