@@ -58,11 +58,11 @@ const (
 	RequestStatusBatched RequestStatus = "batched"
 
 	// RequestStatusSpeculating indicates that the batch containing the request is in speculation:
-	// planning, building, or waiting for its dependencies to settle. None of those leaves it able to land.
+	// planning, building, or waiting until either its dependencies settle or passed paths cover every possible outcome.
 	RequestStatusSpeculating RequestStatus = "speculating"
 
 	// RequestStatusSpeculated indicates that the batch containing the request has finished speculating:
-	// a build passed on a path whose assumptions all held, and the batch has been cleared to merge.
+	// either a passed path's assumptions all held, or passed paths cover every outcome of its unsettled dependencies.
 	RequestStatusSpeculated RequestStatus = "speculated"
 
 	// RequestStatusLanding indicates that the request is actively being landed (e.g., source control operation is in progress to push the change to the target branch).

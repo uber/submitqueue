@@ -276,34 +276,10 @@ func (s *E2EIntegrationSuite) TestLand_HappyPath_ReachesLanded() {
 		"operating store should show request %s in terminal state landed", req.sqid)
 }
 
-// TestDependentBatch_IsWokenByTheMergeAhead proves that a batch waiting on
-// another is woken when that one merges — the edge CODEM-303 was silently
-// dropping.
-//
-// A merged batch fans out to speculate so its dependents can re-plan. That
-// message used to reuse the bare batch ID, which the batch controller had
-// already published to the same topic and partition when the batch was
-// created. The queue deduplicates against rows it has not collected yet,
-// consumed ones included, so the wake-up was reported as a success, stored
-// nothing, and never arrived.
-//
-// Ordinarily something else re-plans the queue soon enough to hide that. This
-// test removes every other source of a wake-up, as stop → observe → start:
-//
-//  1. Stop: close the gate for runway-merge on this queue, before landing, so
-//     the lead batch cannot complete its merge.
-//  2. Land the lead. It runs to the merge hand-off and parks there.
-//  3. Land the dependent. The queue's analyzer serializes conservatively, so
-//     its batch depends on the lead's, which is in-flight (Merging counts).
-//  4. Observe: wait for the dependent to record "waiting" — its speculative
-//     build has already passed, so its own build signals are finished. From
-//     here the only thing that can advance it is the lead merging.
-//  5. Start: open the gate. The lead merges and fans out.
-//
-// The dependent reaching "landed" is therefore attributable to the fan-out
-// alone. Against the old code it rests at "speculating" and the suite runs to
-// Bazel's timeout, which is how the harness reports a pipeline that stalled.
-func (s *E2EIntegrationSuite) TestDependentBatch_IsWokenByTheMergeAhead() {
+// TestDependentBatch_BypassesMergingDependency proves that a dependency still
+// waiting on Runway is unresolved for strict merge but can be bypassed once
+// passed paths cover both of its possible outcomes.
+func (s *E2EIntegrationSuite) TestDependentBatch_BypassesMergingDependency() {
 	t := s.T()
 
 	const queue = "e2e-chain-queue"
@@ -337,12 +313,11 @@ func (s *E2EIntegrationSuite) TestDependentBatch_IsWokenByTheMergeAhead() {
 	require.Contains(t, got.Dependencies, leadBatch,
 		"batch %s must depend on the in-flight %s for this test to exercise anything", dependentBatch, leadBatch)
 
-	// Its speculative build passes while the lead is still parked, so by the
-	// time the gate opens the dependent has no build signals left to wake it.
-	// That rest is an event, not a status: a batch blocked on a dependency has
-	// not finished speculating, so it stays "speculating" until it can merge.
-	s.awaitEvent(dependent, entity.RequestEventWaiting)
-	s.log.Logf("Dependent %s has passed its build and waits only on %s", dependent.sqid, leadBatch)
+	// Both paths pass while the lead is still parked. A Merging dependency is
+	// unresolved because its merge can fail, so the durable Merging state proves
+	// the dependent advanced through complete coverage rather than strict merge.
+	s.awaitBatchState(queue, dependentBatch, entity.BatchStateMerging)
+	s.log.Logf("Dependent %s bypassed merging batch %s", dependent.sqid, leadBatch)
 
 	// Start: the lead merges, and its fan-out is now the only thing that can
 	// move the dependent.
@@ -352,8 +327,100 @@ func (s *E2EIntegrationSuite) TestDependentBatch_IsWokenByTheMergeAhead() {
 	s.awaitStatus(lead, entity.RequestStatusLanded)
 	s.awaitStatus(dependent, entity.RequestStatusLanded)
 
-	assert.Equal(t, entity.RequestStateLanded, s.terminalState(dependent),
-		"the dependent must land once the batch it waited on merged")
+	assert.Equal(t, entity.RequestStateLanded, s.terminalState(dependent))
+}
+
+// TestDependentBatch_BypassedHeadLandsFirst proves the bypass does not just
+// dispatch a merge: the dependent lands while its dependency is still held
+// mid-build, and only then does the dependency proceed.
+func (s *E2EIntegrationSuite) TestDependentBatch_BypassedHeadLandsFirst() {
+	t := s.T()
+
+	const queue = "e2e-chain-queue"
+	const gateGroup = "orchestrator"
+
+	lead := s.land(queue, "github://github.example.com/uber/e2e-bypass/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	heldBatch := s.awaitBatchID(lead)
+	s.closeGate(gateGroup, heldBatch, "e2e: hold the leader's build so the follower can fully cover it")
+	defer s.openGate(gateGroup, heldBatch)
+	s.awaitBatchState(queue, heldBatch, entity.BatchStateSpeculating)
+
+	follower := s.land(queue, "github://github.example.com/uber/e2e-bypass/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	followerBatch := s.awaitBatchID(follower)
+	require.NotEqual(t, heldBatch, followerBatch)
+
+	// The follower builds with and without the held leader while the leader's
+	// own build is parked; complete coverage hands it to the merge stage.
+	s.awaitBatchState(queue, followerBatch, entity.BatchStateMerging)
+	s.awaitStatus(follower, entity.RequestStatusLanded)
+	assert.Equal(t, entity.RequestStatusSpeculating, s.mustStatus(lead),
+		"the follower must land while its dependency is still held")
+
+	s.openGate(gateGroup, heldBatch)
+	s.awaitStatus(lead, entity.RequestStatusLanded)
+
+	s.assertStatusesInOrder(follower,
+		entity.RequestStatusSpeculating,
+		entity.RequestStatusSpeculated,
+		entity.RequestStatusLanding,
+		entity.RequestStatusLanded,
+	)
+}
+
+// TestDependentBatch_NoBypassWhenCoverageIsIncomplete proves the complement:
+// with only the "dependency succeeds" side passed, a head waits for its
+// dependency to resolve and merges strictly, never dispatching ahead of it.
+//
+// Partial coverage is seeded directly: the follower's batch is stranded in
+// Created (build held), its "succeeds" path is written as passed, and a
+// trigger request wakes the queue. The follower's real speculative builds are
+// parked on its held batch partition, so the funded set stays exactly one
+// path. The single passed path is a live passed path, so the run reports the
+// wait — the signal this test then uses to prove nothing else advanced it.
+func (s *E2EIntegrationSuite) TestDependentBatch_NoBypassWhenCoverageIsIncomplete() {
+	t := s.T()
+
+	const queue = "e2e-chain-queue"
+	const gateGroup = "orchestrator"
+
+	lead := s.land(queue, "github://github.example.com/uber/e2e-nobypass/pull/1/cccccccccccccccccccccccccccccccccccccccc")
+	leadBatch := s.awaitBatchID(lead)
+	s.awaitBatchState(queue, leadBatch, entity.BatchStateSpeculating)
+
+	follower := s.land(queue, "github://github.example.com/uber/e2e-nobypass/pull/2/dddddddddddddddddddddddddddddddddddddddd")
+	heldBatch := s.awaitBatchID(follower)
+	s.closeGate(gateGroup, heldBatch, "e2e: hold the follower's builds so only the seeded path exists")
+	defer s.openGate(gateGroup, heldBatch)
+
+	// Strand the follower in Created, then seed exactly one passed path: the
+	// guess that the lead succeeds. Its builds are parked, so nothing can add
+	// the "fails" path while the queue is quiet.
+	s.strandInCreated(queue, heldBatch)
+	s.seedPassedPath(queue, entity.SpeculationPath{
+		Head: heldBatch,
+		Dependencies: []entity.PathDependency{
+			{Batch: leadBatch, Assumption: entity.DependencyAssumptionSucceeds},
+		},
+	})
+
+	trigger := s.land(queue, "github://github.example.com/uber/e2e-nobypass/pull/3/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+	s.awaitBatchID(trigger)
+
+	// The run that admits the follower also reports the wait: its one passed
+	// path covers only one of the lead's two outcomes. The follower's batch
+	// must still be Speculating — incomplete coverage must never hand it to
+	// the merge stage ahead of the lead.
+	s.awaitEvent(follower, entity.RequestEventWaiting)
+	assert.Equal(t, entity.BatchStateSpeculating, s.batchState(queue, heldBatch),
+		"incomplete coverage must not move the batch to merging")
+
+	// Let the queue finish. The follower's own speculative builds were parked
+	// on the held partition; releasing it lets the surviving path complete and
+	// land after the lead. How it ultimately converges is exercised by the
+	// other tests; this one exists to prove the wait, not the landing.
+	s.openGate(gateGroup, heldBatch)
+	s.awaitStatus(lead, entity.RequestStatusLanded)
+	s.awaitStatus(trigger, entity.RequestStatusLanded)
 }
 
 // TestReadAPIs validates all five request read endpoints against receipts
@@ -434,23 +501,16 @@ func (s *E2EIntegrationSuite) TestReadAPIs() {
 	assert.Equal(t, secondSummary.Request.LastError, secondEvents[len(secondEvents)-1].LastError)
 }
 
-// TestLand_DependentBatch_StaysSpeculatingAcrossAnUnresolvedDependency covers
-// the oscillation the request log used to report as a regression: a head
-// speculates while a dependency is unresolved, the dependency then fails, and
-// the head re-plans and lands anyway. Throughout, it is speculating exactly
-// once — the trail must never revisit a stage.
+// TestLand_DependentBatch_BypassesAnUnresolvedDependency proves the complete
+// payoff: a follower built both with and without a held leader lands before the
+// leader resolves.
 //
 // The wait is forced rather than raced. Batch IDs come from a per-queue counter
 // as "<queue>/batch/<n>", so the leader on a fresh queue is batch/1, and the
 // build topic partitions by batch — closing the gate on that partition before
 // anything is published holds the leader's build and nothing else, so the
 // follower reaches a passed path while its dependency is still outstanding.
-//
-// No invalidated event is asserted. A passed path stops occupying build budget,
-// so by the time the leader fails the follower has usually funded the other side
-// of the guess too; it never loses its last live passed path, which is what
-// invalidated reports. The unit tests cover that state directly.
-func (s *E2EIntegrationSuite) TestLand_DependentBatch_StaysSpeculatingAcrossAnUnresolvedDependency() {
+func (s *E2EIntegrationSuite) TestLand_DependentBatch_BypassesAnUnresolvedDependency() {
 	const queue = "e2e-respeculate-queue"
 	const gateGroup = "orchestrator"
 	leaderBatch := queue + "/batch/1"
@@ -462,21 +522,18 @@ func (s *E2EIntegrationSuite) TestLand_DependentBatch_StaysSpeculatingAcrossAnUn
 	follower := s.land(queue, "github://github.example.com/uber/e2e-respeculate/pull/2/2222222222222222222222222222222222222222")
 	s.log.Logf("Landed leader=%s (build held) follower=%s", leader.sqid, follower.sqid)
 
-	// The baseline analyzer serializes the queue, so the follower depends on the
-	// leader and speculates on it succeeding. That build passes while the leader
-	// is still held: the follower's own work is done and only the leader is
-	// outstanding, which is the wait.
-	s.awaitEvent(follower, entity.RequestEventWaiting)
-	assert.Equal(s.T(), entity.RequestStatusSpeculating, s.mustStatus(follower),
-		"a head waiting on its dependency has not finished speculating")
+	// The baseline analyzer serializes the queue, and the build budget lets the
+	// follower validate both possible outcomes while the leader is held.
+	s.awaitStatus(follower, entity.RequestStatusLanded)
+	assert.Equal(s.T(), entity.RequestStatusSpeculating, s.mustStatus(leader),
+		"the follower must land before the held leader resolves")
 
-	// Release the leader. Its build fails, contradicting the guess the follower
-	// speculated on, and the follower has to reach the trunk another way.
+	// Release the leader only after the follower has landed. Its later failure is
+	// one of the outcomes the follower already validated.
 	s.openGate(gateGroup, leaderBatch)
 	assert.Equal(s.T(), entity.RequestStatusError, s.awaitTerminal(leader),
 		"the leader's build carries a failure marker, so it must not land")
 
-	s.awaitStatus(follower, entity.RequestStatusLanded)
 	s.assertStatusesInOrder(follower,
 		entity.RequestStatusSpeculating,
 		entity.RequestStatusSpeculated,
