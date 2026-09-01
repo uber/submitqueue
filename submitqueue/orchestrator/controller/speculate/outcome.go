@@ -25,8 +25,9 @@ type outcome string
 const (
 	// outcomeWait means the batch's outcome is not decided yet.
 	outcomeWait outcome = "wait"
-	// outcomeMerge means a passed path's assumptions have all come true, so
-	// the head can be handed to the merge stage.
+	// outcomeMerge means the head can be handed to the merge stage: either a
+	// passed path's assumptions have all come true, or passed paths cover every
+	// possible outcome of its unsettled dependencies.
 	outcomeMerge outcome = "merge"
 	// outcomeFail means no future remains in which the head could pass.
 	outcomeFail outcome = "fail"
@@ -52,6 +53,9 @@ func (v outcome) terminalState() (entity.BatchState, bool) {
 // decide returns the run's outcome on one open head, from the snapshot alone.
 func decide(head entity.Batch, set entity.SpeculationPathSet, snap snapshot) outcome {
 	if _, ok := mergeablePath(set, snap); ok {
+		return outcomeMerge
+	}
+	if _, ok := bypassablePath(head, set, snap); ok {
 		return outcomeMerge
 	}
 	if hasNoViableFuture(head, set, snap) {
