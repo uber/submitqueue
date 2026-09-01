@@ -55,10 +55,10 @@ The ref is a *cache* of the last-green URI, not a second record of greenness. It
 |---|---|
 | **SourceControl** | Resolve a Queue name to its current head URI; answer ancestry/comparison questions between two URIs (is the new head a fast-forward descendant of the last green, or was history rewritten?); enumerate commits in a range; advance the Queue's **promotion ref** to a commit. The sole owner of URI semantics, including which refs a Queue name resolves to. |
 | **build-runner** | Build a scope at a URI (optionally relative to a baseline URI), returning pass/fail and the target graph. See [build-runner.md](../submitqueue/build-runner.md). |
-| **Hooks** | Deliver Stovepipe's greenness events to downstream systems — "this URI / this project is now green (or not green)". Fire-and-forget notification, decoupled so Stovepipe does not know or care who consumes the event. The shared cross-domain hook seam rather than a Stovepipe-specific extension. See [hook-framework.md](../hook-framework.md). |
+| **Hooks** | Deliver Stovepipe's validation events to downstream systems — "validation of this URI has begun", "this URI / this project is now green (or not green)". Fire-and-forget notification, decoupled so Stovepipe does not know or care who consumes the event. The shared cross-domain hook seam rather than a Stovepipe-specific extension. See [hook-framework.md](../hook-framework.md). |
 | **Storage** | Persist Queues (incl. last-green URI), Requests, build records, and per-URI / per-project greenness. Key/value-shaped per the extension-design rules in [AGENTS.md](../../../AGENTS.md). |
 
-Hooks are the notification boundary. When a validation fact is recorded — whole-repo green/not-green, or later a project green/not-green — the event reaches deployment systems, dashboards, and developer tooling without any of them polling Stovepipe's store, and each environment can route it to its own downstream (a deploy gate, a Slack notifier, an event bus) without changing the pipeline. The mechanism is the cross-domain hook framework rather than a call out of the recording stage: `record` publishes a `HookEvent` to Stovepipe's `hook` topic, and a dispatcher stage consumes it and invokes the wired hooks, so a slow or failing downstream cannot add latency to the pipeline. Both halves exist; what a deployment supplies is the hooks themselves, since the example server resolves every event to `noop`. See [record.md](steps/record.md#hooks) for the fact-to-event mapping.
+Hooks are the notification boundary. When validation of a commit begins, and when a validation fact is recorded — whole-repo green/not-green, or later a project green/not-green — the event reaches deployment systems, dashboards, and developer tooling without any of them polling Stovepipe's store, and each environment can route it to its own downstream (a deploy gate, a Slack notifier, an event bus) without changing the pipeline. The mechanism is the cross-domain hook framework rather than a call out of the pipeline stages: `process` and `record` publish a `HookEvent` to Stovepipe's `hook` topic, and a dispatcher stage consumes it and invokes the wired hooks, so a slow or failing downstream cannot add latency to the pipeline. Both halves exist; what a deployment supplies is the hooks themselves, since the example server resolves every event to `noop`. See [process.md](steps/process.md#hooks) for the start event and [record.md](steps/record.md#hooks) for the fact-to-event mapping.
 
 ## Workflow
 
@@ -74,9 +74,9 @@ The pipeline runs in two phases against the same Request. **Phase 1** establishe
                                    └───────────────┬──────────────┘
                                                    │ RequestID
                                                    ▼
-                                   ┌──────────────────────────────┐
-                                   │ process                      │
-                                   │ Ask SourceControl: is head a │
+                                   ┌──────────────────────────────┐   Hooks
+                                   │ process                      │┄┄┄┄┄►  "validation
+                                   │ Ask SourceControl: is head a │        started"
                                    │ descendant of last-green?    │
                                    │  → incremental since green   │
                                    │ else (history rewrite)       │
@@ -132,7 +132,7 @@ The pipeline runs in two phases against the same Request. **Phase 1** establishe
 ### Phase 1 — whole-repo greenness
 
 1. **ingest** — invoked by the external poller with a **Queue name**. It asks `SourceControl` for that Queue's current head URI, mints a Request namespaced by the Queue, persists it with no recorded greenness yet, and dedups on `(Queue, head URI)` so a re-reported head is processed once. It publishes the RequestID onward.
-2. **process** — decides build strategy (incremental since last-green vs full monorepo), gates concurrent work per Queue, coalesces backlog to the latest head, and publishes to `build`. See [process.md](steps/process.md).
+2. **process** — decides build strategy (incremental since last-green vs full monorepo), gates concurrent work per Queue, coalesces backlog to the latest head, publishes a **hook event** announcing that validation of the commit has begun, and publishes to `build`. See [process.md](steps/process.md).
 3. **build** — runs the build-runner for the chosen scope. A flag derived from `process` decides whether to build relative to the last-green **baseline URI** (incremental) or from scratch (full). It records a build and publishes the BuildID.
 4. **buildsignal** — records the build's status and target graph when the build completes, then releases the Queue's `in_flight_count` slot, projects the terminal status onto the Request (`succeeded` / `failed` / `cancelled`), and publishes the RequestID to `record`.
 5. **record** — writes the whole-repo greenness for the head URI (`0` green / `1` broken to start), derived from the Request's build outcome. On green it advances the Queue's **last-green URI** so the next `process` can build incrementally from here, and asks `SourceControl` to advance the Queue's **promotion ref** to the same commit (see [Promotion ref](#promotion-ref--the-last-green-commit-by-name)). It publishes a **hook event** for the green/not-green transition, then fans out into Phase 2. The Queue's `in_flight_count` was already released by `buildsignal` when the build went terminal.
@@ -150,7 +150,7 @@ The pipeline runs in two phases against the same Request. **Phase 1** establishe
 | Controller | In | Out | One-line role |
 |---|---|---|---|
 | **ingest** | Queue name (from poller) | process | Resolve head URI via SourceControl, mint Request, persist (no greenness), dedup on `(Queue, head URI)` |
-| **process** | RequestID | build | Build strategy, concurrency gate, backlog coalescing → [process.md](steps/process.md) |
+| **process** | RequestID | build, hook topic | Build strategy, concurrency gate, backlog coalescing; announce validation start on admit → [process.md](steps/process.md) |
 | **build** | RequestID | buildsignal | Run the build-runner for the chosen scope; baseline = last-green URI iff incremental |
 | **buildsignal** | BuildID | record (P1), record (P2) | Record build status + target graph; release `in_flight_count`; project the outcome onto the Request; signal completion |
 | **record** | RequestID | analyze (P1→P2), hook topic | Write greenness; on whole-repo green advance last-green URI and the promotion ref; publish the hook event |

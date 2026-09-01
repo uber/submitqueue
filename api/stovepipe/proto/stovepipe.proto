@@ -54,6 +54,63 @@ message IngestResponse {
     string id = 1;
 }
 
+// GetRequestHistoryByIDRequest selects one request history by the ID returned from Ingest.
+message GetRequestHistoryByIDRequest {
+    // Logical queue containing the request.
+    string queue = 1;
+    // Globally unique request identifier returned from Ingest.
+    string request_id = 2;
+}
+
+// GetRequestHistoryByURIRequest selects retained request histories for an exact commit URI.
+message GetRequestHistoryByURIRequest {
+    // Logical queue containing the request.
+    string queue = 1;
+    // Exact VCS-agnostic commit URI whose request histories are selected.
+    string uri = 2;
+}
+
+// HistoryEvent is one retained request state or lifecycle event.
+message HistoryEvent {
+    // Opaque stable identity of this logical occurrence within the request.
+    string event_id = 1;
+    // Occurrence time in Unix milliseconds.
+    int64 timestamp_ms = 2;
+    // Exactly one occurrence kind is populated.
+    oneof occurrence {
+        // Durable request state reached by the request.
+        string request_state = 3;
+        // Event that occurred without changing the request state.
+        string event = 4;
+    }
+    // Newer request that caused a superseded state. Empty when not applicable.
+    string superseded_by_request_id = 5;
+    // Build associated with the occurrence. Empty when no build applies.
+    string build_id = 6;
+    // Stable domain reason for a terminal request outcome. Empty otherwise.
+    string outcome_reason = 7;
+}
+
+// RequestHistory identifies one request and contains its ordered events.
+message RequestHistory {
+    // Globally unique request identifier.
+    string request_id = 1;
+    // Events ordered by occurrence time and stable event identity.
+    repeated HistoryEvent events = 2;
+}
+
+// GetRequestHistoryByIDResponse contains all retained events for one request.
+message GetRequestHistoryByIDResponse {
+    // Events ordered by occurrence time and stable event identity.
+    repeated HistoryEvent events = 1;
+}
+
+// GetRequestHistoryByURIResponse contains all retained request histories for an exact URI.
+message GetRequestHistoryByURIResponse {
+    // Histories ordered by numeric request-ID counter, then request ID.
+    repeated RequestHistory histories = 1;
+}
+
 // Stovepipe provides the Stovepipe API.
 service Stovepipe {
     // Ping returns a response indicating the service is alive
@@ -61,4 +118,8 @@ service Stovepipe {
     // Ingest admits a queue's newly observed commit into the validation pipeline and returns
     // the minted request ID. The caller hands off asynchronously; validation happens later.
     rpc Ingest(IngestRequest) returns (IngestResponse) {}
+    // GetRequestHistoryByID returns retained history for one request ID.
+    rpc GetRequestHistoryByID(GetRequestHistoryByIDRequest) returns (GetRequestHistoryByIDResponse) {}
+    // GetRequestHistoryByURI returns retained histories for an exact commit URI.
+    rpc GetRequestHistoryByURI(GetRequestHistoryByURIRequest) returns (GetRequestHistoryByURIResponse) {}
 }

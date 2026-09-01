@@ -44,6 +44,11 @@ func TestConstructors(t *testing.T) {
 		wantType Type
 	}{
 		{
+			name:     "started",
+			build:    NewValidationRepositoryStarted,
+			wantType: TypeValidationRepositoryStarted,
+		},
+		{
 			name:     "recorded",
 			build:    NewValidationRepositoryRecorded,
 			wantType: TypeValidationRepositoryRecorded,
@@ -85,8 +90,11 @@ func TestNewValidationRepositoryRecorded_IDIsStable(t *testing.T) {
 }
 
 func TestConstructors_IDsDifferByType(t *testing.T) {
+	started := NewValidationRepositoryStarted(testRequest())
 	recorded := NewValidationRepositoryRecorded(testRequest())
 	cancelled := NewValidationRepositoryCancelled(testRequest())
 
+	assert.NotEqual(t, started.GetId(), recorded.GetId())
+	assert.NotEqual(t, started.GetId(), cancelled.GetId())
 	assert.NotEqual(t, recorded.GetId(), cancelled.GetId())
 }

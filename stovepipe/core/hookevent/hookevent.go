@@ -40,6 +40,10 @@ const Source = "stovepipe"
 type Type string
 
 const (
+	// TypeValidationRepositoryStarted announces that whole-repository validation
+	// of the request named in the payload has begun. It carries no verdict; the
+	// outcome arrives later as one of the types below.
+	TypeValidationRepositoryStarted Type = "validation.repository.started"
 	// TypeValidationRepositoryRecorded announces a durable whole-repository
 	// validation fact for the request named in the payload.
 	TypeValidationRepositoryRecorded Type = "validation.repository.recorded"
@@ -52,6 +56,12 @@ const (
 // versioned write, so nothing separates one occurrence of a type from the next
 // beyond the request it names.
 const unversioned int32 = 0
+
+// NewValidationRepositoryStarted builds the event announcing that validation of
+// request's commit has begun.
+func NewValidationRepositoryStarted(request entity.Request) *basehook.HookEvent {
+	return newEvent(TypeValidationRepositoryStarted, request)
+}
 
 // NewValidationRepositoryRecorded builds the event announcing that request's
 // validation fact is durable.
