@@ -303,7 +303,7 @@ func run() error {
 	brf := fakeBuildRunnerFactory{}
 
 	storageFty := storageFactory{backend: store}
-	requestLog := requestlog.NewRecorder(scope)
+	materializer := requestlog.NewMaterializer(scope)
 	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, registry, sourceControl, brf, hookResolver{})
 	if err != nil {
 		return err
@@ -338,7 +338,7 @@ func run() error {
 		newInMemoryCounterFactory(),
 		sourceControl,
 		storageFty,
-		requestLog,
+		materializer,
 		registry,
 	)
 	srv := &StovepipeServer{

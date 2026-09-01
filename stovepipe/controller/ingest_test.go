@@ -28,6 +28,7 @@ import (
 	countermock "github.com/uber/submitqueue/platform/extension/counter/mock"
 	mqmock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
@@ -45,15 +46,15 @@ const (
 
 // ingestMocks bundles the mocks an Ingest test case wires expectations on.
 type ingestMocks struct {
-	counter    *countermock.MockCounter
-	factory    *scmock.MockFactory
-	sc         *scmock.MockSourceControl
-	reqStore   *storagemock.MockRequestStore
-	uriStore   *storagemock.MockRequestURIStore
-	logStore   *storagemock.MockRequestLogStore
-	queueStore *storagemock.MockQueueStore
-	requestLog *requestlogmock.MockRecorder
-	publisher  *mqmock.MockPublisher
+	counter      *countermock.MockCounter
+	factory      *scmock.MockFactory
+	sc           *scmock.MockSourceControl
+	reqStore     *storagemock.MockRequestStore
+	uriStore     *storagemock.MockRequestURIStore
+	queueStore   *storagemock.MockQueueStore
+	store        *storagemock.MockStorage
+	materializer *requestlogmock.MockMaterializer
+	publisher    *mqmock.MockPublisher
 }
 
 // staticStorageFactory resolves every queue to one fixed store aggregate.
@@ -72,21 +73,20 @@ func newIngestController(t *testing.T, ctrl *gomock.Controller) (*IngestControll
 	t.Helper()
 
 	m := ingestMocks{
-		counter:    countermock.NewMockCounter(ctrl),
-		factory:    scmock.NewMockFactory(ctrl),
-		sc:         scmock.NewMockSourceControl(ctrl),
-		reqStore:   storagemock.NewMockRequestStore(ctrl),
-		uriStore:   storagemock.NewMockRequestURIStore(ctrl),
-		logStore:   storagemock.NewMockRequestLogStore(ctrl),
-		queueStore: storagemock.NewMockQueueStore(ctrl),
-		requestLog: requestlogmock.NewMockRecorder(ctrl),
-		publisher:  mqmock.NewMockPublisher(ctrl),
+		counter:      countermock.NewMockCounter(ctrl),
+		factory:      scmock.NewMockFactory(ctrl),
+		sc:           scmock.NewMockSourceControl(ctrl),
+		reqStore:     storagemock.NewMockRequestStore(ctrl),
+		uriStore:     storagemock.NewMockRequestURIStore(ctrl),
+		queueStore:   storagemock.NewMockQueueStore(ctrl),
+		materializer: requestlogmock.NewMockMaterializer(ctrl),
+		publisher:    mqmock.NewMockPublisher(ctrl),
 	}
 
 	store := storagemock.NewMockStorage(ctrl)
+	m.store = store
 	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
 	store.EXPECT().GetRequestURIStore().Return(m.uriStore).AnyTimes()
-	store.EXPECT().GetRequestLogStore().Return(m.logStore).AnyTimes()
 	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 
 	queue := mqmock.NewMockQueue(ctrl)
@@ -97,7 +97,7 @@ func newIngestController(t *testing.T, ctrl *gomock.Controller) (*IngestControll
 	})
 	require.NoError(t, err)
 
-	c := NewIngestController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), staticCounterFactory{counter: m.counter}, m.factory, staticStorageFactory{store: store}, m.requestLog, registry)
+	c := NewIngestController(zap.NewNop().Sugar(), tally.NewTestScope("test", nil), staticCounterFactory{counter: m.counter}, m.factory, staticStorageFactory{store: store}, m.materializer, registry)
 	return c, m
 }
 
@@ -111,12 +111,11 @@ func acceptedRequest(id string) entity.Request {
 	}
 }
 
-func expectRecordAccepted(m ingestMocks, id string) {
-	m.requestLog.EXPECT().RecordRequestState(
+func expectMaterializeAccepted(m ingestMocks, id string) {
+	m.materializer.EXPECT().PersistLog(
 		gomock.Any(),
-		m.logStore,
-		acceptedRequest(id),
-		entity.RequestOutcomeReasonUnknown,
+		m.store,
+		requestlog.NewRequestStateLog(acceptedRequest(id), entity.RequestOutcomeReasonUnknown),
 	).Return(nil)
 }
 
@@ -178,7 +177,7 @@ func TestIngestController_Ingest(t *testing.T) {
 				m.uriStore.EXPECT().Create(gomock.Any(), testURI, "request/monorepo/main/7").Return(nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), "request/monorepo/main/7").Return(entity.Request{}, storage.ErrNotFound)
 				m.reqStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
-				expectRecordAccepted(m, "request/monorepo/main/7")
+				expectMaterializeAccepted(m, "request/monorepo/main/7")
 				expectAdvanceLatestRequestID(m, testQueue, "request/monorepo/main/7")
 				m.publisher.EXPECT().Publish(gomock.Any(), "process", gomock.Any()).Return(nil)
 			},
@@ -191,7 +190,7 @@ func TestIngestController_Ingest(t *testing.T) {
 				expectResolve(m)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("request/monorepo/main/3", nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), "request/monorepo/main/3").Return(acceptedRequest("request/monorepo/main/3"), nil)
-				expectRecordAccepted(m, "request/monorepo/main/3")
+				expectMaterializeAccepted(m, "request/monorepo/main/3")
 				expectAdvanceLatestRequestIDNoOp(m, testQueue, "request/monorepo/main/3")
 				m.publisher.EXPECT().Publish(gomock.Any(), "process", gomock.Any()).Return(nil)
 			},
@@ -205,7 +204,7 @@ func TestIngestController_Ingest(t *testing.T) {
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("request/monorepo/main/3", nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), "request/monorepo/main/3").Return(entity.Request{}, storage.ErrNotFound)
 				m.reqStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
-				expectRecordAccepted(m, "request/monorepo/main/3")
+				expectMaterializeAccepted(m, "request/monorepo/main/3")
 				expectAdvanceLatestRequestID(m, testQueue, "request/monorepo/main/3")
 				m.publisher.EXPECT().Publish(gomock.Any(), "process", gomock.Any()).Return(nil)
 			},
@@ -221,7 +220,7 @@ func TestIngestController_Ingest(t *testing.T) {
 				m.uriStore.EXPECT().Create(gomock.Any(), testURI, "request/monorepo/main/7").Return(storage.ErrAlreadyExists)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("request/monorepo/main/3", nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), "request/monorepo/main/3").Return(acceptedRequest("request/monorepo/main/3"), nil)
-				expectRecordAccepted(m, "request/monorepo/main/3")
+				expectMaterializeAccepted(m, "request/monorepo/main/3")
 				expectAdvanceLatestRequestIDNoOp(m, testQueue, "request/monorepo/main/3")
 				m.publisher.EXPECT().Publish(gomock.Any(), "process", gomock.Any()).Return(nil)
 			},
@@ -286,7 +285,7 @@ func TestIngestController_Ingest(t *testing.T) {
 				m.uriStore.EXPECT().Create(gomock.Any(), testURI, gomock.Any()).Return(nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), gomock.Any()).Return(entity.Request{}, storage.ErrNotFound)
 				m.reqStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
-				expectRecordAccepted(m, "request/monorepo/main/7")
+				expectMaterializeAccepted(m, "request/monorepo/main/7")
 				expectAdvanceLatestRequestID(m, testQueue, "request/monorepo/main/7")
 				m.publisher.EXPECT().Publish(gomock.Any(), "process", gomock.Any()).Return(errors.New("queue down"))
 			},
@@ -299,11 +298,10 @@ func TestIngestController_Ingest(t *testing.T) {
 				expectResolve(m)
 				m.uriStore.EXPECT().GetIDByURI(gomock.Any(), testURI).Return("request/monorepo/main/3", nil)
 				m.reqStore.EXPECT().Get(gomock.Any(), "request/monorepo/main/3").Return(acceptedRequest("request/monorepo/main/3"), nil)
-				m.requestLog.EXPECT().RecordRequestState(
+				m.materializer.EXPECT().PersistLog(
 					gomock.Any(),
-					m.logStore,
-					acceptedRequest("request/monorepo/main/3"),
-					entity.RequestOutcomeReasonUnknown,
+					m.store,
+					requestlog.NewRequestStateLog(acceptedRequest("request/monorepo/main/3"), entity.RequestOutcomeReasonUnknown),
 				).Return(errors.New("log unavailable"))
 			},
 			wantErr: true,

@@ -61,7 +61,7 @@ type IngestController struct {
 	counters      counter.Factory
 	sourceControl sourcecontrol.Factory
 	stores        storage.Factory
-	requestLog    requestlog.Recorder
+	materializer  requestlog.Materializer
 	registry      consumer.TopicRegistry
 }
 
@@ -73,7 +73,7 @@ func NewIngestController(
 	counters counter.Factory,
 	sourceControl sourcecontrol.Factory,
 	stores storage.Factory,
-	requestLog requestlog.Recorder,
+	materializer requestlog.Materializer,
 	registry consumer.TopicRegistry,
 ) *IngestController {
 	return &IngestController{
@@ -82,7 +82,7 @@ func NewIngestController(
 		counters:      counters,
 		sourceControl: sourceControl,
 		stores:        stores,
-		requestLog:    requestLog,
+		materializer:  materializer,
 		registry:      registry,
 	}
 }
@@ -141,7 +141,8 @@ func (c *IngestController) Ingest(ctx context.Context, req entity.IngestRequest)
 	}
 
 	if request.State == entity.RequestStateAccepted {
-		if err := c.requestLog.RecordRequestState(ctx, store.GetRequestLogStore(), request, entity.RequestOutcomeReasonUnknown); err != nil {
+		log := requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown)
+		if err := c.materializer.PersistLog(ctx, store, log); err != nil {
 			return entity.IngestResult{}, fmt.Errorf("failed to record accepted state for request %s: %w", id, err)
 		}
 	}
