@@ -36,16 +36,19 @@ const (
 	testNowMs     = int64(1735689600000)
 )
 
-func newTestRecorder(t *testing.T) (*recorder, *storagemock.MockRequestLogStore) {
+func newTestMaterializer(t *testing.T) (*materializer, *storagemock.MockStorage, *storagemock.MockRequestLogStore) {
 	t.Helper()
 	ctrl := gomock.NewController(t)
-	return &recorder{
+	stores := storagemock.NewMockStorage(ctrl)
+	store := storagemock.NewMockRequestLogStore(ctrl)
+	stores.EXPECT().GetRequestLogStore().Return(store).AnyTimes()
+	return &materializer{
 		scope: tally.NoopScope,
 		now:   func() time.Time { return time.UnixMilli(testNowMs) },
-	}, storagemock.NewMockRequestLogStore(ctrl)
+	}, stores, store
 }
 
-func TestRecorderRecordRequestState(t *testing.T) {
+func TestMaterializerPersistRequestStateLog(t *testing.T) {
 	tests := []struct {
 		name          string
 		state         entity.RequestState
@@ -69,7 +72,7 @@ func TestRecorderRecordRequestState(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			recorder, store := newTestRecorder(t)
+			materializer, stores, store := newTestMaterializer(t)
 			request := entity.Request{
 				ID:      testRequestID,
 				Queue:   testQueue,
@@ -90,7 +93,8 @@ func TestRecorderRecordRequestState(t *testing.T) {
 				})
 			}
 
-			err := recorder.RecordRequestState(context.Background(), store, request, tt.outcomeReason)
+			log := NewRequestStateLog(request, tt.outcomeReason)
+			err := materializer.PersistLog(context.Background(), stores, log)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -100,8 +104,8 @@ func TestRecorderRecordRequestState(t *testing.T) {
 	}
 }
 
-func TestRecorderExistingIdenticalOccurrenceIsSuccess(t *testing.T) {
-	recorder, store := newTestRecorder(t)
+func TestMaterializerExistingIdenticalOccurrenceIsSuccess(t *testing.T) {
+	materializer, stores, store := newTestMaterializer(t)
 	request := entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateAccepted, Version: 1}
 
 	var candidate entity.RequestLog
@@ -119,11 +123,23 @@ func TestRecorderExistingIdenticalOccurrenceIsSuccess(t *testing.T) {
 		},
 	)
 
-	require.NoError(t, recorder.RecordRequestState(context.Background(), store, request, entity.RequestOutcomeReasonUnknown))
+	require.NoError(t, materializer.PersistLog(context.Background(), stores, NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown)))
 }
 
-func TestRecorderExistingConflictingOccurrenceFails(t *testing.T) {
-	recorder, store := newTestRecorder(t)
+func TestMaterializerPreservesSuppliedTimestamp(t *testing.T) {
+	materializer, stores, store := newTestMaterializer(t)
+	log := NewRequestStateLog(
+		entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateAccepted, Version: 1},
+		entity.RequestOutcomeReasonUnknown,
+	)
+	log.TimestampMs = testNowMs - 1000
+	store.EXPECT().Create(gomock.Any(), log).Return(nil)
+
+	require.NoError(t, materializer.PersistLog(context.Background(), stores, log))
+}
+
+func TestMaterializerExistingConflictingOccurrenceFails(t *testing.T) {
+	materializer, stores, store := newTestMaterializer(t)
 	request := entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateSucceeded, Version: 3}
 
 	var candidate entity.RequestLog
@@ -139,10 +155,10 @@ func TestRecorderExistingConflictingOccurrenceFails(t *testing.T) {
 		},
 	)
 
-	require.Error(t, recorder.RecordRequestState(context.Background(), store, request, entity.RequestOutcomeReasonBuildSucceeded))
+	require.Error(t, materializer.PersistLog(context.Background(), stores, NewRequestStateLog(request, entity.RequestOutcomeReasonBuildSucceeded)))
 }
 
-func TestRecorderStorageFailures(t *testing.T) {
+func TestMaterializerStorageFailures(t *testing.T) {
 	tests := []struct {
 		name  string
 		setup func(*storagemock.MockRequestLogStore)
@@ -164,11 +180,12 @@ func TestRecorderStorageFailures(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			recorder, store := newTestRecorder(t)
+			materializer, stores, store := newTestMaterializer(t)
 			tt.setup(store)
-			err := recorder.RecordRequestState(context.Background(), store, entity.Request{
+			log := NewRequestStateLog(entity.Request{
 				ID: testRequestID, Queue: testQueue, State: entity.RequestStateAccepted, Version: 1,
 			}, entity.RequestOutcomeReasonUnknown)
+			err := materializer.PersistLog(context.Background(), stores, log)
 			require.Error(t, err)
 		})
 	}
@@ -199,22 +216,25 @@ func TestSameOccurrenceMetadata(t *testing.T) {
 	assert.True(t, sameOccurrence(stored, candidate))
 }
 
-func TestRecorderMetricsIncludeContextTags(t *testing.T) {
+func TestMaterializerMetricsIncludeContextTags(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	scope := tally.NewTestScope("test", nil)
-	recorder := &recorder{
+	materializer := &materializer{
 		scope: scope,
 		now:   func() time.Time { return time.UnixMilli(testNowMs) },
 	}
+	stores := storagemock.NewMockStorage(ctrl)
 	store := storagemock.NewMockRequestLogStore(ctrl)
+	stores.EXPECT().GetRequestLogStore().Return(store)
 	store.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
 	ctx := metrics.WithContextTags(context.Background(), metrics.NewTag("queue", testQueue))
 
-	require.NoError(t, recorder.RecordRequestState(ctx, store, entity.Request{
+	log := NewRequestStateLog(entity.Request{
 		ID: testRequestID, Queue: testQueue, State: entity.RequestStateAccepted, Version: 1,
-	}, entity.RequestOutcomeReasonUnknown))
+	}, entity.RequestOutcomeReasonUnknown)
+	require.NoError(t, materializer.PersistLog(ctx, stores, log))
 
-	counter, ok := scope.Snapshot().Counters()["test.record.created+occurrence=accepted,queue=monorepo/main"]
+	counter, ok := scope.Snapshot().Counters()["test.persist.created+occurrence=accepted,queue=monorepo/main"]
 	require.True(t, ok)
 	assert.EqualValues(t, 1, counter.Value())
 }

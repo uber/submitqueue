@@ -2,7 +2,7 @@ load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "go_default_library",
-    srcs = ["recorder_mock.go"],
+    srcs = ["materializer_mock.go"],
     importpath = "github.com/uber/submitqueue/stovepipe/core/requestlog/mock",
     visibility = ["//visibility:public"],
     deps = [

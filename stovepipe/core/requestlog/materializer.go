@@ -15,7 +15,7 @@
 // Package requestlog retains the request occurrences exposed by Stovepipe's history API.
 package requestlog
 
-//go:generate mockgen -source=recorder.go -destination=mock/recorder_mock.go -package=mock
+//go:generate mockgen -source=materializer.go -destination=mock/materializer_mock.go -package=mock
 
 import (
 	"context"
@@ -38,27 +38,30 @@ const (
 	_occurrenceKindState = "state"
 )
 
-// Recorder retains idempotent request-state occurrences.
-type Recorder interface {
-	// RecordRequestState retains the request's current durable state and version.
-	RecordRequestState(context.Context, storage.RequestLogStore, entity.Request, entity.RequestOutcomeReason) error
+// Materializer persists request-log occurrences into their queue-scoped read model.
+type Materializer interface {
+	// PersistLog retains one request-log occurrence idempotently.
+	PersistLog(context.Context, storage.Storage, entity.RequestLog) error
 }
 
-type recorder struct {
+type materializer struct {
 	scope tally.Scope
 	now   func() time.Time
 }
 
-// NewRecorder creates a request-log recorder.
-func NewRecorder(scope tally.Scope) Recorder {
-	return &recorder{
-		scope: scope.SubScope("request_log_recorder"),
+var _ Materializer = (*materializer)(nil)
+
+// NewMaterializer creates a request-log materializer.
+func NewMaterializer(scope tally.Scope) Materializer {
+	return &materializer{
+		scope: scope.SubScope("request_log_materializer"),
 		now:   time.Now,
 	}
 }
 
-func (r *recorder) RecordRequestState(ctx context.Context, store storage.RequestLogStore, request entity.Request, outcomeReason entity.RequestOutcomeReason) error {
-	log := entity.RequestLog{
+// NewRequestStateLog constructs the occurrence representing the request's current durable state.
+func NewRequestStateLog(request entity.Request, outcomeReason entity.RequestOutcomeReason) entity.RequestLog {
+	return entity.RequestLog{
 		ID:             occurrenceID(request.Queue, request.ID, _occurrenceKindState, strconv.FormatInt(int64(request.Version), 10)),
 		Queue:          request.Queue,
 		RequestID:      request.ID,
@@ -66,41 +69,43 @@ func (r *recorder) RecordRequestState(ctx context.Context, store storage.Request
 		RequestVersion: request.Version,
 		OutcomeReason:  outcomeReason,
 	}
-	return r.record(ctx, store, log)
 }
 
-func (r *recorder) record(ctx context.Context, store storage.RequestLogStore, log entity.RequestLog) error {
-	log.TimestampMs = r.now().UnixMilli()
+func (m *materializer) PersistLog(ctx context.Context, stores storage.Storage, log entity.RequestLog) error {
+	if log.TimestampMs == 0 {
+		log.TimestampMs = m.now().UnixMilli()
+	}
 
 	if err := log.Validate(); err != nil {
-		r.count(ctx, "validation_failure", log)
+		m.count(ctx, "validation_failure", log)
 		return fmt.Errorf("invalid request log occurrence: %w", err)
 	}
 
+	store := stores.GetRequestLogStore()
 	if err := store.Create(ctx, log); err == nil {
-		r.count(ctx, "created", log)
+		m.count(ctx, "created", log)
 		return nil
 	} else if !errors.Is(err, storage.ErrAlreadyExists) {
-		r.count(ctx, "storage_failure", log)
+		m.count(ctx, "storage_failure", log)
 		return fmt.Errorf("failed to create request log request_id=%q log_id=%q: %w", log.RequestID, log.ID, err)
 	}
 
 	stored, err := store.Get(ctx, log.RequestID, log.ID)
 	if err != nil {
-		r.count(ctx, "storage_failure", log)
+		m.count(ctx, "storage_failure", log)
 		return fmt.Errorf("failed to reconcile request log request_id=%q log_id=%q: %w", log.RequestID, log.ID, err)
 	}
 	if !sameOccurrence(stored, log) {
-		r.count(ctx, "conflict", log)
+		m.count(ctx, "conflict", log)
 		return fmt.Errorf("request log conflicts with retained occurrence request_id=%q log_id=%q", log.RequestID, log.ID)
 	}
 
-	r.count(ctx, "identical_existing", log)
+	m.count(ctx, "identical_existing", log)
 	return nil
 }
 
-func (r *recorder) count(ctx context.Context, counter string, log entity.RequestLog) {
-	metrics.NamedCounter(r.scope, "record", counter, 1, metrics.TagsFromContext(ctx, occurrenceTag(log))...)
+func (m *materializer) count(ctx context.Context, counter string, log entity.RequestLog) {
+	metrics.NamedCounter(m.scope, "persist", counter, 1, metrics.TagsFromContext(ctx, occurrenceTag(log))...)
 }
 
 func occurrenceID(queue, requestID string, identity ...string) string {
