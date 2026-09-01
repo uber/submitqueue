@@ -94,12 +94,21 @@ func TestMySQLStorage(t *testing.T) {
 		testSuite.SetLogger(testutil.NewTestLogger(t))
 		suite.Run(t, testSuite)
 	})
+
+	t.Run("RequestLogStore", func(t *testing.T) {
+		resetStorage(t, db)
+		testSuite := new(MySQLRequestLogStoreSuite)
+		testSuite.SetContext(ctx)
+		testSuite.SetFactory(factory)
+		suite.Run(t, testSuite)
+	})
 }
 
 func resetStorage(t *testing.T, db *sql.DB) {
 	t.Helper()
 
 	for _, statement := range []string{
+		"TRUNCATE TABLE request_log",
 		"TRUNCATE TABLE request_uri",
 		"TRUNCATE TABLE request",
 		"TRUNCATE TABLE build",
@@ -270,6 +279,11 @@ type MySQLValidationFactStoreSuite struct {
 // MySQLBuildStoreSuite exercises the MySQL-backed BuildStore by embedding the shared contract suite.
 type MySQLBuildStoreSuite struct {
 	storagesuite.BuildStoreContractSuite
+}
+
+// MySQLRequestLogStoreSuite exercises the MySQL-backed RequestLogStore against a real MySQL instance.
+type MySQLRequestLogStoreSuite struct {
+	storagesuite.RequestLogStoreContractSuite
 }
 
 // mysqlFactory adapts the MySQL storage backend's queue binding to the

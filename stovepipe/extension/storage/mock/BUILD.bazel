@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "build_store_mock.go",
         "queue_store_mock.go",
+        "request_log_store_mock.go",
         "request_store_mock.go",
         "request_uri_store_mock.go",
         "storage_mock.go",

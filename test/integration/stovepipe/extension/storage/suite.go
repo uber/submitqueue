@@ -184,6 +184,127 @@ func (s *QueueStoreContractSuite) TestQueueStore_UpdateSequentialCAS() {
 	assert.Equal(t, int32(3), got.Version)
 }
 
+// RequestLogStoreContractSuite defines contract tests for storage.RequestLogStore.
+// All RequestLogStore implementations must pass these tests.
+type RequestLogStoreContractSuite struct {
+	suite.Suite
+	ctx     context.Context
+	factory storage.Factory
+}
+
+// SetContext sets the context for tests.
+func (s *RequestLogStoreContractSuite) SetContext(ctx context.Context) {
+	s.ctx = ctx
+}
+
+// SetFactory provides the Factory that resolves the store under test per queue.
+func (s *RequestLogStoreContractSuite) SetFactory(factory storage.Factory) {
+	s.factory = factory
+}
+
+func (s *RequestLogStoreContractSuite) storeFor(queue string) storage.RequestLogStore {
+	bound, err := s.factory.For(storage.Config{QueueName: queue})
+	s.Require().NoError(err)
+	return bound.GetRequestLogStore()
+}
+
+func (s *RequestLogStoreContractSuite) entry(queue, requestID, id string, timestampMs int64, version int32) entity.RequestLog {
+	return entity.RequestLog{
+		ID:             id,
+		Queue:          queue,
+		RequestID:      requestID,
+		TimestampMs:    timestampMs,
+		State:          entity.RequestStateAccepted,
+		RequestVersion: version,
+		Metadata:       map[string]string{"source": "contract"},
+	}
+}
+
+// TestRequestLogStore_CreateAndGet verifies all occurrence fields round-trip unchanged.
+func (s *RequestLogStoreContractSuite) TestRequestLogStore_CreateAndGet() {
+	const (
+		queue     = "contract/history-create"
+		requestID = "request/contract/history-create/1"
+	)
+	entry := entity.RequestLog{
+		ID:          "fact/repository",
+		Queue:       queue,
+		RequestID:   requestID,
+		TimestampMs: 1735689600000,
+		Event:       entity.RequestEventValidationFactRecorded,
+		Metadata: map[string]string{
+			"fact_degree": "0.5",
+			"scope":       "repository",
+		},
+	}
+	store := s.storeFor(queue)
+	require.NoError(s.T(), store.Create(s.ctx, entry))
+
+	got, err := store.Get(s.ctx, requestID, entry.ID)
+	require.NoError(s.T(), err)
+	assert.Equal(s.T(), entry, got)
+}
+
+// TestRequestLogStore_CreateAlreadyExists verifies stable identities are create-only.
+func (s *RequestLogStoreContractSuite) TestRequestLogStore_CreateAlreadyExists() {
+	const (
+		queue     = "contract/history-duplicate"
+		requestID = "request/contract/history-duplicate/1"
+	)
+	store := s.storeFor(queue)
+	entry := s.entry(queue, requestID, "state/1", 1735689600000, 1)
+	require.NoError(s.T(), store.Create(s.ctx, entry))
+
+	err := store.Create(s.ctx, entry)
+	assert.ErrorIs(s.T(), err, storage.ErrAlreadyExists)
+
+	got, err := store.Get(s.ctx, requestID, entry.ID)
+	require.NoError(s.T(), err)
+	assert.Equal(s.T(), entry, got)
+}
+
+// TestRequestLogStore_GetNotFound verifies a missing stable identity returns ErrNotFound.
+func (s *RequestLogStoreContractSuite) TestRequestLogStore_GetNotFound() {
+	_, err := s.storeFor("contract/history-missing").Get(s.ctx, "request/missing/1", "state/1")
+	assert.True(s.T(), storage.IsNotFound(err))
+}
+
+// TestRequestLogStore_List verifies chronological ordering and equal-time tie breaking.
+func (s *RequestLogStoreContractSuite) TestRequestLogStore_List() {
+	const (
+		queue     = "contract/history-list"
+		requestID = "request/contract/history-list/1"
+	)
+	store := s.storeFor(queue)
+	last := s.entry(queue, requestID, "state/z", 2000, 3)
+	first := s.entry(queue, requestID, "state/a", 1000, 1)
+	second := s.entry(queue, requestID, "state/b", 1000, 2)
+	for _, entry := range []entity.RequestLog{last, second, first} {
+		require.NoError(s.T(), store.Create(s.ctx, entry))
+	}
+
+	logs, err := store.List(s.ctx, requestID)
+	require.NoError(s.T(), err)
+	assert.Equal(s.T(), []entity.RequestLog{first, second, last}, logs)
+}
+
+// TestRequestLogStore_QueueIsolation verifies identical request and entry IDs remain queue-scoped.
+func (s *RequestLogStoreContractSuite) TestRequestLogStore_QueueIsolation() {
+	const requestID = "request/shared/1"
+	entryA := s.entry("contract/history-a", requestID, "state/1", 1000, 1)
+	entryB := s.entry("contract/history-b", requestID, "state/1", 2000, 1)
+	require.NoError(s.T(), s.storeFor(entryA.Queue).Create(s.ctx, entryA))
+	require.NoError(s.T(), s.storeFor(entryB.Queue).Create(s.ctx, entryB))
+
+	gotA, err := s.storeFor(entryA.Queue).Get(s.ctx, requestID, entryA.ID)
+	require.NoError(s.T(), err)
+	assert.Equal(s.T(), entryA, gotA)
+
+	gotB, err := s.storeFor(entryB.Queue).Get(s.ctx, requestID, entryB.ID)
+	require.NoError(s.T(), err)
+	assert.Equal(s.T(), entryB, gotB)
+}
+
 // BuildStoreContractSuite defines contract tests for storage.BuildStore.
 // All BuildStore implementations must pass these tests.
 type BuildStoreContractSuite struct {

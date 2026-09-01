@@ -250,6 +250,395 @@ func (x *IngestResponse) GetId() string {
 	return ""
 }
 
+// GetRequestHistoryByIDRequest selects one request history by the ID returned from Ingest.
+type GetRequestHistoryByIDRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Logical queue containing the request.
+	Queue string `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
+	// Globally unique request identifier returned from Ingest.
+	RequestId     string `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetRequestHistoryByIDRequest) Reset() {
+	*x = GetRequestHistoryByIDRequest{}
+	mi := &file_stovepipe_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetRequestHistoryByIDRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetRequestHistoryByIDRequest) ProtoMessage() {}
+
+func (x *GetRequestHistoryByIDRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetRequestHistoryByIDRequest.ProtoReflect.Descriptor instead.
+func (*GetRequestHistoryByIDRequest) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *GetRequestHistoryByIDRequest) GetQueue() string {
+	if x != nil {
+		return x.Queue
+	}
+	return ""
+}
+
+func (x *GetRequestHistoryByIDRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+// GetRequestHistoryByURIRequest selects retained request histories for an exact commit URI.
+type GetRequestHistoryByURIRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Logical queue containing the request.
+	Queue string `protobuf:"bytes,1,opt,name=queue,proto3" json:"queue,omitempty"`
+	// Exact VCS-agnostic commit URI whose request histories are selected.
+	Uri           string `protobuf:"bytes,2,opt,name=uri,proto3" json:"uri,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetRequestHistoryByURIRequest) Reset() {
+	*x = GetRequestHistoryByURIRequest{}
+	mi := &file_stovepipe_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetRequestHistoryByURIRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetRequestHistoryByURIRequest) ProtoMessage() {}
+
+func (x *GetRequestHistoryByURIRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetRequestHistoryByURIRequest.ProtoReflect.Descriptor instead.
+func (*GetRequestHistoryByURIRequest) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *GetRequestHistoryByURIRequest) GetQueue() string {
+	if x != nil {
+		return x.Queue
+	}
+	return ""
+}
+
+func (x *GetRequestHistoryByURIRequest) GetUri() string {
+	if x != nil {
+		return x.Uri
+	}
+	return ""
+}
+
+// HistoryEvent is one retained request state or lifecycle event.
+type HistoryEvent struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Opaque stable identity of this logical occurrence within the request.
+	EventId string `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
+	// Occurrence time in Unix milliseconds.
+	TimestampMs int64 `protobuf:"varint,2,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`
+	// Exactly one occurrence kind is populated.
+	//
+	// Types that are valid to be assigned to Occurrence:
+	//
+	//	*HistoryEvent_RequestState
+	//	*HistoryEvent_Event
+	Occurrence isHistoryEvent_Occurrence `protobuf_oneof:"occurrence"`
+	// Newer request that caused a superseded state. Empty when not applicable.
+	SupersededByRequestId string `protobuf:"bytes,5,opt,name=superseded_by_request_id,json=supersededByRequestId,proto3" json:"superseded_by_request_id,omitempty"`
+	// Build associated with the occurrence. Empty when no build applies.
+	BuildId string `protobuf:"bytes,6,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
+	// Stable domain reason for a terminal request outcome. Empty otherwise.
+	OutcomeReason string `protobuf:"bytes,7,opt,name=outcome_reason,json=outcomeReason,proto3" json:"outcome_reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HistoryEvent) Reset() {
+	*x = HistoryEvent{}
+	mi := &file_stovepipe_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HistoryEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HistoryEvent) ProtoMessage() {}
+
+func (x *HistoryEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HistoryEvent.ProtoReflect.Descriptor instead.
+func (*HistoryEvent) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *HistoryEvent) GetEventId() string {
+	if x != nil {
+		return x.EventId
+	}
+	return ""
+}
+
+func (x *HistoryEvent) GetTimestampMs() int64 {
+	if x != nil {
+		return x.TimestampMs
+	}
+	return 0
+}
+
+func (x *HistoryEvent) GetOccurrence() isHistoryEvent_Occurrence {
+	if x != nil {
+		return x.Occurrence
+	}
+	return nil
+}
+
+func (x *HistoryEvent) GetRequestState() string {
+	if x != nil {
+		if x, ok := x.Occurrence.(*HistoryEvent_RequestState); ok {
+			return x.RequestState
+		}
+	}
+	return ""
+}
+
+func (x *HistoryEvent) GetEvent() string {
+	if x != nil {
+		if x, ok := x.Occurrence.(*HistoryEvent_Event); ok {
+			return x.Event
+		}
+	}
+	return ""
+}
+
+func (x *HistoryEvent) GetSupersededByRequestId() string {
+	if x != nil {
+		return x.SupersededByRequestId
+	}
+	return ""
+}
+
+func (x *HistoryEvent) GetBuildId() string {
+	if x != nil {
+		return x.BuildId
+	}
+	return ""
+}
+
+func (x *HistoryEvent) GetOutcomeReason() string {
+	if x != nil {
+		return x.OutcomeReason
+	}
+	return ""
+}
+
+type isHistoryEvent_Occurrence interface {
+	isHistoryEvent_Occurrence()
+}
+
+type HistoryEvent_RequestState struct {
+	// Durable request state reached by the request.
+	RequestState string `protobuf:"bytes,3,opt,name=request_state,json=requestState,proto3,oneof"`
+}
+
+type HistoryEvent_Event struct {
+	// Event that occurred without changing the request state.
+	Event string `protobuf:"bytes,4,opt,name=event,proto3,oneof"`
+}
+
+func (*HistoryEvent_RequestState) isHistoryEvent_Occurrence() {}
+
+func (*HistoryEvent_Event) isHistoryEvent_Occurrence() {}
+
+// RequestHistory identifies one request and contains its ordered events.
+type RequestHistory struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Globally unique request identifier.
+	RequestId string `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// Events ordered by occurrence time and stable event identity.
+	Events        []*HistoryEvent `protobuf:"bytes,2,rep,name=events,proto3" json:"events,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RequestHistory) Reset() {
+	*x = RequestHistory{}
+	mi := &file_stovepipe_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RequestHistory) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RequestHistory) ProtoMessage() {}
+
+func (x *RequestHistory) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RequestHistory.ProtoReflect.Descriptor instead.
+func (*RequestHistory) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *RequestHistory) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *RequestHistory) GetEvents() []*HistoryEvent {
+	if x != nil {
+		return x.Events
+	}
+	return nil
+}
+
+// GetRequestHistoryByIDResponse contains all retained events for one request.
+type GetRequestHistoryByIDResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Events ordered by occurrence time and stable event identity.
+	Events        []*HistoryEvent `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetRequestHistoryByIDResponse) Reset() {
+	*x = GetRequestHistoryByIDResponse{}
+	mi := &file_stovepipe_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetRequestHistoryByIDResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetRequestHistoryByIDResponse) ProtoMessage() {}
+
+func (x *GetRequestHistoryByIDResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetRequestHistoryByIDResponse.ProtoReflect.Descriptor instead.
+func (*GetRequestHistoryByIDResponse) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *GetRequestHistoryByIDResponse) GetEvents() []*HistoryEvent {
+	if x != nil {
+		return x.Events
+	}
+	return nil
+}
+
+// GetRequestHistoryByURIResponse contains all retained request histories for an exact URI.
+type GetRequestHistoryByURIResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Histories ordered by numeric request-ID counter, then request ID.
+	Histories     []*RequestHistory `protobuf:"bytes,1,rep,name=histories,proto3" json:"histories,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetRequestHistoryByURIResponse) Reset() {
+	*x = GetRequestHistoryByURIResponse{}
+	mi := &file_stovepipe_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetRequestHistoryByURIResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetRequestHistoryByURIResponse) ProtoMessage() {}
+
+func (x *GetRequestHistoryByURIResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_stovepipe_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetRequestHistoryByURIResponse.ProtoReflect.Descriptor instead.
+func (*GetRequestHistoryByURIResponse) Descriptor() ([]byte, []int) {
+	return file_stovepipe_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *GetRequestHistoryByURIResponse) GetHistories() []*RequestHistory {
+	if x != nil {
+		return x.Histories
+	}
+	return nil
+}
+
 var File_stovepipe_proto protoreflect.FileDescriptor
 
 const file_stovepipe_proto_rawDesc = "" +
@@ -265,10 +654,37 @@ const file_stovepipe_proto_rawDesc = "" +
 	"\rIngestRequest\x12\x14\n" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\" \n" +
 	"\x0eIngestResponse\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id2\xcb\x01\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"S\n" +
+	"\x1cGetRequestHistoryByIDRequest\x12\x14\n" +
+	"\x05queue\x18\x01 \x01(\tR\x05queue\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x02 \x01(\tR\trequestId\"G\n" +
+	"\x1dGetRequestHistoryByURIRequest\x12\x14\n" +
+	"\x05queue\x18\x01 \x01(\tR\x05queue\x12\x10\n" +
+	"\x03uri\x18\x02 \x01(\tR\x03uri\"\x94\x02\n" +
+	"\fHistoryEvent\x12\x19\n" +
+	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12!\n" +
+	"\ftimestamp_ms\x18\x02 \x01(\x03R\vtimestampMs\x12%\n" +
+	"\rrequest_state\x18\x03 \x01(\tH\x00R\frequestState\x12\x16\n" +
+	"\x05event\x18\x04 \x01(\tH\x00R\x05event\x127\n" +
+	"\x18superseded_by_request_id\x18\x05 \x01(\tR\x15supersededByRequestId\x12\x19\n" +
+	"\bbuild_id\x18\x06 \x01(\tR\abuildId\x12%\n" +
+	"\x0eoutcome_reason\x18\a \x01(\tR\routcomeReasonB\f\n" +
+	"\n" +
+	"occurrence\"q\n" +
+	"\x0eRequestHistory\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12@\n" +
+	"\x06events\x18\x02 \x03(\v2(.uber.submitqueue.stovepipe.HistoryEventR\x06events\"a\n" +
+	"\x1dGetRequestHistoryByIDResponse\x12@\n" +
+	"\x06events\x18\x01 \x03(\v2(.uber.submitqueue.stovepipe.HistoryEventR\x06events\"j\n" +
+	"\x1eGetRequestHistoryByURIResponse\x12H\n" +
+	"\thistories\x18\x01 \x03(\v2*.uber.submitqueue.stovepipe.RequestHistoryR\thistories2\xf0\x03\n" +
 	"\tStovepipe\x12[\n" +
 	"\x04Ping\x12'.uber.submitqueue.stovepipe.PingRequest\x1a(.uber.submitqueue.stovepipe.PingResponse\"\x00\x12a\n" +
-	"\x06Ingest\x12).uber.submitqueue.stovepipe.IngestRequest\x1a*.uber.submitqueue.stovepipe.IngestResponse\"\x00Be\n" +
+	"\x06Ingest\x12).uber.submitqueue.stovepipe.IngestRequest\x1a*.uber.submitqueue.stovepipe.IngestResponse\"\x00\x12\x8e\x01\n" +
+	"\x15GetRequestHistoryByID\x128.uber.submitqueue.stovepipe.GetRequestHistoryByIDRequest\x1a9.uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse\"\x00\x12\x91\x01\n" +
+	"\x16GetRequestHistoryByURI\x129.uber.submitqueue.stovepipe.GetRequestHistoryByURIRequest\x1a:.uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse\"\x00Be\n" +
 	"\x1ecom.uber.submitqueue.stovepipeB\x0eStovepipeProtoP\x01Z1github.com/uber/submitqueue/api/stovepipe/protopbb\x06proto3"
 
 var (
@@ -283,23 +699,36 @@ func file_stovepipe_proto_rawDescGZIP() []byte {
 	return file_stovepipe_proto_rawDescData
 }
 
-var file_stovepipe_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_stovepipe_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_stovepipe_proto_goTypes = []any{
-	(*PingRequest)(nil),    // 0: uber.submitqueue.stovepipe.PingRequest
-	(*PingResponse)(nil),   // 1: uber.submitqueue.stovepipe.PingResponse
-	(*IngestRequest)(nil),  // 2: uber.submitqueue.stovepipe.IngestRequest
-	(*IngestResponse)(nil), // 3: uber.submitqueue.stovepipe.IngestResponse
+	(*PingRequest)(nil),                    // 0: uber.submitqueue.stovepipe.PingRequest
+	(*PingResponse)(nil),                   // 1: uber.submitqueue.stovepipe.PingResponse
+	(*IngestRequest)(nil),                  // 2: uber.submitqueue.stovepipe.IngestRequest
+	(*IngestResponse)(nil),                 // 3: uber.submitqueue.stovepipe.IngestResponse
+	(*GetRequestHistoryByIDRequest)(nil),   // 4: uber.submitqueue.stovepipe.GetRequestHistoryByIDRequest
+	(*GetRequestHistoryByURIRequest)(nil),  // 5: uber.submitqueue.stovepipe.GetRequestHistoryByURIRequest
+	(*HistoryEvent)(nil),                   // 6: uber.submitqueue.stovepipe.HistoryEvent
+	(*RequestHistory)(nil),                 // 7: uber.submitqueue.stovepipe.RequestHistory
+	(*GetRequestHistoryByIDResponse)(nil),  // 8: uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse
+	(*GetRequestHistoryByURIResponse)(nil), // 9: uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse
 }
 var file_stovepipe_proto_depIdxs = []int32{
-	0, // 0: uber.submitqueue.stovepipe.Stovepipe.Ping:input_type -> uber.submitqueue.stovepipe.PingRequest
-	2, // 1: uber.submitqueue.stovepipe.Stovepipe.Ingest:input_type -> uber.submitqueue.stovepipe.IngestRequest
-	1, // 2: uber.submitqueue.stovepipe.Stovepipe.Ping:output_type -> uber.submitqueue.stovepipe.PingResponse
-	3, // 3: uber.submitqueue.stovepipe.Stovepipe.Ingest:output_type -> uber.submitqueue.stovepipe.IngestResponse
-	2, // [2:4] is the sub-list for method output_type
-	0, // [0:2] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	6, // 0: uber.submitqueue.stovepipe.RequestHistory.events:type_name -> uber.submitqueue.stovepipe.HistoryEvent
+	6, // 1: uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse.events:type_name -> uber.submitqueue.stovepipe.HistoryEvent
+	7, // 2: uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse.histories:type_name -> uber.submitqueue.stovepipe.RequestHistory
+	0, // 3: uber.submitqueue.stovepipe.Stovepipe.Ping:input_type -> uber.submitqueue.stovepipe.PingRequest
+	2, // 4: uber.submitqueue.stovepipe.Stovepipe.Ingest:input_type -> uber.submitqueue.stovepipe.IngestRequest
+	4, // 5: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDRequest
+	5, // 6: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:input_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIRequest
+	1, // 7: uber.submitqueue.stovepipe.Stovepipe.Ping:output_type -> uber.submitqueue.stovepipe.PingResponse
+	3, // 8: uber.submitqueue.stovepipe.Stovepipe.Ingest:output_type -> uber.submitqueue.stovepipe.IngestResponse
+	8, // 9: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByID:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByIDResponse
+	9, // 10: uber.submitqueue.stovepipe.Stovepipe.GetRequestHistoryByURI:output_type -> uber.submitqueue.stovepipe.GetRequestHistoryByURIResponse
+	7, // [7:11] is the sub-list for method output_type
+	3, // [3:7] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_stovepipe_proto_init() }
@@ -307,13 +736,17 @@ func file_stovepipe_proto_init() {
 	if File_stovepipe_proto != nil {
 		return
 	}
+	file_stovepipe_proto_msgTypes[6].OneofWrappers = []any{
+		(*HistoryEvent_RequestState)(nil),
+		(*HistoryEvent_Event)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_stovepipe_proto_rawDesc), len(file_stovepipe_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

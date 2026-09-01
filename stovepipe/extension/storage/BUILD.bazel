@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "build_store.go",
         "queue_store.go",
+        "request_log_store.go",
         "request_store.go",
         "request_uri_store.go",
         "storage.go",

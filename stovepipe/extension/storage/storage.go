@@ -75,6 +75,9 @@ type Storage interface {
 	// GetRequestURIStore returns the RequestURIStore instance.
 	GetRequestURIStore() RequestURIStore
 
+	// GetRequestLogStore returns the RequestLogStore instance.
+	GetRequestLogStore() RequestLogStore
+
 	// GetQueueStore returns the QueueStore instance.
 	GetQueueStore() QueueStore
 

@@ -24,10 +24,13 @@ import (
 	"fmt"
 
 	"github.com/uber-go/tally"
+	basehook "github.com/uber/submitqueue/api/base/hook"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
+	platformhook "github.com/uber/submitqueue/platform/hook"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
+	"github.com/uber/submitqueue/stovepipe/core/hookevent"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/entity"
@@ -113,6 +116,14 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	switch request.State {
 	case entity.RequestStateProcessing:
+		// Announce here as well as at admit: this is the only path a redelivery
+		// takes once the transition is durable, so an admit that failed after
+		// persisting would otherwise lose the start event for good. The event id
+		// is derived from the transition, so a repeat carries the id the first
+		// attempt would have and a consumer deduplicates on it.
+		if err := c.publishHookEvent(ctx, request, hookevent.NewValidationRepositoryStarted(request)); err != nil {
+			return err
+		}
 		if err := c.publishBuild(ctx, request.ID, request.Queue); err != nil {
 			metrics.NamedCounter(c.metricsScope, _opName, "publish_errors", 1, metrics.TagsFromContext(ctx)...)
 			return fmt.Errorf("failed to publish request %s to build: %w", request.ID, err)
@@ -250,6 +261,10 @@ func (c *Controller) admitLatestHead(ctx context.Context, store storage.Storage,
 		// Lost the admit race: another delivery advanced this request. Release and skip.
 		c.releaseBuildSlot(ctx, store, request.Queue)
 		return nil
+	}
+
+	if err := c.publishHookEvent(ctx, request, hookevent.NewValidationRepositoryStarted(request)); err != nil {
+		return err
 	}
 
 	if err := c.publishBuild(ctx, request.ID, request.Queue); err != nil {
@@ -471,6 +486,33 @@ func (c *Controller) publishBuild(ctx context.Context, id, queue string) error {
 	if err := publish.Message(ctx, c.registry, stovepipemq.TopicKeyBuild, publish.IntentID(id), payload, id); err != nil {
 		return fmt.Errorf("failed to publish build request: %w", err)
 	}
+	return nil
+}
+
+// publishHookEvent announces a lifecycle transition on the hook topic.
+//
+// Published only once the transition is durable: the payload names the request
+// rather than snapshotting it, so a hook that reloads it must not find a request
+// whose strategy and baseline are still unwritten.
+//
+// Partitioning by request id matches the process topic's own, carrying
+// per-request ordering across the seam.
+func (c *Controller) publishHookEvent(ctx context.Context, request entity.Request, event *basehook.HookEvent) error {
+	if err := platformhook.Publish(ctx, c.registry, event, request.ID); err != nil {
+		metrics.NamedCounter(c.metricsScope, _opName, "hook_errors", 1, metrics.TagsFromContext(ctx)...)
+		return fmt.Errorf("failed to announce %s for request %s: %w", event.GetType(), request.ID, err)
+	}
+
+	metrics.NamedCounter(c.metricsScope, _opName, "hook_events_published", 1,
+		metrics.TagsFromContext(ctx, metrics.NewTag("event_type", event.GetType()))...,
+	)
+	c.logger.Debugw("announced validation event",
+		"queue", request.Queue,
+		"request_id", request.ID,
+		"uri", request.URI,
+		"event_type", event.GetType(),
+		"event_id", event.GetId(),
+	)
 	return nil
 }
 
