@@ -4,21 +4,23 @@ The gateway is the RPC entry point to SubmitQueue. It accepts `Land`, `Cancel`, 
 
 ## Request receipts and current summaries
 
-`Land` creates gateway-owned receipt projections before publishing the request:
+`Land` first creates an internal request summary in `accepting` state. That receipt prevents a failed publish from exposing work that was never admitted. After the start message is published, the gateway records the `accepted` log through the request materializer.
 
-- An authoritative request summary keyed by sqid.
-- One exact change-URI mapping per submitted URI.
-- A queue-ordered receipt projection used by `List`.
+The materializer appends the log, chooses the winning current status, and activates or repairs the public projections:
 
-`GetRequestSummaryByID` and `GetRequestSummaryByChangeURI` read authoritative summaries. `List` reads the queue projection and may briefly lag those summaries while eventual repair converges.
+- The authoritative request summary keyed by sqid.
+- One change-URI mapping per submitted URI.
+- The queue-ordered projection used by `List`.
+
+`GetRequestSummaryByID` and `GetRequestSummaryByChangeURI` read authoritative summaries. `List` reads the queue projection and may briefly lag while later log materialization repairs a partial attempt. If recording `accepted` fails after publication, `Land` still succeeds because subsequent pipeline logs can advance the internal `accepting` summary and create the public projections.
 
 ## Request log ownership
 
 The gateway owns the request log read model and is the only service that reads it.
 
-- For statuses produced synchronously by the gateway, such as `accepted` on `Land` and `cancelling` on `Cancel`, the gateway persists the event through the shared request-log materializer before returning or publishing.
+- `Land` publishes first and then attempts to materialize `accepted`; publication is its success boundary. `Cancel` materializes `cancelling` before publishing so the user's intent is visible when the RPC returns.
 - For statuses produced downstream, the orchestrator publishes entries to the `log` topic through `submitqueue/core/request.PublishLog`. The gateway consumes that topic and persists each entry through the same materializer.
-- Orchestrator DLQ reconciliation materializes terminal repairs directly so the DLQ delivery remains unacknowledged until the log and public projections converge.
+- Orchestrator DLQ reconciliation transitions durable request state and publishes terminal log entries to the same `log` topic; the gateway remains the materializer.
 - `GetRequestHistoryByID` and `GetRequestHistoryByChangeURI` read retained request-log rows directly.
 
 The materializer appends every audit event, selects the current authoritative winner, and repairs the queue projection. The normal orchestrator pipeline does not read or write the request-log store directly.

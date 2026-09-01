@@ -6,9 +6,7 @@ Pluggable persistence interfaces for SubmitQueue entities (requests, batches, de
 
 Storage follows the extension contract: the queue-scoped store aggregate is resolved per queue through a factory keyed by queue name, mirroring how every decision/action extension resolves its implementation. A resolved aggregate is bound to its queue — entity arguments whose queue disagrees with the binding are rejected, queue-keyed reads are implicitly scoped, and the host wiring decides which backend serves which queue (single shared backend by default).
 
-Three read-model stores are deliberately global rather than queue-scoped, because their lookups start from identifiers that arrive without queue context (a bare request ID or change URI at the status API): the request log, the request summary, and the change-URI mapping. They are injected individually as standalone seams, following the gateway's per-store injection. The queue registry (`queueconfig`) was never part of this aggregate and stays the registry the factory sits beside.
-
-The classification rule: a store is queue-scoped when every read path authoritatively holds the queue before the first read, and global when any read path begins from an identifier that arrives without queue context. Entity IDs are opaque — no reader may derive the queue from an ID prefix; the queue travels explicitly on payloads and requests.
+Every entity and read-model store is a member of the queue-scoped `Storage` aggregate returned by `Factory.For`. Gateway read requests therefore carry the queue explicitly before resolving request summaries, logs, URI mappings, or queue-list projections. Entity IDs remain opaque — readers do not derive the queue from an ID prefix.
 
 ## Optimistic locking contract
 
@@ -48,7 +46,7 @@ A `Get` immediately following a successful write (`Create`/`Update`) — by the 
 
 ## Key-value contract
 
-Store interfaces are designed for the storage technology *space*, not for SQL (see the Extensions section of the repo [AGENTS.md](../../../../AGENTS.md)): every method must be satisfiable by a plain key-value backend (DynamoDB, Bigtable, an in-memory map) as cheaply as by MySQL. Concretely, a store exposes only get/put/conditional-update **by primary key**. No lookups by other attributes, no listings filtered server-side, no joins.
+Store interfaces are designed for the storage technology *space*, not for SQL (see the Extensions section of the repo [AGENTS.md](../../../AGENTS.md)): every method must be satisfiable by a plain key-value backend (DynamoDB, Bigtable, an in-memory map) as cheaply as by MySQL. Contracts use point operations by complete primary key and deliberate bounded prefix/range reads where the lookup fields are leading components of the primary key. They do not require secondary-index lookups, joins, or arbitrary server-side predicates.
 
 **The smell test is the index.** If implementing a proposed store method in MySQL requires adding a secondary index (`KEY idx_*`) to the schema, the method is a query-by-attribute in disguise and the contract has left the key-value space — a KV backend would need a global secondary index or a hand-maintained index table to fake it. Treat a new `KEY` line in a schema diff as a design review flag, not a tuning detail.
 
