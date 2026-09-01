@@ -29,7 +29,7 @@ const (
 	rejectHeadNotSpeculating rejection = "head_not_speculating"
 	// rejectMalformedPath is a path whose assumptions do not line up with its
 	// head's dependency list: one missing or extra, a duplicate, a wrong head,
-	// or a made-up assumption value.
+	// an assumption out of queue order, or a made-up assumption value.
 	rejectMalformedPath rejection = "malformed_path"
 	// rejectBrokenAssumption is a path with an assumption a finished
 	// dependency has already proven wrong.
@@ -122,7 +122,13 @@ func rejectionReason(proposal entity.Speculation, snap snapshot) (rejection, boo
 
 // isWellFormed reports whether a path is a proper guess about its head:
 // exactly one assumption for each of the head's dependencies, no more and no
-// fewer, and every assumption a real value.
+// fewer, in the head's dependency order, and every assumption a real value.
+//
+// Order is load-bearing: Base() projects the path positionally, so a path
+// whose dependencies are permuted describes a stack the build runner applied
+// in a different order — a different tree, which no verdict may count as the
+// combination its assumptions name. With the length check and position-wise
+// equality, a missing, extra, or duplicate dependency is also impossible.
 //
 // A malformed path is not merely suboptimal, it is unmergeable — the merge
 // preconditions are read off the path's assumptions (see mergeablePath), so a
@@ -135,16 +141,10 @@ func isWellFormed(path entity.SpeculationPath, head entity.Batch) bool {
 		return false
 	}
 
-	required := make(map[string]struct{}, len(head.Dependencies))
-	for _, dep := range head.Dependencies {
-		required[dep] = struct{}{}
-	}
-
-	for _, dep := range path.Dependencies {
-		if _, ok := required[dep.Batch]; !ok {
+	for i, dep := range path.Dependencies {
+		if dep.Batch != head.Dependencies[i] {
 			return false
 		}
-		delete(required, dep.Batch)
 
 		switch dep.Assumption {
 		case entity.DependencyAssumptionSucceeds,
@@ -154,7 +154,7 @@ func isWellFormed(path entity.SpeculationPath, head entity.Batch) bool {
 		}
 	}
 
-	return len(required) == 0
+	return true
 }
 
 // findPath returns the entry for a path ID in the set.

@@ -24,7 +24,8 @@
 // speculation everything is serial: C waits for B, B waits for A. Speculation
 // builds a batch against a guess about how its dependencies turn out. When
 // the guess holds, the batch merges the moment the guessed-on dependencies
-// land — it never waits for a build of its own to start afterwards.
+// land. If passed paths cover every possible outcome, the batch can merge
+// before those dependencies settle.
 //
 // # Paths
 //
@@ -46,6 +47,8 @@
 //
 // Fund both and every future is covered:
 //
+//   - While A is still unresolved, both P1 and P2 passing lets B bypass A and
+//     merge immediately: either possible future has already been validated.
 //   - A succeeds and P1 passed: B merges the moment A lands. P2's guess
 //     ("A fails") is broken — it can no longer come true — so its build is
 //     cancelled to free the slot.
@@ -75,9 +78,8 @@
 // building, and every pending, building, and cancelling path holds its slot
 // until its build stops. A path is broken once a dependency's actual result
 // proves one of its assumptions wrong: its guess can no longer come true, so
-// its build is cancelled to free the slot. A path is superseded when a
-// sibling path of the same head passes — that sibling will carry the head out
-// of the queue, so the others are cancelled too.
+// its build is cancelled to free the slot. A path is superseded when its head
+// becomes mergeable, so any still-running siblings are cancelled too.
 //
 // Cancelling is intent, not fact: the build keeps its slot until CI actually
 // stops it, and only an observation of that stop (or proof nothing was ever
@@ -89,8 +91,8 @@
 //
 // # The life of a batch, as seen from here
 //
-//	Created ──admit──► Speculating ──┬── merge ──► Merging   (merge stage takes over)
-//	                                 └── fail ───► Failed
+//	Created ──admit──► Speculating ──┬── merge or bypass ──► Merging
+//	                                 └── fail ─────────────► Failed
 //	user cancel (cancel stage):
 //	   ... ──► Cancelling ── every path stopped ──► Cancelled
 //

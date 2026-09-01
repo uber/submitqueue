@@ -33,9 +33,9 @@ import (
 // snap.speculating holding the heads still open to new work.
 //
 // Everything here is a fact, not a choice: a path a resolved dependency ruled
-// out is dead, a head whose passed build's assumptions all came true
-// merges, and a batch the user cancelled is finished once its last build
-// stops. Finalizing before the Speculator is asked is what keeps its work from
+// out is dead, a head whose passed builds establish a merge verdict merges,
+// and a batch the user cancelled is finished once its last build stops.
+// Finalizing before the Speculator is asked is what keeps its work from
 // being wasted — asked first, it would propose builds for a head that is
 // already merging.
 //
@@ -98,7 +98,10 @@ func (c *Controller) finalize(ctx context.Context, snap *snapshot) error {
 				// The winning path carries the head out of the queue; its
 				// siblings cannot help it any more and are still holding CI
 				// slots the rest of the queue could use.
-				winner, _ := mergeablePath(set, *snap)
+				winner, ok := mergeablePath(set, *snap)
+				if !ok {
+					winner, _ = bypassablePath(batch, set, *snap)
+				}
 				if supersede(&set, winner.ID, nowMs) {
 					snap.pathSets[batch.ID] = set
 					snap.markDirty(batch.ID)
@@ -449,9 +452,9 @@ func cancelBrokenPathsInSet(set *entity.SpeculationPathSet, snap snapshot, nowMs
 	})
 }
 
-// supersede stops every path other than the winner. Once one path has passed,
-// its siblings cannot help the head any more — but they are still holding CI
-// slots the rest of the queue could use.
+// supersede stops every path other than the winner once the head can merge.
+// Its live siblings cannot help any more but still hold CI slots the rest of
+// the queue could use.
 func supersede(set *entity.SpeculationPathSet, winnerID string, nowMs int64) bool {
 	return markCancelling(set, nowMs, func(entry entity.SpeculationPathEntry) bool {
 		return entry.ID == winnerID

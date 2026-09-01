@@ -1549,6 +1549,37 @@ func TestRun_MergingHeadReportsSpeculatedAndNoWait(t *testing.T) {
 	assert.Equal(t, head, h.logs[0].Metadata["batch_id"])
 }
 
+func TestRun_BypassesUnsettledDependenciesWithFullCoverage(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	const (
+		succeeds = entity.DependencyAssumptionSucceeds
+		fails    = entity.DependencyAssumptionFails
+	)
+
+	h := newRunHarness(t, ctrl, &scriptedSpeculator{}, []entity.Batch{memberHead()})
+	h.batches.EXPECT().Get(gomock.Any(), dep1).Return(entity.Batch{ID: dep1, State: entity.BatchStateSpeculating}, nil)
+	h.batches.EXPECT().Get(gomock.Any(), dep2).Return(entity.Batch{ID: dep2, State: entity.BatchStateMerging}, nil)
+	h.pathSets.EXPECT().Get(gomock.Any(), head).Return(entity.SpeculationPathSet{
+		Head: head,
+		Paths: []entity.SpeculationPathEntry{
+			passedPath(succeeds, succeeds),
+			passedPath(succeeds, fails),
+			passedPath(fails, succeeds),
+			passedPath(fails, fails),
+		},
+		Version: 1,
+	}, nil).AnyTimes()
+	h.batches.EXPECT().
+		Update(gomock.Any(), updateTo{id: head, state: entity.BatchStateMerging}, int32(1), int32(2)).Return(nil)
+
+	require.NoError(t, h.run(head))
+
+	assert.Equal(t, []string{"submitqueue-merge"}, h.published)
+	assert.Zero(t, h.spec.calls)
+	require.Len(t, h.logs, 1)
+	assert.Equal(t, entity.RequestStatusSpeculated, h.logs[0].Status)
+}
+
 // The merge stage publishes landing as its first act on the dispatch. Both
 // statuses are non-terminal, so the summary is decided on timestamp alone and
 // a speculated sent afterwards would beat the landing it precedes.
