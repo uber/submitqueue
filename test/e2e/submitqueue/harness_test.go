@@ -42,6 +42,7 @@ import (
 	corebatch "github.com/uber/submitqueue/submitqueue/core/batch"
 	"github.com/uber/submitqueue/submitqueue/core/topickey"
 	"github.com/uber/submitqueue/submitqueue/entity"
+	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"go.uber.org/zap"
 )
 
@@ -319,6 +320,39 @@ func (s *E2EIntegrationSuite) awaitBatchState(queue, batchID string, want entity
 		s.log.Logf("Batch %s is %q (want %q)", batchID, got, want)
 		return got == want
 	})
+}
+
+// seedPassedPath writes one already-passed speculation path directly, so a
+// test can hold the other side of a dependency back deterministically.
+func (s *E2EIntegrationSuite) seedPassedPath(queue string, path entity.SpeculationPath) {
+	t := s.T()
+	store, err := s.appStorage.For(queue)
+	require.NoError(t, err, "failed to resolve operating store for queue %s", queue)
+	pathSets := store.GetSpeculationPathSetStore()
+
+	set, err := pathSets.Get(s.ctx, path.Head)
+	if storage.IsNotFound(err) {
+		set = entity.SpeculationPathSet{Queue: queue, Head: path.Head}
+	} else {
+		require.NoError(t, err, "failed to read path set for %s", path.Head)
+	}
+
+	set.Paths = append(set.Paths, entity.SpeculationPathEntry{
+		ID:     path.ID(),
+		Path:   path,
+		Status: entity.SpeculationPathStatusPassed,
+		// Attempt 1 is the first build of a path and matches every entry the
+		// speculate run itself writes.
+		Attempt: 1,
+		Version: 1,
+	})
+	newVersion := set.Version + 1
+	if set.Version == 0 {
+		require.NoError(t, pathSets.Create(s.ctx, set), "failed to create path set for %s", path.Head)
+	} else {
+		require.NoError(t, pathSets.Update(s.ctx, set, set.Version, newVersion),
+			"failed to seed passed path %s for %s", path.ID(), path.Head)
+	}
 }
 
 // strandInCreated puts a batch back into Created, reproducing the state a batch
