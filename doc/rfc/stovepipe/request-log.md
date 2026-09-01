@@ -73,7 +73,7 @@ The retained unit is `entity.RequestLog`:
 
 ```go
 type RequestLog struct {
-    // ID is the stable identity of one logical occurrence within the request. It is opaque, stable across redelivery, and never derived from time or randomness.
+    // ID is the stable identity of one logical occurrence within the request. It is stable across redelivery and never derived from time or randomness.
     ID string
     // Queue is the logical queue containing the request and scopes RequestID.
     Queue string
@@ -145,7 +145,7 @@ Terminal entries retain domain reasons rather than transport mechanisms. Initial
 
 ## Stable IDs and Idempotency
 
-`stovepipe/core/requestlog` constructs opaque IDs from durable identities before passing each record to `Materializer.PersistLog`:
+`stovepipe/core/requestlog` composes readable IDs from durable identities with the same `publish.IntentID` convention used by SubmitQueue before passing each record to `Materializer.PersistLog`. The surrounding `(queue, request_id)` storage key scopes the ID to one request, so a request state entry uses `state/<request-version>` without repeating the request identity:
 
 | Entry | Stable identity inputs |
 |---|---|

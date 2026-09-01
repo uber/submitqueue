@@ -191,29 +191,35 @@ func TestMaterializerStorageFailures(t *testing.T) {
 	}
 }
 
-func TestOccurrenceID(t *testing.T) {
-	assert.Equal(t, occurrenceID("queue", "request", "state", "1"), occurrenceID("queue", "request", "state", "1"))
-	assert.NotEqual(t, occurrenceID("queue", "request", "state", "1"), occurrenceID("queue", "request", "state", "2"))
-	assert.NotEqual(t, occurrenceID("queue", "request", "ab", "c"), occurrenceID("queue", "request", "a", "bc"))
+func TestNewRequestStateLogStableID(t *testing.T) {
+	request := entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateAccepted, Version: 1}
+	first := NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown)
+	retry := NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown)
+	request.Version++
+	next := NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown)
+
+	assert.Equal(t, "state/1", first.ID)
+	assert.Equal(t, first.ID, retry.ID)
+	assert.NotEqual(t, first.ID, next.ID)
 }
 
-func TestSameOccurrenceMetadata(t *testing.T) {
+func TestSameSemanticOccurrenceMetadata(t *testing.T) {
 	base := entity.RequestLog{ID: "log/1", Queue: testQueue, RequestID: testRequestID, State: entity.RequestStateAccepted, RequestVersion: 1}
 	stored := base
 	stored.Metadata = map[string]string{}
-	assert.True(t, sameOccurrence(stored, base))
+	assert.True(t, sameSemanticOccurrence(stored, base))
 
 	stored.Metadata["source"] = "hook"
-	assert.True(t, sameOccurrence(stored, base))
+	assert.True(t, sameSemanticOccurrence(stored, base))
 
 	candidate := base
 	candidate.Metadata = map[string]string{"source": "ingest"}
-	assert.False(t, sameOccurrence(stored, candidate))
+	assert.False(t, sameSemanticOccurrence(stored, candidate))
 
 	candidate.Metadata["source"] = "hook"
 	candidate.Metadata["new_key"] = "new_value"
 	stored.Metadata["new_key"] = "new_value"
-	assert.True(t, sameOccurrence(stored, candidate))
+	assert.True(t, sameSemanticOccurrence(stored, candidate))
 }
 
 func TestMaterializerMetricsIncludeContextTags(t *testing.T) {
@@ -234,7 +240,7 @@ func TestMaterializerMetricsIncludeContextTags(t *testing.T) {
 	}, entity.RequestOutcomeReasonUnknown)
 	require.NoError(t, materializer.PersistLog(ctx, stores, log))
 
-	counter, ok := scope.Snapshot().Counters()["test.persist.created+occurrence=accepted,queue=monorepo/main"]
+	counter, ok := scope.Snapshot().Counters()["test.persist.created+queue=monorepo/main"]
 	require.True(t, ok)
 	assert.EqualValues(t, 1, counter.Value())
 }

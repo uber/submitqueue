@@ -19,9 +19,6 @@ package requestlog
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
@@ -30,6 +27,7 @@ import (
 	"github.com/uber-go/tally"
 
 	"github.com/uber/submitqueue/platform/metrics"
+	"github.com/uber/submitqueue/platform/publish"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 )
@@ -62,7 +60,7 @@ func NewMaterializer(scope tally.Scope) Materializer {
 // NewRequestStateLog constructs the occurrence representing the request's current durable state.
 func NewRequestStateLog(request entity.Request, outcomeReason entity.RequestOutcomeReason) entity.RequestLog {
 	return entity.RequestLog{
-		ID:             occurrenceID(request.Queue, request.ID, _occurrenceKindState, strconv.FormatInt(int64(request.Version), 10)),
+		ID:             publish.IntentID(_occurrenceKindState, strconv.FormatInt(int64(request.Version), 10)),
 		Queue:          request.Queue,
 		RequestID:      request.ID,
 		State:          request.State,
@@ -77,50 +75,38 @@ func (m *materializer) PersistLog(ctx context.Context, stores storage.Storage, l
 	}
 
 	if err := log.Validate(); err != nil {
-		m.count(ctx, "validation_failure", log)
+		m.count(ctx, "validation_failure")
 		return fmt.Errorf("invalid request log occurrence: %w", err)
 	}
 
 	store := stores.GetRequestLogStore()
 	if err := store.Create(ctx, log); err == nil {
-		m.count(ctx, "created", log)
+		m.count(ctx, "created")
 		return nil
 	} else if !errors.Is(err, storage.ErrAlreadyExists) {
-		m.count(ctx, "storage_failure", log)
+		m.count(ctx, "storage_failure")
 		return fmt.Errorf("failed to create request log request_id=%q log_id=%q: %w", log.RequestID, log.ID, err)
 	}
 
 	stored, err := store.Get(ctx, log.RequestID, log.ID)
 	if err != nil {
-		m.count(ctx, "storage_failure", log)
+		m.count(ctx, "storage_failure")
 		return fmt.Errorf("failed to reconcile request log request_id=%q log_id=%q: %w", log.RequestID, log.ID, err)
 	}
-	if !sameOccurrence(stored, log) {
-		m.count(ctx, "conflict", log)
+	if !sameSemanticOccurrence(stored, log) {
+		m.count(ctx, "conflict")
 		return fmt.Errorf("request log conflicts with retained occurrence request_id=%q log_id=%q", log.RequestID, log.ID)
 	}
 
-	m.count(ctx, "identical_existing", log)
+	m.count(ctx, "identical_existing")
 	return nil
 }
 
-func (m *materializer) count(ctx context.Context, counter string, log entity.RequestLog) {
-	metrics.NamedCounter(m.scope, "persist", counter, 1, metrics.TagsFromContext(ctx, occurrenceTag(log))...)
+func (m *materializer) count(ctx context.Context, counter string) {
+	metrics.NamedCounter(m.scope, "persist", counter, 1, metrics.TagsFromContext(ctx)...)
 }
 
-func occurrenceID(queue, requestID string, identity ...string) string {
-	hash := sha256.New()
-	parts := append([]string{queue, requestID}, identity...)
-	var size [8]byte
-	for _, part := range parts {
-		binary.BigEndian.PutUint64(size[:], uint64(len(part)))
-		_, _ = hash.Write(size[:])
-		_, _ = hash.Write([]byte(part))
-	}
-	return "log/" + hex.EncodeToString(hash.Sum(nil))
-}
-
-func sameOccurrence(stored, candidate entity.RequestLog) bool {
+func sameSemanticOccurrence(stored, candidate entity.RequestLog) bool {
 	// This list is the compatibility boundary for duplicate reconciliation. New entity fields do not
 	// become conflict-sensitive until they are deliberately added here.
 	return stored.ID == candidate.ID &&
@@ -142,18 +128,4 @@ func metadataCompatible(stored, candidate map[string]string) bool {
 		}
 	}
 	return true
-}
-
-func occurrenceTag(log entity.RequestLog) metrics.Tag {
-	value := "invalid"
-	switch log.State {
-	case entity.RequestStateAccepted,
-		entity.RequestStateProcessing,
-		entity.RequestStateSuperseded,
-		entity.RequestStateSucceeded,
-		entity.RequestStateFailed,
-		entity.RequestStateCancelled:
-		value = string(log.State)
-	}
-	return metrics.NewTag("occurrence", value)
 }

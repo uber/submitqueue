@@ -54,7 +54,7 @@ const (
 
 // RequestLog is one immutable request state or explanatory lifecycle occurrence.
 type RequestLog struct {
-	// ID is the stable opaque identity of the occurrence within the request.
+	// ID is the stable identity of the occurrence within the request.
 	ID string `json:"id"`
 	// Queue is the logical queue containing the request and scopes RequestID.
 	Queue string `json:"queue"`
