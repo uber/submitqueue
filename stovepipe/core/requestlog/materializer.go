@@ -80,6 +80,8 @@ func (m *materializer) PersistLog(ctx context.Context, stores storage.Storage, l
 	}
 
 	store := stores.GetRequestLogStore()
+	// SubmitQueue deduplicates the message that hands a log to its materializer. Stovepipe has no
+	// log topic, so the retained occurrence ID is the retry boundary instead.
 	if err := store.Create(ctx, log); err == nil {
 		m.count(ctx, "created")
 		return nil

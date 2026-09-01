@@ -147,6 +147,8 @@ Terminal entries retain domain reasons rather than transport mechanisms. Initial
 
 `stovepipe/core/requestlog` composes readable IDs from durable identities with the same `publish.IntentID` convention used by SubmitQueue before passing each record to `Materializer.PersistLog`. The surrounding `(queue, request_id)` storage key scopes the ID to one request, so a request state entry uses `state/<request-version>` without repeating the request identity:
 
+SubmitQueue applies that identity to the message carrying a log to its materializer, while its log store remains append-only and may retain a duplicate after a later materialization step fails. Stovepipe has no intermediate log topic, so it applies the identity to the retained row itself: retrying the direct call reloads the existing occurrence and succeeds only when its semantic content is compatible.
+
 | Entry | Stable identity inputs |
 |---|---|
 | Request state transition | Request ID and request version |
