@@ -98,7 +98,7 @@ brew install grpcurl
 | `make e2e-test` | Run end-to-end tests |
 | `make proto` | Regenerate protobuf files |
 | `make gazelle` | Update BUILD.bazel files |
-| `make local-submitqueue-start` | Start full stack (Gateway + Orchestrator + MySQL) |
+| `make local-submitqueue-start` | Start full workflow stack (Gateway + Orchestrator + Runway + two MySQL databases) |
 | `make local-submitqueue-ps` | Show running containers and ports |
 | `make local-submitqueue-logs` | View logs from all services |
 | `make local-stop` | Stop all services |
@@ -109,10 +109,10 @@ brew install grpcurl
 
 ```bash
 # Run tests for a single package
-bazel test //gateway/controller:controller_test
+bazel test //submitqueue/gateway/controller:go_default_test
 
 # Run a single test function
-bazel test //gateway/controller:controller_test --test_filter=TestLand
+bazel test //submitqueue/gateway/controller:go_default_test --test_filter=TestLand
 
 # Run Gateway integration tests only
 make integration-test-submitqueue-gateway
@@ -120,7 +120,7 @@ make integration-test-submitqueue-gateway
 # Run Orchestrator integration tests only
 make integration-test-submitqueue-orchestrator
 
-# Run extension integration tests only
+# Run SubmitQueue and shared extension integration tests
 make integration-test-extensions
 
 # Run unit tests without cache

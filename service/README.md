@@ -5,7 +5,7 @@ Runnable gRPC servers and clients that wire each domain's controllers and extens
 Each domain has its own subdirectory with a dedicated README:
 
 - [`submitqueue/`](submitqueue/README.md) — the multi-service SubmitQueue domain (Gateway + Orchestrator).
-- [`stovepipe/`](stovepipe/README.md) — the single-service Stovepipe domain (ingest → process pipeline).
+- [`stovepipe/`](stovepipe/README.md) — the single-service Stovepipe domain (ingest → process → build → buildsignal → record).
 - [`runway/`](runway/README.md) — the single-service Runway landing service (consumes the merge queues).
 
 ## Services
@@ -13,8 +13,8 @@ Each domain has its own subdirectory with a dedicated README:
 | Service | Port | Domain | RPCs | Backing stores |
 |---------|------|--------|------|----------------|
 | **SubmitQueue Gateway** | 8081 | `submitqueue` | `Ping`, `Land`, `Cancel`, `GetRequestSummaryByID`, `GetRequestSummaryByChangeURI`, `List`, `GetRequestHistoryByID`, `GetRequestHistoryByChangeURI` | MySQL app + queue |
-| **SubmitQueue Orchestrator** | 8082 | `submitqueue` | `Ping` (+ consumes pipeline topics: start, cancel, validate, batch, dependency-analysis, speculate, build, buildsignal, submitqueue-merge, conclude, log, plus DLQ topics, and the two Runway signal topics) | MySQL app + queue |
-| **Stovepipe** | 8083 | `stovepipe` | `Ping`, `Ingest` (+ consumes the process, build, buildsignal, and record topics, plus DLQ topics) | MySQL storage + queue |
+| **SubmitQueue Orchestrator** | 8082 | `submitqueue` | `Ping` (+ consumes start, cancel, validate, merge-conflict-check-signal, batch, dependency-analysis, speculate, build, buildsignal, submitqueue-merge, merge-signal, conclude, submitqueue-hook, and paired DLQ topics) | MySQL app + queue |
+| **Stovepipe** | 8083 | `stovepipe` | `Ping`, `Ingest` (+ consumes process, build, buildsignal, record, stovepipe-hook, and paired DLQ topics) | MySQL storage + queue |
 | **Runway** | 8086 | `runway` | `Ping` (+ consumes merge-conflict-check & runway-merge topics) | MySQL queue |
 
 Ports above are the `go run` defaults; under Docker Compose each server listens on `:8080` inside its container and is published on a random ephemeral host port (use `make local-*-ps` / `docker port` to discover it).
@@ -24,11 +24,11 @@ Ports above are the `go run` defaults; under Docker Compose each server listens 
 ```
 service/
 ├── submitqueue/
-│   ├── docker-compose.yml              # Full stack (Gateway + Orchestrator + 2x MySQL)
+│   ├── docker-compose.yml              # Full stack (Gateway + Orchestrator + Runway + 2x MySQL)
 │   ├── gateway/
 │   │   ├── server/                     # Gateway server entry point + Dockerfile + compose
-│   │   │   └── queues.yaml             # Per-queue extension profiles
-│   │   └── client/                     # Gateway ping client
+│   │   │   └── queues.yaml             # Gateway valid-queue registry
+│   │   └── client/                     # Gateway command-line client
 │   └── orchestrator/
 │       ├── server/                     # Orchestrator server entry point + Dockerfile + compose
 │       └── client/                     # Orchestrator ping client
@@ -47,7 +47,7 @@ service/
 ### Docker Compose (recommended)
 
 ```bash
-# Full SubmitQueue stack (Gateway + Orchestrator + MySQL)
+# Full SubmitQueue workflow stack (Gateway + Orchestrator + Runway + MySQL)
 make local-submitqueue-start
 make local-submitqueue-gateway-start        # gateway-only stack
 make local-submitqueue-orchestrator-start   # orchestrator-only stack
@@ -98,7 +98,7 @@ go run ./service/runway/server
 
 ```bash
 # Go clients
-go run ./service/submitqueue/gateway/client -addr localhost:8081 -message "hello"
+go run ./service/submitqueue/gateway/client -addr localhost:8081 ping -message "hello"
 go run ./service/submitqueue/orchestrator/client -addr localhost:8082 -message "hello"
 go run ./service/stovepipe/client -addr localhost:8083 -message "hello"
 go run ./service/runway/client -addr localhost:8086 -message "hello"
@@ -110,10 +110,7 @@ make run-client-stovepipe
 make run-client-runway
 ```
 
-Client flags:
-- `-addr`: Server address (default: service-specific port)
-- `-message`: Message to send in the ping request
-- `-timeout`: Request timeout (default: 5s)
+The Gateway client is command-oriented (`ping`, `land`, `status`, `list`, and `watch`); run it without arguments for command-specific usage. The other clients are Ping clients with `-addr`, `-message`, and `-timeout` flags.
 
 ### grpcurl
 
@@ -125,16 +122,18 @@ go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
 ```
 
 ```bash
-# Ping
-grpcurl -plaintext -d '{"message": "hello"}' localhost:8081 uber.submitqueue.gateway.SubmitQueueGateway/Ping
+# Ping services whose reflection descriptors resolve normally
 grpcurl -plaintext -d '{"message": "hello"}' localhost:8082 uber.submitqueue.orchestrator.SubmitQueueOrchestrator/Ping
 grpcurl -plaintext -d '{"message": "hello"}' localhost:8083 uber.submitqueue.stovepipe.Stovepipe/Ping
 grpcurl -plaintext -d '{"message": "hello"}' localhost:8086 uber.runway.Runway/Ping
 
-# List / describe services (reflection is registered on every server)
-grpcurl -plaintext localhost:8081 list
-grpcurl -plaintext localhost:8081 describe uber.submitqueue.gateway.SubmitQueueGateway
+# Gateway: use the repository client, or supply its proto explicitly
+go run ./service/submitqueue/gateway/client -addr localhost:8081 ping -message "hello"
+grpcurl -plaintext -import-path . -proto api/submitqueue/gateway/proto/gateway.proto \
+  -d '{"message": "hello"}' localhost:8081 uber.submitqueue.gateway.SubmitQueueGateway/Ping
 ```
+
+The Gateway registers reflection, but its generated descriptor currently cannot resolve one imported file name. Do not use Gateway reflection-based `list` or `describe`; use the client or pass `-import-path` and `-proto` to grpcurl.
 
 ## API Reference
 
@@ -183,4 +182,3 @@ The gateway owns request receipts, current-status projections, and request-log r
 | Method | Description |
 |--------|-------------|
 | `Ping` | Health check |
-</content>
