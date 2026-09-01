@@ -28,6 +28,9 @@ var ErrPublisherClosed = errors.New("publisher is closed")
 // ErrSubscriberClosed is returned when attempting to subscribe after the subscriber has been closed.
 var ErrSubscriberClosed = errors.New("subscriber is closed")
 
+// ErrInvalidConfig is returned when subscription configuration is invalid.
+var ErrInvalidConfig = errors.New("invalid subscription config")
+
 // ErrAlreadyAcknowledged is returned when attempting to ack/nack a delivery that was already processed
 type ErrAlreadyAcknowledged struct {
 	DeliveryID string

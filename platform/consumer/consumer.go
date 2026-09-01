@@ -489,9 +489,6 @@ func (m *consumer) processDelivery(ctx context.Context, controller Controller, d
 			"elapsed_ms", elapsed.Milliseconds(),
 		)
 
-		// Nack requeues immediately - the visibility timeout spaces retries.
-		// The failure travels with it so that the attempt which finally spends
-		// the retry budget can dead-letter saying why.
 		nackOp := metrics.Begin(controllerScope, "nack", metrics.StorageLatencyBuckets, metrics.TagsFromContext(ctx)...)
 		nackErr := delivery.Nack(ctx, controllerFailure)
 		nackOp.Complete(nackErr)

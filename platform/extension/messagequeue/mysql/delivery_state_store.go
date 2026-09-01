@@ -146,16 +146,18 @@ func (s *sqldeliveryStateStore) MarkAcked(ctx context.Context, consumerGroup, to
 	return nil
 }
 
-// MarkNacked sets invisible_until = now, making the message immediately
-// eligible for redelivery on the next poll.
+// MarkNacked makes the message eligible for redelivery after delayMs.
 // retry_count is NOT incremented here — it is incremented by MarkDelivered on redelivery.
-func (s *sqldeliveryStateStore) MarkNacked(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64) (retErr error) {
+func (s *sqldeliveryStateStore) MarkNacked(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64, delayMs int64) (retErr error) {
 	op := metrics.Begin(s.scope, "mark_nacked", metrics.StorageLatencyBuckets,
 		metrics.NewTag("topic", topic),
 		metrics.NewTag("consumer_group", consumerGroup))
 	defer func() { op.Complete(retErr) }()
 
-	invisibleUntil := time.Now().UnixMilli()
+	if delayMs < 0 || delayMs > maxRetryBackoffMs {
+		return fmt.Errorf("mark nacked topic=%s partition=%s offset=%d: retry delay %d is outside [0, %d]", topic, partitionKey, offset, delayMs, maxRetryBackoffMs)
+	}
+	invisibleUntil := time.Now().UnixMilli() + delayMs
 
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (consumer_group, topic, partition_key, message_offset, acked, invisible_until, retry_count)

@@ -218,9 +218,8 @@ type deliveryStateStore interface {
 	// MarkAcked sets acked = TRUE to indicate this group has processed the message.
 	MarkAcked(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64) error
 
-	// MarkNacked makes the message immediately eligible for redelivery
-	// (invisible_until = now).
-	MarkNacked(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64) error
+	// MarkNacked makes the message eligible for redelivery after delayMs.
+	MarkNacked(ctx context.Context, consumerGroup, topic, partitionKey string, offset int64, delayMs int64) error
 
 	// MarkPostponed sets invisible_until = now + delay, resets retry_count, and
 	// sets the postponed flag. The message becomes a partition barrier until it
