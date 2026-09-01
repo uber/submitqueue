@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
@@ -186,5 +187,34 @@ func TestSameOccurrenceMetadata(t *testing.T) {
 	assert.True(t, sameOccurrence(stored, base))
 
 	stored.Metadata["source"] = "hook"
-	assert.False(t, sameOccurrence(stored, base))
+	assert.True(t, sameOccurrence(stored, base))
+
+	candidate := base
+	candidate.Metadata = map[string]string{"source": "ingest"}
+	assert.False(t, sameOccurrence(stored, candidate))
+
+	candidate.Metadata["source"] = "hook"
+	candidate.Metadata["new_key"] = "new_value"
+	stored.Metadata["new_key"] = "new_value"
+	assert.True(t, sameOccurrence(stored, candidate))
+}
+
+func TestRecorderMetricsIncludeContextTags(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	scope := tally.NewTestScope("test", nil)
+	recorder := &recorder{
+		scope: scope,
+		now:   func() time.Time { return time.UnixMilli(testNowMs) },
+	}
+	store := storagemock.NewMockRequestLogStore(ctrl)
+	store.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+	ctx := metrics.WithContextTags(context.Background(), metrics.NewTag("queue", testQueue))
+
+	require.NoError(t, recorder.RecordRequestState(ctx, store, entity.Request{
+		ID: testRequestID, Queue: testQueue, State: entity.RequestStateAccepted, Version: 1,
+	}, entity.RequestOutcomeReasonUnknown))
+
+	counter, ok := scope.Snapshot().Counters()["test.record.created+occurrence=accepted,queue=monorepo/main"]
+	require.True(t, ok)
+	assert.EqualValues(t, 1, counter.Value())
 }

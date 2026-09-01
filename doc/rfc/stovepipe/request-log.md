@@ -154,7 +154,7 @@ Terminal entries retain domain reasons rather than transport mechanisms. Initial
 | Build finished | Request ID, event kind, and build ID |
 | Validation fact recorded | Request ID, event kind, and whole-repository fact identity |
 
-The controller passes the recorder the `RequestLogStore` from the same queue-scoped storage aggregate used for the source write. The recorder assigns the current time immediately before the first insertion attempt and calls `Create`. If the ID already exists, it loads the stored record and compares every domain field. The first successfully retained timestamp is authoritative and is not compared with a later retry's newly sampled time. Identical domain content is idempotent success; conflicting content is an internal consistency error, and the stored record is never overwritten.
+The controller passes the recorder the `RequestLogStore` from the same queue-scoped storage aggregate used for the source write. The recorder assigns the current time immediately before the first insertion attempt and calls `Create`. If the ID already exists, it loads the stored record and compares the explicitly designated stable semantic fields. The first successfully retained timestamp is authoritative and is not compared with a later retry's newly sampled time. Metadata keys emitted by both records must agree, while a key present on only one record remains compatible so an additive metadata rollout does not turn retries of older occurrences into conflicts. Compatible content is idempotent success; conflicting content is an internal consistency error, and the stored record is never overwritten or enriched.
 
 ## Storage Contract
 

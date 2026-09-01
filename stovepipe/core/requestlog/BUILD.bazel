@@ -18,6 +18,7 @@ go_test(
     srcs = ["recorder_test.go"],
     embed = [":go_default_library"],
     deps = [
+        "//platform/metrics:go_default_library",
         "//stovepipe/entity:go_default_library",
         "//stovepipe/extension/storage:go_default_library",
         "//stovepipe/extension/storage/mock:go_default_library",

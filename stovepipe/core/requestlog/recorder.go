@@ -24,8 +24,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"maps"
-	"reflect"
 	"strconv"
 	"time"
 
@@ -73,33 +71,36 @@ func (r *recorder) RecordRequestState(ctx context.Context, store storage.Request
 
 func (r *recorder) record(ctx context.Context, store storage.RequestLogStore, log entity.RequestLog) error {
 	log.TimestampMs = r.now().UnixMilli()
-	tag := occurrenceTag(log)
 
 	if err := log.Validate(); err != nil {
-		metrics.NamedCounter(r.scope, "record", "validation_failure", 1, tag)
+		r.count(ctx, "validation_failure", log)
 		return fmt.Errorf("invalid request log occurrence: %w", err)
 	}
 
 	if err := store.Create(ctx, log); err == nil {
-		metrics.NamedCounter(r.scope, "record", "created", 1, tag)
+		r.count(ctx, "created", log)
 		return nil
 	} else if !errors.Is(err, storage.ErrAlreadyExists) {
-		metrics.NamedCounter(r.scope, "record", "storage_failure", 1, tag)
+		r.count(ctx, "storage_failure", log)
 		return fmt.Errorf("failed to create request log request_id=%q log_id=%q: %w", log.RequestID, log.ID, err)
 	}
 
 	stored, err := store.Get(ctx, log.RequestID, log.ID)
 	if err != nil {
-		metrics.NamedCounter(r.scope, "record", "storage_failure", 1, tag)
+		r.count(ctx, "storage_failure", log)
 		return fmt.Errorf("failed to reconcile request log request_id=%q log_id=%q: %w", log.RequestID, log.ID, err)
 	}
 	if !sameOccurrence(stored, log) {
-		metrics.NamedCounter(r.scope, "record", "conflict", 1, tag)
+		r.count(ctx, "conflict", log)
 		return fmt.Errorf("request log conflicts with retained occurrence request_id=%q log_id=%q", log.RequestID, log.ID)
 	}
 
-	metrics.NamedCounter(r.scope, "record", "identical_existing", 1, tag)
+	r.count(ctx, "identical_existing", log)
 	return nil
+}
+
+func (r *recorder) count(ctx context.Context, counter string, log entity.RequestLog) {
+	metrics.NamedCounter(r.scope, "record", counter, 1, metrics.TagsFromContext(ctx, occurrenceTag(log))...)
 }
 
 func occurrenceID(queue, requestID string, identity ...string) string {
@@ -115,14 +116,27 @@ func occurrenceID(queue, requestID string, identity ...string) string {
 }
 
 func sameOccurrence(stored, candidate entity.RequestLog) bool {
-	// The first successful insert owns display time; retries compare only the occurrence's domain content.
-	storedMetadata := stored.Metadata
-	candidateMetadata := candidate.Metadata
-	stored.Metadata = nil
-	candidate.Metadata = nil
-	stored.TimestampMs = 0
-	candidate.TimestampMs = 0
-	return reflect.DeepEqual(stored, candidate) && maps.Equal(storedMetadata, candidateMetadata)
+	// This list is the compatibility boundary for duplicate reconciliation. New entity fields do not
+	// become conflict-sensitive until they are deliberately added here.
+	return stored.ID == candidate.ID &&
+		stored.Queue == candidate.Queue &&
+		stored.RequestID == candidate.RequestID &&
+		stored.State == candidate.State &&
+		stored.Event == candidate.Event &&
+		stored.RequestVersion == candidate.RequestVersion &&
+		stored.OutcomeReason == candidate.OutcomeReason &&
+		metadataCompatible(stored.Metadata, candidate.Metadata)
+}
+
+func metadataCompatible(stored, candidate map[string]string) bool {
+	// One-sided keys permit additive metadata rollout without making a retry conflict with an older
+	// immutable row. Values emitted by both versions must still agree.
+	for key, storedValue := range stored {
+		if candidateValue, ok := candidate[key]; ok && candidateValue != storedValue {
+			return false
+		}
+	}
+	return true
 }
 
 func occurrenceTag(log entity.RequestLog) metrics.Tag {
