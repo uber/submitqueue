@@ -103,6 +103,18 @@ func TestFilterProposals_Rejects(t *testing.T) {
 			want: rejectMalformedPath,
 		},
 		{
+			name: "path with dependencies out of queue order",
+			proposal: entity.Speculation{
+				Path: entity.SpeculationPath{Head: head, Dependencies: []entity.PathDependency{
+					{Batch: dep2, Assumption: entity.DependencyAssumptionFails},
+					{Batch: dep1, Assumption: entity.DependencyAssumptionSucceeds},
+				}},
+				Action: entity.PathActionBuild,
+			},
+			snap: checkSnapshot(entity.BatchStateSpeculating),
+			want: rejectMalformedPath,
+		},
+		{
 			name:     "cancel on a path that is not stored",
 			proposal: entity.Speculation{Path: valid, Action: entity.PathActionCancel},
 			snap:     checkSnapshot(entity.BatchStateSpeculating),
@@ -208,12 +220,12 @@ func TestIsWellFormed(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "order does not matter",
+			name: "dependencies out of queue order",
 			path: entity.SpeculationPath{Head: head, Dependencies: []entity.PathDependency{
 				{Batch: dep2, Assumption: entity.DependencyAssumptionSucceeds},
 				{Batch: dep1, Assumption: entity.DependencyAssumptionFails},
 			}},
-			want: true,
+			want: false,
 		},
 		{
 			name: "missing a dependency",
