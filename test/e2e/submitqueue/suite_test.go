@@ -213,6 +213,45 @@ func (s *E2EIntegrationSuite) TestPingOrchestrator() {
 	s.log.Logf("Orchestrator ping: %s", resp.Message)
 }
 
+// TestConflictAnalyzerFailure_ReconcilesFromDLQ drives an unexpected extension
+// failure through the real queue's dead-letter path. The dedicated queue uses
+// an analyzer that always errors, so dependency analysis rejects its batch
+// message instead of producing a normal terminal outcome. The DLQ reconciler
+// must fail both the batch and its request, and preserve the queue's failure
+// context on the public request history.
+func (s *E2EIntegrationSuite) TestConflictAnalyzerFailure_ReconcilesFromDLQ() {
+	t := s.T()
+	const (
+		queue   = "e2e-conflict-error-queue"
+		batchID = queue + "/batch/1"
+	)
+
+	req := s.land(queue, "github://github.example.com/uber/e2e-conflict-error/pull/1/abcdef0123456789abcdef0123456789abcdef01")
+
+	assert.Equal(t, entity.RequestStatusError, s.awaitTerminal(req))
+	assert.Equal(t, entity.RequestStateError, s.terminalState(req))
+	assert.Equal(t, entity.BatchStateFailed, s.batchState(queue, batchID))
+
+	history, err := s.gatewayClient.GetRequestHistoryByID(s.ctx, &gatewaypb.GetRequestHistoryByIDRequest{
+		Sqid:  req.sqid,
+		Queue: req.queue,
+	})
+	require.NoError(t, err)
+
+	var terminal *gatewaypb.HistoryEvent
+	for _, event := range history.Events {
+		if event.Type == string(entity.RequestLogTypeStatus) &&
+			event.Status == string(entity.RequestStatusError) {
+			terminal = event
+		}
+	}
+	require.NotNil(t, terminal, "request history must contain the reconciled terminal error")
+	assert.NotEmpty(t, terminal.LastError)
+	assert.Equal(t, "dependency-analysis", terminal.Metadata["dlq.original_topic"])
+	assert.Equal(t, "1", terminal.Metadata["dlq.failure_count"])
+	assert.NotEmpty(t, terminal.Metadata["dlq.failed_at"])
+}
+
 // TestLand_HappyPath_ReachesLanded drives a single request through the whole
 // pipeline to terminal success on the fully-hermetic e2e-test-queue (no
 // conflicts, fake build succeeds, noop runway signals SUCCEEDED for both the
