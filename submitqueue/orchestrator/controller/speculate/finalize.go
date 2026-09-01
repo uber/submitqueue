@@ -94,13 +94,14 @@ func (c *Controller) finalize(ctx context.Context, snap *snapshot) error {
 				continue
 			}
 
+			bypassed := false
 			if decision == outcomeMerge {
 				// The winning path carries the head out of the queue; its
 				// siblings cannot help it any more and are still holding CI
 				// slots the rest of the queue could use.
 				winner, ok := mergeablePath(set, *snap)
 				if !ok {
-					winner, _ = bypassablePath(batch, set, *snap)
+					winner, bypassed = bypassablePath(batch, set, *snap)
 				}
 				if supersede(&set, winner.ID, nowMs) {
 					snap.pathSets[batch.ID] = set
@@ -118,6 +119,9 @@ func (c *Controller) finalize(ctx context.Context, snap *snapshot) error {
 				// from an outcome that did not land, and the Speculator must
 				// not be offered a head whose set we could not write.
 				continue
+			}
+			if bypassed {
+				metrics.NamedCounter(c.metricsScope, opName, "bypass", 1)
 			}
 			c.recordOutcome(snap, batch.ID, decision)
 			decided++
