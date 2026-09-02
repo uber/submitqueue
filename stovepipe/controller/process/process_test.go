@@ -191,17 +191,22 @@ func expectProcessingLogAndHandoff(t *testing.T, m processMocks, id string, vers
 
 func expectProcessingLog(t *testing.T, m processMocks, id string, version int32) *gomock.Call {
 	t.Helper()
+	return expectStateLog(t, m, id, entity.RequestStateProcessing, version, entity.RequestOutcomeReasonUnknown)
+}
+
+func expectStateLog(t *testing.T, m processMocks, id string, state entity.RequestState, version int32, reason entity.RequestOutcomeReason) *gomock.Call {
+	t.Helper()
 
 	request := entity.Request{
 		ID:      id,
 		Queue:   testQueue,
-		State:   entity.RequestStateProcessing,
+		State:   state,
 		Version: version,
 	}
 	return m.materializer.EXPECT().PersistLog(
 		gomock.Any(),
 		m.store,
-		requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown),
+		requestlog.NewRequestStateLog(request, reason),
 	).Return(nil)
 }
 
@@ -487,11 +492,27 @@ func TestProcess(t *testing.T) {
 		wantRetry  bool
 	}{
 		{
-			name: "superseded is no-op",
+			name: "superseded redelivery repairs its state log",
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
 					ID: testID, Queue: testQueue, State: entity.RequestStateSuperseded, Version: 2,
 				}, nil)
+				expectStateLog(t, m, testID, entity.RequestStateSuperseded, 2, entity.RequestOutcomeReasonSupersededByNewerHead)
+			},
+		},
+		{
+			name:    "superseded redelivery fails when log persistence fails",
+			wantErr: true,
+			setup: func(m processMocks) {
+				request := entity.Request{
+					ID: testID, Queue: testQueue, State: entity.RequestStateSuperseded, Version: 2,
+				}
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+				m.materializer.EXPECT().PersistLog(
+					gomock.Any(),
+					m.store,
+					requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonSupersededByNewerHead),
+				).Return(errors.New("db down"))
 			},
 		},
 		{
@@ -757,7 +778,8 @@ func TestProcess(t *testing.T) {
 				}, nil)
 				superseded := acceptedRequest(testID)
 				superseded.State = entity.RequestStateSuperseded
-				m.reqStore.EXPECT().Update(gomock.Any(), superseded, int32(1), int32(2)).Return(nil)
+				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), superseded, int32(1), int32(2)).Return(nil)
+				expectStateLog(t, m, testID, entity.RequestStateSuperseded, 2, entity.RequestOutcomeReasonSupersededByNewerHead).After(updateCall)
 			},
 		},
 		{
@@ -857,7 +879,32 @@ func TestProcess(t *testing.T) {
 				}, nil)
 				updated := acceptedRequest(testOlderID)
 				updated.State = entity.RequestStateSuperseded
-				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(nil)
+				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(nil)
+				expectStateLog(t, m, testOlderID, entity.RequestStateSuperseded, 2, entity.RequestOutcomeReasonSupersededByNewerHead).After(updateCall)
+			},
+		},
+		{
+			name:    "superseded log failure retries the coalesce step",
+			id:      testOlderID,
+			wantErr: true,
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testOlderID).Return(acceptedRequest(testOlderID), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name:            testQueue,
+					LatestRequestID: testID,
+					Version:         1,
+				}, nil)
+				updated := acceptedRequest(testOlderID)
+				updated.State = entity.RequestStateSuperseded
+				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(nil)
+				request := entity.Request{
+					ID: testOlderID, Queue: testQueue, State: entity.RequestStateSuperseded, Version: 2,
+				}
+				m.materializer.EXPECT().PersistLog(
+					gomock.Any(),
+					m.store,
+					requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonSupersededByNewerHead),
+				).Return(errors.New("db down")).After(updateCall)
 			},
 		},
 		{
@@ -873,9 +920,10 @@ func TestProcess(t *testing.T) {
 				updated := acceptedRequest(testOlderID)
 				updated.State = entity.RequestStateSuperseded
 				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(1), int32(2)).Return(storage.ErrVersionMismatch)
-				m.reqStore.EXPECT().Get(gomock.Any(), testOlderID).Return(entity.Request{
+				reloadCall := m.reqStore.EXPECT().Get(gomock.Any(), testOlderID).Return(entity.Request{
 					ID: testOlderID, Queue: testQueue, State: entity.RequestStateSuperseded, Version: 2,
 				}, nil)
+				expectStateLog(t, m, testOlderID, entity.RequestStateSuperseded, 2, entity.RequestOutcomeReasonSupersededByNewerHead).After(reloadCall)
 			},
 		},
 		{
