@@ -153,3 +153,138 @@ func (s *StovepipeIntegrationSuite) TestIngestEmptyQueue() {
 	_, err := s.client.Ingest(s.ctx, &pb.IngestRequest{Queue: ""})
 	require.Error(t, err, "Ingest with empty queue should fail")
 }
+
+func (s *StovepipeIntegrationSuite) TestRequestHistoryAPIs() {
+	t := s.T()
+	const (
+		queue     = "history-api/main"
+		requestID = "request/history-api/main/7"
+		uri       = "git://history-api/main/abc123"
+	)
+
+	_, err := s.db.Exec(
+		"INSERT INTO request_uri (queue, uri, request_id, version) VALUES (?, ?, ?, ?)",
+		queue, uri, requestID, 1,
+	)
+	require.NoError(t, err)
+	_, err = s.db.Exec(
+		`INSERT INTO request_log
+			(queue, request_id, log_id, timestamp_ms, state, event, request_version, outcome_reason, metadata)
+		 VALUES
+			(?, ?, ?, ?, ?, ?, ?, ?, ?),
+			(?, ?, ?, ?, ?, ?, ?, ?, ?),
+			(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		queue, requestID, "occurrence/001", 1000, "accepted", "", 1, "", `{}`,
+		queue, requestID, "occurrence/002", 2000, "", "build_triggered", 0, "", `{}`,
+		queue, requestID, "occurrence/003", 2000, "succeeded", "", 3, "build_succeeded", `{}`,
+	)
+	require.NoError(t, err)
+
+	var requestRows int
+	require.NoError(t, s.db.QueryRow("SELECT COUNT(*) FROM request WHERE id = ?", requestID).Scan(&requestRows))
+	require.Zero(t, requestRows)
+
+	byID, err := s.client.GetRequestHistoryByID(s.ctx, &pb.GetRequestHistoryByIDRequest{Queue: queue, RequestId: requestID})
+	require.NoError(t, err)
+	assertHistoryEvents(t, byID.Events)
+
+	byURI, err := s.client.GetRequestHistoryByURI(s.ctx, &pb.GetRequestHistoryByURIRequest{Queue: queue, Uri: uri})
+	require.NoError(t, err)
+	require.Len(t, byURI.Histories, 1)
+	assert.Equal(t, requestID, byURI.Histories[0].RequestId)
+	assertHistoryEvents(t, byURI.Histories[0].Events)
+}
+
+func (s *StovepipeIntegrationSuite) TestRequestHistoryAbsence() {
+	t := s.T()
+	const (
+		queue      = "history-api-absence/main"
+		mappedID   = "request/history-api-absence/main/1"
+		mappedURI  = "git://history-api-absence/main/mapped"
+		scopedID   = "request/history-api-absence/main/2"
+		scopedURI  = "git://history-api-absence/main/scoped"
+		missingID  = "request/history-api-absence/main/missing"
+		missingURI = "git://history-api-absence/main/missing"
+		wrongQueue = "history-api-absence/other"
+	)
+
+	_, err := s.db.Exec(
+		"INSERT INTO request_uri (queue, uri, request_id, version) VALUES (?, ?, ?, ?), (?, ?, ?, ?)",
+		queue, mappedURI, mappedID, 1, queue, scopedURI, scopedID, 1,
+	)
+	require.NoError(t, err)
+	_, err = s.db.Exec(
+		`INSERT INTO request_log
+			(queue, request_id, log_id, timestamp_ms, state, event, request_version, outcome_reason, metadata)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		queue, scopedID, "occurrence/001", 1000, "accepted", "", 1, "", `{}`,
+	)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{
+			name: "missing request ID",
+			call: func() error {
+				_, err := s.client.GetRequestHistoryByID(s.ctx, &pb.GetRequestHistoryByIDRequest{Queue: queue, RequestId: missingID})
+				return err
+			},
+		},
+		{
+			name: "missing URI mapping",
+			call: func() error {
+				_, err := s.client.GetRequestHistoryByURI(s.ctx, &pb.GetRequestHistoryByURIRequest{Queue: queue, Uri: missingURI})
+				return err
+			},
+		},
+		{
+			name: "mapped URI without retained logs",
+			call: func() error {
+				_, err := s.client.GetRequestHistoryByURI(s.ctx, &pb.GetRequestHistoryByURIRequest{Queue: queue, Uri: mappedURI})
+				return err
+			},
+		},
+		{
+			name: "request ID in wrong queue",
+			call: func() error {
+				_, err := s.client.GetRequestHistoryByID(s.ctx, &pb.GetRequestHistoryByIDRequest{Queue: wrongQueue, RequestId: scopedID})
+				return err
+			},
+		},
+		{
+			name: "URI mapping in wrong queue",
+			call: func() error {
+				_, err := s.client.GetRequestHistoryByURI(s.ctx, &pb.GetRequestHistoryByURIRequest{Queue: wrongQueue, Uri: scopedURI})
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Error(t, tt.call())
+		})
+	}
+}
+
+func assertHistoryEvents(t *testing.T, events []*pb.HistoryEvent) {
+	t.Helper()
+	require.Len(t, events, 3)
+
+	assert.Equal(t, "occurrence/001", events[0].EventId)
+	assert.Equal(t, int64(1000), events[0].TimestampMs)
+	assert.Equal(t, "accepted", events[0].GetRequestState())
+	assert.Empty(t, events[0].GetEvent())
+
+	assert.Equal(t, "occurrence/002", events[1].EventId)
+	assert.Equal(t, int64(2000), events[1].TimestampMs)
+	assert.Equal(t, "build_triggered", events[1].GetEvent())
+	assert.Empty(t, events[1].GetRequestState())
+
+	assert.Equal(t, "occurrence/003", events[2].EventId)
+	assert.Equal(t, int64(2000), events[2].TimestampMs)
+	assert.Equal(t, "succeeded", events[2].GetRequestState())
+	assert.Equal(t, "build_succeeded", events[2].OutcomeReason)
+}

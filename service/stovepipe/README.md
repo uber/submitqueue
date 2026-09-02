@@ -1,9 +1,11 @@
 # Stovepipe Service
 
-Runnable wiring for the **Stovepipe** domain — a single-service domain (the domain *is* the service). The server exposes two RPCs and runs the internal pipeline stages as queue consumers:
+Runnable wiring for the **Stovepipe** domain — a single-service domain (the domain *is* the service). The server exposes four RPCs and runs the internal pipeline stages as queue consumers:
 
 - **`Ping`** — health check.
 - **`Ingest`** — resolves a queue's head commit, persists a `Request` (and its head URI) to storage, and publishes the request to the **process** stage.
+- **`GetRequestHistoryByID`** — returns the retained request log for one request ID.
+- **`GetRequestHistoryByURI`** — returns retained histories selected by an exact commit URI.
 - **process consumer** (`TopicKeyProcess`) — reloads the persisted `Request` from storage and runs the process stage (`stovepipe/controller/process`).
 - **build consumer** (`TopicKeyBuild`) — reloads the persisted `Request` and triggers the build-runner, then publishes to `buildsignal`.
 - **buildsignal consumer** (`TopicKeyBuildSignal`) — polls/records the build's terminal status and releases the queue's in-flight slot, then publishes to `record`.
@@ -70,7 +72,15 @@ Attach with `.vscode/launch.json` (**Debug: attach (dlv in docker)**), then send
 ```bash
 # Ingest example
 grpcurl -plaintext -d '{"queue":"monorepo/main"}' localhost:PORT uber.submitqueue.stovepipe.Stovepipe/Ingest
+
+# Retained history by request ID
+grpcurl -plaintext -d '{"queue":"monorepo/main","request_id":"request/monorepo/main/1"}' localhost:PORT uber.submitqueue.stovepipe.Stovepipe/GetRequestHistoryByID
+
+# Retained history by exact commit URI
+grpcurl -plaintext -d '{"queue":"monorepo/main","uri":"git://monorepo/main/HEAD"}' localhost:PORT uber.submitqueue.stovepipe.Stovepipe/GetRequestHistoryByURI
 ```
+
+History lookup is defined by retained `request_log` rows. A request with no retained rows is not discoverable through these RPCs, even if operational request data still exists.
 
 ### Bazel / Go
 
