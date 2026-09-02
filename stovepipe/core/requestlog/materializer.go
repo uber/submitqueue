@@ -33,7 +33,13 @@ import (
 )
 
 const (
+	_occurrenceKindEvent = "event"
 	_occurrenceKindState = "state"
+
+	// MetadataKeyBuildID identifies the build associated with a request event.
+	MetadataKeyBuildID = "build_id"
+	// MetadataKeyFactDegree records the degree established by a validation fact.
+	MetadataKeyFactDegree = "fact_degree"
 )
 
 // Materializer persists request-log occurrences into their queue-scoped read model.
@@ -66,6 +72,22 @@ func NewRequestStateLog(request entity.Request, outcomeReason entity.RequestOutc
 		State:          request.State,
 		RequestVersion: request.Version,
 		OutcomeReason:  outcomeReason,
+	}
+}
+
+// NewRequestEventLog constructs a stable occurrence for a durable request lifecycle event.
+func NewRequestEventLog(
+	request entity.Request,
+	event entity.RequestEvent,
+	occurrence string,
+	metadata map[string]string,
+) entity.RequestLog {
+	return entity.RequestLog{
+		ID:        publish.IntentID(_occurrenceKindEvent, string(event), occurrence),
+		Queue:     request.Queue,
+		RequestID: request.ID,
+		Event:     event,
+		Metadata:  metadata,
 	}
 }
 

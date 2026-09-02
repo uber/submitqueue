@@ -29,8 +29,11 @@ package record
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/uber-go/tally"
@@ -41,6 +44,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/hookevent"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -54,6 +58,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	stores        storage.Factory
+	materializer  requestlog.Materializer
 	sourceControl sourcecontrol.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
@@ -76,6 +81,7 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
+	materializer requestlog.Materializer,
 	sourceControl sourcecontrol.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
@@ -86,6 +92,7 @@ func NewController(
 		logger:        logger.Named(name),
 		metricsScope:  scope.SubScope(name),
 		stores:        stores,
+		materializer:  materializer,
 		sourceControl: sourceControl,
 		registry:      registry,
 		topicKey:      topicKey,
@@ -136,6 +143,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		if err != nil {
 			return err
 		}
+		if err := c.persistValidationFactRecorded(ctx, store, request, fact); err != nil {
+			return err
+		}
 		if err := c.applyFactToDerivedCaches(ctx, store, request, fact, created); err != nil {
 			return err
 		}
@@ -160,6 +170,27 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		metrics.NamedCounter(c.metricsScope, _opName, "invariant_errors", 1, metrics.TagsFromContext(ctx)...)
 		return fmt.Errorf("request %s reached record in non-terminal state %q", request.ID, request.State)
 	}
+}
+
+func (c *Controller) persistValidationFactRecorded(
+	ctx context.Context,
+	store storage.Storage,
+	request entity.Request,
+	fact entity.ValidationFact,
+) error {
+	// Hash the composite fact key so an arbitrarily long URI cannot overflow the bounded log ID.
+	identity := sha256.Sum256([]byte(fact.URI + "\x00" + fact.Project))
+	log := requestlog.NewRequestEventLog(
+		request,
+		entity.RequestEventValidationFactRecorded,
+		hex.EncodeToString(identity[:]),
+		map[string]string{requestlog.MetadataKeyFactDegree: strconv.FormatFloat(fact.Degree, 'g', -1, 64)},
+	)
+	log.TimestampMs = fact.CreatedAt
+	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
+		return fmt.Errorf("failed to record validation fact for request %s: %w", request.ID, err)
+	}
+	return nil
 }
 
 // applyFactToDerivedCaches moves the two caches that follow the persisted fact: a

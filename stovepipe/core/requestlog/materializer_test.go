@@ -203,6 +203,25 @@ func TestNewRequestStateLogStableID(t *testing.T) {
 	assert.NotEqual(t, first.ID, next.ID)
 }
 
+func TestNewRequestEventLogStableID(t *testing.T) {
+	request := entity.Request{ID: testRequestID, Queue: testQueue, State: entity.RequestStateProcessing, Version: 2}
+	metadata := map[string]string{MetadataKeyBuildID: "bk-1"}
+	first := NewRequestEventLog(request, entity.RequestEventBuildTriggered, "bk-1", metadata)
+	retry := NewRequestEventLog(request, entity.RequestEventBuildTriggered, "bk-1", metadata)
+	next := NewRequestEventLog(request, entity.RequestEventBuildFinished, "bk-1", metadata)
+
+	assert.Equal(t, "event/build_triggered/bk-1", first.ID)
+	assert.Equal(t, first.ID, retry.ID)
+	assert.NotEqual(t, first.ID, next.ID)
+	assert.Equal(t, testQueue, first.Queue)
+	assert.Equal(t, testRequestID, first.RequestID)
+	assert.Equal(t, entity.RequestEventBuildTriggered, first.Event)
+	assert.Empty(t, first.State)
+	assert.Zero(t, first.RequestVersion)
+	assert.Empty(t, first.OutcomeReason)
+	assert.Equal(t, metadata, first.Metadata)
+}
+
 func TestSameSemanticOccurrenceMetadata(t *testing.T) {
 	base := entity.RequestLog{ID: "log/1", Queue: testQueue, RequestID: testRequestID, State: entity.RequestStateAccepted, RequestVersion: 1}
 	stored := base

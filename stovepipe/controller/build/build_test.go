@@ -29,6 +29,8 @@ import (
 	mqmock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
+	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
 	buildrunnermock "github.com/uber/submitqueue/stovepipe/extension/buildrunner/mock"
@@ -55,6 +57,8 @@ func queueContext() context.Context {
 type buildMocks struct {
 	reqStore      *storagemock.MockRequestStore
 	buildStore    *storagemock.MockBuildStore
+	store         *storagemock.MockStorage
+	materializer  *requestlogmock.MockMaterializer
 	runnerFactory *buildrunnermock.MockFactory
 	runner        *buildrunnermock.MockBuildRunner
 	publisher     *mqmock.MockPublisher
@@ -74,15 +78,16 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildMoc
 	m := buildMocks{
 		reqStore:      storagemock.NewMockRequestStore(ctrl),
 		buildStore:    storagemock.NewMockBuildStore(ctrl),
+		store:         storagemock.NewMockStorage(ctrl),
+		materializer:  requestlogmock.NewMockMaterializer(ctrl),
 		runnerFactory: buildrunnermock.NewMockFactory(ctrl),
 		runner:        buildrunnermock.NewMockBuildRunner(ctrl),
 		publisher:     mqmock.NewMockPublisher(ctrl),
 		metricsScope:  scope,
 	}
 
-	store := storagemock.NewMockStorage(ctrl)
-	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
-	store.EXPECT().GetBuildStore().Return(m.buildStore).AnyTimes()
+	m.store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
+	m.store.EXPECT().GetBuildStore().Return(m.buildStore).AnyTimes()
 
 	queue := mqmock.NewMockQueue(ctrl)
 	queue.EXPECT().Publisher().Return(m.publisher).AnyTimes()
@@ -92,8 +97,22 @@ func newController(t *testing.T, ctrl *gomock.Controller) (*Controller, buildMoc
 	})
 	require.NoError(t, err)
 
-	c := NewController(zap.NewNop().Sugar(), scope, staticStorageFactory{store: store}, m.runnerFactory, registry, stovepipemq.TopicKeyBuild, "stovepipe-build")
+	c := NewController(zap.NewNop().Sugar(), scope, staticStorageFactory{store: m.store}, m.materializer, m.runnerFactory, registry, stovepipemq.TopicKeyBuild, "stovepipe-build")
 	return c, m
+}
+
+func expectBuildTriggered(m buildMocks) *gomock.Call {
+	request := entity.Request{ID: testID, Queue: testQueue}
+	return m.materializer.EXPECT().PersistLog(
+		gomock.Any(),
+		m.store,
+		requestlog.NewRequestEventLog(
+			request,
+			entity.RequestEventBuildTriggered,
+			testBuildID,
+			map[string]string{requestlog.MetadataKeyBuildID: testBuildID},
+		),
+	).Return(nil)
 }
 
 func TestProcessTagsMetricsWithQueue(t *testing.T) {
@@ -185,8 +204,9 @@ func TestProcess(t *testing.T) {
 					Status:    entity.BuildStatusAccepted,
 					Version:   1,
 				}
-				m.buildStore.EXPECT().Create(gomock.Any(), build).Return(nil)
-				m.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).Return(nil)
+				createCall := m.buildStore.EXPECT().Create(gomock.Any(), build).Return(nil)
+				logCall := expectBuildTriggered(m).After(createCall)
+				m.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).Return(nil).After(logCall)
 			},
 		},
 		{
@@ -202,8 +222,9 @@ func TestProcess(t *testing.T) {
 					Status:    entity.BuildStatusAccepted,
 					Version:   1,
 				}
-				m.buildStore.EXPECT().Create(gomock.Any(), build).Return(nil)
-				m.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).Return(nil)
+				createCall := m.buildStore.EXPECT().Create(gomock.Any(), build).Return(nil)
+				logCall := expectBuildTriggered(m).After(createCall)
+				m.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).Return(nil).After(logCall)
 			},
 		},
 		{
@@ -292,8 +313,12 @@ func TestProcess(t *testing.T) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(req, nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Trigger(gomock.Any(), "", testHeadURI, entity.BuildMetadata(nil)).Return(entity.BuildID{ID: testBuildID}, nil)
-				m.buildStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
-				m.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).Return(nil)
+				createCall := m.buildStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
+				getCall := m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).
+					Return(entity.Build{ID: testBuildID, RequestID: testID, Status: entity.BuildStatusAccepted, Version: 1}, nil).
+					After(createCall)
+				logCall := expectBuildTriggered(m).After(getCall)
+				m.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).Return(nil).After(logCall)
 			},
 		},
 		{
@@ -309,6 +334,28 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
+			name:    "event persistence failure stops before buildsignal",
+			wantErr: true,
+			setup: func(m buildMocks) {
+				req := processingRequest(entity.BuildStrategyFull, "")
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(req, nil)
+				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+				m.runner.EXPECT().Trigger(gomock.Any(), "", testHeadURI, entity.BuildMetadata(nil)).Return(entity.BuildID{ID: testBuildID}, nil)
+				createCall := m.buildStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+				request := entity.Request{ID: testID, Queue: testQueue}
+				m.materializer.EXPECT().PersistLog(
+					gomock.Any(),
+					m.store,
+					requestlog.NewRequestEventLog(
+						request,
+						entity.RequestEventBuildTriggered,
+						testBuildID,
+						map[string]string{requestlog.MetadataKeyBuildID: testBuildID},
+					),
+				).Return(errors.New("db down")).After(createCall)
+			},
+		},
+		{
 			name:      "publish failure is not retryable",
 			wantErr:   true,
 			wantRetry: false,
@@ -317,8 +364,9 @@ func TestProcess(t *testing.T) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(req, nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Trigger(gomock.Any(), "", testHeadURI, entity.BuildMetadata(nil)).Return(entity.BuildID{ID: testBuildID}, nil)
-				m.buildStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
-				m.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).Return(errors.New("queue down"))
+				createCall := m.buildStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+				logCall := expectBuildTriggered(m).After(createCall)
+				m.publisher.EXPECT().Publish(gomock.Any(), "buildsignal", gomock.Any()).Return(errors.New("queue down")).After(logCall)
 			},
 		},
 		{
