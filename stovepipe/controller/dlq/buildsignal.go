@@ -23,6 +23,8 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
+	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
@@ -53,6 +55,7 @@ type buildSignalController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	stores        storage.Factory
+	materializer  requestlog.Materializer
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -67,6 +70,7 @@ func NewDLQBuildSignalController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
+	materializer requestlog.Materializer,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) consumer.Controller {
@@ -75,6 +79,7 @@ func NewDLQBuildSignalController(
 		logger:        logger.Named(name),
 		metricsScope:  scope.SubScope(name),
 		stores:        stores,
+		materializer:  materializer,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
@@ -143,7 +148,7 @@ func (c *buildSignalController) Process(ctx context.Context, delivery consumer.D
 	// the slot failRequest releases, or already terminal, and past releasing it: build
 	// triggers only once process has written the strategy, which lands in the same CAS
 	// as accepted→processing, and processing exits only to a terminal outcome.
-	if err := failRequest(ctx, store, c.logger, build.RequestID); err != nil {
+	if err := failRequest(ctx, store, c.materializer, c.logger, build.RequestID, entity.RequestOutcomeReasonBuildPollingExhausted); err != nil {
 		metrics.NamedCounter(c.metricsScope, _buildSignalOpName, "reconcile_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}

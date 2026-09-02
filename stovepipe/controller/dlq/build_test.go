@@ -22,6 +22,7 @@ import (
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/consumer"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -35,13 +36,14 @@ func newBuildController(t *testing.T, ctrl *gomock.Controller) (consumer.Control
 	m := dlqMocks{
 		reqStore:     storagemock.NewMockRequestStore(ctrl),
 		queueStore:   storagemock.NewMockQueueStore(ctrl),
+		store:        storagemock.NewMockStorage(ctrl),
+		materializer: requestlogmock.NewMockMaterializer(ctrl),
 		metricsScope: scope,
 	}
-	store := storagemock.NewMockStorage(ctrl)
-	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
-	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
+	m.store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
+	m.store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 
-	c := NewDLQBuildController(zap.NewNop().Sugar(), scope, staticStorageFactory{store: store}, TopicKey(stovepipemq.TopicKeyBuild), "stovepipe-build-dlq")
+	c := NewDLQBuildController(zap.NewNop().Sugar(), scope, staticStorageFactory{store: m.store}, m.materializer, TopicKey(stovepipemq.TopicKeyBuild), "stovepipe-build-dlq")
 	return c, m
 }
 
@@ -68,7 +70,8 @@ func TestBuildProcess(t *testing.T) {
 				m.queueStore.EXPECT().Update(gomock.Any(), entity.Queue{Name: testQueue, Version: 5}, int32(5), int32(6)).Return(nil)
 				updated := requestWithState(entity.RequestStateProcessing)
 				updated.State = entity.RequestStateFailed
-				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
+				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
+				expectFailureLog(m, entity.RequestOutcomeReasonProcessingFailed, 3).After(updateCall)
 			},
 			wantMetric: "test.build_dlq_controller.build_dlq.reconciled+queue=monorepo/main",
 		},

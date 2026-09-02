@@ -16,6 +16,7 @@ package dlq
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,6 +27,8 @@ import (
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
+	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
@@ -46,6 +49,8 @@ func queueContext() context.Context {
 type dlqMocks struct {
 	reqStore     *storagemock.MockRequestStore
 	queueStore   *storagemock.MockQueueStore
+	store        *storagemock.MockStorage
+	materializer *requestlogmock.MockMaterializer
 	metricsScope tally.TestScope
 }
 
@@ -62,15 +67,26 @@ func newController(t *testing.T, ctrl *gomock.Controller) (consumer.Controller, 
 	m := dlqMocks{
 		reqStore:     storagemock.NewMockRequestStore(ctrl),
 		queueStore:   storagemock.NewMockQueueStore(ctrl),
+		store:        storagemock.NewMockStorage(ctrl),
+		materializer: requestlogmock.NewMockMaterializer(ctrl),
 		metricsScope: scope,
 	}
 
-	store := storagemock.NewMockStorage(ctrl)
-	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
-	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
+	m.store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
+	m.store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 
-	c := NewDLQRequestController(zap.NewNop().Sugar(), scope, staticStorageFactory{store: store}, TopicKey(stovepipemq.TopicKeyProcess), "stovepipe-process-dlq")
+	c := NewDLQRequestController(zap.NewNop().Sugar(), scope, staticStorageFactory{store: m.store}, m.materializer, TopicKey(stovepipemq.TopicKeyProcess), "stovepipe-process-dlq")
 	return c, m
+}
+
+func expectFailureLog(m dlqMocks, reason entity.RequestOutcomeReason, version int32) *gomock.Call {
+	request := requestWithState(entity.RequestStateFailed)
+	request.Version = version
+	return m.materializer.EXPECT().PersistLog(
+		gomock.Any(),
+		m.store,
+		requestlog.NewRequestStateLog(request, reason),
+	).Return(nil)
 }
 
 func delivery(t *testing.T, ctrl *gomock.Controller, payload []byte) consumer.Delivery {
@@ -118,7 +134,8 @@ func TestProcess(t *testing.T) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateAccepted), nil)
 				updated := requestWithState(entity.RequestStateAccepted)
 				updated.State = entity.RequestStateFailed
-				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
+				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
+				expectFailureLog(m, entity.RequestOutcomeReasonProcessingFailed, 3).After(updateCall)
 			},
 		},
 		{
@@ -133,7 +150,8 @@ func TestProcess(t *testing.T) {
 				}, int32(5), int32(6)).Return(nil)
 				updated := requestWithState(entity.RequestStateProcessing)
 				updated.State = entity.RequestStateFailed
-				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
+				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
+				expectFailureLog(m, entity.RequestOutcomeReasonProcessingFailed, 3).After(updateCall)
 			},
 		},
 		{
@@ -143,9 +161,10 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
-			name: "already failed is a no-op",
+			name: "already failed repairs its missing log",
 			setup: func(m dlqMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateFailed), nil)
+				expectFailureLog(m, entity.RequestOutcomeReasonProcessingFailed, 2)
 			},
 		},
 		{
@@ -182,7 +201,8 @@ func TestProcess(t *testing.T) {
 				}, int32(6), int32(7)).Return(nil)
 				updated := requestWithState(entity.RequestStateProcessing)
 				updated.State = entity.RequestStateFailed
-				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
+				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
+				expectFailureLog(m, entity.RequestOutcomeReasonProcessingFailed, 3).After(updateCall)
 			},
 		},
 		{
@@ -194,7 +214,25 @@ func TestProcess(t *testing.T) {
 				}, nil)
 				updated := requestWithState(entity.RequestStateProcessing)
 				updated.State = entity.RequestStateFailed
-				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
+				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
+				expectFailureLog(m, entity.RequestOutcomeReasonProcessingFailed, 3).After(updateCall)
+			},
+		},
+		{
+			name:    "log failure leaves the failed state repairable",
+			wantErr: true,
+			setup: func(m dlqMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateAccepted), nil)
+				updated := requestWithState(entity.RequestStateAccepted)
+				updated.State = entity.RequestStateFailed
+				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
+				request := requestWithState(entity.RequestStateFailed)
+				request.Version = 3
+				m.materializer.EXPECT().PersistLog(
+					gomock.Any(),
+					m.store,
+					requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonProcessingFailed),
+				).Return(errors.New("db down")).After(updateCall)
 			},
 		},
 		{
