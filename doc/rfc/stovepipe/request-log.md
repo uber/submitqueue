@@ -2,7 +2,7 @@
 
 ## Summary
 
-Stovepipe retains an append-only request log for each validation request. Its internal `RequestLog` is the counterpart of SubmitQueue's `RequestLog`: both retain request status changes and explanatory lifecycle events, while Stovepipe persists records directly instead of sending them through a cross-service log topic and materializer. The public API presents these records as request history. The log records every durable `Request.State` transition plus three asynchronous milestones needed to explain those transitions and the public verdict:
+Stovepipe retains an append-only request log for each validation request. Its internal `RequestLog` is the counterpart of SubmitQueue's `RequestLog`: both retain request status changes and explanatory lifecycle events, while Stovepipe calls its materializer directly instead of sending records through a cross-service log topic. The public API presents these records as request history. The log records every durable `Request.State` transition plus three asynchronous milestones needed to explain those transitions and the public verdict:
 
 - `build_triggered`;
 - `build_finished`;
@@ -73,13 +73,13 @@ The retained unit is `entity.RequestLog`:
 
 ```go
 type RequestLog struct {
-    // ID is the stable identity of one logical occurrence within the request. It is opaque, stable across redelivery, and never derived from time or randomness.
+    // ID is the stable identity of one logical occurrence within the request. It is stable across redelivery and never derived from time or randomness.
     ID string
     // Queue is the logical queue containing the request and scopes RequestID.
     Queue string
     // RequestID identifies the request whose log contains this record.
     RequestID string
-    // TimestampMs is the durable occurrence time in Unix milliseconds.
+    // TimestampMs is when the occurrence was first retained, in Unix milliseconds.
     TimestampMs int64
     // State is the durable request state recorded by a state entry. It is unset on an event entry.
     State RequestState
@@ -145,7 +145,9 @@ Terminal entries retain domain reasons rather than transport mechanisms. Initial
 
 ## Stable IDs and Idempotency
 
-`stovepipe/core/requestlog.Recorder` constructs opaque IDs from durable identities:
+`stovepipe/core/requestlog` composes readable IDs from durable identities with the same `publish.IntentID` convention used by SubmitQueue before passing each record to `Materializer.PersistLog`. The surrounding `(queue, request_id)` storage key scopes the ID to one request, so a request state entry uses `state/<request-version>` without repeating the request identity:
+
+SubmitQueue applies that identity to the message carrying a log to its materializer, while its log store remains append-only and may retain a duplicate after a later materialization step fails. Stovepipe has no intermediate log topic, so it applies the identity to the retained row itself: retrying the direct call reloads the existing occurrence and succeeds only when its semantic content is compatible.
 
 | Entry | Stable identity inputs |
 |---|---|
@@ -154,7 +156,7 @@ Terminal entries retain domain reasons rather than transport mechanisms. Initial
 | Build finished | Request ID, event kind, and build ID |
 | Validation fact recorded | Request ID, event kind, and whole-repository fact identity |
 
-The recorder calls `RequestLogStore.Create`. If the ID already exists, it loads the stored record and compares every semantic field. Identical content is idempotent success; conflicting content is an internal consistency error, and the stored record is never overwritten.
+The controller passes the materializer the same queue-scoped storage aggregate used for the source write. The materializer preserves a supplied occurrence time or assigns the current time immediately before the first insertion attempt, then calls `RequestLogStore.Create`. If the ID already exists, it loads the stored record and compares the explicitly designated stable semantic fields. The first successfully retained timestamp is authoritative and is not compared with a later retry's newly sampled time. Metadata keys emitted by both records must agree, while a key present on only one record remains compatible so an additive metadata rollout does not turn retries of older occurrences into conflicts. Compatible content is idempotent success; conflicting content is an internal consistency error, and the stored record is never overwritten or enriched.
 
 ## Storage Contract
 
@@ -188,11 +190,11 @@ Request-log durability is part of completing a pipeline transition. The source w
 
 For a Request transition, the controller:
 
-1. builds an immutable updated copy with transition context and `StateChangedAtMs`;
+1. builds an immutable updated copy for the state transition;
 2. computes `newVersion = oldVersion + 1`;
 3. calls `RequestStore.Update(updated, oldVersion, newVersion)`;
 4. assigns the in-memory version only after the store succeeds;
-5. asks the recorder to create the log record from durable Request data;
+5. constructs the log record from the durable Request and bounded context still owned by that stage, then calls `Materializer.PersistLog`;
 6. publishes the downstream handoff.
 
 Request creation, Build changes, and fact creation use the same source-write, log-write, dependent-publish ordering. A request-log outage can leave a source update visible, but it cannot allow dependent processing to move past an unrecorded transition.
@@ -224,7 +226,7 @@ This is rollout work, not deferred cleanup: a mandatory request log without a du
 
 Rollout therefore:
 
-1. deploys source timestamp and provenance fields, request-log storage, recorder, and readers;
+1. deploys request-log storage, the materializer, and readers;
 2. enables writers and verifies every repair path stage by stage;
 3. enables the public API after every writer and repair path is active.
 
@@ -246,11 +248,11 @@ Identifiers, outcome reasons, and reasonable per-request build counts have expli
 
 Contract tests cover required-field validation, stable IDs, idempotent create/reload, conflict detection, queue binding, deterministic ordering, equal-timestamp tie breaking, and empty histories.
 
-Writer tests cover source success followed by log failure, redelivery with the log record absent or present, CAS loss, conflicting terminal writers, downstream publish failure, stable timestamps, and controller-owned version arithmetic. End-to-end tests cover successful, failed, cancelled, superseded, and fail-closed paths plus idempotent redelivery.
+Writer tests cover source success followed by log failure, redelivery with the log record absent or present, CAS loss, conflicting terminal writers, downstream publish failure, first-insert timestamp reuse, and controller-owned version arithmetic. End-to-end tests cover successful, failed, cancelled, superseded, and fail-closed paths plus idempotent redelivery.
 
 Tests reconstruct the latest Request state from state entries by request version and compare it with `RequestStore.Get`. They separately verify that only a durable fact produces green or broken.
 
-The recorder reports create, identical-existing, conflict, validation failure, and storage failure counters tagged only by bounded state or event. IDs, URIs, and errors remain structured log fields rather than metric tags. Alerts cover sustained repair gaps and content conflicts.
+The materializer reports create, identical-existing, conflict, validation failure, and storage failure counters tagged only by bounded state or event plus tags carried by the context. IDs, URIs, and errors remain structured log fields rather than metric tags. Alerts cover sustained repair gaps and content conflicts.
 
 ## Alternatives Considered
 

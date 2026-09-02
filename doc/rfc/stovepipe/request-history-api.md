@@ -107,7 +107,9 @@ Event rows remain in SubmitQueue history but never participate in current-status
 
 Stovepipe has no equivalent ownership gap. The same service owns the queue-scoped `Request`, `ValidationFact`, request-URI mapping, and request-log store. Operational reads use their owning entities, while request history reads retained log records directly.
 
-Stovepipe therefore does not add `RequestSummary`, replay history to determine current state, or materialize another history table. The controller performs only an in-memory wire projection from stored log records to protobuf messages. This avoids a second winner-selection algorithm competing with Request CAS state.
+Stovepipe calls `requestlog.Materializer.PersistLog` directly, without an intermediate topic. Its initial materializer appends only the request log: it does not add `RequestSummary`, replay history to determine current state, or materialize another history table. The controller performs only an in-memory wire projection from stored log records to protobuf messages. This avoids a second winner-selection algorithm competing with Request CAS state.
+
+`PersistLog` receives the whole queue-scoped storage aggregate so a future current-status or queue-list API can add SubmitQueue-style summary and index projections behind the same write boundary without changing request-log producers. Such projections remain deferred until a concrete read path needs them; `Request` remains authoritative in the initial implementation.
 
 ## Ordering and Consistency
 

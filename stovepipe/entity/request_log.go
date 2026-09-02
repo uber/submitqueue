@@ -54,13 +54,13 @@ const (
 
 // RequestLog is one immutable request state or explanatory lifecycle occurrence.
 type RequestLog struct {
-	// ID is the stable opaque identity of the occurrence within the request.
+	// ID is the stable identity of the occurrence within the request.
 	ID string `json:"id"`
 	// Queue is the logical queue containing the request and scopes RequestID.
 	Queue string `json:"queue"`
 	// RequestID identifies the request whose log contains this record.
 	RequestID string `json:"request_id"`
-	// TimestampMs is the occurrence time in Unix milliseconds.
+	// TimestampMs is when the occurrence was first retained, in Unix milliseconds.
 	TimestampMs int64 `json:"timestamp_ms"`
 	// State is the durable request state recorded by a state record and is unset on an event record.
 	State RequestState `json:"state"`
