@@ -19,6 +19,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 - [Extension Contract](submitqueue/extension-contract.md) - When extensions take orchestrator identity (request/batch) and resolve granular content themselves vs. take controller-resolved data; revises the BuildRunner base/head contract
 - [Gateway Status and List APIs](submitqueue/status-list-api.md) - Gateway-owned request context, materialized current status, sqid or change-URI status lookup, and queue admission listing
 - [Speculation](submitqueue/speculation.md) - Why SubmitQueue speculates, the path/tree model, and the two pluggable seams: speculation-tree enumeration and path selection
+- [Outcome Predictor](submitqueue/outcome-predictor.md) - How likely a batch is to succeed: a predictor built with a Scorer that multiplies its price by what the pipeline has observed (a build passed, the batch is merging), factors written by hand first and fitted later
 - [Best-First Speculation Path Generation](submitqueue/speculation-generator-best-first.md) - The default Generator: per-head lazy streams of flip subsets merged best-first across heads, log-probability ranking, and the strict snapshot contract
 - [Modular Queue Wiring](submitqueue/modular-queue-wiring.md) - Declare-don't-assemble engine (`pipeline.Construct`) that unifies topic registry, controller registration, DLQ pairing, and lifecycle ordering into one typed call; services self-declare via Deps struct + Stages slice, hosts own per-queue profiles and transport
 
