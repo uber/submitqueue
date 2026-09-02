@@ -89,6 +89,8 @@ type runHarness struct {
 	logs []entity.RequestLog
 	// failTopic, when set, makes every publish to that topic fail.
 	failTopic string
+	// metrics records the controller's emitted counters for outcome assertions.
+	metrics tally.TestScope
 }
 
 // failPublishTo makes publishes to one topic fail, leaving the others working,
@@ -117,7 +119,7 @@ func (h *runHarness) run(triggerID string) error {
 func newRunHarness(t *testing.T, ctrl *gomock.Controller, spec *scriptedSpeculator, inFlight []entity.Batch) *runHarness {
 	t.Helper()
 
-	h := &runHarness{spec: spec}
+	h := &runHarness{spec: spec, metrics: tally.NewTestScope("test", nil)}
 
 	h.batches = storagemock.NewMockBatchStore(ctrl)
 	for _, b := range inFlight {
@@ -193,7 +195,7 @@ func newRunHarness(t *testing.T, ctrl *gomock.Controller, spec *scriptedSpeculat
 	require.NoError(t, err)
 
 	h.controller = NewController(
-		zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store},
+		zaptest.NewLogger(t).Sugar(), h.metrics, staticStorageFactory{store: store},
 		staticSpeculatorFactory{s: spec}, registry, topickey.TopicKeySpeculate, "orchestrator-speculate",
 	)
 	return h
@@ -1547,6 +1549,7 @@ func TestRun_MergingHeadReportsSpeculatedAndNoWait(t *testing.T) {
 	assert.Equal(t, entity.RequestLogTypeStatus, h.logs[0].Type)
 	assert.Equal(t, entity.RequestStatusSpeculated, h.logs[0].Status)
 	assert.Equal(t, head, h.logs[0].Metadata["batch_id"])
+	assert.NotContains(t, h.metrics.Snapshot().Counters(), "test.speculate_controller.process.bypass+")
 }
 
 func TestRun_BypassesUnsettledDependenciesWithFullCoverage(t *testing.T) {
@@ -1578,6 +1581,10 @@ func TestRun_BypassesUnsettledDependenciesWithFullCoverage(t *testing.T) {
 	assert.Zero(t, h.spec.calls)
 	require.Len(t, h.logs, 1)
 	assert.Equal(t, entity.RequestStatusSpeculated, h.logs[0].Status)
+
+	counter, ok := h.metrics.Snapshot().Counters()["test.speculate_controller.process.bypass+"]
+	require.True(t, ok)
+	assert.EqualValues(t, 1, counter.Value())
 }
 
 // The merge stage publishes landing as its first act on the dispatch. Both
