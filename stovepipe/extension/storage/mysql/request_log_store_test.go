@@ -275,10 +275,11 @@ func TestRequestLogStoreList(t *testing.T) {
 	second.RequestVersion = 2
 
 	tests := []struct {
-		name    string
-		setup   func(sqlmock.Sqlmock)
-		want    []entity.RequestLog
-		wantErr bool
+		name      string
+		setup     func(sqlmock.Sqlmock)
+		want      []entity.RequestLog
+		wantErrIs error
+		wantErr   bool
 	}{
 		{
 			name: "all records",
@@ -297,7 +298,8 @@ func TestRequestLogStoreList(t *testing.T) {
 					WithArgs(testLogQueue, testLogRequestID).
 					WillReturnRows(sqlmock.NewRows(requestLogColumnNames))
 			},
-			want: []entity.RequestLog{},
+			wantErr:   true,
+			wantErrIs: storage.ErrNotFound,
 		},
 		{
 			name: "database failure",
@@ -321,6 +323,9 @@ func TestRequestLogStoreList(t *testing.T) {
 			got, err := store.List(context.Background(), testLogRequestID)
 			if tt.wantErr {
 				require.Error(t, err)
+				if tt.wantErrIs != nil {
+					assert.ErrorIs(t, err, tt.wantErrIs)
+				}
 			} else {
 				require.NoError(t, err)
 				assert.Equal(t, tt.want, got)

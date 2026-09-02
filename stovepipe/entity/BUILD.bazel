@@ -8,6 +8,7 @@ go_library(
         "queue.go",
         "queue_config.go",
         "request.go",
+        "request_history.go",
         "request_id.go",
         "request_log.go",
         "validation_fact.go",

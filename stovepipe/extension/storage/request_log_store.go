@@ -30,6 +30,6 @@ type RequestLogStore interface {
 	// Get returns one record identified by requestID and logID, or ErrNotFound when absent.
 	Get(ctx context.Context, requestID, logID string) (entity.RequestLog, error)
 
-	// List returns all records for one request ordered by timestamp and log ID ascending.
+	// List returns all records for one request ordered by timestamp and log ID ascending, or ErrNotFound when none are retained.
 	List(ctx context.Context, requestID string) ([]entity.RequestLog, error)
 }
