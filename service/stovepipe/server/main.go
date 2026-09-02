@@ -308,7 +308,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, storageFty, registry, sourceControl)
+	dlqCount, err := registerDLQControllers(dlqConsumer, logger.Sugar(), scope, storageFty, materializer, registry, sourceControl)
 	if err != nil {
 		return err
 	}
@@ -440,7 +440,7 @@ func registerPrimaryControllers(
 	}
 	count++
 
-	buildController := build.NewController(logger, scope, store, brf, registry, stovepipemq.TopicKeyBuild, "stovepipe-build")
+	buildController := build.NewController(logger, scope, store, materializer, brf, registry, stovepipemq.TopicKeyBuild, "stovepipe-build")
 	if err := c.Register(buildController); err != nil {
 		return count, fmt.Errorf("failed to register build controller: %w", err)
 	}
@@ -452,7 +452,7 @@ func registerPrimaryControllers(
 	}
 	count++
 
-	recordController := record.NewController(logger, scope, store, sourceControl, registry, stovepipemq.TopicKeyRecord, "stovepipe-record")
+	recordController := record.NewController(logger, scope, store, materializer, sourceControl, registry, stovepipemq.TopicKeyRecord, "stovepipe-record")
 	if err := c.Register(recordController); err != nil {
 		return count, fmt.Errorf("failed to register record controller: %w", err)
 	}
@@ -474,6 +474,7 @@ func registerDLQControllers(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	store storage.Factory,
+	materializer requestlog.Materializer,
 	registry consumer.TopicRegistry,
 	sourceControl sourcecontrol.Factory,
 ) (int, error) {
@@ -497,7 +498,7 @@ func registerDLQControllers(
 	}
 	count++
 
-	recordDLQController := record.NewController(logger, scope, store, sourceControl, registry, dlq.TopicKey(stovepipemq.TopicKeyRecord), "stovepipe-record-dlq")
+	recordDLQController := record.NewController(logger, scope, store, materializer, sourceControl, registry, dlq.TopicKey(stovepipemq.TopicKeyRecord), "stovepipe-record-dlq")
 	if err := c.Register(recordDLQController); err != nil {
 		return count, fmt.Errorf("failed to register record dlq controller: %w", err)
 	}

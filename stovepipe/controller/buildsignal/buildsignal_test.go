@@ -160,9 +160,24 @@ func queueRow(inFlight, version int32) entity.Queue {
 }
 
 func expectFinishWrites(m buildsignalMocks, state entity.RequestState) *gomock.Call {
-	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(1, 4), nil)
+	eventCall := expectBuildFinished(m)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(1, 4), nil).After(eventCall)
 	m.queueStore.EXPECT().Update(gomock.Any(), queueRow(0, 4), int32(4), int32(5)).Return(nil)
 	return m.reqStore.EXPECT().Update(gomock.Any(), requestWithState(state), int32(1), int32(2)).Return(nil)
+}
+
+func expectBuildFinished(m buildsignalMocks) *gomock.Call {
+	request := entity.Request{ID: testID, Queue: testQueue}
+	return m.materializer.EXPECT().PersistLog(
+		gomock.Any(),
+		m.store,
+		requestlog.NewRequestEventLog(
+			request,
+			entity.RequestEventBuildFinished,
+			testBuildID,
+			map[string]string{requestlog.MetadataKeyBuildID: testBuildID},
+		),
+	).Return(nil)
 }
 
 func expectFinish(m buildsignalMocks, state entity.RequestState) *gomock.Call {
@@ -336,8 +351,30 @@ func TestProcess(t *testing.T) {
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
 				// No build/queue/request write: the status is unchanged and the outcome
 				// is already recorded, so the slot must not be released a second time.
-				logCall := expectOutcomeLog(m, entity.RequestStateSucceeded, 2)
+				eventCall := expectBuildFinished(m)
+				logCall := expectOutcomeLog(m, entity.RequestStateSucceeded, 2).After(eventCall)
 				m.publisher.EXPECT().Publish(gomock.Any(), "record", gomock.Any()).Return(nil).After(logCall)
+			},
+		},
+		{
+			name:    "build event failure stops before request outcome",
+			wantErr: true,
+			setup: func(m buildsignalMocks) {
+				m.buildStore.EXPECT().Get(gomock.Any(), testBuildID).Return(build(entity.BuildStatusSucceeded, 3), nil)
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
+				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
+				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
+				request := entity.Request{ID: testID, Queue: testQueue}
+				m.materializer.EXPECT().PersistLog(
+					gomock.Any(),
+					m.store,
+					requestlog.NewRequestEventLog(
+						request,
+						entity.RequestEventBuildFinished,
+						testBuildID,
+						map[string]string{requestlog.MetadataKeyBuildID: testBuildID},
+					),
+				).Return(errors.New("db down"))
 			},
 		},
 		{
@@ -350,11 +387,12 @@ func TestProcess(t *testing.T) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
+				eventCall := expectBuildFinished(m)
 				m.materializer.EXPECT().PersistLog(
 					gomock.Any(),
 					m.store,
 					requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonBuildSucceeded),
-				).Return(errors.New("db down"))
+				).Return(errors.New("db down")).After(eventCall)
 			},
 		},
 		{
@@ -403,7 +441,8 @@ func TestProcess(t *testing.T) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
-				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(1, 4), nil)
+				eventCall := expectBuildFinished(m)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(queueRow(1, 4), nil).After(eventCall)
 				m.queueStore.EXPECT().Update(gomock.Any(), queueRow(0, 4), int32(4), int32(5)).Return(nil)
 				m.reqStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(errors.New("db down"))
 			},
@@ -417,7 +456,8 @@ func TestProcess(t *testing.T) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(requestWithState(entity.RequestStateProcessing), nil)
 				m.runnerFactory.EXPECT().For(buildrunner.Config{QueueName: testQueue}).Return(m.runner, nil)
 				m.runner.EXPECT().Status(gomock.Any(), entity.BuildID{ID: testBuildID}).Return(entity.BuildStatusSucceeded, nil, nil)
-				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{}, errors.New("db down"))
+				eventCall := expectBuildFinished(m)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{}, errors.New("db down")).After(eventCall)
 				// No request Update and no record publish: marking the request terminal
 				// while it still holds a slot would strand the slot, since a terminal
 				// request is skipped by both redelivery and the DLQ reconciler.

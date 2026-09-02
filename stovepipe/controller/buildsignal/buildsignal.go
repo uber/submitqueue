@@ -170,6 +170,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	}
 
 	if effective.IsTerminal() {
+		if err := c.persistBuildFinished(ctx, store, request, build.ID); err != nil {
+			return err
+		}
 		if err := c.finishRequest(ctx, store, &request, effective); err != nil {
 			return err
 		}
@@ -198,6 +201,19 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		"status", string(effective),
 		"delay_ms", delayMs,
 	)
+	return nil
+}
+
+func (c *Controller) persistBuildFinished(ctx context.Context, store storage.Storage, request entity.Request, buildID string) error {
+	log := requestlog.NewRequestEventLog(
+		request,
+		entity.RequestEventBuildFinished,
+		buildID,
+		map[string]string{requestlog.MetadataKeyBuildID: buildID},
+	)
+	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
+		return fmt.Errorf("failed to record build %s completion for request %s: %w", buildID, request.ID, err)
+	}
 	return nil
 }
 

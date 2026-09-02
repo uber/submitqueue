@@ -31,6 +31,8 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/core/hookevent"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
+	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	sourcecontrolmock "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/mock"
@@ -68,6 +70,8 @@ type recordMocks struct {
 	reqStore      *storagemock.MockRequestStore
 	queueStore    *storagemock.MockQueueStore
 	factStore     *storagemock.MockValidationFactStore
+	store         *storagemock.MockStorage
+	materializer  *requestlogmock.MockMaterializer
 	sourceControl *sourcecontrolmock.MockSourceControl
 	hooks         *hookRecorder
 	metricsScope  tally.TestScope
@@ -139,15 +143,26 @@ func newControllerForTopic(t *testing.T, ctrl *gomock.Controller, topicKey consu
 		reqStore:      storagemock.NewMockRequestStore(ctrl),
 		queueStore:    storagemock.NewMockQueueStore(ctrl),
 		factStore:     storagemock.NewMockValidationFactStore(ctrl),
+		store:         storagemock.NewMockStorage(ctrl),
+		materializer:  requestlogmock.NewMockMaterializer(ctrl),
 		sourceControl: sourcecontrolmock.NewMockSourceControl(ctrl),
 		hooks:         &hookRecorder{},
 		metricsScope:  scope,
 	}
 
-	store := storagemock.NewMockStorage(ctrl)
-	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
-	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
-	store.EXPECT().GetValidationFactStore().Return(m.factStore).AnyTimes()
+	m.store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
+	m.store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
+	m.store.EXPECT().GetValidationFactStore().Return(m.factStore).AnyTimes()
+	m.materializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
+			assert.Equal(t, entity.RequestEventValidationFactRecorded, log.Event)
+			assert.Empty(t, log.State)
+			assert.Zero(t, log.RequestVersion)
+			assert.Empty(t, log.OutcomeReason)
+			assert.NotEmpty(t, log.Metadata[requestlog.MetadataKeyFactDegree])
+			return nil
+		},
+	).AnyTimes()
 
 	publisher := mqmock.NewMockPublisher(ctrl)
 	publisher.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).
@@ -175,7 +190,8 @@ func newControllerForTopic(t *testing.T, ctrl *gomock.Controller, topicKey consu
 	c := NewController(
 		zap.NewNop().Sugar(),
 		scope,
-		staticStorageFactory{store: store},
+		staticStorageFactory{store: m.store},
+		m.materializer,
 		staticSourceControlFactory{sourceControl: m.sourceControl},
 		registry,
 		topicKey,
@@ -389,6 +405,58 @@ func TestProcess_RecordsBrokenFactWithoutAdvancing(t *testing.T) {
 	assert.EqualValues(t, 1, counter.Value())
 }
 
+func TestProcess_RecordsFactEventBeforeDerivedWork(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	eventMaterializer := requestlogmock.NewMockMaterializer(ctrl)
+	c.materializer = eventMaterializer
+
+	request := requestWithState(entity.RequestStateSucceeded)
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+	var fact entity.ValidationFact
+	m.expectFactCreated(&fact)
+
+	eventPersisted := false
+	eventMaterializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ storage.Storage, log entity.RequestLog) error {
+			eventPersisted = true
+			assert.Equal(t, entity.RequestEventValidationFactRecorded, log.Event)
+			assert.Contains(t, log.ID, "event/validation_fact_recorded/")
+			assert.Equal(t, fact.CreatedAt, log.TimestampMs)
+			assert.Equal(t, "0", log.Metadata[requestlog.MetadataKeyFactDegree])
+			return nil
+		},
+	)
+	m.queueStore.EXPECT().Get(gomock.Any(), testQueue).DoAndReturn(
+		func(context.Context, string) (entity.Queue, error) {
+			require.True(t, eventPersisted)
+			return queueRow("", "", 1), nil
+		},
+	)
+	m.queueStore.EXPECT().Update(gomock.Any(), gomock.Any(), int32(1), int32(2)).Return(nil)
+	m.sourceControl.EXPECT().ChangeInfo(gomock.Any(), testURI).
+		Return(sourcecontrol.ChangeInfo{CreatedAt: testChangeTime.UnixMilli()}, nil)
+	m.sourceControl.EXPECT().Promote(gomock.Any(), testURI).Return(nil)
+
+	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
+}
+
+func TestProcess_FactEventFailureStopsDerivedWork(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	c, m := newController(t, ctrl)
+	eventMaterializer := requestlogmock.NewMockMaterializer(ctrl)
+	c.materializer = eventMaterializer
+
+	m.reqStore.EXPECT().Get(gomock.Any(), testID).
+		Return(requestWithState(entity.RequestStateSucceeded), nil)
+	var fact entity.ValidationFact
+	m.expectFactCreated(&fact)
+	eventMaterializer.EXPECT().PersistLog(gomock.Any(), m.store, gomock.Any()).Return(errors.New("db down"))
+
+	require.Error(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
+	assert.Empty(t, m.hooks.events)
+}
+
 func TestProcess_ReportsFailureDetectionLatency(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	c, m := newController(t, ctrl)
@@ -440,7 +508,7 @@ func TestProcess_RedeliveredFailureIsNotResampled(t *testing.T) {
 	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(failedRequest(), nil)
 	m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
 	m.factStore.EXPECT().Get(gomock.Any(), testURI, wholeRepositoryProject).
-		Return(entity.ValidationFact{URI: testURI, Degree: entity.DegreeBroken, RequestID: testID}, nil)
+		Return(entity.ValidationFact{URI: testURI, Degree: entity.DegreeBroken, RequestID: testID, CreatedAt: testChangeTime.UnixMilli()}, nil)
 
 	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 	assert.Empty(t, m.metricsScope.Snapshot().Histograms())
@@ -517,12 +585,12 @@ func TestProcess_AdoptsExistingFactFromSameRequest(t *testing.T) {
 	}{
 		{
 			name:       "green fact still advances the bookmark",
-			stored:     entity.ValidationFact{URI: testURI, Degree: entity.DegreeGreen, RequestID: testID},
+			stored:     entity.ValidationFact{URI: testURI, Degree: entity.DegreeGreen, RequestID: testID, CreatedAt: testChangeTime.UnixMilli()},
 			wantUpdate: true,
 		},
 		{
 			name:   "broken fact does not",
-			stored: entity.ValidationFact{URI: testURI, Degree: entity.DegreeBroken, RequestID: testID},
+			stored: entity.ValidationFact{URI: testURI, Degree: entity.DegreeBroken, RequestID: testID, CreatedAt: testChangeTime.UnixMilli()},
 		},
 	}
 
@@ -814,7 +882,7 @@ func TestProcess_RedeliveryAnnouncesTheSameEventID(t *testing.T) {
 
 	m.factStore.EXPECT().Create(gomock.Any(), gomock.Any()).Return(storage.ErrAlreadyExists)
 	m.factStore.EXPECT().Get(gomock.Any(), testURI, wholeRepositoryProject).
-		Return(entity.ValidationFact{URI: testURI, Degree: entity.DegreeBroken, RequestID: testID}, nil)
+		Return(entity.ValidationFact{URI: testURI, Degree: entity.DegreeBroken, RequestID: testID, CreatedAt: testChangeTime.UnixMilli()}, nil)
 
 	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
 	require.NoError(t, c.Process(queueContext(), delivery(t, ctrl, recordPayload(t, testID))))
