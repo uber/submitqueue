@@ -33,6 +33,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/core/hookevent"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/queueconfig"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
@@ -47,6 +48,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	stores        storage.Factory
+	materializer  requestlog.Materializer
 	queueConfigs  queueconfig.Store
 	sourceControl sourcecontrol.Factory
 	registry      consumer.TopicRegistry
@@ -65,6 +67,7 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
+	materializer requestlog.Materializer,
 	queueConfigs queueconfig.Store,
 	sourceControl sourcecontrol.Factory,
 	registry consumer.TopicRegistry,
@@ -75,6 +78,7 @@ func NewController(
 		logger:        logger.Named("process_controller"),
 		metricsScope:  scope.SubScope("process_controller"),
 		stores:        stores,
+		materializer:  materializer,
 		queueConfigs:  queueConfigs,
 		sourceControl: sourceControl,
 		registry:      registry,
@@ -116,6 +120,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 
 	switch request.State {
 	case entity.RequestStateProcessing:
+		if err := c.persistProcessingLog(ctx, store, request); err != nil {
+			return err
+		}
 		// Announce here as well as at admit: this is the only path a redelivery
 		// takes once the transition is durable, so an admit that failed after
 		// persisting would otherwise lose the start event for good. The event id
@@ -263,6 +270,10 @@ func (c *Controller) admitLatestHead(ctx context.Context, store storage.Storage,
 		return nil
 	}
 
+	if err := c.persistProcessingLog(ctx, store, request); err != nil {
+		return err
+	}
+
 	if err := c.publishHookEvent(ctx, request, hookevent.NewValidationRepositoryStarted(request)); err != nil {
 		return err
 	}
@@ -282,6 +293,14 @@ func (c *Controller) admitLatestHead(ctx context.Context, store storage.Storage,
 		"build_strategy", string(request.BuildStrategy),
 		"base_uri", request.BaseURI,
 	)
+	return nil
+}
+
+func (c *Controller) persistProcessingLog(ctx context.Context, store storage.Storage, request entity.Request) error {
+	log := requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown)
+	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
+		return fmt.Errorf("failed to record processing state for request %s: %w", request.ID, err)
+	}
 	return nil
 }
 

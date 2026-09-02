@@ -31,6 +31,8 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/stovepipe/core/hookevent"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
+	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
@@ -58,6 +60,8 @@ type processMocks struct {
 	queueStore    *storagemock.MockQueueStore
 	sourceFactory *sourcecontrolmock.MockFactory
 	sourceControl *sourcecontrolmock.MockSourceControl
+	store         *storagemock.MockStorage
+	materializer  *requestlogmock.MockMaterializer
 	publisher     *mqmock.MockPublisher
 }
 
@@ -79,12 +83,13 @@ func newControllerWithScope(t *testing.T, ctrl *gomock.Controller, scope tally.S
 		queueStore:    storagemock.NewMockQueueStore(ctrl),
 		sourceFactory: sourcecontrolmock.NewMockFactory(ctrl),
 		sourceControl: sourcecontrolmock.NewMockSourceControl(ctrl),
+		store:         storagemock.NewMockStorage(ctrl),
+		materializer:  requestlogmock.NewMockMaterializer(ctrl),
 		publisher:     mqmock.NewMockPublisher(ctrl),
 	}
 
-	store := storagemock.NewMockStorage(ctrl)
-	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
-	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
+	m.store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
+	m.store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
 
 	queue := mqmock.NewMockQueue(ctrl)
 	queue.EXPECT().Publisher().Return(m.publisher).AnyTimes()
@@ -98,7 +103,8 @@ func newControllerWithScope(t *testing.T, ctrl *gomock.Controller, scope tally.S
 	c := NewController(
 		zap.NewNop().Sugar(),
 		scope,
-		staticStorageFactory{store: store},
+		staticStorageFactory{store: m.store},
+		m.materializer,
 		queueconfigdefault.NewStore(),
 		m.sourceFactory,
 		registry,
@@ -141,6 +147,7 @@ func TestProcessBuildPublishRequiresRegisteredTopic(t *testing.T) {
 	m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
 		ID: testID, Queue: testQueue, State: entity.RequestStateProcessing, Version: 2,
 	}, nil)
+	expectProcessingLog(t, m, testID, 2)
 
 	err := c.Process(queueContext(testQueue), delivery(t, ctrl, processPayload(t, testID)))
 
@@ -167,19 +174,41 @@ func expectAdmit(t *testing.T, m processMocks, id string) {
 	expectStartAnnounceAndBuildPublish(t, m, id)
 }
 
-// expectStartAnnounceAndBuildPublish expects the pair of publishes every admitted
-// request produces, in the order the controller performs them.
 func expectStartAnnounceAndBuildPublish(t *testing.T, m processMocks, id string) {
 	t.Helper()
-
-	expectStartValidationAnnounce(t, m, id)
-	expectBuildPublish(t, m, id)
+	expectProcessingLogAndHandoff(t, m, id, 2)
 }
 
-func expectStartValidationAnnounce(t *testing.T, m processMocks, id string) {
+func expectProcessingLogAndHandoff(t *testing.T, m processMocks, id string, version int32) {
 	t.Helper()
 
-	m.publisher.EXPECT().
+	logCall := expectProcessingLog(t, m, id, version)
+	hookCall := expectStartValidationAnnounce(t, m, id)
+	buildCall := expectBuildPublish(t, m, id)
+	hookCall.After(logCall)
+	buildCall.After(hookCall)
+}
+
+func expectProcessingLog(t *testing.T, m processMocks, id string, version int32) *gomock.Call {
+	t.Helper()
+
+	request := entity.Request{
+		ID:      id,
+		Queue:   testQueue,
+		State:   entity.RequestStateProcessing,
+		Version: version,
+	}
+	return m.materializer.EXPECT().PersistLog(
+		gomock.Any(),
+		m.store,
+		requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown),
+	).Return(nil)
+}
+
+func expectStartValidationAnnounce(t *testing.T, m processMocks, id string) *gomock.Call {
+	t.Helper()
+
+	return m.publisher.EXPECT().
 		Publish(gomock.Any(), "stovepipe-hook", gomock.AssignableToTypeOf(entityqueue.Message{})).
 		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
 			assert.Equal(t, id, msg.PartitionKey)
@@ -194,10 +223,10 @@ func expectStartValidationAnnounce(t *testing.T, m processMocks, id string) {
 		})
 }
 
-func expectBuildPublish(t *testing.T, m processMocks, id string) {
+func expectBuildPublish(t *testing.T, m processMocks, id string) *gomock.Call {
 	t.Helper()
 
-	m.publisher.EXPECT().
+	return m.publisher.EXPECT().
 		Publish(gomock.Any(), "build", gomock.AssignableToTypeOf(entityqueue.Message{})).
 		DoAndReturn(func(_ context.Context, _ string, msg entityqueue.Message) error {
 			assert.Equal(t, id, msg.ID)
@@ -499,6 +528,21 @@ func TestProcess(t *testing.T) {
 			},
 		},
 		{
+			name:    "processing redelivery stops before handoff when log persistence fails",
+			wantErr: true,
+			setup: func(m processMocks) {
+				request := entity.Request{
+					ID: testID, Queue: testQueue, State: entity.RequestStateProcessing, Version: 2,
+				}
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(request, nil)
+				m.materializer.EXPECT().PersistLog(
+					gomock.Any(),
+					m.store,
+					requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown),
+				).Return(errors.New("db down"))
+			},
+		},
+		{
 			name: "unknown state is acked without retry",
 			setup: func(m processMocks) {
 				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(entity.Request{
@@ -539,9 +583,11 @@ func TestProcess(t *testing.T) {
 				updatedRequest.State = entity.RequestStateProcessing
 				updatedRequest.BuildStrategy = entity.BuildStrategyFull
 				m.reqStore.EXPECT().Update(gomock.Any(), updatedRequest, int32(1), int32(2)).Return(nil)
+				logCall := expectProcessingLog(t, m, testID, 2)
 				m.publisher.EXPECT().
 					Publish(gomock.Any(), "stovepipe-hook", gomock.AssignableToTypeOf(entityqueue.Message{})).
-					Return(errors.New("queue unavailable"))
+					Return(errors.New("queue unavailable")).
+					After(logCall)
 			},
 		},
 		{
@@ -565,10 +611,44 @@ func TestProcess(t *testing.T) {
 				updatedRequest.State = entity.RequestStateProcessing
 				updatedRequest.BuildStrategy = entity.BuildStrategyFull
 				m.reqStore.EXPECT().Update(gomock.Any(), updatedRequest, int32(1), int32(2)).Return(nil)
-				expectStartValidationAnnounce(t, m, testID)
+				logCall := expectProcessingLog(t, m, testID, 2)
+				hookCall := expectStartValidationAnnounce(t, m, testID)
 				m.publisher.EXPECT().
 					Publish(gomock.Any(), "build", gomock.AssignableToTypeOf(entityqueue.Message{})).
-					Return(errors.New("queue unavailable"))
+					Return(errors.New("queue unavailable")).
+					After(hookCall)
+				hookCall.After(logCall)
+			},
+		},
+		{
+			name:    "processing log failure retains admitted request and claimed slot",
+			wantErr: true,
+			setup: func(m processMocks) {
+				m.reqStore.EXPECT().Get(gomock.Any(), testID).Return(acceptedRequest(testID), nil)
+				m.queueStore.EXPECT().Get(gomock.Any(), testQueue).Return(entity.Queue{
+					Name:            testQueue,
+					LatestRequestID: testID,
+					Version:         1,
+				}, nil)
+				updatedQueue := entity.Queue{
+					Name:            testQueue,
+					LatestRequestID: testID,
+					InFlightCount:   1,
+					Version:         1,
+				}
+				m.queueStore.EXPECT().Update(gomock.Any(), updatedQueue, int32(1), int32(2)).Return(nil)
+				updatedRequest := acceptedRequest(testID)
+				updatedRequest.State = entity.RequestStateProcessing
+				updatedRequest.BuildStrategy = entity.BuildStrategyFull
+				m.reqStore.EXPECT().Update(gomock.Any(), updatedRequest, int32(1), int32(2)).Return(nil)
+				request := entity.Request{
+					ID: testID, Queue: testQueue, State: entity.RequestStateProcessing, Version: 2,
+				}
+				m.materializer.EXPECT().PersistLog(
+					gomock.Any(),
+					m.store,
+					requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown),
+				).Return(errors.New("db down"))
 			},
 		},
 		{
@@ -710,7 +790,7 @@ func TestProcess(t *testing.T) {
 				retry.BuildStrategy = entity.BuildStrategyIncrementalSinceGreen
 				retry.BaseURI = lastGreenURI
 				m.reqStore.EXPECT().Update(gomock.Any(), retry, int32(2), int32(3)).Return(nil)
-				expectStartAnnounceAndBuildPublish(t, m, testID)
+				expectProcessingLogAndHandoff(t, m, testID, 3)
 			},
 		},
 		{
