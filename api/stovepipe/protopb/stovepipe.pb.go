@@ -374,10 +374,6 @@ type HistoryEvent struct {
 	//	*HistoryEvent_RequestState
 	//	*HistoryEvent_Event
 	Occurrence isHistoryEvent_Occurrence `protobuf_oneof:"occurrence"`
-	// Newer request that caused a superseded state. Empty when not applicable.
-	SupersededByRequestId string `protobuf:"bytes,5,opt,name=superseded_by_request_id,json=supersededByRequestId,proto3" json:"superseded_by_request_id,omitempty"`
-	// Build associated with the occurrence. Empty when no build applies.
-	BuildId string `protobuf:"bytes,6,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
 	// Stable domain reason for a terminal request outcome. Empty otherwise.
 	OutcomeReason string `protobuf:"bytes,7,opt,name=outcome_reason,json=outcomeReason,proto3" json:"outcome_reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -449,20 +445,6 @@ func (x *HistoryEvent) GetEvent() string {
 		if x, ok := x.Occurrence.(*HistoryEvent_Event); ok {
 			return x.Event
 		}
-	}
-	return ""
-}
-
-func (x *HistoryEvent) GetSupersededByRequestId() string {
-	if x != nil {
-		return x.SupersededByRequestId
-	}
-	return ""
-}
-
-func (x *HistoryEvent) GetBuildId() string {
-	if x != nil {
-		return x.BuildId
 	}
 	return ""
 }
@@ -661,17 +643,15 @@ const file_stovepipe_proto_rawDesc = "" +
 	"request_id\x18\x02 \x01(\tR\trequestId\"G\n" +
 	"\x1dGetRequestHistoryByURIRequest\x12\x14\n" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\x12\x10\n" +
-	"\x03uri\x18\x02 \x01(\tR\x03uri\"\x94\x02\n" +
+	"\x03uri\x18\x02 \x01(\tR\x03uri\"\xf0\x01\n" +
 	"\fHistoryEvent\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12!\n" +
 	"\ftimestamp_ms\x18\x02 \x01(\x03R\vtimestampMs\x12%\n" +
 	"\rrequest_state\x18\x03 \x01(\tH\x00R\frequestState\x12\x16\n" +
-	"\x05event\x18\x04 \x01(\tH\x00R\x05event\x127\n" +
-	"\x18superseded_by_request_id\x18\x05 \x01(\tR\x15supersededByRequestId\x12\x19\n" +
-	"\bbuild_id\x18\x06 \x01(\tR\abuildId\x12%\n" +
+	"\x05event\x18\x04 \x01(\tH\x00R\x05event\x12%\n" +
 	"\x0eoutcome_reason\x18\a \x01(\tR\routcomeReasonB\f\n" +
 	"\n" +
-	"occurrence\"q\n" +
+	"occurrenceJ\x04\b\x05\x10\x06J\x04\b\x06\x10\aR\x18superseded_by_request_idR\bbuild_id\"q\n" +
 	"\x0eRequestHistory\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12@\n" +
