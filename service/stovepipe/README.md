@@ -7,13 +7,13 @@ Runnable wiring for the **Stovepipe** domain — a single-service domain (the do
 - **process consumer** (`TopicKeyProcess`) — reloads the persisted `Request` from storage and runs the process stage (`stovepipe/controller/process`).
 - **build consumer** (`TopicKeyBuild`) — reloads the persisted `Request` and triggers the build-runner, then publishes to `buildsignal`.
 - **buildsignal consumer** (`TopicKeyBuildSignal`) — polls/records the build's terminal status and releases the queue's in-flight slot, then publishes to `record`.
-- **record consumer** (`TopicKeyRecord`) — writes the whole-repo validation fact, and advances the queue's last-green bookmark and promotion ref.
-- **hook consumer** (`TopicKeyHook`) — hands each lifecycle event to the hooks `hookResolver` returns (`platform/hook`). Nothing publishes to this topic yet and the resolver returns only `noop`, so events are accepted and discarded. Its topic name is domain-qualified (`stovepipe-hook`) because the key is shared across domains.
-- **DLQ reconciler** — for each internal topic, a `_dlq` consumer that drives stuck requests to a conservative terminal state so the queue's slot is freed.
+- **record consumer** (`TopicKeyRecord`) — writes the whole-repository validation fact and, for a green fact, advances the queue's last-green bookmark and promotion ref.
+- **hook consumer** (`TopicKeyHook`) — receives `validation.repository.started` from process and `validation.repository.recorded` or `validation.repository.cancelled` from record. The current resolver invokes only `noop`, so these events have no external side effect. Its topic name is domain-qualified (`stovepipe-hook`) because the key is shared across domains.
+- **DLQ consumers** — registered for process, build, buildsignal, record, and hook, with stage-specific reconciliation behavior.
 
-The ingest → process → build → buildsignal → record hop stays inside one service and one store, so the queue messages carry only request **IDs**; the consumers reload from storage (the source of truth), which keeps messages small and redelivery idempotent. The process, build, buildsignal, and record topic keys and their internal wire contract are owned by the domain under `stovepipe/core/messagequeue/`.
+The ingest → process → build → buildsignal → record flow stays inside one service and one store, so messages carry thin identifiers: request IDs on process, build, and record; a build ID on buildsignal. Consumers reload the full entity from storage, which keeps messages small and redelivery idempotent. The topic keys and internal wire contract are owned by the domain under `stovepipe/core/messagequeue/`.
 
-Stovepipe therefore needs two MySQL databases: a **storage** database (the `queue`, `request`, `request_uri`, and `build` tables) and a **queue** database (messaging infrastructure).
+Stovepipe therefore needs two MySQL databases: a **storage** database (the `queue`, `request`, `request_uri`, `request_log`, `build`, and `validation_fact` tables) and a **queue** database (messaging infrastructure).
 
 ## Wiring notes
 
@@ -35,14 +35,15 @@ stovepipe/
     └── main.go             # Ping client (default :8083)
 ```
 
-The Stovepipe controllers live under [`stovepipe/controller/`](../../stovepipe/controller) (subdirectories for `ingest`, `process`, `build`, `buildsignal`, `record`, and `dlq`) and its extensions under [`stovepipe/extension/`](../../stovepipe/extension); this directory only contains the runnable wiring and a Docker Compose stack for manual testing.
+The Stovepipe controllers live under [`stovepipe/controller/`](../../stovepipe/controller): `ingest.go` contains the RPC controller, while `process/`, `build/`, `buildsignal/`, `record/`, and `dlq/` contain queue controllers. Its extensions live under [`stovepipe/extension/`](../../stovepipe/extension); this directory only contains runnable wiring and a Docker Compose stack for manual testing.
 
 ## Configuration
 
 | Variable            | Required | Description                              | Default              |
 |---------------------|----------|------------------------------------------|----------------------|
-| `STORAGE_MYSQL_DSN` | yes      | Storage database DSN (`request`, `request_uri`) | —             |
+| `STORAGE_MYSQL_DSN` | yes      | Storage database DSN | — |
 | `QUEUE_MYSQL_DSN`   | yes      | Queue database DSN                       | —                    |
+| `QUEUE_LOG_LEVEL`   | no       | Message-queue logger level               | `info`               |
 | `PORT`              | no       | gRPC listen address                      | `:8083`              |
 | `HOSTNAME`          | no       | Subscriber name for the queue consumers  | `stovepipe-<unix_ts>` |
 
@@ -93,4 +94,4 @@ grpcurl -plaintext -d '{"message": "hello"}' localhost:8083 uber.submitqueue.sto
 
 ## Shutdown
 
-The server handles `SIGINT` / `SIGTERM` gracefully: it drains in-flight RPCs, then stops the process consumer (30s timeout). It exits `0` on clean shutdown, `143` (128 + SIGTERM) when stopped by signal, and `1` on startup/runtime errors (details on stderr). Shutdown errors override the signal exit code.
+The server handles `SIGINT` / `SIGTERM` gracefully: it drains in-flight RPCs, then stops the primary pipeline consumer followed by the DLQ consumer (30-second limit for each). It exits `0` on clean shutdown, `143` (128 + SIGTERM) when stopped by signal, and `1` on startup/runtime errors (details on stderr). Shutdown errors override the signal exit code.

@@ -1,6 +1,6 @@
 # Testing
 
-All testing (automated and manual) uses **containerized environments** for consistency and reproducibility.
+Integration, end-to-end, and local/manual service testing use **containerized environments** for consistency and reproducibility. Unit tests run directly under Bazel and do not require Docker.
 
 ## Prerequisites
 
@@ -24,13 +24,13 @@ SubmitQueue uses **two separate databases** to demonstrate proper architectural 
 ### 1. Application Database
 - **Purpose**: Business data (requests, counters, batches)
 - **Schema**: `submitqueue/extension/storage/mysql/schema`, `platform/extension/counter/mysql/schema`
-- **Used by**: Gateway (stores requests), Orchestrator (reads/updates request state)
+- **Used by**: Gateway (receipts, request logs, and read models), Orchestrator (requests, batches, builds, and counters)
 - **Connection**: `MYSQL_DSN`
 
 ### 2. Queue Database
 - **Purpose**: Messaging infrastructure (queue messages, offsets, partition leases)
 - **Schema**: `platform/extension/messagequeue/mysql/schema`
-- **Used by**: Gateway (publishes), Orchestrator (consumes)
+- **Used by**: Gateway (publishes and consumes), Orchestrator (publishes and consumes), Runway (consumes merge work and publishes results)
 - **Connection**: `QUEUE_MYSQL_DSN`
 
 **Why separate?**
@@ -54,7 +54,7 @@ make test
 # Integration tests (Docker required)
 make integration-test-submitqueue-gateway       # Gateway in isolation
 make integration-test-submitqueue-orchestrator  # Orchestrator in isolation
-make integration-test-extensions    # All extension tests
+make integration-test-extensions    # SubmitQueue and shared extension tests
 make integration-test               # All integration tests
 
 # E2E tests (Docker required)
@@ -73,16 +73,16 @@ make build-all-linux                # Build Linux binaries for the local docker-
 - Speed: Fast (< 1s typically)
 
 **2. Integration Tests** - Service in isolation with real dependencies
-- Location: `test/integration/submitqueue/<area>/` (e.g., `gateway/`, `orchestrator/`, `extension/<ext>/`)
+- Location: `test/integration/{submitqueue,stovepipe,extension}/...`
 - Run: `make integration-test-submitqueue-gateway`, `make integration-test-submitqueue-orchestrator`, `make integration-test-submitqueue-consumer`, or `make integration-test-extensions`
 - Containers: MySQL + one service or the extension's dependencies
 - Tests one service isolated from others
 
-**3. E2E Tests** - Complete workflows across all services
-- Location: `test/e2e/submitqueue/`
+**3. E2E Tests** - Complete domain workflows
+- Location: `test/e2e/{submitqueue,stovepipe,runway}/`
 - Run: `make e2e-test`
-- Containers: MySQL + all services
-- Tests cross-service communication
+- Containers: Each suite's required services and dependencies; SubmitQueue E2E includes Gateway, Orchestrator, Runway, and MySQL
+- Tests end-to-end behavior, including cross-service communication where applicable
 
 ### How Automated Tests Work
 
@@ -111,7 +111,7 @@ Project name format:
 ```
 sq-test-{context}-{shortid}
 │       │         │
-│       │         └─ 6-char hex timestamp (unique per test run)
+│       │         └─ 6 hex digits derived from the current time
 │       └─────────── Test context (domain-qualified — see convention)
 └─────────────────── Namespace prefix
 ```
@@ -139,14 +139,14 @@ Shared (cross-domain) suites carry no domain segment — e.g. the shared queue e
 | Stovepipe | `svc-stovepipe` | `sq-test-svc-stovepipe-abc123-stovepipe-service-1` |
 | SubmitQueue storage extension | `ext-submitqueue-storage-mysql` | `sq-test-ext-submitqueue-storage-mysql-2ce1d0-mysql-1` |
 | Counter extension (shared) | `ext-counter-mysql` | `sq-test-ext-counter-mysql-…-mysql-1` |
-| SubmitQueue changestore extension | `ext-submitqueue-changestore-mysql` | `sq-test-ext-submitqueue-changestore-mysql-…-mysql-1` |
+| Stovepipe storage extension | `ext-stovepipe-storage-mysql` | `sq-test-ext-stovepipe-storage-mysql-…-mysql-1` |
 | Shared queue extension | `ext-messagequeue-sql` | `sq-test-ext-messagequeue-sql-a1b2c3-mysql-1` |
 | SubmitQueue consumer (core) | `core-submitqueue-consumer` | `sq-test-core-submitqueue-consumer-…-mysql-1` |
 | SubmitQueue e2e (full stack) | `e2e-submitqueue` | `sq-test-e2e-submitqueue-def456-gateway-service-1` |
 
 ### Parallel execution
 
-Every suite gets a unique project name (`{context}-{shortid}`) and every compose service publishes **ephemeral host ports** (`- "3306"`, `- "8080"`), so suites are fully isolated and run **in parallel**. `make integration-test` runs all suites concurrently via `--test_output=errors` (`--test_output=streamed` would force bazel to serialize them). The domain-qualified context is what keeps container names unambiguous when many run at once.
+Each suite normally gets a distinct project name (`{context}-{shortid}`), where the short suffix is derived from the low 24 bits of the current nanosecond timestamp. It is useful for separating concurrent runs but is not a guaranteed unique identifier. Every compose service publishes **ephemeral host ports** (`- "3306"`, `- "8080"`), so suites can run **in parallel**. `make integration-test` runs suites concurrently via `--test_output=errors` (`--test_output=streamed` would force Bazel to serialize them). The domain-qualified context keeps container names understandable when many run at once.
 
 ### Debugging with Container Names
 
@@ -173,7 +173,7 @@ docker exec -it sq-test-ext-counter-2ce1d0-mysql-1 \
 ### Quick Start
 
 ```bash
-# Start all services (Gateway + Orchestrator + 2 MySQL DBs)
+# Start the full workflow stack (Gateway + Orchestrator + Runway + 2 MySQL DBs)
 make local-submitqueue-start
 
 # See running containers and endpoints
@@ -199,9 +199,10 @@ grpcurl -plaintext -d '{"message": "hello"}' localhost:<PORT> uber.submitqueue.g
 # Test Land API
 grpcurl -plaintext -d '{
   "queue": "test-queue",
-  "change": {"source": "github", "ids": ["PR-123"]},
+  "change": {"uris": ["github://github.com/owner/repo/pull/123/0123456789abcdef0123456789abcdef01234567"]},
   "strategy": "REBASE"
-}' localhost:<PORT> uber.submitqueue.gateway.SubmitQueueGateway/Land
+}' -import-path . -proto api/submitqueue/gateway/proto/gateway.proto \
+  localhost:<PORT> uber.submitqueue.gateway.SubmitQueueGateway/Land
 
 # Stop
 make local-submitqueue-gateway-stop
@@ -252,20 +253,16 @@ mysql -h127.0.0.1 -P<QUEUE_PORT> -uroot -proot submitqueue
 brew install grpcurl  # macOS
 # OR: go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
 
-# List services (use port from make local-submitqueue-ps)
-grpcurl -plaintext localhost:<PORT> list
-
-# Describe a service
-grpcurl -plaintext localhost:<PORT> describe uber.submitqueue.gateway.SubmitQueueGateway
-
-# Call Ping
-grpcurl -plaintext -d '{"message": "test"}' \
+# Gateway reflection currently cannot resolve one imported descriptor, so pass the local proto.
+grpcurl -plaintext -import-path . -proto api/submitqueue/gateway/proto/gateway.proto \
+  -d '{"message": "test"}' \
   localhost:<PORT> uber.submitqueue.gateway.SubmitQueueGateway/Ping
 
 # Call Land
-grpcurl -plaintext -d '{
-  "queue": "my-queue",
-  "change": {"source": "github", "ids": ["PR-456"]},
+grpcurl -plaintext -import-path . -proto api/submitqueue/gateway/proto/gateway.proto \
+  -d '{
+  "queue": "test-queue",
+  "change": {"uris": ["github://github.com/owner/repo/pull/456/0123456789abcdef0123456789abcdef01234567"]},
   "strategy": "REBASE"
 }' localhost:<PORT> uber.submitqueue.gateway.SubmitQueueGateway/Land
 ```
@@ -380,7 +377,7 @@ assert.Equal(s.T(), "expected", resp.Value)
 
 1. Add test to `test/e2e/submitqueue/suite_test.go`
 2. Use all service clients
-3. Use `require.Eventually()` for async operations
+3. Use the suite's polling helper for async operations; it retries until the condition holds and relies on the Bazel test timeout rather than adding a second hardcoded deadline
 4. Run: `make e2e-test`
 
 ---
