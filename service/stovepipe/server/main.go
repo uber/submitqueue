@@ -67,8 +67,9 @@ import (
 // StovepipeServer wraps the controllers and implements the gRPC service interface.
 type StovepipeServer struct {
 	pb.UnimplementedStovepipeServer
-	pingController   *controller.PingController
-	ingestController *controller.IngestController
+	pingController           *controller.PingController
+	ingestController         *controller.IngestController
+	requestHistoryController controller.RequestHistoryController
 }
 
 // Ping delegates to the controller.
@@ -84,6 +85,24 @@ func (s *StovepipeServer) Ingest(ctx context.Context, req *pb.IngestRequest) (*p
 		return nil, err
 	}
 	return mapper.IngestResultToProto(result), nil
+}
+
+// GetRequestHistoryByID returns retained history for one request ID.
+func (s *StovepipeServer) GetRequestHistoryByID(ctx context.Context, req *pb.GetRequestHistoryByIDRequest) (*pb.GetRequestHistoryByIDResponse, error) {
+	events, err := s.requestHistoryController.GetRequestHistoryByID(ctx, mapper.ProtoToGetRequestHistoryByIDRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	return &pb.GetRequestHistoryByIDResponse{Events: mapper.HistoryEventsToProto(events)}, nil
+}
+
+// GetRequestHistoryByURI returns retained histories for one commit URI.
+func (s *StovepipeServer) GetRequestHistoryByURI(ctx context.Context, req *pb.GetRequestHistoryByURIRequest) (*pb.GetRequestHistoryByURIResponse, error) {
+	histories, err := s.requestHistoryController.GetRequestHistoryByURI(ctx, mapper.ProtoToGetRequestHistoryByURIRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	return &pb.GetRequestHistoryByURIResponse{Histories: mapper.RequestHistoriesToProto(histories)}, nil
 }
 
 // inMemoryCounter is a minimal, process-local counter.Counter used to wire the example
@@ -341,9 +360,11 @@ func run() error {
 		materializer,
 		registry,
 	)
+	requestHistoryController := controller.NewRequestHistoryController(logger.Sugar(), scope, storageFty)
 	srv := &StovepipeServer{
-		pingController:   pingController,
-		ingestController: ingestController,
+		pingController:           pingController,
+		ingestController:         ingestController,
+		requestHistoryController: requestHistoryController,
 	}
 	pb.RegisterStovepipeServer(grpcServer, srv)
 
