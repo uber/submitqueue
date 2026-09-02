@@ -11,7 +11,7 @@ Designed for large monorepos and fast-moving teams where concurrent changes can 
 
 ## Repository layout
 
-Cross-domain Go code (errors, metrics, consumer framework, HTTP helpers, shared entities, shared extension contracts) lives under [`platform/`](platform/README.md). Each product domain has its own tree (`submitqueue/`, `stovepipe/`, …) and grows into `gateway/`, `orchestrator/`, `entity/`, `extension/`, and domain-local `core/` — though a domain may start smaller (Stovepipe is currently a single Ping-only service with just `controller/`). See [AGENTS.md](AGENTS.md) for conventions and import paths.
+Cross-domain Go code (errors, metrics, consumer framework, HTTP helpers, shared entities, shared extension contracts) lives under [`platform/`](platform/README.md). Each product domain has its own tree (`submitqueue/`, `stovepipe/`, …). Multi-service domains may split into `gateway/` and `orchestrator/`; single-service domains keep controllers directly under the domain root. Stovepipe currently exposes ingestion behavior and runs its own queue pipeline. See [AGENTS.md](AGENTS.md) for conventions and import paths.
 
 ## Quick Start
 

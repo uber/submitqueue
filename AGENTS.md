@@ -4,17 +4,17 @@
 
 SubmitQueue is a distributed system for managing code submission workflows. It follows clean architecture with interface-driven extensibility.
 
-**Immutability and Eventual Consistency:**
+**Versioned State and Eventual Consistency:**
 
-1. **Immutable entities** — once created, don't modify in place. Create new versions with updated fields.
+1. **Immutable values and versioned snapshots** — do not mutate caller-owned values or pre-update in-memory state. Lifecycle entities are persisted as complete replacement snapshots under optimistic locking; records whose identity is immutable (for example mappings and append-only logs) are created rather than updated.
 2. **Eventual consistency** — handle stale reads, idempotent operations, and convergence over time.
-3. **Event sourcing** — store events (what happened) rather than just current state for critical changes.
-4. **Optimistic locking** — use version numbers instead of pessimistic locks. Avoid transactions; prefer optimistic concurrency and retries. **Version arithmetic lives in the controller, not the storage layer.** Update methods take both `oldVersion` (the where-clause guard) and `newVersion` (the value to write); the store performs a pure conditional write. Controllers compute `newVersion = oldVersion + 1`, call the store, and only assign `entity.Version = newVersion` after the call succeeds. Pre-incrementing in memory before the call is a bug pattern — on error the in-memory version drifts ahead of the database. See [submitqueue/extension/storage/README.md](submitqueue/extension/storage/README.md).
+3. **Selective event sourcing** — request history and customer-facing request status are represented by append-only log events plus materialized projections. Other orchestration entities retain versioned current-state snapshots.
+4. **Optimistic locking** — use version numbers instead of pessimistic locks. Avoid transactions across entities or distributed boundaries; prefer optimistic concurrency and retries. A storage backend may still use a local transaction to implement one backend operation atomically. **Version arithmetic lives in the controller, not the storage layer.** Update methods take both `oldVersion` (the where-clause guard) and `newVersion` (the value to write); the store performs a pure conditional write. Controllers compute `newVersion = oldVersion + 1`, call the store, and only assign `entity.Version = newVersion` after the call succeeds. Pre-incrementing in memory before the call is a bug pattern — on error the in-memory version drifts ahead of the database. See [submitqueue/extension/storage/README.md](submitqueue/extension/storage/README.md).
 5. **Idempotency keys** — include unique request IDs, check for duplicates before executing.
 6. **Persist before you publish** — when a message hands work to a later stage, write the state first and publish only once the write has succeeded. Publishing first races the consumer against the write: it can load an entity that was never recorded, or a version older than the one the message describes, and then build on an assumption that was never true. Ordered write-then-publish, a failed publish leaves the state durable and the retry re-publishes; the reverse leaves a message describing a state nothing wrote. The exception is a message that depends on nothing the write does — a status log recording a transition, or an idempotent nudge whose consumer re-derives everything from current state. Those publish first on purpose, so that a failure leaves nothing written and the retry redoes the whole step rather than stranding a durable state change with no way to announce it; see `submitqueue/orchestrator/controller/speculate/finalize.go` and `.../buildsignal/buildsignal.go` for the reasoning at those two sites.
 
 ```go
-// Immutable entity pattern
+// Versioned snapshot pattern
 type Request struct {
     ID        string
     Version   int       // For optimistic locking
@@ -50,10 +50,13 @@ submitqueue/                        # repo root (Go module github.com/uber/submi
 │   ├── gateway/                    # Gateway service (port 8081) - entry point
 │   ├── orchestrator/               # Orchestrator service (port 8082) - coordinates jobs
 │   ├── entity/                     # SubmitQueue-specific domain entities
-│   ├── extension/                  # SubmitQueue-specific extension impls (storage, counter, mergechecker, …)
-│   └── core/                       # SubmitQueue-internal shared infra (consumer wiring, request, topickey, …)
-├── stovepipe/                      # Stovepipe domain (single Ping-only service for now)
-│   └── controller/                 # Business logic (currently just Ping); entity/extension/core added as it grows
+│   ├── extension/                  # SubmitQueue-specific extension contracts and implementations
+│   └── core/                       # SubmitQueue-internal shared infra (batch, changeset, request, topickey)
+├── stovepipe/                      # Stovepipe domain (single service)
+│   ├── controller/                 # RPC and queue-stage business logic
+│   ├── entity/                     # Stovepipe domain entities
+│   ├── extension/                  # Stovepipe-specific extension contracts and implementations
+│   └── core/                       # Stovepipe-internal queue contracts and shared infrastructure
 ├── runway/                         # Runway domain (single service — the domain *is* the service)
 │   └── controller/                 # Runway service controllers (consumes the merge queues; no gateway/orchestrator split)
 ├── tool/                           # Development and CI tooling
@@ -68,7 +71,7 @@ submitqueue/                        # repo root (Go module github.com/uber/submi
 └── doc/                            # Documentation
 ```
 
-The `platform/` tree holds code reused across domains (infrastructure, shared entities, shared extension contracts). A multi-service **domain** (e.g. `submitqueue/`) keeps the same internal layout (`gateway/`, `orchestrator/`, `entity/`, `extension/`, `core/`); a domain's own `core/` (e.g. `submitqueue/core/`) holds infra shared only between that domain's services. A **single-service domain** collapses that split — the domain *is* the service, so its controllers live directly under the domain root (e.g. `runway/controller/`, `stovepipe/controller/`) with no `gateway/`/`orchestrator/` segment, and its wire contract is service-segment-free (`api/{domain}/`). `runway` is a consumer-only landing service with no gateway; `stovepipe` is currently a single Ping-only service that can grow the other layers (`entity/`, `extension/`, `core/`) as it gains real behavior.
+The `platform/` tree holds code reused across domains (infrastructure, shared entities, shared extension contracts). A multi-service **domain** (e.g. `submitqueue/`) keeps the same internal layout (`gateway/`, `orchestrator/`, `entity/`, `extension/`, `core/`); a domain's own `core/` (e.g. `submitqueue/core/`) holds infra shared only between that domain's services. A **single-service domain** collapses that split — the domain *is* the service, so its controllers live directly under the domain root (e.g. `runway/controller/`, `stovepipe/controller/`) with no `gateway/`/`orchestrator/` segment, and its wire contract is service-segment-free (`api/{domain}/`). `runway` is a consumer-only landing service with no gateway. `stovepipe` exposes ingestion RPC behavior and runs its own process, build, build-signal, record, hook, and DLQ queue stages.
 
 The `api/` tree holds **published** wire contracts — those depended on from outside the owning domain. RPC contracts live at `api/{domain}/{service}/` (`proto/` for `.proto` sources, `protopb/` for committed generated Go); for a single-service domain the service segment is dropped, so the contract lives directly at `api/{domain}/` (e.g. `api/runway/{proto,protopb}/`). A service package may hold multiple `.proto` files, all generating into the same `protopb/`. External message-queue contracts live at `api/{domain}/messagequeue/` (see Message Queue Contracts below). Internal queue contracts do **not** go here — they live under `{domain}/core/messagequeue/`.
 
@@ -83,7 +86,7 @@ Each service follows the same layout:
 
 ```
 <service>/
-└── controller/          # Business logic (pure, transport-agnostic)
+└── controller/          # Transport-agnostic business logic over injected interfaces
     ├── {method}.go      # RPC controllers (e.g., land.go, ping.go)
     ├── {method}_test.go
     └── {step}/          # Queue message controllers (e.g., request/)
@@ -95,22 +98,22 @@ Wire contracts for a service live separately under `api/{domain}/{service}/` (se
 
 ### Controllers
 
-Two types, both containing pure business logic independent of infrastructure:
+Two types, both containing transport-agnostic business logic. Controllers depend on behavioral interfaces for storage, queues, providers, and other infrastructure; service wiring supplies concrete implementations.
 
-**RPC Controllers** — in `{service}/controller/`, accept protobuf types:
+**RPC Controllers** — in `{service}/controller/`, normally accept and return domain entities after the service wiring maps the wire request. Legacy health-check controllers may still accept protobuf types directly:
 ```go
-func (c *LandController) Land(ctx context.Context, req *pb.LandRequest) (*pb.LandResponse, error)
+func (c *LandController) Land(ctx context.Context, req entity.LandRequest) (entity.LandResult, error)
 ```
 
 **Queue Message Controllers** — in `{service}/controller/{step}/`, implement `consumer.Controller`:
 ```go
-// Return nil to ack, error to nack. Consumer handles ack/nack automatically.
+// Return nil to ack or an error to nack/reject. Call Hold and return nil to postpone.
 func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) error
 ```
 
-Controllers receive `consumer.Delivery` (subset interface without Ack/Nack) to enforce separation of business logic from infrastructure.
+Controllers receive `consumer.Delivery` (a subset interface without Ack/Nack) to enforce separation of business logic from queue mechanics. `delivery.Hold(delayMs)` requests delayed redelivery without consuming retry budget; the controller must then return `nil`.
 
-**Queue payloads: IDs within a boundary, full payloads across one.** When producer and consumer share a store (same service — e.g. `build`→`buildsignal`, `validate`→`mergeconflict`), put only the entity **ID** on the queue and reload from storage (the store is the source of truth, messages stay small, redelivery is idempotent). Reloading from storage is what makes the publish ordering load-bearing — see "Persist before you publish" above. When a queue **crosses a service boundary** (the consumer cannot read the producer's store — e.g. orchestrator→runway), publish the **full payload** the consumer needs, and have the **client own the correlation ID** so it can match the async result back to the work it is tracking. The queue's **owner defines the wire contract and topic keys** (in its own domain package); the other side imports them.
+**Queue payloads: IDs within a boundary, full payloads across one.** When producer and consumer share a store (for example SubmitQueue's `build`→`buildsignal` flow), put only the entity **ID** on the queue and reload from storage (the store is the source of truth, messages stay small, redelivery is idempotent). Reloading from storage is what makes the publish ordering load-bearing — see "Persist before you publish" above. When a queue **crosses a service boundary** (for example SubmitQueue validation or merge handing work to Runway), publish the **full payload** the consumer needs, and have the **client own the correlation ID** so it can match the asynchronous result back to the work it is tracking. The queue's **owner defines the wire contract and topic keys** (in its own domain package); the other side imports them.
 
 ### Entities
 
@@ -153,7 +156,7 @@ The cost of "callers loop over a small batch" is usually negligible. The cost of
 
 When in doubt, ask: *"If the next implementation were DynamoDB / Kafka / Bigtable / a remote RPC service / an in-memory map, could it satisfy this signature without contortion?"* If the answer is no, simplify the contract.
 
-**Input contract — identity in, resolve internally.** A decision/action extension takes the orchestrator's thin reference entity at its pipeline-stage granularity — `entity.Request` (request stage) or `entity.Batch` / `[]entity.Batch` (batch stage) — never controller-pre-resolved data. It resolves the granular content it needs (changes, diffs, targets) through dependencies injected at its `Factory` (e.g. a request store, a change provider), not a global aggregator. Stores (`storage`, `changestore`) and config (`queueconfig`) are the exception — they are the resolution *targets* and stay key/value-shaped per the rule above. `conflict.Analyzer` is the reference shape; every new extension or signature change must follow it. See [doc/rfc/submitqueue/extension-contract.md](doc/rfc/submitqueue/extension-contract.md).
+**Input contract — identity in, resolve internally.** A decision/action extension takes the orchestrator's thin reference entity at its pipeline-stage granularity — `entity.Request` (request stage) or `entity.Batch` / `[]entity.Batch` (batch stage) — never controller-pre-resolved data. It resolves the granular content it needs (changes, diffs, targets) through dependencies injected when the implementation is constructed (for example a `changeset.Resolver` or change provider), not through a global aggregator. Storage and configuration extensions are the resolution targets and retain key-oriented contracts. `conflict.Analyzer` is the reference shape; every new extension or signature change must follow it.
 
 ### Import Paths
 
@@ -165,7 +168,7 @@ Paths follow the directory layout: shared packages live under `platform/` at the
 - Queue contracts: external `github.com/uber/submitqueue/api/{domain}/messagequeue`; internal `github.com/uber/submitqueue/{domain}/core/messagequeue`
 - Domain entities: `github.com/uber/submitqueue/{domain}/entity` (e.g. `.../submitqueue/entity`)
 - Domain extensions: `github.com/uber/submitqueue/{domain}/extension/{ext}[/{impl}]` (e.g. `.../submitqueue/extension/storage/mysql`)
-- Cross-domain consumer framework: `github.com/uber/submitqueue/platform/consumer`; internal pipeline topic keys: `github.com/uber/submitqueue/{domain}/core/topickey` (external queue topic keys live with their contract package, e.g. `api/runway/messagequeue`)
+- Cross-domain consumer framework: `github.com/uber/submitqueue/platform/consumer`; internal topic keys live with the owning domain contract (for example `submitqueue/core/topickey` and `stovepipe/core/messagequeue`); external queue topic keys live with their published contract (for example `api/runway/messagequeue`)
 - Domain-internal infra: `github.com/uber/submitqueue/{domain}/core/{pkg}` (e.g. `.../submitqueue/core/request`)
 - Shared entities: `github.com/uber/submitqueue/platform/base/{pkg}` (e.g. `.../platform/base/messagequeue`)
 - Shared extensions: `github.com/uber/submitqueue/platform/extension/{ext}[/{impl}]` (e.g. `.../platform/extension/messagequeue/mysql`)
@@ -189,13 +192,15 @@ Generated proto files are committed. When modifying `.proto` files:
 2. `make proto` (generates `*.pb.go`, `*_grpc.pb.go`, `*.pb.yarpc.go` into `api/{domain}/{service}/protopb/`)
 3. Commit all generated files
 
-To add a new `.proto` to a service, drop it in the service's `api/{domain}/{service}/proto/` dir, add it to that package's `srcs` in `api/{domain}/{service}/proto/BUILD.bazel` and its `exports_files`, then `make proto && make gazelle`. The codegen and `make proto` copy loop already handle multiple `.proto` files per package.
+To add a new `.proto` to a service, drop it in the service's `api/{domain}/{service}/proto/` directory, export it from that directory's `BUILD.bazel`, and add its label to the corresponding `go_proto_generated_files` target in `tool/proto/BUILD.bazel`. Then run `make proto && make gazelle`. The codegen and `make proto` copy loop handle multiple `.proto` files per package.
 
 ### Message Queue Contracts
 
-Queue payloads are defined in **proto3** (`.proto` under `proto/`, generated Go in `protopb/` as the binding) and serialized as **protobuf JSON** (protojson) so the queue keeps storing self-describing JSON. Location follows audience: external/cross-domain contracts go under `api/{domain}/messagequeue/`; internal contracts (used only within the owning domain) go under `{domain}/core/messagequeue/`. Bazel `visibility` enforces the split — internal targets are domain-scoped, `api/` targets are public. See [doc/rfc/messagequeue-contract.md](doc/rfc/messagequeue-contract.md).
+New queue contracts are defined in **proto3** (`.proto` under `proto/`, generated Go in `protopb/` as the binding) and serialized as **protobuf JSON** (protojson) so the queue keeps storing self-describing JSON. Location follows audience: external/cross-domain contracts go under `api/{domain}/messagequeue/`; internal contracts (used only within the owning domain) go under `{domain}/core/messagequeue/`. Bazel `visibility` enforces the split — internal targets are domain-scoped, `api/` targets are public.
 
-The message types are generated; the contract package adds only generic `protojson` glue — `Marshal(m)` / `Unmarshal[T](b, m)` — owning the wire conventions: `UseProtoNames` (snake_case fields), UPPER_SNAKE enum values, int64-as-string, unknown fields discarded on read (additive evolution). The topic key(s) carrying a message are declared on the message via the `topic_keys` proto option — a `google.protobuf.MessageOptions` extension defined in `api/base/messagequeue`. A topic key is a stable logical name, not a concrete wire topic; each implementer maps it to its backend's topic name, and a `TopicKeys(msg)` reflection helper reads the option back. It is contract metadata, not the hot path — publish/consume still routes on `consumer.TopicKey` + `TopicRegistry`. The contract package owns both halves: the proto payload and the `TopicKey` constants for its topic keys. A contract test round-trips the payloads and asserts every topic key is bound to exactly one message. Shared field types (`Change`, `Strategy`) are shared protos under `api/base/{change,mergestrategy}`. `api/runway/messagequeue/` is the reference example.
+For proto-backed contracts, the message types are generated and the contract package adds generic `protojson` glue — `Marshal(m)` / `Unmarshal[T](b, m)` — owning the wire conventions: `UseProtoNames` (snake_case fields), UPPER_SNAKE enum values, int64-as-string, and unknown fields discarded on read (additive evolution). The topic key(s) carrying a message are declared on the message via the `topic_keys` proto option — a `google.protobuf.MessageOptions` extension defined in `api/base/messagequeue`. A topic key is a stable logical name, not a concrete wire topic; each implementer maps it to its backend's topic name, and a `TopicKeys(msg)` reflection helper reads the option back. It is contract metadata, not the hot path — publish/consume still routes on `consumer.TopicKey` + `TopicRegistry`. The contract package owns both halves: the proto payload and the `TopicKey` constants for its topic keys. A contract test round-trips the payloads and asserts every topic key is bound to exactly one message. Shared field types (`Change`, `Strategy`) are shared protos under `api/base/{change,mergestrategy}`. `api/runway/messagequeue/` and `stovepipe/core/messagequeue/` are current examples.
+
+SubmitQueue's internal pipeline predates the proto-backed convention. It continues to serialize domain entities with `encoding/json` and declares its logical keys in `submitqueue/core/topickey/`. Do not convert or mix these wire formats incidentally; treat migration as an explicit compatibility change.
 
 ### Naming Conventions
 
@@ -247,10 +252,10 @@ make clean              # Clean Bazel cache
 
 **Add new queue message controller:**
 1. Create `{domain}/{service}/controller/{step}/` implementing `consumer.Controller`
-2. Wire up in `service/{domain}/{service}/server/main.go`
+2. Add it to the owning service's pipeline topology when one exists (for example `submitqueue/orchestrator/pipeline.go`); otherwise wire it in `service/{domain}/{service}/server/main.go`
 
 **Add new extension:**
-1. Create the extension under `{domain}/extension/{ext}/{impl}/` (domain-specific, e.g. `submitqueue/extension/...`) or `platform/extension/{ext}/{impl}/` (shared across domains) with factory and interfaces
+1. Define the interface, config, and `Factory` interface under `{domain}/extension/{ext}/` or `platform/extension/{ext}/`, and put implementation constructors under the `{impl}/` subdirectory. Keep concrete factory adapters and per-queue routing in service wiring.
 2. Add `BUILD.bazel`, tests, and README.md
 
 **Add new entity:**
@@ -312,7 +317,7 @@ deps = [
 **Integration tests** use Docker Compose via `testutil.ComposeStack`:
 - Package naming: folder name as package (NOT `*_test` suffix)
 - Bazel: add `tags = ["integration", "requires-network"]` and `data = [...]` for every input the test reads (compose file, schema dirs, and each service's `docker_test_context` filegroup bundling its Dockerfile, configs, and Bazel-built `*_linux` binary). Tests are hermetic: never resolve the repo root — resolve inputs from runfiles via `testutil.Runfile` and stage docker build contexts with `testutil.WithBuildContext`.
-- Use `testutil.NewComposeStack()` with meaningful context (e.g., `"ext-storage-mysql"`)
+- Use `testutil.NewComposeStack()` with meaningful context (e.g., `"ext-submitqueue-storage-mysql"`)
 
 See [doc/howto/TESTING.md](doc/howto/TESTING.md) for full testing guide.
 
@@ -331,7 +336,7 @@ CI runs on every PR and enforces all checks via a `required-checks` gate. **Befo
 
 ### Code Style
 
-1. **Structured logging** — `zap.SugaredLogger` with `Debugw`/`Infow`/`Errorw(msg, key, val, ...)`. Never unstructured methods.
+1. **Structured logging** — use structured Zap APIs: `zap.SugaredLogger` with `Debugw`/`Infow`/`Errorw(msg, key, val, ...)`, or core `zap.Logger` methods with typed fields. Never use unstructured formatted logging methods.
 2. **Interfaces for behavior, structs for data** — use interfaces for behavioral contracts (Consumer, Controller, Storage). Use structs for data containers, configs, and registries (TopicRegistry, SubscriptionConfig).
 3. **Value types over pointers** — prefer value types for structs, configs, and return values. Use `(T, bool)` to signal absence instead of `*T`. Pointers only when mutation or shared ownership is needed.
 4. **Errors for failures, not control flow** — reserve `error` returns for unexpected or infrastructure failures. Use result types (structs, bools) for expected outcomes like `(Result, error)` or `(T, bool)`. Avoid sentinel errors that represent non-failure states.
