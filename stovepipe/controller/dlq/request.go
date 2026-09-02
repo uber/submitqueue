@@ -22,6 +22,8 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/metrics"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
+	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
 )
@@ -34,6 +36,7 @@ type requestController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	stores        storage.Factory
+	materializer  requestlog.Materializer
 	topicKey      consumer.TopicKey
 	consumerGroup string
 }
@@ -50,6 +53,7 @@ func NewDLQRequestController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
+	materializer requestlog.Materializer,
 	topicKey consumer.TopicKey,
 	consumerGroup string,
 ) consumer.Controller {
@@ -58,6 +62,7 @@ func NewDLQRequestController(
 		logger:        logger.Named(name),
 		metricsScope:  scope.SubScope(name),
 		stores:        stores,
+		materializer:  materializer,
 		topicKey:      topicKey,
 		consumerGroup: consumerGroup,
 	}
@@ -105,7 +110,7 @@ func (c *requestController) Process(ctx context.Context, delivery consumer.Deliv
 		"dlq_last_error", dmeta["dlq.last_error"],
 	)
 
-	if err := failRequest(ctx, store, c.logger, pr.Id); err != nil {
+	if err := failRequest(ctx, store, c.materializer, c.logger, pr.Id, entity.RequestOutcomeReasonProcessingFailed); err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "reconcile_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
 	}

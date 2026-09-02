@@ -22,6 +22,8 @@ import (
 	"github.com/uber-go/tally"
 	"github.com/uber/submitqueue/platform/consumer"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
+	requestlogmock "github.com/uber/submitqueue/stovepipe/core/requestlog/mock"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
@@ -35,6 +37,8 @@ type buildSignalDLQMocks struct {
 	reqStore     *storagemock.MockRequestStore
 	queueStore   *storagemock.MockQueueStore
 	buildStore   *storagemock.MockBuildStore
+	store        *storagemock.MockStorage
+	materializer *requestlogmock.MockMaterializer
 	metricsScope tally.TestScope
 }
 
@@ -46,18 +50,20 @@ func newBuildSignalController(t *testing.T, ctrl *gomock.Controller) (consumer.C
 		reqStore:     storagemock.NewMockRequestStore(ctrl),
 		queueStore:   storagemock.NewMockQueueStore(ctrl),
 		buildStore:   storagemock.NewMockBuildStore(ctrl),
+		store:        storagemock.NewMockStorage(ctrl),
+		materializer: requestlogmock.NewMockMaterializer(ctrl),
 		metricsScope: scope,
 	}
 
-	store := storagemock.NewMockStorage(ctrl)
-	store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
-	store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
-	store.EXPECT().GetBuildStore().Return(m.buildStore).AnyTimes()
+	m.store.EXPECT().GetRequestStore().Return(m.reqStore).AnyTimes()
+	m.store.EXPECT().GetQueueStore().Return(m.queueStore).AnyTimes()
+	m.store.EXPECT().GetBuildStore().Return(m.buildStore).AnyTimes()
 
 	c := NewDLQBuildSignalController(
 		zap.NewNop().Sugar(),
 		scope,
-		staticStorageFactory{store: store},
+		staticStorageFactory{store: m.store},
+		m.materializer,
 		TopicKey(stovepipemq.TopicKeyBuildSignal),
 		"stovepipe-buildsignal-dlq",
 	)
@@ -103,7 +109,14 @@ func TestBuildSignalProcess(t *testing.T) {
 				}, int32(5), int32(6)).Return(nil)
 				updated := requestWithState(entity.RequestStateProcessing)
 				updated.State = entity.RequestStateFailed
-				m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
+				updateCall := m.reqStore.EXPECT().Update(gomock.Any(), updated, int32(2), int32(3)).Return(nil)
+				request := requestWithState(entity.RequestStateFailed)
+				request.Version = 3
+				m.materializer.EXPECT().PersistLog(
+					gomock.Any(),
+					m.store,
+					requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonBuildPollingExhausted),
+				).Return(nil).After(updateCall)
 			},
 		},
 		{

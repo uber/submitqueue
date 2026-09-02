@@ -40,6 +40,7 @@ import (
 	"fmt"
 
 	"github.com/uber/submitqueue/platform/consumer"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	"go.uber.org/zap"
@@ -84,7 +85,14 @@ func TopicKey(main consumer.TopicKey) consumer.TopicKey {
 // queue's capacity toward a wedge. Over-admission is the failure mode we prefer. See
 // doc/rfc/stovepipe/steps/process.md#in_flight_count-integrity for the broader
 // counter-drift story.
-func failRequest(ctx context.Context, store storage.Storage, logger *zap.SugaredLogger, requestID string) error {
+func failRequest(
+	ctx context.Context,
+	store storage.Storage,
+	materializer requestlog.Materializer,
+	logger *zap.SugaredLogger,
+	requestID string,
+	reason entity.RequestOutcomeReason,
+) error {
 	request, err := store.GetRequestStore().Get(ctx, requestID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
@@ -97,6 +105,11 @@ func failRequest(ctx context.Context, store storage.Storage, logger *zap.Sugared
 	}
 
 	if request.State.IsTerminal() {
+		if request.State == entity.RequestStateFailed {
+			// The originating DLQ remains the retry trigger after the state write. Its stage-specific
+			// reason repairs that write's missing log; PersistLog rejects an already-retained conflict.
+			return persistFailureLog(ctx, store, materializer, request, reason)
+		}
 		logger.Infow("dlq reconcile: request already terminal, skipping",
 			"request_id", requestID,
 			"state", string(request.State),
@@ -116,10 +129,28 @@ func failRequest(ctx context.Context, store storage.Storage, logger *zap.Sugared
 	if err := store.GetRequestStore().Update(ctx, updated, request.Version, newVersion); err != nil {
 		return fmt.Errorf("failed to update request %s state to failed: %w", requestID, err)
 	}
+	updated.Version = newVersion
+	if err := persistFailureLog(ctx, store, materializer, updated, reason); err != nil {
+		return err
+	}
 	logger.Infow("dlq reconcile: request forced terminal failed",
 		"request_id", requestID,
 		"previous_state", string(request.State),
 	)
+	return nil
+}
+
+func persistFailureLog(
+	ctx context.Context,
+	store storage.Storage,
+	materializer requestlog.Materializer,
+	request entity.Request,
+	reason entity.RequestOutcomeReason,
+) error {
+	log := requestlog.NewRequestStateLog(request, reason)
+	if err := materializer.PersistLog(ctx, store, log); err != nil {
+		return fmt.Errorf("failed to record failed state for request %s: %w", request.ID, err)
+	}
 	return nil
 }
 
