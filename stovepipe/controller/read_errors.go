@@ -44,10 +44,14 @@ func validateHistoryIdentifier(name, value string) error {
 // RequestHistoryNotFoundError indicates that no retained history exists for a selector.
 type RequestHistoryNotFoundError struct {
 	RequestID string
+	URI       string
 }
 
 // Error implements error.
 func (e *RequestHistoryNotFoundError) Error() string {
+	if e.RequestID == "" {
+		return fmt.Sprintf("request history not found for URI %q", e.URI)
+	}
 	return fmt.Sprintf("request history not found for request ID %q", e.RequestID)
 }
 
