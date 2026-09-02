@@ -31,6 +31,7 @@ import (
 	"github.com/uber/submitqueue/platform/publish"
 	"github.com/uber/submitqueue/stovepipe/core/loader"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -60,6 +61,7 @@ type Controller struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	stores        storage.Factory
+	materializer  requestlog.Materializer
 	buildRunners  buildrunner.Factory
 	registry      consumer.TopicRegistry
 	topicKey      consumer.TopicKey
@@ -77,6 +79,7 @@ func NewController(
 	logger *zap.SugaredLogger,
 	scope tally.Scope,
 	stores storage.Factory,
+	materializer requestlog.Materializer,
 	buildRunners buildrunner.Factory,
 	registry consumer.TopicRegistry,
 	topicKey consumer.TopicKey,
@@ -86,6 +89,7 @@ func NewController(
 		logger:        logger.Named("buildsignal_controller"),
 		metricsScope:  scope.SubScope("buildsignal_controller"),
 		stores:        stores,
+		materializer:  materializer,
 		buildRunners:  buildRunners,
 		registry:      registry,
 		topicKey:      topicKey,
@@ -169,6 +173,9 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		if err := c.finishRequest(ctx, store, &request, effective); err != nil {
 			return err
 		}
+		if err := c.persistOutcomeLog(ctx, store, request); err != nil {
+			return err
+		}
 		if err := c.publishRecord(ctx, request.ID, request.Queue); err != nil {
 			return fmt.Errorf("failed to publish record for request %s: %w", request.ID, err)
 		}
@@ -220,6 +227,27 @@ func (c *Controller) finishRequest(ctx context.Context, store storage.Storage, r
 	if err := c.markOutcome(ctx, store, request, outcomeState(status)); err != nil {
 		metrics.NamedCounter(c.metricsScope, _opName, "storage_errors", 1, metrics.TagsFromContext(ctx)...)
 		return err
+	}
+	return nil
+}
+
+func (c *Controller) persistOutcomeLog(ctx context.Context, store storage.Storage, request entity.Request) error {
+	var reason entity.RequestOutcomeReason
+	// The durable request is authoritative when duplicate builds race to record different outcomes.
+	switch request.State {
+	case entity.RequestStateSucceeded:
+		reason = entity.RequestOutcomeReasonBuildSucceeded
+	case entity.RequestStateFailed:
+		reason = entity.RequestOutcomeReasonBuildFailed
+	case entity.RequestStateCancelled:
+		reason = entity.RequestOutcomeReasonBuildCancelled
+	default:
+		return fmt.Errorf("request %s has no build outcome to record", request.ID)
+	}
+
+	log := requestlog.NewRequestStateLog(request, reason)
+	if err := c.materializer.PersistLog(ctx, store, log); err != nil {
+		return fmt.Errorf("failed to record %s state for request %s: %w", request.State, request.ID, err)
 	}
 	return nil
 }
