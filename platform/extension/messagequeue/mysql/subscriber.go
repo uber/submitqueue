@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"sync"
@@ -74,6 +75,11 @@ const (
 	// discovered partitions, so nothing would ever steal (and thereby
 	// refresh or remove) a stale lease on a partition with no messages.
 	leasePurgeAfterLeaseDurations = 10
+
+	// maxRetryBackoffMs bounds how long one failed message can pin its
+	// partition's contiguous ack watermark. Callers may choose a lower cap;
+	// this ceiling also applies when MaxBackoffMs is unset.
+	maxRetryBackoffMs = int64(time.Minute / time.Millisecond)
 )
 
 // gcTickInterval is the number of poll ticks between garbage collection runs.
@@ -331,9 +337,8 @@ func (d *sqlDelivery) Nack(ctx context.Context, f failure.Failure) error {
 		return d.deadLetter(ctx, f)
 	}
 
-	// Mark as nacked in delivery state (per consumer group): immediately
-	// eligible for redelivery on the next poll.
-	if err := d.subscriber.deliveryStateStore.MarkNacked(ctx, d.consumerGroup, d.topic, d.partitionKey, d.offset); err != nil {
+	retryDelayMs := retryBackoffMs(d.retry, d.attempt)
+	if err := d.subscriber.deliveryStateStore.MarkNacked(ctx, d.consumerGroup, d.topic, d.partitionKey, d.offset, retryDelayMs); err != nil {
 		return err
 	}
 
@@ -341,6 +346,7 @@ func (d *sqlDelivery) Nack(ctx context.Context, f failure.Failure) error {
 		"topic", d.topic,
 		"partition_key", d.partitionKey,
 		"message_id", d.messageID,
+		"retry_delay_ms", retryDelayMs,
 	)
 
 	d.acknowledged = true
@@ -495,6 +501,9 @@ func (s *subscriber) Subscribe(ctx context.Context, topic string, config extqueu
 
 	if closed {
 		return nil, ErrSubscriberClosed
+	}
+	if err := validateRetryConfig(config.Retry); err != nil {
+		return nil, fmt.Errorf("subscribe topic %q: %w: %v", topic, ErrInvalidConfig, err)
 	}
 
 	// Create subscription key (topic + consumer group must be unique)
@@ -1506,5 +1515,56 @@ func (s *subscriber) Close() (retErr error) {
 	s.closed = true
 
 	s.logger.Infow("subscriber closed")
+	return nil
+}
+
+func retryBackoffMs(retry extqueue.RetryConfig, attempt int) int64 {
+	backoffMs := retry.InitialBackoffMs
+	if backoffMs <= 0 {
+		return 0
+	}
+
+	maxBackoffMs := retry.MaxBackoffMs
+	if maxBackoffMs <= 0 || maxBackoffMs > maxRetryBackoffMs {
+		maxBackoffMs = maxRetryBackoffMs
+	}
+	if backoffMs >= maxBackoffMs {
+		return maxBackoffMs
+	}
+
+	multiplier := retry.BackoffMultiplier
+	if multiplier <= 1 || math.IsNaN(multiplier) || attempt <= 1 {
+		return backoffMs
+	}
+
+	backoff := float64(backoffMs) * math.Pow(multiplier, float64(attempt-1))
+	if backoff >= float64(maxBackoffMs) {
+		return maxBackoffMs
+	}
+	return int64(backoff)
+}
+
+func validateRetryConfig(retry extqueue.RetryConfig) error {
+	if retry.MaxAttempts < 0 {
+		return fmt.Errorf("retry MaxAttempts must be non-negative, got %d", retry.MaxAttempts)
+	}
+	if retry.InitialBackoffMs < 0 {
+		return fmt.Errorf("retry InitialBackoffMs must be non-negative, got %d", retry.InitialBackoffMs)
+	}
+	if retry.MaxBackoffMs < 0 {
+		return fmt.Errorf("retry MaxBackoffMs must be non-negative, got %d", retry.MaxBackoffMs)
+	}
+	if retry.InitialBackoffMs > maxRetryBackoffMs {
+		return fmt.Errorf("retry InitialBackoffMs must not exceed %d, got %d", maxRetryBackoffMs, retry.InitialBackoffMs)
+	}
+	if retry.MaxBackoffMs > maxRetryBackoffMs {
+		return fmt.Errorf("retry MaxBackoffMs must not exceed %d, got %d", maxRetryBackoffMs, retry.MaxBackoffMs)
+	}
+	if retry.MaxBackoffMs > 0 && retry.InitialBackoffMs > retry.MaxBackoffMs {
+		return fmt.Errorf("retry InitialBackoffMs (%d) must not exceed MaxBackoffMs (%d)", retry.InitialBackoffMs, retry.MaxBackoffMs)
+	}
+	if retry.BackoffMultiplier < 0 || math.IsNaN(retry.BackoffMultiplier) || math.IsInf(retry.BackoffMultiplier, 0) {
+		return fmt.Errorf("retry BackoffMultiplier must be finite and non-negative, got %v", retry.BackoffMultiplier)
+	}
 	return nil
 }

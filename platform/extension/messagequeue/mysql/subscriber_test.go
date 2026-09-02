@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -64,7 +65,7 @@ func newTestDeliveryStateStore(ctrl *gomock.Controller) *MockdeliveryStateStore 
 	mockDS := NewMockdeliveryStateStore(ctrl)
 	mockDS.EXPECT().MarkDelivered(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(0, nil).AnyTimes()
 	mockDS.EXPECT().MarkAcked(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mockDS.EXPECT().MarkNacked(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockDS.EXPECT().MarkNacked(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockDS.EXPECT().GetDeliveryState(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(DeliveryState{}, false, nil).AnyTimes()
 	mockDS.EXPECT().AdvanceWatermark(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(int64(0), nil).AnyTimes()
 	mockDS.EXPECT().ExtendVisibility(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -142,6 +143,37 @@ func TestSubscriber_Subscribe(t *testing.T) {
 			if tt.expectSame && len(channels) == 2 {
 				assert.Equal(t, channels[0], channels[1], "should return same channel for same topic and consumer group")
 			}
+		})
+	}
+}
+
+func TestSubscriber_SubscribeRejectsInvalidRetryConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		retry   extqueue.RetryConfig
+		wantErr string
+	}{
+		{name: "negative max attempts", retry: extqueue.RetryConfig{MaxAttempts: -1}, wantErr: "MaxAttempts"},
+		{name: "negative initial backoff", retry: extqueue.RetryConfig{InitialBackoffMs: -1}, wantErr: "InitialBackoffMs"},
+		{name: "negative max backoff", retry: extqueue.RetryConfig{MaxBackoffMs: -1}, wantErr: "MaxBackoffMs"},
+		{name: "initial backoff above safety ceiling", retry: extqueue.RetryConfig{InitialBackoffMs: maxRetryBackoffMs + 1}, wantErr: "InitialBackoffMs"},
+		{name: "max backoff above safety ceiling", retry: extqueue.RetryConfig{MaxBackoffMs: maxRetryBackoffMs + 1}, wantErr: "MaxBackoffMs"},
+		{name: "initial backoff above configured maximum", retry: extqueue.RetryConfig{InitialBackoffMs: 2000, MaxBackoffMs: 1000}, wantErr: "must not exceed MaxBackoffMs"},
+		{name: "negative multiplier", retry: extqueue.RetryConfig{BackoffMultiplier: -1}, wantErr: "BackoffMultiplier"},
+		{name: "NaN multiplier", retry: extqueue.RetryConfig{BackoffMultiplier: math.NaN()}, wantErr: "BackoffMultiplier"},
+		{name: "infinite multiplier", retry: extqueue.RetryConfig{BackoffMultiplier: math.Inf(1)}, wantErr: "BackoffMultiplier"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			sub := setupSubscriberTest(t, NewMockmessageStore(ctrl), NewMockoffsetStore(ctrl), NewMockpartitionLeaseStore(ctrl))
+			t.Cleanup(func() { require.NoError(t, sub.Close()) })
+
+			ch, err := sub.Subscribe(context.Background(), "test_topic", extqueue.SubscriptionConfig{Retry: tt.retry})
+			require.Nil(t, ch)
+			require.ErrorIs(t, err, ErrInvalidConfig)
+			assert.ErrorContains(t, err, tt.wantErr)
 		})
 	}
 }
@@ -444,18 +476,69 @@ func TestSQLDelivery_Reject(t *testing.T) {
 // early would silently cost every message a retry.
 func TestSQLDelivery_NackDeadLettersWhenBudgetSpent(t *testing.T) {
 	tests := []struct {
-		name        string
-		attempt     int
-		maxAttempts int
-		wantDLQ     bool
+		name             string
+		attempt          int
+		retry            extqueue.RetryConfig
+		wantDLQ          bool
+		wantRetryDelayMs int64
 	}{
-		{name: "budget remaining", attempt: 1, maxAttempts: 3},
-		{name: "one attempt left", attempt: 2, maxAttempts: 3},
-		{name: "final attempt dead-letters", attempt: 3, maxAttempts: 3, wantDLQ: true},
-		{name: "single-attempt budget dead-letters at once", attempt: 1, maxAttempts: 1, wantDLQ: true},
+		{
+			name: "first retry uses initial delay", attempt: 1,
+			retry:            extqueue.RetryConfig{MaxAttempts: 3, InitialBackoffMs: 1000, MaxBackoffMs: 30000, BackoffMultiplier: 2},
+			wantRetryDelayMs: 1000,
+		},
+		{
+			name: "second retry multiplies delay", attempt: 2,
+			retry:            extqueue.RetryConfig{MaxAttempts: 3, InitialBackoffMs: 1000, MaxBackoffMs: 30000, BackoffMultiplier: 2},
+			wantRetryDelayMs: 2000,
+		},
+		{
+			name: "delay is capped", attempt: 6,
+			retry:            extqueue.RetryConfig{MaxAttempts: 10, InitialBackoffMs: 1000, MaxBackoffMs: 30000, BackoffMultiplier: 2},
+			wantRetryDelayMs: 30000,
+		},
+		{
+			name: "initial delay is capped", attempt: 1,
+			retry:            extqueue.RetryConfig{MaxAttempts: 3, InitialBackoffMs: 5000, MaxBackoffMs: 2000, BackoffMultiplier: 2},
+			wantRetryDelayMs: 2000,
+		},
+		{
+			name: "unset multiplier uses constant delay", attempt: 2,
+			retry:            extqueue.RetryConfig{MaxAttempts: 3, InitialBackoffMs: 1000, MaxBackoffMs: 30000},
+			wantRetryDelayMs: 1000,
+		},
+		{
+			name: "fractional multiplier compounds from initial delay", attempt: 3,
+			retry:            extqueue.RetryConfig{MaxAttempts: 4, InitialBackoffMs: 1, BackoffMultiplier: 1.5},
+			wantRetryDelayMs: 2,
+		},
+		{
+			name: "uncapped backoff uses safety ceiling", attempt: 3,
+			retry:            extqueue.RetryConfig{MaxAttempts: 4, InitialBackoffMs: 1000, BackoffMultiplier: 10},
+			wantRetryDelayMs: maxRetryBackoffMs,
+		},
+		{
+			name: "configured cap cannot exceed safety ceiling", attempt: 3,
+			retry:            extqueue.RetryConfig{MaxAttempts: 4, InitialBackoffMs: 1000, MaxBackoffMs: 120000, BackoffMultiplier: 10},
+			wantRetryDelayMs: maxRetryBackoffMs,
+		},
+		{
+			name: "unset initial delay retries immediately", attempt: 1,
+			retry: extqueue.RetryConfig{MaxAttempts: 3},
+		},
+		{
+			name: "final attempt dead-letters", attempt: 3,
+			retry:   extqueue.RetryConfig{MaxAttempts: 3, InitialBackoffMs: 1000, MaxBackoffMs: 30000, BackoffMultiplier: 2},
+			wantDLQ: true,
+		},
+		{
+			name: "single-attempt budget dead-letters at once", attempt: 1,
+			retry:   extqueue.RetryConfig{MaxAttempts: 1},
+			wantDLQ: true,
+		},
 		// A zero budget is not "dead-letter immediately" — it is unconfigured,
 		// and the poll loop still governs.
-		{name: "unset budget never dead-letters here", attempt: 9, maxAttempts: 0},
+		{name: "unset budget never dead-letters here", attempt: 9},
 	}
 
 	for _, tt := range tests {
@@ -477,7 +560,7 @@ func TestSQLDelivery_NackDeadLettersWhenBudgetSpent(t *testing.T) {
 			)
 
 			dlqConfig := extqueue.DLQConfig{Enabled: true, TopicSuffix: "_dlq"}
-			d := newDeliveryForTest(sub, tt.attempt, dlqConfig, extqueue.RetryConfig{MaxAttempts: tt.maxAttempts})
+			d := newDeliveryForTest(sub, tt.attempt, dlqConfig, tt.retry)
 
 			f := failure.New("boom", failure.Subject{Type: "batch", ID: "q/batch/1"})
 
@@ -490,7 +573,7 @@ func TestSQLDelivery_NackDeadLettersWhenBudgetSpent(t *testing.T) {
 				).Return(nil)
 			} else {
 				mockDeliveryState.EXPECT().MarkNacked(
-					gomock.Any(), "test-group", "test_topic", "part-1", int64(100),
+					gomock.Any(), "test-group", "test_topic", "part-1", int64(100), tt.wantRetryDelayMs,
 				).Return(nil)
 			}
 
