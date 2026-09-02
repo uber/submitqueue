@@ -94,6 +94,7 @@ func TestResolveMergeStrategy(t *testing.T) {
 		{name: "rebase", in: mergestrategypb.Strategy_REBASE, want: mergestrategy.MergeStrategyRebase},
 		{name: "squash_rebase", in: mergestrategypb.Strategy_SQUASH_REBASE, want: mergestrategy.MergeStrategySquashRebase},
 		{name: "merge", in: mergestrategypb.Strategy_MERGE, want: mergestrategy.MergeStrategyMerge},
+		{name: "promote", in: mergestrategypb.Strategy_PROMOTE, want: mergestrategy.MergeStrategyPromote},
 		{name: "unknown", in: mergestrategypb.Strategy(9999), errMsg: "unknown land strategy in proto message"},
 	}
 

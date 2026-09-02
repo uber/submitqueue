@@ -59,6 +59,8 @@ func resolveMergeStrategy(s mergestrategypb.Strategy) (mergestrategy.MergeStrate
 		return mergestrategy.MergeStrategySquashRebase, nil
 	case mergestrategypb.Strategy_MERGE:
 		return mergestrategy.MergeStrategyMerge, nil
+	case mergestrategypb.Strategy_PROMOTE:
+		return mergestrategy.MergeStrategyPromote, nil
 	default:
 		return mergestrategy.MergeStrategyUnknown, fmt.Errorf("%w: %v", errUnknownStrategy, s)
 	}
