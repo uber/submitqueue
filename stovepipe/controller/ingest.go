@@ -27,6 +27,7 @@ import (
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -51,15 +52,16 @@ func IsInvalidRequest(err error) bool {
 // observed commit into the validation pipeline.
 //
 // It resolves the queue's head commit URI via the SourceControl extension, dedups on the
-// (queue, URI) pair, persists the Request and its URI mapping via storage, and publishes the
-// request ID onto the process stage. Ingestion is idempotent: a re-reported head resolves to the
-// already-minted request and no new work is published.
+// (queue, URI) pair, persists the Request and its initial log entry via storage, and publishes
+// the request ID onto the process stage. Ingestion is idempotent: a re-reported head resolves to
+// the already-minted request and republishes it only while it remains accepted.
 type IngestController struct {
 	logger        *zap.SugaredLogger
 	metricsScope  tally.Scope
 	counters      counter.Factory
 	sourceControl sourcecontrol.Factory
 	stores        storage.Factory
+	materializer  requestlog.Materializer
 	registry      consumer.TopicRegistry
 }
 
@@ -71,6 +73,7 @@ func NewIngestController(
 	counters counter.Factory,
 	sourceControl sourcecontrol.Factory,
 	stores storage.Factory,
+	materializer requestlog.Materializer,
 	registry consumer.TopicRegistry,
 ) *IngestController {
 	return &IngestController{
@@ -79,6 +82,7 @@ func NewIngestController(
 		counters:      counters,
 		sourceControl: sourceControl,
 		stores:        stores,
+		materializer:  materializer,
 		registry:      registry,
 	}
 }
@@ -87,11 +91,11 @@ func NewIngestController(
 // request ID validating it.
 //
 // It is idempotent and runs to completion on every call, each step tolerant of having already
-// run: it resolves (or claims) the (queue, URI) mapping, ensures the Request row exists, and
-// publishes the request to the process stage. A retry after a partial failure — for example the
-// URI mapping committed but the request write failed — completes the missing steps instead of
-// returning a dangling reference. The (queue, URI) mapping is the dedup gate, so concurrent
-// ingests of the same head converge on one request.
+// run: it resolves (or claims) the (queue, URI) mapping, ensures the Request row and accepted log
+// entry exist, and publishes the request to the process stage. A retry after a partial failure —
+// for example the URI mapping committed but the request write failed — completes the missing
+// steps instead of returning a dangling reference. The (queue, URI) mapping is the dedup gate,
+// so concurrent ingests of the same head converge on one request.
 func (c *IngestController) Ingest(ctx context.Context, req entity.IngestRequest) (result entity.IngestResult, retErr error) {
 	const opName = "ingest"
 
@@ -134,6 +138,13 @@ func (c *IngestController) Ingest(ctx context.Context, req entity.IngestRequest)
 	request, err := c.ensureRequest(ctx, store, id, queue, uri)
 	if err != nil {
 		return entity.IngestResult{}, err
+	}
+
+	if request.State == entity.RequestStateAccepted {
+		log := requestlog.NewRequestStateLog(request, entity.RequestOutcomeReasonUnknown)
+		if err := c.materializer.PersistLog(ctx, store, log); err != nil {
+			return entity.IngestResult{}, fmt.Errorf("failed to record accepted state for request %s: %w", id, err)
+		}
 	}
 
 	if err := c.advanceQueueLatestRequestID(ctx, store, queue, id); err != nil {

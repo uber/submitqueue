@@ -51,6 +51,7 @@ import (
 	"github.com/uber/submitqueue/stovepipe/controller/process"
 	"github.com/uber/submitqueue/stovepipe/controller/record"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
+	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/extension/buildrunner"
 	buildrunnerfake "github.com/uber/submitqueue/stovepipe/extension/buildrunner/fake"
 	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
@@ -302,6 +303,7 @@ func run() error {
 	brf := fakeBuildRunnerFactory{}
 
 	storageFty := storageFactory{backend: store}
+	materializer := requestlog.NewMaterializer(scope)
 	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, registry, sourceControl, brf, hookResolver{})
 	if err != nil {
 		return err
@@ -336,6 +338,7 @@ func run() error {
 		newInMemoryCounterFactory(),
 		sourceControl,
 		storageFty,
+		materializer,
 		registry,
 	)
 	srv := &StovepipeServer{
