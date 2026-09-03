@@ -53,6 +53,19 @@ func (c *requestHistoryController) GetRequestHistoryByID(ctx context.Context, re
 	op := metrics.Begin(c.metricsScope, "get_by_id", metrics.StorageLatencyBuckets, metrics.TagsFromContext(ctx)...)
 	defer func() { op.Complete(retErr) }()
 
+	logs, retErr = c.readHistoryByID(ctx, req)
+	if retErr != nil {
+		return nil, retErr
+	}
+	c.logger.Debugw("request history retrieved",
+		"request_id", req.ID,
+		"queue", req.Queue,
+		"event_count", len(logs),
+	)
+	return logs, nil
+}
+
+func (c *requestHistoryController) readHistoryByID(ctx context.Context, req entity.GetRequestHistoryByIDRequest) ([]entity.RequestLog, error) {
 	if err := validateHistoryIdentifier("queue", req.Queue); err != nil {
 		return nil, fmt.Errorf("GetRequestHistoryByID invalid queue: %w", err)
 	}
@@ -65,7 +78,7 @@ func (c *requestHistoryController) GetRequestHistoryByID(ctx context.Context, re
 		return nil, fmt.Errorf("GetRequestHistoryByID failed to resolve storage for queue %q: %w", req.Queue, err)
 	}
 
-	logs, err = stores.GetRequestLogStore().List(ctx, req.ID)
+	logs, err := stores.GetRequestLogStore().List(ctx, req.ID)
 	if err != nil {
 		if storage.IsNotFound(err) {
 			return nil, errs.NewUserError(&RequestHistoryNotFoundError{RequestID: req.ID})
@@ -73,10 +86,5 @@ func (c *requestHistoryController) GetRequestHistoryByID(ctx context.Context, re
 		return nil, fmt.Errorf("GetRequestHistoryByID failed to list request logs request_id=%s: %w", req.ID, err)
 	}
 
-	c.logger.Debugw("request history retrieved",
-		"request_id", req.ID,
-		"queue", req.Queue,
-		"event_count", len(logs),
-	)
 	return logs, nil
 }
