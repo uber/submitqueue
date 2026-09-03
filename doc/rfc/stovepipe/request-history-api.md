@@ -39,8 +39,6 @@ message HistoryEvent {
         string request_state = 3;
         string event = 4;
     }
-    reserved 5, 6;
-    reserved "superseded_by_request_id", "build_id";
     string outcome_reason = 7;
 }
 
