@@ -134,6 +134,9 @@ func (r *requestLogStore) List(ctx context.Context, requestID string) (ret []ent
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("failed to iterate request log request_id=%q: %w", requestID, err)
 	}
+	if len(logs) == 0 {
+		return nil, fmt.Errorf("no request log records for queue=%q request_id=%q: %w", r.queue, requestID, storage.ErrNotFound)
+	}
 	return logs, nil
 }
 

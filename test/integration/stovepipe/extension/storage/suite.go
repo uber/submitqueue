@@ -288,6 +288,12 @@ func (s *RequestLogStoreContractSuite) TestRequestLogStore_List() {
 	assert.Equal(s.T(), []entity.RequestLog{first, second, last}, logs)
 }
 
+// TestRequestLogStore_ListNotFound verifies a request with no retained records returns ErrNotFound.
+func (s *RequestLogStoreContractSuite) TestRequestLogStore_ListNotFound() {
+	_, err := s.storeFor("contract/history-list-missing").List(s.ctx, "request/shared/1")
+	assert.ErrorIs(s.T(), err, storage.ErrNotFound)
+}
+
 // TestRequestLogStore_QueueIsolation verifies identical request and entry IDs remain queue-scoped.
 func (s *RequestLogStoreContractSuite) TestRequestLogStore_QueueIsolation() {
 	const requestID = "request/shared/1"
@@ -303,6 +309,9 @@ func (s *RequestLogStoreContractSuite) TestRequestLogStore_QueueIsolation() {
 	gotB, err := s.storeFor(entryB.Queue).Get(s.ctx, requestID, entryB.ID)
 	require.NoError(s.T(), err)
 	assert.Equal(s.T(), entryB, gotB)
+
+	_, err = s.storeFor("contract/history-c").List(s.ctx, requestID)
+	assert.ErrorIs(s.T(), err, storage.ErrNotFound)
 }
 
 // BuildStoreContractSuite defines contract tests for storage.BuildStore.

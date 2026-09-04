@@ -83,10 +83,6 @@ message HistoryEvent {
         // Event that occurred without changing the request state.
         string event = 4;
     }
-    // Newer request that caused a superseded state. Empty when not applicable.
-    string superseded_by_request_id = 5;
-    // Build associated with the occurrence. Empty when no build applies.
-    string build_id = 6;
     // Stable domain reason for a terminal request outcome. Empty otherwise.
     string outcome_reason = 7;
 }

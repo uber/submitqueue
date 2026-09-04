@@ -19,7 +19,7 @@ SubmitQueue's URI method returns several histories because the same change may b
 
 ## Representative Contract
 
-The final protobuf receives a separate compatibility review before implementation. Its representative shape is:
+The protobuf contract is:
 
 ```proto
 message GetRequestHistoryByIDRequest {
@@ -39,8 +39,6 @@ message HistoryEvent {
         string request_state = 3;
         string event = 4;
     }
-    string superseded_by_request_id = 5;
-    string build_id = 6;
     string outcome_reason = 7;
 }
 
@@ -69,11 +67,11 @@ Event IDs are opaque. Clients may compare them but never parse their format. Req
 
 ## Selection Flow
 
-Request-ID lookup validates the queue and ID, loads the queue's `Request` to validate the selector, and lists its `RequestLogStore` records. Its response projects only the ordered events, matching SubmitQueue's equivalent API.
+Request-ID lookup validates the queue and ID and lists the queue's `RequestLogStore` records. At least one retained log record defines the existence of a history; the API does not consult the operational `Request` entity. Its response projects only the ordered events, matching SubmitQueue's equivalent API.
 
-URI lookup currently resolves one request ID from the existing `RequestURIStore` primary key and delegates to the same request-ID path. Supporting multiple retained attempts later requires the URI index to enumerate their request IDs; each history still uses primary-key reads for its Request and log. The API does not scan the request log by URI. A missing mapping is not found; a mapping whose Request is missing is an internal consistency error.
+URI lookup currently resolves one request ID from the existing `RequestURIStore` primary key and delegates to the same retained-log read. Supporting multiple retained attempts later requires the URI index to enumerate their request IDs; each history still uses a primary-key log read. The API does not scan the request log by URI. A missing mapping or a mapped request ID with no retained log is not found.
 
-Every request-URI mapping must be repaired and retained with its Request and history. Otherwise URI lookup could lose coverage while request-ID lookup still succeeds. Each `RequestHistory` contains only the selected request ID and its events; URI, build strategy, and base URI remain resolvable from the Request rather than being duplicated in the history response.
+Every request-URI mapping must be retained for the same advertised period as its history. Otherwise URI lookup could lose coverage while request-ID lookup still succeeds. Each `RequestHistory` contains only the selected request ID and its events; operational request context is not duplicated in the history response.
 
 ## Public Projection
 
@@ -92,9 +90,9 @@ History events representing state changes set `request_state` and preserve each 
 
 These strings intentionally match the current domain states one-to-one, but they are a stable public history vocabulary: an internal refactor cannot rename or reinterpret an existing wire value. In particular, `succeeded` and `failed` remain distinct rather than collapsing into a derived snapshot phase such as `finalizing`.
 
-Build events set `event` and decode `build_id` from the reserved request-log metadata key. `validation_fact_recorded` records that a fact was established, while its degree remains internal metadata until a typed public projection is designed. Superseded state events similarly decode `superseded_by_request_id`. The `occurrence` oneof makes state and event mutually exclusive without a redundant type field. A terminal Request state entry never substitutes for the fact event.
+Build and validation-fact occurrences set `event`. The `occurrence` oneof makes state and event mutually exclusive without a redundant type field. A terminal Request state entry never substitutes for the fact event.
 
-The raw `RequestLog.Metadata` map, unknown metadata keys, dependency errors, credentials, and stack traces are not exposed. `outcome_reason` uses a bounded public vocabulary.
+The raw `RequestLog.Metadata` map, request version, dependency errors, credentials, and stack traces are not exposed. Typed metadata projections can be added later when a concrete client need defines their contract. `outcome_reason` uses a bounded public vocabulary.
 
 ## Materialization
 
@@ -123,13 +121,13 @@ Request-ID lookup and the corresponding history within URI lookup return the sam
 
 Request-ID lookup returns all currently retained events for the selected request. URI lookup returns every retained request history associated with the exact URI. This matches SubmitQueue's request-history response shapes. The bounded lifecycle vocabulary and reasonable per-request build limits keep each history modest.
 
-History, `Request`, and request-URI mapping retention must support the same advertised lookup period. The API does not promise a lifetime longer than every record required by its selector. The initial rollout exposes only requests accepted after all history writers and repair paths are active; older requests are outside the lookup period and are not backfilled.
+History and request-URI mapping retention must support the same advertised lookup period. The API does not promise a lifetime longer than every record required by its selector. The initial rollout exposes only requests accepted after all history writers and repair paths are active; older requests without retained logs are outside the lookup period and are not backfilled.
 
 ## Errors and Authorization
 
 - Empty queue or selector is invalid.
 - An unknown request ID or URI, including one scoped to the wrong queue, is not found.
-- A URI mapping whose Request is missing and a request within the advertised history lookup period whose required history is missing are internal consistency errors.
+- A request ID or URI with no retained history is not found, including a URI mapping whose request ID has no retained log rows.
 - Retryable storage failures are unavailable; context cancellation and deadline errors retain their canonical codes.
 
 Authorization follows the same queue policy as other Stovepipe reads. Possession of a request ID alone does not bypass queue authorization.
@@ -142,7 +140,7 @@ Contract and controller tests cover:
 - deterministic equal-timestamp ordering;
 - state, build-event, and fact-event public mapping;
 - queue isolation and cross-queue not found;
-- unknown selectors versus dangling mappings;
+- unknown selectors and URI mappings without retained logs;
 - a repaired older occurrence appearing in chronological position;
 - unknown future request-state and event strings remaining readable.
 
