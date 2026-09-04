@@ -64,6 +64,7 @@ type SubscriptionConfig struct {
 type RetryConfig struct {
 	// MaxAttempts is the maximum number of processing attempts.
 	// After this many attempts, the message is moved to DLQ (if enabled).
+	// Zero means unlimited attempts.
 	MaxAttempts int
 
 	// InitialBackoffMs is the delay after the first failed attempt (in milliseconds).
@@ -90,20 +91,14 @@ type DLQConfig struct {
 	TopicSuffix string
 }
 
-// DLQSubscriptionConfig returns a SubscriptionConfig for consuming a dead-letter
-// topic (DLQ reconciliation). It starts from DefaultSubscriptionConfig and applies
-// the two overrides every DLQ consumer needs:
-//
-//   - DLQ.Enabled is false, so a reconciliation failure retries in place instead of
-//     cascading to a second-level "_dlq_dlq" topic that nobody consumes.
-//   - Retry.MaxAttempts is a very high backstop so the per-message retry budget
-//     effectively never runs out. This pairs with errs.AlwaysRetryableProcessor
-//     wired into the DLQ consumer: reconciliation converges eventually instead of
-//     being silently dropped after the default retry count.
+// DLQSubscriptionConfig returns a final-DLQ reconciliation subscription.
+// It disables a second-level DLQ and sets MaxAttempts to zero (unlimited).
+// Paired with errs.AlwaysRetryableProcessor, errors redeliver until the
+// reconciliation converges or an operator removes the message.
 func DLQSubscriptionConfig(subscriberName, consumerGroup string) SubscriptionConfig {
 	config := DefaultSubscriptionConfig(subscriberName, consumerGroup)
 	config.DLQ.Enabled = false
-	config.Retry.MaxAttempts = 1000
+	config.Retry.MaxAttempts = 0
 	return config
 }
 
