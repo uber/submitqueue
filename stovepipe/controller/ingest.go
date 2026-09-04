@@ -22,7 +22,6 @@ import (
 	"github.com/uber-go/tally"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
-	"github.com/uber/submitqueue/platform/errs"
 	"github.com/uber/submitqueue/platform/extension/counter"
 	"github.com/uber/submitqueue/platform/metrics"
 	"github.com/uber/submitqueue/platform/publish"
@@ -34,19 +33,10 @@ import (
 	"go.uber.org/zap"
 )
 
-// ErrInvalidRequest is returned when the request fails validation.
-// This error should be mapped to codes.InvalidArgument at the gRPC layer.
-var ErrInvalidRequest = errs.NewUserError(errors.New("invalid request"))
-
 // counterDomainRequest names the per-queue sequence that mints request IDs. It also
 // happens to be the leading segment of the ID, but the two are written independently
 // (see resolveID) so they cannot drift into each other.
 const counterDomainRequest = "request"
-
-// IsInvalidRequest returns true if any error in the error chain is ErrInvalidRequest.
-func IsInvalidRequest(err error) bool {
-	return errors.Is(err, ErrInvalidRequest)
-}
 
 // IngestController handles ingest business logic for stovepipe: it admits a queue's newly
 // observed commit into the validation pipeline.
