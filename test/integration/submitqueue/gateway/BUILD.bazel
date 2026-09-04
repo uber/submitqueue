@@ -16,7 +16,7 @@ go_test(
     ],
     deps = [
         "//api/base/change/protopb:go_default_library",
-        "//api/base/mergestrategy/protopb:go_default_library",
+        "//api/base/landstrategy/protopb:go_default_library",
         "//api/submitqueue/gateway/protopb:go_default_library",
         "//platform/consumer:go_default_library",
         "//platform/extension/messagequeue/mysql:go_default_library",

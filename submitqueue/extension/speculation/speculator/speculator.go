@@ -25,7 +25,7 @@ import (
 // Speculator decides which speculation paths to build and which running ones to
 // cancel, within the queue's build budget. It is the only speculation extension the
 // speculate controller calls. It can never express a verdict: whether a batch
-// merges or fails is fixed by the facts and computed by the controller, so a
+// lands or fails is fixed by the facts and computed by the controller, so a
 // swapped-in Speculator changes which paths run, never a batch's outcome.
 type Speculator interface {
 	// Speculate proposes this run's path actions.

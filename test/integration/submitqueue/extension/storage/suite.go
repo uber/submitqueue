@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber/submitqueue/platform/base/change"
-	"github.com/uber/submitqueue/platform/base/mergestrategy"
+	"github.com/uber/submitqueue/platform/base/landstrategy"
 	"github.com/uber/submitqueue/submitqueue/entity"
 	"github.com/uber/submitqueue/submitqueue/extension/storage"
 	"github.com/uber/submitqueue/test/testutil"
@@ -77,7 +77,7 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet() {
 		Change: change.Change{
 			URIs: []string{"github://github.example.com/uber/storage-test/pull/123/abcdef0123456789abcdef0123456789abcdef01"},
 		},
-		LandStrategy: mergestrategy.MergeStrategyMerge,
+		LandStrategy: landstrategy.StrategyMerge,
 		Version:      1,
 	}
 
@@ -118,7 +118,7 @@ func (s *StorageContractSuite) TestStorage_CreateAndGet_StackedPRs() {
 		Change: change.Change{
 			URIs: stackedURIs,
 		},
-		LandStrategy: mergestrategy.MergeStrategySquashRebase,
+		LandStrategy: landstrategy.StrategySquashRebase,
 		Version:      1,
 	}
 
@@ -146,7 +146,7 @@ func (s *StorageContractSuite) TestStorage_Update() {
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/monorepo/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
 		State:        entity.RequestStateStarted,
-		LandStrategy: mergestrategy.MergeStrategyMerge,
+		LandStrategy: landstrategy.StrategyMerge,
 		Version:      1,
 	}
 
@@ -156,7 +156,7 @@ func (s *StorageContractSuite) TestStorage_Update() {
 
 	updated := request
 	updated.Change.URIs = []string{"github://github.example.com/uber/monorepo/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
-	updated.LandStrategy = mergestrategy.MergeStrategySquashRebase
+	updated.LandStrategy = landstrategy.StrategySquashRebase
 	updated.State = entity.RequestStateProcessing
 	err = s.forQueue("test-queue").GetRequestStore().Update(ctx, updated, request.Version, request.Version+1)
 	require.NoError(t, err, "failed to update request")
@@ -177,7 +177,7 @@ func (s *StorageContractSuite) TestStorage_OptimisticLocking() {
 		ID:           "test/optimistic-lock",
 		Queue:        "test-queue",
 		State:        entity.RequestStateStarted,
-		LandStrategy: mergestrategy.MergeStrategyMerge,
+		LandStrategy: landstrategy.StrategyMerge,
 		Version:      1,
 	}
 
@@ -188,7 +188,7 @@ func (s *StorageContractSuite) TestStorage_OptimisticLocking() {
 	// Update with correct version.
 	updated := request
 	updated.Change.URIs = []string{"github://github.example.com/uber/monorepo/pull/2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
-	updated.LandStrategy = mergestrategy.MergeStrategySquashRebase
+	updated.LandStrategy = landstrategy.StrategySquashRebase
 	updated.State = entity.RequestStateProcessing
 	err = s.forQueue("test-queue").GetRequestStore().Update(ctx, updated, 1, 2)
 	require.NoError(t, err, "update with correct version should succeed")
@@ -196,7 +196,7 @@ func (s *StorageContractSuite) TestStorage_OptimisticLocking() {
 	// Try to replace every field with a stale version.
 	stale := request
 	stale.Change.URIs = []string{"github://github.example.com/uber/monorepo/pull/3/cccccccccccccccccccccccccccccccccccccccc"}
-	stale.LandStrategy = mergestrategy.MergeStrategyRebase
+	stale.LandStrategy = landstrategy.StrategyRebase
 	stale.State = entity.RequestStateLanded
 	err = s.forQueue("test-queue").GetRequestStore().Update(ctx, stale, 1, 3)
 	assert.Error(t, err, "update with stale version should fail")
@@ -229,7 +229,7 @@ func (s *StorageContractSuite) TestStorage_UpdateChangeURIs() {
 				Queue:        "test-queue",
 				Change:       change.Change{URIs: []string{"github://github.example.com/uber/monorepo/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
 				State:        entity.RequestStateStarted,
-				LandStrategy: mergestrategy.MergeStrategyMerge,
+				LandStrategy: landstrategy.StrategyMerge,
 				Version:      1,
 			}
 			require.NoError(t, s.forQueue("test-queue").GetRequestStore().Create(ctx, request))
@@ -319,7 +319,7 @@ func (s *StorageContractSuite) TestStorage_BatchUpdateReplacesAllNonKeyFields() 
 	emptyCollections := got
 	emptyCollections.Contains = []string{}
 	emptyCollections.Dependencies = []string{}
-	emptyCollections.State = entity.BatchStateMerging
+	emptyCollections.State = entity.BatchStateLanding
 	require.NoError(t, store.Update(ctx, emptyCollections, 2, 3))
 
 	got, err = store.Get(ctx, batch.ID)
@@ -329,7 +329,7 @@ func (s *StorageContractSuite) TestStorage_BatchUpdateReplacesAllNonKeyFields() 
 	assert.Empty(t, got.Contains)
 	assert.NotNil(t, got.Dependencies)
 	assert.Empty(t, got.Dependencies)
-	assert.Equal(t, entity.BatchStateMerging, got.State)
+	assert.Equal(t, entity.BatchStateLanding, got.State)
 	assert.Equal(t, int32(3), got.Version)
 
 	stale := got
@@ -375,7 +375,7 @@ func (s *StorageContractSuite) TestStorage_QueueBatchStateRecordLifecycle() {
 	assert.ElementsMatch(t, []entity.QueueBatchState{speculating}, got)
 
 	// An empty bucket lists empty, not an error.
-	got, err = storeA.List(ctx, entity.BatchStateMerging)
+	got, err = storeA.List(ctx, entity.BatchStateLanding)
 	require.NoError(t, err)
 	assert.Empty(t, got)
 
@@ -410,7 +410,7 @@ func (s *StorageContractSuite) TestStorage_QueueIsolation() {
 	storeA := s.forQueue("iso-queue-a")
 	storeB := s.forQueue("iso-queue-b")
 
-	request := entity.Request{ID: "iso-a/1", Queue: "iso-queue-a", State: entity.RequestStateStarted, LandStrategy: mergestrategy.MergeStrategyMerge, Version: 1}
+	request := entity.Request{ID: "iso-a/1", Queue: "iso-queue-a", State: entity.RequestStateStarted, LandStrategy: landstrategy.StrategyMerge, Version: 1}
 	require.NoError(t, storeA.GetRequestStore().Create(ctx, request))
 	_, err := storeB.GetRequestStore().Get(ctx, request.ID)
 	require.ErrorIs(t, err, storage.ErrNotFound, "a request must be invisible through another queue's binding")
@@ -474,7 +474,7 @@ func (s *StorageContractSuite) TestStorage_CreateDuplicate() {
 		ID:           "test/duplicate",
 		Queue:        "test-queue",
 		State:        entity.RequestStateStarted,
-		LandStrategy: mergestrategy.MergeStrategyMerge,
+		LandStrategy: landstrategy.StrategyMerge,
 		Version:      1,
 	}
 

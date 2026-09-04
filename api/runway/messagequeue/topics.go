@@ -18,25 +18,25 @@ import "github.com/uber/submitqueue/platform/consumer"
 
 // TopicKey is the typed identifier used to look up a queue backend, topic name,
 // and subscription config in a consumer.TopicRegistry. The constants below are
-// the wire topic names a client uses to publish to / consume from Runway's merge
+// the wire topic names a client uses to publish to / consume from Runway's land
 // queues; they are the same strings each message lists in its topics option.
 type TopicKey = consumer.TopicKey
 
 const (
-	// TopicKeyMergeConflictCheck carries dry-run merge-conflict check requests.
-	// A client publishes a MergeRequest here; Runway attempts the merge without
-	// committing and reports only whether it was mergeable.
-	TopicKeyMergeConflictCheck TopicKey = "merge-conflict-check"
-	// TopicKeyMergeConflictCheckSignal carries merge-conflict check results.
-	// Runway publishes a MergeResult here (with no produced revisions); the
+	// TopicKeyLandConflictCheck carries dry-run land-conflict check requests.
+	// A client publishes a LandRequest here; Runway attempts the land without
+	// committing and reports only whether it was landable.
+	TopicKeyLandConflictCheck TopicKey = "land-conflict-check"
+	// TopicKeyLandConflictCheckSignal carries land-conflict check results.
+	// Runway publishes a LandResult here (with no produced revisions); the
 	// requesting client consumes it.
-	TopicKeyMergeConflictCheckSignal TopicKey = "merge-conflict-check-signal"
-	// TopicKeyMerge carries committing merge requests. A client publishes a
-	// MergeRequest here; Runway applies the steps, commits the result, and
+	TopicKeyLandConflictCheckSignal TopicKey = "land-conflict-check-signal"
+	// TopicKeyLand carries committing land requests. A client publishes a
+	// LandRequest here; Runway applies the steps, commits the result, and
 	// reports the revisions it produced.
-	TopicKeyMerge TopicKey = "runway-merge"
-	// TopicKeyMergeSignal carries committing merge results. Runway publishes a
-	// MergeResult here (with the produced revisions populated); the requesting
+	TopicKeyLand TopicKey = "runway-land"
+	// TopicKeyLandSignal carries committing land results. Runway publishes a
+	// LandResult here (with the produced revisions populated); the requesting
 	// client consumes it.
-	TopicKeyMergeSignal TopicKey = "merge-signal"
+	TopicKeyLandSignal TopicKey = "land-signal"
 )

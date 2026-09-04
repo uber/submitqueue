@@ -13,7 +13,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 
 ## SubmitQueue
 
-- [Orchestrator Workflow](submitqueue/workflow.md) - Queue-driven controller pipeline from gateway entry through batching, scoring, build, merge, and conclude
+- [Orchestrator Workflow](submitqueue/workflow.md) - Queue-driven controller pipeline from gateway entry through batching, scoring, build, land, and conclude
 - [Gateway History APIs](submitqueue/history-api.md) - Request lifecycle history exposed through separate request ID and change ID endpoints
 - [Build Runner](submitqueue/build-runner.md) - Vendor-agnostic BuildRunner interface, provider-neutral BuildStatus lifecycle, and how the orchestrator wires it into the build stage
 - [Extension Contract](submitqueue/extension-contract.md) - When extensions take orchestrator identity (request/batch) and resolve granular content themselves vs. take controller-resolved data; revises the BuildRunner base/head contract
@@ -24,7 +24,7 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 
 ## Stovepipe
 
-- [Stovepipe Workflow](stovepipe/workflow.md) - Post-merge validation pipeline overview: ingest, process, build, record greenness, analyze projects, notify downstream
+- [Stovepipe Workflow](stovepipe/workflow.md) - Post-land validation pipeline overview: ingest, process, build, record greenness, analyze projects, notify downstream
 - [Process stage](stovepipe/steps/process.md) - Build-strategy decision, per-queue concurrency gate, backlog coalescing, entity model, platform prerequisites
 - [Build stage](stovepipe/steps/build.md) - Trigger-only stage and Stovepipe's URI-based BuildRunner contract
 - [Buildsignal stage](stovepipe/steps/buildsignal.md) - Build polling, terminal status persistence, and the handoff to record
@@ -34,4 +34,4 @@ Design documents and technical proposals, grouped by scope. Shared/cross-cutting
 
 ## Runway
 
-- [Runway Workflow](runway/workflow.md) - Landing service: merge-conflict checking and merging on behalf of SubmitQueue
+- [Runway Workflow](runway/workflow.md) - Landing service: land-conflict checking and landing on behalf of SubmitQueue

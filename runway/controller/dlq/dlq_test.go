@@ -70,7 +70,7 @@ func newRegistry(t *testing.T, ctrl *gomock.Controller) (consumer.TopicRegistry,
 	q.EXPECT().Publisher().Return(pub).AnyTimes()
 
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
-		{Key: runwaymq.TopicKeyMergeSignal, Name: "merge-signal", Queue: q},
+		{Key: runwaymq.TopicKeyLandSignal, Name: "land-signal", Queue: q},
 	})
 	require.NoError(t, err)
 	return registry, &published
@@ -82,9 +82,9 @@ func newController(t *testing.T, registry consumer.TopicRegistry) *Controller {
 		Logger:         zaptest.NewLogger(t).Sugar(),
 		Scope:          tally.NoopScope,
 		Registry:       registry,
-		TopicKey:       TopicKey(runwaymq.TopicKeyMerge),
-		SignalTopicKey: runwaymq.TopicKeyMergeSignal,
-		ConsumerGroup:  "runway-merge-dlq",
+		TopicKey:       TopicKey(runwaymq.TopicKeyLand),
+		SignalTopicKey: runwaymq.TopicKeyLandSignal,
+		ConsumerGroup:  "runway-land-dlq",
 	})
 }
 
@@ -93,17 +93,17 @@ func TestProcess_DecodableRepublishesFailure(t *testing.T) {
 	registry, published := newRegistry(t, ctrl)
 	controller := newController(t, registry)
 
-	req := &runwaymq.MergeRequest{
+	req := &runwaymq.LandRequest{
 		Id:        testID,
 		QueueName: testQueue,
-		Steps:     []*runwaymq.MergeStep{{StepId: "step-1"}},
+		Steps:     []*runwaymq.LandStep{{StepId: "step-1"}},
 	}
 	payload, err := runwaymq.Marshal(req)
 	require.NoError(t, err)
 
 	meta := map[string]string{
 		"dlq.last_error":     "boom: connection refused",
-		"dlq.original_topic": "runway-merge",
+		"dlq.original_topic": "runway-land",
 	}
 	delivery := newDelivery(t, ctrl, payload, meta)
 
@@ -111,9 +111,9 @@ func TestProcess_DecodableRepublishesFailure(t *testing.T) {
 
 	require.Len(t, *published, 1)
 	got := (*published)[0]
-	assert.Equal(t, "merge-signal", got.topic)
+	assert.Equal(t, "land-signal", got.topic)
 
-	result := &runwaymq.MergeResult{}
+	result := &runwaymq.LandResult{}
 	require.NoError(t, runwaymq.Unmarshal(got.msg.Payload, result))
 	assert.Equal(t, testID, result.Id)
 	assert.Equal(t, runwaypb.Outcome_FAILED, result.Outcome)
@@ -125,7 +125,7 @@ func TestProcess_UndecodableAcksAndPublishesNothing(t *testing.T) {
 	registry, published := newRegistry(t, ctrl)
 	controller := newController(t, registry)
 
-	delivery := newDelivery(t, ctrl, []byte("{bad"), map[string]string{"dlq.original_topic": "runway-merge"})
+	delivery := newDelivery(t, ctrl, []byte("{bad"), map[string]string{"dlq.original_topic": "runway-land"})
 
 	require.NoError(t, controller.Process(context.Background(), delivery))
 	assert.Empty(t, *published)

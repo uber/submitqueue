@@ -360,7 +360,7 @@ func resolvePullRequests(ctx context.Context, urls []string) ([]string, error) {
 // resolvePullRequest dispatches a change URL to the provider that hosts it.
 //
 // Only GitHub is implemented. Adding a provider is a case here plus its own
-// resolver, mirroring how the merger and the change provider each dispatch on
+// resolver, mirroring how the lander and the change provider each dispatch on
 // the change's provider rather than assuming one.
 func resolvePullRequest(ctx context.Context, raw string) (string, error) {
 	u, err := url.Parse(raw)

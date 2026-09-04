@@ -1,6 +1,6 @@
 # changeset
 
-`changeset` resolves batch identity into the changes a batch contains. Current consumers include build-runner and scorer implementations and the path-overlap conflict analyzer. The merge controller loads member requests directly because its Runway payload preserves one ordered merge step per request.
+`changeset` resolves batch identity into the changes a batch contains. Current consumers include build-runner and scorer implementations and the path-overlap conflict analyzer. The land controller loads member requests directly because its Runway payload preserves one ordered land step per request.
 
 ## Why it exists
 

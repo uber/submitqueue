@@ -22,10 +22,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
-	strategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	strategypb "github.com/uber/submitqueue/api/base/landstrategy/protopb"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	"github.com/uber/submitqueue/platform/base/change"
-	"github.com/uber/submitqueue/platform/base/mergestrategy"
+	"github.com/uber/submitqueue/platform/base/landstrategy"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
@@ -126,7 +126,7 @@ func newTestController(
 
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ},
+			{Key: runwaymq.TopicKeyLandConflictCheck, Name: "land-conflict-check", Queue: mockQ},
 			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
 		},
 	)
@@ -136,7 +136,7 @@ func newTestController(
 	cpFactory := changeprovidermock.NewMockFactory(ctrl)
 	cpFactory.EXPECT().For(gomock.Any()).Return(cp, nil).AnyTimes()
 
-	return NewController(logger, scope, staticStorageFactory{store: store}, registry, cpFactory, nil, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
+	return NewController(logger, scope, staticStorageFactory{store: store}, registry, cpFactory, nil, runwaymq.TopicKeyLandConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
 }
 
 func TestNewController(t *testing.T) {
@@ -145,7 +145,7 @@ func TestNewController(t *testing.T) {
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
-		LandStrategy: mergestrategy.MergeStrategyRebase,
+		LandStrategy: landstrategy.StrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
@@ -165,7 +165,7 @@ func TestController_Process_Success(t *testing.T) {
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
-		LandStrategy: mergestrategy.MergeStrategyRebase,
+		LandStrategy: landstrategy.StrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
@@ -180,8 +180,8 @@ func TestController_Process_Success(t *testing.T) {
 	require.NoError(t, controller.Process(context.Background(), delivery))
 }
 
-// TestController_Process_PublishesCheckToRunway verifies the full merge-conflict
-// check request is published to runway's merge-conflict-check queue (keyed by
+// TestController_Process_PublishesCheckToRunway verifies the full land-conflict
+// check request is published to runway's land-conflict-check queue (keyed by
 // the request id, the client-owned correlation id) on the happy path.
 func TestController_Process_PublishesCheckToRunway(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -190,7 +190,7 @@ func TestController_Process_PublishesCheckToRunway(t *testing.T) {
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
-		LandStrategy: mergestrategy.MergeStrategyRebase,
+		LandStrategy: landstrategy.StrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
@@ -204,7 +204,7 @@ func TestController_Process_PublishesCheckToRunway(t *testing.T) {
 	mockPub := queuemock.NewMockPublisher(ctrl)
 	mockPub.EXPECT().Publish(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, topic string, msg entityqueue.Message) error {
-			if topic != "merge-conflict-check" {
+			if topic != "land-conflict-check" {
 				return nil
 			}
 			gotTopic = topic
@@ -216,7 +216,7 @@ func TestController_Process_PublishesCheckToRunway(t *testing.T) {
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ},
+			{Key: runwaymq.TopicKeyLandConflictCheck, Name: "land-conflict-check", Queue: mockQ},
 			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
 		},
 	)
@@ -224,7 +224,7 @@ func TestController_Process_PublishesCheckToRunway(t *testing.T) {
 	cpFactory := changeprovidermock.NewMockFactory(ctrl)
 	cpFactory.EXPECT().For(gomock.Any()).Return(&mockChangeProvider{}, nil).AnyTimes()
 
-	controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, registry, cpFactory, nil, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
+	controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, registry, cpFactory, nil, runwaymq.TopicKeyLandConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := consumermock.NewMockDelivery(ctrl)
@@ -234,8 +234,8 @@ func TestController_Process_PublishesCheckToRunway(t *testing.T) {
 	require.NoError(t, controller.Process(context.Background(), delivery))
 
 	// Full payload published to runway, keyed by the request id (the correlation id).
-	assert.Equal(t, "merge-conflict-check", gotTopic)
-	got := &runwaymq.MergeRequest{}
+	assert.Equal(t, "land-conflict-check", gotTopic)
+	got := &runwaymq.LandRequest{}
 	require.NoError(t, runwaymq.Unmarshal(gotPayload, got))
 	assert.Equal(t, request.ID, got.Id)
 	assert.Equal(t, request.Queue, got.QueueName)
@@ -259,7 +259,7 @@ func TestController_Process_ClaimsChangeRecordsWithDetails(t *testing.T) {
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{uri}},
-		LandStrategy: mergestrategy.MergeStrategyRebase,
+		LandStrategy: landstrategy.StrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
@@ -320,7 +320,7 @@ func TestController_Process_PublishFailure(t *testing.T) {
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/789abc1234567890abcdef1234567890abcdef12"}},
-		LandStrategy: mergestrategy.MergeStrategyRebase,
+		LandStrategy: landstrategy.StrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
@@ -468,7 +468,7 @@ func TestController_Process_DuplicateDetection(t *testing.T) {
 				ID:           newRequestID,
 				Queue:        queueName,
 				Change:       change.Change{URIs: uris},
-				LandStrategy: mergestrategy.MergeStrategyRebase,
+				LandStrategy: landstrategy.StrategyRebase,
 				State:        entity.RequestStateStarted,
 				Version:      1,
 			}
@@ -535,7 +535,7 @@ func TestController_Process_ChangeStoreQueryFailure(t *testing.T) {
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://github.example.com/uber/service/pull/1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
-		LandStrategy: mergestrategy.MergeStrategyRebase,
+		LandStrategy: landstrategy.StrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
@@ -602,7 +602,7 @@ func TestController_Process_CustomValidatorPasses(t *testing.T) {
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
-		LandStrategy: mergestrategy.MergeStrategyRebase,
+		LandStrategy: landstrategy.StrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
@@ -617,7 +617,7 @@ func TestController_Process_CustomValidatorPasses(t *testing.T) {
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ},
+			{Key: runwaymq.TopicKeyLandConflictCheck, Name: "land-conflict-check", Queue: mockQ},
 			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
 		},
 	)
@@ -634,7 +634,7 @@ func TestController_Process_CustomValidatorPasses(t *testing.T) {
 		QueueName: request.Queue,
 	}).Return(mockValidator, nil)
 
-	controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
+	controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyLandConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := consumermock.NewMockDelivery(ctrl)
@@ -651,7 +651,7 @@ func TestController_Process_CustomValidatorFails(t *testing.T) {
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
-		LandStrategy: mergestrategy.MergeStrategyRebase,
+		LandStrategy: landstrategy.StrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
@@ -676,7 +676,7 @@ func TestController_Process_CustomValidatorFails(t *testing.T) {
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ},
+			{Key: runwaymq.TopicKeyLandConflictCheck, Name: "land-conflict-check", Queue: mockQ},
 			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
 		},
 	)
@@ -693,7 +693,7 @@ func TestController_Process_CustomValidatorFails(t *testing.T) {
 		QueueName: request.Queue,
 	}).Return(mockValidator, nil)
 
-	controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
+	controller := NewController(logger, tally.NoopScope, staticStorageFactory{store: store}, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyLandConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
 
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := consumermock.NewMockDelivery(ctrl)
@@ -715,7 +715,7 @@ func TestController_Process_CustomValidatorFailure_TerminationPublishFails(t *te
 		ID:           "test-queue/123",
 		Queue:        "test-queue",
 		Change:       change.Change{URIs: []string{"github://uber/service/pull/456/abcdef0123456789abcdef0123456789abcdef01"}},
-		LandStrategy: mergestrategy.MergeStrategyRebase,
+		LandStrategy: landstrategy.StrategyRebase,
 		State:        entity.RequestStateStarted,
 		Version:      1,
 	}
@@ -740,7 +740,7 @@ func TestController_Process_CustomValidatorFailure_TerminationPublishFails(t *te
 	mockQ.EXPECT().Publisher().Return(mockPub).AnyTimes()
 	registry, err := consumer.NewTopicRegistry(
 		[]consumer.TopicConfig{
-			{Key: runwaymq.TopicKeyMergeConflictCheck, Name: "merge-conflict-check", Queue: mockQ},
+			{Key: runwaymq.TopicKeyLandConflictCheck, Name: "land-conflict-check", Queue: mockQ},
 			{Key: topickey.TopicKeyLog, Name: "log", Queue: mockQ},
 		},
 	)
@@ -756,7 +756,7 @@ func TestController_Process_CustomValidatorFailure_TerminationPublishFails(t *te
 		QueueName: request.Queue,
 	}).Return(mockValidator, nil)
 
-	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyMergeConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
+	controller := NewController(zaptest.NewLogger(t).Sugar(), tally.NoopScope, staticStorageFactory{store: store}, registry, cpFactory, mockValidatorFactory, runwaymq.TopicKeyLandConflictCheck, topickey.TopicKeyValidate, "orchestrator-validate")
 	msg := entityqueue.NewMessage(request.ID, requestIDPayload(t, request.ID), request.Queue, nil)
 	delivery := consumermock.NewMockDelivery(ctrl)
 	delivery.EXPECT().Message().Return(msg).AnyTimes()

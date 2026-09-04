@@ -18,7 +18,7 @@ MySQL-based distributed message queue with immutable message log, per-consumer-g
 ### Motivation
 
 SubmitQueue needs a reliable message queue for coordinating asynchronous workflows:
-- **Orchestrator** publishes merge jobs and speculative build requests to workers
+- **Orchestrator** publishes land jobs and speculative build requests to workers
 - **Workers** need distributed coordination without duplicate processing
 - **Crash recovery** must preserve exactly where processing stopped
 
@@ -223,7 +223,7 @@ See `platform/extension/messagequeue/mysql/schema/queue_subscriber_heartbeats.sq
 
 ### Dead Letter Queue
 
-DLQ messages are stored in the same `queue_messages` table under a different topic name (original topic + DLQ suffix, e.g., `merge_queue_dlq`). This allows DLQ messages to be consumed using the normal subscriber with the DLQ topic name. DLQ-specific fields (`failed_at`, `failure_count`, `last_error`, `original_topic`) are populated when a message is moved to DLQ; they are zero/empty for normal messages.
+DLQ messages are stored in the same `queue_messages` table under a different topic name (original topic + DLQ suffix, e.g., `land_queue_dlq`). This allows DLQ messages to be consumed using the normal subscriber with the DLQ topic name. DLQ-specific fields (`failed_at`, `failure_count`, `last_error`, `original_topic`) are populated when a message is moved to DLQ; they are zero/empty for normal messages.
 
 ## Message Flow
 
@@ -387,7 +387,7 @@ For our use case, we need ordering per repository. With Watermill:
 
 With our custom implementation:
 - Single `queue_messages` table for all topics and partitions
-- Rows like `('merge_events', 'repo-123', offset, ...)` provide ordering within partition
+- Rows like `('land_events', 'repo-123', offset, ...)` provide ordering within partition
 - No schema migrations for new repos or topics
 - Ordering guaranteed within `(topic, partition_key)`
 
@@ -453,7 +453,7 @@ The current design separates the immutable message log from per-consumer-group d
 **At-Least-Once vs Exactly-Once**
 - Simpler, better performance
 - Applications must handle duplicates
-- Mitigation: Idempotency keys (e.g., merge request ID)
+- Mitigation: Idempotency keys (e.g., land request ID)
 
 ## Appendix
 

@@ -106,7 +106,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	)
 
 	// Map batch terminal state to request state.
-	// We expect the batch to be in a terminal state as written by the merge
+	// We expect the batch to be in a terminal state as written by the land
 	// controller (Succeeded) or the speculate controller (Failed via
 	// failOnDependency, Cancelled via cancelBatch).
 	requestState, err := batchStateToRequestState(batch.State)

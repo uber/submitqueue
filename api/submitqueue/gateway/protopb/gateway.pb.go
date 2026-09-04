@@ -26,7 +26,7 @@ import (
 	unsafe "unsafe"
 
 	protopb "github.com/uber/submitqueue/api/base/change/protopb"
-	protopb1 "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	protopb1 "github.com/uber/submitqueue/api/base/landstrategy/protopb"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
@@ -157,7 +157,7 @@ func (x *PingResponse) GetHostname() string {
 	return ""
 }
 
-// LandRequest defines a request to land (merge into target branch of the source control repository) a set of code changes.
+// LandRequest defines a request to land a set of code changes on the source control repository's target branch.
 //
 // SubmitQueue guarantees changes are landed in order with no other changes in between.
 // SubmitQueue does not guarantee each change is individually valid, but produces a validity marker on such changes.
@@ -171,7 +171,7 @@ type LandRequest struct {
 	// Source control integration strategy to use for this land operation. If not specified, the default queue strategy is used.
 	// It applies to every URI the change carries, the same way to each — a land
 	// request cannot pick a different strategy per URI.
-	Strategy      protopb1.Strategy `protobuf:"varint,4,opt,name=strategy,proto3,enum=uber.base.mergestrategy.Strategy" json:"strategy,omitempty"`
+	Strategy      protopb1.Strategy `protobuf:"varint,4,opt,name=strategy,proto3,enum=uber.base.landstrategy.Strategy" json:"strategy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1341,18 +1341,18 @@ var File_gateway_proto protoreflect.FileDescriptor
 
 const file_gateway_proto_rawDesc = "" +
 	"\n" +
-	"\rgateway.proto\x12\x18uber.submitqueue.gateway\x1a\"api/base/change/proto/change.proto\x1a0api/base/mergestrategy/proto/mergestrategy.proto\"'\n" +
+	"\rgateway.proto\x12\x18uber.submitqueue.gateway\x1a\"api/base/change/proto/change.proto\x1a.api/base/landstrategy/proto/landstrategy.proto\"'\n" +
 	"\vPingRequest\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"\x85\x01\n" +
 	"\fPingResponse\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12!\n" +
 	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12\x1c\n" +
 	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x1a\n" +
-	"\bhostname\x18\x04 \x01(\tR\bhostname\"\x94\x01\n" +
+	"\bhostname\x18\x04 \x01(\tR\bhostname\"\x93\x01\n" +
 	"\vLandRequest\x12\x14\n" +
 	"\x05queue\x18\x01 \x01(\tR\x05queue\x120\n" +
-	"\x06change\x18\x02 \x01(\v2\x18.uber.base.change.ChangeR\x06change\x12=\n" +
-	"\bstrategy\x18\x04 \x01(\x0e2!.uber.base.mergestrategy.StrategyR\bstrategy\"\"\n" +
+	"\x06change\x18\x02 \x01(\v2\x18.uber.base.change.ChangeR\x06change\x12<\n" +
+	"\bstrategy\x18\x04 \x01(\x0e2 .uber.base.landstrategy.StrategyR\bstrategy\"\"\n" +
 	"\fLandResponse\x12\x12\n" +
 	"\x04sqid\x18\x01 \x01(\tR\x04sqid\"Q\n" +
 	"\rCancelRequest\x12\x12\n" +
@@ -1479,11 +1479,11 @@ var file_gateway_proto_goTypes = []any{
 	nil,                                          // 22: uber.submitqueue.gateway.RequestSummary.MetadataEntry
 	nil,                                          // 23: uber.submitqueue.gateway.HistoryEvent.MetadataEntry
 	(*protopb.Change)(nil),                       // 24: uber.base.change.Change
-	(protopb1.Strategy)(0),                       // 25: uber.base.mergestrategy.Strategy
+	(protopb1.Strategy)(0),                       // 25: uber.base.landstrategy.Strategy
 }
 var file_gateway_proto_depIdxs = []int32{
 	24, // 0: uber.submitqueue.gateway.LandRequest.change:type_name -> uber.base.change.Change
-	25, // 1: uber.submitqueue.gateway.LandRequest.strategy:type_name -> uber.base.mergestrategy.Strategy
+	25, // 1: uber.submitqueue.gateway.LandRequest.strategy:type_name -> uber.base.landstrategy.Strategy
 	22, // 2: uber.submitqueue.gateway.RequestSummary.metadata:type_name -> uber.submitqueue.gateway.RequestSummary.MetadataEntry
 	6,  // 3: uber.submitqueue.gateway.GetRequestSummaryByIDResponse.request:type_name -> uber.submitqueue.gateway.RequestSummary
 	6,  // 4: uber.submitqueue.gateway.GetRequestSummaryByChangeURIResponse.requests:type_name -> uber.submitqueue.gateway.RequestSummary

@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//platform/base/change:go_default_library",
-        "//platform/base/mergestrategy:go_default_library",
+        "//platform/base/landstrategy:go_default_library",
         "//submitqueue/entity:go_default_library",
         "//submitqueue/extension/storage:go_default_library",
         "//test/testutil:go_default_library",

@@ -155,7 +155,7 @@ func newProcHarness(t *testing.T, ctrl *gomock.Controller, publishErr error) *pr
 
 	registry, err := consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{Key: topickey.TopicKeyBuild, Name: "build", Queue: q},
-		{Key: topickey.TopicKeyMerge, Name: "submitqueue-merge", Queue: q},
+		{Key: topickey.TopicKeyLand, Name: "submitqueue-land", Queue: q},
 		{Key: topickey.TopicKeyConclude, Name: "conclude", Queue: q},
 		{Key: topickey.TopicKeySpeculate, Name: "speculate", Queue: q},
 		{Key: topickey.TopicKeyLog, Name: "log", Queue: q},
@@ -204,7 +204,7 @@ func TestProcess_AdmitsCreatedBatch(t *testing.T) {
 	h.listsInFlight()
 
 	require.NoError(t, h.process(t, ctrl, batch.ID))
-	assert.Empty(t, h.published, "a batch cannot merge on the message that admitted it")
+	assert.Empty(t, h.published, "a batch cannot land on the message that admitted it")
 
 	// Admission is the first thing a member hears after being batched: without
 	// it the request reads "batched" for the whole of speculation.
@@ -276,19 +276,19 @@ func TestProcess_TerminalReplansQueue(t *testing.T) {
 		"the dependent must be re-planned against the terminal outcome, which it can only be weighed against if the terminal batch comes too")
 }
 
-// A Merging batch has left the speculating set, so a message naming it is the
+// A Landing batch has left the speculating set, so a message naming it is the
 // only thing that will look at it again: it re-sends the dispatch to repair
 // one lost after the state write.
-func TestProcess_MergingSelfHeals(t *testing.T) {
+func TestProcess_LandingSelfHeals(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	h := newProcHarness(t, ctrl, nil)
-	batch := testBatch(entity.BatchStateMerging)
+	batch := testBatch(entity.BatchStateLanding)
 
 	h.batches.EXPECT().Get(gomock.Any(), batch.ID).Return(batch, nil)
 	h.listsInFlight()
 
 	require.NoError(t, h.process(t, ctrl, batch.ID))
-	assert.Equal(t, []string{"submitqueue-merge"}, h.published)
+	assert.Equal(t, []string{"submitqueue-land"}, h.published)
 }
 
 func TestProcess_Errors(t *testing.T) {

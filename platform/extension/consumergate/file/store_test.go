@@ -72,7 +72,7 @@ func TestIsGated(t *testing.T) {
 		{
 			name:      "gate on one group leaves other groups open",
 			close:     []consumergate.Key{{ConsumerGroup: "orchestrator-batch"}},
-			group:     "runway-merge",
+			group:     "runway-land",
 			partition: "queue-a",
 			want:      false,
 		},
@@ -128,8 +128,8 @@ func TestParkedRecordLifecycle(t *testing.T) {
 	store := New(t.TempDir())
 
 	parked := consumergate.Parked{
-		ConsumerGroup: "runway-mergeconflictcheck",
-		Topic:         "merge-conflict-check",
+		ConsumerGroup: "runway-landconflictcheck",
+		Topic:         "land-conflict-check",
 		MessageID:     "e2e-queue/42",
 		PartitionKey:  "e2e-queue",
 		Payload:       []byte(`{"id":"e2e-queue/42"}`),

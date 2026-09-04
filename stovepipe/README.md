@@ -1,6 +1,6 @@
 # Stovepipe
 
-Stovepipe is a post-merge validation service. Its layout:
+Stovepipe is a post-land validation service. Its layout:
 
 - `controller/` — business logic (transport-agnostic). Exposes the `Ping` and `Ingest` RPCs, and consumes the internal pipeline stages (`process`, `build`, `buildsignal`, `record`) plus a DLQ reconciler.
 

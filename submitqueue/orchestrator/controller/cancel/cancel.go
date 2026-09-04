@@ -26,14 +26,14 @@
 //   - The request is associated with one or more batch attempts — the controller
 //     records cancellation intent on every cancellable attempt and hands each one
 //     to speculate. Creating attempts are ignored because their dependency set is
-//     not yet resolved and nothing downstream can see them, while Merging and
+//     not yet resolved and nothing downstream can see them, while Landing and
 //     terminal attempts retain their existing outcome for conclude to reconcile.
 //
 // The split exists so that the terminal write and the work that must precede
 // it (cancelling builds, respeculating dependents) live in the same controller
 // — speculate is the single writer of every non-Cancelling batch state and is
 // already wired with the build/dependent stores. Forward-progress controllers
-// (build, buildsignal, merge) observe BatchStateCancelling via
+// (build, buildsignal, land) observe BatchStateCancelling via
 // IsBatchStateHalted and short-circuit while speculate drives the batch to
 // its terminal state.
 //
@@ -149,7 +149,7 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 	// Step 1: record the cancellation intent on the request itself by transitioning
 	// to RequestStateCancelling. This is non-terminal; forward-progress controllers
 	// (validate, batch) treat it as halted, but conclude may still write a different
-	// terminal state if a concurrent merge or failure wins the race.
+	// terminal state if a concurrent land or failure wins the race.
 	request, err = c.markCancelling(ctx, store, request)
 	if err != nil {
 		return err
@@ -180,10 +180,10 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 					firstErr = err
 				}
 			}
-		case batch.State == entity.BatchStateMerging:
-			// Merge owns the outcome once it has started. Conclude will reconcile the request with that outcome.
+		case batch.State == entity.BatchStateLanding:
+			// Land owns the outcome once it has started. Conclude will reconcile the request with that outcome.
 			foundApplicableBatch = true
-			metrics.NamedCounter(c.metricsScope, opName, "batch_merging", 1)
+			metrics.NamedCounter(c.metricsScope, opName, "batch_landing", 1)
 		case batch.State.IsTerminal():
 			// The terminal batch outcome wins; conclude may not have reconciled the request yet.
 			foundApplicableBatch = true
@@ -311,7 +311,7 @@ func (c *Controller) cancelBatch(ctx context.Context, store storage.Storage, bat
 		if err != nil {
 			metrics.NamedCounter(c.metricsScope, opName, "batch_update_errors", 1)
 			// storage.ErrVersionMismatch here means the batch advanced concurrently
-			// (e.g. speculate / merge progressed). Returned as-is because the
+			// (e.g. speculate / land progressed). Returned as-is because the
 			// sentinel is intrinsically retryable; the re-fetch will see the new state
 			// and either short-circuit (already terminal) or attempt the transition
 			// again.

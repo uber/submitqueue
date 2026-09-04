@@ -47,9 +47,9 @@ func TestHookEventRoundTrip(t *testing.T) {
 			}),
 		},
 		"unversioned": {
-			Id:          "runway/merge.completed/queue-a-42/msg-9/0",
+			Id:          "runway/land.completed/queue-a-42/msg-9/0",
 			Source:      "runway",
-			Type:        "merge.completed",
+			Type:        "land.completed",
 			TimestampMs: 1722800012345,
 			Payload:     mustStruct(t, map[string]any{"request_id": "queue-a/42"}),
 		},

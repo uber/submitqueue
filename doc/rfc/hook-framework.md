@@ -4,9 +4,9 @@ Fire-and-forget side effects for pipeline lifecycle events: one shared event con
 
 ## Problem
 
-The pipelines emit lifecycle transitions — a request lands or fails, a batch merges, a build finishes — but nothing can react outside pipeline state: no warehouse export, no PR comments or closes on merge events, no notifications or audit trails. The log topic is not this seam: SubmitQueue request statuses only, consumed solely to build gateway read models.
+The pipelines emit lifecycle transitions — a request lands or fails, a batch lands, a build finishes — but nothing can react outside pipeline state: no warehouse export, no PR comments or closes on land events, no notifications or audit trails. The log topic is not this seam: SubmitQueue request statuses only, consumed solely to build gateway read models.
 
-Two requirements: side effects must never stall or fail the pipeline, and "fire and forget" must not mean lossy — a merge-failure comment that silently never posts is a support ticket.
+Two requirements: side effects must never stall or fail the pipeline, and "fire and forget" must not mean lossy — a land-failure comment that silently never posts is a support ticket.
 
 ## Proposal
 
@@ -54,7 +54,7 @@ Delivery promise:
 
 - `api/base/hook/`: no owning domain, so the message-queue location rule extends — platform-owned contracts live under `api/base/`.
 - Envelope = only fields every consumer keys on uniformly; subject, queue, and error are occurrence facts → payload. `source`/`type` are strings, not enums, for additive evolution.
-- Payload (`Struct`): shaped per type, add-only, documented by its domain; must carry the subject's id and transient facts (merge step outcomes, build failure detail) — the event is their only durable record. Never entity snapshots; hooks resolve entities from stores.
+- Payload (`Struct`): shaped per type, add-only, documented by its domain; must carry the subject's id and transient facts (land step outcomes, build failure detail) — the event is their only durable record. Never entity snapshots; hooks resolve entities from stores.
 
 ### Hooks and dispatch
 
@@ -93,7 +93,7 @@ message HookEvent {
 }
 ```
 
-A failed batch, carrying merge-result facts persisted nowhere else (protojson: int64 as string, empty fields omitted):
+A failed batch, carrying land-result facts persisted nowhere else (protojson: int64 as string, empty fields omitted):
 
 ```json
 {
@@ -105,7 +105,7 @@ A failed batch, carrying merge-result facts persisted nowhere else (protojson: i
   "payload": {
     "batch_id": "batch-778",
     "queue": "go-monorepo",
-    "error": "merge conflict",
+    "error": "land conflict",
     "failed_step": "sq-12346",
     "conflict_paths": ["foo/bar.go"]
   }
@@ -116,7 +116,7 @@ A failed batch, carrying merge-result facts persisted nowhere else (protojson: i
 
 - **A contract per domain.** N schemas, N hook shapes, N warehouse tables; one envelope absorbs differences additively.
 - **Inline hook calls.** Couples pipeline latency to integrations; a crash between write and call silently drops the notification.
-- **A second consumer group on the log topic.** Request statuses only; no path to batch, build, merge, or other domains.
+- **A second consumer group on the log topic.** Request statuses only; no path to batch, build, land, or other domains.
 - **Enums for source/type.** protojson rejects unknown enum values; every addition would break consumers.
 - **Subject, queue, or error on the envelope.** Occurrence facts; they live in the payload. No major event platform carries a top-level error.
 - **Entity snapshots as payload.** Stale on redelivery; competes with the store; drags domain schemas into the shared contract.

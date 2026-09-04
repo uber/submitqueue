@@ -20,7 +20,7 @@ import (
 	"strings"
 
 	changepb "github.com/uber/submitqueue/api/base/change/protopb"
-	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	landstrategypb "github.com/uber/submitqueue/api/base/landstrategy/protopb"
 	pb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 )
 
@@ -32,7 +32,7 @@ func (c *Client) Land(
 	ctx context.Context,
 	queue string,
 	uris []string,
-	strategy mergestrategypb.Strategy,
+	strategy landstrategypb.Strategy,
 ) (string, error) {
 	if queue == "" {
 		return "", fmt.Errorf("queue must not be empty")
@@ -54,19 +54,19 @@ func (c *Client) Land(
 
 // ParseStrategy maps a strategy name to its wire value. An empty name selects
 // the queue's configured default.
-func ParseStrategy(name string) (mergestrategypb.Strategy, error) {
+func ParseStrategy(name string) (landstrategypb.Strategy, error) {
 	switch strings.ToUpper(strings.TrimSpace(name)) {
 	case "", "DEFAULT":
-		return mergestrategypb.Strategy_DEFAULT, nil
+		return landstrategypb.Strategy_DEFAULT, nil
 	case "REBASE":
-		return mergestrategypb.Strategy_REBASE, nil
+		return landstrategypb.Strategy_REBASE, nil
 	case "SQUASH_REBASE":
-		return mergestrategypb.Strategy_SQUASH_REBASE, nil
+		return landstrategypb.Strategy_SQUASH_REBASE, nil
 	case "MERGE":
-		return mergestrategypb.Strategy_MERGE, nil
+		return landstrategypb.Strategy_MERGE, nil
 	case "PROMOTE":
-		return mergestrategypb.Strategy_PROMOTE, nil
+		return landstrategypb.Strategy_PROMOTE, nil
 	default:
-		return mergestrategypb.Strategy_DEFAULT, fmt.Errorf("unknown strategy %q", name)
+		return landstrategypb.Strategy_DEFAULT, fmt.Errorf("unknown strategy %q", name)
 	}
 }

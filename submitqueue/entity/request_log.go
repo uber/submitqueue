@@ -45,10 +45,10 @@ const (
 	// RequestStatusStarted is the initial status of a request. It corresponds to the RequestStateStarted state and typically set by the orchestrator service when the request is received and persisted to the operating database.
 	RequestStatusStarted RequestStatus = "started"
 
-	// RequestStatusValidating indicates that the request is currently being validated (e.g., duplicate check, merge check, etc.).
+	// RequestStatusValidating indicates that the request is currently being validated (e.g., duplicate check, landability check, etc.).
 	RequestStatusValidating RequestStatus = "validating"
 
-	// RequestStatusValidated indicates that the request has been validated (duplicate check, merge check etc.) successfully. It corresponds to the RequestStateValidated state.
+	// RequestStatusValidated indicates that the request has been validated (duplicate check, landability check, etc.) successfully. It corresponds to the RequestStateValidated state.
 	RequestStatusValidated RequestStatus = "validated"
 
 	// RequestStatusBatching indicates that a batch has been created for the request and is resolving what it must serialize behind.
@@ -75,7 +75,7 @@ const (
 	RequestStatusError RequestStatus = "error"
 
 	// RequestStatusCancelling indicates that the user has requested cancellation but the request has not yet transitioned
-	// to the RequestStateCancelled state. Cancellation is best-effort: a request that has already been merged or that
+	// to the RequestStateCancelled state. Cancellation is best-effort: a request that has already landed or that
 	// races to completion before the cancel propagates through the pipeline may still land. Observers should treat this
 	// as intent only and rely on RequestStatusCancelled (or RequestStatusLanded) for the terminal outcome. Emitted by
 	// the gateway when the Cancel RPC is received.

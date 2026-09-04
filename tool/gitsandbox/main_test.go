@@ -182,7 +182,7 @@ func TestRun_CreatesTheCheckoutDirectory(t *testing.T) {
 	assert.True(t, info.IsDir())
 }
 
-// A repository that exists but carries no commit cannot be merged into, and the
+// A repository that exists but carries no commit cannot be used as a land target, and the
 // next run would skip it as already provisioned rather than repair it.
 func TestProvision_LeavesNothingBehindWhenCreationFails(t *testing.T) {
 	ctx := context.Background()

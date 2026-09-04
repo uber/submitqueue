@@ -21,7 +21,7 @@ queues:
   # exercise the conflict-analysis error path. See newQueueRegistry in the
   # orchestrator example server.
   - name: e2e-conflict-error-queue
-  # Used by the hermetic git E2E, where Runway is wired to a real git merger
+  # Used by the hermetic git E2E, where Runway is wired to a real git lander
   # against a bare repository. See service/submitqueue/demo/provider/git.
   - name: e2e-git-queue
   # Used by the provider demo stack (make local-submitqueue-start) in every mode —

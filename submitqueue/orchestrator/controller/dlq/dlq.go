@@ -28,7 +28,7 @@
 // new `{topic}_dlq` name). The DLQ controllers decode that payload to recover
 // the affected request or batch, then transition it to a terminal failed
 // state — Error for requests, Failed for batches — with an idempotent
-// optimistic-locking write so concurrent activity (a late merge, a cancel
+// optimistic-locking write so concurrent activity (a late land, a cancel
 // race) wins cleanly. Batch failures also fan out to the member requests so
 // the gateway no longer reports them as in-progress.
 package dlq

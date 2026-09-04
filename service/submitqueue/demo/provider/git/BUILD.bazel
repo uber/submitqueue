@@ -7,7 +7,7 @@ orchestrator and runway containers.
 filegroup(
     name = "config",
     srcs = [
-        "merge.yaml",
+        "land.yaml",
         "profiles.yaml",
     ],
     visibility = ["//test:__subpackages__"],

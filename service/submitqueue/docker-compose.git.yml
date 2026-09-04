@@ -1,24 +1,24 @@
-# Compose overlay: point Runway at a real git merge target.
+# Compose overlay: point Runway at a real git land target.
 #
 # Layered over docker-compose.yml, which it does not modify:
 #
 #   docker compose -f docker-compose.yml -f docker-compose.git.yml up
 #
-# Used by the hermetic git E2E (`make e2e-git-test`), which merges it through
+# Used by the hermetic git E2E (`make e2e-git-test`), which lands it through
 # testutil.WithOverlay. Everything else about the stack — the services, their
 # databases, the consumer gate — comes from the base file, so a service added
 # there reaches this variant too.
 #
-# The merge target is a bare repository on a shared volume, addressed by path.
-# That exercises the whole merge path (git in the image, checkout provisioning,
+# The land target is a bare repository on a shared volume, addressed by path.
+# That exercises the whole land path (git in the image, checkout provisioning,
 # real cherry-pick and push, head-branch updates) with no credential, no
 # network, and no account anywhere — which is what lets it gate a pull request.
 #
 # Required in the environment, all owned by the test:
-#   SQ_PROVIDER_CONFIG_DIR   profiles.yaml / merge.yaml selecting each queue's
+#   SQ_PROVIDER_CONFIG_DIR   profiles.yaml / land.yaml selecting each queue's
 #                            extensions (service/submitqueue/demo/provider/git)
-#   SQ_GIT_SANDBOX_DIR       the bare repository the merger fetches and pushes
-#   SQ_RUNWAY_CHECKOUT_DIR   storage for the working trees the merger owns
+#   SQ_GIT_SANDBOX_DIR       the bare repository the lander fetches and pushes
+#   SQ_RUNWAY_CHECKOUT_DIR   storage for the working trees the lander owns
 #
 # Optional:
 #   SQ_ORCHESTRATOR_REPO_DIR  storage for the orchestrator's own repository
@@ -29,11 +29,11 @@ services:
     environment:
       # Which change provider, build runner, and conflict analyzer each queue
       # resolves to. The build runner stays fake here; the change provider and
-      # the merge are real.
+      # the land are real.
       - PROFILES_CONFIG_PATH=/etc/submitqueue/profiles.yaml
     volumes:
       - ${SQ_PROVIDER_CONFIG_DIR}:/etc/submitqueue:ro
-      # The same bare repository Runway merges into, read-only: the orchestrator
+      # The same bare repository Runway lands into, read-only: the orchestrator
       # only ever fetches from it. Each service keeps its own copy and points
       # its own remote at this one, which is the arrangement a real deployment
       # has with both of them pointing at a remote host.
@@ -46,9 +46,9 @@ services:
 
   runway-service:
     environment:
-      # Per-queue merge targets. Without this Runway falls back to the noop
-      # merger and nothing would actually be pushed.
-      - MERGE_CONFIG_PATH=/etc/submitqueue/merge.yaml
+      # Per-queue land targets. Without this Runway falls back to the noop
+      # lander and nothing would actually be pushed.
+      - LAND_CONFIG_PATH=/etc/submitqueue/land.yaml
     volumes:
       - ${SQ_PROVIDER_CONFIG_DIR}:/etc/submitqueue:ro
       - ${SQ_GIT_SANDBOX_DIR}:/srv/git
@@ -59,10 +59,10 @@ services:
       # SQ_RUNWAY_CHECKOUT_DIR at a host directory, because it runs the services
       # as the host user and a named volume would arrive owned by root. Left
       # unset — which is how `make local-submitqueue-start PROVIDER=git` runs it —
-      # it is a named volume instead, keeping the merger's object writes off a
+      # it is a named volume instead, keeping the lander's object writes off a
       # bind mount: this is the directory git clones, cherry-picks and commits
       # in, and on macOS a freshly written loose object can read back as corrupt
-      # over the host filesystem bridge, failing a merge that has nothing wrong
+      # over the host filesystem bridge, failing a land that has nothing wrong
       # with it. The bare repository above only receives finished pushes, so it
       # stays a bind mount and keeps `git log` on the host working.
       - ${SQ_RUNWAY_CHECKOUT_DIR:-runway-checkouts}:/var/runway/checkouts

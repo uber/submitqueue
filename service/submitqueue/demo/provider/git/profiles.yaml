@@ -1,8 +1,8 @@
 # Extension profiles for the "git" example: a plain git remote with no provider.
 #
 # There is no provider to ask about a change, and no CI to run, so both edge
-# integrations stay fake. What this example exercises is the merge itself — see
-# merge.yaml.
+# integrations stay fake. What this example exercises is the land itself — see
+# land.yaml.
 
 defaults:
   # A local git remote has no API to fetch change metadata from; the fake
@@ -18,7 +18,7 @@ queues:
   # batches that touch a shared directory, matching the github mode.
   #
   # Both halves are real here. The change provider keeps its own copy of the
-  # same bare repository Runway merges into and reads each change out of it, so
+  # same bare repository Runway lands into and reads each change out of it, so
   # the analyzer keys on paths that were actually committed — including for a
   # change submitted by hand, which nothing else could have described.
   - name: demo-queue
@@ -27,7 +27,7 @@ queues:
       git:
         # The orchestrator's own copy, and its own remote pointing at the
         # sandbox — mounted read-only, since it only ever fetches. Runway
-        # configures the same repository separately for itself in merge.yaml.
+        # configures the same repository separately for itself in land.yaml.
         remoteUrl: file:///srv/git/sandbox.git
         target: main
         repoPath: /var/submitqueue/changerepos/demo

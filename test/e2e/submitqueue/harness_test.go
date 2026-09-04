@@ -33,7 +33,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
 	changepb "github.com/uber/submitqueue/api/base/change/protopb"
-	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	landstrategypb "github.com/uber/submitqueue/api/base/landstrategy/protopb"
 	gatewaypb "github.com/uber/submitqueue/api/submitqueue/gateway/protopb"
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/extension/consumergate"
@@ -73,7 +73,7 @@ func (s *E2EIntegrationSuite) land(queue string, uris ...string) request {
 	resp, err := s.gatewayClient.Land(s.ctx, &gatewaypb.LandRequest{
 		Queue:    queue,
 		Change:   &changepb.Change{Uris: uris},
-		Strategy: mergestrategypb.Strategy_REBASE,
+		Strategy: landstrategypb.Strategy_REBASE,
 	})
 	require.NoError(t, err, "Land failed for queue %s", queue)
 	require.NotEmpty(t, resp.Sqid, "Land returned an empty sqid for queue %s", queue)

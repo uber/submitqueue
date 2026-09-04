@@ -57,7 +57,7 @@ So the option earns its place as the single, language-neutral source of truth fo
 
 ### Go binding: the generated `protopb`
 
-The generated message types in `protopb` are the Go binding, sitting beside `proto/` exactly as for the RPC contracts. The contract package adds only thin helpers — `protojson` (de)serialization and the `topic_keys` reflection lookup. Shared field types (`change.Change`, `mergestrategy.MergeStrategy`) are themselves shared protos under `api/base/{change,mergestrategy}/proto`, imported by every contract that needs them.
+The generated message types in `protopb` are the Go binding, sitting beside `proto/` exactly as for the RPC contracts. The contract package adds only thin helpers — `protojson` (de)serialization and the `topic_keys` reflection lookup. Shared field types (`change.Change`, `landstrategy.Strategy`) are themselves shared protos under `api/base/{change,landstrategy}/proto`, imported by every contract that needs them.
 
 ## Example
 
@@ -82,9 +82,9 @@ message ExampleRequest {
 
 message ExampleResult {
     // One shape, two queues: the same result is published under the check-result
-    // key for a dry run and the merge-result key for a committing run.
+    // key for a dry run and the land-result key for a committing run.
     option (uber.base.messagequeue.topic_keys) = "example-check-result";
-    option (uber.base.messagequeue.topic_keys) = "example-merge-result";
+    option (uber.base.messagequeue.topic_keys) = "example-land-result";
 
     string id = 1;       // Echoes the request's correlation id.
     bool success = 2;

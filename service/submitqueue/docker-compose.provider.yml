@@ -11,7 +11,7 @@
 # demo/provider/<name>/ — so adding a provider needs no change to this file.
 #
 # Required in the environment:
-#   SQ_PROVIDER_CONFIG_DIR  directory holding profiles.yaml and merge.yaml
+#   SQ_PROVIDER_CONFIG_DIR  directory holding profiles.yaml and land.yaml
 #   GITHUB_TOKEN         (for the github example) the credential named by
 #                        tokenEnv in those files
 #
@@ -32,15 +32,15 @@ services:
 
   runway-service:
     environment:
-      # Per-queue merge targets. Without this Runway falls back to the noop
-      # merger and nothing is ever pushed.
-      - MERGE_CONFIG_PATH=/etc/submitqueue/merge.yaml
+      # Per-queue land targets. Without this Runway falls back to the noop
+      # lander and nothing is ever pushed.
+      - LAND_CONFIG_PATH=/etc/submitqueue/land.yaml
       # Used to clone, fetch, and push. Written into the checkout as an HTTP
       # Authorization header, never into the remote URL.
       - GITHUB_TOKEN=${GITHUB_TOKEN:?set GITHUB_TOKEN to reach the provider}
     volumes:
       - ${SQ_PROVIDER_CONFIG_DIR:?set SQ_PROVIDER_CONFIG_DIR, e.g. ./service/submitqueue/demo/provider/github}:/etc/submitqueue:ro
-      # Working trees the merger owns. A named volume so a restart re-uses the
+      # Working trees the lander owns. A named volume so a restart re-uses the
       # clone instead of fetching the repository again.
       - runway-checkouts:/var/runway/checkouts
 

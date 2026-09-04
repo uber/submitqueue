@@ -81,7 +81,7 @@ func (a alloc) Allocate(ctx context.Context, pathSets []entity.SpeculationPathSe
 			// keeps its slot until it actually stops.
 			//
 			// Only the path's status matters. No batch state enters this
-			// decision — "merging" and the rest are states of a batch, never of
+			// decision — "landing" and the rest are states of a batch, never of
 			// a path — so the rule is simply that CI is still busy with it.
 			funded[entry.ID] = true
 		}

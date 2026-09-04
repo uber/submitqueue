@@ -27,7 +27,7 @@ import (
 )
 
 // batchController is the DLQ reconciler for batch-scoped pipeline stages
-// (build, merge, conclude). All three topics carry a BatchID payload, so this
+// (build, land, conclude). All three topics carry a BatchID payload, so this
 // controller is registered three times — one per topic, each with the matching
 // DLQ topic key and consumer group.
 //
@@ -39,7 +39,7 @@ import (
 //
 // Blaming the batch on the message is right for these stages because their
 // work is that batch: whatever failed, it failed doing this batch's build,
-// merge, or conclusion. The speculate stage is not like that — it re-plans a
+// land, or conclusion. The speculate stage is not like that — it re-plans a
 // whole queue from a message that names one batch — so it has its own
 // reconciler; see speculate.go.
 type batchController struct {

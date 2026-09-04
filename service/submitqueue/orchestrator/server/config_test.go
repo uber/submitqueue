@@ -301,7 +301,7 @@ func TestNewProfiles_ResolvesPerQueueAnalyzers(t *testing.T) {
 
 func TestNewProfiles_FailsWhenAForgeTokenIsMissing(t *testing.T) {
 	// Failing at startup beats accepting land requests and discovering the
-	// credential gap one API call into the first merge.
+	// credential gap one API call into the first land.
 	t.Setenv("TEST_GH_TOKEN_UNSET", "")
 	path := writeProfiles(t, `
 defaults:

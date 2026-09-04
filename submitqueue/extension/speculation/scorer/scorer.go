@@ -29,7 +29,7 @@ type Scorer interface {
 	// ultimately succeeds — reaches its terminal Succeeded state with its
 	// changes landed, rather than Failed or Cancelled. A passing build is
 	// necessary but not sufficient: a batch whose build already passed can
-	// still fail to merge, so this is the probability of the final outcome,
+	// still fail to land, so this is the probability of the final outcome,
 	// not of the build alone. It is handed the batch identity and resolves the
 	// batch's changes itself through an injected changeset.Resolver.
 	//

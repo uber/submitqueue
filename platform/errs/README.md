@@ -178,7 +178,7 @@ In particular, **do not reach for `NewRetryableError` just because replaying the
 
 ## Extensions Return Go Errors
 
-Extension interfaces (`MergeChecker`, `Storage`, `Publisher`) return `error` values and may define domain-specific sentinels. Most sentinels remain unclassified because their meaning depends on the call site; for example, `storage.ErrNotFound` might be a user error in one controller and an infrastructure error in another. A sentinel whose classification is intrinsic in every context may carry that classification at its declaration. `storage.ErrVersionMismatch`, for example, is always a retryable infrastructure error because it reports a lost optimistic-concurrency race.
+Extension interfaces (`LandChecker`, `Storage`, `Publisher`) return `error` values and may define domain-specific sentinels. Most sentinels remain unclassified because their meaning depends on the call site; for example, `storage.ErrNotFound` might be a user error in one controller and an infrastructure error in another. A sentinel whose classification is intrinsic in every context may carry that classification at its declaration. `storage.ErrVersionMismatch`, for example, is always a retryable infrastructure error because it reports a lost optimistic-concurrency race.
 
 Controllers should return intrinsically classified sentinels without adding another framework wrapper. The declaration remains reusable across implementations while every caller observes the same classification.
 

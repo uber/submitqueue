@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Command gitsandbox provisions the bare repository the git provider merges
+// Command gitsandbox provisions the bare repository the git provider lands
 // into (`make local-submitqueue-start PROVIDER=git`).
 //
-// A merge target has to exist before Runway starts: the merger clones it at
+// A land target has to exist before Runway starts: the lander clones it at
 // boot and fails outright if it cannot. So this runs ahead of the stack,
 // creating a bare repository with one commit on the target branch — the
-// smallest thing a merge can be performed against.
+// smallest thing a land can be performed against.
 //
 // It is idempotent. An already-initialized repository is left exactly as it is,
 // so restarting the stack keeps whatever previous runs landed rather than
@@ -36,7 +36,7 @@ import (
 )
 
 // seedFile is committed so the target branch exists with something on it. A
-// branch with no commits cannot be cloned or merged into.
+// branch with no commits cannot be cloned or landed into.
 const seedFile = "README.md"
 
 const seedContents = `# SubmitQueue sandbox
@@ -107,7 +107,7 @@ func provision(ctx context.Context, git, bare, branch string) (bool, error) {
 	}
 
 	if err := create(ctx, git, bare, branch); err != nil {
-		// A repository that is initialized but has no commit cannot be merged
+		// A repository that is initialized but has no commit cannot be landed
 		// into, and the next run would skip it as already provisioned — so the
 		// stack would fail at boot instead of being repaired. Leave nothing
 		// behind rather than something unusable.
@@ -148,7 +148,7 @@ func configure(ctx context.Context, git, bare string) error {
 		// repository is written from the host and read from inside a container
 		// through a bind mount, and that boundary does not preserve the
 		// guarantee. A run pushing fifty branches gives fifty chances for the
-		// merger to read a packed-refs truncated mid-name and fail a land that
+		// lander to read a packed-refs truncated mid-name and fail a land that
 		// had nothing wrong with it. Left unpacked, there is nothing to rewrite;
 		// loose refs cost a sandbox that gets deleted nothing.
 		{"gc.auto", "0"},

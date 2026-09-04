@@ -23,51 +23,51 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	landstrategypb "github.com/uber/submitqueue/api/base/landstrategy/protopb"
 )
 
-// writeConfig writes a merge config file and returns its path.
+// writeConfig writes a land config file and returns its path.
 func writeConfig(t *testing.T, contents string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "merge.yaml")
+	path := filepath.Join(t.TempDir(), "land.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
 	return path
 }
 
-func TestLoadMergeConfig_Defaults(t *testing.T) {
+func TestLoadLandConfig_Defaults(t *testing.T) {
 	path := writeConfig(t, `
 defaults:
-  merger: {type: noop}
+  lander: {type: noop}
 queues:
   - name: demo
-    merger:
+    lander:
       type: git
       remoteUrl: https://example.com/o/r.git
       checkoutPath: /var/checkouts/r
 `)
 
-	cfg, err := loadMergeConfig(path)
+	cfg, err := loadLandConfig(path)
 	require.NoError(t, err)
 
-	demo := cfg.Queues[0].Merger
+	demo := cfg.Queues[0].Lander
 	require.NotNil(t, demo)
 	assert.Equal(t, "origin", demo.Remote)
 	assert.Equal(t, "main", demo.Target)
 	assert.Equal(t, "x-access-token", demo.TokenUser)
-	assert.Equal(t, mergestrategypb.Strategy_REBASE, demo.strategy())
+	assert.Equal(t, landstrategypb.Strategy_REBASE, demo.strategy())
 	require.NotNil(t, demo.CheckStaleness)
 	assert.True(t, *demo.CheckStaleness, "staleness checking is on unless turned off")
 	assert.False(t, demo.UpdateHeadBranch)
 	assert.True(t, cfg.usesGit())
 }
 
-func TestLoadMergeConfig_ExplicitValuesWin(t *testing.T) {
+func TestLoadLandConfig_ExplicitValuesWin(t *testing.T) {
 	path := writeConfig(t, `
 defaults:
-  merger: {type: noop}
+  lander: {type: noop}
 queues:
   - name: demo
-    merger:
+    lander:
       type: git
       remoteUrl: https://example.com/o/r.git
       remote: upstream
@@ -80,68 +80,68 @@ queues:
       tokenUser: oauth2
 `)
 
-	cfg, err := loadMergeConfig(path)
+	cfg, err := loadLandConfig(path)
 	require.NoError(t, err)
 
-	demo := cfg.Queues[0].Merger
+	demo := cfg.Queues[0].Lander
 	assert.Equal(t, "upstream", demo.Remote)
 	assert.Equal(t, "trunk", demo.Target)
 	assert.Equal(t, "oauth2", demo.TokenUser)
-	assert.Equal(t, mergestrategypb.Strategy_SQUASH_REBASE, demo.strategy())
+	assert.Equal(t, landstrategypb.Strategy_SQUASH_REBASE, demo.strategy())
 	require.NotNil(t, demo.CheckStaleness)
 	assert.False(t, *demo.CheckStaleness)
 	assert.True(t, demo.UpdateHeadBranch)
 }
 
-func TestLoadMergeConfig_NoopOnlyNeedsNoGit(t *testing.T) {
+func TestLoadLandConfig_NoopOnlyNeedsNoGit(t *testing.T) {
 	path := writeConfig(t, `
 defaults:
-  merger: {type: noop}
+  lander: {type: noop}
 queues:
   - name: demo
 `)
 
-	cfg, err := loadMergeConfig(path)
+	cfg, err := loadLandConfig(path)
 	require.NoError(t, err)
 	assert.False(t, cfg.usesGit(), "a noop-only deployment must not require a git runtime")
 }
 
-func TestLoadMergeConfig_EmptyFileIsNoop(t *testing.T) {
-	cfg, err := loadMergeConfig(writeConfig(t, ""))
+func TestLoadLandConfig_EmptyFileIsNoop(t *testing.T) {
+	cfg, err := loadLandConfig(writeConfig(t, ""))
 	require.NoError(t, err)
-	assert.Equal(t, mergerTypeNoop, cfg.Defaults.Merger.Type)
+	assert.Equal(t, landerTypeNoop, cfg.Defaults.Lander.Type)
 	assert.False(t, cfg.usesGit())
 }
 
-func TestLoadMergeConfig_SharedCheckoutForSameTargetIsAllowed(t *testing.T) {
-	// Two queues landing on one target must resolve to one merger instance, so
+func TestLoadLandConfig_SharedCheckoutForSameTargetIsAllowed(t *testing.T) {
+	// Two queues landing on one target must resolve to one lander instance, so
 	// sharing a checkout is the correct configuration rather than a mistake.
 	path := writeConfig(t, `
 defaults:
-  merger: {type: noop}
+  lander: {type: noop}
 queues:
   - name: a
-    merger: {type: git, remoteUrl: https://example.com/o/r.git, checkoutPath: /var/checkouts/r}
+    lander: {type: git, remoteUrl: https://example.com/o/r.git, checkoutPath: /var/checkouts/r}
   - name: b
-    merger: {type: git, remoteUrl: https://example.com/o/r.git, checkoutPath: /var/checkouts/r}
+    lander: {type: git, remoteUrl: https://example.com/o/r.git, checkoutPath: /var/checkouts/r}
 `)
 
-	_, err := loadMergeConfig(path)
+	_, err := loadLandConfig(path)
 	require.NoError(t, err)
 }
 
-func TestLoadMergeConfig_SharedCheckoutToleratesEquivalentSpellings(t *testing.T) {
+func TestLoadLandConfig_SharedCheckoutToleratesEquivalentSpellings(t *testing.T) {
 	// Sharing is judged on the normalized configuration, so a queue that omits
 	// a defaulted field and one that states the default explicitly agree. An
 	// empty refspec list and an omitted one likewise mean the same thing.
 	path := writeConfig(t, `
 defaults:
-  merger: {type: noop}
+  lander: {type: noop}
 queues:
   - name: a
-    merger: {type: git, remoteUrl: https://example.com/o/r.git, checkoutPath: /var/checkouts/r}
+    lander: {type: git, remoteUrl: https://example.com/o/r.git, checkoutPath: /var/checkouts/r}
   - name: b
-    merger:
+    lander:
       type: git
       remoteUrl: https://example.com/o/r.git
       checkoutPath: /var/checkouts/r
@@ -151,12 +151,12 @@ queues:
       fetchRefspecs: []
 `)
 
-	_, err := loadMergeConfig(path)
+	_, err := loadLandConfig(path)
 	require.NoError(t, err)
 }
 
-func TestLoadMergeConfig_RejectsSharedCheckoutWithDivergentMergerFields(t *testing.T) {
-	// A shared checkout means a shared merger instance, built from whichever
+func TestLoadLandConfig_RejectsSharedCheckoutWithDivergentLanderFields(t *testing.T) {
+	// A shared checkout means a shared lander instance, built from whichever
 	// queue reached the builder first. Any field that instance is constructed
 	// from must agree, or the second queue silently runs with the first's
 	// value — merging with a strategy it never asked for, and saying nothing.
@@ -194,52 +194,52 @@ func TestLoadMergeConfig_RejectsSharedCheckoutWithDivergentMergerFields(t *testi
 		t.Run(tt.name, func(t *testing.T) {
 			path := writeConfig(t, `
 defaults:
-  merger: {type: noop}
+  lander: {type: noop}
 queues:
   - name: a
-    merger: {type: git, remoteUrl: https://example.com/o/r.git, checkoutPath: /var/checkouts/r, defaultStrategy: SQUASH_REBASE, committerEmail: a@example.com}
+    lander: {type: git, remoteUrl: https://example.com/o/r.git, checkoutPath: /var/checkouts/r, defaultStrategy: SQUASH_REBASE, committerEmail: a@example.com}
   - name: b
-    merger: `+tt.b+`
+    lander: `+tt.b+`
 `)
-			_, err := loadMergeConfig(path)
+			_, err := loadLandConfig(path)
 			require.Error(t, err)
 		})
 	}
 }
 
-func TestMergerConfig_FirstDifference(t *testing.T) {
+func TestLanderConfig_FirstDifference(t *testing.T) {
 	// The differing field is named rather than left to the reader, because
 	// "these two queues disagree somewhere" is not enough to act on when a
-	// merger has fifteen fields. This is asserted on the returned value rather
+	// lander has fifteen fields. This is asserted on the returned value rather
 	// than on an error string so it stays a test of behavior.
-	base := mergerConfig{Type: mergerTypeGit, RemoteURL: "https://example.com/o/r.git", Remote: "origin", Target: "main"}
+	base := landerConfig{Type: landerTypeGit, RemoteURL: "https://example.com/o/r.git", Remote: "origin", Target: "main"}
 	enabled, disabled := true, false
 
 	tests := []struct {
 		name        string
-		other       mergerConfig
+		other       landerConfig
 		wantDiffers bool
 		wantField   string
 	}{
 		{name: "identical", other: base},
 		{
 			name:        "target",
-			other:       func() mergerConfig { c := base; c.Target = "release"; return c }(),
+			other:       func() landerConfig { c := base; c.Target = "release"; return c }(),
 			wantDiffers: true, wantField: "target",
 		},
 		{
 			name:        "default strategy",
-			other:       func() mergerConfig { c := base; c.DefaultStrategy = "REBASE"; return c }(),
+			other:       func() landerConfig { c := base; c.DefaultStrategy = "REBASE"; return c }(),
 			wantDiffers: true, wantField: "defaultStrategy",
 		},
 		{
 			name:        "optional bool set on one side only",
-			other:       func() mergerConfig { c := base; c.CheckStaleness = &enabled; return c }(),
+			other:       func() landerConfig { c := base; c.CheckStaleness = &enabled; return c }(),
 			wantDiffers: true, wantField: "checkStaleness",
 		},
 		{
 			name:        "refspecs",
-			other:       func() mergerConfig { c := base; c.FetchRefspecs = []string{"+refs/pull/*:refs/pull/*"}; return c }(),
+			other:       func() landerConfig { c := base; c.FetchRefspecs = []string{"+refs/pull/*:refs/pull/*"}; return c }(),
 			wantDiffers: true, wantField: "fetchRefspecs",
 		},
 	}
@@ -271,37 +271,37 @@ func TestMergerConfig_FirstDifference(t *testing.T) {
 		"an optional bool reads as its value, not as a pointer address")
 }
 
-func TestLoadMergeConfig_Rejects(t *testing.T) {
+func TestLoadLandConfig_Rejects(t *testing.T) {
 	tests := []struct {
 		name     string
 		contents string
 	}{
 		{
-			name: "unknown merger type",
+			name: "unknown lander type",
 			contents: `
 defaults:
-  merger: {type: magic}
+  lander: {type: magic}
 `,
 		},
 		{
 			name: "git without checkout path",
 			contents: `
 defaults:
-  merger: {type: git, remoteUrl: https://example.com/o/r.git}
+  lander: {type: git, remoteUrl: https://example.com/o/r.git}
 `,
 		},
 		{
 			name: "token without a remote to authenticate to",
 			contents: `
 defaults:
-  merger: {type: git, checkoutPath: /var/checkouts/r, tokenEnv: SOME_TOKEN}
+  lander: {type: git, checkoutPath: /var/checkouts/r, tokenEnv: SOME_TOKEN}
 `,
 		},
 		{
 			name: "unknown default strategy",
 			contents: `
 defaults:
-  merger:
+  lander:
     type: git
     remoteUrl: https://example.com/o/r.git
     checkoutPath: /var/checkouts/r
@@ -312,73 +312,73 @@ defaults:
 			name: "queue without a name",
 			contents: `
 defaults:
-  merger: {type: noop}
+  lander: {type: noop}
 queues:
-  - merger: {type: noop}
+  - lander: {type: noop}
 `,
 		},
 		{
 			name: "duplicate queue",
 			contents: `
 defaults:
-  merger: {type: noop}
+  lander: {type: noop}
 queues:
   - name: a
-    merger: {type: noop}
+    lander: {type: noop}
   - name: a
-    merger: {type: noop}
+    lander: {type: noop}
 `,
 		},
 		{
-			// Two mergers over one working tree would reset and push it out
-			// from under each other mid-merge.
+			// Two landers over one working tree would reset and push it out
+			// from under each other mid-land.
 			name: "same checkout for different targets",
 			contents: `
 defaults:
-  merger: {type: noop}
+  lander: {type: noop}
 queues:
   - name: a
-    merger: {type: git, remoteUrl: https://example.com/o/r.git, target: main, checkoutPath: /var/checkouts/r}
+    lander: {type: git, remoteUrl: https://example.com/o/r.git, target: main, checkoutPath: /var/checkouts/r}
   - name: b
-    merger: {type: git, remoteUrl: https://example.com/o/r.git, target: release, checkoutPath: /var/checkouts/r}
+    lander: {type: git, remoteUrl: https://example.com/o/r.git, target: release, checkoutPath: /var/checkouts/r}
 `,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := loadMergeConfig(writeConfig(t, tt.contents))
+			_, err := loadLandConfig(writeConfig(t, tt.contents))
 			require.Error(t, err)
 		})
 	}
 }
 
-func TestMergerConfig_NeedsHTTPCredential(t *testing.T) {
+func TestLanderConfig_NeedsHTTPCredential(t *testing.T) {
 	tests := []struct {
 		name string
-		cfg  mergerConfig
+		cfg  landerConfig
 		want bool
 	}{
 		{
 			name: "https remote with token",
-			cfg:  mergerConfig{RemoteURL: "https://example.com/o/r.git", TokenEnv: "T"},
+			cfg:  landerConfig{RemoteURL: "https://example.com/o/r.git", TokenEnv: "T"},
 			want: true,
 		},
 		{
 			name: "https remote without token",
-			cfg:  mergerConfig{RemoteURL: "https://example.com/o/r.git"},
+			cfg:  landerConfig{RemoteURL: "https://example.com/o/r.git"},
 			want: false,
 		},
 		{
 			// The credential is an HTTP header; over SSH there is nothing to
-			// attach it to, and the merger passes the agent socket instead.
+			// attach it to, and the lander passes the agent socket instead.
 			name: "ssh remote",
-			cfg:  mergerConfig{RemoteURL: "ssh://git@example.com/o/r.git", TokenEnv: "T"},
+			cfg:  landerConfig{RemoteURL: "ssh://git@example.com/o/r.git", TokenEnv: "T"},
 			want: false,
 		},
 		{
 			name: "local path used by the hermetic e2e",
-			cfg:  mergerConfig{RemoteURL: "file:///srv/git/sandbox.git", TokenEnv: "T"},
+			cfg:  landerConfig{RemoteURL: "file:///srv/git/sandbox.git", TokenEnv: "T"},
 			want: false,
 		},
 	}
@@ -390,12 +390,12 @@ func TestMergerConfig_NeedsHTTPCredential(t *testing.T) {
 	}
 }
 
-func TestMergerConfig_Provisions(t *testing.T) {
+func TestLanderConfig_Provisions(t *testing.T) {
 	// A checkout with no remote named is one something else built; the wiring
 	// must use it as it stands rather than trying to create it.
-	external := mergerConfig{Type: mergerTypeGit, CheckoutPath: "/var/checkouts/r"}
+	external := landerConfig{Type: landerTypeGit, CheckoutPath: "/var/checkouts/r"}
 	assert.False(t, external.provisions())
 
-	owned := mergerConfig{Type: mergerTypeGit, CheckoutPath: "/var/checkouts/r", RemoteURL: "https://example.com/o/r.git"}
+	owned := landerConfig{Type: landerTypeGit, CheckoutPath: "/var/checkouts/r", RemoteURL: "https://example.com/o/r.git"}
 	assert.True(t, owned.provisions())
 }

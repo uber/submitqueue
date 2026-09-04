@@ -255,7 +255,7 @@ func (s *E2EIntegrationSuite) TestConflictAnalyzerFailure_ReconcilesFromDLQ() {
 // TestLand_HappyPath_ReachesLanded drives a single request through the whole
 // pipeline to terminal success on the fully-hermetic e2e-test-queue (no
 // conflicts, fake build succeeds, noop runway signals SUCCEEDED for both the
-// merge-conflict check and the merge). It asserts three views: the black-box
+// land-conflict check and the land). It asserts three views: the black-box
 // terminal request summary, the public GetRequestHistoryByID timeline, and the internal RequestState
 // in the operating store.
 //
@@ -315,31 +315,31 @@ func (s *E2EIntegrationSuite) TestLand_HappyPath_ReachesLanded() {
 		"operating store should show request %s in terminal state landed", req.sqid)
 }
 
-// TestDependentBatch_BypassesMergingDependency proves that a dependency still
-// waiting on Runway is unresolved for strict merge but can be bypassed once
+// TestDependentBatch_BypassesLandingDependency proves that a dependency still
+// waiting on Runway is unresolved for strict land but can be bypassed once
 // passed paths cover both of its possible outcomes.
-func (s *E2EIntegrationSuite) TestDependentBatch_BypassesMergingDependency() {
+func (s *E2EIntegrationSuite) TestDependentBatch_BypassesLandingDependency() {
 	t := s.T()
 
 	const queue = "e2e-chain-queue"
-	const gateGroup = "runway-merge"
-	gateTopic := runwaymq.TopicKeyMerge.String()
+	const gateGroup = "runway-land"
+	gateTopic := runwaymq.TopicKeyLand.String()
 
-	s.closeGate(gateGroup, queue, "e2e: hold the lead merge so the dependent finishes building first")
+	s.closeGate(gateGroup, queue, "e2e: hold the lead land so the dependent finishes building first")
 	// Reopen even if an assertion below fails, so teardown does not stop the
 	// stack with a delivery still parked. Opening twice is a no-op.
 	defer s.openGate(gateGroup, queue)
 
 	lead := s.land(queue, "github://github.example.com/uber/e2e-chain/pull/1/abcdef0123456789abcdef0123456789abcdef01")
-	s.log.Logf("Landed lead request %s; awaiting its merge to park", lead.sqid)
+	s.log.Logf("Landed lead request %s; awaiting its land to park", lead.sqid)
 
-	// The merge request is keyed by batch, so name the batch to prove the
-	// parked delivery is this request's merge and not some other.
+	// The land request is keyed by batch, so name the batch to prove the
+	// parked delivery is this request's land and not some other.
 	leadBatch := s.awaitBatchID(lead)
 	parked := s.awaitParked(gateGroup, gateTopic, leadBatch)
-	assert.Equal(t, queue, parked.PartitionKey, "merge request should be partitioned by queue")
+	assert.Equal(t, queue, parked.PartitionKey, "land request should be partitioned by queue")
 
-	// The lead is provably stopped mid-merge. A request landed now serializes
+	// The lead is provably stopped mid-land. A request landed now serializes
 	// behind it.
 	dependent := s.land(queue, "github://github.example.com/uber/e2e-chain/pull/2/1234567890abcdef1234567890abcdef12345678")
 	dependentBatch := s.awaitBatchID(dependent)
@@ -352,13 +352,13 @@ func (s *E2EIntegrationSuite) TestDependentBatch_BypassesMergingDependency() {
 	require.Contains(t, got.Dependencies, leadBatch,
 		"batch %s must depend on the in-flight %s for this test to exercise anything", dependentBatch, leadBatch)
 
-	// Both paths pass while the lead is still parked. A Merging dependency is
-	// unresolved because its merge can fail, so the durable Merging state proves
-	// the dependent advanced through complete coverage rather than strict merge.
-	s.awaitBatchState(queue, dependentBatch, entity.BatchStateMerging)
-	s.log.Logf("Dependent %s bypassed merging batch %s", dependent.sqid, leadBatch)
+	// Both paths pass while the lead is still parked. A Landing dependency is
+	// unresolved because its land can fail, so the durable Landing state proves
+	// the dependent advanced through complete coverage rather than strict land.
+	s.awaitBatchState(queue, dependentBatch, entity.BatchStateLanding)
+	s.log.Logf("Dependent %s bypassed landing batch %s", dependent.sqid, leadBatch)
 
-	// Start: the lead merges, and its fan-out is now the only thing that can
+	// Start: the lead lands, and its fan-out is now the only thing that can
 	// move the dependent.
 	s.openGate(gateGroup, queue)
 	s.awaitUnparked(gateGroup, gateTopic, leadBatch)
@@ -370,7 +370,7 @@ func (s *E2EIntegrationSuite) TestDependentBatch_BypassesMergingDependency() {
 }
 
 // TestDependentBatch_BypassedHeadLandsFirst proves the bypass does not just
-// dispatch a merge: the dependent lands while its dependency is still held
+// dispatch a land: the dependent lands while its dependency is still held
 // mid-build, and only then does the dependency proceed.
 func (s *E2EIntegrationSuite) TestDependentBatch_BypassedHeadLandsFirst() {
 	t := s.T()
@@ -389,8 +389,8 @@ func (s *E2EIntegrationSuite) TestDependentBatch_BypassedHeadLandsFirst() {
 	require.NotEqual(t, heldBatch, followerBatch)
 
 	// The follower builds with and without the held leader while the leader's
-	// own build is parked; complete coverage hands it to the merge stage.
-	s.awaitBatchState(queue, followerBatch, entity.BatchStateMerging)
+	// own build is parked; complete coverage hands it to the land stage.
+	s.awaitBatchState(queue, followerBatch, entity.BatchStateLanding)
 	s.awaitStatus(follower, entity.RequestStatusLanded)
 	assert.Equal(t, entity.RequestStatusSpeculating, s.mustStatus(lead),
 		"the follower must land while its dependency is still held")
@@ -408,7 +408,7 @@ func (s *E2EIntegrationSuite) TestDependentBatch_BypassedHeadLandsFirst() {
 
 // TestDependentBatch_NoBypassWhenCoverageIsIncomplete proves the complement:
 // with only the "dependency succeeds" side passed, a head waits for its
-// dependency to resolve and merges strictly, never dispatching ahead of it.
+// dependency to resolve and lands strictly, never dispatching ahead of it.
 //
 // Partial coverage is seeded directly: the follower's batch is stranded in
 // Created (build held), its "succeeds" path is written as passed, and a
@@ -444,15 +444,15 @@ func (s *E2EIntegrationSuite) TestDependentBatch_NoBypassWhenCoverageIsIncomplet
 	s.awaitBatchID(trigger)
 
 	// The run that admits the follower also reports the wait: its one passed
-	// path covers only one of the lead's two outcomes, so it cannot merge
+	// path covers only one of the lead's two outcomes, so it cannot land
 	// until the lead resolves.
 	s.awaitEvent(follower, entity.RequestEventWaiting)
 
 	// "No bypass" must not be read off the follower's batch state: waiting is
 	// a recorded event, not a moment, and the lead is ungated — it can land
-	// before this test looks, at which point the seeded path is mergeable
-	// *strictly* and the batch rightly moves to Merging. The bypass would
-	// show up differently: the follower merging while the lead is still
+	// before this test looks, at which point the seeded path is landable
+	// *strictly* and the batch rightly moves to Landing. The bypass would
+	// show up differently: the follower landing while the lead is still
 	// unresolved. Assert the true invariant instead — the follower only lands
 	// after the lead has landed.
 	s.awaitStatus(lead, entity.RequestStatusLanded)
@@ -463,6 +463,86 @@ func (s *E2EIntegrationSuite) TestDependentBatch_NoBypassWhenCoverageIsIncomplet
 	// the queue ultimately converges is exercised by the other tests.
 	s.openGate(gateGroup, heldBatch)
 	s.awaitStatus(trigger, entity.RequestStatusLanded)
+}
+
+// TestDependentBatch_IsWokenByTheLandAhead proves that a batch waiting on
+// another is woken when that one lands — the edge CODEM-303 was silently
+// dropping.
+//
+// A landed batch fans out to speculate so its dependents can re-plan. That
+// message used to reuse the bare batch ID, which the batch controller had
+// already published to the same topic and partition when the batch was
+// created. The queue deduplicates against rows it has not collected yet,
+// consumed ones included, so the wake-up was reported as a success, stored
+// nothing, and never arrived.
+//
+// Ordinarily something else re-plans the queue soon enough to hide that. This
+// test removes every other source of a wake-up, as stop → observe → start:
+//
+//  1. Stop: close the gate for runway-land on this queue, before landing, so
+//     the lead batch cannot complete its land.
+//  2. Land the lead. It runs to the land hand-off and parks there.
+//  3. Land the dependent. The queue's analyzer serializes conservatively, so
+//     its batch depends on the lead's, which is in-flight (Landing counts).
+//  4. Observe: wait for the dependent to record "waiting" — its speculative
+//     build has already passed, so its own build signals are finished. From
+//     here the only thing that can advance it is the lead landing.
+//  5. Start: open the gate. The lead lands and fans out.
+//
+// The dependent reaching "landed" is therefore attributable to the fan-out
+// alone. Against the old code it rests at "speculating" and the suite runs to
+// Bazel's timeout, which is how the harness reports a pipeline that stalled.
+func (s *E2EIntegrationSuite) TestDependentBatch_IsWokenByTheLandAhead() {
+	t := s.T()
+
+	const queue = "e2e-chain-queue"
+	const gateGroup = "runway-land"
+	gateTopic := runwaymq.TopicKeyLand.String()
+
+	s.closeGate(gateGroup, queue, "e2e: hold the lead land so the dependent finishes building first")
+	// Reopen even if an assertion below fails, so teardown does not stop the
+	// stack with a delivery still parked. Opening twice is a no-op.
+	defer s.openGate(gateGroup, queue)
+
+	lead := s.land(queue, "github://github.example.com/uber/e2e-chain/pull/1/abcdef0123456789abcdef0123456789abcdef01")
+	s.log.Logf("Landed lead request %s; awaiting its land to park", lead.sqid)
+
+	// The land request is keyed by batch, so name the batch to prove the
+	// parked delivery is this request's land and not some other.
+	leadBatch := s.awaitBatchID(lead)
+	parked := s.awaitParked(gateGroup, gateTopic, leadBatch)
+	assert.Equal(t, queue, parked.PartitionKey, "land request should be partitioned by queue")
+
+	// The lead is provably stopped mid-land. A request landed now serializes
+	// behind it.
+	dependent := s.land(queue, "github://github.example.com/uber/e2e-chain/pull/2/1234567890abcdef1234567890abcdef12345678")
+	dependentBatch := s.awaitBatchID(dependent)
+	require.NotEqual(t, leadBatch, dependentBatch, "the two requests must be carried by different batches")
+
+	leadState, err := s.appStorage.For(queue)
+	require.NoError(t, err)
+	got, err := leadState.GetBatchStore().Get(s.ctx, dependentBatch)
+	require.NoError(t, err, "failed to read the dependent batch")
+	require.Contains(t, got.Dependencies, leadBatch,
+		"batch %s must depend on the in-flight %s for this test to exercise anything", dependentBatch, leadBatch)
+
+	// Its speculative build passes while the lead is still parked, so by the
+	// time the gate opens the dependent has no build signals left to wake it.
+	// That rest is an event, not a status: a batch blocked on a dependency has
+	// not finished speculating, so it stays "speculating" until it can land.
+	s.awaitEvent(dependent, entity.RequestEventWaiting)
+	s.log.Logf("Dependent %s has passed its build and waits only on %s", dependent.sqid, leadBatch)
+
+	// Start: the lead lands, and its fan-out is now the only thing that can
+	// move the dependent.
+	s.openGate(gateGroup, queue)
+	s.awaitUnparked(gateGroup, gateTopic, leadBatch)
+
+	s.awaitStatus(lead, entity.RequestStatusLanded)
+	s.awaitStatus(dependent, entity.RequestStatusLanded)
+
+	assert.Equal(t, entity.RequestStateLanded, s.terminalState(dependent),
+		"the dependent must land once the batch it waited on landed")
 }
 
 // TestReadAPIs validates all five request read endpoints against receipts
@@ -603,13 +683,13 @@ func (s *E2EIntegrationSuite) TestCancelRequest_InvalidSqid() {
 
 // TestCancel_CaughtPreBatch_NeverLands drives the deterministic cancel
 // scenario from doc/rfc/consumer-gate.md as stop → observe → start: the
-// consumer gate stops runway's merge-conflict-check controller before the
+// consumer gate stops runway's land-conflict-check controller before the
 // request's check message can be answered, so the request is provably held
 // pre-batch while the cancel lands. The change must never reach the repo.
 //
-//  1. Stop: close the gate for runway-mergeconflictcheck, scoped to this
+//  1. Stop: close the gate for runway-landconflictcheck, scoped to this
 //     queue's partition, before landing — exact by construction, no timing.
-//  2. Land: the orchestrator runs the request to the merge-conflict-check
+//  2. Land: the orchestrator runs the request to the land-conflict-check
 //     hand-off; runway's subscriber delivers the check and the gate parks it.
 //  3. Observe: awaiting the parked record proves the controller is stopped and
 //     holding exactly this request's check (there is otherwise no signal
@@ -629,10 +709,10 @@ func (s *E2EIntegrationSuite) TestCancel_CaughtPreBatch_NeverLands() {
 	t := s.T()
 
 	const queue = "e2e-cancel-queue"
-	const gateGroup = "runway-mergeconflictcheck"
-	gateTopic := runwaymq.TopicKeyMergeConflictCheck.String()
+	const gateGroup = "runway-landconflictcheck"
+	gateTopic := runwaymq.TopicKeyLandConflictCheck.String()
 
-	s.closeGate(gateGroup, queue, "e2e: hold merge-conflict check to catch cancel pre-batch")
+	s.closeGate(gateGroup, queue, "e2e: hold land-conflict check to catch cancel pre-batch")
 	// Reopen even if an assertion below fails, so teardown does not stop the
 	// stack with a delivery still parked. Opening twice is a no-op.
 	defer s.openGate(gateGroup, queue)
@@ -677,7 +757,7 @@ func (s *E2EIntegrationSuite) TestCancel_CaughtPreBatch_NeverLands() {
 
 // A batch delivery that is retried after its ack was lost must not enrol the
 // request into a second batch. Both batches would be analyzed, promoted and
-// admitted, and both would merge the same change.
+// admitted, and both would land the same change.
 //
 // The build gate is what makes the redelivery land in the window that matters:
 // with the build for the first batch held, the request cannot reach a terminal

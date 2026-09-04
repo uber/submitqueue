@@ -23,8 +23,8 @@
 // Batches in a queue depend on the batches ahead of them, so without
 // speculation everything is serial: C waits for B, B waits for A. Speculation
 // builds a batch against a guess about how its dependencies turn out. When
-// the guess holds, the batch merges the moment the guessed-on dependencies
-// land. If passed paths cover every possible outcome, the batch can merge
+// the guess holds, the batch lands the moment the guessed-on dependencies
+// land. If passed paths cover every possible outcome, the batch can land
 // before those dependencies settle.
 //
 // # Paths
@@ -48,11 +48,11 @@
 // Fund both and every future is covered:
 //
 //   - While A is still unresolved, both P1 and P2 passing lets B bypass A and
-//     merge immediately: either possible future has already been validated.
-//   - A succeeds and P1 passed: B merges the moment A lands. P2's guess
+//     land immediately: either possible future has already been validated.
+//   - A succeeds and P1 passed: B lands the moment A lands. P2's guess
 //     ("A fails") is broken — it can no longer come true — so its build is
 //     cancelled to free the slot.
-//   - A fails and P2 passed: B merges without A, again with no new build.
+//   - A fails and P2 passed: B lands without A, again with no new build.
 //     P1's guess is broken.
 //   - A resolved either way, and every unbroken path failed: no future
 //     remains in which B passes, so B fails.
@@ -79,7 +79,7 @@
 // until its build stops. A path is broken once a dependency's actual result
 // proves one of its assumptions wrong: its guess can no longer come true, so
 // its build is cancelled to free the slot. A path is superseded when its head
-// becomes mergeable, so any still-running siblings are cancelled too.
+// becomes landable, so any still-running siblings are cancelled too.
 //
 // Cancelling is intent, not fact: the build keeps its slot until CI actually
 // stops it, and only an observation of that stop (or proof nothing was ever
@@ -91,7 +91,7 @@
 //
 // # The life of a batch, as seen from here
 //
-//	Created ──admit──► Speculating ──┬── merge or bypass ──► Merging
+//	Created ──admit──► Speculating ──┬── land or bypass ──► Landing
 //	                                 └── fail ─────────────► Failed
 //	user cancel (cancel stage):
 //	   ... ──► Cancelling ── every path stopped ──► Cancelled

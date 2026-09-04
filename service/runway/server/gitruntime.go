@@ -23,36 +23,36 @@ import (
 	"path/filepath"
 	"strings"
 
-	gitmerger "github.com/uber/submitqueue/runway/extension/merger/git"
+	gitlander "github.com/uber/submitqueue/runway/extension/lander/git"
 )
 
-// resolveGitRuntime determines the pinned git runtime the merger invokes.
+// resolveGitRuntime determines the pinned git runtime the lander invokes.
 //
-// The merger requires all three paths to be absolute and present — it refuses
-// to construct otherwise, deliberately, so that a merge can never silently pick
+// The lander requires all three paths to be absolute and present — it refuses
+// to construct otherwise, deliberately, so that a land can never silently pick
 // up a different git than the one the deployment intended. Requiring an
 // operator to supply all three by hand turns that safeguard into a boot-time
 // trap, so each is derived from the installed git when its environment
 // override is unset. GIT_EXECUTABLE, GIT_EXEC_PATH, and GIT_TEMPLATE_DIR still
 // take precedence, which is how a deployment pins a git other than the one on
 // PATH.
-func resolveGitRuntime(ctx context.Context) (gitmerger.GitRuntime, error) {
+func resolveGitRuntime(ctx context.Context) (gitlander.GitRuntime, error) {
 	executable, err := resolveGitExecutable()
 	if err != nil {
-		return gitmerger.GitRuntime{}, err
+		return gitlander.GitRuntime{}, err
 	}
 
 	execPath, err := resolveGitExecPath(ctx, executable)
 	if err != nil {
-		return gitmerger.GitRuntime{}, err
+		return gitlander.GitRuntime{}, err
 	}
 
 	templateDir, err := resolveGitTemplateDir(execPath)
 	if err != nil {
-		return gitmerger.GitRuntime{}, err
+		return gitlander.GitRuntime{}, err
 	}
 
-	return gitmerger.GitRuntime{
+	return gitlander.GitRuntime{
 		Executable:  executable,
 		ExecPath:    execPath,
 		TemplateDir: templateDir,

@@ -73,7 +73,7 @@ A slot is held from admit until the build goes terminal (`process → build → 
 
 ## Raising `max_concurrent` (speculative validation)
 
-Setting `max_concurrent = N > 1` overlaps validations to start work sooner, and it is **safe** — because Stovepipe validates **already-landed, linear trunk heads**, not pre-merge candidates. Successive commits (`G0 → A → B → C …`) each contain everything below them, so validating `G0..B` already tests A+B together. (A pre-merge queue serializes to catch "two changes green alone, broken combined"; that risk isn't present here.) A green result for head `H` on baseline `B` is an immutable property of `H`, true no matter where last-green moves afterward.
+Setting `max_concurrent = N > 1` overlaps validations to start work sooner, and it is **safe** — because Stovepipe validates **already-landed, linear trunk heads**, not pre-land candidates. Successive commits (`G0 → A → B → C …`) each contain everything below them, so validating `G0..B` already tests A+B together. (A pre-land queue serializes to catch "two changes green alone, broken combined"; that risk isn't present here.) A green result for head `H` on baseline `B` is an immutable property of `H`, true no matter where last-green moves afterward.
 
 The scheme: each admit pins its baseline to last-green *at admit time*; a green head is adopted even if last-green has since advanced. A late green result is either the newest (adopt) or already behind the pointer (**moot** — dropped, never a regression).
 

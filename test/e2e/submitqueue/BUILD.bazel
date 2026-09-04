@@ -24,7 +24,7 @@ go_test(
         "@git//:templates",
     ],
     # The git suite drives the bare repository with the same pinned git the
-    # merger uses, rather than whatever the host has installed.
+    # lander uses, rather than whatever the host has installed.
     env = {
         "SUBMITQUEUE_TEST_GIT": "$(location @git//:git)",
     },
@@ -35,7 +35,7 @@ go_test(
     ],
     deps = [
         "//api/base/change/protopb:go_default_library",
-        "//api/base/mergestrategy/protopb:go_default_library",
+        "//api/base/landstrategy/protopb:go_default_library",
         "//api/runway/messagequeue:go_default_library",
         "//api/submitqueue/gateway/protopb:go_default_library",
         "//api/submitqueue/orchestrator/protopb:go_default_library",

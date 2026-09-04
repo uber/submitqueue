@@ -31,7 +31,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uber-go/tally"
-	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
+	landstrategypb "github.com/uber/submitqueue/api/base/landstrategy/protopb"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	pb "github.com/uber/submitqueue/api/runway/protopb"
 	"github.com/uber/submitqueue/platform/consumer"
@@ -45,12 +45,12 @@ import (
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	"github.com/uber/submitqueue/runway/controller"
 	"github.com/uber/submitqueue/runway/controller/dlq"
-	"github.com/uber/submitqueue/runway/controller/merge"
-	"github.com/uber/submitqueue/runway/controller/mergeconflictcheck"
-	"github.com/uber/submitqueue/runway/extension/merger"
-	"github.com/uber/submitqueue/runway/extension/merger/fake"
-	gitmerger "github.com/uber/submitqueue/runway/extension/merger/git"
-	"github.com/uber/submitqueue/runway/extension/merger/noop"
+	"github.com/uber/submitqueue/runway/controller/land"
+	"github.com/uber/submitqueue/runway/controller/landconflictcheck"
+	"github.com/uber/submitqueue/runway/extension/lander"
+	"github.com/uber/submitqueue/runway/extension/lander/fake"
+	gitlander "github.com/uber/submitqueue/runway/extension/lander/git"
+	"github.com/uber/submitqueue/runway/extension/lander/noop"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -171,37 +171,37 @@ func run() error {
 		gate,
 	)
 
-	mergerFactory, err := newMergerFactory(ctx, logger, scope.SubScope("merger"))
+	landerFactory, err := newLanderFactory(ctx, logger, scope.SubScope("lander"))
 	if err != nil {
-		return fmt.Errorf("failed to create merger factory: %w", err)
+		return fmt.Errorf("failed to create lander factory: %w", err)
 	}
 
-	mergeConflictCheckController := mergeconflictcheck.NewController(mergeconflictcheck.Params{
+	landConflictCheckController := landconflictcheck.NewController(landconflictcheck.Params{
 		Logger:        logger.Sugar(),
 		Scope:         scope,
-		MergerFactory: mergerFactory,
+		LanderFactory: landerFactory,
 		Registry:      registry,
-		TopicKey:      runwaymq.TopicKeyMergeConflictCheck,
-		ConsumerGroup: "runway-mergeconflictcheck",
+		TopicKey:      runwaymq.TopicKeyLandConflictCheck,
+		ConsumerGroup: "runway-landconflictcheck",
 	})
-	if err := primaryConsumer.Register(mergeConflictCheckController); err != nil {
-		return fmt.Errorf("failed to register merge-conflict-check controller: %w", err)
+	if err := primaryConsumer.Register(landConflictCheckController); err != nil {
+		return fmt.Errorf("failed to register land-conflict-check controller: %w", err)
 	}
 
-	mergeController := merge.NewController(merge.Params{
+	landController := land.NewController(land.Params{
 		Logger:        logger.Sugar(),
 		Scope:         scope,
-		MergerFactory: mergerFactory,
+		LanderFactory: landerFactory,
 		Registry:      registry,
-		TopicKey:      runwaymq.TopicKeyMerge,
-		ConsumerGroup: "runway-merge",
+		TopicKey:      runwaymq.TopicKeyLand,
+		ConsumerGroup: "runway-land",
 	})
-	if err := primaryConsumer.Register(mergeController); err != nil {
-		return fmt.Errorf("failed to register merge controller: %w", err)
+	if err := primaryConsumer.Register(landController); err != nil {
+		return fmt.Errorf("failed to register land controller: %w", err)
 	}
 	logger.Info("controllers registered", zap.Int("primary", 2))
 
-	// The DLQ consumer reconciles dead-lettered merge requests: it republishes a
+	// The DLQ consumer reconciles dead-lettered land requests: it republishes a
 	// terminal FAILED result to the signal topic so the client's correlation id
 	// always resolves. It uses AlwaysRetryableProcessor so a transient publish
 	// failure retries forever rather than dead-lettering again.
@@ -210,28 +210,28 @@ func run() error {
 		gate,
 	)
 
-	mergeConflictCheckDLQController := dlq.NewController(dlq.Params{
+	landConflictCheckDLQController := dlq.NewController(dlq.Params{
 		Logger:         logger.Sugar(),
 		Scope:          scope,
 		Registry:       registry,
-		TopicKey:       dlq.TopicKey(runwaymq.TopicKeyMergeConflictCheck),
-		SignalTopicKey: runwaymq.TopicKeyMergeConflictCheckSignal,
-		ConsumerGroup:  "runway-mergeconflictcheck-dlq",
+		TopicKey:       dlq.TopicKey(runwaymq.TopicKeyLandConflictCheck),
+		SignalTopicKey: runwaymq.TopicKeyLandConflictCheckSignal,
+		ConsumerGroup:  "runway-landconflictcheck-dlq",
 	})
-	if err := dlqConsumer.Register(mergeConflictCheckDLQController); err != nil {
-		return fmt.Errorf("failed to register merge-conflict-check DLQ controller: %w", err)
+	if err := dlqConsumer.Register(landConflictCheckDLQController); err != nil {
+		return fmt.Errorf("failed to register land-conflict-check DLQ controller: %w", err)
 	}
 
-	mergeDLQController := dlq.NewController(dlq.Params{
+	landDLQController := dlq.NewController(dlq.Params{
 		Logger:         logger.Sugar(),
 		Scope:          scope,
 		Registry:       registry,
-		TopicKey:       dlq.TopicKey(runwaymq.TopicKeyMerge),
-		SignalTopicKey: runwaymq.TopicKeyMergeSignal,
-		ConsumerGroup:  "runway-merge-dlq",
+		TopicKey:       dlq.TopicKey(runwaymq.TopicKeyLand),
+		SignalTopicKey: runwaymq.TopicKeyLandSignal,
+		ConsumerGroup:  "runway-land-dlq",
 	})
-	if err := dlqConsumer.Register(mergeDLQController); err != nil {
-		return fmt.Errorf("failed to register merge DLQ controller: %w", err)
+	if err := dlqConsumer.Register(landDLQController); err != nil {
+		return fmt.Errorf("failed to register land DLQ controller: %w", err)
 	}
 	logger.Info("DLQ controllers registered", zap.Int("dlq", 2))
 
@@ -305,41 +305,41 @@ func run() error {
 	return err
 }
 
-// newMergerFactory builds the mergers for the server.
+// newLanderFactory builds the landers for the server.
 //
-// MERGER pins every queue to one implementation explicitly, which is how a test
+// LANDER pins every queue to one implementation explicitly, which is how a test
 // holds the service to a fake without a git checkout. Left unset, each queue
-// resolves its own merge target through the merge configuration, so a
+// resolves its own land target through the land configuration, so a
 // deployment can serve several repositories from one Runway.
 //
-// The fake is reachable only through MERGER, never through the configuration
+// The fake is reachable only through LANDER, never through the configuration
 // file: an implementation whose outcomes are steered by markers in a change URI
 // has no business being selectable by a production config.
-func newMergerFactory(ctx context.Context, logger *zap.Logger, scope tally.Scope) (merger.Factory, error) {
-	switch impl := strings.ToLower(strings.TrimSpace(os.Getenv("MERGER"))); impl {
+func newLanderFactory(ctx context.Context, logger *zap.Logger, scope tally.Scope) (lander.Factory, error) {
+	switch impl := strings.ToLower(strings.TrimSpace(os.Getenv("LANDER"))); impl {
 	case "fake":
 		// Marker-driven outcomes, for e2e tests that need Runway to fail on
 		// demand without a git checkout. Never production.
-		logger.Info("MERGER=fake; using marker-driven fake merger for every queue")
-		return &fakeMergerFactory{seq: new(atomic.Uint64)}, nil
+		logger.Info("LANDER=fake; using marker-driven fake lander for every queue")
+		return &fakeLanderFactory{seq: new(atomic.Uint64)}, nil
 	case "noop":
-		logger.Info("MERGER=noop; using noop merger for every queue")
-		return &noopMergerFactory{seq: new(atomic.Uint64)}, nil
+		logger.Info("LANDER=noop; using noop lander for every queue")
+		return &noopLanderFactory{seq: new(atomic.Uint64)}, nil
 	case "", "git":
-		// Fall through to the configured per-queue merge targets.
+		// Fall through to the configured per-queue land targets.
 	default:
-		return nil, fmt.Errorf("invalid MERGER %q", impl)
+		return nil, fmt.Errorf("invalid LANDER %q", impl)
 	}
 
-	cfg, err := loadMergeConfigFromEnv(logger)
+	cfg, err := loadLandConfigFromEnv(logger)
 	if err != nil {
 		return nil, err
 	}
 
 	// The git runtime is resolved only when something actually needs it, so a
-	// deployment running nothing but the noop merger does not require git to be
+	// deployment running nothing but the noop lander does not require git to be
 	// installed at all.
-	var runtime gitmerger.GitRuntime
+	var runtime gitlander.GitRuntime
 	if cfg.usesGit() {
 		runtime, err = resolveGitRuntime(ctx)
 		if err != nil {
@@ -352,115 +352,115 @@ func newMergerFactory(ctx context.Context, logger *zap.Logger, scope tally.Scope
 		)
 	}
 
-	builder := &mergerBuilder{
+	builder := &landerBuilder{
 		ctx:      ctx,
 		logger:   logger,
 		scope:    scope,
 		runtime:  runtime,
-		byTarget: make(map[string]merger.Factory),
+		byTarget: make(map[string]lander.Factory),
 		seq:      new(atomic.Uint64),
 	}
 
-	fallback, err := builder.build(cfg.Defaults.Merger, "defaults")
+	fallback, err := builder.build(cfg.Defaults.Lander, "defaults")
 	if err != nil {
 		return nil, err
 	}
 
-	byQueue := make(map[string]merger.Factory, len(cfg.Queues))
+	byQueue := make(map[string]lander.Factory, len(cfg.Queues))
 	for _, q := range cfg.Queues {
-		if q.Merger == nil {
+		if q.Lander == nil {
 			continue
 		}
-		m, err := builder.build(*q.Merger, fmt.Sprintf("queue %q", q.Name))
+		m, err := builder.build(*q.Lander, fmt.Sprintf("queue %q", q.Name))
 		if err != nil {
 			return nil, err
 		}
 		byQueue[q.Name] = m
 	}
 
-	logger.Info("mergers configured",
-		zap.String("default_type", cfg.Defaults.Merger.Type),
+	logger.Info("landers configured",
+		zap.String("default_type", cfg.Defaults.Lander.Type),
 		zap.Int("queue_overrides", len(byQueue)),
 	)
-	return mergerRegistry{byQueue: byQueue, fallback: fallback}, nil
+	return landerRegistry{byQueue: byQueue, fallback: fallback}, nil
 }
 
-// loadMergeConfigFromEnv reads the merge configuration file when one is
+// loadLandConfigFromEnv reads the land configuration file when one is
 // configured, and otherwise reconstructs the equivalent single-queue
-// configuration from the MERGE_* environment.
+// configuration from the LAND_* environment.
 //
 // The environment path predates the file and remains the shortest way to run
-// one merge target, so it stays supported rather than being migrated away;
+// one land target, so it stays supported rather than being migrated away;
 // expressing it as the same config type means there is still only one code path
-// building mergers.
-func loadMergeConfigFromEnv(logger *zap.Logger) (mergeConfig, error) {
-	if path := os.Getenv("MERGE_CONFIG_PATH"); path != "" {
-		cfg, err := loadMergeConfig(path)
+// building landers.
+func loadLandConfigFromEnv(logger *zap.Logger) (landConfig, error) {
+	if path := os.Getenv("LAND_CONFIG_PATH"); path != "" {
+		cfg, err := loadLandConfig(path)
 		if err != nil {
-			return mergeConfig{}, err
+			return landConfig{}, err
 		}
-		logger.Info("merge config loaded", zap.String("path", path), zap.Int("queues", len(cfg.Queues)))
+		logger.Info("land config loaded", zap.String("path", path), zap.Int("queues", len(cfg.Queues)))
 		return cfg, nil
 	}
 
-	checkoutPath := os.Getenv("MERGE_CHECKOUT_PATH")
+	checkoutPath := os.Getenv("LAND_CHECKOUT_PATH")
 	if checkoutPath == "" {
-		logger.Info("neither MERGE_CONFIG_PATH nor MERGE_CHECKOUT_PATH set; using noop merger")
-		return mergeConfig{Defaults: queueMergeConfig{Merger: mergerConfig{Type: mergerTypeNoop}}}, nil
+		logger.Info("neither LAND_CONFIG_PATH nor LAND_CHECKOUT_PATH set; using noop lander")
+		return landConfig{Defaults: queueLandConfig{Lander: landerConfig{Type: landerTypeNoop}}}, nil
 	}
 
-	checkStaleness := envBool("MERGE_CHECK_STALENESS", true)
-	cfg := mergeConfig{Defaults: queueMergeConfig{Merger: mergerConfig{
-		Type:            mergerTypeGit,
+	checkStaleness := envBool("LAND_CHECK_STALENESS", true)
+	cfg := landConfig{Defaults: queueLandConfig{Lander: landerConfig{
+		Type:            landerTypeGit,
 		CheckoutPath:    checkoutPath,
-		Remote:          envOr("MERGE_REMOTE", "origin"),
-		Target:          envOr("MERGE_TARGET", "main"),
-		DefaultStrategy: os.Getenv("MERGE_DEFAULT_STRATEGY"),
+		Remote:          envOr("LAND_REMOTE", "origin"),
+		Target:          envOr("LAND_TARGET", "main"),
+		DefaultStrategy: os.Getenv("LAND_DEFAULT_STRATEGY"),
 		CheckStaleness:  &checkStaleness,
 		// Off by default: it lifts git's refusal to join two unrelated history
 		// graphs, which is a safeguard everywhere except a queue whose purpose
 		// is importing one repository's history into another.
-		AllowUnrelatedHistories: envBool("MERGE_ALLOW_UNRELATED_HISTORIES", false),
-		UpdateHeadBranch:        envBool("MERGE_UPDATE_HEAD_BRANCH", false),
-		FetchRefspecs:           splitRefspecs(os.Getenv("MERGE_FETCH_REFSPECS")),
-		CommitterName:           os.Getenv("MERGE_COMMITTER_NAME"),
-		CommitterEmail:          os.Getenv("MERGE_COMMITTER_EMAIL"),
+		AllowUnrelatedHistories: envBool("LAND_ALLOW_UNRELATED_HISTORIES", false),
+		UpdateHeadBranch:        envBool("LAND_UPDATE_HEAD_BRANCH", false),
+		FetchRefspecs:           splitRefspecs(os.Getenv("LAND_FETCH_REFSPECS")),
+		CommitterName:           os.Getenv("LAND_COMMITTER_NAME"),
+		CommitterEmail:          os.Getenv("LAND_COMMITTER_EMAIL"),
 	}}}
 	if err := cfg.normalizeAndValidate(); err != nil {
-		return mergeConfig{}, fmt.Errorf("invalid MERGE_* environment: %w", err)
+		return landConfig{}, fmt.Errorf("invalid LAND_* environment: %w", err)
 	}
 	return cfg, nil
 }
 
-// mergerBuilder constructs merger factories, reusing one git instance per merge
+// landerBuilder constructs lander factories, reusing one git instance per land
 // target.
 //
-// Sharing matters: a git merger serializes its own operations against the
+// Sharing matters: a git lander serializes its own operations against the
 // working tree it owns, so two queues landing on the same target must be the
 // same instance to be serialized against each other. Two instances would hold
 // separate locks over one working tree and reset it out from under each other
-// mid-merge. A noop target has no such constraint and is built per queue, so it
+// mid-land. A noop target has no such constraint and is built per queue, so it
 // carries the queue's own config.
-type mergerBuilder struct {
+type landerBuilder struct {
 	ctx     context.Context
 	logger  *zap.Logger
 	scope   tally.Scope
-	runtime gitmerger.GitRuntime
-	// byTarget caches one merger per checkout path. Keying on the path alone is
+	runtime gitlander.GitRuntime
+	// byTarget caches one lander per checkout path. Keying on the path alone is
 	// safe only because validation has already rejected two queues that share a
-	// checkout and disagree anywhere in their merger config: the cached instance
+	// checkout and disagree anywhere in their lander config: the cached instance
 	// is built from whichever queue arrived first, so a divergent second queue
 	// would silently run with the first one's settings. Widening what may share
 	// a checkout means widening that check with it.
-	byTarget map[string]merger.Factory
-	// seq is the process-wide counter the noop mergers mint revision ids from,
+	byTarget map[string]lander.Factory
+	// seq is the process-wide counter the noop landers mint revision ids from,
 	// held here so ids stay unique across every queue.
 	seq *atomic.Uint64
 }
 
-func (b *mergerBuilder) build(cfg mergerConfig, where string) (merger.Factory, error) {
-	if cfg.Type != mergerTypeGit {
-		return &noopMergerFactory{seq: b.seq}, nil
+func (b *landerBuilder) build(cfg landerConfig, where string) (lander.Factory, error) {
+	if cfg.Type != landerTypeGit {
+		return &noopLanderFactory{seq: b.seq}, nil
 	}
 
 	if existing, ok := b.byTarget[cfg.CheckoutPath]; ok {
@@ -473,7 +473,7 @@ func (b *mergerBuilder) build(cfg mergerConfig, where string) (merger.Factory, e
 		}
 	}
 
-	m, err := gitmerger.NewMerger(gitmerger.Params{
+	m, err := gitlander.NewLander(gitlander.Params{
 		CheckoutPath:            cfg.CheckoutPath,
 		Remote:                  cfg.Remote,
 		Target:                  cfg.Target,
@@ -490,92 +490,92 @@ func (b *mergerBuilder) build(cfg mergerConfig, where string) (merger.Factory, e
 		MetricsScope:            b.scope,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%s: failed to build git merger: %w", where, err)
+		return nil, fmt.Errorf("%s: failed to build git lander: %w", where, err)
 	}
 
-	b.logger.Info("git merger configured",
+	b.logger.Info("git lander configured",
 		zap.String("checkout", cfg.CheckoutPath),
 		zap.String("target", cfg.Target),
 		zap.String("default_strategy", cfg.strategy().String()),
 		zap.Bool("update_head_branch", cfg.UpdateHeadBranch),
 	)
-	f := &gitMergerFactory{merger: m}
+	f := &gitLanderFactory{lander: m}
 	b.byTarget[cfg.CheckoutPath] = f
 	return f, nil
 }
 
-// gitMergerFactory returns one git-backed merger for every queue routed to it.
-// The merger owns one checkout and serializes its own operations, so a single
-// instance is shared — which is why this is the one merger factory that does
+// gitLanderFactory returns one git-backed lander for every queue routed to it.
+// The lander owns one checkout and serializes its own operations, so a single
+// instance is shared — which is why this is the one lander factory that does
 // not forward its Config. Queues landing on different targets get different
-// instances of it, resolved through mergerRegistry.
-type gitMergerFactory struct {
-	merger merger.Merger
+// instances of it, resolved through landerRegistry.
+type gitLanderFactory struct {
+	lander lander.Lander
 }
 
-func (f *gitMergerFactory) For(_ merger.Config) (merger.Merger, error) {
-	return f.merger, nil
+func (f *gitLanderFactory) For(_ lander.Config) (lander.Lander, error) {
+	return f.lander, nil
 }
 
-// noopMergerFactory builds a noop merger per queue, bound to that queue's
+// noopLanderFactory builds a noop lander per queue, bound to that queue's
 // config. The synthetic revision-id counter is held here rather than on the
-// merger so ids stay unique across every queue in the process.
-type noopMergerFactory struct {
+// lander so ids stay unique across every queue in the process.
+type noopLanderFactory struct {
 	seq *atomic.Uint64
 }
 
-func (f *noopMergerFactory) For(cfg merger.Config) (merger.Merger, error) {
+func (f *noopLanderFactory) For(cfg lander.Config) (lander.Lander, error) {
 	return noop.New(cfg, f.seq), nil
 }
 
-// fakeMergerFactory builds a fake merger per queue, bound to that queue's
+// fakeLanderFactory builds a fake lander per queue, bound to that queue's
 // config. As with noop, the revision-id counter lives on the factory so ids
 // stay unique for the lifetime of the process.
-type fakeMergerFactory struct {
+type fakeLanderFactory struct {
 	seq *atomic.Uint64
 }
 
-func (f *fakeMergerFactory) For(cfg merger.Config) (merger.Merger, error) {
+func (f *fakeLanderFactory) For(cfg lander.Config) (lander.Lander, error) {
 	return fake.New(cfg, f.seq), nil
 }
 
-// mergerRegistry resolves each queue's merger factory, falling back to the
+// landerRegistry resolves each queue's lander factory, falling back to the
 // default for a queue with no entry of its own.
 //
-// It holds factories rather than mergers so the queue's Config reaches the
+// It holds factories rather than landers so the queue's Config reaches the
 // implementation: whether an entry yields one shared instance or a fresh
 // per-queue one is the factory's business, not the registry's.
-type mergerRegistry struct {
-	byQueue  map[string]merger.Factory
-	fallback merger.Factory
+type landerRegistry struct {
+	byQueue  map[string]lander.Factory
+	fallback lander.Factory
 }
 
-func (r mergerRegistry) For(cfg merger.Config) (merger.Merger, error) {
+func (r landerRegistry) For(cfg lander.Config) (lander.Lander, error) {
 	if f, ok := r.byQueue[cfg.QueueName]; ok {
 		return f.For(cfg)
 	}
 	return r.fallback.For(cfg)
 }
 
-// parseStrategy maps the MERGE_DEFAULT_STRATEGY env value to a concrete merge
+// parseStrategy maps the LAND_DEFAULT_STRATEGY env value to a concrete land
 // strategy, defaulting to REBASE when unset. DEFAULT is rejected because it
 // cannot itself be the default a step resolves to.
-func parseStrategy(name string) (mergestrategypb.Strategy, error) {
+func parseStrategy(name string) (landstrategypb.Strategy, error) {
 	switch strings.ToUpper(strings.TrimSpace(name)) {
 	case "", "REBASE":
-		return mergestrategypb.Strategy_REBASE, nil
+		return landstrategypb.Strategy_REBASE, nil
 	case "SQUASH_REBASE":
-		return mergestrategypb.Strategy_SQUASH_REBASE, nil
+		return landstrategypb.Strategy_SQUASH_REBASE, nil
 	case "MERGE":
-		return mergestrategypb.Strategy_MERGE, nil
+		return landstrategypb.Strategy_MERGE, nil
 	case "PROMOTE":
-		return mergestrategypb.Strategy_PROMOTE, nil
+		return landstrategypb.Strategy_PROMOTE, nil
 	default:
-		return mergestrategypb.Strategy_DEFAULT, fmt.Errorf("invalid MERGE_DEFAULT_STRATEGY %q", name)
+		return landstrategypb.Strategy_DEFAULT, fmt.Errorf("invalid LAND_DEFAULT_STRATEGY %q", name)
 	}
 }
 
-// splitRefspecs parses the comma-separated MERGE_FETCH_REFSPECS value. Empty
+// splitRefspecs parses the comma-separated LAND_FETCH_REFSPECS value. Empty
 // entries are dropped so a trailing comma is harmless.
 func splitRefspecs(v string) []string {
 	var out []string
@@ -609,35 +609,35 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-// newTopicRegistry builds the TopicRegistry for Runway's merge queues. Inbound
-// topics (merge-conflict-check, merge) have subscriptions; outbound signal topics
+// newTopicRegistry builds the TopicRegistry for Runway's land queues. Inbound
+// topics (land-conflict-check, land) have subscriptions; outbound signal topics
 // are publish-only.
 func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRegistry, error) {
 	return consumer.NewTopicRegistry([]consumer.TopicConfig{
 		{
-			Key:   runwaymq.TopicKeyMergeConflictCheck,
-			Name:  "merge-conflict-check",
+			Key:   runwaymq.TopicKeyLandConflictCheck,
+			Name:  "land-conflict-check",
 			Queue: q,
 			Subscription: extqueue.DefaultSubscriptionConfig(
-				subscriberName, "runway-mergeconflictcheck",
+				subscriberName, "runway-landconflictcheck",
 			),
 		},
 		{
-			Key:   runwaymq.TopicKeyMergeConflictCheckSignal,
-			Name:  "merge-conflict-check-signal",
+			Key:   runwaymq.TopicKeyLandConflictCheckSignal,
+			Name:  "land-conflict-check-signal",
 			Queue: q,
 		},
 		{
-			Key:   runwaymq.TopicKeyMerge,
-			Name:  "runway-merge",
+			Key:   runwaymq.TopicKeyLand,
+			Name:  "runway-land",
 			Queue: q,
 			Subscription: extqueue.DefaultSubscriptionConfig(
-				subscriberName, "runway-merge",
+				subscriberName, "runway-land",
 			),
 		},
 		{
-			Key:   runwaymq.TopicKeyMergeSignal,
-			Name:  "merge-signal",
+			Key:   runwaymq.TopicKeyLandSignal,
+			Name:  "land-signal",
 			Queue: q,
 		},
 		// DLQ topics: the reconciler consumes these and republishes a FAILED
@@ -645,19 +645,19 @@ func newTopicRegistry(q extqueue.Queue, subscriberName string) (consumer.TopicRe
 		// topic name plus the "_dlq" suffix the subscriber uses when
 		// dead-lettering (see dlq.TopicKey / DefaultSubscriptionConfig).
 		{
-			Key:   dlq.TopicKey(runwaymq.TopicKeyMergeConflictCheck),
-			Name:  "merge-conflict-check_dlq",
+			Key:   dlq.TopicKey(runwaymq.TopicKeyLandConflictCheck),
+			Name:  "land-conflict-check_dlq",
 			Queue: q,
 			Subscription: extqueue.DLQSubscriptionConfig(
-				subscriberName, "runway-mergeconflictcheck-dlq",
+				subscriberName, "runway-landconflictcheck-dlq",
 			),
 		},
 		{
-			Key:   dlq.TopicKey(runwaymq.TopicKeyMerge),
-			Name:  "runway-merge_dlq",
+			Key:   dlq.TopicKey(runwaymq.TopicKeyLand),
+			Name:  "runway-land_dlq",
 			Queue: q,
 			Subscription: extqueue.DLQSubscriptionConfig(
-				subscriberName, "runway-merge-dlq",
+				subscriberName, "runway-land-dlq",
 			),
 		},
 	})
