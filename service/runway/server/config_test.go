@@ -15,6 +15,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap/zaptest"
 
 	mergestrategypb "github.com/uber/submitqueue/api/base/mergestrategy/protopb"
 )
@@ -111,6 +113,133 @@ func TestLoadMergeConfig_EmptyFileIsNoop(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, mergerTypeNoop, cfg.Defaults.Merger.Type)
 	assert.False(t, cfg.usesGit())
+}
+
+func TestResolveMergerStartupConfig(t *testing.T) {
+	tests := []struct {
+		name             string
+		merger           string
+		checkoutPath     string
+		configPath       string
+		configContents   string
+		hasConfigFile    bool
+		wantSelection    string
+		wantDefaultType  string
+		wantUsesGit      bool
+		wantErr          error
+		wantUnclassified bool
+	}{
+		{
+			name:            "unset without config uses automatic noop fallback",
+			wantDefaultType: mergerTypeNoop,
+		},
+		{
+			name:    "explicit git without config fails",
+			merger:  mergerTypeGit,
+			wantErr: errExplicitGitConfigurationRequired,
+		},
+		{
+			name:            "explicit git with checkout environment is configured",
+			merger:          mergerTypeGit,
+			checkoutPath:    "/var/checkouts/r",
+			wantSelection:   mergerTypeGit,
+			wantDefaultType: mergerTypeGit,
+			wantUsesGit:     true,
+		},
+		{
+			name:            "explicit git with config file containing a git target is configured",
+			merger:          mergerTypeGit,
+			configContents:  gitTargetConfig(),
+			hasConfigFile:   true,
+			wantSelection:   mergerTypeGit,
+			wantDefaultType: mergerTypeNoop,
+			wantUsesGit:     true,
+		},
+		{
+			name:           "explicit git with config file containing no git target fails",
+			merger:         mergerTypeGit,
+			configContents: noopTargetConfig(),
+			hasConfigFile:  true,
+			wantErr:        errExplicitGitConfigurationRequired,
+		},
+		{
+			name:          "explicit noop bypasses merge configuration",
+			merger:        mergerTypeNoop,
+			configPath:    "/missing/merge.yaml",
+			wantSelection: mergerTypeNoop,
+		},
+		{
+			name:          "explicit fake preserves test behavior",
+			merger:        mergerOverrideFake,
+			configPath:    "/missing/merge.yaml",
+			wantSelection: mergerOverrideFake,
+		},
+		{
+			name:             "invalid merger fails",
+			merger:           "magic",
+			wantUnclassified: true,
+		},
+		{
+			name:             "invalid merge config still fails",
+			configContents:   "defaults:\n  merger: {type: magic}\n",
+			hasConfigFile:    true,
+			wantUnclassified: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setMergerStartupEnv(t, tt.merger, tt.checkoutPath)
+			switch {
+			case tt.hasConfigFile:
+				t.Setenv("MERGE_CONFIG_PATH", writeConfig(t, tt.configContents))
+			case tt.configPath != "":
+				t.Setenv("MERGE_CONFIG_PATH", tt.configPath)
+			}
+
+			startup, err := resolveMergerStartupConfig(zaptest.NewLogger(t))
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+				return
+			}
+			if tt.wantUnclassified {
+				require.Error(t, err)
+				assert.False(t, errors.Is(err, errExplicitGitConfigurationRequired))
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantSelection, startup.selection)
+			assert.Equal(t, tt.wantDefaultType, startup.targets.Defaults.Merger.Type)
+			assert.Equal(t, tt.wantUsesGit, startup.targets.usesGit())
+		})
+	}
+}
+
+func setMergerStartupEnv(t *testing.T, merger, checkoutPath string) {
+	t.Helper()
+	t.Setenv("MERGER", merger)
+	t.Setenv("MERGE_CONFIG_PATH", "")
+	t.Setenv("MERGE_CHECKOUT_PATH", checkoutPath)
+}
+
+func gitTargetConfig() string {
+	return `
+defaults:
+  merger: {type: noop}
+queues:
+  - name: demo
+    merger: {type: git, checkoutPath: /var/checkouts/r}
+`
+}
+
+func noopTargetConfig() string {
+	return `
+defaults:
+  merger: {type: noop}
+queues:
+  - name: demo
+    merger: {type: noop}
+`
 }
 
 func TestLoadMergeConfig_SharedCheckoutForSameTargetIsAllowed(t *testing.T) {
