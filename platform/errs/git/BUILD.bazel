@@ -2,19 +2,22 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "go_default_library",
-    srcs = [
-        "command_error.go",
-        "gitexec.go",
-    ],
-    importpath = "github.com/uber/submitqueue/platform/git/exec",
+    srcs = ["git.go"],
+    importpath = "github.com/uber/submitqueue/platform/errs/git",
     visibility = ["//visibility:public"],
+    deps = [
+        "//platform/errs:go_default_library",
+        "//platform/git/exec:go_default_library",
+    ],
 )
 
 go_test(
     name = "go_default_test",
-    srcs = ["gitexec_test.go"],
+    srcs = ["git_test.go"],
     embed = [":go_default_library"],
     deps = [
+        "//platform/errs:go_default_library",
+        "//platform/git/exec:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
     ],

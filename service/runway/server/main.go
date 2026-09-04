@@ -37,6 +37,7 @@ import (
 	"github.com/uber/submitqueue/platform/consumer"
 	"github.com/uber/submitqueue/platform/errs"
 	genericerrs "github.com/uber/submitqueue/platform/errs/generic"
+	giterrs "github.com/uber/submitqueue/platform/errs/git"
 	mysqlerrs "github.com/uber/submitqueue/platform/errs/mysql"
 	"github.com/uber/submitqueue/platform/extension/consumergate"
 	consumergatefile "github.com/uber/submitqueue/platform/extension/consumergate/file"
@@ -163,13 +164,7 @@ func run() error {
 	// group name just like a primary stage.
 	gate := newConsumerGate(logger)
 
-	primaryConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry,
-		errs.NewClassifierProcessor(
-			genericerrs.Classifier,
-			mysqlerrs.Classifier,
-		),
-		gate,
-	)
+	primaryConsumer := consumer.New(logger.Sugar(), scope.SubScope("consumer"), registry, newPrimaryErrorProcessor(), gate)
 
 	mergerFactory, err := newMergerFactory(ctx, logger, scope.SubScope("merger"))
 	if err != nil {
@@ -303,6 +298,14 @@ func run() error {
 	}
 
 	return err
+}
+
+func newPrimaryErrorProcessor() errs.ErrorProcessor {
+	return errs.NewClassifierProcessor(
+		genericerrs.Classifier,
+		giterrs.Classifier,
+		mysqlerrs.Classifier,
+	)
 }
 
 // newMergerFactory builds the mergers for the server.

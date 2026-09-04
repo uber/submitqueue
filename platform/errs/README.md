@@ -89,7 +89,7 @@ One operational consequence worth knowing before relying on any of this: **retry
 
 ## Adding a Backend-Specific Classifier
 
-Backend classifiers live alongside the extension they classify, under `platform/errs/<backend>/`. The canonical examples are `platform/errs/mysql` (MySQL driver errors), `platform/errs/http` (rejected status codes and transport failures from clients built on `platform/http`), `platform/errs/yarpc` (YARPC status codes), and `platform/errs/generic` (transport-agnostic concerns such as `context.Canceled`).
+Backend classifiers live alongside the extension they classify, under `platform/errs/<backend>/`. The canonical examples are `platform/errs/mysql` (MySQL driver errors), `platform/errs/http` (rejected status codes and transport failures from clients built on `platform/http`), `platform/errs/git` (structured Git process failures), `platform/errs/yarpc` (YARPC status codes), and `platform/errs/generic` (transport-agnostic concerns such as `context.Canceled`).
 
 A classifier:
 
@@ -122,6 +122,7 @@ Servers wire each classifier into the consumer's `ErrorProcessor`. Order matters
 import (
     "github.com/uber/submitqueue/platform/errs"
     genericerrs "github.com/uber/submitqueue/platform/errs/generic"
+    giterrs     "github.com/uber/submitqueue/platform/errs/git"
     httperrs    "github.com/uber/submitqueue/platform/errs/http"
     mysqlerrs   "github.com/uber/submitqueue/platform/errs/mysql"
     yarpcerrs   "github.com/uber/submitqueue/platform/errs/yarpc"
@@ -130,6 +131,7 @@ import (
 c := consumer.New(logger, scope, registry,
     errs.NewClassifierProcessor(
         genericerrs.Classifier,
+        giterrs.Classifier,
         httperrs.Classifier,
         yarpcerrs.Classifier,
         mysqlerrs.Classifier,
@@ -143,7 +145,9 @@ Classifiers are not installed globally. A host that wants YARPC statuses classif
 
 The YARPC classifier reads the typed status code rather than matching its rendered message. Cancellation is retryable caller-side infrastructure; transient or ambiguous server codes (`Unknown`, `DeadlineExceeded`, `ResourceExhausted`, `Aborted`, `Internal`, and `Unavailable`) are retryable dependency failures; request verdicts and permanent server failures are non-retryable dependency failures. A deadline may expire after a mutating RPC succeeded, so this classification relies on the repository-wide requirement that queue-driven operations are idempotent.
 
-Tests follow the same shape: assert per-node behaviour against `Classifier.Classify(node)` directly, and assert end-to-end behaviour by running `errs.NewClassifierProcessor(Classifier).Process(err)` and checking the helpers (`IsRetryable`, `IsUserError`, …) on the result. See `platform/errs/mysql/mysql_test.go`, `platform/errs/yarpc/yarpc_test.go`, and `platform/errs/generic/generic_test.go`.
+The Git classifier reads `gitexec.CommandError`, which preserves the Git subcommand and the underlying `os/exec` error through contextual wrapping. A started `fetch`, `push`, or `ls-remote` process is a retryable dependency failure unless its diagnostic identifies a permanent authentication, repository, invocation, or configuration problem. Started local repository operations are retryable infrastructure failures under the same exception; commands that never started and unknown operations remain non-retryable by default.
+
+Tests follow the same shape: assert per-node behaviour against `Classifier.Classify(node)` directly, and assert end-to-end behaviour by running `errs.NewClassifierProcessor(Classifier).Process(err)` and checking the helpers (`IsRetryable`, `IsUserError`, …) on the result. See `platform/errs/mysql/mysql_test.go`, `platform/errs/git/git_test.go`, `platform/errs/yarpc/yarpc_test.go`, and `platform/errs/generic/generic_test.go`.
 
 ## Overriding Classification from a Controller
 

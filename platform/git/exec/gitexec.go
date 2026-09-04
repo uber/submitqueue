@@ -161,7 +161,7 @@ func Output(ctx context.Context, git, dir string, args ...string) (string, error
 		if message == "" {
 			message = err.Error()
 		}
-		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), message)
+		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), NewCommandError(commandOperation(args), message, err))
 	}
 	return strings.TrimSpace(string(out)), nil
 }
