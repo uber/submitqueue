@@ -100,6 +100,7 @@ go_test(
     },
     deps = [
         "//api/base/mergestrategy/protopb:go_default_library",
+        "//api/runway/messagequeue:go_default_library",
         "//platform/base/failure:go_default_library",
         "//platform/base/messagequeue:go_default_library",
         "//platform/consumer:go_default_library",
@@ -108,6 +109,7 @@ go_test(
         "//platform/extension/messagequeue/mock:go_default_library",
         "//platform/git/exec:go_default_library",
         "//platform/git/exectest:go_default_library",
+        "//runway/controller/dlq:go_default_library",
         "//runway/extension/merger/git:go_default_library",
         "@com_github_stretchr_testify//assert:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",

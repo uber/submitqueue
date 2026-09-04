@@ -21,8 +21,10 @@ import (
 	"os/exec"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
+	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	"github.com/uber/submitqueue/platform/base/failure"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
@@ -30,6 +32,7 @@ import (
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
 	gitexec "github.com/uber/submitqueue/platform/git/exec"
+	"github.com/uber/submitqueue/runway/controller/dlq"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zaptest"
 )
@@ -143,6 +146,55 @@ func TestPrimaryConsumer_GitFailureDisposition(t *testing.T) {
 			deliveryChannel <- delivery
 			<-done
 			require.NoError(t, serviceConsumer.Stop(30000))
+		})
+	}
+}
+
+func TestNewTopicRegistry_RetryBudgets(t *testing.T) {
+	registry, err := newTopicRegistry(nil, "runway-test")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name          string
+		topicKey      consumer.TopicKey
+		consumerGroup string
+		unlimited     bool
+	}{
+		{
+			name:          "merge conflict check primary remains finite",
+			topicKey:      runwaymq.TopicKeyMergeConflictCheck,
+			consumerGroup: "runway-mergeconflictcheck",
+		},
+		{
+			name:          "merge conflict check dlq is unlimited",
+			topicKey:      dlq.TopicKey(runwaymq.TopicKeyMergeConflictCheck),
+			consumerGroup: "runway-mergeconflictcheck-dlq",
+			unlimited:     true,
+		},
+		{
+			name:          "merge primary remains finite",
+			topicKey:      runwaymq.TopicKeyMerge,
+			consumerGroup: "runway-merge",
+		},
+		{
+			name:          "merge dlq is unlimited",
+			topicKey:      dlq.TopicKey(runwaymq.TopicKeyMerge),
+			consumerGroup: "runway-merge-dlq",
+			unlimited:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config, found := registry.SubscriptionConfig(tt.topicKey, tt.consumerGroup)
+			require.True(t, found)
+			if tt.unlimited {
+				assert.Zero(t, config.Retry.MaxAttempts)
+				assert.False(t, config.DLQ.Enabled)
+				return
+			}
+			assert.Positive(t, config.Retry.MaxAttempts)
+			assert.True(t, config.DLQ.Enabled)
 		})
 	}
 }

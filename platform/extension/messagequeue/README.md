@@ -53,7 +53,7 @@ type Delivery interface {
 - **Reject** — poison pill, move to DLQ (or ack if DLQ disabled)
 - **ExtendVisibilityTimeout** — extend processing window for long-running work
 
-**`Postpone` vs `Nack` vs `ExtendVisibilityTimeout`:** `Nack` is a failure — the message is immediately eligible again, the redelivery counts toward `Retry.MaxAttempts` and eventually trips the DLQ, and later offsets in the partition keep flowing past the nacked message (a failed message must not halt its partition). `Postpone` is a deliberate wait — the redelivery happens after the chosen delay, resets the failure streak (it restarts at attempt 1), and blocks the partition behind it until it redelivers, in order. `ExtendVisibilityTimeout` is neither: the delivery is still being processed and stays in flight.
+**`Postpone` vs `Nack` vs `ExtendVisibilityTimeout`:** `Nack` is a failure — the message is immediately eligible again, the redelivery counts toward `Retry.MaxAttempts` and eventually trips the DLQ when the limit is finite, and later offsets in the partition keep flowing past the nacked message (a failed message must not halt its partition). `Postpone` is a deliberate wait — the redelivery happens after the chosen delay, resets the failure streak (it restarts at attempt 1), and blocks the partition behind it until it redelivers, in order. `ExtendVisibilityTimeout` is neither: the delivery is still being processed and stays in flight.
 
 ### SubscriptionConfig
 
@@ -69,6 +69,8 @@ cfg.DLQ.Enabled = true
 ```
 
 See `subscription_config.go` for all fields and defaults.
+
+`Retry.MaxAttempts` uses zero to mean unlimited attempts. `DLQSubscriptionConfig` selects this mode and disables a second-level DLQ so reconciliation messages remain retryable until they converge or an operator removes them.
 
 ## Usage
 
