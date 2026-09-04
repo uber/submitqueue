@@ -110,10 +110,44 @@ func (m *gitMerger) checkStale(ctx context.Context, refs []changeRef) error {
 			continue
 		}
 		if current := fields[0]; current != ref.SHA {
+			// The merger moves a change's head branch itself, to the commit it
+			// made of that change. Finding the branch on one of those commits
+			// means an earlier attempt got that far, not that the author
+			// replaced the change, so it is not evidence of staleness. The
+			// attempt may have been an earlier delivery of this same message,
+			// which is why the committer is read from the commit rather than
+			// remembered in the in-flight head-branch tracker.
+			if m.isOwnCommit(ctx, current) {
+				continue
+			}
 			coremetrics.NamedCounter(m.metricsScope, "merge", "stale_changes", 1)
 			return fmt.Errorf("%w: change is stale: %s names commit %s but %s now points at %s",
 				merger.ErrInvalidRequest, ref.Label, ref.SHA, ref.Ref, current)
 		}
 	}
 	return nil
+}
+
+// isOwnCommit reports whether this merger created the commit at sha. Every git
+// command the merger runs injects its committer identity, so that identity is
+// the durable record of authorship — it survives the process that wrote it,
+// unlike anything held in memory for the length of one request.
+//
+// A commit that cannot be resolved is not ours as far as this reports: the
+// caller's fallback is to treat the change as superseded, which is the safe
+// direction.
+func (m *gitMerger) isOwnCommit(ctx context.Context, sha string) bool {
+	if !m.hasCommit(ctx, sha) {
+		if _, err := m.run(ctx, nil, "fetch", m.remote, sha); err != nil {
+			return false
+		}
+		if !m.hasCommit(ctx, sha) {
+			return false
+		}
+	}
+	out, err := m.run(ctx, nil, "show", "-s", "--format=%ce", sha)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == m.committerEmail
 }
