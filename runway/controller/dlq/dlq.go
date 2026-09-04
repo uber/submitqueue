@@ -129,7 +129,13 @@ func (c *Controller) Process(ctx context.Context, delivery consumer.Delivery) er
 		return nil
 	}
 
-	reason := meta["dlq.last_error"]
+	reason := ""
+	if recordedFailure, failed := delivery.Failure(); failed {
+		reason = recordedFailure.Message
+	}
+	if reason == "" {
+		reason = meta["dlq.last_error"]
+	}
 	if reason == "" {
 		reason = "runway failed to process the merge request"
 	}
