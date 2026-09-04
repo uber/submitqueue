@@ -23,6 +23,7 @@ import (
 	"github.com/uber-go/tally"
 	runwaymq "github.com/uber/submitqueue/api/runway/messagequeue"
 	runwaypb "github.com/uber/submitqueue/api/runway/messagequeue/protopb"
+	"github.com/uber/submitqueue/platform/base/failure"
 	entityqueue "github.com/uber/submitqueue/platform/base/messagequeue"
 	"github.com/uber/submitqueue/platform/consumer"
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
@@ -43,13 +44,21 @@ type publishedMsg struct {
 	msg   entityqueue.Message
 }
 
-func newDelivery(t *testing.T, ctrl *gomock.Controller, payload []byte, meta map[string]string) *consumermock.MockDelivery {
+func newDelivery(
+	t *testing.T,
+	ctrl *gomock.Controller,
+	payload []byte,
+	meta map[string]string,
+	recordedFailure failure.Failure,
+	failed bool,
+) *consumermock.MockDelivery {
 	t.Helper()
 	msg := entityqueue.NewMessage(testID, payload, testPartitionKey, nil)
 	d := consumermock.NewMockDelivery(ctrl)
 	d.EXPECT().Message().Return(msg).AnyTimes()
 	d.EXPECT().Metadata().Return(meta).AnyTimes()
 	d.EXPECT().Attempt().Return(1).AnyTimes()
+	d.EXPECT().Failure().Return(recordedFailure, failed).AnyTimes()
 	return d
 }
 
@@ -88,11 +97,8 @@ func newController(t *testing.T, registry consumer.TopicRegistry) *Controller {
 	})
 }
 
-func TestProcess_DecodableRepublishesFailure(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	registry, published := newRegistry(t, ctrl)
-	controller := newController(t, registry)
-
+func mergeRequestPayload(t *testing.T) []byte {
+	t.Helper()
 	req := &runwaymq.MergeRequest{
 		Id:        testID,
 		QueueName: testQueue,
@@ -100,24 +106,68 @@ func TestProcess_DecodableRepublishesFailure(t *testing.T) {
 	}
 	payload, err := runwaymq.Marshal(req)
 	require.NoError(t, err)
+	return payload
+}
 
-	meta := map[string]string{
-		"dlq.last_error":     "boom: connection refused",
-		"dlq.original_topic": "runway-merge",
+func TestProcess_DecodableRepublishesFailure(t *testing.T) {
+	payload := mergeRequestPayload(t)
+	tests := []struct {
+		name            string
+		recordedFailure failure.Failure
+		failed          bool
+		metadata        map[string]string
+		wantReason      string
+	}{
+		{
+			name:            "portable failure overrides conflicting legacy metadata",
+			recordedFailure: failure.New("git provider rejected the push"),
+			failed:          true,
+			metadata: map[string]string{
+				"dlq.last_error":     "legacy metadata reason",
+				"dlq.original_topic": "runway-merge",
+			},
+			wantReason: "dead-lettered: git provider rejected the push",
+		},
+		{
+			name:   "legacy metadata is used when portable failure is absent",
+			failed: false,
+			metadata: map[string]string{
+				"dlq.last_error":     "boom: connection refused",
+				"dlq.original_topic": "runway-merge",
+			},
+			wantReason: "dead-lettered: boom: connection refused",
+		},
+		{
+			name:       "default is used when no failure reason is available",
+			failed:     false,
+			metadata:   map[string]string{"dlq.original_topic": "runway-merge"},
+			wantReason: "dead-lettered: runway failed to process the merge request",
+		},
 	}
-	delivery := newDelivery(t, ctrl, payload, meta)
 
-	require.NoError(t, controller.Process(context.Background(), delivery))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			registry, published := newRegistry(t, ctrl)
+			controller := newController(t, registry)
+			delivery := newDelivery(t, ctrl, payload, tt.metadata, tt.recordedFailure, tt.failed)
 
-	require.Len(t, *published, 1)
-	got := (*published)[0]
-	assert.Equal(t, "merge-signal", got.topic)
+			require.NoError(t, controller.Process(context.Background(), delivery))
 
-	result := &runwaymq.MergeResult{}
-	require.NoError(t, runwaymq.Unmarshal(got.msg.Payload, result))
-	assert.Equal(t, testID, result.Id)
-	assert.Equal(t, runwaypb.Outcome_FAILED, result.Outcome)
-	assert.Contains(t, result.Reason, "boom: connection refused")
+			require.Len(t, *published, 1)
+			got := (*published)[0]
+			assert.Equal(t, "merge-signal", got.topic)
+			assert.Equal(t, testID+"/dlq", got.msg.ID)
+			assert.Equal(t, testPartitionKey, got.msg.PartitionKey)
+
+			result := &runwaymq.MergeResult{}
+			require.NoError(t, runwaymq.Unmarshal(got.msg.Payload, result))
+			assert.Equal(t, testID, result.Id)
+			assert.Equal(t, testQueue, result.QueueName)
+			assert.Equal(t, runwaypb.Outcome_FAILED, result.Outcome)
+			assert.Equal(t, tt.wantReason, result.Reason)
+		})
+	}
 }
 
 func TestProcess_UndecodableAcksAndPublishesNothing(t *testing.T) {
@@ -125,7 +175,14 @@ func TestProcess_UndecodableAcksAndPublishesNothing(t *testing.T) {
 	registry, published := newRegistry(t, ctrl)
 	controller := newController(t, registry)
 
-	delivery := newDelivery(t, ctrl, []byte("{bad"), map[string]string{"dlq.original_topic": "runway-merge"})
+	delivery := newDelivery(
+		t,
+		ctrl,
+		[]byte("{bad"),
+		map[string]string{"dlq.original_topic": "runway-merge"},
+		failure.Failure{},
+		false,
+	)
 
 	require.NoError(t, controller.Process(context.Background(), delivery))
 	assert.Empty(t, *published)
